@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
 
 describe('official DSH client adapter', () => {
-  it('temporarily shadows the official workspace and conversation slots and restores both', () => {
+  it('temporarily shadows the official conversation while the Footer owns the directory', () => {
     const registered: Array<{ name: string; id?: string; priority?: number; inject?: () => unknown; dispose: ReturnType<typeof vi.fn> }> = []
     const inject = vi.fn((key: string, register: () => unknown) => {
       register()
@@ -25,16 +25,12 @@ describe('official DSH client adapter', () => {
     const footer = registered.find(item => item.name === 'sidebar.footer.action')!
     const face = footer.inject?.() as { toggle(sessionId: string | undefined): void }
     face.toggle('session-1')
-    const workspace = registered.find(item => item.name === 'sidebar.workspaces')!
     const conversation = registered.find(item => item.name === 'conversation')!
-    expect(workspace.priority).toBe(-10)
     expect(conversation.priority).toBe(-10)
     expect(conversation.inject?.()).toMatchObject({ openedFromSession: 'session-1' })
     face.toggle('session-1')
-    expect(workspace.dispose).toHaveBeenCalledOnce()
     expect(conversation.dispose).toHaveBeenCalledOnce()
     face.toggle('session-2')
-    expect(registered.filter(item => item.name === 'sidebar.workspaces')).toHaveLength(2)
     expect(registered.filter(item => item.name === 'conversation')).toHaveLength(2)
     expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
     expect(registered.map(item => item.name)).not.toContain('main.surface')
