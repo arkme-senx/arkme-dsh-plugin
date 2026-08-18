@@ -693,6 +693,53 @@ describe('JotmoService', () => {
     expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', text_content: '回复' })
   })
 
+  it('checks private-chat eligibility and reads normalized related recordings', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [{
+          session: { chat_session_uid: 'chat-private', session_kind: 1, last_active_at: 200 },
+          private_counterpart: { user_id: 20002, display_name_snapshot: '小林' },
+          unread_snapshot: { unread_count: 0 },
+        }],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: { items: [] } })
+      if (url.endsWith('/api/v1/auth/able-func')) {
+        expect(body).toEqual({ func_type: 17 })
+        return json({ code: 200, data: { able: true } })
+      }
+      if (url.endsWith('/api/v1/chats/records/related-recordings/page')) return json({ code: 200, data: {
+        state: 3,
+        state_msg: '已找到相关录音',
+        has_entry: true,
+        moment_ls: [{
+          moment_id: 'moment-1', session_id: 'session-1', start_at: 1_785_000_000_000,
+          end_at: 1_785_000_120_000, time_range_text: '14:00 - 14:02', title: '版本讨论',
+          summary: '讨论版本计划。', summary_status: 3, transcript: '原文', transcript_available: true,
+          participant_ls: [{ speaker_id: 'speaker-1', display_name: '小林', role: 1 }],
+        }],
+        has_more: false,
+        partial: false,
+        time_index_complete: true,
+        month_bucket_ls: [{ month_key: '2026-08', item_count: 1 }],
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const source = (await service.listSources('root')).items[0]!
+    await expect(service.relatedRecordingEligibility(source.sourceRef)).resolves.toEqual({ allowed: true })
+    await expect(service.relatedRecordings(source.sourceRef, { includeTimeIndex: true })).resolves.toMatchObject({
+      state: 'success',
+      items: [{ recordingRef: 'moment-1', title: '版本讨论', transcript: '原文' }],
+      monthBuckets: [{ monthKey: '2026-08', itemCount: 1 }],
+    })
+  })
+
   it('hydrates private and group avatars as opaque refs and reads them through fresh authorization', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

@@ -8,6 +8,10 @@ import type {} from '@deepseek-ai/dsh-llm'
 import { createJotmoImageToolDefinition } from './jotmo-image-tool.js'
 import type { JotmoImageReadService } from './jotmo-image-tool.js'
 import {
+  createJotmoRelatedRecordingToolDefinition, JOTMO_RELATED_RECORDING_TOOL_PROMPT,
+  type JotmoRelatedRecordingReadService,
+} from './related-recording-tool.js'
+import {
   createJotmoRecordingToolDefinitions,
   JOTMO_RECORDING_TOOL_PROMPT,
   type JotmoRecordingReadService,
@@ -18,7 +22,7 @@ import type {
   JotmoUserProfileSnapshot,
 } from './types.js'
 
-export interface JotmoConversationReadService extends JotmoRecordingReadService {
+export interface JotmoConversationReadService extends JotmoRecordingReadService, JotmoRelatedRecordingReadService {
   providerCapabilities(): JotmoProviderCapabilities
   refreshLatest(): Promise<void>
   syncHistory(maxPages?: number, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }>
@@ -158,6 +162,7 @@ export function consumerPluginContract(capabilities: JotmoProviderCapabilities):
     },
     availableMethods: [
       'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
+      'relatedRecordingEligibility', 'relatedRecordings',
     ],
     limits: capabilities.limits,
     securityRules: [
@@ -331,6 +336,7 @@ export function createAllJotmoToolDefinitions(
   return [
     ...createJotmoToolDefinitions(service),
     ...createJotmoRecordingToolDefinitions(service),
+    createJotmoRelatedRecordingToolDefinition(service),
   ]
 }
 
@@ -343,6 +349,11 @@ export function registerJotmoConversationTools(
     name: 'tool:jotmo-recordings',
     order: 117,
     text: JOTMO_RECORDING_TOOL_PROMPT,
+  })
+  ctx.systemPrompt.section({
+    name: 'tool:jotmo-related-recordings',
+    order: 118,
+    text: JOTMO_RELATED_RECORDING_TOOL_PROMPT,
   })
   for (const definition of createAllJotmoToolDefinitions(service)) ctx.tools.register(definition)
   ctx.inject(['attachments'], imageCtx => {

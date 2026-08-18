@@ -213,6 +213,19 @@ async function dispatch(
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
     )
+    case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'related-recordings.page': return await service.relatedRecordings(
+      stringParam(params, 'sourceRef'),
+      {
+        limit: numberParam(params, 'limit', 10),
+        ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+        ...(stringParam(params, 'monthKey') === '' ? {} : { monthKey: stringParam(params, 'monthKey') }),
+        timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
+        includeTimeIndex: booleanParam(params, 'includeTimeIndex'),
+      },
+    )
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),

@@ -20,6 +20,7 @@ export interface Config {
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
+  relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   stateDirectory: string
   keychainServicePrefix: string
@@ -36,6 +37,7 @@ export const Config: Schema<Config> = Schema.object({
   routePath: Schema.string().default('/jotmo-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
+  relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-jotmo'),
@@ -111,6 +113,14 @@ export type {
   JotmoPendingWrite,
   JotmoImageMediaType,
   JotmoImagePayload,
+  JotmoRelatedRecordingEligibility,
+  JotmoRelatedRecordingItem,
+  JotmoRelatedRecordingMonthBucket,
+  JotmoRelatedRecordingPage,
+  JotmoRelatedRecordingPageOptions,
+  JotmoRelatedRecordingPageState,
+  JotmoRelatedRecordingParticipant,
+  JotmoRelatedRecordingSpeaker,
   JotmoSourceDirectory,
   JotmoSourceItem,
   JotmoSourceKind,

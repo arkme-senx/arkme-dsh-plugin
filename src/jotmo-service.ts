@@ -15,6 +15,12 @@ import type {
   JotmoImageMediaType,
   JotmoPendingWrite,
   JotmoRecordCursor,
+  JotmoRelatedRecordingEligibility,
+  JotmoRelatedRecordingItem,
+  JotmoRelatedRecordingMonthBucket,
+  JotmoRelatedRecordingPage,
+  JotmoRelatedRecordingPageOptions,
+  JotmoRelatedRecordingPageState,
   JotmoRecordingCalendarMonth,
   JotmoRecordingCursorPayload,
   JotmoRecordingDay,
@@ -73,6 +79,20 @@ export interface JotmoServiceConfig {
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
+  relatedRecordingsEnabled?: boolean
+}
+
+export interface JotmoServiceEvent {
+  operation: 'related-recordings-eligibility' | 'related-recordings-page' | 'related-recordings-tool'
+  result: 'allowed' | 'denied' | 'success' | 'error' | 'legacy-fallback'
+  durationMs: number
+  itemCount?: number
+  cursorPresent?: boolean
+  partial?: boolean
+  consumer?: 'ui' | 'tool'
+  transcriptRequested?: boolean
+  transcriptTruncated?: boolean
+  errorCode?: string
 }
 
 interface LoginAttempt {
@@ -134,6 +154,10 @@ interface PhoneLoginResponse extends ScanResponse {
 type FetchLike = typeof fetch
 
 export const MAX_JOTMO_IMAGE_BYTES = 2 * 1024 * 1024
+export const MAX_JOTMO_RELATED_RECORDING_PAGE_SIZE = 20
+export const MAX_JOTMO_RELATED_RECORDING_CURSOR_LENGTH = 1024
+const MAX_JOTMO_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
+const RELATED_RECORDINGS_FUNC_TYPE = 17
 
 export interface JotmoImageBytes {
   mediaType: JotmoImageMediaType
@@ -354,12 +378,17 @@ export class JotmoService {
         sourceDirectory: true,
         sourceTimeline: true,
         sourceTextSend: true,
+        ...(this.relatedRecordingsEnabled() ? { relatedRecordings: true as const } : {}),
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
         maxSearchResults: 30,
         maxSyncPages: 20,
         maxImageBytes: MAX_JOTMO_IMAGE_BYTES,
+        ...(this.relatedRecordingsEnabled() ? {
+          maxRelatedRecordingPageSize: MAX_JOTMO_RELATED_RECORDING_PAGE_SIZE,
+          maxRelatedRecordingCursorLength: MAX_JOTMO_RELATED_RECORDING_CURSOR_LENGTH,
+        } : {}),
       },
     }
   }
@@ -856,6 +885,284 @@ export class JotmoService {
       localState: 'synced',
     }
   }
+
+  async relatedRecordingEligibility(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<JotmoRelatedRecordingEligibility> {
+    const startedAt = Date.now()
+    try {
+      const session = await this.requireSession()
+      await this.requirePrivateSource(sourceRef, session.userId)
+      const allowed = this.relatedRecordingsEnabled()
+        && await this.loadRelatedRecordingEligibility(session, signal)
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-eligibility',
+        result: allowed ? 'allowed' : 'denied',
+        durationMs: Date.now() - startedAt,
+      })
+      return { allowed }
+    } catch (error) {
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-eligibility',
+        result: 'error',
+        durationMs: Date.now() - startedAt,
+        errorCode: error instanceof JotmoPluginError ? error.code : 'internal-error',
+      })
+      throw error
+    }
+  }
+
+  async relatedRecordings(
+    sourceRef: string,
+    options: JotmoRelatedRecordingPageOptions = {},
+  ): Promise<JotmoRelatedRecordingPage> {
+    const startedAt = Date.now()
+    const limit = options.limit ?? 10
+    const cursor = options.cursor?.trim() ?? ''
+    const monthKey = options.monthKey?.trim() ?? ''
+    const timezoneOffsetMillis = options.timezoneOffsetMillis ?? 0
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_JOTMO_RELATED_RECORDING_PAGE_SIZE) {
+      throw new JotmoPluginError('related-recordings-limit-invalid', '相关录音每页条数必须在 1 到 20 之间', false)
+    }
+    if (cursor.length > MAX_JOTMO_RELATED_RECORDING_CURSOR_LENGTH) {
+      throw new JotmoPluginError('related-recordings-cursor-invalid', '相关录音分页游标无效', false)
+    }
+    if (monthKey !== '' && !/^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey)) {
+      throw new JotmoPluginError('related-recordings-month-invalid', '相关录音月份参数无效', false)
+    }
+    if (!Number.isInteger(timezoneOffsetMillis)
+      || Math.abs(timezoneOffsetMillis) > MAX_JOTMO_TIMEZONE_OFFSET_MILLIS) {
+      throw new JotmoPluginError('related-recordings-timezone-invalid', '相关录音时区参数无效', false)
+    }
+    try {
+      const session = await this.requireSession()
+      const source = await this.requirePrivateSource(sourceRef, session.userId)
+      if (!this.relatedRecordingsEnabled() || !await this.loadRelatedRecordingEligibility(session, options.signal)) {
+        throw new JotmoPluginError('related-recordings-not-allowed', '当前账号暂未开放相关录音能力', false, 403)
+      }
+      const legacyBody: Record<string, unknown> = {
+        chat_session_uid: source.ownerRef,
+        page_size: limit,
+        ...(cursor === '' ? {} : { cursor }),
+      }
+      const shouldUseModernContract = options.includeTimeIndex === true || monthKey !== ''
+      let raw: Record<string, unknown>
+      let legacyTimeIndexFallback = false
+      if (shouldUseModernContract) {
+        try {
+          raw = await this.authenticatedChatPost<Record<string, unknown>>(
+            '/api/v1/chats/records/related-recordings/page',
+            {
+              ...legacyBody,
+              ...(monthKey === '' ? {} : { month_key: monthKey }),
+              timezone_offset: timezoneOffsetMillis,
+              include_time_index: options.includeTimeIndex === true,
+            },
+            session,
+            options.signal,
+          )
+        } catch (error) {
+          const safeLegacyProbe = error instanceof JotmoPluginError
+            && error.code === 'jotmo-code-1001'
+            && cursor === ''
+            && monthKey === ''
+            && options.includeTimeIndex === true
+          if (!safeLegacyProbe) throw error
+          raw = await this.authenticatedChatPost<Record<string, unknown>>(
+            '/api/v1/chats/records/related-recordings/page',
+            legacyBody,
+            session,
+            options.signal,
+          )
+          legacyTimeIndexFallback = true
+          this.emitRelatedRecordingEvent({
+            operation: 'related-recordings-page',
+            result: 'legacy-fallback',
+            durationMs: Date.now() - startedAt,
+            cursorPresent: false,
+            consumer: options.consumer ?? 'ui',
+          })
+        }
+      } else {
+        raw = await this.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/records/related-recordings/page',
+          legacyBody,
+          session,
+          options.signal,
+        )
+      }
+      const page = this.relatedRecordingPage(raw, legacyTimeIndexFallback)
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-page',
+        result: 'success',
+        durationMs: Date.now() - startedAt,
+        itemCount: page.items.length,
+        cursorPresent: cursor !== '',
+        partial: page.partial,
+        consumer: options.consumer ?? 'ui',
+      })
+      return page
+    } catch (error) {
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-page',
+        result: 'error',
+        durationMs: Date.now() - startedAt,
+        cursorPresent: cursor !== '',
+        consumer: options.consumer ?? 'ui',
+        errorCode: error instanceof JotmoPluginError ? error.code : 'internal-error',
+      })
+      throw error
+    }
+  }
+
+  private relatedRecordingsEnabled(): boolean {
+    return this.config.relatedRecordingsEnabled !== false
+  }
+
+  private emitRelatedRecordingEvent(_event: JotmoServiceEvent): void {
+    // Diagnostics remain best-effort; the current Jotmo service has no external event sink.
+  }
+
+  recordRelatedRecordingsToolEvent(event: {
+    result: 'success' | 'error'
+    durationMs: number
+    itemCount?: number
+    cursorPresent?: boolean
+    transcriptRequested?: boolean
+    transcriptTruncated?: boolean
+  }): void {
+    this.emitRelatedRecordingEvent({
+      operation: 'related-recordings-tool',
+      consumer: 'tool',
+      ...event,
+    })
+  }
+
+  private async requirePrivateSource(sourceRef: string, userId: number): Promise<JotmoSourceRefPayload> {
+    const source = await this.openSourceRef(sourceRef, userId)
+    if (source.kind !== 'private_chat') {
+      throw new JotmoPluginError('related-recordings-private-source-required', '相关录音仅支持一对一私聊', false, 400)
+    }
+    return source
+  }
+
+  private async loadRelatedRecordingEligibility(
+    session: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/able-func',
+      { func_type: RELATED_RECORDINGS_FUNC_TYPE },
+      session,
+      signal,
+    )
+    return data.able === true
+  }
+
+  private relatedRecordingPage(
+    raw: Record<string, unknown>,
+    legacyTimeIndexFallback: boolean,
+  ): JotmoRelatedRecordingPage {
+    const items = listValue(raw.moment_ls).flatMap(item => {
+      const normalized = this.relatedRecordingItem(item)
+      return normalized === undefined ? [] : [normalized]
+    })
+    const partial = raw.partial === true
+    const stateCode = numberValue(raw.state)
+    const state: JotmoRelatedRecordingPageState = partial
+      ? items.length > 0 ? 'partial' : 'error'
+      : items.length > 0 ? 'success'
+        : stateCode === 2 ? 'generating'
+          : stateCode === 4 ? 'error'
+            : 'empty'
+    const nextCursor = stringValue(raw.next_cursor).trim()
+    const timeIndexComplete = raw.time_index_complete === true && !legacyTimeIndexFallback
+    const monthBuckets: JotmoRelatedRecordingMonthBucket[] = timeIndexComplete
+      ? listValue(raw.month_bucket_ls).flatMap(value => {
+          const bucket = objectValue(value)
+          const key = stringValue(bucket.month_key).trim()
+          const itemCount = numberValue(bucket.item_count)
+          return /^\d{4}-(0[1-9]|1[0-2])$/.test(key) && Number.isInteger(itemCount) && itemCount >= 0
+            ? [{ monthKey: key, itemCount }]
+            : []
+        })
+      : []
+    return {
+      state,
+      stateCode,
+      stateMessage: stringValue(raw.state_msg).trim(),
+      hasEntry: raw.has_entry === true,
+      items,
+      hasMore: raw.has_more === true && nextCursor !== '',
+      ...(raw.has_more === true && nextCursor !== '' ? { nextCursor } : {}),
+      partial,
+      ...(timeIndexComplete ? { monthBuckets } : {}),
+      timeIndexComplete,
+      legacyTimeIndexFallback,
+    }
+  }
+
+  private relatedRecordingItem(raw: unknown): JotmoRelatedRecordingItem | undefined {
+    const item = objectValue(raw)
+    const momentId = stringValue(item.moment_id).trim()
+    const sessionId = stringValue(item.session_id).trim()
+    const startAtMillis = numberValue(item.start_at)
+    if (momentId === '' || sessionId === '' || !Number.isSafeInteger(startAtMillis) || startAtMillis <= 0) return undefined
+    const summaryId = stringValue(item.summary_id).trim()
+    const originalName = stringValue(item.orig_name).trim()
+    const transcript = stringValue(item.transcript)
+    const speakers = listValue(item.speaker_ls).flatMap(value => {
+      const speaker = objectValue(value)
+      const speakerId = stringValue(speaker.speaker_id).trim()
+      if (speakerId === '') return []
+      const refUserId = numberValue(speaker.ref_usr_id)
+      const nickname = stringValue(speaker.nick_name).trim()
+      return [{
+        speakerId,
+        ...(Number.isSafeInteger(refUserId) && refUserId > 0 ? { refUserId } : {}),
+        ...(nickname === '' ? {} : { nickname }),
+      }]
+    })
+    const participants = listValue(item.participant_ls).flatMap(value => {
+      const participant = objectValue(value)
+      const speakerId = stringValue(participant.speaker_id).trim()
+      const nickname = stringValue(participant.nick_name).trim()
+      const displayName = stringValue(participant.display_name).trim() || nickname
+      if (speakerId === '' || displayName === '') return []
+      const refUserId = numberValue(participant.ref_usr_id)
+      return [{
+        speakerId,
+        ...(Number.isSafeInteger(refUserId) && refUserId > 0 ? { refUserId } : {}),
+        ...(nickname === '' ? {} : { nickname }),
+        displayName,
+        role: numberValue(participant.role),
+      }]
+    })
+    const dateStamp = numberValue(item.date_stamp)
+    const timezoneOffsetMillis = numberValue(item.tz_offset)
+    return {
+      recordingRef: momentId,
+      momentId,
+      sessionId,
+      ...(summaryId === '' ? {} : { summaryId }),
+      ...(originalName === '' ? {} : { originalName }),
+      startAtMillis,
+      endAtMillis: numberValue(item.end_at),
+      ...(Number.isSafeInteger(dateStamp) && dateStamp > 0 ? { dateStamp } : {}),
+      ...(Number.isSafeInteger(timezoneOffsetMillis) ? { timezoneOffsetMillis } : {}),
+      timeRangeText: stringValue(item.time_range_text).trim(),
+      title: stringValue(item.title).trim(),
+      summary: stringValue(item.summary).trim(),
+      summaryStatus: numberValue(item.summary_status),
+      ...(transcript === '' ? {} : { transcript }),
+      transcriptAvailable: item.transcript_available === true && transcript !== '',
+      speakers,
+      participants,
+      isSharedByOther: item.is_shared_by_other === true,
+    }
+  }
+
 
   private async hydrateSourceAvatars(
     items: JotmoSourceItem[],
