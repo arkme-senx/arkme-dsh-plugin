@@ -33,6 +33,7 @@ function fakeService(): JotmoConversationReadService & {
   readCall: ReturnType<typeof vi.fn>
   listWorldRecords: ReturnType<typeof vi.fn>
   publishWorldTextForConversation: ReturnType<typeof vi.fn>
+  requestOutgoingCall: ReturnType<typeof vi.fn>
 } {
   return {
     providerCapabilities: () => ({
@@ -50,6 +51,7 @@ function fakeService(): JotmoConversationReadService & {
         sourceTextSend: true as const,
         callHistory: true as const,
         callDetail: true as const,
+        outgoingCall: true as const,
       },
       limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
     }),
@@ -184,6 +186,11 @@ function fakeService(): JotmoConversationReadService & {
     listWechatCommonGroups: vi.fn(async () => ({ friends: [], total: 0, hasMore: false })),
     listWechatMoneyFlows: vi.fn(async () => ({ moneyFlows: [], total: 0, hasMore: false })),
     listWechatLocations: vi.fn(async () => ({ locations: [], total: 0, hasMore: false })),
+    requestOutgoingCall: vi.fn(async (_sourceRef: string, mediaType: 'audio' | 'video') => ({
+      status: 'calling' as const,
+      displayName: '小林',
+      mediaType,
+    })),
   }
 }
 
@@ -523,5 +530,42 @@ describe('Jotmo conversation tools', () => {
     expect(JOTMO_RECORDING_TOOL_PROMPT).toContain('has_more=false')
     expect(JOTMO_RECORDING_TOOL_PROMPT)
       .toContain('do not expose tool names, cursors, or version ids')
+  })
+
+  it('starts an explicitly requested outgoing call with a safe action result', async () => {
+    const service = fakeService()
+    const tool = createJotmoToolDefinitions(service).find(definition => definition.name === 'jotmo_call_start')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { source_ref: 'opaque-private-ref', media_type: 'video' },
+      { signal } as never,
+    ) as string
+
+    expect(service.requestOutgoingCall).toHaveBeenCalledWith('opaque-private-ref', 'video', signal)
+    expect(output).toBe('已向“小林”发起视频通话，呼叫界面已打开。')
+    expect(output).not.toContain('opaque-private-ref')
+    expect(output).not.toMatch(/room-|userSig|__c/)
+    expect(tool.isConcurrencySafe?.({ source_ref: 'opaque-private-ref', media_type: 'video' })).toBe(false)
+  })
+
+  it('rejects blank references and invalid outgoing media before invoking the service', async () => {
+    const service = fakeService()
+    const tool = createJotmoToolDefinitions(service).find(definition => definition.name === 'jotmo_call_start')!
+    const exec = { signal: new AbortController().signal } as never
+
+    await expect(tool.execute({ source_ref: '  ', media_type: 'audio' }, exec)).rejects.toThrow(/source_ref 不能为空/)
+    await expect(tool.execute({ source_ref: 'source', media_type: 'screen' }, exec)).rejects.toThrow(/media_type/)
+    expect(service.requestOutgoingCall).not.toHaveBeenCalled()
+  })
+
+  it('requires list-first exact private-chat targeting and true calling status', () => {
+    expect(JOTMO_TOOL_PROMPT).toContain('explicit human request in the current conversation')
+    expect(JOTMO_TOOL_PROMPT).toContain('jotmo_sources_list')
+    expect(JOTMO_TOOL_PROMPT).toContain('kind=private_chat')
+    expect(JOTMO_TOOL_PROMPT).toContain('source_ref')
+    expect(JOTMO_TOOL_PROMPT).toContain('must not be guessed from a nickname')
+    expect(JOTMO_TOOL_PROMPT).toContain('ask the human to disambiguate')
+    expect(JOTMO_TOOL_PROMPT).toContain('calling')
   })
 })

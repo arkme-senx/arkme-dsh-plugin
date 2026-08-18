@@ -8,6 +8,14 @@ import {
   projectCallListPage,
 } from './call-presentation.js'
 import type { JotmoSessionCredentials } from './keychain-store.js'
+import { JotmoOutgoingCallBroker } from './outgoing-call-broker.js'
+import type {
+  JotmoOutgoingCallIntentClaim,
+  JotmoOutgoingCallIntentResolutionInput,
+  JotmoOutgoingCallMediaType,
+  JotmoOutgoingCallPrepareResult,
+  JotmoOutgoingCallToolResult,
+} from './outgoing-call-contract.js'
 import { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
 import { projectRecordingTranscripts, projectRecordingVersions } from './recording-presentation.js'
 import type {
@@ -111,6 +119,7 @@ export interface JotmoServiceConfig {
   maxTextLength: number
   geetestCaptchaId: string
   relatedRecordingsEnabled?: boolean
+  routePath?: string
 }
 
 export interface JotmoServiceEvent {
@@ -444,6 +453,7 @@ export class JotmoService {
     private readonly sessionStore: SessionStore,
     private readonly stateStore: StateStore,
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly outgoingCallBroker = new JotmoOutgoingCallBroker(),
   ) {}
 
   async authStatus(): Promise<JotmoAuthSnapshot> {
@@ -458,7 +468,11 @@ export class JotmoService {
   }
 
   clientConfig(): JotmoClientConfig {
-    return { captchaId: this.config.geetestCaptchaId }
+    const routePath = this.config.routePath?.trim() || '/jotmo-self/api'
+    return {
+      captchaId: this.config.geetestCaptchaId,
+      callAssetBasePath: `${routePath}/call`,
+    }
   }
 
   providerCapabilities(): JotmoProviderCapabilities {
@@ -483,6 +497,7 @@ export class JotmoService {
         callHistory: true,
         callDetail: true,
         ...(this.relatedRecordingsEnabled() ? { relatedRecordings: true as const } : {}),
+        outgoingCall: true,
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
@@ -506,6 +521,180 @@ export class JotmoService {
       ...(auth.userId === undefined ? {} : { userId: auth.userId }),
       revision: auth.userId === undefined ? 0 : await this.stateStore.revision(auth.userId),
     }
+  }
+
+  async requestOutgoingCall(
+    sourceRef: string,
+    mediaType: JotmoOutgoingCallMediaType,
+    signal?: AbortSignal,
+  ): Promise<JotmoOutgoingCallToolResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new JotmoPluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
+    }
+    return await this.outgoingCallBroker.request({
+      userId: session.userId,
+      sourceRef,
+      displayName: source.displayName,
+      mediaType,
+      ...(signal === undefined ? {} : { signal }),
+    })
+  }
+
+  async claimOutgoingCallIntent(): Promise<JotmoOutgoingCallIntentClaim | null> {
+    const session = await this.requireSession()
+    return this.outgoingCallBroker.claim(session.userId)
+  }
+
+  async resolveOutgoingCallIntent(
+    input: Omit<JotmoOutgoingCallIntentResolutionInput, 'userId'>,
+  ): Promise<void> {
+    const session = await this.requireSession()
+    this.outgoingCallBroker.resolveIntent({ ...input, userId: session.userId })
+  }
+
+  async prepareOutgoingCall(input: {
+    sourceRef: string
+    mediaType: JotmoOutgoingCallMediaType
+    callRequestId: string
+    signal?: AbortSignal
+  }): Promise<JotmoOutgoingCallPrepareResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(input.sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new JotmoPluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
+    }
+    this.outgoingCallBroker.acquireLease(session.userId, input.callRequestId)
+    try {
+      const detail = await this.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/detail',
+        { chat_session_uid: source.ownerRef },
+        session,
+        input.signal,
+      )
+      const chatSession = objectValue(detail.session)
+      const sessionUid = stringValue(chatSession.chat_session_uid).trim()
+      const sessionKind = numberValue(chatSession.session_kind)
+      if (sessionUid !== source.ownerRef || (sessionKind !== 1 && sessionKind !== 3)) {
+        throw new JotmoPluginError('call-source-invalid', '当前私聊会话不可用，请刷新后重试', false, 409)
+      }
+      const counterpart = objectValue(detail.private_counterpart)
+      const supplement = objectValue(detail.private_supplement)
+      const counterpartUserId = numberValue(counterpart.user_id)
+      if (!Number.isSafeInteger(counterpartUserId) || counterpartUserId <= 0 || counterpartUserId === session.userId) {
+        throw new JotmoPluginError('call-peer-unavailable', '当前私聊用户不可用，请刷新后重试', false, 409)
+      }
+      const detailDisplayName = stringValue(
+        supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
+        ?? supplement.pending_name ?? counterpart.visible_phone,
+      ).trim()
+      const callerProfile = (await this.refreshProfile()).profile
+      if (callerProfile === null) {
+        throw new JotmoPluginError('profile-contract-invalid', '即我个人资料响应不完整', false, 502)
+      }
+      const publicProfiles = await this.publicProfilesByUserIds([counterpartUserId], session, input.signal)
+      const peerProfile = publicProfiles.get(counterpartUserId)
+      const displayName = detailDisplayName || peerProfile?.displayName || source.displayName || '即我用户'
+      const credentials = await this.authenticatedWebrtcPost<Record<string, unknown>>(
+        '/api/v1/trtc/credentials',
+        {},
+        session,
+        input.signal,
+      )
+      const sdkAppId = numberValue(credentials.sdk_app_id)
+      const trtcUserId = stringValue(credentials.user_id).trim()
+      const userSig = stringValue(credentials.user_sig).trim()
+      if (!Number.isSafeInteger(sdkAppId) || sdkAppId <= 0 || trtcUserId === '' || userSig === '') {
+        throw new JotmoPluginError('call-credentials-invalid', '桌面通话初始化失败', true, 502)
+      }
+      const callerName = callerProfile.displayName.trim() || '即我用户'
+      const callerAvatarRef = callerProfile.avatarRef.trim()
+      const room = await this.authenticatedWebrtcPost<Record<string, unknown>>(
+        '/api/v1/trtc/create-room',
+        {
+          shared_topic_id: 0,
+          chat_session_uid: source.ownerRef,
+          callee_user_ids: [counterpartUserId],
+          call_media_type: input.mediaType === 'video' ? 1 : 0,
+          caller_name: callerName,
+          ...(callerAvatarRef === '' ? {} : {
+            sender_avatar_url: callerAvatarRef,
+            caller_avatar_url: callerAvatarRef,
+          }),
+        },
+        session,
+        input.signal,
+      )
+      const roomId = stringValue(room.room_id).trim()
+      const calleeAccounts = [...new Set(listValue(room.callee_accounts)
+        .map(value => stringValue(value).trim())
+        .filter(value => value !== ''))]
+      if (roomId === '') {
+        throw new JotmoPluginError('call-room-invalid', '呼叫房间创建失败，请重试', true, 502)
+      }
+      if (calleeAccounts.length === 0) {
+        throw new JotmoPluginError('call-peer-unavailable', '对方未开通通话，请对方先登录后再试', false, 409)
+      }
+      const sharedTopicId = numberValue(room.shared_topic_id)
+      const userData = JSON.stringify({
+        sharedTopicId: sharedTopicId > 0 ? sharedTopicId : 0,
+        sourceTag: 'harness-private-chat-header',
+        callerName,
+        callerAvatar: '',
+      })
+      const description = input.mediaType === 'video' ? '邀请你进行视频通话' : '邀请你进行语音通话'
+      return {
+        callRequestId: input.callRequestId,
+        displayName,
+        ...(peerProfile === undefined ? {} : {
+          peerAvatarRef: await this.sealProfileImageRef(session.userId, counterpartUserId),
+        }),
+        bootstrap: {
+          sdkAppId,
+          userId: trtcUserId,
+          userSig,
+          nickName: callerName,
+          avatar: '',
+          outgoingOnly: true,
+        },
+        call: {
+          roomId,
+          mediaType: input.mediaType,
+          calleeAccounts,
+          calleeName: displayName,
+          calleeAvatar: '',
+          callerName,
+          callerAvatar: '',
+          timeoutSec: 30,
+          userData,
+          offlinePushInfo: {
+            title: callerName,
+            description,
+            extension: userData,
+            ignoreIOSBadge: true,
+            iOSPushType: 1,
+          },
+        },
+      }
+    } catch (error) {
+      this.outgoingCallBroker.releaseLease(session.userId, input.callRequestId)
+      throw error
+    }
+  }
+
+  async heartbeatOutgoingCall(callRequestId: string): Promise<{ expiresAtMillis: number }> {
+    const session = await this.requireSession()
+    return { expiresAtMillis: this.outgoingCallBroker.heartbeatLease(session.userId, callRequestId) }
+  }
+
+  async releaseOutgoingCall(callRequestId: string): Promise<void> {
+    const session = await this.requireSession()
+    this.outgoingCallBroker.releaseLease(session.userId, callRequestId)
+  }
+
+  dispose(): void {
+    this.outgoingCallBroker.dispose()
   }
 
   async listCalls(options: {
@@ -2085,6 +2274,8 @@ export class JotmoService {
   }
 
   async logout(): Promise<JotmoAuthSnapshot> {
+    const session = await this.sessionStore.read()
+    if (session !== undefined) this.outgoingCallBroker.clearUser(session.userId, '账号已退出，呼叫已取消')
     await this.sessionStore.delete()
     this.attempts.clear()
     return { status: 'logged-out', environment: this.config.environment }

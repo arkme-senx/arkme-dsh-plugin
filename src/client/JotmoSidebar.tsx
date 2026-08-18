@@ -14,6 +14,7 @@ import { JotmoCallHistorySurface } from './JotmoCallHistorySurface.js'
 import { JotmoMark } from './JotmoFooterAction.js'
 import { JotmoLogin, type JotmoLoginMode } from './JotmoLogin.js'
 import { JotmoRecordingSurface } from './JotmoRecordingSurface.js'
+import { JotmoPrivateCallMenu } from './JotmoPrivateCallMenu.js'
 import { loadJotmoImageDataUrl } from './JotmoVirtualWorkspace.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
@@ -39,8 +40,8 @@ const styles: Record<string, CSSProperties> = {
   },
   panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   header: {
-    position: 'relative', flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
-    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+    position: 'relative', flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 28px 12px 20px',
+    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, gap: 2,
   },
   title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
   headerActions: { marginLeft: 'auto', display: 'flex', alignItems: 'center' },
@@ -151,6 +152,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   const [smsCode, setSmsCode] = useState('')
   const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
+  const [callAssetBasePath, setCallAssetBasePath] = useState('/jotmo-self/api/call')
   const [qr, setQr] = useState('')
   const qrRequestStartedRef = useRef(false)
   const authenticated = auth?.status === 'authenticated'
@@ -185,7 +187,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
       const [snapshot, config] = await Promise.all([
         callJotmo<JotmoAuthSnapshot>('auth.status'), callJotmo<JotmoClientConfig>('auth.config'),
       ])
-      setAuth(snapshot); setCaptchaId(config.captchaId)
+      setAuth(snapshot); setCaptchaId(config.captchaId); setCallAssetBasePath(config.callAssetBasePath)
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
   }, [])
@@ -439,7 +441,12 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
       <section style={styles.panel} role="region" aria-label={source?.displayName ?? '即我'}>
         <header style={styles.header}>
           <h2 style={styles.title}>{ui.mode === 'recordings' ? '全天候录音' : source?.displayName ?? '即我'}</h2>
-          {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div style={styles.headerActions}>
+          {ui.mode === 'source' && source?.kind === 'private_chat' && <JotmoPrivateCallMenu
+            sourceRef={source.sourceRef}
+            displayName={source.displayName}
+            assetBasePath={callAssetBasePath}
+          />}
+          {ui.mode === 'source' && shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div style={styles.headerActions}>
             <button type="button" style={styles.moreButton} aria-label="更多私聊操作" aria-expanded={relatedMenuOpen}
               onClick={() => { setRelatedMenuOpen(value => !value) }}>•••</button>
             {relatedMenuOpen && <div style={styles.popover} role="menu">

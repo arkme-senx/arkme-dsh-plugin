@@ -3,6 +3,7 @@ import type { JotmoAuthSnapshot } from '../types.js'
 import { callJotmo } from './api.js'
 import { JotmoFooterAction, type JotmoFooterActionProps } from './JotmoFooterAction.js'
 import { JotmoNavigation } from './JotmoVirtualWorkspace.js'
+import { JotmoOutgoingCallHost } from './JotmoOutgoingCallHost.js'
 import { jotmoUi } from './ui-controller.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -49,6 +50,7 @@ export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
     return () => { cancelled = true }
   }, [ui.authRevision])
   return <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
+    <JotmoOutgoingCallHost />
     {hasOpened.current && <div
       id="jotmo-footer-directory" role="region" aria-label="即我下拉列表"
       hidden={!props.wide || !ui.open}

@@ -22,6 +22,7 @@ export interface JotmoCaptchaResult {
 
 export interface JotmoClientConfig {
   captchaId: string
+  callAssetBasePath: string
 }
 
 export interface JotmoRecordCursor {
@@ -218,6 +219,7 @@ export interface JotmoProviderCapabilities {
     callHistory: true
     callDetail: true
     relatedRecordings?: true
+    outgoingCall: true
   }
   limits: {
     maxTextLength: number
@@ -691,6 +693,11 @@ export type JotmoPluginOperation =
   | 'calls.detail'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
+  | 'calls.outgoing.intent.claim'
+  | 'calls.outgoing.intent.resolve'
+  | 'calls.outgoing.prepare'
+  | 'calls.outgoing.heartbeat'
+  | 'calls.outgoing.release'
 
 export type JotmoHostOperation = JotmoPluginOperation
   | 'recordings.calendar'

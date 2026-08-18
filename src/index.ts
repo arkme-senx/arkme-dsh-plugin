@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createJotmoHostApi } from './host-api.js'
+import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { JotmoKeychainStore } from './keychain-store.js'
 import { JotmoLocalDatabase } from './local-database.js'
 import { JotmoService } from './jotmo-service.js'
@@ -77,12 +78,21 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
   })
-  ctx.effect(() => () => { localDatabase.close() }, 'dsh-jotmo: local cache database')
+  const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
+  ctx.effect(() => () => {
+    service.dispose()
+    localDatabase.close()
+  }, 'dsh-jotmo: local cache database')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: config.routePath,
     handler,
   }), 'dsh-jotmo: local BFF route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: `${config.routePath}/call`,
+    handler: callAssetHandler,
+  }), 'dsh-jotmo: outgoing call assets')
   ctx.logger.info('dsh-jotmo: mounted %s for %s environment', config.routePath, config.environment)
 }
 

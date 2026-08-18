@@ -50,7 +50,7 @@
 ### Pinned assets
 
 - `assets/desktop_call/index.html` — adapted same-origin Harness bridge; visual DOM remains owned by the frontend bundle.
-- `assets/desktop_call/bundle.js` — exact copy of `jotmo_frontend/assets/web/desktop_call/bundle.js`.
+- `assets/desktop_call/bundle.js` — pinned `jotmo_frontend` bundle with the single documented `outgoingOnly` incoming-listener guard; both upstream and derived hashes are recorded.
 - `assets/desktop_call/call-linear-strong.svg` — exact copy of the existing frontend header icon.
 - `assets/desktop_call/manifest.json` — upstream commit and SHA-256 pins.
 

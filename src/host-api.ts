@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { JotmoPluginError, JotmoService } from './jotmo-service.js'
+import { JotmoOutgoingCallError, type JotmoOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   JotmoPluginRequest, JotmoPluginResponse, JotmoRecordCursor, JotmoSourceDirectory, JotmoTimelineCursor,
 } from './types.js'
@@ -67,6 +68,46 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean {
   return params[key] === true
 }
 
+function requiredCallParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  maxLength = 512,
+): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > maxLength) {
+    throw new JotmoPluginError(code, '呼叫请求参数无效', false)
+  }
+  return value
+}
+
+function outgoingMediaTypeParam(params: Record<string, unknown>): 'audio' | 'video' {
+  const value = stringParam(params, 'mediaType')
+  if (value !== 'audio' && value !== 'video') {
+    throw new JotmoPluginError('call-media-type-invalid', '呼叫媒体类型无效', false)
+  }
+  return value
+}
+
+const OUTGOING_FAILURE_CODES = new Set<JotmoOutgoingCallFailureCode>([
+  'call-ui-unavailable',
+  'call-active',
+  'call-source-invalid',
+  'call-peer-unavailable',
+  'call-permission-denied',
+  'call-bootstrap-failed',
+  'call-engine-failed',
+  'call-cancelled',
+])
+
+function outgoingFailureCodeParam(params: Record<string, unknown>): JotmoOutgoingCallFailureCode {
+  const code = stringParam(params, 'code') as JotmoOutgoingCallFailureCode
+  if (!OUTGOING_FAILURE_CODES.has(code)) {
+    throw new JotmoPluginError('call-failure-invalid', '呼叫失败类型无效', false)
+  }
+  return code
+}
+
 function cursorParam(params: Record<string, unknown>): JotmoRecordCursor | undefined {
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
@@ -127,12 +168,14 @@ export function createJotmoHostApi(service: JotmoService, options: JotmoHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      const value = await dispatch(service, request.operation, params)
+      const value = await dispatchJotmoHostOperation(service, request.operation, params)
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       const known = error instanceof JotmoPluginError
         ? error
-        : new JotmoPluginError('internal-error', '即我插件处理失败', true, 500, { cause: error })
+        : error instanceof JotmoOutgoingCallError
+          ? new JotmoPluginError(error.code, error.message, error.retryable, error.code === 'call-active' ? 409 : 400)
+          : new JotmoPluginError('internal-error', '即我插件处理失败', true, 500, { cause: error })
       writeJson(res, known.httpStatus, {
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable },
@@ -141,7 +184,7 @@ export function createJotmoHostApi(service: JotmoService, options: JotmoHostApiO
   }
 }
 
-async function dispatch(
+export async function dispatchJotmoHostOperation(
   service: JotmoService,
   operation: JotmoPluginRequest['operation'],
   params: Record<string, unknown>,
@@ -236,6 +279,42 @@ async function dispatch(
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
+    case 'calls.outgoing.intent.resolve': {
+      const intentId = requiredCallParam(params, 'intentId', 'call-intent-invalid')
+      const claimToken = requiredCallParam(params, 'claimToken', 'call-intent-invalid')
+      const status = stringParam(params, 'status')
+      if (status === 'calling') {
+        return await service.resolveOutgoingCallIntent({
+          intentId,
+          claimToken,
+          outcome: { status: 'calling' },
+        })
+      }
+      if (status !== 'failed') {
+        throw new JotmoPluginError('call-intent-invalid', '呼叫意图状态无效', false)
+      }
+      return await service.resolveOutgoingCallIntent({
+        intentId,
+        claimToken,
+        outcome: {
+          status: 'failed',
+          code: outgoingFailureCodeParam(params),
+          message: requiredCallParam(params, 'message', 'call-failure-invalid', 500),
+        },
+      })
+    }
+    case 'calls.outgoing.prepare': return await service.prepareOutgoingCall({
+      sourceRef: requiredCallParam(params, 'sourceRef', 'call-source-invalid', 4096),
+      mediaType: outgoingMediaTypeParam(params),
+      callRequestId: requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
+    })
+    case 'calls.outgoing.heartbeat': return await service.heartbeatOutgoingCall(
+      requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
+    )
+    case 'calls.outgoing.release': return await service.releaseOutgoingCall(
+      requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
+    )
     default: throw new JotmoPluginError('operation-unknown', '不支持的即我插件操作', false, 404)
   }
 }

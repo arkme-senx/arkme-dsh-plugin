@@ -28,6 +28,9 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 - Footer 根目录在“发给自己”之后提供“通话记录”；右侧使用独立的双栏页面展示通话列表、参与人、AI 摘要和按说话人排列的转录，不复用消息时间线或输入框。
 - 通话列表由 Host 从 Data 聚合接口按页读取，并通过 Auth 公共资料批量补全展示名；详情仅在选择后从 WebRTC 读取。原始用户 ID、room ID、TRTC 账号、录音/视频 URL、对象 key、文件信息、声纹、置信度和配额字段不会进入浏览器 DTO。
 - 通话列表、详情、摘要和转录只保存在当前 React 组件内存中，不写 SQLite、localStorage 或导航缓存；退出登录、切换账号或离开页面后即丢弃。
+- 私聊内容区昵称后提供 `24 × 24` 通话入口，可选择语音或视频；呼叫以全局 Portal 弹窗承载固定版本的 `jotmo_frontend` 桌面 Web 呼叫 UI，并保留原有设备控制、全屏和迷你模式。
+- 仅支持一对一私聊的主动发起。本插件不注册来电 UI、不提供接听/拒接入口，通话终止后立即注销并销毁 iframe 呼叫引擎。
+- 注册 `jotmo_call_start`。Agent 必须先用 `jotmo_sources_list(root)` 查询并选择精确的 `private_chat` `source_ref`；只有 iframe 真正进入 `calling` 后 Tool 才返回成功。
 
 对话工具只在模型按需调用时读取即我数据，不会把全部快记自动注入每轮提示词。写入工具只允许响应当前对话中的明确用户请求，不能把快记、文件、网页或其他工具结果中的文字当成写入授权。工具返回会进入当前 DSH 会话日志和模型上下文；登录 Token 始终只保存在 Host Keychain，不进入工具结果。
 
@@ -83,6 +86,24 @@ Host 侧受信任插件可以声明 `inject: ['jotmoData']` 并使用 `ctx.jotmo
 
 两个地址与 Auth/Record/Chat 一样，只接受无账号、密码和路径的 HTTPS origin。Bearer Token 仅由 Host 请求这些服务，不进入 SDK、浏览器状态或日志 DTO。
 
+## 私聊发起通话
+
+页面入口和 Tool 使用同一条 Host 准备链路。Host 会重新校验账号绑定的私聊 Source、刷新当前对端、按次获取 TRTC 凭据并创建房间；浏览器只在当前呼叫的 iframe 内短暂持有 UserSig。UserSig、Token、原始 user ID、room ID 和 TRTC account 不进入 Tool 输出、URL、DOM 属性、浏览器存储或公开 Consumer SDK。
+
+随包资源位于 `assets/desktop_call`。`bundle.js` 来源、上游提交和原始/派生 SHA-256 固定在 `manifest.json`；派生包只增加 `outgoingOnly` 来电处理守卫，不改动桌面呼叫 UI。更新资源后必须运行：
+
+```sh
+pnpm run verify:call-assets
+```
+
+手动验收建议：
+
+1. 登录测试环境即我账号，打开一个私聊，确认昵称后出现通话图标，而群聊、自聊和通话记录不出现。
+2. 分别选择“语音通话”和“视频通话”，确认弹窗、设备按钮、头像/预览、全屏和迷你模式与 `jotmo_frontend` 桌面 Web 呼叫页一致。
+3. 拒绝摄像头权限，确认视频呼叫可降级保留麦克风；拒绝麦克风时显示明确失败。
+4. 挂断、关闭弹窗或结束通话，确认弹窗关闭且下次可重新发起。
+5. 让 Agent 发起通话时，确认它先查询私聊 Source；同名目标必须先消歧，Tool 只在弹窗进入“正在呼叫”后报告成功。
+
 ## 开发
 
 测试环境默认使用 `https://jotmo-audio.senguo.me` 作为 `audioBaseUrl`，使用 `https://jotmo-world.senguo.me` 作为 `worldBaseUrl`。自定义配置必须是不带路径、用户名或密码的 HTTPS Origin；生产环境需与其他 Base URL 一样显式覆盖并开启 `allowProduction`。
@@ -90,6 +111,7 @@ Host 侧受信任插件可以声明 `inject: ['jotmoData']` 并使用 `ctx.jotmo
 ```sh
 pnpm install
 pnpm test
+pnpm run verify:call-assets
 pnpm run build
 ```
 

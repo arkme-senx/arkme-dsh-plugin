@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { JotmoPluginError, JotmoService, type JotmoServiceConfig } from '../src/jotmo-service.js'
 import type { JotmoSessionCredentials } from '../src/keychain-store.js'
@@ -102,6 +103,17 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+function sourceRefFor(
+  kind: 'default_category' | 'topic' | 'private_chat' | 'group_chat',
+  ownerRef: string,
+  displayName: string,
+  userId = 10001,
+): string {
+  const payload = Buffer.from(JSON.stringify({ version: 1, userId, kind, ownerRef, displayName }), 'utf8').toString('base64url')
+  const signature = createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')
+  return `jotmo-source-v1.${payload}.${signature}`
 }
 
 describe('JotmoService', () => {
@@ -523,6 +535,181 @@ describe('JotmoService', () => {
     })
   })
 
+  it('prepares an outgoing video call only from a fresh private-chat counterpart', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body)) as Record<string, unknown>
+      requests.push({ url, method: init?.method ?? 'GET', ...(body === undefined ? {} : { body }) })
+      if (url === 'https://chat.test/api/v1/chats/detail') {
+        return json({
+          code: 200,
+          data: {
+            session: { chat_session_uid: 'chat-private-1', session_kind: 1 },
+            private_counterpart: { user_id: 20002, display_name_snapshot: '接口昵称' },
+            private_supplement: { remark: '小林' },
+          },
+        })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-user-info') {
+        return json({
+          code: 200,
+          data: {
+            user_id: 10001,
+            nick_name: '我的昵称',
+            head_img: '10001_avatar.png',
+            name_slug: 'me',
+          },
+        })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        return json({
+          code: 200,
+          data: {
+            items: [{
+              user_id: 20002,
+              nick_name: '公开昵称',
+              head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+            }],
+          },
+        })
+      }
+      if (url === 'https://webrtc.test/api/v1/trtc/credentials') {
+        return json({ code: 200, data: { sdk_app_id: 1400001, user_id: 'me__c1', user_sig: 'user-sig-secret' } })
+      }
+      if (url === 'https://webrtc.test/api/v1/trtc/create-room') {
+        return json({
+          code: 200,
+          data: {
+            room_id: 'room-private-1',
+            shared_topic_id: 99,
+            chat_session_uid: 'chat-private-1',
+            callee_accounts: ['peer__c2'],
+          },
+        })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const result = await service.prepareOutgoingCall({
+      sourceRef: sourceRefFor('private_chat', 'chat-private-1', '旧名称'),
+      mediaType: 'video',
+      callRequestId: 'request-1',
+    })
+
+    expect(requests.map(item => item.url)).toEqual([
+      'https://chat.test/api/v1/chats/detail',
+      'https://auth.test/api/v1/auth/get-user-info',
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
+      'https://webrtc.test/api/v1/trtc/credentials',
+      'https://webrtc.test/api/v1/trtc/create-room',
+    ])
+    expect(requests[0]?.body).toEqual({ chat_session_uid: 'chat-private-1' })
+    expect(requests[4]?.body).toMatchObject({
+      shared_topic_id: 0,
+      chat_session_uid: 'chat-private-1',
+      callee_user_ids: [20002],
+      call_media_type: 1,
+      caller_name: '我的昵称',
+      sender_avatar_url: '10001_avatar.png',
+      caller_avatar_url: '10001_avatar.png',
+    })
+    expect(result).toMatchObject({
+      callRequestId: 'request-1',
+      displayName: '小林',
+      peerAvatarRef: expect.stringMatching(/^jotmo-profile-image-v1\./),
+      bootstrap: {
+        sdkAppId: 1400001,
+        userId: 'me__c1',
+        userSig: 'user-sig-secret',
+        nickName: '我的昵称',
+        avatar: '',
+        outgoingOnly: true,
+      },
+      call: {
+        roomId: 'room-private-1',
+        mediaType: 'video',
+        calleeAccounts: ['peer__c2'],
+        calleeName: '小林',
+        callerName: '我的昵称',
+        timeoutSec: 30,
+      },
+    })
+    expect(result.call.userData).toContain('harness-private-chat-header')
+    expect(result.call.offlinePushInfo).toMatchObject({
+      title: '我的昵称',
+      description: '邀请你进行视频通话',
+      ignoreIOSBadge: true,
+      iOSPushType: 1,
+    })
+  })
+
+  it('rejects a non-private outgoing source before contacting remote services', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>()
+    const service = new JotmoService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    await expect(service.prepareOutgoingCall({
+      sourceRef: sourceRefFor('group_chat', 'group-1', '项目群'),
+      mediaType: 'audio',
+      callRequestId: 'request-1',
+    })).rejects.toMatchObject({ code: 'call-source-invalid' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty callee account result and releases the active lease', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new JotmoService(config, sessions, state, async input => {
+      const url = String(input)
+      if (url.includes('/chats/detail')) return json({ code: 200, data: {
+        session: { chat_session_uid: 'chat-private-1', session_kind: 1 },
+        private_counterpart: { user_id: 20002 },
+        private_supplement: { remark: '小林' },
+      } })
+      if (url.includes('/get-user-info')) return json({ code: 200, data: { user_id: 10001, nick_name: '我', head_img: '' } })
+      if (url.includes('/get-public-users-by-ids')) return json({ code: 200, data: { items: [] } })
+      if (url.includes('/trtc/credentials')) return json({ code: 200, data: { sdk_app_id: 1, user_id: 'me', user_sig: 'sig' } })
+      if (url.includes('/trtc/create-room')) return json({ code: 200, data: { room_id: 'room', callee_accounts: [] } })
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const input = {
+      sourceRef: sourceRefFor('private_chat', 'chat-private-1', '小林'),
+      mediaType: 'audio' as const,
+      callRequestId: 'request-1',
+    }
+
+    await expect(service.prepareOutgoingCall(input)).rejects.toMatchObject({ code: 'call-peer-unavailable' })
+    await expect(service.prepareOutgoingCall(input)).rejects.toMatchObject({ code: 'call-peer-unavailable' })
+  })
+
+  it('returns only safe fields when a Tool intent reaches calling', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new JotmoService(config, sessions, new MemoryStateStore(), async () => {
+      throw new Error('not used')
+    })
+    const pending = service.requestOutgoingCall(
+      sourceRefFor('private_chat', 'chat-private-1', '小林'),
+      'video',
+    )
+    await new Promise<void>(resolve => { setTimeout(resolve, 0) })
+    const claim = await service.claimOutgoingCallIntent()
+    await service.resolveOutgoingCallIntent({
+      intentId: claim!.intentId,
+      claimToken: claim!.claimToken,
+      outcome: { status: 'calling' },
+    })
+
+    const result = await pending
+    expect(result).toEqual({ status: 'calling', displayName: '小林', mediaType: 'video' })
+    expect(JSON.stringify(result)).not.toMatch(/userSig|room-|__c/)
+  })
   it('completes QR login without exposing tokens in the auth snapshot', async () => {
     const sessions = new MemorySessionStore()
     const state = new MemoryStateStore()

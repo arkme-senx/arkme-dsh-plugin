@@ -26,6 +26,7 @@
   },
   "files": [
     "lib",
+    "assets/desktop_call",
     "cordis.patch.yml",
     "README.md",
     "docs"
@@ -50,6 +51,7 @@
     "bundle": "tsdown",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
+    "verify:call-assets": "node scripts/verify-call-assets.mjs",
     "prepare": "pnpm run build"
   },
   "dependencies": {
