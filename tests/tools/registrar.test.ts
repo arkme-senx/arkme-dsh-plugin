@@ -78,6 +78,7 @@ describe('registerArkmeTools', () => {
       'arkme_plugin_contract',
       'arkme_records_recent',
       'arkme_user_profile',
+      'arkme_id_set',
       'arkme_records_search',
       'arkme_record_create',
       'arkme_world_recent',

@@ -24,6 +24,9 @@ import type {
   ArkmeCreateTextResult,
   ArkmeDirectTextSendResult,
   ArkmeEnvironment,
+  ArkmeIdAvailabilityReason,
+  ArkmeIdAvailabilitySnapshot,
+  ArkmeIdMutationResult,
   ArkmeImageBytes,
   ArkmeImageMediaType,
   ArkmePendingWrite,
@@ -181,6 +184,10 @@ const ARKME_PHONE_BIND_REPEAT = 2
 const ARKME_PHONE_BIND_CODE_ERR = 3
 
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
+const ARKME_ID_MIN_LENGTH_DEFAULT = 6
+const ARKME_ID_MIN_LENGTH_STAFF = 5
+const ARKME_ID_MAX_LENGTH = 20
+const ARKME_STAFF_ACCOUNT_TYPE = 2
 
 export class ArkmePluginError extends Error {
   constructor(
@@ -246,6 +253,57 @@ const WECHAT_FILTER_TYPES: Readonly<Record<Exclude<ArkmeWechatMessageFilter, 'al
   reply: 25,
   chat_record: 49,
   location_share: 81,
+}
+
+function optionalBooleanValue(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function arkmeIdAvailabilityReason(value: unknown): ArkmeIdAvailabilityReason {
+  switch (stringValue(value).trim()) {
+    case 'invalid': return 'invalid'
+    case 'taken': return 'taken'
+    case 'modify_limited': return 'modify_limited'
+    default: return 'server_busy'
+  }
+}
+
+function normalizedArkmeId(value: string, accountType: number): string {
+  const normalized = value.trim()
+  const minLength = accountType === ARKME_STAFF_ACCOUNT_TYPE
+    ? ARKME_ID_MIN_LENGTH_STAFF
+    : ARKME_ID_MIN_LENGTH_DEFAULT
+  if (normalized === '') {
+    throw new ArkmePluginError('arkme-id-empty', '请输入要设置的 Arkme ID', false)
+  }
+  if (!/^[A-Za-z]/.test(normalized)) {
+    throw new ArkmePluginError('arkme-id-leading-character-invalid', 'Arkme ID 必须以英文字母开头', false)
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
+    throw new ArkmePluginError('arkme-id-characters-invalid', 'Arkme ID 仅支持字母、数字、下划线或减号', false)
+  }
+  const length = [...normalized].length
+  if (length < minLength || length > ARKME_ID_MAX_LENGTH) {
+    throw new ArkmePluginError(
+      'arkme-id-length-invalid',
+      `Arkme ID 需要 ${String(minLength)}-${String(ARKME_ID_MAX_LENGTH)} 个字符`,
+      false,
+    )
+  }
+  return normalized
+}
+
+function unavailableArkmeIdError(availability: ArkmeIdAvailabilitySnapshot): ArkmePluginError {
+  switch (availability.reason) {
+    case 'taken':
+      return new ArkmePluginError('arkme-id-taken', '这个 Arkme ID 已被占用，请换一个再试', false, 409)
+    case 'modify_limited':
+      return new ArkmePluginError('arkme-id-modify-limited', '每个账号通常只能修改一次 Arkme ID，你当前已无法再次修改', false, 409)
+    case 'invalid':
+      return new ArkmePluginError('arkme-id-invalid', '这个 Arkme ID 不符合设置规则，请检查后重试', false)
+    default:
+      return new ArkmePluginError('arkme-id-availability-unavailable', '暂时无法确认这个 Arkme ID 是否可用，请稍后重试', true, 503)
+  }
 }
 
 function maskedPhone(value: string): string | undefined {
@@ -647,6 +705,7 @@ export class ArkmeService {
     const avatarRef = stringValue(data.head_img).trim()
     const phone = maskedPhone(stringValue(data.phone))
     const email = maskedEmail(stringValue(data.email))
+    const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
     const profile: ArkmeUserProfile = {
       userId,
       displayName,
@@ -654,6 +713,7 @@ export class ArkmeService {
       avatarRef,
       ...(/^https?:\/\//i.test(avatarRef) ? { avatarUrl: avatarRef } : {}),
       arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
+      ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
       accountType: numberValue(data.type),
       createdAt: numberValue(data.create_at),
       bindings: {
@@ -772,6 +832,97 @@ export class ArkmeService {
       signal,
     )
     return this.aiVideoJob(data)
+  }
+
+  async checkArkmeIdAvailability(name: string): Promise<ArkmeIdAvailabilitySnapshot> {
+    const snapshot = await this.refreshProfile()
+    if (snapshot.profile === null) {
+      throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料当前不可用', true, 502)
+    }
+    const target = normalizedArkmeId(name, snapshot.profile.accountType)
+    return await this.remoteArkmeIdAvailability(target)
+  }
+
+  async setArkmeIdOnce(name: string): Promise<ArkmeIdMutationResult> {
+    const before = await this.refreshProfile()
+    const profile = before.profile
+    if (profile === null) {
+      throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料当前不可用', true, 502)
+    }
+    const session = await this.requireSession()
+    if (session.userId !== profile.userId) {
+      throw new ArkmePluginError('account-changed', 'Arkme 账号已发生切换，请重新查询资料后再确认修改', false, 409)
+    }
+    const target = normalizedArkmeId(name, profile.accountType)
+    if (profile.arkmeId === target) {
+      return {
+        arkmeId: target,
+        changed: false,
+        canUpdate: profile.canUpdateArkmeId ?? false,
+        revision: before.revision,
+      }
+    }
+    if (profile.canUpdateArkmeId === false) {
+      throw unavailableArkmeIdError({
+        available: false,
+        reason: 'modify_limited',
+        arkmeId: target,
+      })
+    }
+
+    const availability = await this.remoteArkmeIdAvailability(target, session)
+    if (!availability.available) throw unavailableArkmeIdError(availability)
+
+    try {
+      const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+        '/api/v1/auth/update-jotmo-id',
+        { name: target },
+        session,
+      )
+      const returnedName = stringValue(data.name).trim() || target
+      if (returnedName !== target) {
+        throw new ArkmePluginError('arkme-id-update-contract-invalid', 'Arkme ID 设置结果与请求不一致，请刷新后确认', true, 502)
+      }
+    } catch (error) {
+      const reconciled = await this.tryRefreshProfile()
+      if (reconciled?.profile?.arkmeId === target) {
+        return this.arkmeIdMutationResult(reconciled, profile.arkmeId)
+      }
+      if (error instanceof ArkmePluginError && error.code === 'arkme-code-1001') {
+        try {
+          const latestAvailability = await this.remoteArkmeIdAvailability(target)
+          if (!latestAvailability.available) throw unavailableArkmeIdError(latestAvailability)
+        } catch (availabilityError) {
+          if (availabilityError instanceof ArkmePluginError
+            && ['arkme-id-taken', 'arkme-id-modify-limited', 'arkme-id-invalid'].includes(availabilityError.code)) {
+            throw availabilityError
+          }
+        }
+        throw new ArkmePluginError(
+          'arkme-id-update-rejected',
+          'Arkme ID 设置未完成，请刷新资料确认修改资格，或换一个 ID 后重试',
+          false,
+          409,
+          { cause: error },
+        )
+      }
+      throw error
+    }
+
+    let after: ArkmeUserProfileSnapshot
+    try {
+      after = await this.refreshProfile()
+    } catch {
+      after = await this.stateStore.cacheProfile(session.userId, {
+        ...profile,
+        arkmeId: target,
+        canUpdateArkmeId: false,
+      })
+    }
+    if (after.profile?.arkmeId !== target) {
+      throw new ArkmePluginError('arkme-id-update-contract-invalid', 'Arkme ID 设置已受理，但刷新结果不一致，请重新查询确认', true, 502)
+    }
+    return this.arkmeIdMutationResult(after, profile.arkmeId)
   }
 
   async listSources(
@@ -2692,6 +2843,46 @@ export class ArkmeService {
       throw new ArkmePluginError('captcha-required', '请先完成安全验证', false)
     }
     return normalized
+  }
+
+  private async remoteArkmeIdAvailability(
+    name: string,
+    initialSession?: ArkmeSessionCredentials,
+  ): Promise<ArkmeIdAvailabilitySnapshot> {
+    const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/check-jotmo-id-available',
+      { name, scene: 'user_update' },
+      initialSession,
+    )
+    const available = data.available === true
+    return {
+      available,
+      reason: available ? '' : arkmeIdAvailabilityReason(data.reason),
+      arkmeId: stringValue(data.name).trim() || name,
+    }
+  }
+
+  private async tryRefreshProfile(): Promise<ArkmeUserProfileSnapshot | undefined> {
+    try {
+      return await this.refreshProfile()
+    } catch {
+      return undefined
+    }
+  }
+
+  private arkmeIdMutationResult(
+    snapshot: ArkmeUserProfileSnapshot,
+    previousArkmeId: string,
+  ): ArkmeIdMutationResult {
+    if (snapshot.profile === null) {
+      throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料当前不可用', true, 502)
+    }
+    return {
+      arkmeId: snapshot.profile.arkmeId,
+      changed: snapshot.profile.arkmeId !== previousArkmeId,
+      canUpdate: snapshot.profile.canUpdateArkmeId ?? false,
+      revision: snapshot.revision,
+    }
   }
 
   private async authenticatedAuthGet<T>(

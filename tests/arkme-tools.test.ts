@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   consumerPluginContract, createArkmeCoreToolDefinitions, ARKME_TOOL_PROMPT, recordUidForToolCall,
-  stableUidForToolCall,
+  registerArkmeTools, stableUidForToolCall,
 } from '../src/tools/index.js'
 import { createArkmeImageToolDefinition } from '../src/tools/business/media/read-image.js'
 import type { ArkmeCoreToolPorts } from '../src/tools/index.js'
@@ -25,6 +25,7 @@ function fakeService(): ArkmeCoreToolPorts & {
   syncHistory: ReturnType<typeof vi.fn>
   queryCached: ReturnType<typeof vi.fn>
   createTextForConversation: ReturnType<typeof vi.fn>
+  setArkmeIdOnce: ReturnType<typeof vi.fn>
 } {
   return {
     providerCapabilities: () => ({
@@ -59,6 +60,7 @@ function fakeService(): ArkmeCoreToolPorts & {
         nickname: '昵称',
         avatarRef: 'avatar',
         arkmeId: 'arkme-id',
+        canUpdateArkmeId: true,
         accountType: 1,
         createdAt: 1,
         bindings: { apple: true, wechat: false, google: false },
@@ -66,6 +68,12 @@ function fakeService(): ArkmeCoreToolPorts & {
       },
       cachedAtMillis: 1,
       revision: 8,
+    })),
+    setArkmeIdOnce: vi.fn(async (arkmeId: string) => ({
+      arkmeId,
+      changed: true,
+      canUpdate: false,
+      revision: 9,
     })),
     listSources: vi.fn(async (directory: 'root' | 'send_to_self') => ({ directory, items: [], hasMore: false })),
     readSource: vi.fn(async (sourceRef: string) => ({
@@ -190,6 +198,56 @@ describe('Arkme conversation tools', () => {
     expect(output).not.toContain('realName')
   })
 
+  it('sets the exact user-selected Arkme ID without echoing unrelated profile data', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_id_set')!
+    const output = await tool.execute(
+      { arkme_id: 'Chosen_01' },
+      { signal: new AbortController().signal } as never,
+    ) as string
+
+    expect(service.setArkmeIdOnce).toHaveBeenCalledWith('Chosen_01')
+    expect(output).toContain('arkme_id_changed=true')
+    expect(output).toContain('can_update_again=false')
+    expect(output).toContain('"arkmeId": "Chosen_01"')
+    expect(output).not.toContain('138****8000')
+  })
+
+  it('requires explicit approval for the one-time Arkme ID write and preserves downstream decisions', async () => {
+    let preExecute: ((exec: {
+      name: string
+      arguments: Record<string, unknown>
+    }, next: () => Promise<{ kind: string; reason?: string }>) => Promise<{ kind: string; reason?: string }>) | undefined
+    const ctx = {
+      systemPrompt: { section: vi.fn() },
+      tools: { register: vi.fn() },
+      on: vi.fn((event: string, listener: typeof preExecute) => {
+        expect(event).toBe('tools/pre-execute')
+        preExecute = listener
+      }),
+      inject: vi.fn(),
+      get: vi.fn(),
+    }
+
+    registerArkmeTools(ctx as never, fakeService() as never)
+    expect(preExecute).toBeDefined()
+
+    const ask = await preExecute!(
+      { name: 'arkme_id_set', arguments: { arkme_id: 'Chosen_01' } },
+      async () => ({ kind: 'allow' }),
+    )
+    expect(ask).toEqual({
+      kind: 'ask',
+      reason: 'Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“Chosen_01”吗？',
+    })
+
+    const denied = { kind: 'deny', reason: 'blocked by policy' }
+    await expect(preExecute!(
+      { name: 'arkme_id_set', arguments: { arkme_id: 'Chosen_01' } },
+      async () => denied,
+    )).resolves.toBe(denied)
+  })
+
   it('returns an authorized Arkme profile image as a durable model image block', async () => {
     const readImage = vi.fn(async () => ({
       mediaType: 'image/png' as const,
@@ -311,7 +369,6 @@ describe('Arkme conversation tools', () => {
       expect(ARKME_TOOL_PROMPT).toContain(name)
     }
   })
-
   it('registers AI video creation in the business profile', () => {
     const names = createArkmeCoreToolDefinitions(fakeService()).map(tool => tool.name)
     expect(names).toContain('arkme_ai_video')

@@ -31,7 +31,7 @@ const dispose = arkme.subscribe(state => refreshWhen(state.revision))
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
 
-`profile()` exposes only UI-safe fields: display name, nickname, avatar reference, Arkme id, account type, creation time, binding flags, and masked phone/email. Raw phone, raw email, real name, and credentials are intentionally excluded from contract v1.
+`profile()` exposes only UI-safe fields: display name, nickname, avatar reference, Arkme ID, optional one-time Arkme ID change availability, account type, creation time, binding flags, and masked phone/email. Raw phone, raw email, real name, and credentials are intentionally excluded from contract v1. The model-facing `arkme_id_set` tool owns the one-time write workflow; the Browser SDK does not expose a profile mutation method.
 
 `readImage(avatarRef)` resolves an opaque image reference returned by `profile()` or `listSources()`. Private chats expose one optional `avatarRef`; groups expose ordered `avatarRefs` for the desktop-style composite avatar. The Provider refreshes the authorized public profile image before downloading it and returns bounded PNG/JPEG/WebP/GIF base64 bytes; signed URLs, STS credentials and bearer tokens never enter the browser contract. Consumers must use `imageDataUrl()` (or decode the payload themselves) instead of concatenating OSS URLs or fetching an avatar reference directly.
 

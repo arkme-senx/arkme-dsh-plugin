@@ -1,6 +1,7 @@
 import { mkdtemp, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { ArkmeLocalDatabase } from '../src/local-database.js'
 import { ArkmeStateStore } from '../src/state-store.js'
@@ -29,6 +30,46 @@ function remote(recordUid: string, textContent: string): ArkmeSelfRecordItem {
 }
 
 describe('ArkmeLocalDatabase', () => {
+  it('adds Arkme ID change availability to an existing profile cache without dropping data', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
+    const legacyDatabase = new DatabaseSync(join(directory, 'records.sqlite3'))
+    legacyDatabase.exec(`
+      CREATE TABLE user_profile_cache (
+        user_id INTEGER PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        nickname TEXT NOT NULL,
+        avatar_ref TEXT NOT NULL,
+        avatar_url TEXT,
+        arkme_id TEXT NOT NULL,
+        account_type INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        bind_apple INTEGER NOT NULL,
+        bind_wechat INTEGER NOT NULL,
+        bind_google INTEGER NOT NULL,
+        phone_masked TEXT,
+        email_masked TEXT,
+        updated_at_millis INTEGER NOT NULL
+      );
+      INSERT INTO user_profile_cache VALUES (
+        10001, '旧用户', '旧用户', '', NULL, 'legacy-id', 1, 123, 0, 1, 0, NULL, NULL, 456
+      );
+    `)
+    legacyDatabase.close()
+
+    const database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    expect(await database.cachedProfile(10001)).toMatchObject({
+      profile: { displayName: '旧用户', arkmeId: 'legacy-id' },
+    })
+    expect((await database.cachedProfile(10001)).profile).not.toHaveProperty('canUpdateArkmeId')
+
+    const previous = (await database.cachedProfile(10001)).profile!
+    await database.cacheProfile(10001, { ...previous, canUpdateArkmeId: false })
+    expect(await database.cachedProfile(10001)).toMatchObject({
+      profile: { displayName: '旧用户', arkmeId: 'legacy-id', canUpdateArkmeId: false },
+    })
+    database.close()
+  })
+
   it('migrates legacy outbox data and isolates cached records by account', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
     const legacy = new ArkmeStateStore(directory)
@@ -96,6 +137,7 @@ describe('ArkmeLocalDatabase', () => {
       nickname: '测试用户',
       avatarRef: 'avatar-file-id',
       arkmeId: 'arkme-id',
+      canUpdateArkmeId: false,
       accountType: 1,
       createdAt: 123,
       bindings: { apple: true, wechat: false, google: true },

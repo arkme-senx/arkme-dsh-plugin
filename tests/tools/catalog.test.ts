@@ -28,6 +28,7 @@ describe('Arkme tool catalog', () => {
       'arkme_plugin_contract',
       'arkme_records_recent',
       'arkme_user_profile',
+      'arkme_id_set',
       'arkme_records_search',
       'arkme_record_create',
       'arkme_world_recent',
@@ -58,7 +59,7 @@ describe('Arkme tool catalog', () => {
 
     expect(image?.meta).toMatchObject({ kind: 'business', phase: 'attachments', effect: 'read' })
     expect(writes.map(module => module.meta.toolName)).toEqual([
-      'arkme_record_create', 'arkme_world_publish_text', 'arkme_text_send', 'arkme_direct_text_send',
+      'arkme_id_set', 'arkme_record_create', 'arkme_world_publish_text', 'arkme_text_send', 'arkme_direct_text_send',
       'arkme_ai_video',
     ])
     expect(writes.every(module => module.meta.grant === 'explicit-user-write')).toBe(true)

@@ -44,6 +44,23 @@ export function registerArkmeTools(
     })
   }
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) ctx.tools.register(definition)
+  if (arkmeToolCatalog.toolNamesFor(profile).includes('arkme_id_set')) {
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      if (exec.name !== 'arkme_id_set') return await next()
+      const decision = await next()
+      if (decision.kind !== 'allow') return decision
+      const args = exec.arguments as Record<string, unknown>
+      const raw = typeof args.arkme_id === 'string' ? args.arkme_id.trim() : ''
+      const sanitized = raw.replace(/[\u0000-\u001F\u007F]/g, ' ')
+      const display = sanitized.length > 64 ? `${sanitized.slice(0, 64)}…` : sanitized
+      return {
+        kind: 'ask',
+        reason: display === ''
+          ? 'Arkme ID 通常只能修改一次。确认执行本次设置吗？'
+          : `Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“${display}”吗？`,
+      }
+    })
+  }
   if (arkmeToolCatalog.modulesFor(profile, 'attachments').length === 0) return
   ctx.inject(['attachments'], imageCtx => {
     for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile)) {

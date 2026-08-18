@@ -1,5 +1,5 @@
 import type {
-  ArkmeCachedQueryResult, ArkmeConversationWriteResult, ArkmeUserProfileSnapshot,
+  ArkmeCachedQueryResult, ArkmeConversationWriteResult, ArkmeIdMutationResult, ArkmeUserProfileSnapshot,
 } from '../../types.js'
 
 export const TEXT_OUTPUT = {
@@ -49,6 +49,15 @@ export function formatProfileResult(snapshot: ArkmeUserProfileSnapshot): string 
     `Arkme 个人资料: cached_at_millis=${String(snapshot.cachedAtMillis)}, revision=${String(snapshot.revision)}`,
     '<data_from_arkme_profile>',
     JSON.stringify(snapshot.profile, undefined, 2),
+    '</data_from_arkme_profile>',
+  ].join('\n')
+}
+
+export function formatArkmeIdMutationResult(result: ArkmeIdMutationResult): string {
+  return [
+    `Arkme ID 设置: arkme_id_changed=${String(result.changed)}, can_update_again=${String(result.canUpdate)}, revision=${String(result.revision)}`,
+    '<data_from_arkme_profile>',
+    JSON.stringify({ arkmeId: result.arkmeId }, undefined, 2),
     '</data_from_arkme_profile>',
   ].join('\n')
 }

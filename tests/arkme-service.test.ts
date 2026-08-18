@@ -352,6 +352,7 @@ describe('ArkmeService', () => {
           head_img: 'avatar-file-id',
           name_slug: 'legacy-name-slug',
           jotmo_id: 'arkme-10001',
+          can_update_jotmo_id: true,
           type: 1,
           create_at: 123,
           phone: '13800138000',
@@ -370,6 +371,7 @@ describe('ArkmeService', () => {
       nickname: '昵称',
       avatarRef: 'avatar-file-id',
       arkmeId: 'arkme-10001',
+      canUpdateArkmeId: true,
       accountType: 1,
       createdAt: 123,
       bindings: { apple: true, wechat: false, google: true },
@@ -398,7 +400,192 @@ describe('ArkmeService', () => {
     const snapshot = await service.refreshProfile()
 
     expect(snapshot.profile?.arkmeId).toBe('legacy-name-slug')
+    expect(snapshot.profile).not.toHaveProperty('canUpdateArkmeId')
     await expect(service.cachedProfile()).resolves.toEqual(snapshot)
+  })
+
+  it('checks availability and sets the current user Arkme ID once', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; method?: string; body?: Record<string, unknown> }> = []
+    let profileReads = 0
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      calls.push({
+        url,
+        ...(init?.method === undefined ? {} : { method: init.method }),
+        ...(init?.body === undefined ? {} : {
+          body: JSON.parse(String(init.body)) as Record<string, unknown>,
+        }),
+      })
+      if (url.endsWith('/get-user-info')) {
+        profileReads += 1
+        return json({
+          code: 200,
+          data: {
+            user_id: 10001,
+            nick_name: '昵称',
+            name_slug: 'legacy-name-slug',
+            jotmo_id: profileReads === 1 ? 'legacy-name-slug' : 'New_id-01',
+            can_update_jotmo_id: profileReads === 1,
+            type: 1,
+          },
+        })
+      }
+      if (url.endsWith('/check-jotmo-id-available')) {
+        return json({ code: 200, data: { available: true, name: 'New_id-01' } })
+      }
+      if (url.endsWith('/update-jotmo-id')) {
+        return json({ code: 200, data: { name: 'New_id-01' } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.setArkmeIdOnce('  New_id-01  ')).resolves.toMatchObject({
+      arkmeId: 'New_id-01',
+      changed: true,
+      canUpdate: false,
+    })
+    expect(calls.map(call => [call.method, new URL(call.url).pathname])).toEqual([
+      ['GET', '/api/v1/auth/get-user-info'],
+      ['POST', '/api/v1/auth/check-jotmo-id-available'],
+      ['POST', '/api/v1/auth/update-jotmo-id'],
+      ['GET', '/api/v1/auth/get-user-info'],
+    ])
+    expect(calls[1]?.body).toEqual({ name: 'New_id-01', scene: 'user_update' })
+    expect(calls[2]?.body).toEqual({ name: 'New_id-01' })
+    expect(state.profile).toMatchObject({ arkmeId: 'New_id-01', canUpdateArkmeId: false })
+  })
+
+  it('does not consume the one-time change when the requested Arkme ID is already current', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async () => json({
+      code: 200,
+      data: {
+        user_id: 10001,
+        nick_name: '昵称',
+        jotmo_id: 'Current_01',
+        can_update_jotmo_id: true,
+        type: 1,
+      },
+    }))
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.setArkmeIdOnce('Current_01')).resolves.toMatchObject({
+      arkmeId: 'Current_01', changed: false, canUpdate: true,
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an Arkme ID change after the account has used its one-time update', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async () => json({
+      code: 200,
+      data: {
+        user_id: 10001,
+        nick_name: 'Lucis',
+        jotmo_id: 'Lucis',
+        can_update_jotmo_id: false,
+        type: 1,
+      },
+    }))
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.setArkmeIdOnce('Lucis666')).rejects.toMatchObject({
+      code: 'arkme-id-modify-limited', retryable: false, httpStatus: 409,
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('aborts the one-time Arkme ID write if the signed-in account changes after profile refresh', async () => {
+    const sessions = new MemorySessionStore()
+    const firstSession = { userId: 10001, accessToken: 'access-1', refreshToken: 'refresh-1' }
+    const secondSession = { userId: 20002, accessToken: 'access-2', refreshToken: 'refresh-2' }
+    sessions.session = secondSession
+    vi.spyOn(sessions, 'read')
+      .mockResolvedValueOnce(firstSession)
+      .mockResolvedValueOnce(secondSession)
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async () => json({
+      code: 200,
+      data: {
+        user_id: 10001,
+        nick_name: '旧账号',
+        jotmo_id: 'Old_account',
+        can_update_jotmo_id: true,
+        type: 1,
+      },
+    }))
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.setArkmeIdOnce('New_account')).rejects.toMatchObject({
+      code: 'account-changed', retryable: false, httpStatus: 409,
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('validates Arkme IDs locally and maps authoritative availability reasons', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/get-user-info')) return json({
+        code: 200,
+        data: { user_id: 10001, jotmo_id: 'legacy-id', can_update_jotmo_id: true, type: 1 },
+      })
+      if (url.endsWith('/check-jotmo-id-available')) return json({
+        code: 200,
+        data: { available: false, reason: 'taken', name: 'Taken_01' },
+      })
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.setArkmeIdOnce('1bad-id')).rejects.toMatchObject({
+      code: 'arkme-id-leading-character-invalid', retryable: false,
+    })
+    await expect(service.setArkmeIdOnce('Taken_01')).rejects.toMatchObject({
+      code: 'arkme-id-taken', retryable: false, httpStatus: 409,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('reconciles an unknown update outcome by reading back the current Arkme ID', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    let profileReads = 0
+    const service = new ArkmeService(config, sessions, state, async (input) => {
+      const url = String(input)
+      if (url.endsWith('/get-user-info')) {
+        profileReads += 1
+        return json({
+          code: 200,
+          data: {
+            user_id: 10001,
+            jotmo_id: profileReads === 1 ? 'legacy-id' : 'Reconciled_01',
+            can_update_jotmo_id: profileReads === 1,
+            type: 1,
+          },
+        })
+      }
+      if (url.endsWith('/check-jotmo-id-available')) {
+        return json({ code: 200, data: { available: true, name: 'Reconciled_01' } })
+      }
+      if (url.endsWith('/update-jotmo-id')) throw new TypeError('socket closed after write')
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.setArkmeIdOnce('Reconciled_01')).resolves.toMatchObject({
+      arkmeId: 'Reconciled_01', changed: true, canUpdate: false,
+    })
+    expect(profileReads).toBe(2)
   })
 
   it('authorizes and downloads only the current user private profile image', async () => {
