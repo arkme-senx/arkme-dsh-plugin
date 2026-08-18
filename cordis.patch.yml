@@ -2,15 +2,15 @@
     - id: jotmo-self
       name: '@senqisi/dsh-jotmo'
       config:
-        environment: test
-        authBaseUrl: https://jotmo.senguo.me
-        recordBaseUrl: https://jotmo-record.senguo.me
-        chatBaseUrl: https://jotmo-chat.senguo.me
-        dataBaseUrl: https://jotmo-data.senguo.me
-        webrtcBaseUrl: https://jotmo-webrtc.senguo.me
+        environment: prod
+        authBaseUrl: https://api.jotmo.cc
+        recordBaseUrl: https://record.jotmo.cc
+        chatBaseUrl: https://chat.jotmo.cc
+        dataBaseUrl: https://data.jotmo.cc
+        webrtcBaseUrl: https://webrtc.jiwo.cc
         routePath: /jotmo-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         allowNonLoopback: false
-        allowProduction: false
+        allowProduction: true

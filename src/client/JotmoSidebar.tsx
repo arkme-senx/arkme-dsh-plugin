@@ -11,6 +11,7 @@ import { callJotmo, JotmoClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { JotmoCallHistorySurface } from './JotmoCallHistorySurface.js'
 import { JotmoMark } from './JotmoFooterAction.js'
+import { JotmoLogin, type JotmoLoginMode } from './JotmoLogin.js'
 import { loadJotmoImageDataUrl } from './JotmoVirtualWorkspace.js'
 import { jotmoUi } from './ui-controller.js'
 
@@ -71,24 +72,7 @@ const styles: Record<string, CSSProperties> = {
   },
   tools: { position: 'absolute', right: 10, bottom: 10, display: 'flex', padding: 0 },
   send: { width: 34, height: 34, border: 0, borderRadius: 999, background: colors.accent, color: '#fff', cursor: 'pointer' },
-  login: { minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28, boxSizing: 'border-box' },
-  loginCard: {
-    width: 'min(620px,100%)', minHeight: 560, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18,
-    padding: '42px clamp(24px,6vw,58px)', boxSizing: 'border-box', border: '1px solid rgba(72,116,84,.2)', borderRadius: 28,
-    background: 'radial-gradient(circle at 92% 5%, rgba(62,139,91,.08), transparent 28%), rgba(252,255,252,.98)',
-  },
-  brand: { width: '100%', display: 'flex', alignItems: 'center', gap: 18 },
-  loginTitle: { margin: 0, fontSize: 34, fontWeight: 750 },
-  modes: { display: 'flex', width: 'min(420px,100%)', padding: 5, borderRadius: 999, background: '#edf5ef' },
-  mode: { flex: 1, border: 0, borderRadius: 999, padding: 10, background: 'transparent', cursor: 'pointer' },
-  modeActive: { background: '#fff', fontWeight: 650 },
-  form: { width: 'min(420px,100%)', display: 'grid', gap: 12 },
-  input: { width: '100%', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 12, padding: '12px 14px', font: 'inherit' },
-  codeRow: { display: 'flex', gap: 8 },
-  button: { border: `1px solid ${colors.border}`, borderRadius: 9, padding: '8px 12px', background: '#fff', cursor: 'pointer' },
-  primary: { border: 0, borderRadius: 12, padding: 12, background: '#16a34a', color: '#fff', fontWeight: 650, cursor: 'pointer' },
-  agreement: { maxWidth: 440, fontSize: 12, color: colors.secondary },
-  qr: { width: 220, height: 220, padding: 10, borderRadius: 14, background: '#fff', border: `1px solid ${colors.border}` },
+  loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
 }
 
 function errorMessage(error: unknown): string {
@@ -148,13 +132,14 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   const [busy, setBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [error, setError] = useState('')
-  const [agreed, setAgreed] = useState(false)
-  const [loginMode, setLoginMode] = useState<'phone' | 'wechat'>('phone')
+  const [agreed, setAgreed] = useState(true)
+  const [loginMode, setLoginMode] = useState<JotmoLoginMode>('wechat')
   const [phone, setPhone] = useState('')
   const [smsCode, setSmsCode] = useState('')
   const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
   const [qr, setQr] = useState('')
+  const qrRequestStartedRef = useRef(false)
   const authenticated = auth?.status === 'authenticated'
 
   useLayoutEffect(() => {
@@ -218,7 +203,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   }, [smsCountdown])
 
   useEffect(() => {
-    if (auth?.status !== 'pending' || auth.attemptId === undefined) return
+    if (loginMode !== 'wechat' || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
     let stopped = false; let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
       try {
@@ -231,29 +216,44 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
     }
     timer = setTimeout(() => { void poll() }, 800)
     return () => { stopped = true; clearTimeout(timer) }
-  }, [auth?.attemptId, auth?.status])
+  }, [agreed, auth?.attemptId, auth?.status, loginMode])
 
   const beginWechat = async () => {
-    if (!agreed) { setError('请先阅读并同意即我用户协议和隐私政策'); return }
+    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
     setBusy(true); setError('')
     try { const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.begin'); setAuth(snapshot); setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent)) }
     catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
   const sendCode = async () => {
-    if (!agreed) { setError('请先阅读并同意即我用户协议和隐私政策'); return }
+    if (!/^1[3-9]\d{9}$/.test(phone)) { setError('请输入正确的 11 位手机号'); return }
     setBusy(true); setError('')
     try { const captcha = await verifyPhoneCaptcha(captchaId, phone); await callJotmo('auth.phone.send', { phone, captcha }); setSmsCountdown(60) }
     catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
   const verifyCode = async () => {
-    if (!agreed) { setError('请先阅读并同意即我用户协议和隐私政策'); return }
+    if (!/^1[3-9]\d{9}$/.test(phone)) { setError('请输入正确的手机号'); return }
+    if (!/^\d{6}$/.test(smsCode)) { setError('请输入验证码'); return }
+    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
     setBusy(true); setError('')
     try {
       const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
       setAuth(snapshot); if (snapshot.status === 'authenticated') jotmoUi.authChanged(true)
     } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+  }
+
+  useEffect(() => {
+    if (authenticated || auth === undefined || loginMode !== 'wechat' || !agreed || qr !== '' || qrRequestStartedRef.current) return
+    qrRequestStartedRef.current = true
+    void beginWechat()
+  }, [agreed, auth, authenticated, loginMode, qr])
+
+  const changeLoginMode = (mode: JotmoLoginMode) => {
+    setLoginMode(mode)
+    setAgreed(mode === 'wechat')
+    setError('')
+    if (mode === 'phone') qrRequestStartedRef.current = false
   }
 
   const send = async () => {
@@ -286,29 +286,22 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
     <div style={styles.surface}>
       <section style={styles.panel} role="region" aria-label={source?.displayName ?? '即我'}>
         <header style={styles.header}><h2 style={styles.title}>{source?.displayName ?? '即我'}</h2></header>
-        {!authenticated ? (
-          <div style={styles.body}><div style={styles.login}><div style={styles.loginCard}>
-            <div style={styles.brand}><JotmoMark size={58} /><h3 style={styles.loginTitle}>登录即我</h3></div>
-            {error !== '' && <div style={styles.error} role="alert">{error}</div>}
-            <div style={styles.modes}>
-              <button style={{ ...styles.mode, ...(loginMode === 'phone' ? styles.modeActive : {}) }} onClick={() => { setLoginMode('phone') }}>手机号登录</button>
-              <button style={{ ...styles.mode, ...(loginMode === 'wechat' ? styles.modeActive : {}) }} onClick={() => { setLoginMode('wechat') }}>微信扫码</button>
-            </div>
-            {loginMode === 'phone' ? <div style={styles.form}>
-              <input style={styles.input} value={phone} placeholder="中国大陆手机号" aria-label="手机号" onChange={event => { setPhone(event.target.value) }} />
-              <div style={styles.codeRow}>
-                <input style={{ ...styles.input, flex: 1 }} value={smsCode} placeholder="短信验证码" aria-label="短信验证码" maxLength={6} onChange={event => { setSmsCode(event.target.value.replace(/\D/g, '')) }} />
-                <button style={styles.button} disabled={busy || smsCountdown > 0} onClick={() => { void sendCode() }}>{smsCountdown > 0 ? `${smsCountdown}s` : '获取验证码'}</button>
-              </div>
-              <button style={styles.primary} disabled={busy || phone.trim() === '' || smsCode.length !== 6} onClick={() => { void verifyCode() }}>{busy ? '正在登录…' : '登录'}</button>
-            </div> : auth?.status === 'pending' && qr !== '' ? <img src={qr} alt="微信扫码登录即我" style={styles.qr} />
-              : <button style={styles.primary} disabled={busy} onClick={() => { void beginWechat() }}>获取登录二维码</button>}
-            <label style={styles.agreement}><input type="checkbox" checked={agreed} onChange={event => { setAgreed(event.target.checked) }} /> 我已阅读并同意
-              <a href="https://www.jiwo.cc/article/user-aggrement-v1.html" target="_blank" rel="noreferrer">《用户协议》</a>、
-              <a href="https://www.jiwo.cc/article/privacy-aggrement-v1.html" target="_blank" rel="noreferrer">《隐私政策》</a>
-            </label>
-          </div></div></div>
-        ) : ui.mode === 'calls' ? <JotmoCallHistorySurface /> : source === undefined ? <div style={styles.body} /> : <>
+        {!authenticated ? <div style={styles.loginBody}><JotmoLogin
+          mode={loginMode}
+          agreed={agreed}
+          busy={busy}
+          error={error}
+          phone={phone}
+          smsCode={smsCode}
+          smsCountdown={smsCountdown}
+          qrDataUrl={qr}
+          onModeChange={changeLoginMode}
+          onAgreementChange={setAgreed}
+          onPhoneChange={setPhone}
+          onSmsCodeChange={setSmsCode}
+          onSendCode={() => { void sendCode() }}
+          onVerifyCode={() => { void verifyCode() }}
+        /></div> : ui.mode === 'calls' ? <JotmoCallHistorySurface /> : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
