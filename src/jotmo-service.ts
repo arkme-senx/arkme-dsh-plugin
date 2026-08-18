@@ -1,5 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import OSS from 'ali-oss'
+import {
+  callListParticipantUserIds,
+  callListRoomIds,
+  projectCallDetail,
+  projectCallListPage,
+} from './call-presentation.js'
 import type { JotmoSessionCredentials } from './keychain-store.js'
 import { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
@@ -7,6 +13,8 @@ import type {
   JotmoCachedSnapshot,
   JotmoCachedQueryResult,
   JotmoCaptchaResult,
+  JotmoCallDetail,
+  JotmoCallList,
   JotmoClientConfig,
   JotmoConversationWriteResult,
   JotmoCreateTextResult,
@@ -105,6 +113,12 @@ interface JotmoProfileImageRefPayload {
   version: 1
   viewerUserId: number
   targetUserId: number
+}
+
+interface JotmoCallRefPayload {
+  version: 1
+  userId: number
+  roomId: string
 }
 
 interface JotmoPublicProfile {
@@ -367,6 +381,63 @@ export class JotmoService {
       ...(auth.userId === undefined ? {} : { userId: auth.userId }),
       revision: auth.userId === undefined ? 0 : await this.stateStore.revision(auth.userId),
     }
+  }
+
+  async listCalls(options: {
+    limit?: number
+    cursor?: string
+    signal?: AbortSignal
+  } = {}): Promise<JotmoCallList> {
+    const session = await this.requireSession()
+    const requestedLimit = options.limit
+    const limit = typeof requestedLimit === 'number' && Number.isFinite(requestedLimit)
+      ? Math.min(50, Math.max(1, Math.trunc(requestedLimit)))
+      : 20
+    const raw = await this.authenticatedDataPost<Record<string, unknown>>(
+      '/api/v1/call/history-aggregate',
+      {
+        limit,
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      },
+      session,
+      options.signal,
+    )
+    const currentSession = await this.requireSession()
+    let displayNamesByUserId = new Map<number, string>()
+    try {
+      displayNamesByUserId = await this.publicDisplayNamesByUserIds(
+        callListParticipantUserIds(raw),
+        currentSession,
+        options.signal,
+      )
+    } catch {
+      displayNamesByUserId = new Map()
+    }
+    const callRefByRoomId = new Map<string, string>()
+    await Promise.all(callListRoomIds(raw).map(async roomId => {
+      callRefByRoomId.set(roomId, await this.sealCallRef(currentSession.userId, roomId))
+    }))
+    return projectCallListPage(raw, {
+      viewerUserId: currentSession.userId,
+      displayNamesByUserId,
+      callRefByRoomId,
+    })
+  }
+
+  async readCall(callRef: string, options: { signal?: AbortSignal } = {}): Promise<JotmoCallDetail> {
+    const session = await this.requireSession()
+    const opened = await this.openCallRef(callRef, session.userId)
+    const raw = await this.authenticatedWebrtcPost<Record<string, unknown>>(
+      '/api/v1/trtc/call-detail',
+      { room_id: opened.roomId },
+      session,
+      options.signal,
+    )
+    return projectCallDetail(raw, {
+      viewerUserId: session.userId,
+      expectedRoomId: opened.roomId,
+      callRef,
+    })
   }
 
   async cachedProfile(): Promise<JotmoUserProfileSnapshot> {
@@ -753,6 +824,32 @@ export class JotmoService {
       }
     }
     return profiles
+  }
+
+  private async publicDisplayNamesByUserIds(
+    userIds: number[],
+    session: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<number, string>> {
+    const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
+    const displayNames = new Map<number, string>()
+    for (const batch of chunksOf(normalized, 100)) {
+      if (batch.length === 0) continue
+      const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+        '/api/v1/auth/get-public-users-by-ids',
+        { user_ids: batch },
+        session,
+        signal,
+      )
+      for (const raw of listValue(data.items)) {
+        const item = objectValue(raw)
+        const userId = numberValue(item.user_id)
+        const displayName = stringValue(item.nick_name ?? item.display_name).trim()
+        if (!batch.includes(userId) || displayName === '') continue
+        displayNames.set(userId, displayName)
+      }
+    }
+    return displayNames
   }
 
   private async sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string> {
@@ -1207,6 +1304,45 @@ export class JotmoService {
     return `jotmo-source-v1.${payload}.${signature}`
   }
 
+  private async sealCallRef(userId: number, roomId: string): Promise<string> {
+    const payload = encodeOpaqueJson({ version: 1, userId, roomId } satisfies JotmoCallRefPayload)
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `jotmo-call-v1.${payload}.${signature}`
+  }
+
+  private async openCallRef(callRef: string, expectedUserId: number): Promise<JotmoCallRefPayload> {
+    const parts = callRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'jotmo-call-v1') {
+      throw new JotmoPluginError('call-ref-invalid', '即我通话记录引用无效', false)
+    }
+    const payload = parts[1] ?? ''
+    const encodedSignature = parts[2] ?? ''
+    const supplied = Buffer.from(encodedSignature, 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.toString('base64url') !== encodedSignature
+      || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new JotmoPluginError('call-ref-invalid', '即我通话记录引用无效', false)
+    }
+    let parsed: Record<string, unknown>
+    try {
+      parsed = objectValue(decodeOpaqueJson(payload))
+    } catch (error) {
+      throw new JotmoPluginError('call-ref-invalid', '即我通话记录引用无效', false, 400, { cause: error })
+    }
+    const result: JotmoCallRefPayload = {
+      version: 1,
+      userId: numberValue(parsed.userId),
+      roomId: stringValue(parsed.roomId).trim(),
+    }
+    if (parsed.version !== 1 || result.roomId === '' || !Number.isSafeInteger(result.userId) || result.userId <= 0) {
+      throw new JotmoPluginError('call-ref-invalid', '即我通话记录引用无效', false)
+    }
+    if (result.userId !== expectedUserId) {
+      throw new JotmoPluginError('call-ref-invalid', '即我通话记录引用与当前账号不匹配', false, 403)
+    }
+    return result
+  }
+
   private async openSourceRef(sourceRef: string, expectedUserId: number): Promise<JotmoSourceRefPayload> {
     const parts = sourceRef.trim().split('.')
     if (parts.length !== 3 || parts[0] !== 'jotmo-source-v1') {
@@ -1401,6 +1537,42 @@ export class JotmoService {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedDataPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.dataBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.dataBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedWebrtcPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
     }
   }
 

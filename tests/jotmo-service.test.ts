@@ -609,4 +609,194 @@ describe('JotmoService', () => {
     expect(authorizations).toEqual(['Bearer old-access', 'Bearer refresh', 'Bearer new-access'])
     expect(sessions.session?.accessToken).toBe('new-access')
   })
+
+  it('lists safe call history with public-name hydration and opaque pagination', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; body: Record<string, unknown>; authorization: string }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({
+        url,
+        body,
+        authorization: new Headers(init?.headers).get('Authorization') ?? '',
+      })
+      if (url.endsWith('/api/v1/call/history-aggregate')) return json({ code: 200, data: {
+        items: [{
+          source: 'trtc',
+          sort_time_ms: 1_700_000_000_000,
+          trtc: {
+            room_id: 'room-a',
+            caller_user_id: 10001,
+            callee_user_ids: [20002],
+            call_media_type: 0,
+            call_result: 'answered',
+            start_time: 1_700_000_000,
+            accept_time: 1_700_000_005,
+            end_time: 1_700_000_065,
+            connected_user_ids: [10001, 20002],
+            call_summary: '发布节奏',
+            call_summary_status: 'done',
+          },
+        }],
+        has_more: true,
+        next_cursor: 'opaque-next',
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [
+          { user_id: 10001, nick_name: '我', head_img: '' },
+          { user_id: 20002, nick_name: '小林', head_img: '' },
+        ],
+      } })
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const page = await service.listCalls({ limit: 20, cursor: 'opaque-page' })
+    expect(requests).toEqual([
+      {
+        url: 'https://data.test/api/v1/call/history-aggregate',
+        body: { limit: 20, cursor: 'opaque-page' },
+        authorization: 'Bearer access',
+      },
+      {
+        url: 'https://auth.test/api/v1/auth/get-public-users-by-ids',
+        body: { user_ids: [10001, 20002] },
+        authorization: 'Bearer access',
+      },
+    ])
+    expect(page).toMatchObject({
+      items: [{ displayName: '小林', summaryPreview: '发布节奏' }],
+      hasMore: true,
+      nextCursor: 'opaque-next',
+    })
+    expect(page.items[0]?.callRef).toMatch(/^jotmo-call-v1\./)
+    expect(JSON.stringify(page)).not.toMatch(/room-a|10001|20002/)
+  })
+
+  it('constrains call page size and degrades safely when name hydration fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requestBodies: Record<string, unknown>[] = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+      if (url.endsWith('/api/v1/call/history-aggregate')) return json({ code: 200, data: {
+        items: [{
+          source: 'trtc',
+          sort_time_ms: 1_700_000_000_000,
+          trtc: {
+            room_id: 'room-fallback', caller_user_id: 10001, callee_user_ids: [90909],
+            call_media_type: 0, call_result: 'missed', start_time: 1_700_000_000,
+          },
+        }],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ message: 'unavailable' }, 500)
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.listCalls({ limit: 99.8 })).resolves.toMatchObject({
+      items: [{ displayName: '即我用户' }],
+    })
+    expect(requestBodies[0]).toEqual({ limit: 50 })
+  })
+
+  it('refreshes once when Data rejects the access token and forwards abort signals', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'old-access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const authorizations: string[] = []
+    let dataCalls = 0
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      authorizations.push(new Headers(init?.headers).get('Authorization') ?? '')
+      if (url.endsWith('/api/public/v1/auth/new-short')) {
+        return json({ code: 200, data: { access_token: 'new-access' } })
+      }
+      if (url.endsWith('/api/v1/call/history-aggregate')) {
+        dataCalls += 1
+        if (dataCalls === 1) return json({}, 403)
+        return json({ code: 200, data: { items: [], has_more: false } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.listCalls()).resolves.toEqual({ items: [], hasMore: false })
+    expect(authorizations).toEqual(['Bearer old-access', 'Bearer refresh', 'Bearer new-access'])
+
+    const controller = new AbortController()
+    controller.abort()
+    const aborted: boolean[] = []
+    const abortingService = new JotmoService(config, sessions, state, async (_input, init) => {
+      aborted.push(init?.signal?.aborted === true)
+      throw new DOMException('aborted', 'AbortError')
+    })
+    await expect(abortingService.listCalls({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'jotmo-timeout',
+    })
+    expect(aborted).toEqual([true])
+  })
+
+  it('opens a verified account-bound call reference before requesting detail', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const webRtcBodies: Record<string, unknown>[] = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/call/history-aggregate')) return json({ code: 200, data: {
+        items: [{
+          source: 'trtc',
+          sort_time_ms: 1_700_000_000_000,
+          trtc: {
+            room_id: 'room-a', caller_user_id: 10001, callee_user_ids: [20002],
+            call_media_type: 0, call_result: 'answered', start_time: 1_700_000_000,
+            accept_time: 1_700_000_005, end_time: 1_700_000_065,
+            connected_user_ids: [10001, 20002],
+          },
+        }],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [{ user_id: 20002, nick_name: '小林' }],
+      } })
+      if (url.endsWith('/api/v1/trtc/call-detail')) {
+        webRtcBodies.push(body)
+        return json({ code: 200, data: {
+          room_id: 'room-a', caller_user_id: 10001, callee_user_ids: [20002],
+          connected_user_ids: [10001, 20002], call_media_type: 0, call_result: 'answered',
+          start_time: 1_700_000_000, accept_time: 1_700_000_005, end_time: 1_700_000_065,
+          call_summary: '发布节奏', call_summary_status: 'done',
+          call_transcription_progress: { enabled: true, overall_status: 'done' },
+          room_transcript_segments: [],
+          participant_profiles: [
+            { user_id: 10001, display_name: '我' },
+            { user_id: 20002, display_name: '小林' },
+          ],
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const callRef = (await service.listCalls()).items[0]!.callRef
+    await expect(service.readCall(callRef)).resolves.toMatchObject({
+      callRef,
+      displayName: '小林',
+      summary: { state: 'ready', content: '发布节奏' },
+    })
+    expect(webRtcBodies).toEqual([{ room_id: 'room-a' }])
+
+    const callsBeforeTamper = webRtcBodies.length
+    const tampered = `${callRef.slice(0, -1)}${callRef.endsWith('a') ? 'b' : 'a'}`
+    await expect(service.readCall(tampered)).rejects.toMatchObject({ code: 'call-ref-invalid' })
+    expect(webRtcBodies).toHaveLength(callsBeforeTamper)
+
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+    await expect(service.readCall(callRef)).rejects.toMatchObject({ code: 'call-ref-invalid', httpStatus: 403 })
+    expect(webRtcBodies).toHaveLength(callsBeforeTamper)
+  })
 })
