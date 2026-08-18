@@ -759,10 +759,10 @@ describe('ArkmeService', () => {
       phones: [{ phone: '13800138000', likelyOwner: '妈妈', location: '浙江 杭州', isRegistered: true }],
     })
     await expect(service.listWechatCommonGroups()).resolves.toMatchObject({
-      friends: [{ name: '小林', commonGroupCount: 3, sampleConversationRefs: [expect.stringMatching(/^jotmo-wechat-conversation-v1\./)] }],
+      friends: [{ name: '小林', commonGroupCount: 3, sampleConversationRefs: [expect.stringMatching(/^arkme-wechat-conversation-v1\./)] }],
     })
     await expect(service.listWechatMoneyFlows()).resolves.toMatchObject({
-      moneyFlows: [{ content: '转账 100 元', senderName: '妈妈', conversationRef: expect.stringMatching(/^jotmo-wechat-conversation-v1\./) }],
+      moneyFlows: [{ content: '转账 100 元', senderName: '妈妈', conversationRef: expect.stringMatching(/^arkme-wechat-conversation-v1\./) }],
     })
     await expect(service.listWechatLocations()).resolves.toMatchObject({
       locations: [{ conversationName: '家人群', poiName: '西湖', latitude: 30.1, longitude: 120.2 }],
