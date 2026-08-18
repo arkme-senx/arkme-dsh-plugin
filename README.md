@@ -4,7 +4,7 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 
 - 手机号验证码登录测试环境即我账号；
 - 保留微信扫码入口；测试服 Auth 当前未返回可用二维码时会提示改用手机号；
-- 通过官方 `sidebar.footer.action` 注册“即我”入口，并以 `priority: -10` 临时占用官方 `conversation` 中间栏；关闭、点击“新会话”或切换原生 Session 时 dispose 注册，原生 Conversation 自动恢复；
+- 通过官方 `sidebar.footer.action` 注册“即我”入口，并以 `priority: -10` 同时临时替换官方 `sidebar.workspaces` 浏览区和 `conversation` 中间栏；关闭、点击“新会话”或切换原生 Session 时 dispose 两处注册，原生工作区列表与 Conversation 自动恢复；
 - 插件页面内部提供“发给自己 → 默认分类/主题”和私聊/群聊导航，不创建或污染真实文件系统 Workspace；
 - 读取默认分类摘要和分页列表；
 - 使用账号隔离的 SQLite 缓存记录、分页游标和本地发送状态；
@@ -22,7 +22,7 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 
 ## 官方 DSH 兼容边界
 
-插件只使用官方发布的 `sidebar.footer.action`、`conversation` 和 `settings.general.item`。官方 `conversation` 是 single slot，最低 priority 渲染；即我用 `priority: -10` 临时替换中间栏，dispose 后 priority 0 的原生 Conversation 自动恢复。官方当前没有“向 Workspace 浏览区追加虚拟工作区”的 additive slot，因此本插件不会修改 DSH 源码，也不会注册 `sidebar.workspaces.virtual`、`main.surface` 等私有扩展。即我页面不是文件系统 Workspace，也不冒充 DSH Session。
+插件只使用官方发布的 `sidebar.footer.action`、`sidebar.workspaces`、`conversation` 和 `settings.general.item`。`sidebar.workspaces` 与 `conversation` 都是最低 priority 渲染的 single slot；即我用 `priority: -10` 在打开期间替换两处，dispose 后 priority 0 的原生 Workspace 浏览区和 Conversation 自动恢复。官方当前没有“向 Workspace 浏览区追加虚拟工作区”的 additive slot，因此本插件不会修改 DSH 源码，也不会注册 `sidebar.workspaces.virtual`、`main.surface` 等私有扩展。即我页面不是文件系统 Workspace，也不冒充 DSH Session。
 
 ## Headless Provider / Consumer SDK
 
