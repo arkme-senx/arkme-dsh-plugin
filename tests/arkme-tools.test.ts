@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  consumerPluginContract, createArkmeToolDefinitions, ARKME_TOOL_PROMPT, recordUidForToolCall,
-} from '../src/arkme-tools.js'
-import { createArkmeImageToolDefinition } from '../src/arkme-image-tool.js'
-import type { ArkmeConversationReadService } from '../src/arkme-tools.js'
+  consumerPluginContract, createArkmeCoreToolDefinitions, ARKME_TOOL_PROMPT, recordUidForToolCall,
+} from '../src/tools/index.js'
+import { createArkmeImageToolDefinition } from '../src/tools/business/media/read-image.js'
+import type { ArkmeCoreToolPorts } from '../src/tools/index.js'
 import type { ArkmeSelfRecordItem } from '../src/types.js'
 
 function item(recordUid: string, textContent: string): ArkmeSelfRecordItem {
@@ -19,7 +19,7 @@ function item(recordUid: string, textContent: string): ArkmeSelfRecordItem {
   }
 }
 
-function fakeService(): ArkmeConversationReadService & {
+function fakeService(): ArkmeCoreToolPorts & {
   refreshLatest: ReturnType<typeof vi.fn>
   syncHistory: ReturnType<typeof vi.fn>
   queryCached: ReturnType<typeof vi.fn>
@@ -80,7 +80,7 @@ function fakeService(): ArkmeConversationReadService & {
 describe('Arkme conversation tools', () => {
   it('reads recent records with optional refresh and an explicit data boundary', async () => {
     const service = fakeService()
-    const tool = createArkmeToolDefinitions(service).find(definition => definition.name === 'arkme_records_recent')!
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_records_recent')!
     const output = await tool.execute(
       { limit: 2, refresh: true },
       { signal: new AbortController().signal } as never,
@@ -96,7 +96,7 @@ describe('Arkme conversation tools', () => {
 
   it('syncs history before a comprehensive keyword search', async () => {
     const service = fakeService()
-    const tool = createArkmeToolDefinitions(service).find(definition => definition.name === 'arkme_records_search')!
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_records_search')!
     const signal = new AbortController().signal
     const output = await tool.execute(
       { query: '复盘', limit: 5, sync_all: true },
@@ -111,7 +111,7 @@ describe('Arkme conversation tools', () => {
 
   it('writes with a stable call-derived uid without echoing the saved text', async () => {
     const service = fakeService()
-    const tool = createArkmeToolDefinitions(service).find(definition => definition.name === 'arkme_record_create')!
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_record_create')!
     const callId = 'tool-call-stable-1'
     const expectedUid = recordUidForToolCall(callId)
     const output = await tool.execute(
@@ -131,7 +131,7 @@ describe('Arkme conversation tools', () => {
 
   it('describes the stable SDK contract before consumer generation', async () => {
     const service = fakeService()
-    const tool = createArkmeToolDefinitions(service).find(definition => definition.name === 'arkme_plugin_contract')!
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_plugin_contract')!
     const output = await tool.execute({}, { signal: new AbortController().signal } as never) as string
     expect(output).toContain('"contractVersion": 1')
     expect(output).toContain('@senguoyun/dsh-arkme/sdk')
@@ -152,7 +152,7 @@ describe('Arkme conversation tools', () => {
 
   it('returns only the safe profile projection to the model', async () => {
     const service = fakeService()
-    const tool = createArkmeToolDefinitions(service).find(definition => definition.name === 'arkme_user_profile')!
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_user_profile')!
     const output = await tool.execute(
       { refresh: true },
       { signal: new AbortController().signal } as never,
@@ -227,7 +227,7 @@ describe('Arkme conversation tools', () => {
 
   it('exposes unified list, read, and explicit-send tools', async () => {
     const service = fakeService()
-    const tools = createArkmeToolDefinitions(service)
+    const tools = createArkmeCoreToolDefinitions(service)
     const list = tools.find(definition => definition.name === 'arkme_sources_list')!
     const read = tools.find(definition => definition.name === 'arkme_source_read')!
     const send = tools.find(definition => definition.name === 'arkme_text_send')!

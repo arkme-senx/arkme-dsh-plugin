@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
+import { arkmeToolCatalog } from '../src/tools/index.js'
 
 const root = new URL('..', import.meta.url).pathname
 
@@ -52,14 +53,13 @@ describe('Arkme plugin identity', () => {
   it('declares the Arkme package, route, provider and tool surface', () => {
     const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { name: string }
     const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
-    const tools = readFileSync(join(root, 'src/arkme-tools.ts'), 'utf8')
 
     expect(manifest.name).toBe('@senguoyun/dsh-arkme')
     expect(patch).toContain("name: '@senguoyun/dsh-arkme'")
     expect(patch).toContain('routePath: /arkme-self/api')
-    expect(tools).toContain("name: 'arkme_sources_list'")
-    expect(tools).toContain("name: 'arkme_source_read'")
-    expect(tools).toContain("name: 'arkme_text_send'")
+    expect(arkmeToolCatalog.toolNamesFor('business')).toEqual(expect.arrayContaining([
+      'arkme_sources_list', 'arkme_source_read', 'arkme_text_send',
+    ]))
   })
 
   it('embeds the complete official Arkme application icon', () => {

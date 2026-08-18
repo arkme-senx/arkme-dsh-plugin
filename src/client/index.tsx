@@ -7,7 +7,6 @@ import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 import { watchOfficialNewSession } from './new-session-activation.js'
-import { cachedSelectedSource, readLastNavigationCache } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 
 export const inject = ['slots']
@@ -44,11 +43,7 @@ export function apply(ctx: ClientContext): void {
   const openArkme = (openedFromSession: SessionId | undefined) => {
     if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeArkme)
     const retained = arkmeUi.getSnapshot().selectedSource
-    const cached = readLastNavigationCache()
-    const restored = cached === undefined ? undefined : cachedSelectedSource(cached)
-      ?? cached.sources.send_to_self?.find(source => source.kind === 'default_category')
     if (retained !== undefined) arkmeUi.open()
-    else if (restored !== undefined) arkmeUi.selectSource(restored)
     else arkmeUi.focusSendToSelf()
     activateSurface(openedFromSession)
   }

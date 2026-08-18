@@ -7,8 +7,9 @@ import { createArkmeHostApi } from './host-api.js'
 import { ArkmeKeychainStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { ArkmeService } from './arkme-service.js'
-import { registerArkmeConversationTools } from './arkme-tools.js'
 import { ArkmeStateStore } from './state-store.js'
+import { registerArkmeTools } from './tools/index.js'
+import type { ArkmeToolProfile } from './tools/index.js'
 import type { ArkmeEnvironment } from './types.js'
 
 export interface Config {
@@ -19,6 +20,7 @@ export interface Config {
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
+  toolProfile: ArkmeToolProfile
   geetestCaptchaId: string
   stateDirectory: string
   keychainServicePrefix: string
@@ -34,6 +36,7 @@ export const Config: Schema<Config> = Schema.object({
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
+  toolProfile: Schema.union(['business', 'atomic', 'hybrid', 'disabled']).default('business'),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
@@ -60,7 +63,7 @@ export function apply(ctx: Context, config: Config): void {
   const keychain = new ArkmeKeychainStore(`${config.keychainServicePrefix}.${config.environment}`)
   const service = new ArkmeService(config, keychain, localDatabase)
   ctx.provide('arkmeData', service)
-  registerArkmeConversationTools(ctx, service)
+  registerArkmeTools(ctx, service, config.toolProfile)
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,

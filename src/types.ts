@@ -119,6 +119,12 @@ export interface ArkmeProviderCapabilities {
 
 export type ArkmeImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 
+export interface ArkmeImageBytes {
+  mediaType: ArkmeImageMediaType
+  bytes: number
+  data: Uint8Array
+}
+
 /** Browser-safe image payload. Signed OSS URLs and credentials never cross the Provider boundary. */
 export interface ArkmeImagePayload {
   mediaType: ArkmeImageMediaType

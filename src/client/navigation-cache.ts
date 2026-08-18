@@ -123,3 +123,15 @@ export function cachedSelectedSource(cache: ArkmeNavigationCache): ArkmeSourceIt
   }
   return undefined
 }
+
+/** Rebind a cached selection to a source reference issued by the current Provider instance. */
+export function reconcileSelectedSource(
+  selected: ArkmeSourceItem | undefined,
+  loaded: ArkmeSourceItem[],
+): ArkmeSourceItem | undefined {
+  if (selected === undefined) return undefined
+  const exact = loaded.find(item => item.sourceRef === selected.sourceRef)
+  if (exact !== undefined) return exact
+  const equivalent = loaded.filter(item => item.kind === selected.kind && item.displayName === selected.displayName)
+  return equivalent.length === 1 ? equivalent[0] : undefined
+}

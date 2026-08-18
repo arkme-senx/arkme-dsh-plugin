@@ -45,7 +45,7 @@ export function ArkmeSettingsRow(_props: ArkmeSettingsRowProps) {
     : auth === undefined
       ? '正在读取 Arkme 登录状态…'
       : authenticated
-        ? `已登录测试环境 · 用户 ${String(auth.userId)}`
+        ? '已登录'
         : '当前未登录 Arkme；首次打开“默认分类”时会进入登录引导。'
 
   const logout = async () => {

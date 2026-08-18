@@ -5,14 +5,10 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { ArkmeImageBytes } from './arkme-service.js'
+import { defineArkmeContextToolModule } from '../../contract/module.js'
+import type { ArkmeMediaToolPort } from '../../ports/media.js'
 
-export interface ArkmeImageReadService {
-  readImage(
-    imageRef: string,
-    options?: { maxBytes?: number; signal?: AbortSignal },
-  ): Promise<ArkmeImageBytes>
-}
+export type ArkmeImageReadService = ArkmeMediaToolPort
 
 interface ArkmeImageToolValue {
   source: string
@@ -144,3 +140,15 @@ export function createArkmeImageToolDefinition(ctx: Context, service: ArkmeImage
     },
   })
 }
+
+export const readImageToolModule = defineArkmeContextToolModule({
+  meta: {
+    id: 'business.media.read-image.v1',
+    toolName: 'arkme_image_read',
+    kind: 'business',
+    phase: 'attachments',
+    effect: 'read',
+    profiles: ['business', 'hybrid'],
+  },
+  create: createArkmeImageToolDefinition,
+})

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
-  readNavigationCache, writeNavigationCache, type ArkmeNavigationCache,
+  readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from '../src/client/navigation-cache.js'
 
 class MemoryStorage implements Storage {
@@ -44,5 +44,19 @@ describe('Arkme navigation cache', () => {
       version: 1, userId: 10001, directory: 'root', sources: { root: [{ displayName: 'bad' }] },
     }))
     expect(readLastNavigationCache(storage)?.sources.root).toEqual([])
+  })
+
+  it('rebinds a cached selection to the current Provider source reference', () => {
+    const cached = {
+      sourceRef: 'old-signed-ref', kind: 'default_category' as const, displayName: '默认分类',
+      activeAtMillis: 1, unreadCount: 0,
+    }
+    const current = { ...cached, sourceRef: 'new-signed-ref' }
+
+    expect(reconcileSelectedSource(cached, [current])).toEqual(current)
+    expect(reconcileSelectedSource(cached, [
+      { ...current, sourceRef: 'new-ref-1' },
+      { ...current, sourceRef: 'new-ref-2' },
+    ])).toBeUndefined()
   })
 })

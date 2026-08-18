@@ -8,7 +8,7 @@ import { callArkme } from './api.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
-  readNavigationCache, writeNavigationCache, type ArkmeNavigationCache,
+  readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -248,8 +248,6 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       writeNavigationCache(cached)
       setDirectory(cached.directory)
       setSources(cached.sources[cached.directory] ?? [])
-      const selected = cachedSelectedSource(cached)
-      if (selected !== undefined) arkmeUi.selectSource(selected)
     } catch {
       if (avatarCacheUserIdRef.current !== undefined) avatarDataUrlCache.clear()
       avatarCacheUserIdRef.current = undefined
@@ -278,11 +276,17 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         cursor = page.nextCursor
       }
       setSources(loaded)
-      const selectedSourceRef = arkmeUi.getSnapshot().selectedSource?.sourceRef
+      const selected = arkmeUi.getSnapshot().selectedSource
+      const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
+      const restored = reconcileSelectedSource(selected ?? cachedSelected, loaded)
+        ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'default_category') : undefined)
+      if (restored !== undefined && restored.sourceRef !== selected?.sourceRef) {
+        arkmeUi.selectSource(restored)
+      }
       persistCache({
         directory: next,
         sources: { [next]: loaded },
-        ...(selectedSourceRef === undefined ? {} : { selectedSourceRef }),
+        ...(restored === undefined ? {} : { selectedSourceRef: restored.sourceRef }),
       })
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))

@@ -11,6 +11,7 @@ import type {
   ArkmeConversationWriteResult,
   ArkmeCreateTextResult,
   ArkmeEnvironment,
+  ArkmeImageBytes,
   ArkmeImageMediaType,
   ArkmePendingWrite,
   ArkmeRecordCursor,
@@ -124,12 +125,6 @@ interface PhoneLoginResponse extends ScanResponse {
 type FetchLike = typeof fetch
 
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
-
-export interface ArkmeImageBytes {
-  mediaType: ArkmeImageMediaType
-  bytes: number
-  data: Uint8Array
-}
 
 export class ArkmePluginError extends Error {
   constructor(

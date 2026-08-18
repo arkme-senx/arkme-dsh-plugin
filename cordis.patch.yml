@@ -9,6 +9,7 @@
         routePath: /arkme-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000
+        toolProfile: business
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         allowNonLoopback: false
         allowProduction: true
