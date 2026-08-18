@@ -173,7 +173,8 @@ describe('ArkmeService', () => {
           nick_name: '昵称',
           real_name: '完整真实姓名',
           head_img: 'avatar-file-id',
-          name_slug: 'arkme-10001',
+          name_slug: 'legacy-name-slug',
+          jotmo_id: 'arkme-10001',
           type: 1,
           create_at: 123,
           phone: '13800138000',
@@ -200,6 +201,26 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(snapshot)).not.toContain('完整真实姓名')
     expect(JSON.stringify(snapshot)).not.toContain('13800138000')
     expect(JSON.stringify(snapshot)).not.toContain('test@example.com')
+    await expect(service.cachedProfile()).resolves.toEqual(snapshot)
+  })
+
+  it('falls back to the legacy name slug when the Arkme ID is absent', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async () => json({
+      code: 200,
+      data: {
+        user_id: 10001,
+        nick_name: '昵称',
+        name_slug: 'legacy-name-slug',
+        type: 1,
+      },
+    }))
+
+    const snapshot = await service.refreshProfile()
+
+    expect(snapshot.profile?.arkmeId).toBe('legacy-name-slug')
     await expect(service.cachedProfile()).resolves.toEqual(snapshot)
   })
 
