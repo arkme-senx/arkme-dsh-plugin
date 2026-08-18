@@ -94,6 +94,7 @@ const config: ArkmeServiceConfig = {
   relationBaseUrl: 'https://relation.test',
   intelligentBaseUrl: 'https://intelligent.test',
   routePath: '/arkme-self/api',
+  audioBaseUrl: 'https://audio.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -135,6 +136,163 @@ function sourceRefFor(kind: 'private_chat' | 'group_chat', ownerRef: string, dis
 }
 
 describe('ArkmeService', () => {
+  it('reads the recording calendar from the Audio origin with bearer authorization', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://audio.test/api/v1/audio/get-calender-summary')
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
+      expect(JSON.parse(String(init?.body))).toEqual({ from_stamp: 1_700_000_000_000, to_stamp: 1_700_172_800_000 })
+      return json({ code: 200, data: {
+        duration_ls: [0, 90_000],
+        un_click_session_ids_per_day: [[], ['session-1', 'session-2']],
+      } })
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.recordingCalendar(1_700_000_000_000, 1_700_172_800_000)).resolves.toEqual({
+      fromStamp: 1_700_000_000_000,
+      toStamp: 1_700_172_800_000,
+      days: [
+        { dateStamp: 1_700_000_000_000, durationMillis: 0, hasRecording: false, unreviewedCount: 0 },
+        { dateStamp: 1_700_086_400_000, durationMillis: 90_000, hasRecording: true, unreviewedCount: 2 },
+      ],
+    })
+  })
+
+  it('loads recording day sections independently and refreshes an expired Audio bearer', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'expired', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization: string; body: Record<string, unknown> }> = []
+    let rejected = false
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const authorization = new Headers(init?.headers).get('Authorization') ?? ''
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, authorization, body })
+      if (url === 'https://audio.test/api/v1/audio/one-day-trans-v2' && !rejected) {
+        rejected = true
+        return json({}, 401)
+      }
+      if (url === 'https://auth.test/api/public/v1/auth/new-short') {
+        return json({ code: 200, data: { access_token: 'renewed' } })
+      }
+      if (url.endsWith('/api/v1/audio/one-day-trans-v2')) {
+        return json({ code: 200, data: {
+          session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
+            spk_ls: [{ num: 1, spk_id: 'speaker-1' }] }],
+          child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 500,
+            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', effective_spk_id: 'speaker-1', b: 0 }] }],
+        } })
+      }
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 10001 }] } })
+      }
+      if (url.endsWith('/api/v1/summary/list-timeline-by-range') && body.kind === 1) {
+        return json({ code: 200, data: { audio_summary_ls: [
+          { id: 'timeline-1', kind: 1, status: 2, update_at: dayStamp + 5_000, answer: '09:00-09:30 早会' },
+        ] } })
+      }
+      if (url.endsWith('/api/v1/summary/list-timeline-by-range') && body.kind === 2) {
+        return json({ code: 500, message: '总结服务暂不可用' })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const day = await service.recordingDay(dayStamp)
+    expect(day).toMatchObject({
+      dateStamp: dayStamp,
+      totalDurationMillis: 6_000,
+      transcript: { state: 'ready', items: [{ speakerLabel: '说话人 1', startAtMillis: dayStamp + 1_600 }] },
+      timeline: { state: 'ready', items: [{ id: 'timeline-1', selectable: true }] },
+      summary: { state: 'error', items: [] },
+    })
+    expect(sessions.session?.accessToken).toBe('renewed')
+    expect(requests.filter(item => item.url.endsWith('/one-day-trans-v2')).map(item => item.authorization))
+      .toEqual(['Bearer expired', 'Bearer renewed'])
+    expect(requests.filter(item => item.url.endsWith('/list-timeline-by-range')).map(item => item.body.kind).sort())
+      .toEqual([1, 2])
+  })
+
+  it('refreshes and retries an Audio request rejected with HTTP 403', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'expired', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const authorizations: string[] = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      if (url === 'https://auth.test/api/public/v1/auth/new-short') {
+        return json({ code: 200, data: { access_token: 'renewed' } })
+      }
+      authorizations.push(new Headers(init?.headers).get('Authorization') ?? '')
+      if (authorizations.length === 1) return json({}, 403)
+      return json({ code: 200, data: { duration_ls: [], un_click_session_ids_per_day: [] } })
+    })
+
+    await expect(service.recordingCalendar(1_700_000_000_000, 1_700_086_400_000))
+      .resolves.toMatchObject({ days: [] })
+    expect(authorizations).toEqual(['Bearer expired', 'Bearer renewed'])
+    expect(sessions.session?.accessToken).toBe('renewed')
+  })
+
+  it('keeps transcript rows readable when the speaker directory fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const service = new ArkmeService(config, sessions, state, async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 500, message: '说话人服务暂不可用' })
+      }
+      return json({ code: 200, data: {
+        session_ls: [{ id: 'session-1', start_at: dayStamp, duration: 2_000,
+          spk_ls: [{ num: 6, spk_id: 'speaker-6' }] }],
+        child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 0,
+          asr: [{ s: 100, e: 900, n: 6, t: '继续讨论', effective_spk_id: 'speaker-6' }] }],
+      } })
+    })
+
+    await expect(service.recordingTranscript(dayStamp)).resolves.toMatchObject({
+      state: 'ready',
+      identityCoverage: 'partial',
+      items: [{ speakerLabel: '说话人 6', text: '继续讨论' }],
+    })
+  })
+
+  it('seals recording pagination cursors to the signed-in account and rejects tampering', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async () => {
+      throw new Error('not used')
+    })
+    const payload = {
+      version: 1 as const,
+      dateStamp: new Date(2026, 7, 17).getTime(),
+      content: 'transcript' as const,
+      itemOffset: 50,
+      textOffset: 0,
+      fingerprint: 'transcript-fingerprint',
+    }
+
+    const cursor = await service.sealRecordingCursor(payload)
+    expect(cursor).toMatch(/^arkme-recording-cursor-v1\./)
+    await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
+
+    const [prefix, encoded, signature] = cursor.split('.') as [string, string, string]
+    const tamperedSignature = `${signature.startsWith('A') ? 'B' : 'A'}${signature.slice(1)}`
+    await expect(service.openRecordingCursor(`${prefix}.${encoded}.${tamperedSignature}`))
+      .rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+
+    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other-refresh' }
+    await expect(service.openRecordingCursor(cursor))
+      .rejects.toMatchObject({ code: 'recording-cursor-invalid' })
+  })
+
   it('completes QR login without exposing tokens in the auth snapshot', async () => {
     const sessions = new MemorySessionStore()
     const state = new MemoryStateStore()

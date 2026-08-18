@@ -24,6 +24,7 @@ export interface Config {
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
+  audioBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -45,6 +46,7 @@ export const Config: Schema<Config> = Schema.object({
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
+  audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -137,6 +139,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['worldBaseUrl', config.worldBaseUrl],
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
+    ['audioBaseUrl', config.audioBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {

@@ -125,6 +125,22 @@ function SelfAvatar() {
   </span>
 }
 
+export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><ArkmeMark size={44} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.chatName}>全天候录音</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>转写、日总结与时间轴</span></span>
+    </span>
+  </button>
+}
+
 function timeLabel(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
   const date = new Date(value)
@@ -233,9 +249,12 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       }
       if (controller.signal.aborted) return
       setSources(loaded)
-      const selected = arkmeUi.getSnapshot().selectedSource
+      const uiSnapshot = arkmeUi.getSnapshot()
+      const selected = uiSnapshot.mode === 'recordings' ? undefined : uiSnapshot.selectedSource
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = reconcileSelectedSource(selected ?? cachedSelected, loaded)
+      const restored = uiSnapshot.mode === 'recordings'
+        ? undefined
+        : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'default_category') : undefined)
       if (restored !== undefined) arkmeUi.selectSource(restored)
       persistCache({
@@ -263,16 +282,18 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources
     setSources(loaded)
-    const selected = arkmeUi.getSnapshot().selectedSource
+    const selected = ui.mode === 'recordings' ? undefined : arkmeUi.getSnapshot().selectedSource
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = reconcileSelectedSource(selected ?? cachedSelected, loaded)
+    const restored = ui.mode === 'recordings'
+      ? undefined
+      : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)
     persistCache({
       directory: 'root',
       sources: { root: loaded },
       ...(restored === undefined ? {} : { selectedSourceRef: restored.sourceRef }),
     })
-  }, [authenticated, chatDirectory, directory, persistCache])
+  }, [authenticated, chatDirectory, directory, persistCache, ui.mode])
   useEffect(() => {
     if (!authenticated || directory !== 'send_to_self') return
     const defaultCategory = sources.find(source => source.kind === 'default_category')
@@ -301,6 +322,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   }, [sources, ui.selectedSource])
 
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
+  const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
     directoryRequestAbortRef.current?.abort()
     setDirectory(next)
@@ -357,11 +379,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       {directory === 'root' && <>
         {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
         <button
-          type="button" role="treeitem" aria-selected={isSendToSelfSource(ui.selectedSource)}
-          style={{ ...styles.chatRow, ...(isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
+          type="button" role="treeitem" aria-selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
+          style={{ ...styles.chatRow, ...(ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={() => {
             changeDirectory('send_to_self')
-            if (isSendToSelfSource(ui.selectedSource)) onActivateSurface?.()
+            if (ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)) onActivateSurface?.()
           }}
         >
           <SelfAvatar />
@@ -370,8 +392,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
             <span style={styles.chatBottom}><span style={styles.preview}>默认分类与主题</span></span>
           </span>
         </button>
+        <ArkmeRecordingsRow selected={ui.mode === 'recordings'} onClick={showRecordings} />
         {sources.map(source => {
-          const selected = ui.selectedSource?.sourceRef === source.sourceRef
+          const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
@@ -396,7 +419,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
 
       {directory === 'send_to_self' && visibleSourceRows.map(row => {
         const source = row.source
-        const selected = ui.selectedSource?.sourceRef === source.sourceRef
+        const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
         return <div
           key={source.sourceRef} role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
           aria-expanded={row.hasChildren ? row.expanded : undefined}

@@ -13,7 +13,7 @@ export interface ArkmeUiState {
   surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source'
+  mode: 'login' | 'source' | 'recordings'
   selectedSource?: ArkmeSourceItem
 }
 
@@ -72,6 +72,11 @@ export class ArkmeUiController {
   showLoginSurface(): void {
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({ ...rest, open: false, surfaceOpen: true, mode: 'login' })
+  }
+
+  showRecordings(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'recordings' })
   }
 
   selectSource(source: ArkmeSourceItem): void {
