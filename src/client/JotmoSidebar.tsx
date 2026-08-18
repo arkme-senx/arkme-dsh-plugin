@@ -45,7 +45,7 @@ const styles: Record<string, CSSProperties> = {
   messageBodyMe: { alignItems: 'flex-end' },
   messageAvatar: {
     width: 32, height: 32, flex: 'none', overflow: 'hidden', borderRadius: 999,
-    display: 'grid', placeItems: 'center', background: '#eceeef', color: '#737982', fontSize: 11, fontWeight: 600,
+    display: 'grid', placeItems: 'center', background: 'transparent', color: '#737982', fontSize: 11, fontWeight: 600,
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },

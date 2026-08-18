@@ -67,7 +67,7 @@ const styles: Record<string, CSSProperties> = {
   privateBadge: { flex: 'none', padding: '1px 6px', borderRadius: 999, background: '#f0f1f2', color: '#777d85', fontSize: 10 },
   avatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
-    display: 'grid', placeItems: 'center', background: '#eceeef', color: '#727982', fontSize: 15, fontWeight: 600,
+    display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
   },
   avatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   avatarGrid: { width: '100%', height: '100%', display: 'grid', gap: 1, padding: 2, boxSizing: 'border-box', background: '#eef0f1' },

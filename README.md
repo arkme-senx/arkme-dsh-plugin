@@ -26,6 +26,8 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 
 插件只使用官方发布的 `sidebar.footer.action`、`conversation` 和 `settings.general.item`。即我目录作为 Footer action 自有内容参与侧边栏布局，不替换原生 Workspace 浏览区；`conversation` 使用 `priority: -10` 临时替换中间栏，dispose 后 priority 0 的原生 Conversation 自动恢复。插件不会修改 DSH 源码，也不会注册 `sidebar.workspaces.virtual`、`main.surface` 等私有扩展。即我页面不是文件系统 Workspace，也不冒充 DSH Session。
 
+DSH 的 Footer action 容器默认横排；当 Cordis Runner 等插件占满整行时，即我插件会在挂载期间把该 slot wrapper 临时适配为纵向堆叠，并在卸载时恢复原样。下拉面板向 Footer 上方展开且允许随窗口高度收缩，保证 Cordis、即我和设置入口同时可见。
+
 ## Headless Provider / Consumer SDK
 
 独立 UI 插件通过 `@senqisi/dsh-jotmo/sdk` 读取即我 Provider，不依赖本插件的 React 页面：
