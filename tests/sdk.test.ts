@@ -120,6 +120,46 @@ describe('Jotmo SDK', () => {
     ])
   })
 
+  it('exposes call list and detail operations with abort propagation', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const signals: Array<AbortSignal | null | undefined> = []
+    const sdk = createJotmoSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        signals.push(init?.signal)
+        if (request.operation === 'calls.list') return success({ items: [], hasMore: false })
+        if (request.operation === 'calls.detail') return success({
+          callRef: request.params?.callRef,
+          displayName: '小林',
+          participants: [],
+          mediaType: 'audio',
+          direction: 'outgoing',
+          connected: true,
+          startedAtMillis: 1,
+          acceptedAtMillis: 1,
+          endedAtMillis: 2,
+          durationMillis: 1,
+          summary: { state: 'empty', content: '', message: '暂无 AI 摘要' },
+          transcript: { state: 'empty', items: [], message: '暂无转录内容' },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    const controller = new AbortController()
+
+    await expect(sdk.listCalls({ limit: 12, cursor: 'opaque-page', signal: controller.signal }))
+      .resolves.toMatchObject({ hasMore: false })
+    await expect(sdk.readCall('jotmo-call-v1.payload.signature', { signal: controller.signal }))
+      .resolves.toMatchObject({ callRef: 'jotmo-call-v1.payload.signature' })
+    await expect(sdk.readCall('   ')).rejects.toBeInstanceOf(TypeError)
+    expect(calls).toEqual([
+      { operation: 'calls.list', params: { limit: 12, cursor: 'opaque-page' } },
+      { operation: 'calls.detail', params: { callRef: 'jotmo-call-v1.payload.signature' } },
+    ])
+    expect(signals).toEqual([controller.signal, controller.signal])
+  })
+
   it('notifies subscribers only when auth identity or revision changes', async () => {
     vi.useFakeTimers()
     const states: JotmoProviderState[] = [

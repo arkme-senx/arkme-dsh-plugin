@@ -3,6 +3,8 @@ import type {
   JotmoAuthSnapshot,
   JotmoCachedQueryResult,
   JotmoCachedSnapshot,
+  JotmoCallDetail,
+  JotmoCallList,
   JotmoCreateTextResult,
   JotmoImagePayload,
   JotmoPendingWrite,
@@ -23,6 +25,16 @@ export type {
   JotmoAuthSnapshot,
   JotmoCachedQueryResult,
   JotmoCachedSnapshot,
+  JotmoCallDetail,
+  JotmoCallDirection,
+  JotmoCallList,
+  JotmoCallListItem,
+  JotmoCallMediaType,
+  JotmoCallParticipant,
+  JotmoCallSectionState,
+  JotmoCallTextSection,
+  JotmoCallTranscriptItem,
+  JotmoCallTranscriptSection,
   JotmoCreateTextResult,
   JotmoImageMediaType,
   JotmoImagePayload,
@@ -131,6 +143,22 @@ export class JotmoSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
+  }
+
+  async listCalls(options: {
+    limit?: number
+    cursor?: string
+    signal?: AbortSignal
+  } = {}): Promise<JotmoCallList> {
+    return await this.call<JotmoCallList>('calls.list', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    }, options.signal)
+  }
+
+  async readCall(callRef: string, options: { signal?: AbortSignal } = {}): Promise<JotmoCallDetail> {
+    if (callRef.trim() === '') throw new TypeError('Jiwo call reference must not be empty')
+    return await this.call<JotmoCallDetail>('calls.detail', { callRef }, options.signal)
   }
 
   async readSource(

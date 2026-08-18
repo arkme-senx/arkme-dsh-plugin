@@ -213,6 +213,11 @@ async function dispatch(
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
     )
+    case 'calls.list': return await service.listCalls({
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+    })
+    case 'calls.detail': return await service.readCall(stringParam(params, 'callRef'))
     default: throw new JotmoPluginError('operation-unknown', '不支持的即我插件操作', false, 404)
   }
 }
