@@ -2,6 +2,8 @@
 
 `@senqisi/dsh-jotmo` owns authentication, Keychain access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
 
+The bundled UI uses only official DSH slots: `sidebar.footer.action` for the launcher, a temporary `conversation` registration at priority `-10` for the center-column Jiwo application, and `settings.general.item` for account controls. Disposing the Jiwo registration restores the native priority-0 Conversation. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
+
 ## Browser SDK
 
 ```ts

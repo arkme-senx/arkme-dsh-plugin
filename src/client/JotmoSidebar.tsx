@@ -3,8 +3,6 @@ import {
   type CSSProperties,
 } from 'react'
 import qrcode from 'qrcode-generator'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {
   JotmoAuthSnapshot, JotmoClientConfig, JotmoSourceSendResult, JotmoTimelineCursor,
   JotmoTimelineItem, JotmoTimelinePage,
@@ -14,7 +12,7 @@ import { verifyPhoneCaptcha } from './geetest.js'
 import { JotmoMark } from './JotmoFooterAction.js'
 import { jotmoUi } from './ui-controller.js'
 
-export type JotmoSurfaceProps = PropsRuntime<'main.surface'> & { matched: string }
+export interface JotmoSurfaceProps {}
 
 const colors = {
   panel: 'var(--dsw-alias-bg-base, #ffffff)',
@@ -104,7 +102,7 @@ function mergeItems(current: JotmoTimelineItem[], incoming: JotmoTimelineItem[])
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
 }
 
-export function JotmoSurface(_props: JotmoSurfaceProps) {
+export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
   const source = ui.mode === 'source' ? ui.selectedSource : undefined
   const bodyRef = useRef<HTMLDivElement>(null)

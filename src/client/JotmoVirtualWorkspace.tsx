@@ -1,20 +1,10 @@
-import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { JotmoAuthSnapshot, JotmoSourceDirectory, JotmoSourceItem, JotmoSourceList } from '../types.js'
 import { callJotmo } from './api.js'
 import { JotmoMark } from './JotmoFooterAction.js'
 import { jotmoUi } from './ui-controller.js'
 
-export const JOTMO_SURFACE_ID = 'jotmo-default-category'
-
-export interface JotmoVirtualWorkspaceInjected {
-  hooks: { surface: HostObservable<string | null> }
-  open(): void
-}
-
-export type JotmoVirtualWorkspaceProps =
-  PropsRuntime<'sidebar.workspaces.virtual'> & InjectFace<JotmoVirtualWorkspaceInjected>
+export interface JotmoNavigationProps { wide?: boolean }
 
 const styles: Record<string, CSSProperties> = {
   group: { flex: 'none', margin: '0 0 6px', color: 'var(--dsw-alias-label-primary, #17191c)' },
@@ -56,8 +46,8 @@ function sourceKindLabel(source: JotmoSourceItem): string {
   return ''
 }
 
-export function JotmoVirtualWorkspace({ wide, useSurface, open }: JotmoVirtualWorkspaceProps) {
-  const selectedSurface = useSurface(surface => surface === JOTMO_SURFACE_ID)
+export function JotmoNavigation({ wide = true }: JotmoNavigationProps) {
+  const selectedSurface = true
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
   const [auth, setAuth] = useState<JotmoAuthSnapshot>()
   const [expanded, setExpanded] = useState(true)
@@ -104,8 +94,8 @@ export function JotmoVirtualWorkspace({ wide, useSurface, open }: JotmoVirtualWo
     else if (!authenticated) setSources([])
   }, [authenticated, directory, expanded, loadDirectory])
 
-  const showLogin = () => { jotmoUi.showLogin(); open() }
-  const selectSource = (source: JotmoSourceItem) => { jotmoUi.selectSource(source); open() }
+  const showLogin = () => { jotmoUi.showLogin() }
+  const selectSource = (source: JotmoSourceItem) => { jotmoUi.selectSource(source) }
 
   if (!wide) {
     return (
@@ -117,7 +107,7 @@ export function JotmoVirtualWorkspace({ wide, useSurface, open }: JotmoVirtualWo
           title={authenticated ? '即我' : '即我 · 未登录'}
           onClick={() => {
             if (!authenticated || ui.selectedSource === undefined) showLogin()
-            else { jotmoUi.selectSource(ui.selectedSource); open() }
+            else { jotmoUi.selectSource(ui.selectedSource) }
           }}
         ><JotmoMark size={20} /></button>
       </div>

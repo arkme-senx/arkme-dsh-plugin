@@ -1,43 +1,57 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type { MainSurfaceOwnerProps } from '@deepseek-ai/dsh-client-ui-layout/client'
+import { JotmoConversationSurface } from './JotmoConversationSurface.js'
+import { JotmoFooterAction } from './JotmoFooterAction.js'
 import { JotmoSettingsRow } from './JotmoSettingsRow.js'
-import { JotmoSurface } from './JotmoSidebar.js'
-import {
-  JOTMO_SURFACE_ID, JotmoVirtualWorkspace, type JotmoVirtualWorkspaceInjected,
-} from './JotmoVirtualWorkspace.js'
+import { jotmoUi } from './ui-controller.js'
 
-export const inject = ['slots', 'layout']
+export const inject = ['slots']
 
+/** Register Jiwo only through official additive DSH slots. */
 export function apply(ctx: ClientContext): void {
-  ctx.slots.inject('sidebar.workspaces.virtual', () => ctx.slots.register({
-    name: 'sidebar.workspaces.virtual',
-    id: 'jotmo',
-    order: 10,
-    inject: (): JotmoVirtualWorkspaceInjected => ({
-      hooks: { surface: ctx.layout.surface },
-      open: () => { ctx.layout.showSurface(JOTMO_SURFACE_ID) },
-    }),
-  }, JotmoVirtualWorkspace))
+  let disposeJotmoConversation: (() => void) | undefined
+  const closeJotmo = () => {
+    const dispose = disposeJotmoConversation
+    disposeJotmoConversation = undefined
+    dispose?.()
+    jotmoUi.close()
+  }
+  const openJotmo = (openedFromSession: SessionId | undefined) => {
+    if (disposeJotmoConversation !== undefined) return
+    disposeJotmoConversation = ctx.slots.register({
+      name: 'conversation',
+      priority: -10,
+      inject: () => ({ close: closeJotmo, openedFromSession }),
+    }, JotmoConversationSurface)
+    jotmoUi.open()
+  }
+  const toggleJotmo = (openedFromSession: SessionId | undefined) => {
+    if (disposeJotmoConversation === undefined) openJotmo(openedFromSession)
+    else closeJotmo()
+  }
 
-  ctx.slots.inject('main.surface', () => ctx.slots.register({
-    name: 'main.surface',
-    priority: 10,
-    select: (owner: MainSurfaceOwnerProps) => owner.surface === JOTMO_SURFACE_ID
-      ? JOTMO_SURFACE_ID
-      : null,
-  }, JotmoSurface))
+  ctx.effect(() => () => { closeJotmo() }, 'dsh-jotmo: restore native conversation on dispose')
+
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    name: 'sidebar.footer.action',
+    id: 'jotmo',
+    order: 70,
+    label: '即我',
+    inject: () => ({ toggle: toggleJotmo }),
+  }, JotmoFooterAction))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
     id: 'jotmo-account',
     order: 80,
+    label: '即我账号',
   }, JotmoSettingsRow))
 }
 
+export { JotmoFooterAction } from './JotmoFooterAction.js'
 export { JotmoSettingsRow } from './JotmoSettingsRow.js'
+export { JotmoConversationSurface } from './JotmoConversationSurface.js'
 export { JotmoSurface } from './JotmoSidebar.js'
-export { JOTMO_SURFACE_ID, JotmoVirtualWorkspace } from './JotmoVirtualWorkspace.js'
+export { JotmoNavigation } from './JotmoVirtualWorkspace.js'

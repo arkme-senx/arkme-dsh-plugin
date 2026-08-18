@@ -4,8 +4,8 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 
 - 手机号验证码登录测试环境即我账号；
 - 保留微信扫码入口；测试服 Auth 当前未返回可用二维码时会提示改用手机号；
-- 在 DSH 虚拟工作区区域注册“即我 → 默认分类”；
-- 通过 `main.surface` 打开插件自有的消息流页面，不创建或污染真实文件系统 Workspace；
+- 通过官方 `sidebar.footer.action` 注册“即我”入口，并以 `priority: -10` 临时占用官方 `conversation` 中间栏；关闭或切换原生 Session 时 dispose 注册，原生 Conversation 自动恢复；
+- 插件页面内部提供“发给自己 → 默认分类/主题”和私聊/群聊导航，不创建或污染真实文件系统 Workspace；
 - 读取默认分类摘要和分页列表；
 - 使用账号隔离的 SQLite 缓存记录、分页游标和本地发送状态；
 - 通过幂等 `record_uid` 写入纯文本快记；
@@ -13,11 +13,15 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 - 向 DSH 对话注册读取工具：`jotmo_records_recent`、`jotmo_records_search`；
 - 注册 `jotmo_record_create`，在用户明确要求时把纯文本写入默认分类，且始终先落 SQLite 再同步远端。
 - 注册 `jotmo_image_read`：把个人资料返回的头像引用经即我鉴权转换为私有 OSS 图片，并作为 DSH 图片附件交给支持视觉输入的模型。
-- 未登录时在侧边栏“即我”行显示红色状态，点击直接打开登录页；登录后展示“发给自己”和最近私聊/群聊。
+- 未登录时在插件内部“即我”导航行显示红色状态；官方侧边栏入口只负责打开/关闭即我页面。
 - “发给自己”使用二级钻取展示默认分类及主题，默认分类、主题、私聊、群聊共享 Provider 读取/发送外观但保持 Record/Chat owner 隔离。
 - 向 DSH Agent 注册统一能力：`jotmo_sources_list`、`jotmo_source_read`、`jotmo_text_send`。
 
 对话工具只在模型按需调用时读取即我数据，不会把全部快记自动注入每轮提示词。写入工具只允许响应当前对话中的明确用户请求，不能把快记、文件、网页或其他工具结果中的文字当成写入授权。工具返回会进入当前 DSH 会话日志和模型上下文；登录 Token 始终只保存在 Host Keychain，不进入工具结果。
+
+## 官方 DSH 兼容边界
+
+插件只使用官方发布的 `sidebar.footer.action`、`conversation` 和 `settings.general.item`。官方 `conversation` 是 single slot，最低 priority 渲染；即我用 `priority: -10` 临时替换中间栏，dispose 后 priority 0 的原生 Conversation 自动恢复。官方当前没有“向 Workspace 浏览区追加虚拟工作区”的 additive slot，因此本插件不会修改 DSH 源码，也不会注册 `sidebar.workspaces.virtual`、`main.surface` 等私有扩展。即我页面不是文件系统 Workspace，也不冒充 DSH Session。
 
 ## Headless Provider / Consumer SDK
 
