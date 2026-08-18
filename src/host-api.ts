@@ -154,6 +154,7 @@ async function dispatch(
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
     case 'auth.poll': return await service.pollWechatLogin(stringParam(params, 'attemptId'))
+    case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
       captchaParam(params),

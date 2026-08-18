@@ -70,7 +70,8 @@ export function apply(ctx: Context, config: Config): void {
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
   const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
-  const service = new ArkmeService(config, sessionStore, localDatabase)
+  const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
+  const service = new ArkmeService(config, sessionStore, localDatabase, fetch, pendingSessionStore)
   ctx.provide('arkmeData', service)
   registerArkmeTools(ctx, service, config.toolProfile)
   const handler = createArkmeHostApi(service, {

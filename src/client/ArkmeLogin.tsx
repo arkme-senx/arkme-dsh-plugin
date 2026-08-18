@@ -1,23 +1,30 @@
 import type { ChangeEvent } from 'react'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 
-export type ArkmeLoginMode = 'wechat' | 'phone'
+export type ArkmeLoginMode = 'wechat' | 'phone' | 'test'
 
 export interface ArkmeLoginProps {
   mode: ArkmeLoginMode
+  phoneBindingRequired?: boolean
   agreed: boolean
   busy: boolean
+  submitBusy: boolean
   error: string
   phone: string
   smsCode: string
   smsCountdown: number
+  testLoginEnabled: boolean
+  testUserId: string
   qrDataUrl: string
   onModeChange: (mode: ArkmeLoginMode) => void
   onAgreementChange: (agreed: boolean) => void
   onPhoneChange: (phone: string) => void
   onSmsCodeChange: (code: string) => void
+  onTestUserIdChange: (userId: string) => void
   onSendCode: () => void
   onVerifyCode: () => void
+  onTestLogin: () => void
+  onCancelBinding: () => void
 }
 
 const agreementWarningText = '请阅读并同意用户协议和隐私条款'
@@ -93,6 +100,16 @@ const loginStyles = `
     font-weight: 600;
     line-height: 36px;
     letter-spacing: 0;
+  }
+  .dsh-arkme-login-notice {
+    margin-top: 20px;
+    border: 1px solid #d7eadc;
+    border-radius: 14px;
+    padding: 10px 12px;
+    background: #f2fbf5;
+    color: #2f5f3d;
+    font-size: 14px;
+    line-height: 21px;
   }
   .dsh-arkme-login-tabs-wrap { display: flex; justify-content: center; margin-top: 32px; }
   .dsh-arkme-login-tabs {
@@ -183,6 +200,12 @@ const loginStyles = `
   }
   .dsh-arkme-login-input::placeholder { color: #9aae9f; opacity: 1; }
   .dsh-arkme-login-code-input { padding-right: 100px; }
+  .dsh-arkme-login-test-note {
+    margin: 0 0 14px;
+    color: #617068;
+    font-size: 13px;
+    line-height: 20px;
+  }
   .dsh-arkme-login-code-action {
     position: absolute;
     right: 0;
@@ -228,6 +251,28 @@ const loginStyles = `
   }
   .dsh-arkme-login-submit:hover:not(:disabled) { background: #253129; }
   .dsh-arkme-login-submit:disabled { cursor: default; box-shadow: none; opacity: .72; }
+  .dsh-arkme-login-actions {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+  .dsh-arkme-login-actions .dsh-arkme-login-submit { margin-top: 0; }
+  .dsh-arkme-login-cancel {
+    width: 100%;
+    height: 48px;
+    border: 1px solid #d3ded6;
+    border-radius: 14px;
+    background: #fff;
+    color: #334239;
+    cursor: pointer;
+    font: inherit;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .dsh-arkme-login-cancel:hover:not(:disabled) { background: #f6faf7; border-color: #bacbc0; }
+  .dsh-arkme-login-cancel:disabled { cursor: default; opacity: .62; }
   .dsh-arkme-login-error {
     margin-top: 16px;
     border-radius: 12px;
@@ -280,11 +325,17 @@ const loginStyles = `
 `
 
 export function ArkmeLogin(props: ArkmeLoginProps) {
+  const effectiveMode = props.phoneBindingRequired === true
+    ? 'phone'
+    : props.mode === 'test' && !props.testLoginEnabled ? 'wechat' : props.mode
   const changePhone = (event: ChangeEvent<HTMLInputElement>) => {
     props.onPhoneChange(event.target.value.replace(/\D/g, '').slice(0, 11))
   }
   const changeCode = (event: ChangeEvent<HTMLInputElement>) => {
     props.onSmsCodeChange(event.target.value.replace(/\D/g, '').slice(0, 6))
+  }
+  const changeTestUserId = (event: ChangeEvent<HTMLInputElement>) => {
+    props.onTestUserIdChange(event.target.value.replace(/\D/g, '').slice(0, 16))
   }
 
   return <div className="dsh-arkme-login-page">
@@ -295,25 +346,34 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
       <div className="dsh-arkme-login-content">
         <div className="dsh-arkme-login-brand">
           <ArkmeMark size={56} />
-          <h3 className="dsh-arkme-login-title" id="dsh-arkme-login-title">登录 Arkme</h3>
+          <h3 className="dsh-arkme-login-title" id="dsh-arkme-login-title">
+            {props.phoneBindingRequired === true ? '完成登录' : '登录 Arkme'}
+          </h3>
         </div>
 
-        <div className="dsh-arkme-login-tabs-wrap">
+        {props.phoneBindingRequired === true && <>
+          <div className="dsh-arkme-login-notice" role="status">
+            当前 Arkme 账号还没有绑定手机号，请先完成手机号验证，完成后才会登录成功。
+          </div>
+        </>}
+
+        {props.phoneBindingRequired !== true && <div className="dsh-arkme-login-tabs-wrap">
           <div className="dsh-arkme-login-tabs" role="tablist" aria-label="登录方式">
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'wechat'} onClick={() => { props.onModeChange('wechat') }}>微信扫码</button>
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'phone'} onClick={() => { props.onModeChange('phone') }}>手机号登录</button>
+            {props.testLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'test'} onClick={() => { props.onModeChange('test') }}>测试账号</button>}
           </div>
-        </div>
+        </div>}
 
         <div className="dsh-arkme-login-method">
-          {props.mode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
+          {effectiveMode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
             <div className="dsh-arkme-login-qr-title">请使用微信扫码登录</div>
             <div className="dsh-arkme-login-qr-frame">
               {props.qrDataUrl === ''
                 ? <span className="dsh-arkme-login-qr-loading">二维码加载中</span>
                 : <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt="微信扫码登录 Arkme" />}
             </div>
-          </div> : <div role="tabpanel">
+          </div> : effectiveMode === 'phone' ? <div role="tabpanel">
             <div className="dsh-arkme-login-field">
               <label className="dsh-arkme-login-label" htmlFor="dsh-arkme-login-phone">手机号</label>
               <div className="dsh-arkme-login-input-shell">
@@ -356,8 +416,37 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
                 </span>
               </div>
             </div>
-            <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} onClick={props.onVerifyCode}>
-              {props.busy ? '正在登录…' : '登录'}
+            {props.phoneBindingRequired === true ? <div className="dsh-arkme-login-actions">
+              <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} onClick={props.onVerifyCode}>
+                {props.submitBusy ? '正在绑定…' : '完成绑定'}
+              </button>
+              <button type="button" className="dsh-arkme-login-cancel" disabled={props.busy} onClick={props.onCancelBinding}>
+                取消绑定
+              </button>
+            </div> : <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} onClick={props.onVerifyCode}>
+              {props.submitBusy ? '正在登录…' : '登录'}
+            </button>}
+          </div> : <div role="tabpanel">
+            <p className="dsh-arkme-login-test-note">测试环境可使用 user_id 直登，登录后仍会检查手机号绑定状态。</p>
+            <div className="dsh-arkme-login-field">
+              <label className="dsh-arkme-login-label" htmlFor="dsh-arkme-login-test-user">测试 user_id</label>
+              <div className="dsh-arkme-login-input-shell">
+                <input
+                  id="dsh-arkme-login-test-user"
+                  className="dsh-arkme-login-input"
+                  value={props.testUserId}
+                  onChange={changeTestUserId}
+                  onKeyDown={event => { if (event.key === 'Enter') props.onTestLogin() }}
+                  inputMode="numeric"
+                  maxLength={16}
+                  placeholder="请输入测试账号 user_id"
+                  aria-label="测试账号 user_id"
+                  disabled={props.busy}
+                />
+              </div>
+            </div>
+            <button type="button" className="dsh-arkme-login-submit" disabled={props.busy} onClick={props.onTestLogin}>
+              {props.busy ? '正在登录…' : '测试账号登录'}
             </button>
           </div>}
         </div>

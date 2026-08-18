@@ -103,6 +103,22 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
+function userInfo(userId: number, phone = '13800138000'): Record<string, unknown> {
+  return {
+    user_id: userId,
+    nick_name: `user-${userId}`,
+    head_img: '',
+    name_slug: `arkme-${userId}`,
+    type: 1,
+    create_at: 123,
+    phone,
+    email: '',
+    has_bind_apple: false,
+    has_bind_wechat: false,
+    has_bind_google: false,
+  }
+}
+
 describe('ArkmeService', () => {
   it('completes QR login without exposing tokens in the auth snapshot', async () => {
     const sessions = new MemorySessionStore()
@@ -121,6 +137,7 @@ describe('ArkmeService', () => {
           ? json({ code: 200, data: { user_id: 0 } })
           : json({ code: 200, data: { user_id: 10001, access_token: 'access-secret', refresh_token: 'refresh-secret' } })
       }
+      if (url.endsWith('/get-user-info')) return json({ code: 200, data: userInfo(10001) })
       throw new Error(`unexpected URL ${url}`)
     }
     const service = new ArkmeService(config, sessions, state, fetchImpl)
@@ -132,7 +149,8 @@ describe('ArkmeService', () => {
     const authenticated = await service.pollWechatLogin(begun.attemptId!)
     expect(authenticated).toEqual({ status: 'authenticated', environment: 'test', userId: 10001 })
     expect(sessions.session).toEqual({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' })
-    expect(requests.at(-1)?.body).toMatchObject({ scene_str: 'scene-1', unique_code: 'dsh-device-1' })
+    expect(requests.find(request => request.url.endsWith('/wechat-scan-login'))?.body)
+      .toMatchObject({ scene_str: 'scene-1', unique_code: 'dsh-device-1' })
   })
 
   it('publishes a versioned provider capability and revision state', async () => {
@@ -140,8 +158,9 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     state.revisionValue = 9
-    const service = new ArkmeService(config, sessions, state, async () => {
-      throw new Error('not used')
+    const service = new ArkmeService(config, sessions, state, async input => {
+      expect(String(input)).toBe('https://auth.test/api/v1/auth/get-user-info')
+      return json({ code: 200, data: userInfo(10001) })
     })
 
     expect(service.providerCapabilities()).toMatchObject({
@@ -156,8 +175,165 @@ describe('ArkmeService', () => {
       environment: 'test',
       authStatus: 'authenticated',
       userId: 10001,
-      revision: 9,
+      revision: 10,
     })
+  })
+
+  it('publishes auth client config with the test-login guard', async () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), async () => {
+      throw new Error('not used')
+    })
+
+    expect(service.clientConfig()).toEqual({
+      captchaId: 'captcha-test-id-1234567890',
+      environment: 'test',
+      testLoginEnabled: true,
+    })
+  })
+
+  it('logs in with a test user only on the test environment', async () => {
+    const sessions = new MemorySessionStore()
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/get-user-info')) return json({ code: 200, data: userInfo(10009, '') })
+      return json({ code: 200, data: { access_token: 'test-access', refresh_token: 'test-refresh' } })
+    })
+
+    await expect(service.testLogin(10009)).resolves.toEqual({
+      status: 'binding-required',
+      environment: 'test',
+      userId: 10009,
+    })
+    expect(requests[0]).toMatchObject({
+      url: 'https://auth.test/api/public/v1/auth/the-best-api-for-testing',
+    })
+    expect(requests[0]?.body).toEqual({
+      user_id: 10009,
+      unique_code: 'dsh-device-1',
+      ref: 0,
+      keep_cancel: true,
+    })
+    expect(sessions.session).toBeUndefined()
+    await expect(service.authStatus()).resolves.toEqual({
+      status: 'binding-required',
+      environment: 'test',
+      userId: 10009,
+    })
+    await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
+
+    const prodService = new ArkmeService({ ...config, environment: 'prod' }, sessions, state, async () => {
+      throw new Error('not used')
+    })
+    await expect(prodService.testLogin(10009)).rejects.toMatchObject({ code: 'test-login-disabled' })
+  })
+
+  it('promotes a pending binding session only after phone binding succeeds', async () => {
+    const sessions = new MemorySessionStore()
+    const state = new MemoryStateStore()
+    let bound = false
+    const requests: Array<{ url: string; authorization?: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const headers = new Headers(init?.headers)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, authorization: headers.get('Authorization') ?? undefined, body })
+      if (url.endsWith('/the-best-api-for-testing')) {
+        return json({ code: 200, data: { access_token: 'pending-access', refresh_token: 'pending-refresh' } })
+      }
+      if (url.endsWith('/get-user-info')) return json({ code: 200, data: userInfo(10010, bound ? '13800138000' : '') })
+      if (url.endsWith('/bind-phone-send-code')) return json({ code: 200, data: { result: 1 } })
+      if (url.endsWith('/verify-bind-phone')) {
+        bound = true
+        return json({ code: 200, data: { result: 1 } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.testLogin(10010)).resolves.toEqual({
+      status: 'binding-required',
+      environment: 'test',
+      userId: 10010,
+    })
+    expect(sessions.session).toBeUndefined()
+
+    const captcha = {
+      lot_number: 'lot-1',
+      captcha_output: 'output-1',
+      pass_token: 'pass-1',
+      gen_time: '1700000000',
+    }
+    await expect(service.sendPhoneCode('13800138000', captcha)).resolves.toEqual({ sent: true })
+    await expect(service.verifyPhoneCode('13800138000', '123456')).resolves.toEqual({
+      status: 'authenticated',
+      environment: 'test',
+      userId: 10010,
+    })
+    expect(sessions.session).toEqual({ userId: 10010, accessToken: 'pending-access', refreshToken: 'pending-refresh' })
+    expect(requests.find(request => request.url.endsWith('/bind-phone-send-code'))?.authorization).toBe('Bearer pending-access')
+    expect(requests.find(request => request.url.endsWith('/verify-bind-phone'))?.authorization).toBe('Bearer pending-access')
+  })
+
+  it('restores a pending binding session after the provider is recreated', async () => {
+    const sessions = new MemorySessionStore()
+    const pendingSessions = new MemorySessionStore()
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization?: string; body: Record<string, unknown> }> = []
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      const headers = new Headers(init?.headers)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, authorization: headers.get('Authorization') ?? undefined, body })
+      if (url.endsWith('/the-best-api-for-testing')) {
+        return json({ code: 200, data: { access_token: 'pending-access', refresh_token: 'pending-refresh' } })
+      }
+      if (url.endsWith('/get-user-info')) return json({ code: 200, data: userInfo(10012, '') })
+      throw new Error(`unexpected URL ${url}`)
+    }
+    const service = new ArkmeService(config, sessions, state, fetchImpl, pendingSessions)
+
+    await expect(service.testLogin(10012)).resolves.toEqual({
+      status: 'binding-required',
+      environment: 'test',
+      userId: 10012,
+    })
+    expect(sessions.session).toBeUndefined()
+    expect(pendingSessions.session).toEqual({
+      userId: 10012,
+      accessToken: 'pending-access',
+      refreshToken: 'pending-refresh',
+    })
+
+    const recreated = new ArkmeService(config, sessions, state, fetchImpl, pendingSessions)
+    await expect(recreated.authStatus()).resolves.toEqual({
+      status: 'binding-required',
+      environment: 'test',
+      userId: 10012,
+    })
+    await expect(recreated.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
+    expect(requests.findLast(request => request.url.endsWith('/get-user-info'))?.authorization)
+      .toBe('Bearer pending-access')
+  })
+
+  it('demotes a legacy active session when the profile still requires phone binding', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10011, accessToken: 'legacy-access', refreshToken: 'legacy-refresh' }
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async input => {
+      expect(String(input)).toBe('https://auth.test/api/v1/auth/get-user-info')
+      return json({ code: 200, data: userInfo(10011, '') })
+    })
+
+    await expect(service.authStatus()).resolves.toEqual({
+      status: 'binding-required',
+      environment: 'test',
+      userId: 10011,
+    })
+    expect(sessions.session).toBeUndefined()
+    await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
   })
 
   it('reads and caches only a safe masked user profile projection', async () => {
@@ -303,7 +479,7 @@ describe('ArkmeService', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it('sends and verifies a mainland phone code without enabling the test bypass', async () => {
+  it('sends and verifies a mainland phone code with the environment test bypass', async () => {
     const sessions = new MemorySessionStore()
     const state = new MemoryStateStore()
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -318,6 +494,7 @@ describe('ArkmeService', () => {
           data: { ok: true, user_id: 10002, access_token: 'phone-access', refresh_token: 'phone-refresh' },
         })
       }
+      if (url.endsWith('/get-user-info')) return json({ code: 200, data: userInfo(10002) })
       throw new Error(`unexpected URL ${url}`)
     })
 
@@ -331,10 +508,49 @@ describe('ArkmeService', () => {
     await expect(service.verifyPhoneCode('13800138000', '123456')).resolves.toEqual({
       status: 'authenticated', environment: 'test', userId: 10002,
     })
-    expect(requests[0]?.body).toEqual({ phone: '13800138000', pre: '86', is_test: false, ...captcha })
+    expect(requests[0]?.body).toEqual({ phone: '13800138000', pre: '86', is_test: true, ...captcha })
     expect(requests[1]?.body).toMatchObject({
       phone: '13800138000', pre: '86', code: '123456', token: '', unique_code: 'dsh-device-1',
     })
+  })
+
+  it('binds a phone to the current authenticated user instead of switching accounts', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization?: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const headers = new Headers(init?.headers)
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, authorization: headers.get('Authorization') ?? undefined, body })
+      if (url.endsWith('/bind-phone-send-code')) return json({ code: 200, data: { result: 1 } })
+      if (url.endsWith('/verify-bind-phone')) return json({ code: 200, data: { result: 1 } })
+      if (url.endsWith('/get-user-info')) return json({ code: 200, data: userInfo(10001) })
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const captcha = {
+      lot_number: 'lot-1',
+      captcha_output: 'output-1',
+      pass_token: 'pass-1',
+      gen_time: '1700000000',
+    }
+    await expect(service.sendPhoneCode('138 0013 8000', captcha)).resolves.toEqual({ sent: true })
+    await expect(service.verifyPhoneCode('13800138000', '123456')).resolves.toEqual({
+      status: 'authenticated', environment: 'test', userId: 10001,
+    })
+    expect(requests[0]).toMatchObject({
+      url: 'https://auth.test/api/v1/auth/bind-phone-send-code',
+      authorization: 'Bearer access',
+      body: { phone: '13800138000', pre: '86', is_test: true, ...captcha },
+    })
+    expect(requests[1]).toMatchObject({
+      url: 'https://auth.test/api/v1/auth/verify-bind-phone',
+      authorization: 'Bearer access',
+      body: { phone: '13800138000', pre: '86', code: '123456', is_test: true },
+    })
+    expect(sessions.session?.userId).toBe(10001)
   })
 
   it('reads uncategorized records and preserves stable cursor fields', async () => {

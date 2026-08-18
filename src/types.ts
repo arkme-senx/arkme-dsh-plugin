@@ -2,7 +2,7 @@ export type ArkmeEnvironment = 'test' | 'prod'
 
 export const ARKME_PROVIDER_CONTRACT_VERSION = 1 as const
 
-export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'authenticated' | 'expired'
+export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
 export interface ArkmeAuthSnapshot {
   status: ArkmeAuthStatus
@@ -22,6 +22,8 @@ export interface ArkmeCaptchaResult {
 
 export interface ArkmeClientConfig {
   captchaId: string
+  environment: ArkmeEnvironment
+  testLoginEnabled: boolean
 }
 
 export interface ArkmeRecordCursor {
@@ -509,6 +511,7 @@ export type ArkmePluginOperation =
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
+  | 'auth.test.login'
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.logout'

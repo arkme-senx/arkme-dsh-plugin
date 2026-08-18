@@ -4,14 +4,15 @@ import {
 } from 'react'
 import qrcode from 'qrcode-generator'
 import type {
-  ArkmeAuthSnapshot, ArkmeClientConfig, ArkmeSourceReadResult, ArkmeSourceSendResult, ArkmeTimelineCursor,
-  ArkmeTimelineItem, ArkmeTimelinePage,
+  ArkmeAuthSnapshot, ArkmeSourceReadResult, ArkmeSourceSendResult, ArkmeTimelineCursor,
+  ArkmeTimelineItem, ArkmeTimelinePage, ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -21,6 +22,7 @@ export interface ArkmeSurfaceProps {
 }
 
 export type ArkmeAuthView = 'checking' | 'login' | 'content'
+export type ArkmePhoneBindingGate = 'unknown' | 'checking' | 'ready' | 'required'
 
 const colors = {
   panel: 'var(--dsw-alias-bg-base, #ffffff)',
@@ -94,9 +96,44 @@ const styles: Record<string, CSSProperties> = {
   },
 }
 
-export function arkmeAuthView(auth: ArkmeAuthSnapshot | undefined): ArkmeAuthView {
+export function arkmeAuthView(
+  auth: ArkmeAuthSnapshot | undefined,
+  phoneBindingGate: ArkmePhoneBindingGate = 'ready',
+): ArkmeAuthView {
   if (auth === undefined) return 'checking'
-  return auth.status === 'authenticated' ? 'content' : 'login'
+  if (auth.status === 'binding-required') return 'login'
+  if (auth.status !== 'authenticated') return 'login'
+  if (phoneBindingGate === 'ready') return 'content'
+  if (phoneBindingGate === 'required') return 'login'
+  return 'checking'
+}
+
+export function arkmeProfileHasBoundPhone(snapshot: ArkmeUserProfileSnapshot): boolean {
+  return (snapshot.profile?.contact.phoneMasked?.trim() ?? '') !== ''
+}
+
+export function arkmeLoginNeedsPhoneBinding(
+  auth: ArkmeAuthSnapshot | undefined,
+  phoneBindingGate: ArkmePhoneBindingGate,
+): boolean {
+  return auth?.status === 'binding-required' || phoneBindingGate === 'required'
+}
+
+export function arkmeShouldBeginWechat(
+  auth: ArkmeAuthSnapshot | undefined,
+  authView: ArkmeAuthView,
+  loginMode: ArkmeLoginMode,
+  agreed: boolean,
+  qr: string,
+  qrRequestStarted: boolean,
+): boolean {
+  return authView === 'login'
+    && auth !== undefined
+    && ['logged-out', 'expired'].includes(auth.status)
+    && loginMode === 'wechat'
+    && agreed
+    && qr === ''
+    && !qrRequestStarted
 }
 
 function errorMessage(error: unknown): string {
@@ -106,6 +143,10 @@ function errorMessage(error: unknown): string {
 
 function qrDataUrl(content: string): string {
   const qr = qrcode(0, 'M'); qr.addData(content); qr.make(); return qr.createDataURL(6, 12)
+}
+
+function initialPhoneBindingGate(auth: ArkmeAuthSnapshot | undefined): ArkmePhoneBindingGate {
+  return auth?.status === 'binding-required' ? 'required' : 'unknown'
 }
 
 function dayKey(value: number): string {
@@ -144,34 +185,88 @@ function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
 
 export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
+  const authStoreSnapshot = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const chatDelta = useSyncExternalStore(arkmeChatTimelineDelta.subscribe, arkmeChatTimelineDelta.getSnapshot)
   const source = ui.mode === 'source' ? ui.selectedSource : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const [auth, setAuth] = useState<ArkmeAuthSnapshot | undefined>(initialAuth)
+  const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(initialAuth?.status === 'binding-required' ? '请先绑定手机号，再继续使用 Arkme' : '')
   const [agreed, setAgreed] = useState(true)
-  const [loginMode, setLoginMode] = useState<ArkmeLoginMode>('wechat')
+  const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
   const [phone, setPhone] = useState('')
   const [smsCode, setSmsCode] = useState('')
   const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
+  const [testLoginEnabled, setTestLoginEnabled] = useState(false)
+  const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
+  const [phoneBindingGate, setPhoneBindingGate] = useState<ArkmePhoneBindingGate>(initialPhoneBindingGate(initialAuth))
+  const [phoneCheckRevision, setPhoneCheckRevision] = useState(0)
   const qrRequestStartedRef = useRef(false)
   const lastReadAckRef = useRef('')
-  const authenticated = auth?.status === 'authenticated'
-  const authView = arkmeAuthView(auth)
+  const checkedUserIdRef = useRef<number | undefined>()
+  const notifiedUserIdRef = useRef<number | undefined>()
+  const bindingNotifiedUserIdRef = useRef<number | undefined>()
+  const ignoreStaleBindingAuthRef = useRef(false)
+  const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
+  const authView = arkmeAuthView(auth, phoneBindingGate)
+  const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth, phoneBindingGate)
+
+  const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot, options: { forcePhoneCheck?: boolean } = {}) => {
+    arkmeAuthStore.setAuth(snapshot)
+    if (snapshot.status === 'binding-required') {
+      checkedUserIdRef.current = snapshot.userId
+      notifiedUserIdRef.current = undefined
+      setPhoneBindingGate('required')
+      setLoginMode('phone')
+      setAgreed(true)
+      setQr('')
+      setSmsCode('')
+      setError('请先绑定手机号，再继续使用 Arkme')
+      if (bindingNotifiedUserIdRef.current !== snapshot.userId) {
+        bindingNotifiedUserIdRef.current = snapshot.userId
+        arkmeUi.authChanged(false)
+      }
+      return
+    }
+    bindingNotifiedUserIdRef.current = undefined
+    if (options.forcePhoneCheck === true || snapshot.status !== 'authenticated' || checkedUserIdRef.current !== snapshot.userId) {
+      checkedUserIdRef.current = undefined
+      notifiedUserIdRef.current = undefined
+      bindingNotifiedUserIdRef.current = undefined
+      setPhoneBindingGate('unknown')
+      setPhoneCheckRevision(value => value + 1)
+    }
+  }, [])
 
   useEffect(() => {
-    if (initialAuth !== undefined) setAuth(initialAuth)
-  }, [initialAuth])
+    if (initialAuth === undefined) return
+    if (ignoreStaleBindingAuthRef.current && initialAuth.status !== 'logged-out') return
+    ignoreStaleBindingAuthRef.current = false
+    if (auth?.status === 'binding-required' && initialAuth.status === 'logged-out') return
+    acceptAuthSnapshot(initialAuth)
+  }, [acceptAuthSnapshot, auth?.status, initialAuth])
+  useEffect(() => {
+    if (authStoreSnapshot.auth === undefined) return
+    if (ignoreStaleBindingAuthRef.current && authStoreSnapshot.auth.status !== 'logged-out') return
+    ignoreStaleBindingAuthRef.current = false
+    if (auth?.status === 'binding-required' && authStoreSnapshot.auth.status === 'logged-out') return
+    acceptAuthSnapshot(authStoreSnapshot.auth)
+  }, [acceptAuthSnapshot, auth?.status, authStoreSnapshot.auth])
+  useEffect(() => {
+    if (authStoreSnapshot.config === undefined) return
+    setCaptchaId(authStoreSnapshot.config.captchaId)
+    setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
+  }, [authStoreSnapshot.config])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -182,13 +277,61 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const refreshAuth = useCallback(async () => {
     setBusy(true); setError('')
     try {
-      const [snapshot, config] = await Promise.all([
-        callArkme<ArkmeAuthSnapshot>('auth.status'), callArkme<ArkmeClientConfig>('auth.config'),
-      ])
-      setAuth(snapshot); setCaptchaId(config.captchaId)
+      const snapshot = await arkmeAuthStore.refresh()
+      const config = arkmeAuthStore.getSnapshot().config
+      acceptAuthSnapshot(snapshot)
+      if (config !== undefined) {
+        setCaptchaId(config.captchaId)
+        setTestLoginEnabled(config.testLoginEnabled)
+      }
+      if (!['authenticated', 'binding-required'].includes(snapshot.status) && config?.testLoginEnabled === true) setLoginMode('test')
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
-  }, [])
+  }, [acceptAuthSnapshot])
+
+  useEffect(() => {
+    if (auth?.status !== 'authenticated') {
+      if (auth?.status !== 'binding-required') {
+        if (phoneBindingGate !== 'unknown') setPhoneBindingGate('unknown')
+        checkedUserIdRef.current = undefined
+        notifiedUserIdRef.current = undefined
+      }
+      return
+    }
+    let active = true
+    const userId = auth.userId
+    setPhoneBindingGate('checking'); setBusy(true); setError('')
+    void callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+      .then(snapshot => {
+        if (!active) return
+        checkedUserIdRef.current = userId
+        if (arkmeProfileHasBoundPhone(snapshot)) {
+          setPhoneBindingGate('ready')
+          if (notifiedUserIdRef.current !== userId) {
+            notifiedUserIdRef.current = userId
+            arkmeUi.authChanged(true)
+          }
+          return
+        }
+        setPhoneBindingGate('required')
+        setLoginMode('phone')
+        setAgreed(true)
+        setQr('')
+        setSmsCode('')
+        setError('请先绑定手机号，再继续使用 Arkme')
+      })
+      .catch(caught => {
+        if (!active) return
+        checkedUserIdRef.current = userId
+        setPhoneBindingGate('required')
+        setLoginMode('phone')
+        setAgreed(true)
+        setQr('')
+        setError(errorMessage(caught))
+      })
+      .finally(() => { if (active) setBusy(false) })
+    return () => { active = false }
+  }, [auth?.status, auth?.userId, phoneCheckRevision])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
     if (source === undefined || source.unreadCount <= 0 || nextItems.length === 0
@@ -228,6 +371,9 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   }, [acknowledgeRead, source])
 
   useEffect(() => { void refreshAuth() }, [refreshAuth, ui.authRevision])
+  useEffect(() => {
+    if (ui.surfaceOpen) void refreshAuth()
+  }, [refreshAuth, ui.surfaceOpen])
   useEffect(() => {
     setItems([]); setNextCursor(undefined); setHasMore(false); setError('')
     if (authenticated && source !== undefined) {
@@ -270,8 +416,8 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       try {
         const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.poll', { attemptId: auth.attemptId })
         if (stopped) return
-        setAuth(snapshot)
-        if (snapshot.status === 'authenticated') { setQr(''); arkmeUi.authChanged(true); return }
+        acceptAuthSnapshot(snapshot)
+        if (snapshot.status === 'authenticated') { setQr(''); return }
       } catch (caught) { if (!stopped) setError(errorMessage(caught)) }
       if (!stopped) timer = setTimeout(() => { void poll() }, 1200)
     }
@@ -282,7 +428,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const beginWechat = async () => {
     if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
     setBusy(true); setError('')
-    try { const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.begin'); setAuth(snapshot); setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent)) }
+    try { const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.begin'); acceptAuthSnapshot(snapshot); setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent)) }
     catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
@@ -297,24 +443,54 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     if (!/^1[3-9]\d{9}$/.test(phone)) { setError('请输入正确的手机号'); return }
     if (!/^\d{6}$/.test(smsCode)) { setError('请输入验证码'); return }
     if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
-    setBusy(true); setError('')
+    setBusy(true); setSubmitBusy(true); setError('')
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
-      setAuth(snapshot); if (snapshot.status === 'authenticated') arkmeUi.authChanged(true)
+      acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
+    } catch (caught) { setError(errorMessage(caught)) } finally { setSubmitBusy(false); setBusy(false) }
+  }
+
+  const testLogin = async () => {
+    const userId = Number(testUserId)
+    if (!Number.isSafeInteger(userId) || userId <= 0) { setError('请输入有效的测试账号 user_id'); return }
+    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
+    setBusy(true); setError('')
+    try {
+      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.test.login', { userId })
+      acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
+    } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+  }
+
+  const cancelBinding = async () => {
+    setBusy(true); setError('')
+    try {
+      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.logout')
+      ignoreStaleBindingAuthRef.current = true
+      arkmeAuthStore.setAuth(snapshot)
+      checkedUserIdRef.current = undefined
+      notifiedUserIdRef.current = undefined
+      setPhoneBindingGate('unknown')
+      setPhoneCheckRevision(value => value + 1)
+      setPhone('')
+      setSmsCode('')
+      setQr('')
+      setSubmitBusy(false)
+      qrRequestStartedRef.current = false
+      setLoginMode(testLoginEnabled ? 'test' : 'wechat')
+      arkmeUi.authChanged(false)
     } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
   useEffect(() => {
-    if (authenticated || auth === undefined || loginMode !== 'wechat' || !agreed || qr !== '' || qrRequestStartedRef.current) return
+    if (!arkmeShouldBeginWechat(auth, authView, loginMode, agreed, qr, qrRequestStartedRef.current)) return
     qrRequestStartedRef.current = true
     void beginWechat()
-  }, [agreed, auth, authenticated, loginMode, qr])
+  }, [agreed, auth, authView, loginMode, qr])
 
   const changeLoginMode = (mode: ArkmeLoginMode) => {
     setLoginMode(mode)
-    setAgreed(mode === 'wechat')
     setError('')
-    if (mode === 'phone') qrRequestStartedRef.current = false
+    if (mode !== 'wechat') qrRequestStartedRef.current = false
   }
 
   const send = async () => {
@@ -351,19 +527,26 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           {error === '' ? '正在确认 Arkme 登录状态…' : error}
         </div> : authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           mode={loginMode}
+          phoneBindingRequired={phoneBindingRequired}
           agreed={agreed}
           busy={busy}
+          submitBusy={submitBusy}
           error={error}
           phone={phone}
           smsCode={smsCode}
           smsCountdown={smsCountdown}
+          testLoginEnabled={testLoginEnabled}
+          testUserId={testUserId}
           qrDataUrl={qr}
           onModeChange={changeLoginMode}
           onAgreementChange={setAgreed}
           onPhoneChange={setPhone}
           onSmsCodeChange={setSmsCode}
+          onTestUserIdChange={setTestUserId}
           onSendCode={() => { void sendCode() }}
           onVerifyCode={() => { void verifyCode() }}
+          onTestLogin={() => { void testLogin() }}
+          onCancelBinding={() => { void cancelBinding() }}
         /></div> : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}

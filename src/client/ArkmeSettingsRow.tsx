@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { callArkme } from './api.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import type { ArkmeAuthSnapshot } from '../types.js'
@@ -25,35 +26,35 @@ const styles: Record<string, React.CSSProperties> = {
 
 export function ArkmeSettingsRow(_props: ArkmeSettingsRowProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
-  const [auth, setAuth] = useState<ArkmeAuthSnapshot>()
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const auth = authState.auth
 
   useEffect(() => {
-    let cancelled = false
-    void callArkme<ArkmeAuthSnapshot>('auth.status').then(snapshot => {
-      if (!cancelled) setAuth(snapshot)
-    }).catch(caught => {
-      if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught))
+    void arkmeAuthStore.refresh().catch(caught => {
+      setError(caught instanceof Error ? caught.message : String(caught))
     })
-    return () => { cancelled = true }
   }, [ui.authRevision])
 
   const authenticated = auth?.status === 'authenticated'
+  const bindingRequired = auth?.status === 'binding-required'
   const description = error !== ''
     ? error
-    : auth === undefined
+    : !authState.checked || auth === undefined
       ? '正在读取 Arkme 登录状态…'
       : authenticated
         ? '已登录'
-        : '当前未登录 Arkme；首次打开“默认分类”时会进入登录引导。'
+        : bindingRequired
+          ? '当前 Arkme 账号待绑定手机号，完成绑定后才会登录成功。'
+          : '当前未登录 Arkme；首次打开“默认分类”时会进入登录引导。'
 
   const logout = async () => {
     setBusy(true)
     setError('')
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.logout')
-      setAuth(snapshot)
+      arkmeAuthStore.setAuth(snapshot)
       clearLastNavigationCache()
       arkmeUi.authChanged(false)
     } catch (caught) {
