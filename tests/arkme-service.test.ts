@@ -358,8 +358,12 @@ describe('ArkmeService', () => {
         summary: { record_count: 2, latest_send_at: 99 },
         latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 99 },
       }, {
-        topic_core: { topic_uid: 'topic-child', parent_topic_uid: 'topic-1', title: '周报', update_at: 98 },
+        topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 98 },
         summary: { record_count: 1, latest_send_at: 97 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
+        rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
+        rel_kind: 1, status: 1, sibling_order: 1,
       }] } })
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
@@ -399,7 +403,26 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
 
     await expect(service.readSource(source.sourceRef)).rejects.toMatchObject({ code: 'source-ref-invalid' })
-    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the send-to-self list usable when the hierarchy endpoint is unavailable', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
+        topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) throw new Error('hierarchy unavailable')
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.listSources('send_to_self')).resolves.toMatchObject({
+      items: [{ kind: 'default_category' }, { kind: 'topic', displayName: '工作' }],
+      hasMore: false,
+    })
   })
 
   it('lists, reads, and sends private/group chat sources through the Chat owner', async () => {

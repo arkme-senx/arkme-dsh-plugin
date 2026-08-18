@@ -640,11 +640,18 @@ export class ArkmeService {
       if (options.cursor !== undefined && options.cursor.trim() !== '') {
         throw new ArkmePluginError('source-cursor-invalid', '发给自己的主题目录不支持该分页游标', false)
       }
-      const data = await this.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/topics/display/list',
-        { limit: Math.min(100, Math.max(1, limit)) },
-        session,
-      )
+      const [data, hierarchyData] = await Promise.all([
+        this.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/topics/display/list',
+          { limit: Math.min(100, Math.max(1, limit)) },
+          session,
+        ),
+        this.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/topics/hierarchy/relations/list',
+          {},
+          session,
+        ).catch(() => undefined),
+      ])
       const defaultCategory: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '默认分类'),
         kind: 'default_category',
@@ -661,6 +668,15 @@ export class ArkmeService {
         recordCount: number
       }> = []
       const seenTopicUids = new Set<string>()
+      const parentTopicUidByChild = new Map<string, string>()
+      for (const raw of listValue(hierarchyData?.relations)) {
+        const relation = objectValue(raw)
+        if (numberValue(relation.rel_kind) !== 1 || numberValue(relation.status) !== 1) continue
+        const parentTopicUid = stringValue(relation.parent_topic_uid).trim()
+        const childTopicUid = stringValue(relation.child_topic_uid).trim()
+        if (parentTopicUid === '' || childTopicUid === '' || parentTopicUid === childTopicUid) continue
+        parentTopicUidByChild.set(childTopicUid, parentTopicUid)
+      }
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
         const core = objectValue(item.topic_core)
@@ -674,7 +690,8 @@ export class ArkmeService {
         if (topicUid === '' || title === '' || seenTopicUids.has(topicUid)) continue
         seenTopicUids.add(topicUid)
         const parentTopicUid = stringValue(
-          core.parent_topic_uid ?? core.parent_uid ?? item.parent_topic_uid ?? item.parent_uid
+          parentTopicUidByChild.get(topicUid)
+          ?? core.parent_topic_uid ?? core.parent_uid ?? item.parent_topic_uid ?? item.parent_uid
           ?? parent.topic_uid ?? parent.uid,
         ).trim()
         topicDescriptors.push({
