@@ -1,0 +1,13 @@
+- insert:
+    - id: jotmo-self
+      name: '@senqisi/dsh-jotmo'
+      config:
+        environment: test
+        authBaseUrl: https://jotmo.senguo.me
+        recordBaseUrl: https://jotmo-record.senguo.me
+        routePath: /jotmo-self/api
+        requestTimeoutMs: 30000
+        maxTextLength: 20000
+        geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
+        allowNonLoopback: false
+        allowProduction: false
