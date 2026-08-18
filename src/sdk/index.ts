@@ -46,6 +46,11 @@ export type {
   ArkmeSelfSummary,
 } from '../types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+export type {
+  ArkmeOutgoingCallFailureCode,
+  ArkmeOutgoingCallMediaType,
+  ArkmeOutgoingCallToolResult,
+} from '../outgoing-call-contract.js'
 
 const DEFAULT_ROUTE = '/arkme-self/api'
 

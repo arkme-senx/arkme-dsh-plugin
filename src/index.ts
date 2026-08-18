@@ -205,4 +205,13 @@ export type {
   ArkmeWechatPhonePage,
 } from './types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+export type {
+  ArkmeOutgoingCallFailureCode,
+  ArkmeOutgoingCallIntentClaim,
+  ArkmeOutgoingCallIntentResolutionInput,
+  ArkmeOutgoingCallMediaType,
+  ArkmeOutgoingCallPrepareResult,
+  ArkmeOutgoingCallToolResult,
+} from './outgoing-call-contract.js'
+export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'

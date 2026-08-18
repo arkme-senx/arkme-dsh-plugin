@@ -39,6 +39,8 @@ function fakeService(): ArkmeCoreToolPorts & {
         search: true as const, createText: true as const, retryOutbox: true as const, revisionPolling: true as const,
         userProfile: true as const,
         imageRead: true as const,
+        sourceDirectory: true as const, sourceTimeline: true as const, sourceTextSend: true as const,
+        outgoingCall: true as const,
       },
       limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
     }),
@@ -177,6 +179,7 @@ describe('Arkme conversation tools', () => {
     expect(output).toContain('@senguoyun/dsh-arkme/sdk')
     expect(output).toContain('createArkmeSdk')
     expect(output).toContain('readImage')
+    expect(output).toContain('"outgoingCall": true')
     expect(consumerPluginContract(service.providerCapabilities())).toBe(output)
     expect(ARKME_TOOL_PROMPT).toContain('arkme_plugin_contract')
     expect(tool.description).toContain('does not read Arkme account data')
