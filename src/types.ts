@@ -239,6 +239,13 @@ export interface ArkmeSourceList {
   nextCursor?: string
 }
 
+/** Built-in UI result for creating a personal topic without exposing its server UID. */
+export interface ArkmeTopicCreateResult {
+  source: ArkmeSourceItem
+  /** Present when the topic was created but its requested parent relation could not be committed. */
+  warning?: string
+}
+
 export interface ArkmeTimelineCursor {
   sendAtMillis?: number
   itemUid?: string
@@ -649,6 +656,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'official-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'topic.create'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

@@ -243,6 +243,10 @@ export async function dispatchArkmeHostOperation(
     }
     case 'official-community.entry-state': return await service.officialCommunityEntryState()
     case 'official-community.join': return await service.joinOfficialCommunity()
+    case 'topic.create': return await service.createTopic(
+      stringParam(params, 'title'),
+      stringParam(params, 'parentSourceRef') || undefined,
+    )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {

@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type {
-  ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
+  ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList, ArkmeTopicCreateResult,
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeOfficialCommunityEntry } from './ArkmeOfficialCommunityEntry.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
-import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from './source-tree.js'
+import {
+  buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
+} from './source-tree.js'
 
 export interface ArkmeNavigationProps {
   wide?: boolean
@@ -106,6 +109,23 @@ const styles: Record<string, CSSProperties> = {
   },
   topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
   topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
+  topicHover: { background: 'var(--dsw-alias-fill-secondary, #f3f4f5)' },
+  topicCreateMask: {
+    position: 'absolute', zIndex: 3, top: 0, right: 0, width: 54, height: 38,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 8,
+    boxSizing: 'border-box', pointerEvents: 'none',
+  },
+  topicCreateIcon: {
+    width: 28, height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: colors.secondary,
+    cursor: 'pointer', font: 'inherit', fontSize: 21, lineHeight: 1, pointerEvents: 'auto',
+  },
+  topicCreateFooter: { display: 'flex', justifyContent: 'center', padding: '12px 12px 4px' },
+  topicCreateButton: {
+    minWidth: 100, height: 36, padding: '0 16px', border: 0, borderRadius: 8,
+    background: 'var(--dsw-alias-fill-tertiary, #eceeef)', color: colors.text,
+    cursor: 'pointer', font: 'inherit', fontSize: 14,
+  },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
@@ -159,6 +179,57 @@ function isSendToSelfSource(source: ArkmeSourceItem | undefined): boolean {
   return source?.kind === 'default_category' || source?.kind === 'topic'
 }
 
+export interface ArkmeTopicTreeRowProps {
+  row: ArkmeSourceTreeRow
+  selected: boolean
+  hovered: boolean
+  onHoverChange: (hovered: boolean) => void
+  onToggle: () => void
+  onSelect: () => void
+  onCreateChild: () => void
+}
+
+export function ArkmeTopicTreeRow({
+  row, selected, hovered, onHoverChange, onToggle, onSelect, onCreateChild,
+}: ArkmeTopicTreeRowProps) {
+  const source = row.source
+  const rowFill = selected
+    ? 'var(--dsw-alias-fill-tertiary, #f1f2f3)'
+    : hovered ? 'var(--dsw-alias-fill-secondary, #f3f4f5)' : colors.panel
+  return <div
+    role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
+    aria-expanded={row.hasChildren ? row.expanded : undefined}
+    style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}), ...(hovered && !selected ? styles.topicHover : {}) }}
+    onMouseEnter={() => { onHoverChange(true) }} onMouseLeave={() => { onHoverChange(false) }}
+  >
+    {Array.from({ length: row.depth }, (_, index) => <span
+      key={index} aria-hidden style={{ ...styles.topicGuide, left: 21 + index * 20 }}
+    />)}
+    {row.hasChildren ? <button
+      type="button"
+      style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 6 + row.depth * 20 }}
+      aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
+      title={row.expanded ? '收起子主题' : '展开子主题'}
+      onClick={onToggle}
+    ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
+      aria-hidden style={{ ...styles.topicLead, marginLeft: 6 + row.depth * 20 }}
+    ><span style={styles.topicDot} /></span>}
+    <button type="button" style={styles.topicSelect} onClick={onSelect}>
+      <span style={styles.topicName}>{source.displayName}</span>
+      {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
+    </button>
+    {source.kind === 'topic' && hovered && <span
+      style={{ ...styles.topicCreateMask, background: `linear-gradient(90deg, transparent 0%, ${rowFill} 42%)` }}
+    >
+      <button
+        type="button" style={styles.topicCreateIcon}
+        aria-label={`在${source.displayName}下创建子主题`} title="创建子主题"
+        onClick={event => { event.stopPropagation(); onCreateChild() }}
+      >＋</button>
+    </span>}
+  </div>
+}
+
 export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
@@ -168,12 +239,17 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const directoryRequestAbortRef = useRef<AbortController>()
+  const topicCreateRequestRef = useRef(false)
   const auth = authState.auth
   const [directory, setDirectory] = useState<ArkmeSourceDirectory>(initialCache?.directory ?? 'send_to_self')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     initialCache?.sources[initialCache.directory] ?? [],
   )
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
+  const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
+  const [topicCreateParent, setTopicCreateParent] = useState<ArkmeSourceItem | null>()
+  const [topicCreateError, setTopicCreateError] = useState('')
+  const [topicCreateSubmitting, setTopicCreateSubmitting] = useState(false)
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
   const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
@@ -228,7 +304,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     setSources(cached.sources[cached.directory] ?? [])
   }, [])
 
-  const loadDirectory = useCallback(async (next: ArkmeSourceDirectory) => {
+  const loadDirectory = useCallback(async (
+    next: ArkmeSourceDirectory,
+    ensuredSource?: ArkmeSourceItem,
+  ) => {
     const controller = new AbortController()
     directoryRequestAbortRef.current?.abort()
     directoryRequestAbortRef.current = controller
@@ -248,6 +327,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         cursor = page.nextCursor
       }
       if (controller.signal.aborted) return
+      if (next === 'send_to_self' && ensuredSource !== undefined) {
+        const ensuredIndex = loaded.findIndex(item => item.sourceRef === ensuredSource.sourceRef)
+        if (ensuredIndex === -1) loaded.push(ensuredSource)
+        else loaded[ensuredIndex] = { ...loaded[ensuredIndex], ...ensuredSource }
+      }
       setSources(loaded)
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'recordings' ? undefined : uiSnapshot.selectedSource
@@ -342,6 +426,49 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       return next
     })
   }
+  const openTopicCreate = (parent: ArkmeSourceItem | null) => {
+    setTopicCreateParent(parent)
+    setTopicCreateError('')
+    setTopicCreateSubmitting(false)
+  }
+  const cancelTopicCreate = () => {
+    if (topicCreateRequestRef.current) return
+    setTopicCreateParent(undefined)
+    setTopicCreateError('')
+  }
+  const submitTopicCreate = async (title: string) => {
+    if (topicCreateParent === undefined || topicCreateRequestRef.current) return
+    const parent = topicCreateParent
+    topicCreateRequestRef.current = true
+    setTopicCreateSubmitting(true)
+    setTopicCreateError('')
+    try {
+      const result = await callArkme<ArkmeTopicCreateResult>('topic.create', {
+        title,
+        ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
+      })
+      const nextSources = [...sources.filter(item => item.sourceRef !== result.source.sourceRef), result.source]
+      setSources(nextSources)
+      persistCache({ directory: 'send_to_self', sources: { send_to_self: nextSources } })
+      if (result.source.parentSourceRef !== undefined) {
+        setCollapsedSourceRefs(current => {
+          if (!current.has(result.source.parentSourceRef!)) return current
+          const next = new Set(current)
+          next.delete(result.source.parentSourceRef!)
+          return next
+        })
+      }
+      setHoveredSourceRef(undefined)
+      setTopicCreateParent(undefined)
+      await loadDirectory('send_to_self', result.source)
+      if (result.warning !== undefined) setError(result.warning)
+    } catch (caught) {
+      setTopicCreateError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      topicCreateRequestRef.current = false
+      setTopicCreateSubmitting(false)
+    }
+  }
   const joinedOfficialCommunity = async (source: ArkmeSourceItem): Promise<void> => {
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
     const currentSources = sharedSources.length > 0 ? sharedSources : sources
@@ -420,31 +547,27 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       {directory === 'send_to_self' && visibleSourceRows.map(row => {
         const source = row.source
         const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
-        return <div
-          key={source.sourceRef} role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
-          aria-expanded={row.hasChildren ? row.expanded : undefined}
-          style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }}
-        >
-          {Array.from({ length: row.depth }, (_, index) => <span
-            key={index} aria-hidden style={{ ...styles.topicGuide, left: 21 + index * 20 }}
-          />)}
-          {row.hasChildren ? <button
-            type="button"
-            style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 6 + row.depth * 20 }}
-            aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
-            title={row.expanded ? '收起子主题' : '展开子主题'}
-            onClick={() => { toggleSource(source.sourceRef) }}
-          ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
-            aria-hidden style={{ ...styles.topicLead, marginLeft: 6 + row.depth * 20 }}
-          ><span style={styles.topicDot} /></span>}
-          <button type="button" style={styles.topicSelect} onClick={() => { selectSource(source) }}>
-            <span style={styles.topicName}>{source.displayName}</span>
-            {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
-          </button>
-        </div>
+        return <ArkmeTopicTreeRow
+          key={source.sourceRef} row={row} selected={selected}
+          hovered={hoveredSourceRef === source.sourceRef}
+          onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
+          onToggle={() => { toggleSource(source.sourceRef) }}
+          onSelect={() => { selectSource(source) }}
+          onCreateChild={() => { openTopicCreate(source) }}
+        />
       })}
+
+      {directory === 'send_to_self' && authenticated && <div style={styles.topicCreateFooter}>
+        <button type="button" style={styles.topicCreateButton} onClick={() => { openTopicCreate(null) }}>新建主题</button>
+      </div>}
 
       {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
     </div>}
+    {topicCreateParent !== undefined && <ArkmeTopicCreateDialog
+      key={topicCreateParent?.sourceRef ?? 'root'}
+      mode={topicCreateParent === null ? 'topic' : 'child'}
+      submitting={topicCreateSubmitting} error={topicCreateError}
+      onCancel={cancelTopicCreate} onConfirm={title => { void submitTopicCreate(title) }}
+    />}
   </section>
 }
