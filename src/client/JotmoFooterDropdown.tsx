@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type CSSProperties } from 'react'
+import { useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { JotmoFooterAction, type JotmoFooterActionProps } from './JotmoFooterAction.js'
 import { JotmoNavigation } from './JotmoVirtualWorkspace.js'
 import { jotmoUi } from './ui-controller.js'
@@ -15,9 +15,15 @@ const styles: Record<string, CSSProperties> = {
 /** Footer action plus an inline Jiwo directory that participates in sidebar layout. */
 export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
+  const hasOpened = useRef(false)
+  if (ui.open) hasOpened.current = true
   return <div style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
     <JotmoFooterAction {...props} expanded={ui.open} />
-    {props.wide && ui.open && <div id="jotmo-footer-directory" role="region" aria-label="即我下拉列表" style={styles.panel}>
+    {hasOpened.current && <div
+      id="jotmo-footer-directory" role="region" aria-label="即我下拉列表"
+      hidden={!props.wide || !ui.open}
+      style={{ ...styles.panel, display: props.wide && ui.open ? 'block' : 'none' }}
+    >
       <JotmoNavigation />
     </div>}
   </div>

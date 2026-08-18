@@ -197,6 +197,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<JotmoNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
+  const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const [auth, setAuth] = useState<JotmoAuthSnapshot>()
   const [directory, setDirectory] = useState<JotmoSourceDirectory>(initialCache?.directory ?? 'send_to_self')
   const [sources, setSources] = useState<JotmoSourceItem[]>(
@@ -234,12 +235,16 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
       const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.status')
       setAuth(snapshot)
       if (snapshot.status !== 'authenticated' || snapshot.userId === undefined) {
+        if (avatarCacheUserIdRef.current !== undefined) avatarDataUrlCache.clear()
+        avatarCacheUserIdRef.current = undefined
         authenticatedUserIdRef.current = undefined
         cacheRef.current = undefined
         clearLastNavigationCache()
         setDirectory('send_to_self'); setSources([])
         return
       }
+      if (avatarCacheUserIdRef.current !== snapshot.userId) avatarDataUrlCache.clear()
+      avatarCacheUserIdRef.current = snapshot.userId
       authenticatedUserIdRef.current = snapshot.userId
       const cached = readNavigationCache(snapshot.userId) ?? {
         version: 1, userId: snapshot.userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0,
@@ -251,6 +256,8 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
       const selected = cachedSelectedSource(cached)
       if (selected !== undefined) jotmoUi.selectSource(selected)
     } catch {
+      if (avatarCacheUserIdRef.current !== undefined) avatarDataUrlCache.clear()
+      avatarCacheUserIdRef.current = undefined
       authenticatedUserIdRef.current = undefined
       cacheRef.current = undefined
       clearLastNavigationCache()
@@ -288,7 +295,6 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   }, [persistCache])
 
   useEffect(() => {
-    avatarDataUrlCache.clear()
     void refreshAuth()
   }, [refreshAuth, ui.authRevision])
   useEffect(() => {
