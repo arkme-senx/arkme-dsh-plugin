@@ -192,6 +192,8 @@ async function dispatch(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'official-community.entry-state': return await service.officialCommunityEntryState()
+    case 'official-community.join': return await service.joinOfficialCommunity()
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {

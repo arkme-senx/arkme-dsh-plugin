@@ -1,11 +1,11 @@
-import {
-  useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
-} from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type {
-  ArkmeAuthSnapshot, ArkmeImagePayload, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
+  ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
+import { ArkmeOfficialCommunityEntry } from './ArkmeOfficialCommunityEntry.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
@@ -70,8 +70,6 @@ const styles: Record<string, CSSProperties> = {
     width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
   },
-  avatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  avatarGrid: { width: '100%', height: '100%', display: 'grid', gap: 1, padding: 2, boxSizing: 'border-box', background: '#eef0f1' },
   selfAvatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', borderRadius: 999,
     background: '#f0f1f2', border: '1px solid #e1e3e5', boxSizing: 'border-box',
@@ -105,69 +103,10 @@ const styles: Record<string, CSSProperties> = {
   },
 }
 
-const avatarDataUrlCache = new Map<string, Promise<string>>()
-
-export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
-  const cached = avatarDataUrlCache.get(imageRef)
-  if (cached !== undefined) return cached
-  const pending = callArkme<ArkmeImagePayload>('image.read', { imageRef })
-    .then(image => `data:${image.mediaType};base64,${image.dataBase64}`)
-    .catch(error => {
-      avatarDataUrlCache.delete(imageRef)
-      throw error
-    })
-  avatarDataUrlCache.set(imageRef, pending)
-  return pending
-}
-
 function SelfAvatar() {
   return <span style={styles.selfAvatar} aria-hidden>
     <span style={styles.selfBubbleBack} />
     <span style={styles.selfBubbleFront} />
-  </span>
-}
-
-function SourceAvatar({ source }: { source: ArkmeSourceItem }) {
-  const container = useRef<HTMLSpanElement>(null)
-  const refs = useMemo(
-    () => (source.avatarRefs ?? (source.avatarRef === undefined ? [] : [source.avatarRef])).slice(0, 4),
-    [source.avatarRef, source.avatarRefs],
-  )
-  const refsKey = refs.join('|')
-  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
-  const [urls, setUrls] = useState<string[]>([])
-
-  useEffect(() => {
-    const target = container.current
-    if (target === null || visible) return
-    const observer = new IntersectionObserver(entries => {
-      if (entries[0]?.isIntersecting !== true) return
-      setVisible(true); observer.disconnect()
-    }, { rootMargin: '160px 0px' })
-    observer.observe(target)
-    return () => { observer.disconnect() }
-  }, [visible])
-
-  useEffect(() => {
-    let active = true
-    setUrls([])
-    if (!visible || refs.length === 0) return () => { active = false }
-    void Promise.all(refs.map(async ref => {
-      try { return await loadArkmeImageDataUrl(ref) }
-      catch { return '' }
-    })).then(values => { if (active) setUrls(values.filter(value => value !== '')) })
-    return () => { active = false }
-  }, [refsKey, visible])
-
-  const count = urls.length
-  const columns = count <= 1 ? 1 : 2
-  const rows = count <= 2 ? 1 : 2
-  return <span ref={container} style={styles.avatar} aria-hidden>
-    {count === 0 ? <ArkmeMark size={44} /> : count === 1
-      ? <img src={urls[0]} alt="" draggable={false} style={styles.avatarImage} />
-      : <span style={{ ...styles.avatarGrid, gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
-        {urls.map((url, index) => <img key={`${url.slice(-20)}-${String(index)}`} src={url} alt="" draggable={false} style={styles.avatarImage} />)}
-      </span>}
   </span>
 }
 
@@ -233,7 +172,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.status')
       setAuth(snapshot)
       if (snapshot.status !== 'authenticated' || snapshot.userId === undefined) {
-        if (avatarCacheUserIdRef.current !== undefined) avatarDataUrlCache.clear()
+        if (avatarCacheUserIdRef.current !== undefined) clearArkmeAvatarCache()
         avatarCacheUserIdRef.current = undefined
         authenticatedUserIdRef.current = undefined
         cacheRef.current = undefined
@@ -241,7 +180,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         setDirectory('send_to_self'); setSources([])
         return
       }
-      if (avatarCacheUserIdRef.current !== snapshot.userId) avatarDataUrlCache.clear()
+      if (avatarCacheUserIdRef.current !== snapshot.userId) clearArkmeAvatarCache()
       avatarCacheUserIdRef.current = snapshot.userId
       authenticatedUserIdRef.current = snapshot.userId
       const cached = readNavigationCache(snapshot.userId) ?? {
@@ -252,7 +191,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       setDirectory(cached.directory)
       setSources(cached.sources[cached.directory] ?? [])
     } catch {
-      if (avatarCacheUserIdRef.current !== undefined) avatarDataUrlCache.clear()
+      if (avatarCacheUserIdRef.current !== undefined) clearArkmeAvatarCache()
       avatarCacheUserIdRef.current = undefined
       authenticatedUserIdRef.current = undefined
       cacheRef.current = undefined
@@ -344,6 +283,17 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
   }
+  const joinedOfficialCommunity = async (source: ArkmeSourceItem): Promise<void> => {
+    const sharedSources = arkmeChatDirectory.getSnapshot().sources
+    const currentSources = sharedSources.length > 0 ? sharedSources : sources
+    const nextSources = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
+    setSources(nextSources)
+    arkmeChatDirectory.publish(nextSources)
+    arkmeUi.selectSource(source)
+    persistCache({ directory: 'root', sources: { root: nextSources }, selectedSourceRef: source.sourceRef })
+    onActivateSurface?.()
+    await loadDirectory('root')
+  }
 
   if (!wide) {
     return <div style={styles.rail}><button
@@ -366,6 +316,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
+        {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
         <button
           type="button" role="treeitem" aria-selected={isSendToSelfSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
@@ -386,7 +337,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
           >
-            <SourceAvatar source={source} />
+            <ArkmeSourceAvatar
+              {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
+              {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
+            />
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
                 <span style={styles.chatName}>{source.displayName}</span>

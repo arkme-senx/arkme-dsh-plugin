@@ -9,9 +9,9 @@ import type {
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
+import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
-import { loadArkmeImageDataUrl } from './ArkmeVirtualWorkspace.js'
 import { arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 

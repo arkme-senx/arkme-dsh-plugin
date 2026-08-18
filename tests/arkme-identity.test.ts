@@ -52,6 +52,16 @@ function withoutRecipientIdCompatibilityAliases(file: string, content: string): 
     .replaceAll('即我id', '')
 }
 
+function withoutOfficialCommunityProductCopy(file: string, content: string): string {
+  if (file === join(root, 'src/client/ArkmeOfficialCommunityEntry.tsx')) {
+    return content.replaceAll('即我社区', '').replaceAll('即我官方群', '')
+  }
+  if (file === join(root, 'src/arkme-service.ts')) {
+    return content.replaceAll('即我官方群', '')
+  }
+  return content
+}
+
 describe('Arkme plugin identity', () => {
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
@@ -63,7 +73,10 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutRecipientIdCompatibilityAliases(file, readFileSync(file, 'utf8'))
+      const source = withoutOfficialCommunityProductCopy(
+        file,
+        withoutRecipientIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+      )
       const content = withoutInfrastructureNames(source)
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
     })

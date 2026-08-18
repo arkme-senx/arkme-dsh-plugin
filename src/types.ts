@@ -526,8 +526,12 @@ export type ArkmePluginOperation =
   | 'source.mark-read'
   | 'source.send-text'
 
+export type ArkmeHostOperation = ArkmePluginOperation
+  | 'official-community.entry-state'
+  | 'official-community.join'
+
 export interface ArkmePluginRequest {
-  operation: ArkmePluginOperation
+  operation: ArkmeHostOperation
   params?: Record<string, unknown>
 }
 
