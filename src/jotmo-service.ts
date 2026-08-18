@@ -572,8 +572,10 @@ export class JotmoService {
         limit,
       },
       session,
+      options.signal,
     )
     const items: JotmoTimelineItem[] = []
+    const senderUserIdByIndex = new Map<number, number>()
     for (const raw of listValue(data.items)) {
       const item = objectValue(raw)
       const relation = objectValue(item.relation)
@@ -581,16 +583,29 @@ export class JotmoService {
       const payload = objectValue(record.payload)
       const uid = stringValue(relation.record_uid ?? payload.record_uid).trim()
       if (uid === '') continue
-      items.push({
+      const senderUserId = numberValue(relation.sender_user_id)
+      const itemIndex = items.push({
         itemUid: uid,
         senderName: stringValue(relation.display_name_snapshot).trim() || '即我用户',
-        isMe: numberValue(relation.sender_user_id) === session.userId,
+        isMe: senderUserId === session.userId,
         sendAtMillis: numberValue(relation.attach_at ?? payload.send_at),
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
         status: numberValue(record.status),
         sequence: numberValue(relation.seq),
-      })
+      }) - 1
+      if (Number.isSafeInteger(senderUserId) && senderUserId > 0) senderUserIdByIndex.set(itemIndex, senderUserId)
+    }
+    try {
+      const profiles = await this.publicProfilesByUserIds(
+        [...new Set(senderUserIdByIndex.values())], session, options.signal,
+      )
+      for (const [index, senderUserId] of senderUserIdByIndex) {
+        if (!profiles.has(senderUserId) || items[index] === undefined) continue
+        items[index].avatarRef = await this.sealProfileImageRef(session.userId, senderUserId)
+      }
+    } catch {
+      // Sender avatars are presentation decoration; timeline content remains readable without them.
     }
     const beforeSequence = numberValue(data.next_before_seq)
     return {

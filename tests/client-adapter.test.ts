@@ -23,15 +23,22 @@ describe('official DSH client adapter', () => {
       'settings.general.item',
     ])
     const footer = registered.find(item => item.name === 'sidebar.footer.action')!
-    const face = footer.inject?.() as { toggle(sessionId: string | undefined): void }
+    const face = footer.inject?.() as {
+      toggle(sessionId: string | undefined): void
+      activate(sessionId: string | undefined): void
+    }
     face.toggle('session-1')
     const conversation = registered.find(item => item.name === 'conversation')!
     expect(conversation.priority).toBe(-10)
     expect(conversation.inject?.()).toMatchObject({ openedFromSession: 'session-1' })
-    face.toggle('session-1')
+    const surface = conversation.inject?.() as { close(): void }
+    surface.close()
     expect(conversation.dispose).toHaveBeenCalledOnce()
-    face.toggle('session-2')
+    face.activate('session-2')
     expect(registered.filter(item => item.name === 'conversation')).toHaveLength(2)
+    const secondConversation = registered.filter(item => item.name === 'conversation')[1]!
+    face.toggle('session-2')
+    expect(secondConversation.dispose).toHaveBeenCalledOnce()
     expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
     expect(registered.map(item => item.name)).not.toContain('main.surface')
     expect(registered.map(item => item.name)).not.toContain('shell.overlay')

@@ -16,23 +16,33 @@ export const inject = ['slots']
 export function apply(ctx: ClientContext): void {
   let disposeJotmoConversation: (() => void) | undefined
   let stopWatchingNewSession: (() => void) | undefined
+  const closeSurface = () => {
+    const dispose = disposeJotmoConversation
+    disposeJotmoConversation = undefined
+    dispose?.()
+    jotmoUi.deactivateSurface()
+  }
   const closeJotmo = () => {
     const stop = stopWatchingNewSession
     stopWatchingNewSession = undefined
     stop?.()
-    const dispose = disposeJotmoConversation
-    disposeJotmoConversation = undefined
-    dispose?.()
+    closeSurface()
     jotmoUi.close()
   }
-  const openJotmo = (openedFromSession: SessionId | undefined) => {
-    if (disposeJotmoConversation !== undefined) return
+  const activateSurface = (openedFromSession: SessionId | undefined) => {
+    if (disposeJotmoConversation !== undefined) {
+      jotmoUi.activateSurface()
+      return
+    }
     disposeJotmoConversation = ctx.slots.register({
       name: 'conversation',
       priority: -10,
-      inject: () => ({ close: closeJotmo, openedFromSession }),
+      inject: () => ({ close: closeSurface, openedFromSession }),
     }, JotmoConversationSurface)
-    stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
+    jotmoUi.activateSurface()
+  }
+  const openJotmo = (openedFromSession: SessionId | undefined) => {
+    if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
     const retained = jotmoUi.getSnapshot().selectedSource
     const cached = readLastNavigationCache()
     const restored = cached === undefined ? undefined : cachedSelectedSource(cached)
@@ -40,10 +50,11 @@ export function apply(ctx: ClientContext): void {
     if (retained !== undefined) jotmoUi.open()
     else if (restored !== undefined) jotmoUi.selectSource(restored)
     else jotmoUi.focusSendToSelf()
+    activateSurface(openedFromSession)
   }
   const toggleJotmo = (openedFromSession: SessionId | undefined) => {
-    if (disposeJotmoConversation === undefined) openJotmo(openedFromSession)
-    else closeJotmo()
+    if (jotmoUi.getSnapshot().open) closeJotmo()
+    else openJotmo(openedFromSession)
   }
 
   ctx.effect(() => () => { closeJotmo() }, 'dsh-jotmo: restore native conversation on dispose')
@@ -53,7 +64,7 @@ export function apply(ctx: ClientContext): void {
     id: 'jotmo',
     order: 70,
     label: '即我',
-    inject: () => ({ toggle: toggleJotmo }),
+    inject: () => ({ toggle: toggleJotmo, activate: activateSurface }),
   }, JotmoFooterDropdown))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({

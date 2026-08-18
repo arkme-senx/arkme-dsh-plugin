@@ -185,6 +185,8 @@ export interface JotmoTimelineCursor {
 export interface JotmoTimelineItem {
   itemUid: string
   senderName: string
+  /** Opaque Provider image reference for the concrete message sender. */
+  avatarRef?: string
   isMe: boolean
   sendAtMillis: number
   title: string

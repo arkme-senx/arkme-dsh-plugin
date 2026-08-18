@@ -15,6 +15,7 @@ const styles: Record<string, CSSProperties> = {
 /** Footer action plus an inline Jiwo directory that participates in sidebar layout. */
 export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
+  const currentSession = props.useSessions(state => state.current)
   const hasOpened = useRef(false)
   if (ui.open) hasOpened.current = true
   return <div style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
@@ -24,7 +25,7 @@ export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
       hidden={!props.wide || !ui.open}
       style={{ ...styles.panel, display: props.wide && ui.open ? 'block' : 'none' }}
     >
-      <JotmoNavigation />
+      <JotmoNavigation onActivateSurface={() => { props.activate(currentSession) }} />
     </div>}
   </div>
 }

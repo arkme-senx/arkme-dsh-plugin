@@ -10,6 +10,7 @@ import type {
 import { callJotmo, JotmoClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { JotmoMark } from './JotmoFooterAction.js'
+import { loadJotmoImageDataUrl } from './JotmoVirtualWorkspace.js'
 import { jotmoUi } from './ui-controller.js'
 
 export interface JotmoSurfaceProps {}
@@ -33,14 +34,22 @@ const styles: Record<string, CSSProperties> = {
   title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
   error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
-  empty: { padding: '56px 16px', textAlign: 'center', color: colors.secondary },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
   date: { alignSelf: 'center', padding: '4px 9px', borderRadius: 999, color: '#9097a1', fontSize: 12, background: '#f6f7f9' },
-  row: { display: 'flex', flexDirection: 'column', gap: 5 },
-  rowMe: { alignItems: 'flex-end' },
-  rowOther: { alignItems: 'flex-start' },
+  row: { width: '100%', display: 'flex' },
+  rowMe: { justifyContent: 'flex-end' },
+  rowOther: { justifyContent: 'flex-start' },
+  messageLine: { maxWidth: '88%', display: 'flex', alignItems: 'flex-start', gap: 9 },
+  messageLineMe: { flexDirection: 'row-reverse' },
+  messageBody: { minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 },
+  messageBodyMe: { alignItems: 'flex-end' },
+  messageAvatar: {
+    width: 32, height: 32, flex: 'none', overflow: 'hidden', borderRadius: 999,
+    display: 'grid', placeItems: 'center', background: '#eceeef', color: '#737982', fontSize: 11, fontWeight: 600,
+  },
+  messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },
-  bubble: { maxWidth: 'min(560px,82%)', padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box' },
+  bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box' },
   bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)' },
   bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
@@ -100,6 +109,28 @@ function mergeItems(current: JotmoTimelineItem[], incoming: JotmoTimelineItem[])
   const map = new Map(current.map(item => [item.itemUid, item]))
   for (const item of incoming) map.set(item.itemUid, item)
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
+}
+
+function avatarInitials(item: JotmoTimelineItem): string {
+  if (item.isMe) return '我'
+  const name = item.senderName.trim()
+  return name === '' ? '即' : [...name].slice(-2).join('')
+}
+
+function MessageAvatar({ item }: { item: JotmoTimelineItem }) {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    let active = true
+    setSrc('')
+    if (item.avatarRef === undefined) return () => { active = false }
+    void loadJotmoImageDataUrl(item.avatarRef)
+      .then(value => { if (active) setSrc(value) })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [item.avatarRef])
+  return <span style={styles.messageAvatar} aria-hidden>
+    {src === '' ? avatarInitials(item) : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
+  </span>
 }
 
 export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
@@ -275,21 +306,26 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
               <a href="https://www.jiwo.cc/article/privacy-aggrement-v1.html" target="_blank" rel="noreferrer">《隐私政策》</a>
             </label>
           </div></div></div>
-        ) : source === undefined ? <div style={styles.body}><div style={styles.empty}>请从左侧选择发给自己、私聊或群聊</div></div> : <>
+        ) : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {displayItems.length === 0 ? <div style={styles.empty}>{busy ? '正在读取…' : '暂无内容'}</div> : <ul style={styles.records}>
+            {displayItems.length > 0 && <ul style={styles.records}>
               {displayItems.map((item, index) => {
                 const previous = index === 0 ? undefined : displayItems[index - 1]
                 const startsDay = previous === undefined || dayKey(previous.sendAtMillis) !== dayKey(item.sendAtMillis)
                 return <Fragment key={item.itemUid}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
                   <li style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
-                    {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
-                    <div style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}><p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p></div>
-                    <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
+                    <div style={{ ...styles.messageLine, ...(item.isMe ? styles.messageLineMe : {}) }}>
+                      <MessageAvatar item={item} />
+                      <div style={{ ...styles.messageBody, ...(item.isMe ? styles.messageBodyMe : {}) }}>
+                        {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
+                        <div style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}><p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p></div>
+                        <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
+                      </div>
+                    </div>
                   </li>
                 </Fragment>
               })}

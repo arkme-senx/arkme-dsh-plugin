@@ -2,7 +2,10 @@ import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
-export interface JotmoFooterActionInjected { toggle(openedFromSession: SessionId | undefined): void }
+export interface JotmoFooterActionInjected {
+  toggle(openedFromSession: SessionId | undefined): void
+  activate(openedFromSession: SessionId | undefined): void
+}
 export type JotmoFooterActionProps = PropsRuntime<'sidebar.footer.action'> & InjectFace<JotmoFooterActionInjected> & {
   expanded?: boolean
 }

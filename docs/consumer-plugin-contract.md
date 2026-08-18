@@ -37,6 +37,8 @@ The SDK communicates only with the same-origin Provider route. Consumers must no
 
 `listSources()` is the only directory entrypoint. `root` returns private/group chats; `send_to_self` returns the default category and topics. Every returned `sourceRef` is opaque, account-bound and integrity-protected. Consumers pass it unchanged to `readSource()` or `sendText()` and must never parse, persist across accounts, or construct one themselves.
 
+Chat items returned by `readSource()` may include an opaque sender `avatarRef`. Consumers resolve it with `readImage()` and must not infer or construct avatar URLs from sender identity.
+
 The Provider exposes one facade while preserving owner boundaries: default-category/topic reads and sends go to Record, while private/group reads and sends go to Chat. Consumers must not treat these business objects as interchangeable merely because they share the same UI shell.
 
 ## Host service

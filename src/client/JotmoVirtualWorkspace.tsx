@@ -15,6 +15,7 @@ import { jotmoUi } from './ui-controller.js'
 export interface JotmoNavigationProps {
   wide?: boolean
   onClose?: () => void
+  onActivateSurface?: () => void
 }
 
 const colors = {
@@ -105,7 +106,7 @@ const styles: Record<string, CSSProperties> = {
 
 const avatarDataUrlCache = new Map<string, Promise<string>>()
 
-function avatarDataUrl(imageRef: string): Promise<string> {
+export function loadJotmoImageDataUrl(imageRef: string): Promise<string> {
   const cached = avatarDataUrlCache.get(imageRef)
   if (cached !== undefined) return cached
   const pending = callJotmo<JotmoImagePayload>('image.read', { imageRef })
@@ -156,7 +157,7 @@ function SourceAvatar({ source }: { source: JotmoSourceItem }) {
     setUrls([])
     if (!visible || refs.length === 0) return () => { active = false }
     void Promise.all(refs.map(async ref => {
-      try { return await avatarDataUrl(ref) }
+      try { return await loadJotmoImageDataUrl(ref) }
       catch { return '' }
     })).then(values => { if (active) setUrls(values.filter(value => value !== '')) })
     return () => { active = false }
@@ -192,7 +193,7 @@ function isSendToSelfSource(source: JotmoSourceItem | undefined): boolean {
   return source?.kind === 'default_category' || source?.kind === 'topic'
 }
 
-export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) {
+export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: JotmoNavigationProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<JotmoNavigationCache | undefined>(initialCache)
@@ -203,7 +204,6 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   const [sources, setSources] = useState<JotmoSourceItem[]>(
     initialCache?.sources[initialCache.directory] ?? [],
   )
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
 
@@ -267,7 +267,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   }, [])
 
   const loadDirectory = useCallback(async (next: JotmoSourceDirectory) => {
-    setLoading(true); setError('')
+    setError('')
     try {
       const loaded: JotmoSourceItem[] = []
       let cursor: string | undefined
@@ -291,7 +291,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
       })
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
-    } finally { setLoading(false) }
+    }
   }, [persistCache])
 
   useEffect(() => {
@@ -307,10 +307,11 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
     if (defaultCategory !== undefined && !isSendToSelfSource(ui.selectedSource)) {
       jotmoUi.selectSource(defaultCategory)
       persistCache({ directory, selectedSourceRef: defaultCategory.sourceRef })
+      onActivateSurface?.()
     }
-  }, [authenticated, directory, persistCache, sources, ui.selectedSource])
+  }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
 
-  const showLogin = () => { jotmoUi.showLogin() }
+  const showLogin = () => { jotmoUi.showLogin(); onActivateSurface?.() }
   const changeDirectory = (next: JotmoSourceDirectory) => {
     setDirectory(next)
     setSources(cacheRef.current?.sources[next] ?? [])
@@ -319,6 +320,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   const selectSource = (source: JotmoSourceItem) => {
     jotmoUi.selectSource(source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
+    onActivateSurface?.()
   }
 
   if (!wide) {
@@ -345,7 +347,10 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
         <button
           type="button" role="treeitem" aria-selected={isSendToSelfSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
-          onClick={() => { changeDirectory('send_to_self') }}
+          onClick={() => {
+            changeDirectory('send_to_self')
+            if (isSendToSelfSource(ui.selectedSource)) onActivateSurface?.()
+          }}
         >
           <SelfAvatar />
           <span style={styles.chatContent}>
@@ -386,8 +391,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
         </button>
       })}
 
-      {loading && sources.length === 0 && <div style={styles.status}>正在读取…</div>}
-      {!loading && error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
+      {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
     </div>}
   </section>
 }
