@@ -2,91 +2,90 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { ArkmeFooterAction } from './ArkmeFooterAction.js'
-import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
-import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
-import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
-import { arkmeUi } from './ui-controller.js'
+import { JotmoConversationSurface } from './JotmoConversationSurface.js'
+import { JotmoFooterAction } from './JotmoFooterAction.js'
+import { JotmoFooterDropdown } from './JotmoFooterDropdown.js'
+import { JotmoSettingsRow } from './JotmoSettingsRow.js'
+import { watchOfficialNewSession } from './new-session-activation.js'
+import { cachedSelectedSource, readLastNavigationCache } from './navigation-cache.js'
+import { jotmoUi } from './ui-controller.js'
 
 export const inject = ['slots']
 
-/** Register Arkme only through official additive DSH slots. */
+/** Register Jiwo only through official additive DSH slots. */
 export function apply(ctx: ClientContext): void {
-  let openedFromSession: SessionId | undefined
-  let stopWatchingConversationSelection: (() => void) | undefined
+  let disposeJotmoConversation: (() => void) | undefined
   let stopWatchingNewSession: (() => void) | undefined
   const closeSurface = () => {
-    openedFromSession = undefined
-    arkmeUi.deactivateSurface()
+    const dispose = disposeJotmoConversation
+    disposeJotmoConversation = undefined
+    dispose?.()
+    jotmoUi.deactivateSurface()
   }
-  const closeArkme = () => {
-    const stopConversationSelection = stopWatchingConversationSelection
-    stopWatchingConversationSelection = undefined
-    stopConversationSelection?.()
+  const closeJotmo = () => {
     const stop = stopWatchingNewSession
     stopWatchingNewSession = undefined
     stop?.()
     closeSurface()
-    arkmeUi.close()
+    jotmoUi.close()
   }
-  const activateSurface = (session: SessionId | undefined) => {
-    openedFromSession = session
-    arkmeUi.activateSurface()
+  const ensureSurface = (openedFromSession: SessionId | undefined) => {
+    if (disposeJotmoConversation !== undefined) return
+    disposeJotmoConversation = ctx.slots.register({
+      name: 'conversation',
+      priority: -10,
+      inject: () => ({ close: closeSurface, openedFromSession }),
+    }, JotmoConversationSurface)
   }
-  const watchOfficialNavigation = () => {
-    if (stopWatchingConversationSelection === undefined) {
-      stopWatchingConversationSelection = watchOfficialConversationSelection(closeSurface)
-    }
-    if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeArkme)
+  const activateSurface = (openedFromSession: SessionId | undefined) => {
+    ensureSurface(openedFromSession)
+    jotmoUi.activateSurface()
   }
-  const openArkme = (session: SessionId | undefined) => {
-    watchOfficialNavigation()
-    const retained = arkmeUi.getSnapshot().selectedSource
-    if (retained !== undefined) arkmeUi.open()
-    else arkmeUi.focusSendToSelf()
-    activateSurface(session)
+  const openJotmo = (openedFromSession: SessionId | undefined) => {
+    if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
+    const retained = jotmoUi.getSnapshot().selectedSource
+    const cached = readLastNavigationCache()
+    const restored = cached === undefined ? undefined : cachedSelectedSource(cached)
+      ?? cached.sources.send_to_self?.find(source => source.kind === 'default_category')
+    if (retained !== undefined) jotmoUi.open()
+    else if (restored !== undefined) jotmoUi.selectSource(restored)
+    else jotmoUi.focusSendToSelf()
+    activateSurface(openedFromSession)
   }
-  const openLogin = (session: SessionId | undefined) => {
-    watchOfficialNavigation()
-    openedFromSession = session
-    arkmeUi.showLoginSurface()
+  const openLogin = (openedFromSession: SessionId | undefined) => {
+    if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
+    ensureSurface(openedFromSession)
+    jotmoUi.showLoginSurface()
   }
-  const toggleArkme = (openedFromSession: SessionId | undefined, authenticated: boolean) => {
-    if (arkmeUi.getSnapshot().open) { closeArkme(); return }
-    if (authenticated) openArkme(openedFromSession)
+  const toggleJotmo = (openedFromSession: SessionId | undefined, authenticated: boolean) => {
+    if (jotmoUi.getSnapshot().open) { closeJotmo(); return }
+    if (authenticated) openJotmo(openedFromSession)
     else openLogin(openedFromSession)
   }
 
-  ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
+  ctx.effect(() => () => { closeJotmo() }, 'dsh-jotmo: restore native conversation on dispose')
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
-    id: 'arkme',
+    id: 'jotmo',
     order: 70,
-    label: 'Arkme',
-    inject: () => ({
-      toggle: toggleArkme,
-      activate: activateSurface,
-      closeSurface,
-      surfaceSession: () => openedFromSession,
-    }),
-  }, ArkmeFooterDropdown))
+    label: '即我',
+    inject: () => ({ toggle: toggleJotmo, activate: activateSurface }),
+  }, JotmoFooterDropdown))
 
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
-    id: 'arkme-account',
+    id: 'jotmo-account',
     order: 80,
-    label: 'Arkme 账号',
-  }, ArkmeSettingsRow))
+    label: '即我账号',
+  }, JotmoSettingsRow))
 }
 
-export { ArkmeFooterAction } from './ArkmeFooterAction.js'
-export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
-export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
-export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
-export { ArkmeSurface } from './ArkmeSidebar.js'
-export { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
-export {
-  isOfficialConversationTarget, isOfficialNewSessionTarget,
-  watchOfficialConversationSelection, watchOfficialNewSession,
-} from './new-session-activation.js'
+export { JotmoFooterAction } from './JotmoFooterAction.js'
+export { JotmoFooterDropdown } from './JotmoFooterDropdown.js'
+export { JotmoSettingsRow } from './JotmoSettingsRow.js'
+export { JotmoConversationSurface } from './JotmoConversationSurface.js'
+export { JotmoSurface } from './JotmoSidebar.js'
+export { JotmoNavigation } from './JotmoVirtualWorkspace.js'
+export { isOfficialNewSessionTarget, watchOfficialNewSession } from './new-session-activation.js'
+export { JotmoRecordingSurface } from './JotmoRecordingSurface.js'

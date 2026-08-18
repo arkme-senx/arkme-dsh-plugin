@@ -1,18 +1,18 @@
-import type { ArkmeSourceItem } from '../types.js'
+import type { JotmoSourceItem } from '../types.js'
 
-export interface ArkmeUiState {
+export interface JotmoUiState {
   open: boolean
   surfaceOpen: boolean
   authRevision: number
-  mode: 'login' | 'source'
-  selectedSource?: ArkmeSourceItem
+  mode: 'login' | 'source' | 'recordings'
+  selectedSource?: JotmoSourceItem
 }
 
-export class ArkmeUiController {
-  private state: ArkmeUiState = { open: false, surfaceOpen: false, authRevision: 0, mode: 'login' }
+export class JotmoUiController {
+  private state: JotmoUiState = { open: false, surfaceOpen: false, authRevision: 0, mode: 'login' }
   private readonly listeners = new Set<() => void>()
 
-  readonly getSnapshot = (): ArkmeUiState => this.state
+  readonly getSnapshot = (): JotmoUiState => this.state
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -61,11 +61,16 @@ export class ArkmeUiController {
     this.publish({ ...rest, open: false, surfaceOpen: true, mode: 'login' })
   }
 
-  selectSource(source: ArkmeSourceItem): void {
+  selectSource(source: JotmoSourceItem): void {
     this.publish({ ...this.state, open: true, mode: 'source', selectedSource: source })
   }
 
-  private publish(next: ArkmeUiState): void {
+  showRecordings(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, mode: 'recordings' })
+  }
+
+  private publish(next: JotmoUiState): void {
     if (next.open === this.state.open && next.surfaceOpen === this.state.surfaceOpen
       && next.authRevision === this.state.authRevision
       && next.mode === this.state.mode && next.selectedSource?.sourceRef === this.state.selectedSource?.sourceRef) return
@@ -74,4 +79,4 @@ export class ArkmeUiController {
   }
 }
 
-export const arkmeUi = new ArkmeUiController()
+export const jotmoUi = new JotmoUiController()

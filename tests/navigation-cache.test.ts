@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
-  readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
+  readNavigationCache, writeNavigationCache, type JotmoNavigationCache,
 } from '../src/client/navigation-cache.js'
 
 class MemoryStorage implements Storage {
@@ -14,14 +14,14 @@ class MemoryStorage implements Storage {
   setItem(key: string, value: string) { this.values.set(key, value) }
 }
 
-describe('Arkme navigation cache', () => {
+describe('Jiwo navigation cache', () => {
   it('persists account-scoped directories and the last selected source', () => {
     const storage = new MemoryStorage()
     const source = {
       sourceRef: 'source-private', kind: 'private_chat' as const, displayName: '联系人',
       activeAtMillis: 1, unreadCount: 2, latestPreview: '你好', avatarRef: 'avatar-ref',
     }
-    const cache: ArkmeNavigationCache = {
+    const cache: JotmoNavigationCache = {
       version: 1, userId: 10001, directory: 'root', selectedSourceRef: source.sourceRef,
       sources: { root: [source] }, updatedAtMillis: 2,
     }
@@ -39,24 +39,10 @@ describe('Arkme navigation cache', () => {
 
   it('ignores malformed persisted source data', () => {
     const storage = new MemoryStorage()
-    storage.setItem('dsh-arkme:navigation:v1:last-user', '10001')
-    storage.setItem('dsh-arkme:navigation:v1:user:10001', JSON.stringify({
+    storage.setItem('dsh-jotmo:navigation:v1:last-user', '10001')
+    storage.setItem('dsh-jotmo:navigation:v1:user:10001', JSON.stringify({
       version: 1, userId: 10001, directory: 'root', sources: { root: [{ displayName: 'bad' }] },
     }))
     expect(readLastNavigationCache(storage)?.sources.root).toEqual([])
-  })
-
-  it('rebinds a cached selection to the current Provider source reference', () => {
-    const cached = {
-      sourceRef: 'old-signed-ref', kind: 'default_category' as const, displayName: '默认分类',
-      activeAtMillis: 1, unreadCount: 0,
-    }
-    const current = { ...cached, sourceRef: 'new-signed-ref' }
-
-    expect(reconcileSelectedSource(cached, [current])).toEqual(current)
-    expect(reconcileSelectedSource(cached, [
-      { ...current, sourceRef: 'new-ref-1' },
-      { ...current, sourceRef: 'new-ref-2' },
-    ])).toBeUndefined()
   })
 })

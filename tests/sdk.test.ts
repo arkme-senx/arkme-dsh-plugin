@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createArkmeSdk, ArkmeClientError } from '../src/sdk/index.js'
-import type { ArkmeProviderState } from '../src/types.js'
+import { createJotmoSdk, JotmoClientError } from '../src/sdk/index.js'
+import type { JotmoProviderState } from '../src/types.js'
 
 function success(value: unknown): Response {
   return new Response(JSON.stringify({ ok: true, value }), {
@@ -11,7 +11,7 @@ function success(value: unknown): Response {
 
 afterEach(() => { vi.useRealTimers() })
 
-describe('Arkme SDK', () => {
+describe('Jotmo SDK', () => {
   it('binds the default browser fetch to the global receiver', async () => {
     const originalFetch = globalThis.fetch
     const receiverFetch = vi.fn(function (this: unknown) {
@@ -20,7 +20,7 @@ describe('Arkme SDK', () => {
     }) as unknown as typeof fetch
     globalThis.fetch = receiverFetch
     try {
-      const sdk = createArkmeSdk()
+      const sdk = createJotmoSdk()
       await expect(sdk.authStatus()).resolves.toMatchObject({ status: 'logged-out' })
       expect(receiverFetch).toHaveBeenCalledOnce()
     } finally {
@@ -30,15 +30,15 @@ describe('Arkme SDK', () => {
 
   it('encapsulates the Provider route and validates the contract version', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
-    const sdk = createArkmeSdk({
+    const sdk = createJotmoSdk({
       fetchImpl: async (_input, init) => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
         if (request.operation === 'provider.capabilities') {
           return success({
             contractVersion: 1,
-            provider: '@senguoyun/dsh-arkme',
-            sdk: '@senguoyun/dsh-arkme/sdk',
+            provider: '@senqisi/dsh-jotmo',
+            sdk: '@senqisi/dsh-jotmo/sdk',
             environment: 'test',
             features: {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,
@@ -53,7 +53,7 @@ describe('Arkme SDK', () => {
         if (request.operation === 'user.profile.refresh') {
           return success({
             profile: {
-              userId: 1, displayName: '昵称', nickname: '昵称', avatarRef: '', arkmeId: 'arkme-id',
+              userId: 1, displayName: '昵称', nickname: '昵称', avatarRef: '', jotmoId: 'jiwo-id',
               accountType: 1, createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
             },
             cachedAtMillis: 1,
@@ -88,12 +88,12 @@ describe('Arkme SDK', () => {
         params: { recordUid: 'a5d8df82-5b62-5b22-8f76-916a751ad63c', textContent: '保存内容' },
       },
     ])
-    expect(() => createArkmeSdk({ route: 'https://example.com/api' })).toThrow(/same-origin/)
+    expect(() => createJotmoSdk({ route: 'https://example.com/api' })).toThrow(/same-origin/)
   })
 
   it('exposes unified source directory, timeline, and send operations', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
-    const sdk = createArkmeSdk({
+    const sdk = createJotmoSdk({
       fetchImpl: async (_input, init) => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
@@ -122,13 +122,13 @@ describe('Arkme SDK', () => {
 
   it('notifies subscribers only when auth identity or revision changes', async () => {
     vi.useFakeTimers()
-    const states: ArkmeProviderState[] = [
+    const states: JotmoProviderState[] = [
       { contractVersion: 1, environment: 'test', authStatus: 'authenticated', userId: 1, revision: 2 },
       { contractVersion: 1, environment: 'test', authStatus: 'authenticated', userId: 1, revision: 2 },
       { contractVersion: 1, environment: 'test', authStatus: 'authenticated', userId: 1, revision: 3 },
     ]
     let index = 0
-    const sdk = createArkmeSdk({
+    const sdk = createJotmoSdk({
       fetchImpl: async () => success(states[Math.min(index++, states.length - 1)]),
     })
     const listener = vi.fn()
@@ -140,13 +140,13 @@ describe('Arkme SDK', () => {
     unsubscribe()
   })
 
-  it('maps Provider failures to ArkmeClientError', async () => {
-    const sdk = createArkmeSdk({
+  it('maps Provider failures to JotmoClientError', async () => {
+    const sdk = createJotmoSdk({
       fetchImpl: async () => new Response(JSON.stringify({
         ok: false,
-        error: { code: 'login-required', message: '请先登录 Arkme', retryable: false },
+        error: { code: 'login-required', message: '请先登录即我', retryable: false },
       })),
     })
-    await expect(sdk.state()).rejects.toBeInstanceOf(ArkmeClientError)
+    await expect(sdk.state()).rejects.toBeInstanceOf(JotmoClientError)
   })
 })

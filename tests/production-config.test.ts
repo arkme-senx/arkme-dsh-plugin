@@ -9,7 +9,7 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('authBaseUrl: https://api.jotmo.cc')
     expect(patch).toContain('recordBaseUrl: https://record.jotmo.cc')
     expect(patch).toContain('chatBaseUrl: https://chat.jotmo.cc')
-    expect(patch).toContain('toolProfile: business')
+    expect(patch).toContain('audioBaseUrl: https://audio.jotmo.cc')
     expect(patch).toContain('allowProduction: true')
     expect(patch).not.toContain('chatBaseUrl: https://im.jotmo.cc')
   })

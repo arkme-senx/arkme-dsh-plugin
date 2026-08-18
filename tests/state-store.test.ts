@@ -2,12 +2,12 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ArkmeStateStore } from '../src/state-store.js'
+import { JotmoStateStore } from '../src/state-store.js'
 
-describe('ArkmeStateStore', () => {
+describe('JotmoStateStore', () => {
   it('persists a stable device id and account-isolated pending writes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-state-'))
-    const store = new ArkmeStateStore(root)
+    const root = await mkdtemp(join(tmpdir(), 'dsh-jotmo-state-'))
+    const store = new JotmoStateStore(root)
     const uniqueCode = await store.uniqueCode()
     await store.putPending(10001, {
       recordUid: 'record-1',
@@ -17,7 +17,7 @@ describe('ArkmeStateStore', () => {
       attempts: 0,
     })
 
-    const reloaded = new ArkmeStateStore(root)
+    const reloaded = new JotmoStateStore(root)
     expect(await reloaded.uniqueCode()).toBe(uniqueCode)
     expect(await reloaded.listPending(10001)).toHaveLength(1)
     expect(await reloaded.listPending(10002)).toEqual([])

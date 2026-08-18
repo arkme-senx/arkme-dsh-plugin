@@ -1,84 +1,84 @@
-import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { JOTMO_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import type {
-  ArkmeAuthSnapshot,
-  ArkmeCachedQueryResult,
-  ArkmeCachedSnapshot,
-  ArkmeCreateTextResult,
-  ArkmeImagePayload,
-  ArkmePendingWrite,
-  ArkmePluginErrorBody,
-  ArkmePluginOperation,
-  ArkmePluginResponse,
-  ArkmeProviderCapabilities,
-  ArkmeProviderState,
-  ArkmeSourceDirectory,
-  ArkmeSourceList,
-  ArkmeSourceSendResult,
-  ArkmeTimelineCursor,
-  ArkmeTimelinePage,
-  ArkmeUserProfileSnapshot,
+  JotmoAuthSnapshot,
+  JotmoCachedQueryResult,
+  JotmoCachedSnapshot,
+  JotmoCreateTextResult,
+  JotmoImagePayload,
+  JotmoPendingWrite,
+  JotmoPluginErrorBody,
+  JotmoPluginOperation,
+  JotmoPluginResponse,
+  JotmoProviderCapabilities,
+  JotmoProviderState,
+  JotmoSourceDirectory,
+  JotmoSourceList,
+  JotmoSourceSendResult,
+  JotmoTimelineCursor,
+  JotmoTimelinePage,
+  JotmoUserProfileSnapshot,
 } from '../types.js'
 
 export type {
-  ArkmeAuthSnapshot,
-  ArkmeCachedQueryResult,
-  ArkmeCachedSnapshot,
-  ArkmeCreateTextResult,
-  ArkmeImageMediaType,
-  ArkmeImagePayload,
-  ArkmePendingWrite,
-  ArkmeProviderCapabilities,
-  ArkmeProviderState,
-  ArkmeSourceDirectory,
-  ArkmeSourceItem,
-  ArkmeSourceKind,
-  ArkmeSourceList,
-  ArkmeSourceSendResult,
-  ArkmeTimelineCursor,
-  ArkmeTimelineItem,
-  ArkmeTimelinePage,
-  ArkmeUserProfile,
-  ArkmeUserProfileSnapshot,
-  ArkmeSelfRecordItem,
-  ArkmeSelfRecordList,
-  ArkmeSelfSummary,
+  JotmoAuthSnapshot,
+  JotmoCachedQueryResult,
+  JotmoCachedSnapshot,
+  JotmoCreateTextResult,
+  JotmoImageMediaType,
+  JotmoImagePayload,
+  JotmoPendingWrite,
+  JotmoProviderCapabilities,
+  JotmoProviderState,
+  JotmoSourceDirectory,
+  JotmoSourceItem,
+  JotmoSourceKind,
+  JotmoSourceList,
+  JotmoSourceSendResult,
+  JotmoTimelineCursor,
+  JotmoTimelineItem,
+  JotmoTimelinePage,
+  JotmoUserProfile,
+  JotmoUserProfileSnapshot,
+  JotmoSelfRecordItem,
+  JotmoSelfRecordList,
+  JotmoSelfSummary,
 } from '../types.js'
-export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+export { JOTMO_PROVIDER_CONTRACT_VERSION } from '../types.js'
 
-const DEFAULT_ROUTE = '/arkme-self/api'
+const DEFAULT_ROUTE = '/jotmo-self/api'
 
-export class ArkmeClientError extends Error {
-  constructor(readonly body: ArkmePluginErrorBody) {
+export class JotmoClientError extends Error {
+  constructor(readonly body: JotmoPluginErrorBody) {
     super(body.message)
-    this.name = 'ArkmeClientError'
+    this.name = 'JotmoClientError'
   }
 }
 
-export interface ArkmeSdkOptions {
+export interface JotmoSdkOptions {
   route?: string
   fetchImpl?: typeof fetch
 }
 
-export interface ArkmeSearchOptions {
+export interface JotmoSearchOptions {
   limit?: number
   beforeMillis?: number
   syncAll?: boolean
 }
 
-export interface ArkmeSubscribeOptions {
+export interface JotmoSubscribeOptions {
   intervalMs?: number
   immediate?: boolean
   onError?: (error: unknown) => void
 }
 
-export class ArkmeSdk {
+export class JotmoSdk {
   private readonly route: string
   private readonly fetchImpl: typeof fetch
 
-  constructor(options: ArkmeSdkOptions = {}) {
+  constructor(options: JotmoSdkOptions = {}) {
     const route = options.route ?? DEFAULT_ROUTE
     if (!/^\/[A-Za-z0-9/_-]+$/.test(route) || route.startsWith('//')) {
-      throw new TypeError('Arkme SDK route must be a same-origin absolute path')
+      throw new TypeError('Jotmo SDK route must be a same-origin absolute path')
     }
     this.route = route
     // Browser fetch is a Web IDL method whose receiver must remain the global object.
@@ -87,46 +87,46 @@ export class ArkmeSdk {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
   }
 
-  async capabilities(signal?: AbortSignal): Promise<ArkmeProviderCapabilities> {
-    const capabilities = await this.call<ArkmeProviderCapabilities>('provider.capabilities', undefined, signal)
-    if (capabilities.contractVersion !== ARKME_PROVIDER_CONTRACT_VERSION) {
-      throw new Error(`Unsupported Arkme provider contract version ${String(capabilities.contractVersion)}`)
+  async capabilities(signal?: AbortSignal): Promise<JotmoProviderCapabilities> {
+    const capabilities = await this.call<JotmoProviderCapabilities>('provider.capabilities', undefined, signal)
+    if (capabilities.contractVersion !== JOTMO_PROVIDER_CONTRACT_VERSION) {
+      throw new Error(`Unsupported Jotmo provider contract version ${String(capabilities.contractVersion)}`)
     }
     return capabilities
   }
 
-  async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
-    return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
+  async state(signal?: AbortSignal): Promise<JotmoProviderState> {
+    return await this.call<JotmoProviderState>('provider.state', undefined, signal)
   }
 
-  async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
-    return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
+  async authStatus(signal?: AbortSignal): Promise<JotmoAuthSnapshot> {
+    return await this.call<JotmoAuthSnapshot>('auth.status', undefined, signal)
   }
 
-  async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {
-    return await this.call<ArkmeUserProfileSnapshot>(
+  async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<JotmoUserProfileSnapshot> {
+    return await this.call<JotmoUserProfileSnapshot>(
       options.refresh === true ? 'user.profile.refresh' : 'user.profile',
       undefined,
       options.signal,
     )
   }
 
-  /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
-  async readImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {
-    if (imageRef.trim() === '') throw new TypeError('Arkme image reference must not be empty')
-    return await this.call<ArkmeImagePayload>('image.read', { imageRef }, signal)
+  /** Read one current-user Jiwo image through the authenticated Provider without exposing a signed OSS URL. */
+  async readImage(imageRef: string, signal?: AbortSignal): Promise<JotmoImagePayload> {
+    if (imageRef.trim() === '') throw new TypeError('Jiwo image reference must not be empty')
+    return await this.call<JotmoImagePayload>('image.read', { imageRef }, signal)
   }
 
   /** Convert a Provider image payload into a browser-renderable data URL. */
-  imageDataUrl(image: ArkmeImagePayload): string {
+  imageDataUrl(image: JotmoImagePayload): string {
     return `data:${image.mediaType};base64,${image.dataBase64}`
   }
 
   async listSources(
-    directory: ArkmeSourceDirectory,
+    directory: JotmoSourceDirectory,
     options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
-  ): Promise<ArkmeSourceList> {
-    return await this.call<ArkmeSourceList>('sources.list', {
+  ): Promise<JotmoSourceList> {
+    return await this.call<JotmoSourceList>('sources.list', {
       directory,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
@@ -135,10 +135,10 @@ export class ArkmeSdk {
 
   async readSource(
     sourceRef: string,
-    options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
-  ): Promise<ArkmeTimelinePage> {
-    if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
-    return await this.call<ArkmeTimelinePage>('source.timeline', {
+    options: { limit?: number; cursor?: JotmoTimelineCursor; signal?: AbortSignal } = {},
+  ): Promise<JotmoTimelinePage> {
+    if (sourceRef.trim() === '') throw new TypeError('Jiwo source reference must not be empty')
+    return await this.call<JotmoTimelinePage>('source.timeline', {
       sourceRef,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
@@ -149,11 +149,11 @@ export class ArkmeSdk {
     sourceRef: string,
     textContent: string,
     options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
-  ): Promise<ArkmeSourceSendResult> {
+  ): Promise<JotmoSourceSendResult> {
     if (sourceRef.trim() === '' || textContent.trim() === '') {
-      throw new TypeError('Arkme source reference and text must not be empty')
+      throw new TypeError('Jiwo source reference and text must not be empty')
     }
-    return await this.call<ArkmeSourceSendResult>('source.send-text', {
+    return await this.call<JotmoSourceSendResult>('source.send-text', {
       sourceRef,
       textContent,
       recordUid: options.recordUid ?? crypto.randomUUID(),
@@ -161,16 +161,16 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  async snapshot(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeCachedSnapshot> {
-    return await this.call<ArkmeCachedSnapshot>(
+  async snapshot(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<JotmoCachedSnapshot> {
+    return await this.call<JotmoCachedSnapshot>(
       options.refresh === true ? 'records.refresh' : 'records.cache',
       undefined,
       options.signal,
     )
   }
 
-  async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
-    return await this.call<ArkmeCachedQueryResult>('records.search', {
+  async search(query: string, options: JotmoSearchOptions & { signal?: AbortSignal } = {}): Promise<JotmoCachedQueryResult> {
+    return await this.call<JotmoCachedQueryResult>('records.search', {
       query,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.beforeMillis === undefined ? {} : { beforeMillis: options.beforeMillis }),
@@ -181,22 +181,22 @@ export class ArkmeSdk {
   async createText(
     textContent: string,
     options: { recordUid?: string; signal?: AbortSignal } = {},
-  ): Promise<ArkmeCreateTextResult> {
-    return await this.call<ArkmeCreateTextResult>('records.create', {
+  ): Promise<JotmoCreateTextResult> {
+    return await this.call<JotmoCreateTextResult>('records.create', {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       textContent,
     }, options.signal)
   }
 
-  async outbox(signal?: AbortSignal): Promise<ArkmePendingWrite[]> {
-    return await this.call<ArkmePendingWrite[]>('records.outbox', undefined, signal)
+  async outbox(signal?: AbortSignal): Promise<JotmoPendingWrite[]> {
+    return await this.call<JotmoPendingWrite[]>('records.outbox', undefined, signal)
   }
 
-  async retry(recordUid: string, signal?: AbortSignal): Promise<ArkmeCreateTextResult> {
-    return await this.call<ArkmeCreateTextResult>('records.retry', { recordUid }, signal)
+  async retry(recordUid: string, signal?: AbortSignal): Promise<JotmoCreateTextResult> {
+    return await this.call<JotmoCreateTextResult>('records.retry', { recordUid }, signal)
   }
 
-  subscribe(listener: (state: ArkmeProviderState) => void, options: ArkmeSubscribeOptions = {}): () => void {
+  subscribe(listener: (state: JotmoProviderState) => void, options: JotmoSubscribeOptions = {}): () => void {
     const intervalMs = Math.min(60_000, Math.max(500, Math.trunc(options.intervalMs ?? 1_000)))
     let stopped = false
     let timeout: ReturnType<typeof setTimeout> | undefined
@@ -226,7 +226,7 @@ export class ArkmeSdk {
   }
 
   async call<T>(
-    operation: ArkmePluginOperation,
+    operation: JotmoPluginOperation,
     params?: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<T> {
@@ -237,29 +237,29 @@ export class ArkmeSdk {
       body: JSON.stringify({ operation, ...(params === undefined ? {} : { params }) }),
       ...(signal === undefined ? {} : { signal }),
     })
-    let body: ArkmePluginResponse<T>
+    let body: JotmoPluginResponse<T>
     try {
-      body = await response.json() as ArkmePluginResponse<T>
+      body = await response.json() as JotmoPluginResponse<T>
     } catch {
-      throw new ArkmeClientError({
+      throw new JotmoClientError({
         code: 'local-response-invalid',
-        message: 'Arkme 插件返回了无效响应',
+        message: '即我插件返回了无效响应',
         retryable: true,
       })
     }
-    if (!body.ok) throw new ArkmeClientError(body.error)
+    if (!body.ok) throw new JotmoClientError(body.error)
     return body.value
   }
 }
 
-export function createArkmeSdk(options?: ArkmeSdkOptions): ArkmeSdk {
-  return new ArkmeSdk(options)
+export function createJotmoSdk(options?: JotmoSdkOptions): JotmoSdk {
+  return new JotmoSdk(options)
 }
 
-const defaultSdk = createArkmeSdk()
+const defaultSdk = createJotmoSdk()
 
-export async function callArkme<T>(
-  operation: ArkmePluginOperation,
+export async function callJotmo<T>(
+  operation: JotmoPluginOperation,
   params?: Record<string, unknown>,
 ): Promise<T> {
   return await defaultSdk.call<T>(operation, params)
