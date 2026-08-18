@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { ArkmeAuthSnapshot } from '../types.js'
 import { callArkme } from './api.js'
+import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 import { arkmeUi } from './ui-controller.js'
@@ -48,20 +49,28 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
       .catch(() => { if (!cancelled) { setAuth(undefined); setAuthChecked(true) } })
     return () => { cancelled = true }
   }, [ui.authRevision])
-  return <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
-    {hasOpened.current && <div
-      id="arkme-footer-directory" role="region" aria-label="Arkme 下拉列表"
-      hidden={!props.wide || !ui.open}
-      style={{ ...styles.panel, display: props.wide && ui.open ? 'block' : 'none' }}
-    >
-      <ArkmeNavigation onActivateSurface={() => { props.activate(currentSession) }} />
-    </div>}
-    <ArkmeFooterAction
-      {...props}
-      expanded={ui.open}
-      loggedOut={authChecked && auth !== undefined && auth.status !== 'authenticated'}
-      authenticated={auth?.status === 'authenticated'}
-      authPending={!authChecked}
-    />
-  </div>
+  return <>
+    <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
+      {hasOpened.current && <div
+        id="arkme-footer-directory" role="region" aria-label="Arkme 下拉列表"
+        hidden={!props.wide || !ui.open}
+        style={{ ...styles.panel, display: props.wide && ui.open ? 'block' : 'none' }}
+      >
+        <ArkmeNavigation onActivateSurface={() => { props.activate(currentSession) }} />
+      </div>}
+      <ArkmeFooterAction
+        {...props}
+        expanded={ui.open}
+        loggedOut={authChecked && auth !== undefined && auth.status !== 'authenticated'}
+        authenticated={auth?.status === 'authenticated'}
+        authPending={!authChecked}
+      />
+    </div>
+    {ui.surfaceOpen && <ArkmeConversationSurface
+      close={props.closeSurface}
+      initialAuth={auth}
+      openedFromSession={props.surfaceSession()}
+      useSessions={props.useSessions}
+    />}
+  </>
 }

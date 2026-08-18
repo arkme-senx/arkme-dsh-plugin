@@ -14,22 +14,27 @@ import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { loadArkmeImageDataUrl } from './ArkmeVirtualWorkspace.js'
 import { arkmeUi } from './ui-controller.js'
 
-export interface ArkmeSurfaceProps {}
+export interface ArkmeSurfaceProps {
+  floating?: boolean
+  initialAuth?: ArkmeAuthSnapshot | undefined
+}
+
+export type ArkmeAuthView = 'checking' | 'login' | 'content'
 
 const colors = {
   panel: 'var(--dsw-alias-bg-base, #ffffff)',
   text: 'var(--dsw-alias-label-primary, #17191c)',
   secondary: 'var(--dsw-alias-label-secondary, #68707c)',
   border: 'var(--dsw-alias-border-l2, #e2e5e9)',
-  accent: '#3964fe',
   danger: '#c2413b',
 }
 
 const styles: Record<string, CSSProperties> = {
   surface: { width: '100%', height: '100%', minWidth: 0, display: 'flex', background: colors.panel, color: colors.text },
+  floatingSurface: { background: 'transparent' },
   panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   header: {
-    flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 28px 12px 20px',
+    flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
   },
   title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
@@ -57,21 +62,40 @@ const styles: Record<string, CSSProperties> = {
   meta: { color: '#adb2b8', fontSize: 11 },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
-  composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 16px 8px' },
+  composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
   composerInner: {
-    position: 'relative', width: 'min(780px,100%)', minHeight: 96, overflow: 'hidden',
+    position: 'relative', width: 'min(780px,100%)', overflow: 'hidden', boxSizing: 'border-box',
+    display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
     border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 22,
     background: 'var(--dsw-specific-input-major, #fff)', boxShadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.08))',
   },
   textarea: {
-    width: '100%', minHeight: 96, maxHeight: 336, resize: 'none', overflowY: 'auto',
-    boxSizing: 'border-box', border: 0, outline: 0, borderRadius: 22, padding: '14px 58px 44px 16px',
+    width: '100%', minHeight: 28, maxHeight: 336, resize: 'none', overflowY: 'auto',
+    boxSizing: 'border-box', border: 0, outline: 0, padding: '4px 12px 0 16px',
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
-    font: 'inherit', fontSize: 16, lineHeight: '24px', caretColor: 'var(--dsw-alias-state-business-primary, #3964fe)',
+    fontFamily: 'var(--dsw-font-family, inherit)', fontSize: 16, lineHeight: '24px',
+    whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere',
+    caretColor: 'var(--dsw-alias-state-business-primary, #3964fe)',
   },
-  tools: { position: 'absolute', right: 10, bottom: 10, display: 'flex', padding: 0 },
-  send: { width: 34, height: 34, border: 0, borderRadius: 999, background: colors.accent, color: '#fff', cursor: 'pointer' },
+  tools: {
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0,
+    padding: '2px 8px 6px',
+  },
+  send: {
+    width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
+    border: 0, borderRadius: 999, background: 'var(--dsw-alias-button-info-fill, #3964fe)',
+    color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
+  },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
+  authChecking: {
+    flex: 1, minHeight: 0, display: 'grid', placeItems: 'center',
+    color: colors.secondary, fontSize: 13,
+  },
+}
+
+export function arkmeAuthView(auth: ArkmeAuthSnapshot | undefined): ArkmeAuthView {
+  if (auth === undefined) return 'checking'
+  return auth.status === 'authenticated' ? 'content' : 'login'
 }
 
 function errorMessage(error: unknown): string {
@@ -117,13 +141,13 @@ function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
   </span>
 }
 
-export function ArkmeSurface(_props: ArkmeSurfaceProps = {}) {
+export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const source = ui.mode === 'source' ? ui.selectedSource : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const [auth, setAuth] = useState<ArkmeAuthSnapshot>()
+  const [auth, setAuth] = useState<ArkmeAuthSnapshot | undefined>(initialAuth)
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
@@ -140,6 +164,11 @@ export function ArkmeSurface(_props: ArkmeSurfaceProps = {}) {
   const [qr, setQr] = useState('')
   const qrRequestStartedRef = useRef(false)
   const authenticated = auth?.status === 'authenticated'
+  const authView = arkmeAuthView(auth)
+
+  useEffect(() => {
+    if (initialAuth !== undefined) setAuth(initialAuth)
+  }, [initialAuth])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -282,10 +311,12 @@ export function ArkmeSurface(_props: ArkmeSurfaceProps = {}) {
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
 
   return (
-    <div style={styles.surface}>
+    <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
       <section style={styles.panel} role="region" aria-label={source?.displayName ?? 'Arkme'}>
         <header style={styles.header}><h2 style={styles.title}>{source?.displayName ?? 'Arkme'}</h2></header>
-        {!authenticated ? <div style={styles.loginBody}><ArkmeLogin
+        {authView === 'checking' ? <div style={styles.authChecking} role="status">
+          {error === '' ? '正在确认 Arkme 登录状态…' : error}
+        </div> : authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           mode={loginMode}
           agreed={agreed}
           busy={busy}
@@ -328,7 +359,26 @@ export function ArkmeSurface(_props: ArkmeSurfaceProps = {}) {
           <footer style={styles.composer}><div style={styles.composerInner}>
             <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={`发送到${source.displayName}…`} aria-label={`发送到${source.displayName}`} disabled={busy}
               onChange={event => { setDraft(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draft.trim() !== '') void send() } }} />
-            <div style={styles.tools}><button type="button" style={{ ...styles.send, opacity: busy || draft.trim() === '' ? .4 : 1 }} disabled={busy || draft.trim() === ''} onClick={() => { void send() }} aria-label="发送">↑</button></div>
+            <div style={styles.tools}><button
+              type="button"
+              style={{ ...styles.send, opacity: busy || draft.trim() === '' ? .4 : 1 }}
+              disabled={busy || draft.trim() === ''}
+              aria-label="发送消息"
+              onMouseDown={event => { event.preventDefault() }}
+              onMouseEnter={event => {
+                if (!event.currentTarget.disabled) {
+                  event.currentTarget.style.background = 'var(--dsw-alias-button-info-hover, #2f57df)'
+                }
+              }}
+              onMouseLeave={event => {
+                event.currentTarget.style.background = 'var(--dsw-alias-button-info-fill, #3964fe)'
+              }}
+              onClick={() => { void send() }}
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
+                <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
+              </svg>
+            </button></div>
           </div></footer>
         </>}
       </section>

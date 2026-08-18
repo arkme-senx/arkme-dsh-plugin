@@ -6,6 +6,8 @@ import { ARKME_ICON_DATA_URL } from './arkme-assets.js'
 export interface ArkmeFooterActionInjected {
   toggle(openedFromSession: SessionId | undefined, authenticated: boolean): void
   activate(openedFromSession: SessionId | undefined): void
+  closeSurface(): void
+  surfaceSession(): SessionId | undefined
 }
 export type ArkmeFooterActionProps = PropsRuntime<'sidebar.footer.action'> & InjectFace<ArkmeFooterActionInjected> & {
   expanded?: boolean
