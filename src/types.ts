@@ -24,6 +24,7 @@ export interface ArkmeClientConfig {
   captchaId: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
+  callAssetBasePath: string
 }
 
 export interface ArkmeRecordCursor {
@@ -143,6 +144,7 @@ export interface ArkmeProviderCapabilities {
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
+    outgoingCall: true
   }
   limits: {
     maxTextLength: number
@@ -547,6 +549,11 @@ export type ArkmePluginOperation =
   | 'source.timeline'
   | 'source.mark-read'
   | 'source.send-text'
+  | 'calls.outgoing.intent.claim'
+  | 'calls.outgoing.intent.resolve'
+  | 'calls.outgoing.prepare'
+  | 'calls.outgoing.heartbeat'
+  | 'calls.outgoing.release'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'official-community.entry-state'
