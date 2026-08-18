@@ -21,6 +21,7 @@ export interface Config {
   imBaseUrl: string
   worldBaseUrl: string
   relationBaseUrl: string
+  intelligentBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -40,6 +41,7 @@ export const Config: Schema<Config> = Schema.object({
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
+  intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -120,6 +122,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['imBaseUrl', config.imBaseUrl],
     ['worldBaseUrl', config.worldBaseUrl],
     ['relationBaseUrl', config.relationBaseUrl],
+    ['intelligentBaseUrl', config.intelligentBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -129,6 +132,11 @@ function validateConfig(ctx: Context, config: Config): void {
 }
 
 export type {
+  ArkmeAiVideoJob,
+  ArkmeAiVideoJobStatus,
+  ArkmeAiVideoPreflightResult,
+  ArkmeAiVideoSegmentSelector,
+  ArkmeAiVideoTranscriptSource,
   ArkmeAuthSnapshot,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
@@ -181,4 +189,3 @@ export type {
 } from './types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 export { ArkmeService } from './arkme-service.js'
-

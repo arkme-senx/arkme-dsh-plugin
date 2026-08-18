@@ -4,6 +4,10 @@ import { ArkmeChatRealtimeRuntime, type ArkmeChatRealtimeNotice } from './chat-r
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from './keychain-store.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
+  ArkmeAiVideoJob,
+  ArkmeAiVideoJobStatus,
+  ArkmeAiVideoPreflightResult,
+  ArkmeAiVideoSegmentSelector,
   ArkmeAuthSnapshot,
   ArkmeCachedSnapshot,
   ArkmeCachedQueryResult,
@@ -81,6 +85,7 @@ export interface ArkmeServiceConfig {
   imBaseUrl: string
   worldBaseUrl: string
   relationBaseUrl: string
+  intelligentBaseUrl: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -614,7 +619,7 @@ export class ArkmeService {
       nickname,
       avatarRef,
       ...(/^https?:\/\//i.test(avatarRef) ? { avatarUrl: avatarRef } : {}),
-      arkmeId: stringValue(data.name_slug).trim(),
+      arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
       accountType: numberValue(data.type),
       createdAt: numberValue(data.create_at),
       bindings: {
@@ -628,6 +633,62 @@ export class ArkmeService {
       },
     }
     return await this.stateStore.cacheProfile(userId, profile)
+  }
+
+  async aiVideoPreflight(
+    sessionId: string,
+    segments: readonly ArkmeAiVideoSegmentSelector[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeAiVideoPreflightResult> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/ai-comic-video/preflight',
+      this.aiVideoSelectionBody(sessionId, segments),
+      session,
+      signal,
+    )
+    return {
+      allowed: booleanValue(data.allowed),
+      message: stringValue(data.message).trim() || 'AI 视频内容检查已完成',
+      selectedDurationMillis: Math.max(0, numberValue(data.selected_duration_millis)),
+      minimumDurationMillis: Math.max(0, numberValue(data.minimum_duration_millis)),
+      selectedSegmentCount: Math.max(0, numberValue(data.selected_segment_count)),
+      retryable: booleanValue(data.retryable),
+      ...(stringValue(data.reason_code).trim() === '' ? {} : { reasonCode: stringValue(data.reason_code).trim() }),
+      ...(stringValue(data.proof).trim() === '' ? {} : { proof: stringValue(data.proof).trim() }),
+    }
+  }
+
+  async aiVideoCreate(
+    clientRequestId: string,
+    sessionId: string,
+    segments: readonly ArkmeAiVideoSegmentSelector[],
+    preflightProof: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeAiVideoJob> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/ai-comic-video/jobs/create',
+      {
+        client_request_id: clientRequestId,
+        ...this.aiVideoSelectionBody(sessionId, segments),
+        ...(preflightProof.trim() === '' ? {} : { preflight_proof: preflightProof.trim() }),
+      },
+      session,
+      signal,
+    )
+    return this.aiVideoJob(data)
+  }
+
+  async aiVideoStatus(jobId: string, signal?: AbortSignal): Promise<ArkmeAiVideoJob> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/ai-comic-video/jobs/status',
+      { job_id: jobId.trim() },
+      session,
+      signal,
+    )
+    return this.aiVideoJob(data)
   }
 
   async listSources(
@@ -652,12 +713,21 @@ export class ArkmeService {
           session,
         ).catch(() => undefined),
       ])
+      let defaultRecordCount: number | undefined
+      try {
+        defaultRecordCount = (await this.summary()).recordCount
+      } catch {
+        // Count decoration is best-effort and must not make the source directory unavailable.
+        const cached = await this.stateStore.cachedSnapshot(session.userId).catch(() => undefined)
+        defaultRecordCount = cached?.summary?.recordCount
+      }
       const defaultCategory: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '默认分类'),
         kind: 'default_category',
         displayName: '默认分类',
         activeAtMillis: 0,
         unreadCount: 0,
+        ...(defaultRecordCount === undefined ? {} : { recordCount: defaultRecordCount }),
       }
       const topicDescriptors: Array<{
         topicUid: string
@@ -2506,6 +2576,68 @@ export class ArkmeService {
     }
   }
 
+  private async authenticatedIntelligentPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true)
+    }
+  }
+
+  private aiVideoSelectionBody(
+    sessionId: string,
+    segments: readonly ArkmeAiVideoSegmentSelector[],
+  ): Record<string, unknown> {
+    return {
+      session_id: sessionId.trim(),
+      selection: {
+        kind: 'long_recording_segments',
+        segments: segments.map(segment => ({
+          child_id: segment.childId.trim(),
+          asr_item_index: segment.asrItemIndex,
+          transcript_source: segment.transcriptSource,
+        })),
+      },
+    }
+  }
+
+  private aiVideoJob(data: Record<string, unknown>): ArkmeAiVideoJob {
+    const jobId = stringValue(data.job_id).trim()
+    const status = stringValue(data.status).trim()
+    const allowedStatuses = new Set<ArkmeAiVideoJobStatus>([
+      'queued', 'running', 'succeeded', 'failed', 'canceled',
+    ])
+    if (jobId === '' || !allowedStatuses.has(status as ArkmeAiVideoJobStatus)) {
+      throw new ArkmePluginError('ai-video-contract-invalid', 'AI 视频服务返回了无效任务信息', true, 502)
+    }
+    const selection = objectValue(data.selection)
+    const segmentCount = listValue(objectValue(selection).segments).length
+    return {
+      jobId,
+      status: status as ArkmeAiVideoJobStatus,
+      stage: stringValue(data.stage).trim() || status,
+      progress: Math.min(100, Math.max(0, Math.trunc(numberValue(data.progress)))),
+      selectedSegmentCount: segmentCount,
+      retryable: booleanValue(data.retryable),
+      ...(stringValue(data.video_asset_uid).trim() === '' ? {} : { videoAssetUid: stringValue(data.video_asset_uid).trim() }),
+      ...(stringValue(data.cover_asset_uid).trim() === '' ? {} : { coverAssetUid: stringValue(data.cover_asset_uid).trim() }),
+      ...(numberValue(data.video_duration_millis) <= 0 ? {} : { videoDurationMillis: numberValue(data.video_duration_millis) }),
+      ...(stringValue(data.error_code).trim() === '' ? {} : { errorCode: stringValue(data.error_code).trim() }),
+      ...(stringValue(data.error_message).trim() === '' ? {} : { errorMessage: stringValue(data.error_message).trim() }),
+      ...(stringValue(data.failure_stage).trim() === '' ? {} : { failureStage: stringValue(data.failure_stage).trim() }),
+    }
+  }
+
   private async downloadSignedImage(
     signedUrl: URL,
     byteLimit: number,
@@ -2624,6 +2756,7 @@ export class ArkmeService {
     bearer: string | undefined,
     successCodes: readonly number[],
     signal?: AbortSignal,
+    preferDataError = false,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -2660,10 +2793,13 @@ export class ArkmeService {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
       if (!successCodes.includes(envelope.code)) {
+        const errorData = objectValue(envelope.data)
+        const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
+        const serviceMessage = preferDataError ? stringValue(errorData.message).trim() : ''
         throw new ArkmePluginError(
-          `arkme-code-${envelope.code}`,
-          envelope.message?.trim() || 'Arkme 服务请求失败',
-          envelope.code >= 500,
+          serviceErrorCode || `arkme-code-${envelope.code}`,
+          serviceMessage || envelope.message?.trim() || 'Arkme 服务请求失败',
+          serviceErrorCode === '' ? envelope.code >= 500 : serviceErrorCode === 'ai_comic_video_rate_limited',
           502,
         )
       }

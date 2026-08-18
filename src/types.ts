@@ -436,6 +436,42 @@ export interface ArkmeWechatLocationPage {
   nextCursor?: string
 }
 
+export type ArkmeAiVideoTranscriptSource = 'system' | 'doubao'
+
+export interface ArkmeAiVideoSegmentSelector {
+  childId: string
+  asrItemIndex: number
+  transcriptSource: ArkmeAiVideoTranscriptSource
+}
+
+export interface ArkmeAiVideoPreflightResult {
+  allowed: boolean
+  message: string
+  selectedDurationMillis: number
+  minimumDurationMillis: number
+  selectedSegmentCount: number
+  retryable: boolean
+  reasonCode?: string
+  proof?: string
+}
+
+export type ArkmeAiVideoJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
+
+export interface ArkmeAiVideoJob {
+  jobId: string
+  status: ArkmeAiVideoJobStatus
+  stage: string
+  progress: number
+  selectedSegmentCount: number
+  retryable: boolean
+  videoAssetUid?: string
+  coverAssetUid?: string
+  videoDurationMillis?: number
+  errorCode?: string
+  errorMessage?: string
+  failureStage?: string
+}
+
 export interface ArkmeProviderState {
   contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
   environment: ArkmeEnvironment

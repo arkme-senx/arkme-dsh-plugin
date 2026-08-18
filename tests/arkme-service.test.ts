@@ -90,6 +90,7 @@ const config: ArkmeServiceConfig = {
   imBaseUrl: 'https://im.test',
   worldBaseUrl: 'https://world.test',
   relationBaseUrl: 'https://relation.test',
+  intelligentBaseUrl: 'https://intelligent.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -173,7 +174,8 @@ describe('ArkmeService', () => {
           nick_name: '昵称',
           real_name: '完整真实姓名',
           head_img: 'avatar-file-id',
-          name_slug: 'arkme-10001',
+          name_slug: 'legacy-name-slug',
+          jotmo_id: 'arkme-10001',
           type: 1,
           create_at: 123,
           phone: '13800138000',
@@ -200,6 +202,26 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(snapshot)).not.toContain('完整真实姓名')
     expect(JSON.stringify(snapshot)).not.toContain('13800138000')
     expect(JSON.stringify(snapshot)).not.toContain('test@example.com')
+    await expect(service.cachedProfile()).resolves.toEqual(snapshot)
+  })
+
+  it('falls back to the legacy name slug when the Arkme ID is absent', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async () => json({
+      code: 200,
+      data: {
+        user_id: 10001,
+        nick_name: '昵称',
+        name_slug: 'legacy-name-slug',
+        type: 1,
+      },
+    }))
+
+    const snapshot = await service.refreshProfile()
+
+    expect(snapshot.profile?.arkmeId).toBe('legacy-name-slug')
     await expect(service.cachedProfile()).resolves.toEqual(snapshot)
   })
 
@@ -365,6 +387,9 @@ describe('ArkmeService', () => {
         rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
         rel_kind: 1, status: 1, sibling_order: 1,
       }] } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) {
+        return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
+      }
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
@@ -374,8 +399,8 @@ describe('ArkmeService', () => {
     })
 
     const sources = await service.listSources('send_to_self', { limit: 20 })
-    expect(sources.items.map(item => [item.kind, item.displayName])).toEqual([
-      ['default_category', '默认分类'], ['topic', '工作'], ['topic', '周报'],
+    expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
+      ['default_category', '默认分类', 7], ['topic', '工作', 2], ['topic', '周报', 1],
     ])
     expect(sources.items[1]?.sourceRef).not.toContain('topic-1')
     expect(sources.items[2]?.parentSourceRef).toBe(sources.items[1]?.sourceRef)
@@ -393,6 +418,26 @@ describe('ArkmeService', () => {
     expect(calls.at(-1)?.body).toMatchObject({ topic_uid: 'topic-1', text_content: '写进主题' })
   })
 
+  it('keeps send-to-self sources available when the default summary is unavailable', async () => {
+    for (const cachedSummary of [undefined, { recordCount: 5, wordsCount: 10, totalSec: 0 }]) {
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const state = new MemoryStateStore()
+      state.summary = cachedSummary
+      const service = new ArkmeService(config, sessions, state, async input => {
+        const url = String(input)
+        if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
+        if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new TypeError('summary unavailable')
+        throw new Error(`unexpected ${url}`)
+      })
+
+      const sources = await service.listSources('send_to_self')
+      expect(sources.items).toHaveLength(1)
+      expect(sources.items[0]).toMatchObject({ kind: 'default_category', displayName: '默认分类' })
+      expect(sources.items[0]?.recordCount).toBe(cachedSummary?.recordCount)
+    }
+  })
+
   it('invalidates opaque source references after an account switch', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -400,10 +445,11 @@ describe('ArkmeService', () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => json({ code: 0, data: { items: [] } }))
     const service = new ArkmeService(config, sessions, state, fetchImpl)
     const source = (await service.listSources('send_to_self')).items[0]!
+    const callsBeforeAccountSwitch = fetchImpl.mock.calls.length
     sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
 
     await expect(service.readSource(source.sourceRef)).rejects.toMatchObject({ code: 'source-ref-invalid' })
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeAccountSwitch)
   })
 
   it('keeps the send-to-self list usable when the hierarchy endpoint is unavailable', async () => {
@@ -820,6 +866,119 @@ describe('ArkmeService', () => {
       code: 'wechat-conversation-ref-invalid',
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('preflights, creates, and reads AI video jobs through the Intelligent origin', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({
+        url,
+        authorization: new Headers(init?.headers).get('Authorization') ?? '',
+        body,
+      })
+      if (url.endsWith('/preflight')) {
+        return json({ code: 200, data: {
+          allowed: true,
+          message: '所选内容可以生成视频',
+          selected_duration_millis: 12_000,
+          minimum_duration_millis: 3_000,
+          selected_segment_count: 1,
+          proof: 'private-proof',
+        } })
+      }
+      if (url.endsWith('/jobs/create')) {
+        return json({ code: 200, data: {
+          job_id: 'job-1', status: 'queued', stage: 'queued', progress: 0,
+          selection: { segments: [{}] },
+        } })
+      }
+      if (url.endsWith('/jobs/status')) {
+        return json({ code: 200, data: {
+          job_id: 'job-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+          selection: { segments: [{}] },
+          video_asset_uid: 'video-asset-1', cover_asset_uid: 'cover-asset-1',
+          video_duration_millis: 11_800,
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+    const segments = [{ childId: 'child-1', asrItemIndex: 2, transcriptSource: 'system' as const }]
+
+    const preflight = await service.aiVideoPreflight('session-1', segments)
+    const created = await service.aiVideoCreate('request-1', 'session-1', segments, preflight.proof ?? '')
+    const completed = await service.aiVideoStatus(created.jobId)
+
+    expect(preflight).toEqual({
+      allowed: true,
+      message: '所选内容可以生成视频',
+      selectedDurationMillis: 12_000,
+      minimumDurationMillis: 3_000,
+      selectedSegmentCount: 1,
+      retryable: false,
+      proof: 'private-proof',
+    })
+    expect(completed).toMatchObject({
+      jobId: 'job-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+      selectedSegmentCount: 1, videoAssetUid: 'video-asset-1', coverAssetUid: 'cover-asset-1',
+    })
+    expect(requests).toEqual([
+      {
+        url: 'https://intelligent.test/api/v1/ai-comic-video/preflight',
+        authorization: 'Bearer access',
+        body: {
+          session_id: 'session-1',
+          selection: {
+            kind: 'long_recording_segments',
+            segments: [{ child_id: 'child-1', asr_item_index: 2, transcript_source: 'system' }],
+          },
+        },
+      },
+      {
+        url: 'https://intelligent.test/api/v1/ai-comic-video/jobs/create',
+        authorization: 'Bearer access',
+        body: {
+          client_request_id: 'request-1',
+          session_id: 'session-1',
+          selection: {
+            kind: 'long_recording_segments',
+            segments: [{ child_id: 'child-1', asr_item_index: 2, transcript_source: 'system' }],
+          },
+          preflight_proof: 'private-proof',
+        },
+      },
+      {
+        url: 'https://intelligent.test/api/v1/ai-comic-video/jobs/status',
+        authorization: 'Bearer access',
+        body: { job_id: 'job-1' },
+      },
+    ])
+  })
+
+  it('preserves actionable AI video service errors', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => json({
+      code: 1001,
+      message: '参数错误',
+      data: {
+        error_code: 'active_job_limit',
+        message: '当前已有3个视频正在生成，请完成或取消后再试',
+      },
+    }))
+
+    await expect(service.aiVideoPreflight('session-1', [
+      { childId: 'child-1', asrItemIndex: 0, transcriptSource: 'system' },
+    ])).rejects.toMatchObject({
+      code: 'active_job_limit',
+      message: '当前已有3个视频正在生成，请完成或取消后再试',
+      retryable: false,
+    })
   })
 
   it('refreshes the short token once after an authenticated 403', async () => {

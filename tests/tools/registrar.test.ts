@@ -94,6 +94,7 @@ describe('registerArkmeTools', () => {
       'arkme_source_read',
       'arkme_text_send',
       'arkme_direct_text_send',
+      'arkme_ai_video',
     ])
     const assembly = await ctx.systemPrompt.assemble()
     expect(assembly.sections.find(section => section.name === 'tool:arkme')?.text)
