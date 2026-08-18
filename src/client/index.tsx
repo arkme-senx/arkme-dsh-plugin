@@ -7,6 +7,7 @@ import { JotmoFooterAction } from './JotmoFooterAction.js'
 import { JotmoFooterDropdown } from './JotmoFooterDropdown.js'
 import { JotmoSettingsRow } from './JotmoSettingsRow.js'
 import { watchOfficialNewSession } from './new-session-activation.js'
+import { cachedSelectedSource, readLastNavigationCache } from './navigation-cache.js'
 import { jotmoUi } from './ui-controller.js'
 
 export const inject = ['slots']
@@ -32,7 +33,13 @@ export function apply(ctx: ClientContext): void {
       inject: () => ({ close: closeJotmo, openedFromSession }),
     }, JotmoConversationSurface)
     stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
-    jotmoUi.focusSendToSelf()
+    const retained = jotmoUi.getSnapshot().selectedSource
+    const cached = readLastNavigationCache()
+    const restored = cached === undefined ? undefined : cachedSelectedSource(cached)
+      ?? cached.sources.send_to_self?.find(source => source.kind === 'default_category')
+    if (retained !== undefined) jotmoUi.open()
+    else if (restored !== undefined) jotmoUi.selectSource(restored)
+    else jotmoUi.focusSendToSelf()
   }
   const toggleJotmo = (openedFromSession: SessionId | undefined) => {
     if (disposeJotmoConversation === undefined) openJotmo(openedFromSession)

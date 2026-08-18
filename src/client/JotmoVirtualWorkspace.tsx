@@ -6,6 +6,10 @@ import type {
 } from '../types.js'
 import { callJotmo } from './api.js'
 import { JotmoMark } from './JotmoFooterAction.js'
+import {
+  cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
+  readNavigationCache, writeNavigationCache, type JotmoNavigationCache,
+} from './navigation-cache.js'
 import { jotmoUi } from './ui-controller.js'
 
 export interface JotmoNavigationProps {
@@ -79,14 +83,14 @@ const styles: Record<string, CSSProperties> = {
     background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
   },
   topicRow: {
-    position: 'relative', width: 'calc(100% - 20px)', minHeight: 42, margin: '2px 10px',
+    position: 'relative', width: 'calc(100% - 16px)', minHeight: 44, margin: '2px 8px',
     display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', boxSizing: 'border-box',
     border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
-  topicActive: { background: colors.active, boxShadow: `inset 3px 0 ${colors.accent}` },
+  topicActive: { background: '#dcf4e8', boxShadow: `inset 4px 0 ${colors.accent}` },
   topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
-  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14 },
-  topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
+  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '22px' },
+  topicCount: { flex: 'none', color: colors.caption, fontSize: 13 },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
@@ -190,16 +194,69 @@ function isSendToSelfSource(source: JotmoSourceItem | undefined): boolean {
 
 export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
+  const [initialCache] = useState(readLastNavigationCache)
+  const cacheRef = useRef<JotmoNavigationCache | undefined>(initialCache)
+  const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const [auth, setAuth] = useState<JotmoAuthSnapshot>()
-  const [directory, setDirectory] = useState<JotmoSourceDirectory>('send_to_self')
-  const [sources, setSources] = useState<JotmoSourceItem[]>([])
+  const [directory, setDirectory] = useState<JotmoSourceDirectory>(initialCache?.directory ?? 'send_to_self')
+  const [sources, setSources] = useState<JotmoSourceItem[]>(
+    initialCache?.sources[initialCache.directory] ?? [],
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
 
+  const persistCache = useCallback((patch: {
+    directory?: JotmoSourceDirectory
+    sources?: Partial<Record<JotmoSourceDirectory, JotmoSourceItem[]>>
+    selectedSourceRef?: string
+  }) => {
+    const userId = authenticatedUserIdRef.current
+    if (userId === undefined) return
+    const current = cacheRef.current?.userId === userId
+      ? cacheRef.current
+      : { version: 1, userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0 } satisfies JotmoNavigationCache
+    const next: JotmoNavigationCache = {
+      ...current,
+      directory: patch.directory ?? current.directory,
+      sources: { ...current.sources, ...patch.sources },
+      updatedAtMillis: Date.now(),
+      ...(patch.selectedSourceRef === undefined
+        ? (current.selectedSourceRef === undefined ? {} : { selectedSourceRef: current.selectedSourceRef })
+        : { selectedSourceRef: patch.selectedSourceRef }),
+    }
+    cacheRef.current = next
+    writeNavigationCache(next)
+  }, [])
+
   const refreshAuth = useCallback(async () => {
-    try { setAuth(await callJotmo<JotmoAuthSnapshot>('auth.status')) }
-    catch { setAuth({ status: 'logged-out', environment: 'test' }) }
+    try {
+      const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.status')
+      setAuth(snapshot)
+      if (snapshot.status !== 'authenticated' || snapshot.userId === undefined) {
+        authenticatedUserIdRef.current = undefined
+        cacheRef.current = undefined
+        clearLastNavigationCache()
+        setDirectory('send_to_self'); setSources([])
+        return
+      }
+      authenticatedUserIdRef.current = snapshot.userId
+      const cached = readNavigationCache(snapshot.userId) ?? {
+        version: 1, userId: snapshot.userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0,
+      } satisfies JotmoNavigationCache
+      cacheRef.current = cached
+      writeNavigationCache(cached)
+      setDirectory(cached.directory)
+      setSources(cached.sources[cached.directory] ?? [])
+      const selected = cachedSelectedSource(cached)
+      if (selected !== undefined) jotmoUi.selectSource(selected)
+    } catch {
+      authenticatedUserIdRef.current = undefined
+      cacheRef.current = undefined
+      clearLastNavigationCache()
+      setAuth({ status: 'logged-out', environment: 'test' })
+      setDirectory('send_to_self'); setSources([])
+    }
   }, [])
 
   const loadDirectory = useCallback(async (next: JotmoSourceDirectory) => {
@@ -219,15 +276,19 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
         cursor = page.nextCursor
       }
       setSources(loaded)
+      const selectedSourceRef = jotmoUi.getSnapshot().selectedSource?.sourceRef
+      persistCache({
+        directory: next,
+        sources: { [next]: loaded },
+        ...(selectedSourceRef === undefined ? {} : { selectedSourceRef }),
+      })
     } catch (caught) {
-      setSources([])
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally { setLoading(false) }
-  }, [])
+  }, [persistCache])
 
   useEffect(() => {
     avatarDataUrlCache.clear()
-    setSources([])
     void refreshAuth()
   }, [refreshAuth, ui.authRevision])
   useEffect(() => {
@@ -237,11 +298,22 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   useEffect(() => {
     if (!authenticated || directory !== 'send_to_self') return
     const defaultCategory = sources.find(source => source.kind === 'default_category')
-    if (defaultCategory !== undefined && !isSendToSelfSource(ui.selectedSource)) jotmoUi.selectSource(defaultCategory)
-  }, [authenticated, directory, sources, ui.selectedSource])
+    if (defaultCategory !== undefined && !isSendToSelfSource(ui.selectedSource)) {
+      jotmoUi.selectSource(defaultCategory)
+      persistCache({ directory, selectedSourceRef: defaultCategory.sourceRef })
+    }
+  }, [authenticated, directory, persistCache, sources, ui.selectedSource])
 
   const showLogin = () => { jotmoUi.showLogin() }
-  const selectSource = (source: JotmoSourceItem) => { jotmoUi.selectSource(source) }
+  const changeDirectory = (next: JotmoSourceDirectory) => {
+    setDirectory(next)
+    setSources(cacheRef.current?.sources[next] ?? [])
+    persistCache({ directory: next })
+  }
+  const selectSource = (source: JotmoSourceItem) => {
+    jotmoUi.selectSource(source)
+    persistCache({ directory, selectedSourceRef: source.sourceRef })
+  }
 
   if (!wide) {
     return <div style={styles.rail}><button
@@ -251,14 +323,14 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
   }
 
   return <section style={styles.shell} aria-label="即我会话列表">
-    <header style={styles.header}>
-      {directory === 'send_to_self' && <button
+    {directory === 'send_to_self' && <header style={styles.header}>
+      <button
         type="button" style={styles.headerButton} aria-label="返回即我会话列表" title="返回"
-        onClick={() => { setDirectory('root') }}
-      >‹</button>}
-      <h2 style={styles.headerTitle}>{directory === 'send_to_self' ? '发给自己' : '即我'}</h2>
+        onClick={() => { changeDirectory('root') }}
+      >‹</button>
+      <h2 style={styles.headerTitle}>发给自己</h2>
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭即我" title="关闭即我" onClick={onClose}>×</button>}
-    </header>
+    </header>}
 
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>登录即我</button> : <div
       style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : '即我会话'}
@@ -267,7 +339,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
         <button
           type="button" role="treeitem" aria-selected={isSendToSelfSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
-          onClick={() => { setDirectory('send_to_self') }}
+          onClick={() => { changeDirectory('send_to_self') }}
         >
           <SelfAvatar />
           <span style={styles.chatContent}>
@@ -308,7 +380,7 @@ export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) 
         </button>
       })}
 
-      {loading && <div style={styles.status}>正在读取…</div>}
+      {loading && sources.length === 0 && <div style={styles.status}>正在读取…</div>}
       {!loading && error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
     </div>}
   </section>
