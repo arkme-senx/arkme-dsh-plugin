@@ -12,9 +12,9 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('imBaseUrl: https://im.jotmo.cc')
     expect(patch).toContain('worldBaseUrl: https://world.jotmo.cc')
     expect(patch).toContain('relationBaseUrl: https://relation.jotmo.cc')
+    expect(patch).toContain('intelligentBaseUrl: https://intelligent.jotmo.cc')
     expect(patch).toContain('toolProfile: business')
     expect(patch).toContain('allowProduction: true')
     expect(patch).not.toContain('chatBaseUrl: https://im.jotmo.cc')
   })
 })
-

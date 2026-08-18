@@ -4,6 +4,7 @@ import { listSourcesToolModule } from './conversation/list-sources.js'
 import { readSourceToolModule } from './conversation/read-source.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
 import { sendTextToolModule } from './conversation/send-text.js'
+import { aiVideoToolModule } from './media/ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
 import { createRecordToolModule } from './records/create.js'
 import { recentRecordsToolModule } from './records/recent.js'
@@ -24,5 +25,6 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   readSourceToolModule,
   sendTextToolModule,
   sendDirectTextToolModule,
+  aiVideoToolModule,
   readImageToolModule,
 ]

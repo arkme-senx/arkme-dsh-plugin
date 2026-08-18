@@ -90,6 +90,7 @@ const config: ArkmeServiceConfig = {
   imBaseUrl: 'https://im.test',
   worldBaseUrl: 'https://world.test',
   relationBaseUrl: 'https://relation.test',
+  intelligentBaseUrl: 'https://intelligent.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -837,6 +838,119 @@ describe('ArkmeService', () => {
       code: 'wechat-conversation-ref-invalid',
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('preflights, creates, and reads AI video jobs through the Intelligent origin', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({
+        url,
+        authorization: new Headers(init?.headers).get('Authorization') ?? '',
+        body,
+      })
+      if (url.endsWith('/preflight')) {
+        return json({ code: 200, data: {
+          allowed: true,
+          message: '所选内容可以生成视频',
+          selected_duration_millis: 12_000,
+          minimum_duration_millis: 3_000,
+          selected_segment_count: 1,
+          proof: 'private-proof',
+        } })
+      }
+      if (url.endsWith('/jobs/create')) {
+        return json({ code: 200, data: {
+          job_id: 'job-1', status: 'queued', stage: 'queued', progress: 0,
+          selection: { segments: [{}] },
+        } })
+      }
+      if (url.endsWith('/jobs/status')) {
+        return json({ code: 200, data: {
+          job_id: 'job-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+          selection: { segments: [{}] },
+          video_asset_uid: 'video-asset-1', cover_asset_uid: 'cover-asset-1',
+          video_duration_millis: 11_800,
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+    const segments = [{ childId: 'child-1', asrItemIndex: 2, transcriptSource: 'system' as const }]
+
+    const preflight = await service.aiVideoPreflight('session-1', segments)
+    const created = await service.aiVideoCreate('request-1', 'session-1', segments, preflight.proof ?? '')
+    const completed = await service.aiVideoStatus(created.jobId)
+
+    expect(preflight).toEqual({
+      allowed: true,
+      message: '所选内容可以生成视频',
+      selectedDurationMillis: 12_000,
+      minimumDurationMillis: 3_000,
+      selectedSegmentCount: 1,
+      retryable: false,
+      proof: 'private-proof',
+    })
+    expect(completed).toMatchObject({
+      jobId: 'job-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+      selectedSegmentCount: 1, videoAssetUid: 'video-asset-1', coverAssetUid: 'cover-asset-1',
+    })
+    expect(requests).toEqual([
+      {
+        url: 'https://intelligent.test/api/v1/ai-comic-video/preflight',
+        authorization: 'Bearer access',
+        body: {
+          session_id: 'session-1',
+          selection: {
+            kind: 'long_recording_segments',
+            segments: [{ child_id: 'child-1', asr_item_index: 2, transcript_source: 'system' }],
+          },
+        },
+      },
+      {
+        url: 'https://intelligent.test/api/v1/ai-comic-video/jobs/create',
+        authorization: 'Bearer access',
+        body: {
+          client_request_id: 'request-1',
+          session_id: 'session-1',
+          selection: {
+            kind: 'long_recording_segments',
+            segments: [{ child_id: 'child-1', asr_item_index: 2, transcript_source: 'system' }],
+          },
+          preflight_proof: 'private-proof',
+        },
+      },
+      {
+        url: 'https://intelligent.test/api/v1/ai-comic-video/jobs/status',
+        authorization: 'Bearer access',
+        body: { job_id: 'job-1' },
+      },
+    ])
+  })
+
+  it('preserves actionable AI video service errors', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => json({
+      code: 1001,
+      message: '参数错误',
+      data: {
+        error_code: 'active_job_limit',
+        message: '当前已有3个视频正在生成，请完成或取消后再试',
+      },
+    }))
+
+    await expect(service.aiVideoPreflight('session-1', [
+      { childId: 'child-1', asrItemIndex: 0, transcriptSource: 'system' },
+    ])).rejects.toMatchObject({
+      code: 'active_job_limit',
+      message: '当前已有3个视频正在生成，请完成或取消后再试',
+      retryable: false,
+    })
   })
 
   it('refreshes the short token once after an authenticated 403', async () => {
