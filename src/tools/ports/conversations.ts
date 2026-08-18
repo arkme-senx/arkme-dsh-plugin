@@ -1,5 +1,6 @@
 import type {
-  ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelinePage,
+  ArkmeDirectTextSendResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
+  ArkmeTimelineCursor, ArkmeTimelinePage,
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
@@ -16,4 +17,14 @@ export interface ArkmeConversationToolPort {
     textContent: string,
     options?: { recordUid?: string; relationUid?: string },
   ): Promise<ArkmeSourceSendResult>
+  sendDirectText(
+    recipientArkmeId: string,
+    textContent: string,
+    options?: {
+      recordUid?: string
+      relationUid?: string
+      sendAtMillis?: number
+      signal?: AbortSignal
+    },
+  ): Promise<ArkmeDirectTextSendResult>
 }

@@ -108,6 +108,7 @@ export type {
   ArkmeCachedSnapshot,
   ArkmeConversationWriteResult,
   ArkmeCreateTextResult,
+  ArkmeDirectTextSendResult,
   ArkmePendingWrite,
   ArkmeImageMediaType,
   ArkmeImagePayload,

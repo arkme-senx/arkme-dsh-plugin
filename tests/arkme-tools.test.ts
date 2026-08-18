@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   consumerPluginContract, createArkmeCoreToolDefinitions, ARKME_TOOL_PROMPT, recordUidForToolCall,
+  stableUidForToolCall,
 } from '../src/tools/index.js'
 import { createArkmeImageToolDefinition } from '../src/tools/business/media/read-image.js'
 import type { ArkmeCoreToolPorts } from '../src/tools/index.js'
@@ -73,6 +74,14 @@ function fakeService(): ArkmeCoreToolPorts & {
     })),
     sendSourceText: vi.fn(async (sourceRef: string, _text: string, options?: { recordUid?: string }) => ({
       sourceRef, itemUid: options?.recordUid ?? 'record-1', status: 1, localState: 'synced' as const,
+    })),
+    sendDirectText: vi.fn(async (recipientArkmeId: string, _text: string, options?: { recordUid?: string; relationUid?: string }) => ({
+      recipientArkmeId,
+      chatSessionUid: 'chat-direct-1',
+      recordUid: options?.recordUid ?? 'record-direct-1',
+      relationUid: options?.relationUid ?? 'relation-direct-1',
+      sequence: 11,
+      targetKind: 'direct' as const,
     })),
   }
 }
@@ -245,5 +254,44 @@ describe('Arkme conversation tools', () => {
       recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }))
+  })
+
+  it('direct-sends to an explicit recipient with stable hidden ids and no text echo', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_direct_text_send')!
+    const signal = new AbortController().signal
+    const callId = 'direct-send-call'
+
+    const output = await tool.execute(
+      { recipient_arkme_id: 'zhangsan_01', text: '你好，这是 Agent 代发消息' },
+      { callId, signal } as never,
+    ) as string
+
+    expect(service.sendDirectText).toHaveBeenCalledWith(
+      'zhangsan_01',
+      '你好，这是 Agent 代发消息',
+      expect.objectContaining({
+        recordUid: stableUidForToolCall('direct-record', callId),
+        relationUid: stableUidForToolCall('direct-relation', callId),
+        sendAtMillis: expect.any(Number),
+        signal,
+      }),
+    )
+    expect(output).toContain('chat-direct-1')
+    expect(output).toContain('zhangsan_01')
+    expect(output).not.toContain('你好，这是 Agent 代发消息')
+  })
+
+  it('recognizes the supported names for a recipient Arkme ID', () => {
+    const tool = createArkmeCoreToolDefinitions(fakeService())
+      .find(definition => definition.name === 'arkme_direct_text_send')!
+    const parameters = JSON.stringify(tool.parameters)
+
+    for (const name of ['即我号', '即我id', 'arkme id', 'arkme号']) {
+      expect(tool.description).toContain(name)
+      expect(parameters).toContain(name)
+      expect(ARKME_TOOL_PROMPT).toContain(name)
+    }
   })
 })

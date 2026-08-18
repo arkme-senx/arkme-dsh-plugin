@@ -217,6 +217,15 @@ export interface ArkmeSourceSendResult {
   error?: string
 }
 
+export interface ArkmeDirectTextSendResult {
+  recipientArkmeId: string
+  chatSessionUid: string
+  recordUid: string
+  relationUid: string
+  sequence: number
+  targetKind: 'direct'
+}
+
 export interface ArkmeProviderState {
   contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
   environment: ArkmeEnvironment

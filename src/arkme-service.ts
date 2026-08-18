@@ -10,6 +10,7 @@ import type {
   ArkmeClientConfig,
   ArkmeConversationWriteResult,
   ArkmeCreateTextResult,
+  ArkmeDirectTextSendResult,
   ArkmeEnvironment,
   ArkmeImageBytes,
   ArkmeImageMediaType,
@@ -654,6 +655,59 @@ export class ArkmeService {
       status: numberValue(result.audit_status),
       sequence: numberValue(result.seq),
       localState: 'synced',
+    }
+  }
+
+  async sendDirectText(
+    recipientArkmeId: string,
+    textContent: string,
+    options: {
+      recordUid?: string
+      relationUid?: string
+      sendAtMillis?: number
+      signal?: AbortSignal
+    } = {},
+  ): Promise<ArkmeDirectTextSendResult> {
+    const session = await this.requireSession()
+    const recipient = recipientArkmeId.trim()
+    if (recipient === '') {
+      throw new ArkmePluginError('direct-recipient-invalid', '接收方 Arkme ID 不能为空', false)
+    }
+    const text = textContent.trim()
+    if (text === '' || text.length > this.config.maxTextLength) {
+      throw new ArkmePluginError('direct-text-invalid', '发送内容为空或超过长度限制', false)
+    }
+    const recordUid = options.recordUid?.trim() || crypto.randomUUID()
+    const relationUid = options.relationUid?.trim() || crypto.randomUUID()
+    const sendAtMillis = options.sendAtMillis ?? Date.now()
+    if (!Number.isSafeInteger(sendAtMillis) || sendAtMillis <= 0) {
+      throw new ArkmePluginError('direct-send-at-invalid', '发送时间无效', false)
+    }
+    const result = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/agent/records/send',
+      {
+        recipient_jotmo_id: recipient,
+        record_uid: recordUid,
+        rel_uid: relationUid,
+        text_content: text,
+        send_at: sendAtMillis,
+      },
+      session,
+      options.signal,
+    )
+    const chatSessionUid = stringValue(result.chat_session_uid).trim()
+    const sequence = numberValue(result.seq)
+    const targetKind = stringValue(result.target_kind).trim()
+    if (chatSessionUid === '' || !Number.isSafeInteger(sequence) || sequence <= 0 || targetKind !== 'direct') {
+      throw new ArkmePluginError('direct-send-response-invalid', 'Chat Agent 发送返回了无效响应', true, 502)
+    }
+    return {
+      recipientArkmeId: recipient,
+      chatSessionUid,
+      recordUid: stringValue(result.record_uid).trim() || recordUid,
+      relationUid: stringValue(result.rel_uid).trim() || relationUid,
+      sequence,
+      targetKind: 'direct',
     }
   }
 

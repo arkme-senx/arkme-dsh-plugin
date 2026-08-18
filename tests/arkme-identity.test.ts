@@ -27,9 +27,21 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.senguo.me', '')
     .replaceAll('userfiles.jotmo.cc', '')
+    .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')
     .replaceAll("'jotmo-userfiles'", '')
     .replaceAll('dsh-worktrees/jotmo-virtual-workspace', '')
+}
+
+function withoutRecipientIdCompatibilityAliases(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'src/tools/business/conversation/send-direct-text.ts'),
+    join(root, 'src/tools/prompts/business.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  return content
+    .replaceAll('即我号', '')
+    .replaceAll('即我id', '')
 }
 
 describe('Arkme plugin identity', () => {
@@ -43,7 +55,8 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const content = withoutInfrastructureNames(readFileSync(file, 'utf8'))
+      const source = withoutRecipientIdCompatibilityAliases(file, readFileSync(file, 'utf8'))
+      const content = withoutInfrastructureNames(source)
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
     })
 

@@ -466,6 +466,75 @@ describe('ArkmeService', () => {
     expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', text_content: '回复' })
   })
 
+  it('sends Agent-authored direct text by recipient Jotmo ID through the Chat owner facade', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const signal = new AbortController().signal
+    const requests: Array<{
+      url: string
+      authorization: string | null
+      body: Record<string, unknown>
+      signal: AbortSignal | null
+    }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      requests.push({
+        url: String(input),
+        authorization: new Headers(init?.headers).get('Authorization'),
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        signal: init?.signal as AbortSignal | null,
+      })
+      return json({ code: 200, data: {
+        chat_session_uid: 'chat-direct-1',
+        record_uid: 'record-direct-1',
+        rel_uid: 'relation-direct-1',
+        seq: 11,
+        target_kind: 'direct',
+      } })
+    })
+
+    await expect(service.sendDirectText(' zhangsan_01 ', ' 你好，这是 Agent 代发消息 ', {
+      recordUid: 'record-direct-1',
+      relationUid: 'relation-direct-1',
+      sendAtMillis: 1787036400000,
+      signal,
+    })).resolves.toEqual({
+      recipientArkmeId: 'zhangsan_01',
+      chatSessionUid: 'chat-direct-1',
+      recordUid: 'record-direct-1',
+      relationUid: 'relation-direct-1',
+      sequence: 11,
+      targetKind: 'direct',
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      url: 'https://chat.test/api/v1/chats/agent/records/send',
+      authorization: 'Bearer access',
+      body: {
+        recipient_jotmo_id: 'zhangsan_01',
+        record_uid: 'record-direct-1',
+        rel_uid: 'relation-direct-1',
+        text_content: '你好，这是 Agent 代发消息',
+        send_at: 1787036400000,
+      },
+    })
+    expect(requests[0]?.signal).toBeInstanceOf(AbortSignal)
+    expect(requests[0]?.signal?.aborted).toBe(false)
+    expect(requests[0]?.body).not.toHaveProperty('chat_session_uid')
+    expect(requests[0]?.body).not.toHaveProperty('template_kind')
+  })
+
+  it('rejects an empty direct recipient before any Chat write', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>()
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.sendDirectText('   ', '不应发送')).rejects.toMatchObject({ code: 'direct-recipient-invalid' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('hydrates private and group avatars as opaque refs and reads them through fresh authorization', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

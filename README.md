@@ -6,6 +6,7 @@ Arkme 的 DeepSeek Harness 集成插件，无需修改 DSH 源码即可使用 Ar
 
 - 微信扫码或手机号验证码登录，Token 仅保存在 macOS Keychain 或 Windows Credential Locker。
 - 浏览“发给自己”、主题、私聊和群聊，支持时间线读取与纯文本发送。
+- 按用户明确提供的 Arkme ID 直接发起私聊并以 Agent 来源发送纯文本。
 - 账号隔离的 SQLite 缓存、分页游标和 outbox，失败发送可重试。
 - 提供记录、账号、会话、发送和图片读取工具；图片鉴权与下载由 Provider 统一处理。
 

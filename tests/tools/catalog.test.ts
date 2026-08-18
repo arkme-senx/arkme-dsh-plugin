@@ -33,6 +33,7 @@ describe('Arkme tool catalog', () => {
       'arkme_sources_list',
       'arkme_source_read',
       'arkme_text_send',
+      'arkme_direct_text_send',
       'arkme_image_read',
     ])
     expect(arkmeToolCatalog.toolNamesFor('atomic')).toEqual(['arkme_plugin_contract'])
@@ -45,7 +46,9 @@ describe('Arkme tool catalog', () => {
     const writes = arkmeToolCatalog.modules.filter(module => module.meta.effect === 'write')
 
     expect(image?.meta).toMatchObject({ kind: 'business', phase: 'attachments', effect: 'read' })
-    expect(writes.map(module => module.meta.toolName)).toEqual(['arkme_record_create', 'arkme_text_send'])
+    expect(writes.map(module => module.meta.toolName)).toEqual([
+      'arkme_record_create', 'arkme_text_send', 'arkme_direct_text_send',
+    ])
     expect(writes.every(module => module.meta.grant === 'explicit-user-write')).toBe(true)
   })
 
