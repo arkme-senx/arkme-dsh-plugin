@@ -1,9 +1,11 @@
 {
-  "name": "@senqisi/dsh-jotmo",
-  "version": "0.1.0",
+  "name": "@senguoyun/dsh-arkme",
+  "version": "0.1.1",
   "description": "Jotmo login and send-to-self sidebar integration for DeepSeek Harness",
   "license": "UNLICENSED",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

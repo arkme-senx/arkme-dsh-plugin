@@ -33,8 +33,8 @@ function fakeService(): JotmoConversationReadService & {
   return {
     providerCapabilities: () => ({
       contractVersion: 1,
-      provider: '@senqisi/dsh-jotmo' as const,
-      sdk: '@senqisi/dsh-jotmo/sdk' as const,
+      provider: '@senguoyun/dsh-arkme' as const,
+      sdk: '@senguoyun/dsh-arkme/sdk' as const,
       environment: 'test' as const,
       features: {
         authStatus: true as const, cachedSnapshot: true as const, remoteRefresh: true as const,
@@ -162,7 +162,7 @@ describe('Jotmo conversation tools', () => {
     const tool = createJotmoToolDefinitions(service).find(definition => definition.name === 'jotmo_plugin_contract')!
     const output = await tool.execute({}, { signal: new AbortController().signal } as never) as string
     expect(output).toContain('"contractVersion": 1')
-    expect(output).toContain('@senqisi/dsh-jotmo/sdk')
+    expect(output).toContain('@senguoyun/dsh-arkme/sdk')
     expect(output).toContain('createJotmoSdk')
     expect(output).toContain('readImage')
     expect(consumerPluginContract(service.providerCapabilities())).toBe(output)

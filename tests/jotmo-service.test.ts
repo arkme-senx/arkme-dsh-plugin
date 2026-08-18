@@ -369,8 +369,8 @@ describe('JotmoService', () => {
 
     expect(service.providerCapabilities()).toMatchObject({
       contractVersion: 1,
-      provider: '@senqisi/dsh-jotmo',
-      sdk: '@senqisi/dsh-jotmo/sdk',
+      provider: '@senguoyun/dsh-arkme',
+      sdk: '@senguoyun/dsh-arkme/sdk',
       features: { cachedSnapshot: true, revisionPolling: true, userProfile: true, imageRead: true },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })

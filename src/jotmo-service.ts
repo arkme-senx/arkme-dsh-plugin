@@ -362,8 +362,8 @@ export class JotmoService {
   providerCapabilities(): JotmoProviderCapabilities {
     return {
       contractVersion: JOTMO_PROVIDER_CONTRACT_VERSION,
-      provider: '@senqisi/dsh-jotmo',
-      sdk: '@senqisi/dsh-jotmo/sdk',
+      provider: '@senguoyun/dsh-arkme',
+      sdk: '@senguoyun/dsh-arkme/sdk',
       environment: this.config.environment,
       features: {
         authStatus: true,

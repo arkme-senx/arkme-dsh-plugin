@@ -36,10 +36,10 @@ DSH 的 Footer action 容器默认横排；当 Cordis Runner 等插件占满整�
 
 ## Headless Provider / Consumer SDK
 
-独立 UI 插件通过 `@senqisi/dsh-jotmo/sdk` 读取即我 Provider，不依赖本插件的 React 页面：
+独立 UI 插件通过 `@senguoyun/dsh-arkme/sdk` 读取即我 Provider，不依赖本插件的 React 页面：
 
 ```ts
-import { createJotmoSdk } from '@senqisi/dsh-jotmo/sdk'
+import { createJotmoSdk } from '@senguoyun/dsh-arkme/sdk'
 
 const jotmo = createJotmoSdk()
 const capabilities = await jotmo.capabilities()

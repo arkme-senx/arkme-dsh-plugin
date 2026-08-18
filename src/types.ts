@@ -92,8 +92,8 @@ export interface JotmoCachedQueryResult {
 
 export interface JotmoProviderCapabilities {
   contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
-  provider: '@senqisi/dsh-jotmo'
-  sdk: '@senqisi/dsh-jotmo/sdk'
+  provider: '@senguoyun/dsh-arkme'
+  sdk: '@senguoyun/dsh-arkme/sdk'
   environment: JotmoEnvironment
   features: {
     authStatus: true

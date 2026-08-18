@@ -4,7 +4,7 @@
 
 - 日期：2026-08-18
 - 方案状态：已确认，待实施计划
-- 适用仓库：`@senqisi/dsh-jotmo`
+- 适用仓库：`@senguoyun/dsh-arkme`
 
 ## 背景
 
