@@ -1,0 +1,14 @@
+- insert:
+    - id: arkme-self
+      name: '@senqisi/dsh-arkme'
+      config:
+        environment: prod
+        authBaseUrl: https://api.jotmo.cc
+        recordBaseUrl: https://record.jotmo.cc
+        chatBaseUrl: https://chat.jotmo.cc
+        routePath: /arkme-self/api
+        requestTimeoutMs: 30000
+        maxTextLength: 20000
+        geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
+        allowNonLoopback: false
+        allowProduction: true
