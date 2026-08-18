@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest'
+import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
+import {
+  arkmeAuthView, arkmeLoginNeedsPhoneBinding, arkmeProfileHasBoundPhone, arkmeShouldBeginWechat,
+} from '../src/client/ArkmeSidebar.js'
+
+describe('Arkme floating conversation frame', () => {
+  it('keeps a uniform floating inset inside a wide DSH conversation column', () => {
+    expect(calculateArkmeFloatingFrame({ left: 280, top: 0, width: 1232, height: 674 })).toEqual({
+      left: 296,
+      top: 16,
+      width: 1200,
+      height: 642,
+    })
+  })
+
+  it('keeps compact margins when the DSH conversation column is narrow', () => {
+    expect(calculateArkmeFloatingFrame({ left: 64, top: 0, width: 640, height: 480 })).toEqual({
+      left: 80,
+      top: 16,
+      width: 608,
+      height: 448,
+    })
+  })
+
+  it('does not treat an unresolved auth check as logged out', () => {
+    expect(arkmeAuthView(undefined)).toBe('checking')
+    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 })).toBe('content')
+    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'checking')).toBe('checking')
+    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'required')).toBe('login')
+    expect(arkmeAuthView({ status: 'binding-required', environment: 'prod', userId: 1 })).toBe('login')
+    expect(arkmeAuthView({ status: 'logged-out', environment: 'prod' })).toBe('login')
+    expect(arkmeAuthView({ status: 'expired', environment: 'prod' })).toBe('login')
+  })
+
+  it('treats the remote profile phone projection as the bound-phone signal', () => {
+    expect(arkmeProfileHasBoundPhone({
+      profile: {
+        userId: 1,
+        displayName: 'Arkme',
+        nickname: 'Arkme',
+        avatarRef: '',
+        arkmeId: 'arkme',
+        accountType: 1,
+        createdAt: 1,
+        bindings: { apple: false, wechat: true, google: false },
+        contact: { phoneMasked: '138****8000' },
+      },
+      cachedAtMillis: 1,
+      revision: 1,
+    })).toBe(true)
+    expect(arkmeProfileHasBoundPhone({ profile: null, cachedAtMillis: 1, revision: 1 })).toBe(false)
+  })
+
+  it('keeps the floating login surface in the binding view when auth is binding-required', () => {
+    expect(arkmeLoginNeedsPhoneBinding({ status: 'binding-required', environment: 'prod', userId: 1 }, 'unknown')).toBe(true)
+    expect(arkmeLoginNeedsPhoneBinding({ status: 'logged-out', environment: 'prod' }, 'required')).toBe(true)
+    expect(arkmeLoginNeedsPhoneBinding({ status: 'logged-out', environment: 'prod' }, 'unknown')).toBe(false)
+  })
+
+  it('does not restart WeChat login while a QR login attempt is pending', () => {
+    expect(arkmeShouldBeginWechat({ status: 'logged-out', environment: 'prod' }, 'login', 'wechat', true, '', false)).toBe(true)
+    expect(arkmeShouldBeginWechat({ status: 'expired', environment: 'prod' }, 'login', 'wechat', true, '', false)).toBe(true)
+    expect(arkmeShouldBeginWechat({
+      status: 'pending',
+      environment: 'prod',
+      attemptId: 'attempt-1',
+      qrContent: 'weixin://qr',
+      expiresAtMillis: 1,
+    }, 'login', 'wechat', true, '', false)).toBe(false)
+    expect(arkmeShouldBeginWechat({ status: 'logged-out', environment: 'prod' }, 'login', 'phone', true, '', false)).toBe(false)
+  })
+})

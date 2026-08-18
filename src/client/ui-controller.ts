@@ -1,18 +1,27 @@
-import type { JotmoSourceItem } from '../types.js'
+import type { ArkmeSourceItem } from '../types.js'
 
-export interface JotmoUiState {
+function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.sourceRef === right.sourceRef && left.kind === right.kind && left.displayName === right.displayName
+    && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
+    && left.unreadCount === right.unreadCount && left.latestSequence === right.latestSequence
+    && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
+}
+
+export interface ArkmeUiState {
   open: boolean
   surfaceOpen: boolean
   authRevision: number
-  mode: 'login' | 'source' | 'calls' | 'recordings'
-  selectedSource?: JotmoSourceItem
+  chatRevision: number
+  mode: 'login' | 'source'
+  selectedSource?: ArkmeSourceItem
 }
 
-export class JotmoUiController {
-  private state: JotmoUiState = { open: false, surfaceOpen: false, authRevision: 0, mode: 'login' }
+export class ArkmeUiController {
+  private state: ArkmeUiState = { open: false, surfaceOpen: false, authRevision: 0, chatRevision: 0, mode: 'login' }
   private readonly listeners = new Set<() => void>()
 
-  readonly getSnapshot = (): JotmoUiState => this.state
+  readonly getSnapshot = (): ArkmeUiState => this.state
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -51,6 +60,10 @@ export class JotmoUiController {
     })
   }
 
+  chatChanged(): void {
+    this.publish({ ...this.state, chatRevision: this.state.chatRevision + 1 })
+  }
+
   showLogin(): void {
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'login' })
@@ -61,26 +74,18 @@ export class JotmoUiController {
     this.publish({ ...rest, open: false, surfaceOpen: true, mode: 'login' })
   }
 
-  showCalls(): void {
-    this.publish({ ...this.state, open: true, surfaceOpen: true, mode: 'calls' })
-  }
-
-  selectSource(source: JotmoSourceItem): void {
+  selectSource(source: ArkmeSourceItem): void {
     this.publish({ ...this.state, open: true, mode: 'source', selectedSource: source })
   }
 
-  showRecordings(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, mode: 'recordings' })
-  }
-
-  private publish(next: JotmoUiState): void {
+  private publish(next: ArkmeUiState): void {
     if (next.open === this.state.open && next.surfaceOpen === this.state.surfaceOpen
       && next.authRevision === this.state.authRevision
-      && next.mode === this.state.mode && next.selectedSource?.sourceRef === this.state.selectedSource?.sourceRef) return
+      && next.chatRevision === this.state.chatRevision
+      && next.mode === this.state.mode && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next
     for (const listener of this.listeners) listener()
   }
 }
 
-export const jotmoUi = new JotmoUiController()
+export const arkmeUi = new ArkmeUiController()

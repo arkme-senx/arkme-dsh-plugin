@@ -78,6 +78,7 @@
 **Files:**
 - Keep from current branch: `docs/superpowers/specs/2026-08-18-arkme-master-outgoing-call-merge-design.md`
 - Keep from current branch: `docs/superpowers/plans/2026-08-18-arkme-master-outgoing-call-merge.md`
+- Modify: `tests/arkme-identity.test.ts` to exclude internal `docs/superpowers` migration artifacts while retaining identity checks for published documentation and all source files.
 - Resolve to master: all product code, configuration, package metadata, existing tests and pre-existing documentation.
 - Remove from merge result: old Jotmo call-history/recording/related-recording/outgoing-call files listed below.
 
@@ -149,6 +150,7 @@ Expected output contains only:
 ```text
 A docs/superpowers/plans/2026-08-18-arkme-master-outgoing-call-merge.md
 A docs/superpowers/specs/2026-08-18-arkme-master-outgoing-call-merge-design.md
+M tests/arkme-identity.test.ts
 ```
 
 - [ ] **Step 6: Verify the Arkme baseline**

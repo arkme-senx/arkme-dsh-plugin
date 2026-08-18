@@ -13,7 +13,6 @@
     "jsx": "react-jsx",
     "declaration": true,
     "declarationMap": true,
-    "stripInternal": true,
     "outDir": "lib/types",
     "rootDir": "src",
     "types": ["node"]

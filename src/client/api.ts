@@ -1,15 +1,17 @@
-import { callJotmo as callProvider } from '../sdk/index.js'
-import type { JotmoPluginOperation } from '../types.js'
+import { callArkme as callProvider } from '../sdk/index.js'
+import type { ArkmePluginOperation } from '../types.js'
 
-export { JotmoClientError } from '../sdk/index.js'
+export { ArkmeClientError } from '../sdk/index.js'
 
-type JotmoUiOperation = JotmoPluginOperation | 'recordings.calendar' | 'recordings.day'
+type ArkmeUiOperation = ArkmePluginOperation
+  | 'official-community.entry-state'
+  | 'official-community.join'
 
-/** Built-in UI bridge. Recording operations intentionally stay out of the public Consumer SDK. */
-export async function callJotmo<T>(
-  operation: JotmoUiOperation,
+/** Built-in UI bridge. Community operations intentionally stay out of the public Consumer SDK. */
+export async function callArkme<T>(
+  operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<T> {
-  return await callProvider<T>(operation as JotmoPluginOperation, params, signal)
+  return await callProvider<T>(operation as ArkmePluginOperation, params, signal)
 }

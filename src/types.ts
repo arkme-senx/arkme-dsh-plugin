@@ -1,36 +1,37 @@
-export type JotmoEnvironment = 'test' | 'prod'
+export type ArkmeEnvironment = 'test' | 'prod'
 
-export const JOTMO_PROVIDER_CONTRACT_VERSION = 1 as const
+export const ARKME_PROVIDER_CONTRACT_VERSION = 1 as const
 
-export type JotmoAuthStatus = 'logged-out' | 'pending' | 'authenticated' | 'expired'
+export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
-export interface JotmoAuthSnapshot {
-  status: JotmoAuthStatus
-  environment: JotmoEnvironment
+export interface ArkmeAuthSnapshot {
+  status: ArkmeAuthStatus
+  environment: ArkmeEnvironment
   userId?: number
   attemptId?: string
   qrContent?: string
   expiresAtMillis?: number
 }
 
-export interface JotmoCaptchaResult {
+export interface ArkmeCaptchaResult {
   lot_number: string
   captcha_output: string
   pass_token: string
   gen_time: string
 }
 
-export interface JotmoClientConfig {
+export interface ArkmeClientConfig {
   captchaId: string
-  callAssetBasePath: string
+  environment: ArkmeEnvironment
+  testLoginEnabled: boolean
 }
 
-export interface JotmoRecordCursor {
+export interface ArkmeRecordCursor {
   sendAtMillis: number
   recordUid: string
 }
 
-export interface JotmoSelfRecordItem {
+export interface ArkmeSelfRecordItem {
   recordUid: string
   sendAtMillis: number
   title: string
@@ -42,19 +43,19 @@ export interface JotmoSelfRecordItem {
   lastError?: string
 }
 
-export interface JotmoSelfRecordList {
-  items: JotmoSelfRecordItem[]
+export interface ArkmeSelfRecordList {
+  items: ArkmeSelfRecordItem[]
   hasMore: boolean
-  nextCursor?: JotmoRecordCursor
+  nextCursor?: ArkmeRecordCursor
 }
 
-export interface JotmoSelfSummary {
+export interface ArkmeSelfSummary {
   recordCount: number
   wordsCount: number
   totalSec: number
 }
 
-export interface JotmoPendingWrite {
+export interface ArkmePendingWrite {
   recordUid: string
   textContent: string
   createdAtMillis: number
@@ -63,19 +64,19 @@ export interface JotmoPendingWrite {
   lastError?: string
 }
 
-export interface JotmoCreateTextResult {
+export interface ArkmeCreateTextResult {
   recordUid: string
   status: number
 }
 
-export interface JotmoConversationWriteResult {
+export interface ArkmeConversationWriteResult {
   recordUid: string
   status: number
   localState: 'synced' | 'failed'
   error?: string
 }
 
-export interface JotmoWorldRecordItem {
+export interface ArkmeWorldRecordItem {
   authorName: string
   headline: string
   textContent: string
@@ -89,120 +90,46 @@ export interface JotmoWorldRecordItem {
   extendCount: number
 }
 
-export interface JotmoWorldRecordList {
-  items: JotmoWorldRecordItem[]
+export interface ArkmeWorldRecordList {
+  items: ArkmeWorldRecordItem[]
   total: number
   hasMore: boolean
   nextOffset?: number
 }
 
-export type JotmoWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
+export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
-export interface JotmoWorldPublishResult {
+export interface ArkmeWorldPublishResult {
   recordSaved: boolean
   recordState: 'synced' | 'pending' | 'not_saved'
   worldPublished: boolean
-  visibility: JotmoWorldVisibility
+  visibility: ArkmeWorldVisibility
   checkStatus: number
   retryable: boolean
   error?: string
 }
 
-export interface JotmoCachedSnapshot {
-  items: JotmoSelfRecordItem[]
+export interface ArkmeCachedSnapshot {
+  items: ArkmeSelfRecordItem[]
   hasMore: boolean
-  nextCursor?: JotmoRecordCursor
-  summary?: JotmoSelfSummary
+  nextCursor?: ArkmeRecordCursor
+  summary?: ArkmeSelfSummary
   cachedAtMillis: number
   revision: number
 }
 
-export interface JotmoCachedQueryResult {
-  items: JotmoSelfRecordItem[]
+export interface ArkmeCachedQueryResult {
+  items: ArkmeSelfRecordItem[]
   cacheComplete: boolean
   cachedAtMillis: number
   revision: number
 }
 
-export type JotmoCallMediaType = 'audio' | 'video' | 'unknown'
-export type JotmoCallDirection = 'incoming' | 'outgoing' | 'group' | 'unknown'
-export type JotmoCallSectionState = 'ready' | 'empty' | 'processing' | 'failed'
-
-export interface JotmoCallListItem {
-  callRef: string
-  displayName: string
-  /** Opaque provider-scoped reference; resolve through `image.read`. */
-  avatarRef?: string
-  participantCount: number
-  mediaType: JotmoCallMediaType
-  direction: JotmoCallDirection
-  connected: boolean
-  startedAtMillis: number
-  acceptedAtMillis: number
-  endedAtMillis: number
-  durationMillis: number
-  summaryState: JotmoCallSectionState
-  summaryPreview: string
-}
-
-export interface JotmoCallList {
-  items: JotmoCallListItem[]
-  hasMore: boolean
-  nextCursor?: string
-}
-
-export interface JotmoCallParticipant {
-  displayName: string
-  /** Opaque provider-scoped reference; resolve through `image.read`. */
-  avatarRef?: string
-  isSelf: boolean
-  connected: boolean
-}
-
-export interface JotmoCallTranscriptItem {
-  itemId: string
-  startOffsetMillis: number
-  endOffsetMillis: number
-  speakerLabel: string
-  /** Opaque provider-scoped reference; resolve through `image.read`. */
-  avatarRef?: string
-  isSelf: boolean
-  text: string
-}
-
-export interface JotmoCallTextSection {
-  state: JotmoCallSectionState
-  content: string
-  message: string
-}
-
-export interface JotmoCallTranscriptSection {
-  state: JotmoCallSectionState
-  /** Partial plain-text items may be present while state is `processing`. */
-  items: JotmoCallTranscriptItem[]
-  message: string
-}
-
-export interface JotmoCallDetail {
-  callRef: string
-  displayName: string
-  participants: JotmoCallParticipant[]
-  mediaType: JotmoCallMediaType
-  direction: JotmoCallDirection
-  connected: boolean
-  startedAtMillis: number
-  acceptedAtMillis: number
-  endedAtMillis: number
-  durationMillis: number
-  summary: JotmoCallTextSection
-  transcript: JotmoCallTranscriptSection
-}
-
-export interface JotmoProviderCapabilities {
-  contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
+export interface ArkmeProviderCapabilities {
+  contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
   provider: '@senguoyun/dsh-arkme'
   sdk: '@senguoyun/dsh-arkme/sdk'
-  environment: JotmoEnvironment
+  environment: ArkmeEnvironment
   features: {
     authStatus: true
     cachedSnapshot: true
@@ -216,37 +143,39 @@ export interface JotmoProviderCapabilities {
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
-    callHistory: true
-    callDetail: true
-    relatedRecordings?: true
-    outgoingCall: true
   }
   limits: {
     maxTextLength: number
     maxSearchResults: number
     maxSyncPages: number
     maxImageBytes: number
-    maxRelatedRecordingPageSize?: number
-    maxRelatedRecordingCursorLength?: number
   }
 }
 
-export type JotmoImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+export type ArkmeImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+export interface ArkmeImageBytes {
+  mediaType: ArkmeImageMediaType
+  bytes: number
+  data: Uint8Array
+}
 
 /** Browser-safe image payload. Signed OSS URLs and credentials never cross the Provider boundary. */
-export interface JotmoImagePayload {
-  mediaType: JotmoImageMediaType
+export interface ArkmeImagePayload {
+  mediaType: ArkmeImageMediaType
   bytes: number
   dataBase64: string
 }
 
-export interface JotmoUserProfile {
+export interface ArkmeUserProfile {
   userId: number
   displayName: string
   nickname: string
   avatarRef: string
   avatarUrl?: string
-  jotmoId: string
+  arkmeId: string
+  /** Whether this account can still use its one-time Arkme ID change. Omitted for legacy cached profiles. */
+  canUpdateArkmeId?: boolean
   accountType: number
   createdAt: number
   bindings: {
@@ -260,18 +189,35 @@ export interface JotmoUserProfile {
   }
 }
 
-export interface JotmoUserProfileSnapshot {
-  profile: JotmoUserProfile | null
+export interface ArkmeUserProfileSnapshot {
+  profile: ArkmeUserProfile | null
   cachedAtMillis: number
   revision: number
 }
 
-export type JotmoSourceKind = 'default_category' | 'topic' | 'private_chat' | 'group_chat'
-export type JotmoSourceDirectory = 'root' | 'send_to_self'
+export type ArkmeIdAvailabilityReason = '' | 'invalid' | 'taken' | 'modify_limited' | 'server_busy'
 
-export interface JotmoSourceItem {
+export interface ArkmeIdAvailabilitySnapshot {
+  available: boolean
+  reason: ArkmeIdAvailabilityReason
+  arkmeId: string
+}
+
+export interface ArkmeIdMutationResult {
+  arkmeId: string
+  changed: boolean
+  canUpdate: boolean
+  revision: number
+}
+
+export type ArkmeSourceKind = 'default_category' | 'topic' | 'private_chat' | 'group_chat'
+export type ArkmeSourceDirectory = 'root' | 'send_to_self'
+
+export interface ArkmeSourceItem {
   sourceRef: string
-  kind: JotmoSourceKind
+  /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
+  parentSourceRef?: string
+  kind: ArkmeSourceKind
   displayName: string
   /** Opaque Provider image reference; consumers resolve it through image.read. */
   avatarRef?: string
@@ -280,23 +226,24 @@ export interface JotmoSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  latestSequence?: number
   recordCount?: number
 }
 
-export interface JotmoSourceList {
-  directory: JotmoSourceDirectory
-  items: JotmoSourceItem[]
+export interface ArkmeSourceList {
+  directory: ArkmeSourceDirectory
+  items: ArkmeSourceItem[]
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoTimelineCursor {
+export interface ArkmeTimelineCursor {
   sendAtMillis?: number
   itemUid?: string
   beforeSequence?: number
 }
 
-export interface JotmoTimelineItem {
+export interface ArkmeTimelineItem {
   itemUid: string
   senderName: string
   /** Opaque Provider image reference for the concrete message sender. */
@@ -309,14 +256,14 @@ export interface JotmoTimelineItem {
   sequence?: number
 }
 
-export interface JotmoTimelinePage {
-  source: JotmoSourceItem
-  items: JotmoTimelineItem[]
+export interface ArkmeTimelinePage {
+  source: ArkmeSourceItem
+  items: ArkmeTimelineItem[]
   hasMore: boolean
-  nextCursor?: JotmoTimelineCursor
+  nextCursor?: ArkmeTimelineCursor
 }
 
-export interface JotmoSourceSendResult {
+export interface ArkmeSourceSendResult {
   sourceRef: string
   itemUid: string
   status: number
@@ -325,79 +272,22 @@ export interface JotmoSourceSendResult {
   error?: string
 }
 
-export type JotmoRelatedRecordingPageState = 'empty' | 'generating' | 'success' | 'partial' | 'error'
-
-export interface JotmoRelatedRecordingEligibility {
-  allowed: boolean
+export interface ArkmeDirectTextSendResult {
+  recipientArkmeId: string
+  chatSessionUid: string
+  recordUid: string
+  relationUid: string
+  sequence: number
+  targetKind: 'direct'
 }
 
-export interface JotmoRelatedRecordingSpeaker {
-  speakerId: string
-  refUserId?: number
-  nickname?: string
+export interface ArkmeSourceReadResult {
+  sourceRef: string
+  effectiveReadSequence: number
+  unreadCount: number
 }
 
-export interface JotmoRelatedRecordingParticipant {
-  speakerId: string
-  refUserId?: number
-  nickname?: string
-  displayName: string
-  role: number
-}
-
-export interface JotmoRelatedRecordingItem {
-  /** Stable opaque identity from the recording owner; consumers must not parse it. */
-  recordingRef: string
-  momentId: string
-  sessionId: string
-  summaryId?: string
-  originalName?: string
-  startAtMillis: number
-  endAtMillis: number
-  dateStamp?: number
-  timezoneOffsetMillis?: number
-  timeRangeText: string
-  title: string
-  summary: string
-  summaryStatus: number
-  transcript?: string
-  transcriptAvailable: boolean
-  speakers: JotmoRelatedRecordingSpeaker[]
-  participants: JotmoRelatedRecordingParticipant[]
-  isSharedByOther: boolean
-}
-
-export interface JotmoRelatedRecordingMonthBucket {
-  monthKey: string
-  itemCount: number
-}
-
-export interface JotmoRelatedRecordingPage {
-  state: JotmoRelatedRecordingPageState
-  stateCode: number
-  stateMessage: string
-  hasEntry: boolean
-  items: JotmoRelatedRecordingItem[]
-  hasMore: boolean
-  nextCursor?: string
-  partial: boolean
-  monthBuckets?: JotmoRelatedRecordingMonthBucket[]
-  timeIndexComplete: boolean
-  legacyTimeIndexFallback: boolean
-}
-
-export interface JotmoRelatedRecordingPageOptions {
-  limit?: number
-  cursor?: string
-  monthKey?: string
-  timezoneOffsetMillis?: number
-  includeTimeIndex?: boolean
-  /** Host-side diagnostic classification only; browser SDK does not forward this field. */
-  consumer?: 'ui' | 'tool'
-  signal?: AbortSignal
-}
-
-export type JotmoWechatMessageFilter =
+export type ArkmeWechatMessageFilter =
   | 'all'
   | 'image'
   | 'voice'
@@ -409,9 +299,9 @@ export type JotmoWechatMessageFilter =
   | 'chat_record'
   | 'reply'
 
-export type JotmoWechatCallFilter = 'all' | 'audio' | 'video'
+export type ArkmeWechatCallFilter = 'all' | 'audio' | 'video'
 
-export interface JotmoWechatConversation {
+export interface ArkmeWechatConversation {
   /** Account-bound opaque reference used by the other WeChat tools. */
   conversationRef: string
   name: string
@@ -423,14 +313,14 @@ export interface JotmoWechatConversation {
   isBound: boolean
 }
 
-export interface JotmoWechatConversationPage {
-  conversations: JotmoWechatConversation[]
+export interface ArkmeWechatConversationPage {
+  conversations: ArkmeWechatConversation[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoWechatMessage {
+export interface ArkmeWechatMessage {
   content: string
   senderName: string
   isMe: boolean
@@ -441,15 +331,15 @@ export interface JotmoWechatMessage {
   mimeType?: string
 }
 
-export interface JotmoWechatMessagePage {
+export interface ArkmeWechatMessagePage {
   conversationRef: string
-  messages: JotmoWechatMessage[]
+  messages: ArkmeWechatMessage[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoWechatConversationDetail {
+export interface ArkmeWechatConversationDetail {
   conversationRef: string
   name: string
   remark?: string
@@ -471,7 +361,7 @@ export interface JotmoWechatConversationDetail {
   groupCommonFriendCount?: number
 }
 
-export interface JotmoWechatGroupMember {
+export interface ArkmeWechatGroupMember {
   name: string
   messageCount: number
   lastSendAtMillis?: number
@@ -481,56 +371,56 @@ export interface JotmoWechatGroupMember {
   isInGroup: boolean
 }
 
-export interface JotmoWechatGroupMemberPage {
+export interface ArkmeWechatGroupMemberPage {
   conversationRef: string
-  members: JotmoWechatGroupMember[]
+  members: ArkmeWechatGroupMember[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoWechatPhoneEvidence {
+export interface ArkmeWechatPhoneEvidence {
   why?: string
   content?: string
   sentAtMillis?: number
 }
 
-export interface JotmoWechatPhone {
+export interface ArkmeWechatPhone {
   phone: string
   likelyOwner?: string
   confidence?: number
   reason?: string
   occurrenceCount: number
   lastSeenAtMillis: number
-  evidence: JotmoWechatPhoneEvidence[]
+  evidence: ArkmeWechatPhoneEvidence[]
   isRegistered: boolean
   registeredNickname?: string
   location?: string
   taskStatus?: string
 }
 
-export interface JotmoWechatPhonePage {
-  phones: JotmoWechatPhone[]
+export interface ArkmeWechatPhonePage {
+  phones: ArkmeWechatPhone[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoWechatCommonGroupFriend {
+export interface ArkmeWechatCommonGroupFriend {
   name: string
   commonGroupCount: number
   lastSendAtMillis?: number
   sampleConversationRefs: string[]
 }
 
-export interface JotmoWechatCommonGroupPage {
-  friends: JotmoWechatCommonGroupFriend[]
+export interface ArkmeWechatCommonGroupPage {
+  friends: ArkmeWechatCommonGroupFriend[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoWechatMoneyFlow {
+export interface ArkmeWechatMoneyFlow {
   conversationRef?: string
   content: string
   senderName: string
@@ -538,14 +428,14 @@ export interface JotmoWechatMoneyFlow {
   sentAtMillis: number
 }
 
-export interface JotmoWechatMoneyFlowPage {
-  moneyFlows: JotmoWechatMoneyFlow[]
+export interface ArkmeWechatMoneyFlowPage {
+  moneyFlows: ArkmeWechatMoneyFlow[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoWechatLocation {
+export interface ArkmeWechatLocation {
   conversationRef?: string
   conversationName: string
   entryType: string
@@ -558,120 +448,87 @@ export interface JotmoWechatLocation {
   sentAtMillis?: number
 }
 
-export interface JotmoWechatLocationPage {
-  locations: JotmoWechatLocation[]
+export interface ArkmeWechatLocationPage {
+  locations: ArkmeWechatLocation[]
   total: number
   hasMore: boolean
   nextCursor?: string
 }
 
-export interface JotmoRecordingCalendarDay {
-  dateStamp: number
-  durationMillis: number
-  hasRecording: boolean
-  unreviewedCount: number
-}
+export type ArkmeAiVideoTranscriptSource = 'system' | 'doubao'
 
-export interface JotmoRecordingCalendarMonth {
-  fromStamp: number
-  toStamp: number
-  days: JotmoRecordingCalendarDay[]
-}
-
-export interface JotmoRecordingTranscriptItem {
-  itemId: string
-  sessionId: string
+export interface ArkmeAiVideoSegmentSelector {
   childId: string
-  startAtMillis: number
-  endAtMillis: number
-  speakerNumber: number
-  speakerColorIndex: number
-  speakerLabel: string
-  isSelf: boolean
-  isBackground: boolean
-  text: string
+  asrItemIndex: number
+  transcriptSource: ArkmeAiVideoTranscriptSource
 }
 
-export interface JotmoRecordingTimelineEvent {
-  eventId: string
-  startAt: string
-  endAt: string
-  timeRange: string
-  title: string
-  description: string
-  scene: string
-  emotion: string
-  todo: string
-  tags: string[]
-  participants: string[]
-  rawText: string
-}
-
-export type JotmoRecordingVersionStatus = 'processing' | 'done' | 'failed'
-export type JotmoRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
-export type JotmoRecordingProjectionKind = 'summary' | 'timeline'
-export type JotmoRecordingIdentityCoverage = 'complete' | 'partial'
-export type JotmoRecordingToolContent = 'transcript' | 'summary' | 'timeline'
-
-export interface JotmoRecordingVersion {
-  id: string
-  status: JotmoRecordingVersionStatus
-  selectable: boolean
-  generationStage: number
-  generatedAtMillis: number
-  modelDisplayName: string
-  content: string
-  timelineEvents: JotmoRecordingTimelineEvent[]
-  error: string
-}
-
-export interface JotmoRecordingSection<T> {
-  state: JotmoRecordingSectionState
-  items: T[]
+export interface ArkmeAiVideoPreflightResult {
+  allowed: boolean
   message: string
+  selectedDurationMillis: number
+  minimumDurationMillis: number
+  selectedSegmentCount: number
+  retryable: boolean
+  reasonCode?: string
+  proof?: string
 }
 
-export interface JotmoRecordingTranscriptSection
-  extends JotmoRecordingSection<JotmoRecordingTranscriptItem> {
-  identityCoverage: JotmoRecordingIdentityCoverage
-  totalDurationMillis: number
+export type ArkmeAiVideoJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
+
+export interface ArkmeAiVideoJob {
+  jobId: string
+  status: ArkmeAiVideoJobStatus
+  stage: string
+  progress: number
+  selectedSegmentCount: number
+  retryable: boolean
+  videoAssetUid?: string
+  coverAssetUid?: string
+  videoDurationMillis?: number
+  errorCode?: string
+  errorMessage?: string
+  failureStage?: string
 }
 
-export type JotmoRecordingVersionSection = JotmoRecordingSection<JotmoRecordingVersion>
-
-export interface JotmoRecordingCursorPayload {
-  version: 1
-  dateStamp: number
-  content: JotmoRecordingToolContent
-  versionId?: string
-  itemOffset: number
-  textOffset: number
-  fingerprint: string
-}
-
-export interface JotmoRecordingDay {
-  dateStamp: number
-  totalDurationMillis: number
-  transcript: JotmoRecordingSection<JotmoRecordingTranscriptItem>
-  summary: JotmoRecordingSection<JotmoRecordingVersion>
-  timeline: JotmoRecordingSection<JotmoRecordingVersion>
-}
-
-export interface JotmoProviderState {
-  contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
-  environment: JotmoEnvironment
-  authStatus: JotmoAuthStatus
+export interface ArkmeProviderState {
+  contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
+  environment: ArkmeEnvironment
+  authStatus: ArkmeAuthStatus
   userId?: number
   revision: number
 }
 
-export type JotmoPluginOperation =
+export interface ArkmeChatRealtimeState {
+  revision: number
+  connected: boolean
+  lastEventAtMillis?: number
+}
+
+export type ArkmeChatClientEvent = {
+  type: 'reconcile'
+  revision: number
+  connected: boolean
+} | {
+  type: 'sessions-delta'
+  revision: number
+  updates: Array<{ source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
+} | {
+  type: 'read-ack'
+  revision: number
+  sourceRef: string
+  unreadCount: number
+}
+
+export type ArkmePluginOperation =
   | 'provider.capabilities'
   | 'provider.state'
+  | 'chat.realtime.state'
   | 'auth.status'
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
+  | 'auth.test.login'
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.logout'
@@ -688,32 +545,24 @@ export type JotmoPluginOperation =
   | 'image.read'
   | 'sources.list'
   | 'source.timeline'
+  | 'source.mark-read'
   | 'source.send-text'
-  | 'calls.list'
-  | 'calls.detail'
-  | 'related-recordings.eligibility'
-  | 'related-recordings.page'
-  | 'calls.outgoing.intent.claim'
-  | 'calls.outgoing.intent.resolve'
-  | 'calls.outgoing.prepare'
-  | 'calls.outgoing.heartbeat'
-  | 'calls.outgoing.release'
 
-export type JotmoHostOperation = JotmoPluginOperation
-  | 'recordings.calendar'
-  | 'recordings.day'
+export type ArkmeHostOperation = ArkmePluginOperation
+  | 'official-community.entry-state'
+  | 'official-community.join'
 
-export interface JotmoPluginRequest {
-  operation: JotmoHostOperation
+export interface ArkmePluginRequest {
+  operation: ArkmeHostOperation
   params?: Record<string, unknown>
 }
 
-export interface JotmoPluginErrorBody {
+export interface ArkmePluginErrorBody {
   code: string
   message: string
   retryable: boolean
 }
 
-export type JotmoPluginResponse<T = unknown> =
+export type ArkmePluginResponse<T = unknown> =
   | { ok: true; value: T }
-  | { ok: false; error: JotmoPluginErrorBody }
+  | { ok: false; error: ArkmePluginErrorBody }

@@ -1,19 +1,19 @@
 - insert:
-    - id: jotmo-self
+    - id: arkme-self
       name: '@senguoyun/dsh-arkme'
       config:
         environment: prod
         authBaseUrl: https://api.jotmo.cc
         recordBaseUrl: https://record.jotmo.cc
         chatBaseUrl: https://chat.jotmo.cc
-        dataBaseUrl: https://data.jotmo.cc
-        webrtcBaseUrl: https://webrtc.jiwo.cc
-        audioBaseUrl: https://audio.jotmo.cc
+        imBaseUrl: https://im.jotmo.cc
         worldBaseUrl: https://world.jotmo.cc
         relationBaseUrl: https://relation.jotmo.cc
-        routePath: /jotmo-self/api
+        intelligentBaseUrl: https://intelligent.jotmo.cc
+        routePath: /arkme-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000
+        toolProfile: business
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         allowNonLoopback: false
         allowProduction: true
