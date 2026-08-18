@@ -419,11 +419,26 @@ describe('JotmoService', () => {
         ],
         has_more: false,
       } })
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: {
+        items: [{ chat_session_uid: 'chat-group', members: [{ user_id: 10001 }, { user_id: 20002 }] }],
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [
+          { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
+          { user_id: 20002, nick_name: '小林', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/peer.png?x-oss-signature=peer' },
+        ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
+      } })
       if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
-        items: [{
-          relation: { record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
-          record: { status: 1, payload: { text_content: '聊天正文' } },
-        }],
+        items: [
+          {
+            relation: { record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
+            record: { status: 1, payload: { text_content: '聊天正文' } },
+          },
+          {
+            relation: { record_uid: 'chat-record-2', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 181, seq: 8 },
+            record: { status: 1, payload: { text_content: '我的回复' } },
+          },
+        ],
         has_more: true, next_before_seq: 6,
       } })
       if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
@@ -439,13 +454,71 @@ describe('JotmoService', () => {
     ])
     const privateRef = sources.items[0]!.sourceRef
     await expect(service.readSource(privateRef)).resolves.toMatchObject({
-      items: [{ textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7 }],
+      items: [
+        { textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7, avatarRef: expect.stringMatching(/^jotmo-profile-image-v1\./) },
+        { textContent: '我的回复', senderName: '我', isMe: true, sequence: 8, avatarRef: expect.stringMatching(/^jotmo-profile-image-v1\./) },
+      ],
       nextCursor: { beforeSequence: 6 },
     })
     await expect(service.sendSourceText(privateRef, '回复', { recordUid: 'record-send', relationUid: 'rel-send' })).resolves.toMatchObject({
       itemUid: 'record-send', sequence: 8, localState: 'synced',
     })
     expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', text_content: '回复' })
+  })
+
+  it('hydrates private and group avatars as opaque refs and reads them through fresh authorization', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const privateAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/20002_avatar.png?x-oss-signature=private-signature'
+    const groupAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/import/avatar/member.png?x-oss-signature=group-signature'
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2])
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [
+          {
+            session: { chat_session_uid: 'private-1', session_kind: 1, last_active_at: 2 },
+            private_counterpart: { user_id: 20002, display_name_snapshot: '旧名称' },
+            private_supplement: { remark: '联系人备注' },
+            unread_snapshot: { unread_count: 0 },
+          },
+          {
+            session: { chat_session_uid: 'group-1', session_kind: 2, title: '群聊', last_active_at: 1 },
+            unread_snapshot: { unread_count: 0 },
+          },
+        ],
+      } })
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) {
+        expect(body).toEqual({ chat_session_uids: ['group-1'] })
+        return json({ code: 200, data: {
+          items: [{ chat_session_uid: 'group-1', members: [{ user_id: 20003 }, { user_id: 20002 }] }],
+        } })
+      }
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [
+          { user_id: 20002, nick_name: '联系人', head_img: privateAvatar },
+          { user_id: 20003, nick_name: '群成员', head_img: groupAvatar },
+        ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
+      } })
+      if (url === privateAvatar || url === groupAvatar) {
+        return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const sources = await service.listSources('root')
+    expect(sources.items[0]).toMatchObject({ displayName: '联系人备注' })
+    expect(sources.items[0]?.avatarRef).toMatch(/^jotmo-profile-image-v1\./)
+    expect(sources.items[1]?.avatarRefs).toHaveLength(2)
+    expect(JSON.stringify(sources)).not.toContain('x-oss-signature')
+
+    await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
+      mediaType: 'image/png', bytes: png.byteLength,
+    })
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+    await expect(service.readImage(sources.items[0]!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
   })
 
   it('keeps failed writes in the account outbox and retries with the same record uid', async () => {

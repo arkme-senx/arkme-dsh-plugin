@@ -99,6 +99,18 @@ interface JotmoSourceRefPayload {
   displayName: string
 }
 
+interface JotmoProfileImageRefPayload {
+  version: 1
+  viewerUserId: number
+  targetUserId: number
+}
+
+interface JotmoPublicProfile {
+  userId: number
+  displayName: string
+  avatarUrl: string
+}
+
 interface ScanResponse {
   access_token?: unknown
   refresh_token?: unknown
@@ -196,7 +208,37 @@ function isSourceKind(value: unknown): value is JotmoSourceKind {
 }
 
 function textPreview(raw: Record<string, unknown>): string {
-  return stringValue(raw.text_content ?? raw.title).trim().slice(0, 300)
+  const content = objectValue(raw.content_payload)
+  const direct = stringValue(raw.text_content ?? raw.title).trim()
+  if (direct !== '') return direct.slice(0, 300)
+  const nested = stringValue(content.text_content ?? content.title ?? content.summary).trim()
+  if (nested !== '') return nested.slice(0, 300)
+  if (objectValue(content.voice).duration !== undefined) return '[语音]'
+  if (listValue(content.media_refs).length > 0 || listValue(raw.media_display_items).length > 0) return '[图片]'
+  if (Object.keys(objectValue(content.structured_anchor)).length > 0) return '[卡片]'
+  return ''
+}
+
+function chunksOf<T>(values: readonly T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size))
+  return chunks
+}
+
+function trustedSignedImageUrl(environment: JotmoEnvironment, raw: string): URL {
+  let parsed: URL
+  try {
+    parsed = new URL(raw.trim())
+  } catch (error) {
+    throw new JotmoPluginError('image-ref-invalid', '即我头像授权地址无效', false, 400, { cause: error })
+  }
+  const signature = parsed.searchParams.get('x-oss-signature')?.trim() ?? ''
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.hash !== ''
+    || !allowedSignedImageHost(environment, parsed.hostname) || parsed.pathname.replace(/^\/+/, '') === ''
+    || signature === '') {
+    throw new JotmoPluginError('image-sign-target-rejected', '即我头像授权目标不受信任', false, 502)
+  }
+  return parsed
 }
 
 function imageFileIdFromRef(imageRef: string, userId: number): string {
@@ -420,10 +462,13 @@ export class JotmoService {
       session,
     )
     const items: JotmoSourceItem[] = []
+    const privateUserIdByIndex = new Map<number, number>()
+    const groupSessionUidByIndex = new Map<number, string>()
     for (const raw of listValue(data.items)) {
       const bundle = objectValue(raw)
       const chatSession = objectValue(bundle.session)
       const counterpart = objectValue(bundle.private_counterpart)
+      const supplement = objectValue(bundle.private_supplement)
       const latestPreview = objectValue(bundle.latest_preview)
       const latestRecord = objectValue(latestPreview.record)
       const latestPayload = objectValue(latestRecord.payload)
@@ -435,17 +480,36 @@ export class JotmoService {
         : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
       if (uid === '' || kind === undefined) continue
       const displayName = (kind === 'private_chat'
-        ? stringValue(counterpart.display_name_snapshot)
+        ? stringValue(
+          supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
+          ?? supplement.pending_name ?? counterpart.visible_phone,
+        )
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const preview = textPreview(latestPayload)
-      items.push({
+      const item: JotmoSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, kind, uid, displayName),
         kind,
         displayName,
         ...(preview === '' ? {} : { latestPreview: preview }),
         activeAtMillis: numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
         unreadCount: numberValue(unread.unread_count),
-      })
+      }
+      const itemIndex = items.push(item) - 1
+      if (kind === 'private_chat') {
+        const counterpartUserId = numberValue(counterpart.user_id)
+        if (Number.isSafeInteger(counterpartUserId) && counterpartUserId > 0) {
+          privateUserIdByIndex.set(itemIndex, counterpartUserId)
+        }
+      } else {
+        groupSessionUidByIndex.set(itemIndex, uid)
+      }
+    }
+    try {
+      await this.hydrateSourceAvatars(
+        items, privateUserIdByIndex, groupSessionUidByIndex, session, options.signal,
+      )
+    } catch {
+      // Avatar decoration is best-effort; chat source identity and navigation remain usable.
     }
     const hasMore = data.has_more === true
     const nextPageCursor = objectValue(data.next_page_cursor)
@@ -508,8 +572,10 @@ export class JotmoService {
         limit,
       },
       session,
+      options.signal,
     )
     const items: JotmoTimelineItem[] = []
+    const senderUserIdByIndex = new Map<number, number>()
     for (const raw of listValue(data.items)) {
       const item = objectValue(raw)
       const relation = objectValue(item.relation)
@@ -517,16 +583,29 @@ export class JotmoService {
       const payload = objectValue(record.payload)
       const uid = stringValue(relation.record_uid ?? payload.record_uid).trim()
       if (uid === '') continue
-      items.push({
+      const senderUserId = numberValue(relation.sender_user_id)
+      const itemIndex = items.push({
         itemUid: uid,
         senderName: stringValue(relation.display_name_snapshot).trim() || '即我用户',
-        isMe: numberValue(relation.sender_user_id) === session.userId,
+        isMe: senderUserId === session.userId,
         sendAtMillis: numberValue(relation.attach_at ?? payload.send_at),
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
         status: numberValue(record.status),
         sequence: numberValue(relation.seq),
-      })
+      }) - 1
+      if (Number.isSafeInteger(senderUserId) && senderUserId > 0) senderUserIdByIndex.set(itemIndex, senderUserId)
+    }
+    try {
+      const profiles = await this.publicProfilesByUserIds(
+        [...new Set(senderUserIdByIndex.values())], session, options.signal,
+      )
+      for (const [index, senderUserId] of senderUserIdByIndex) {
+        if (!profiles.has(senderUserId) || items[index] === undefined) continue
+        items[index].avatarRef = await this.sealProfileImageRef(session.userId, senderUserId)
+      }
+    } catch {
+      // Sender avatars are presentation decoration; timeline content remains readable without them.
     }
     const beforeSequence = numberValue(data.next_before_seq)
     return {
@@ -589,12 +668,144 @@ export class JotmoService {
     }
   }
 
-  /** Resolve and download one current-user Jiwo profile image without exposing OSS credentials or signed URLs. */
+  private async hydrateSourceAvatars(
+    items: JotmoSourceItem[],
+    privateUserIdByIndex: ReadonlyMap<number, number>,
+    groupSessionUidByIndex: ReadonlyMap<number, string>,
+    session: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const groupMemberIdsByIndex = new Map<number, number[]>()
+    const indexByGroupUid = new Map([...groupSessionUidByIndex].map(([index, uid]) => [uid, index]))
+    for (const groupUids of chunksOf([...indexByGroupUid.keys()], 10)) {
+      let data: Record<string, unknown>
+      try {
+        data = await this.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/group-avatar-snapshots',
+          { chat_session_uids: groupUids },
+          session,
+          signal,
+        )
+      } catch {
+        continue
+      }
+      for (const raw of listValue(data.items)) {
+        const snapshot = objectValue(raw)
+        const index = indexByGroupUid.get(stringValue(snapshot.chat_session_uid).trim())
+        if (index === undefined) continue
+        const memberIds = listValue(snapshot.members)
+          .map(member => numberValue(objectValue(member).user_id))
+          .filter(userId => Number.isSafeInteger(userId) && userId > 0)
+          .slice(0, 4)
+        if (memberIds.length > 0) groupMemberIdsByIndex.set(index, memberIds)
+      }
+    }
+
+    const targetUserIds = new Set<number>(privateUserIdByIndex.values())
+    for (const memberIds of groupMemberIdsByIndex.values()) {
+      for (const userId of memberIds) targetUserIds.add(userId)
+    }
+    const profiles = await this.publicProfilesByUserIds([...targetUserIds], session, signal)
+    for (const [index, targetUserId] of privateUserIdByIndex) {
+      if (!profiles.has(targetUserId) || items[index] === undefined) continue
+      items[index].avatarRef = await this.sealProfileImageRef(session.userId, targetUserId)
+    }
+    for (const [index, memberIds] of groupMemberIdsByIndex) {
+      const visibleIds = memberIds.filter(userId => profiles.has(userId))
+      if (visibleIds.length === 0 || items[index] === undefined) continue
+      items[index].avatarRefs = await Promise.all(
+        visibleIds.map(userId => this.sealProfileImageRef(session.userId, userId)),
+      )
+    }
+  }
+
+  private async publicProfilesByUserIds(
+    userIds: readonly number[],
+    session: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<number, JotmoPublicProfile>> {
+    const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
+    const profiles = new Map<number, JotmoPublicProfile>()
+    for (const batch of chunksOf(normalized, 100)) {
+      if (batch.length === 0) continue
+      const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+        '/api/v1/auth/get-public-users-by-ids',
+        { user_ids: batch },
+        session,
+        signal,
+      )
+      for (const raw of listValue(data.items)) {
+        const item = objectValue(raw)
+        const userId = numberValue(item.user_id)
+        const avatarUrl = stringValue(item.head_img).trim()
+        if (!batch.includes(userId) || avatarUrl === '') continue
+        try { trustedSignedImageUrl(this.config.environment, avatarUrl) }
+        catch { continue }
+        profiles.set(userId, {
+          userId,
+          displayName: stringValue(item.nick_name).trim(),
+          avatarUrl,
+        })
+      }
+    }
+    return profiles
+  }
+
+  private async sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string> {
+    const payload = encodeOpaqueJson({ version: 1, viewerUserId, targetUserId } satisfies JotmoProfileImageRefPayload)
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `jotmo-profile-image-v1.${payload}.${signature}`
+  }
+
+  private async openProfileImageRef(
+    imageRef: string,
+    expectedViewerUserId: number,
+  ): Promise<JotmoProfileImageRefPayload> {
+    const parts = imageRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'jotmo-profile-image-v1') {
+      throw new JotmoPluginError('image-ref-invalid', '即我头像引用无效', false)
+    }
+    const payload = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new JotmoPluginError('image-ref-invalid', '即我头像引用无效', false)
+    }
+    let parsed: Record<string, unknown>
+    try { parsed = objectValue(decodeOpaqueJson(payload)) }
+    catch (error) {
+      throw new JotmoPluginError('image-ref-invalid', '即我头像引用无效', false, 400, { cause: error })
+    }
+    const result: JotmoProfileImageRefPayload = {
+      version: 1,
+      viewerUserId: numberValue(parsed.viewerUserId),
+      targetUserId: numberValue(parsed.targetUserId),
+    }
+    if (parsed.version !== 1 || result.viewerUserId !== expectedViewerUserId
+      || !Number.isSafeInteger(result.targetUserId) || result.targetUserId <= 0) {
+      throw new JotmoPluginError('image-ref-invalid', '即我头像引用与当前账号不匹配', false, 403)
+    }
+    return result
+  }
+
+  /** Resolve and download one Provider-authorized Jiwo image without exposing OSS credentials or signed URLs. */
   async readImage(
     imageRef: string,
     options: { maxBytes?: number; signal?: AbortSignal } = {},
   ): Promise<JotmoImageBytes> {
     const session = await this.requireSession()
+    const byteLimit = Math.min(MAX_JOTMO_IMAGE_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_JOTMO_IMAGE_BYTES)))
+    if (imageRef.trim().startsWith('jotmo-profile-image-v1.')) {
+      const reference = await this.openProfileImageRef(imageRef, session.userId)
+      const profile = (await this.publicProfilesByUserIds([reference.targetUserId], session, options.signal))
+        .get(reference.targetUserId)
+      if (profile === undefined) {
+        throw new JotmoPluginError('image-ref-unavailable', '即我头像当前不可用', true, 404)
+      }
+      return await this.downloadSignedImage(
+        trustedSignedImageUrl(this.config.environment, profile.avatarUrl), byteLimit, options.signal,
+      )
+    }
     const fileId = imageFileIdFromRef(imageRef, session.userId)
     const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/${fileId}`
     const credentials = await this.ossCredentials(session, options.signal)
@@ -642,7 +853,6 @@ export class JotmoService {
       || !allowedSignedImageHost(this.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
       throw new JotmoPluginError('image-sign-target-rejected', '即我图片授权目标不受信任', false, 502)
     }
-    const byteLimit = Math.min(MAX_JOTMO_IMAGE_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_JOTMO_IMAGE_BYTES)))
     return await this.downloadSignedImage(signedUrl, byteLimit, options.signal)
   }
 
@@ -1172,20 +1382,39 @@ export class JotmoService {
     }
   }
 
-  private async authenticatedChatPost<T>(
+  private async authenticatedAuthPost<T>(
     path: string,
     body: Record<string, unknown>,
     initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
     try {
-      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200])
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal)
     } catch (error) {
       if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200])
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedChatPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal)
     }
   }
 

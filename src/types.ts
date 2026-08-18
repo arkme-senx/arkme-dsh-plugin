@@ -159,7 +159,10 @@ export interface JotmoSourceItem {
   sourceRef: string
   kind: JotmoSourceKind
   displayName: string
+  /** Opaque Provider image reference; consumers resolve it through image.read. */
   avatarRef?: string
+  /** Ordered group-avatar tiles, also resolved only through image.read. */
+  avatarRefs?: string[]
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
@@ -182,6 +185,8 @@ export interface JotmoTimelineCursor {
 export interface JotmoTimelineItem {
   itemUid: string
   senderName: string
+  /** Opaque Provider image reference for the concrete message sender. */
+  avatarRef?: string
   isMe: boolean
   sendAtMillis: number
   title: string

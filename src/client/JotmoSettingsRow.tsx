@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { callJotmo } from './api.js'
+import { clearLastNavigationCache } from './navigation-cache.js'
 import { jotmoUi } from './ui-controller.js'
 import type { JotmoAuthSnapshot } from '../types.js'
 
@@ -53,7 +54,8 @@ export function JotmoSettingsRow(_props: JotmoSettingsRowProps) {
     try {
       const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.logout')
       setAuth(snapshot)
-      jotmoUi.authChanged()
+      clearLastNavigationCache()
+      jotmoUi.authChanged(false)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
