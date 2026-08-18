@@ -196,6 +196,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
+  const directoryRequestAbortRef = useRef<AbortController>()
   const [auth, setAuth] = useState<ArkmeAuthSnapshot>()
   const [directory, setDirectory] = useState<ArkmeSourceDirectory>(initialCache?.directory ?? 'send_to_self')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
@@ -262,6 +263,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   }, [])
 
   const loadDirectory = useCallback(async (next: ArkmeSourceDirectory) => {
+    const controller = new AbortController()
+    directoryRequestAbortRef.current?.abort()
+    directoryRequestAbortRef.current = controller
     setError('')
     try {
       const loaded: ArkmeSourceItem[] = []
@@ -271,12 +275,13 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           directory: next,
           limit: next === 'root' ? 50 : 100,
           ...(cursor === undefined ? {} : { cursor }),
-        })
+        }, controller.signal)
         const known = new Set(loaded.map(item => item.sourceRef))
         loaded.push(...page.items.filter(item => !known.has(item.sourceRef)))
         if (!page.hasMore || page.nextCursor === undefined) break
         cursor = page.nextCursor
       }
+      if (controller.signal.aborted) return
       setSources(loaded)
       const selected = arkmeUi.getSnapshot().selectedSource
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
@@ -289,7 +294,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         ...(restored === undefined ? {} : { selectedSourceRef: restored.sourceRef }),
       })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      if (directoryRequestAbortRef.current === controller) directoryRequestAbortRef.current = undefined
     }
   }, [persistCache])
 
@@ -298,7 +305,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   }, [refreshAuth, ui.authRevision])
   useEffect(() => {
     if (authenticated) void loadDirectory(directory)
-    else setSources([])
+    else { directoryRequestAbortRef.current?.abort(); setSources([]) }
+    return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory])
   useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
@@ -326,6 +334,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
 
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
+    directoryRequestAbortRef.current?.abort()
     setDirectory(next)
     setSources(cacheRef.current?.sources[next] ?? [])
     persistCache({ directory: next })
