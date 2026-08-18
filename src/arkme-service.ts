@@ -165,7 +165,20 @@ interface PhoneLoginResponse extends ScanResponse {
   ok?: unknown
 }
 
+interface TestLoginResponse {
+  access_token?: unknown
+  refresh_token?: unknown
+}
+
+interface BindPhoneResponse {
+  result?: unknown
+}
+
 type FetchLike = typeof fetch
+
+const ARKME_PHONE_BIND_SUCCESS = 1
+const ARKME_PHONE_BIND_REPEAT = 2
+const ARKME_PHONE_BIND_CODE_ERR = 3
 
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
 
@@ -400,12 +413,14 @@ export class ArkmeService {
   private projectionInFlight = false
   private projectionFailureCount = 0
   private chatClientRevision = 0
+  private pendingBindingSession: ArkmeSessionCredentials | undefined
 
   constructor(
     private readonly config: ArkmeServiceConfig,
     private readonly sessionStore: ArkmeSessionStore,
     private readonly stateStore: StateStore,
     private readonly fetchImpl: FetchLike = fetch,
+    private readonly pendingSessionStore?: ArkmeSessionStore,
   ) {
     this.chatRealtime = new ArkmeChatRealtimeRuntime({
       imBaseUrl: config.imBaseUrl,
@@ -542,18 +557,28 @@ export class ArkmeService {
   }
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
-    const session = await this.sessionStore.read()
-    return session === undefined
+    const activeSession = await this.sessionStore.read()
+    if (activeSession !== undefined) {
+      const snapshot = await this.authSnapshotForSession(activeSession)
+      if (snapshot.status === 'binding-required') {
+        await this.writePendingBindingSession(activeSession)
+        await this.sessionStore.delete()
+        this.chatRealtime.reconnect()
+      }
+      return snapshot
+    }
+    const pendingSession = await this.readPendingBindingSession()
+    return pendingSession === undefined
       ? { status: 'logged-out', environment: this.config.environment }
-      : {
-          status: 'authenticated',
-          environment: this.config.environment,
-          userId: session.userId,
-        }
+      : await this.authSnapshotForSession(pendingSession)
   }
 
   clientConfig(): ArkmeClientConfig {
-    return { captchaId: this.config.geetestCaptchaId }
+    return {
+      captchaId: this.config.geetestCaptchaId,
+      environment: this.config.environment,
+      testLoginEnabled: this.config.environment === 'test',
+    }
   }
 
   providerCapabilities(): ArkmeProviderCapabilities {
@@ -597,12 +622,16 @@ export class ArkmeService {
   }
 
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
-    const session = await this.requireSession()
+    const session = await this.requireAuthFlowSession()
     return await this.stateStore.cachedProfile(session.userId)
   }
 
   async refreshProfile(): Promise<ArkmeUserProfileSnapshot> {
-    const session = await this.requireSession()
+    const session = await this.requireAuthFlowSession()
+    return await this.refreshProfileForSession(session)
+  }
+
+  private async refreshProfileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
     const data = await this.authenticatedAuthGet<Record<string, unknown>>('/api/v1/auth/get-user-info', session)
     const userId = numberValue(data.user_id)
     if (userId <= 0 || userId !== session.userId) {
@@ -638,6 +667,55 @@ export class ArkmeService {
       },
     }
     return await this.stateStore.cacheProfile(userId, profile)
+  }
+
+  private async authSnapshotForSession(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
+    const profile = await this.refreshProfileForSession(session)
+    return {
+      status: this.profileHasBoundPhone(profile) ? 'authenticated' : 'binding-required',
+      environment: this.config.environment,
+      userId: session.userId,
+    }
+  }
+
+  private profileHasBoundPhone(snapshot: ArkmeUserProfileSnapshot): boolean {
+    return (snapshot.profile?.contact.phoneMasked?.trim() ?? '') !== ''
+  }
+
+  private isPendingBindingSession(session: ArkmeSessionCredentials): boolean {
+    return this.pendingBindingSession?.userId === session.userId
+      && this.pendingBindingSession.refreshToken === session.refreshToken
+  }
+
+  private async readPendingBindingSession(): Promise<ArkmeSessionCredentials | undefined> {
+    if (this.pendingBindingSession !== undefined) return this.pendingBindingSession
+    const session = await this.pendingSessionStore?.read()
+    this.pendingBindingSession = session
+    return session
+  }
+
+  private async writePendingBindingSession(session: ArkmeSessionCredentials): Promise<void> {
+    this.pendingBindingSession = session
+    await this.pendingSessionStore?.write(session)
+  }
+
+  private async clearPendingBindingSession(): Promise<void> {
+    this.pendingBindingSession = undefined
+    await this.pendingSessionStore?.delete()
+  }
+
+  private async acceptLoginSession(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
+    const snapshot = await this.authSnapshotForSession(session)
+    if (snapshot.status === 'authenticated') {
+      await this.clearPendingBindingSession()
+      await this.sessionStore.write(session)
+      this.chatRealtime.reconnect()
+      return snapshot
+    }
+    await this.writePendingBindingSession(session)
+    await this.sessionStore.delete()
+    this.chatRealtime.reconnect()
+    return snapshot
   }
 
   async aiVideoPreflight(
@@ -1945,23 +2023,62 @@ export class ArkmeService {
     if (accessToken === '' || refreshToken === '') {
       throw new ArkmePluginError('login-contract-invalid', 'Arkme 登录成功响应缺少凭据', false, 502)
     }
-    await this.sessionStore.write({ accessToken, refreshToken, userId })
-    this.chatRealtime.reconnect()
+    const session = { accessToken, refreshToken, userId }
     this.attempts.delete(attemptId)
-    return {
-      status: 'authenticated',
-      environment: this.config.environment,
-      userId,
+    return await this.acceptLoginSession(session)
+  }
+
+  async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {
+    if (this.config.environment !== 'test') {
+      throw new ArkmePluginError('test-login-disabled', '测试账号登录仅允许测试环境使用', false, 403)
     }
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new ArkmePluginError('test-user-id-invalid', '请输入有效的测试账号 user_id', false)
+    }
+    const data = await this.post<TestLoginResponse>(
+      this.config.authBaseUrl,
+      '/api/public/v1/auth/the-best-api-for-testing',
+      {
+        user_id: userId,
+        unique_code: await this.stateStore.uniqueCode(),
+        ref: 0,
+        keep_cancel: true,
+      },
+      undefined,
+      [200],
+    )
+    const accessToken = stringValue(data.access_token)
+    const refreshToken = stringValue(data.refresh_token)
+    if (accessToken === '' || refreshToken === '') {
+      throw new ArkmePluginError('test-login-contract-invalid', '测试账号登录响应缺少凭据', false, 502)
+    }
+    const session = { accessToken, refreshToken, userId }
+    this.attempts.clear()
+    return await this.acceptLoginSession(session)
   }
 
   async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
     const normalizedPhone = this.normalizedPhone(phone)
     const normalizedCaptcha = this.normalizedCaptcha(captcha)
+    const session = await this.sessionStore.read() ?? await this.readPendingBindingSession()
+    if (session !== undefined) {
+      const data = await this.post<BindPhoneResponse>(
+        this.config.authBaseUrl,
+        '/api/v1/auth/bind-phone-send-code',
+        { phone: normalizedPhone, pre: '86', is_test: this.config.environment === 'test', ...normalizedCaptcha },
+        session.accessToken,
+        [200],
+      )
+      const result = numberValue(data.result)
+      if (result === ARKME_PHONE_BIND_REPEAT) {
+        throw new ArkmePluginError('phone-already-bound', '该手机号已绑定其他 Arkme 账号', false, 409)
+      }
+      return { sent: true }
+    }
     await this.post<Record<string, unknown>>(
       this.config.authBaseUrl,
       '/api/public/v1/auth/phone-login-send-code',
-      { phone: normalizedPhone, pre: '86', is_test: false, ...normalizedCaptcha },
+      { phone: normalizedPhone, pre: '86', is_test: this.config.environment === 'test', ...normalizedCaptcha },
       undefined,
       [200],
     )
@@ -1973,6 +2090,32 @@ export class ArkmeService {
     const normalizedCode = code.trim()
     if (!/^[0-9]{6}$/.test(normalizedCode)) {
       throw new ArkmePluginError('phone-code-invalid', '请输入有效的短信验证码', false)
+    }
+    const session = await this.sessionStore.read() ?? await this.readPendingBindingSession()
+    if (session !== undefined) {
+      const data = await this.post<BindPhoneResponse>(
+        this.config.authBaseUrl,
+        '/api/v1/auth/verify-bind-phone',
+        {
+          phone: normalizedPhone,
+          pre: '86',
+          code: normalizedCode,
+          is_test: this.config.environment === 'test',
+        },
+        session.accessToken,
+        [200],
+      )
+      const result = numberValue(data.result)
+      if (result === ARKME_PHONE_BIND_REPEAT) {
+        throw new ArkmePluginError('phone-already-bound', '该手机号已绑定其他 Arkme 账号', false, 409)
+      }
+      if (result === ARKME_PHONE_BIND_CODE_ERR) {
+        throw new ArkmePluginError('phone-code-rejected', '手机号或验证码错误', false, 401)
+      }
+      if (result !== ARKME_PHONE_BIND_SUCCESS) {
+        throw new ArkmePluginError('phone-bind-contract-invalid', 'Arkme 手机号绑定响应不完整', false, 502)
+      }
+      return await this.acceptLoginSession(session)
     }
     const data = await this.post<PhoneLoginResponse>(
       this.config.authBaseUrl,
@@ -1998,18 +2141,14 @@ export class ArkmeService {
     if (userId <= 0 || accessToken === '' || refreshToken === '') {
       throw new ArkmePluginError('login-contract-invalid', 'Arkme手机号登录响应不完整', false, 502)
     }
-    await this.sessionStore.write({ accessToken, refreshToken, userId })
-    this.chatRealtime.reconnect()
+    const sessionAfterPhoneLogin = { accessToken, refreshToken, userId }
     this.attempts.clear()
-    return {
-      status: 'authenticated',
-      environment: this.config.environment,
-      userId,
-    }
+    return await this.acceptLoginSession(sessionAfterPhoneLogin)
   }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
     await this.sessionStore.delete()
+    await this.clearPendingBindingSession()
     this.chatRealtime.reconnect()
     this.attempts.clear()
     return { status: 'logged-out', environment: this.config.environment }
@@ -2830,11 +2969,13 @@ export class ArkmeService {
           throw new ArkmePluginError('refresh-contract-invalid', 'Arkme 登录刷新响应不完整', true, 502)
         }
         const updated = { ...session, accessToken }
-        await this.sessionStore.write(updated)
+        if (this.isPendingBindingSession(session)) await this.writePendingBindingSession(updated)
+        else await this.sessionStore.write(updated)
         return updated
       } catch (error) {
         if (error instanceof ArkmePluginError && ['auth-http-401', 'auth-http-403'].includes(error.code)) {
-          await this.sessionStore.delete()
+          if (this.isPendingBindingSession(session)) await this.clearPendingBindingSession()
+          else await this.sessionStore.delete()
           throw new ArkmePluginError('login-expired', 'Arkme 登录已过期，请重新扫码', false, 401)
         }
         throw error
@@ -2850,6 +2991,14 @@ export class ArkmeService {
 
   private async requireSession(): Promise<ArkmeSessionCredentials> {
     const session = await this.sessionStore.read()
+    if (session === undefined) {
+      throw new ArkmePluginError('login-required', '请先登录 Arkme', false, 401)
+    }
+    return session
+  }
+
+  private async requireAuthFlowSession(): Promise<ArkmeSessionCredentials> {
+    const session = await this.sessionStore.read() ?? await this.readPendingBindingSession()
     if (session === undefined) {
       throw new ArkmePluginError('login-required', '请先登录 Arkme', false, 401)
     }

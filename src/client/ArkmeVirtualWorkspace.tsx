@@ -6,6 +6,7 @@ import { callArkme } from './api.js'
 import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeOfficialCommunityEntry } from './ArkmeOfficialCommunityEntry.js'
+import { arkmeAuthStore } from './auth-store.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
@@ -144,13 +145,14 @@ function isSendToSelfSource(source: ArkmeSourceItem | undefined): boolean {
 
 export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const directoryRequestAbortRef = useRef<AbortController>()
-  const [auth, setAuth] = useState<ArkmeAuthSnapshot>()
+  const auth = authState.auth
   const [directory, setDirectory] = useState<ArkmeSourceDirectory>(initialCache?.directory ?? 'send_to_self')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     initialCache?.sources[initialCache.directory] ?? [],
@@ -163,6 +165,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
     [collapsedSourceRefs, sourceTree],
   )
+  const bindingRequired = auth?.status === 'binding-required'
 
   const persistCache = useCallback((patch: {
     directory?: ArkmeSourceDirectory
@@ -187,11 +190,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     writeNavigationCache(next)
   }, [])
 
-  const refreshAuth = useCallback(async () => {
-    try {
-      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.status')
-      setAuth(snapshot)
-      if (snapshot.status !== 'authenticated' || snapshot.userId === undefined) {
+  const reconcileAuth = useCallback((snapshot: ArkmeAuthSnapshot | undefined) => {
+      if (snapshot?.status !== 'authenticated' || snapshot.userId === undefined) {
         if (avatarCacheUserIdRef.current !== undefined) clearArkmeAvatarCache()
         avatarCacheUserIdRef.current = undefined
         authenticatedUserIdRef.current = undefined
@@ -200,25 +200,16 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         setDirectory('send_to_self'); setSources([])
         return
       }
-      if (avatarCacheUserIdRef.current !== snapshot.userId) clearArkmeAvatarCache()
-      avatarCacheUserIdRef.current = snapshot.userId
-      authenticatedUserIdRef.current = snapshot.userId
-      const cached = readNavigationCache(snapshot.userId) ?? {
-        version: 1, userId: snapshot.userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0,
-      } satisfies ArkmeNavigationCache
-      cacheRef.current = cached
-      writeNavigationCache(cached)
-      setDirectory(cached.directory)
-      setSources(cached.sources[cached.directory] ?? [])
-    } catch {
-      if (avatarCacheUserIdRef.current !== undefined) clearArkmeAvatarCache()
-      avatarCacheUserIdRef.current = undefined
-      authenticatedUserIdRef.current = undefined
-      cacheRef.current = undefined
-      clearLastNavigationCache()
-      setAuth({ status: 'logged-out', environment: 'test' })
-      setDirectory('send_to_self'); setSources([])
-    }
+    if (avatarCacheUserIdRef.current !== snapshot.userId) clearArkmeAvatarCache()
+    avatarCacheUserIdRef.current = snapshot.userId
+    authenticatedUserIdRef.current = snapshot.userId
+    const cached = readNavigationCache(snapshot.userId) ?? {
+      version: 1, userId: snapshot.userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0,
+    } satisfies ArkmeNavigationCache
+    cacheRef.current = cached
+    writeNavigationCache(cached)
+    setDirectory(cached.directory)
+    setSources(cached.sources[cached.directory] ?? [])
   }, [])
 
   const loadDirectory = useCallback(async (next: ArkmeSourceDirectory) => {
@@ -260,8 +251,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   }, [persistCache])
 
   useEffect(() => {
-    void refreshAuth()
-  }, [refreshAuth, ui.authRevision])
+    void arkmeAuthStore.refresh().catch(() => undefined)
+  }, [ui.authRevision])
+  useEffect(() => { reconcileAuth(auth) }, [auth, reconcileAuth])
   useEffect(() => {
     if (authenticated) void loadDirectory(directory)
     else { directoryRequestAbortRef.current?.abort(); setSources([]) }
@@ -342,8 +334,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
 
   if (!wide) {
     return <div style={styles.rail}><button
-      type="button" style={styles.railButton} aria-label={authenticated ? 'Arkme' : 'Arkme · 未登录'}
-      title={authenticated ? 'Arkme' : 'Arkme · 未登录'} onClick={() => { if (!authenticated) showLogin() }}
+      type="button" style={styles.railButton} aria-label={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'}
+      title={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'} onClick={() => { if (!authenticated) showLogin() }}
     ><ArkmeMark size={20} /></button></div>
   }
 
@@ -357,7 +349,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
 
-    {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>登录 Arkme</button> : <div
+    {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
+      {bindingRequired ? '完成登录' : '登录 Arkme'}
+    </button> : <div
       style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>

@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type { ArkmeAuthSnapshot, ArkmeChatClientEvent, ArkmeSourceList } from '../types.js'
+import type { ArkmeChatClientEvent, ArkmeSourceList } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -19,12 +20,12 @@ const styles: Record<string, CSSProperties> = {
 /** Footer action plus an inline Arkme directory that participates in sidebar layout. */
 export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const currentSession = props.useSessions(state => state.current)
-  const [auth, setAuth] = useState<ArkmeAuthSnapshot>()
-  const [authChecked, setAuthChecked] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const hasOpened = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const auth = authState.auth
   if (ui.open) hasOpened.current = true
   useLayoutEffect(() => {
     const slot = rootRef.current?.parentElement
@@ -44,12 +45,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
     return () => { Object.assign(slot.style, previous) }
   }, [])
   useEffect(() => {
-    let cancelled = false
-    setAuthChecked(false)
-    void callArkme<ArkmeAuthSnapshot>('auth.status')
-      .then(snapshot => { if (!cancelled) { setAuth(snapshot); setAuthChecked(true) } })
-      .catch(() => { if (!cancelled) { setAuth(undefined); setAuthChecked(true) } })
-    return () => { cancelled = true }
+    void arkmeAuthStore.refresh().catch(() => undefined)
   }, [ui.authRevision])
   useEffect(() => {
     if (auth?.status !== 'authenticated') {
@@ -126,9 +122,10 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
     <ArkmeFooterAction
       {...props}
       expanded={ui.open}
-      loggedOut={authChecked && auth !== undefined && auth.status !== 'authenticated'}
+      loggedOut={authState.checked && auth !== undefined && !['authenticated', 'binding-required'].includes(auth.status)}
+      bindingRequired={auth?.status === 'binding-required'}
       authenticated={auth?.status === 'authenticated'}
-      authPending={!authChecked}
+      authPending={!authState.checked || authState.busy}
       unreadCount={unreadCount}
     />
     </div>

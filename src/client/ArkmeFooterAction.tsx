@@ -12,6 +12,7 @@ export interface ArkmeFooterActionInjected {
 export type ArkmeFooterActionProps = PropsRuntime<'sidebar.footer.action'> & InjectFace<ArkmeFooterActionInjected> & {
   expanded?: boolean
   loggedOut?: boolean
+  bindingRequired?: boolean
   authenticated?: boolean
   authPending?: boolean
   unreadCount?: number
@@ -81,29 +82,34 @@ export function ArkmeMark({ size = 18 }: { size?: number }) {
 }
 
 export function ArkmeFooterAction({
-  wide, toggle, useSessions, expanded = false, loggedOut = false, authenticated = false, authPending = false,
+  wide, toggle, useSessions, expanded = false, loggedOut = false, bindingRequired = false,
+  authenticated = false, authPending = false,
   unreadCount = 0,
 }: ArkmeFooterActionProps) {
   const currentSession = useSessions(state => state.current)
   const normalizedUnread = Math.max(0, Math.trunc(unreadCount))
   const unreadLabel = normalizedUnread > 99 ? '99+' : String(normalizedUnread)
+  const statusLabel = bindingRequired ? '待绑定' : loggedOut ? '未登录' : ''
+  const accessibleLabel = statusLabel !== ''
+    ? `Arkme · ${statusLabel}`
+    : normalizedUnread > 0 ? `Arkme · ${unreadLabel} 条未读` : 'Arkme'
   return (
     <button
       type="button"
       disabled={authPending}
       style={{ ...buttonStyle, ...(wide ? { width: 'calc(100% + 4px)' } : railButtonStyle) }}
-      aria-label={loggedOut ? 'Arkme · 未登录' : normalizedUnread > 0 ? `Arkme · ${unreadLabel} 条未读` : 'Arkme'}
+      aria-label={accessibleLabel}
       aria-controls={wide ? 'arkme-footer-directory' : undefined}
       aria-expanded={expanded}
-      title={wide ? undefined : loggedOut ? 'Arkme · 未登录' : 'Arkme'}
+      title={wide ? undefined : accessibleLabel}
       onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #eef1f5)' }}
       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       onClick={() => { toggle(currentSession, authenticated) }}
     >
       <ArkmeMark />
       {wide && <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'left' }}>Arkme</span>}
-      {wide && loggedOut && <span style={loggedOutBadgeStyle}>未登录</span>}
-      {!loggedOut && normalizedUnread > 0 && <span style={{
+      {wide && statusLabel !== '' && <span style={loggedOutBadgeStyle}>{statusLabel}</span>}
+      {statusLabel === '' && normalizedUnread > 0 && <span style={{
         ...unreadBadgeStyle,
         ...(wide ? {} : { position: 'absolute', top: -2, right: -3, marginLeft: 0 }),
       }}>{unreadLabel}</span>}
