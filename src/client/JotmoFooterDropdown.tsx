@@ -1,4 +1,6 @@
-import { useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import type { JotmoAuthSnapshot } from '../types.js'
+import { callJotmo } from './api.js'
 import { JotmoFooterAction, type JotmoFooterActionProps } from './JotmoFooterAction.js'
 import { JotmoNavigation } from './JotmoVirtualWorkspace.js'
 import { jotmoUi } from './ui-controller.js'
@@ -16,10 +18,18 @@ const styles: Record<string, CSSProperties> = {
 export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
   const currentSession = props.useSessions(state => state.current)
+  const [auth, setAuth] = useState<JotmoAuthSnapshot>()
   const hasOpened = useRef(false)
   if (ui.open) hasOpened.current = true
+  useEffect(() => {
+    let cancelled = false
+    void callJotmo<JotmoAuthSnapshot>('auth.status')
+      .then(snapshot => { if (!cancelled) setAuth(snapshot) })
+      .catch(() => { if (!cancelled) setAuth(undefined) })
+    return () => { cancelled = true }
+  }, [ui.authRevision])
   return <div style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
-    <JotmoFooterAction {...props} expanded={ui.open} />
+    <JotmoFooterAction {...props} expanded={ui.open} loggedOut={auth !== undefined && auth.status !== 'authenticated'} />
     {hasOpened.current && <div
       id="jotmo-footer-directory" role="region" aria-label="即我下拉列表"
       hidden={!props.wide || !ui.open}
