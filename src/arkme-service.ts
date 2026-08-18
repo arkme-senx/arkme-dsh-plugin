@@ -614,7 +614,7 @@ export class ArkmeService {
       nickname,
       avatarRef,
       ...(/^https?:\/\//i.test(avatarRef) ? { avatarUrl: avatarRef } : {}),
-      arkmeId: stringValue(data.name_slug).trim(),
+      arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
       accountType: numberValue(data.type),
       createdAt: numberValue(data.create_at),
       bindings: {

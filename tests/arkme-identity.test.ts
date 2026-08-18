@@ -32,6 +32,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.senguo.me', '')
     .replaceAll('userfiles.jotmo.cc', '')
+    .replaceAll('data.jotmo_id', '')
     .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')
     .replaceAll("'jotmo-userfiles'", '')
