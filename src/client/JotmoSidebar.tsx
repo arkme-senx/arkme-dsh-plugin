@@ -224,7 +224,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
         const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.poll', { attemptId: auth.attemptId })
         if (stopped) return
         setAuth(snapshot)
-        if (snapshot.status === 'authenticated') { setQr(''); jotmoUi.authChanged(); return }
+        if (snapshot.status === 'authenticated') { setQr(''); jotmoUi.authChanged(true); return }
       } catch (caught) { if (!stopped) setError(errorMessage(caught)) }
       if (!stopped) timer = setTimeout(() => { void poll() }, 1200)
     }
@@ -251,7 +251,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
     setBusy(true); setError('')
     try {
       const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
-      setAuth(snapshot); if (snapshot.status === 'authenticated') jotmoUi.authChanged()
+      setAuth(snapshot); if (snapshot.status === 'authenticated') jotmoUi.authChanged(true)
     } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 

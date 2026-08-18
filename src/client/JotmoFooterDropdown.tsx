@@ -19,6 +19,7 @@ export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
   const currentSession = props.useSessions(state => state.current)
   const [auth, setAuth] = useState<JotmoAuthSnapshot>()
+  const [authChecked, setAuthChecked] = useState(false)
   const hasOpened = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   if (ui.open) hasOpened.current = true
@@ -41,9 +42,10 @@ export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
   }, [])
   useEffect(() => {
     let cancelled = false
+    setAuthChecked(false)
     void callJotmo<JotmoAuthSnapshot>('auth.status')
-      .then(snapshot => { if (!cancelled) setAuth(snapshot) })
-      .catch(() => { if (!cancelled) setAuth(undefined) })
+      .then(snapshot => { if (!cancelled) { setAuth(snapshot); setAuthChecked(true) } })
+      .catch(() => { if (!cancelled) { setAuth(undefined); setAuthChecked(true) } })
     return () => { cancelled = true }
   }, [ui.authRevision])
   return <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
@@ -54,6 +56,12 @@ export function JotmoFooterDropdown(props: JotmoFooterActionProps) {
     >
       <JotmoNavigation onActivateSurface={() => { props.activate(currentSession) }} />
     </div>}
-    <JotmoFooterAction {...props} expanded={ui.open} loggedOut={auth !== undefined && auth.status !== 'authenticated'} />
+    <JotmoFooterAction
+      {...props}
+      expanded={ui.open}
+      loggedOut={authChecked && auth !== undefined && auth.status !== 'authenticated'}
+      authenticated={auth?.status === 'authenticated'}
+      authPending={!authChecked}
+    />
   </div>
 }

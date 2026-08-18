@@ -40,14 +40,25 @@ export class JotmoUiController {
     this.publish({ ...this.state, open: false, surfaceOpen: false })
   }
 
-  authChanged(): void {
+  authChanged(authenticated = false): void {
     const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, mode: 'login', authRevision: this.state.authRevision + 1 })
+    this.publish({
+      ...rest,
+      open: authenticated,
+      surfaceOpen: authenticated ? true : this.state.surfaceOpen,
+      mode: 'login',
+      authRevision: this.state.authRevision + 1,
+    })
   }
 
   showLogin(): void {
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'login' })
+  }
+
+  showLoginSurface(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: false, surfaceOpen: true, mode: 'login' })
   }
 
   selectSource(source: JotmoSourceItem): void {

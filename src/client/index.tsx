@@ -29,16 +29,16 @@ export function apply(ctx: ClientContext): void {
     closeSurface()
     jotmoUi.close()
   }
-  const activateSurface = (openedFromSession: SessionId | undefined) => {
-    if (disposeJotmoConversation !== undefined) {
-      jotmoUi.activateSurface()
-      return
-    }
+  const ensureSurface = (openedFromSession: SessionId | undefined) => {
+    if (disposeJotmoConversation !== undefined) return
     disposeJotmoConversation = ctx.slots.register({
       name: 'conversation',
       priority: -10,
       inject: () => ({ close: closeSurface, openedFromSession }),
     }, JotmoConversationSurface)
+  }
+  const activateSurface = (openedFromSession: SessionId | undefined) => {
+    ensureSurface(openedFromSession)
     jotmoUi.activateSurface()
   }
   const openJotmo = (openedFromSession: SessionId | undefined) => {
@@ -52,9 +52,15 @@ export function apply(ctx: ClientContext): void {
     else jotmoUi.focusSendToSelf()
     activateSurface(openedFromSession)
   }
-  const toggleJotmo = (openedFromSession: SessionId | undefined) => {
-    if (jotmoUi.getSnapshot().open) closeJotmo()
-    else openJotmo(openedFromSession)
+  const openLogin = (openedFromSession: SessionId | undefined) => {
+    if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
+    ensureSurface(openedFromSession)
+    jotmoUi.showLoginSurface()
+  }
+  const toggleJotmo = (openedFromSession: SessionId | undefined, authenticated: boolean) => {
+    if (jotmoUi.getSnapshot().open) { closeJotmo(); return }
+    if (authenticated) openJotmo(openedFromSession)
+    else openLogin(openedFromSession)
   }
 
   ctx.effect(() => () => { closeJotmo() }, 'dsh-jotmo: restore native conversation on dispose')

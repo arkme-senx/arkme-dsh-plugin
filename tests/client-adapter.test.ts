@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
+import { jotmoUi } from '../src/client/ui-controller.js'
 
 describe('official DSH client adapter', () => {
   it('temporarily shadows the official conversation while the Footer owns the directory', () => {
@@ -24,10 +25,10 @@ describe('official DSH client adapter', () => {
     ])
     const footer = registered.find(item => item.name === 'sidebar.footer.action')!
     const face = footer.inject?.() as {
-      toggle(sessionId: string | undefined): void
+      toggle(sessionId: string | undefined, authenticated: boolean): void
       activate(sessionId: string | undefined): void
     }
-    face.toggle('session-1')
+    face.toggle('session-1', true)
     const conversation = registered.find(item => item.name === 'conversation')!
     expect(conversation.priority).toBe(-10)
     expect(conversation.inject?.()).toMatchObject({ openedFromSession: 'session-1' })
@@ -37,8 +38,10 @@ describe('official DSH client adapter', () => {
     face.activate('session-2')
     expect(registered.filter(item => item.name === 'conversation')).toHaveLength(2)
     const secondConversation = registered.filter(item => item.name === 'conversation')[1]!
-    face.toggle('session-2')
+    face.toggle('session-2', true)
     expect(secondConversation.dispose).toHaveBeenCalledOnce()
+    face.toggle('session-3', false)
+    expect(jotmoUi.getSnapshot()).toMatchObject({ open: false, surfaceOpen: true, mode: 'login' })
     expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
     expect(registered.map(item => item.name)).not.toContain('main.surface')
     expect(registered.map(item => item.name)).not.toContain('shell.overlay')

@@ -55,7 +55,7 @@ export function JotmoSettingsRow(_props: JotmoSettingsRowProps) {
       const snapshot = await callJotmo<JotmoAuthSnapshot>('auth.logout')
       setAuth(snapshot)
       clearLastNavigationCache()
-      jotmoUi.authChanged()
+      jotmoUi.authChanged(false)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
