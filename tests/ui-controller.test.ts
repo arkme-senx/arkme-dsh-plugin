@@ -32,4 +32,34 @@ describe('JotmoUiController', () => {
     expect(listener).toHaveBeenCalledTimes(7)
     unsubscribe()
   })
+
+  it('preserves the last source in calls mode and clears it on account change', () => {
+    const controller = new JotmoUiController()
+    const source = {
+      sourceRef: 'source-1',
+      kind: 'private_chat' as const,
+      displayName: '小林',
+      activeAtMillis: 1,
+      unreadCount: 0,
+    }
+
+    controller.selectSource(source)
+    controller.showCalls()
+    expect(controller.getSnapshot()).toMatchObject({
+      mode: 'calls',
+      selectedSource: source,
+      open: true,
+      surfaceOpen: true,
+    })
+    controller.selectSource(source)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    controller.showCalls()
+    controller.authChanged(false)
+    expect(controller.getSnapshot()).toEqual({
+      open: false,
+      surfaceOpen: true,
+      authRevision: 1,
+      mode: 'login',
+    })
+  })
 })
