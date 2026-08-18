@@ -196,6 +196,8 @@ export type ArkmeSourceDirectory = 'root' | 'send_to_self'
 
 export interface ArkmeSourceItem {
   sourceRef: string
+  /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
+  parentSourceRef?: string
   kind: ArkmeSourceKind
   displayName: string
   /** Opaque Provider image reference; consumers resolve it through image.read. */

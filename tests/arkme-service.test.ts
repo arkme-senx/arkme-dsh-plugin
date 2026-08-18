@@ -379,6 +379,13 @@ describe('ArkmeService', () => {
         topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
         summary: { record_count: 2, latest_send_at: 99 },
         latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 99 },
+      }, {
+        topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 98 },
+        summary: { record_count: 1, latest_send_at: 97 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
+        rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
+        rel_kind: 1, status: 1, sibling_order: 1,
       }] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) {
         return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
@@ -393,9 +400,11 @@ describe('ArkmeService', () => {
 
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
-      ['default_category', '默认分类', 7], ['topic', '工作', 2],
+      ['default_category', '默认分类', 7], ['topic', '工作', 2], ['topic', '周报', 1],
     ])
     expect(sources.items[1]?.sourceRef).not.toContain('topic-1')
+    expect(sources.items[2]?.parentSourceRef).toBe(sources.items[1]?.sourceRef)
+    expect(sources.items[2]?.parentSourceRef).not.toContain('topic-1')
     const topicRef = sources.items[1]!.sourceRef
     await expect(service.readSource(topicRef)).resolves.toMatchObject({
       source: { kind: 'topic', displayName: '工作' },
@@ -441,6 +450,25 @@ describe('ArkmeService', () => {
 
     await expect(service.readSource(source.sourceRef)).rejects.toMatchObject({ code: 'source-ref-invalid' })
     expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeAccountSwitch)
+  })
+
+  it('keeps the send-to-self list usable when the hierarchy endpoint is unavailable', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new ArkmeService(config, sessions, state, async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
+        topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) throw new Error('hierarchy unavailable')
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.listSources('send_to_self')).resolves.toMatchObject({
+      items: [{ kind: 'default_category' }, { kind: 'topic', displayName: '工作' }],
+      hasMore: false,
+    })
   })
 
   it('lists, reads, and sends private/group chat sources through the Chat owner', async () => {
