@@ -3,6 +3,7 @@ import type {
   JotmoCallListItem,
   JotmoCallMediaType,
   JotmoCallSectionState,
+  JotmoCallTranscriptItem,
 } from '../types.js'
 
 const CALL_TIME_ZONE = 'Asia/Shanghai'
@@ -44,6 +45,14 @@ export function isCurrentCallRequest(requestGeneration: number, currentGeneratio
   return requestGeneration === currentGeneration
 }
 
+export function transcriptRowGap(
+  previous: Pick<JotmoCallTranscriptItem, 'speakerLabel' | 'isSelf'> | undefined,
+  current: Pick<JotmoCallTranscriptItem, 'speakerLabel' | 'isSelf'>,
+): number {
+  if (previous === undefined) return 0
+  return previous.isSelf === current.isSelf && previous.speakerLabel === current.speakerLabel ? 4 : 8
+}
+
 export function formatCallDuration(value: number): string {
   const totalSeconds = Math.max(0, Math.floor((Number.isFinite(value) ? value : 0) / 1_000))
   const hours = Math.floor(totalSeconds / 3_600)
@@ -54,6 +63,18 @@ export function formatCallDuration(value: number): string {
   }
   if (minutes > 0) return `${String(minutes)}分${String(seconds).padStart(2, '0')}秒`
   return `${String(seconds)}秒`
+}
+
+export function formatTranscriptTime(callStartedAtMillis: number, startOffsetMillis: number): string {
+  if (!Number.isFinite(callStartedAtMillis) || callStartedAtMillis <= 0) return '--'
+  const safeOffsetMillis = Number.isFinite(startOffsetMillis) ? Math.max(0, startOffsetMillis) : 0
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: CALL_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(callStartedAtMillis + safeOffsetMillis))
 }
 
 export function formatCallTime(value: number, nowMillis = Date.now()): string {
@@ -89,6 +110,7 @@ export function callDirectionLabel(value: JotmoCallDirection): string {
 export function sectionStatusMessage(
   kind: 'summary' | 'transcript',
   state: JotmoCallSectionState,
+  hasContent = false,
 ): string {
   if (state === 'ready') return ''
   if (kind === 'summary') {
@@ -96,7 +118,7 @@ export function sectionStatusMessage(
     if (state === 'failed') return 'AI 摘要生成失败'
     return '暂无 AI 摘要'
   }
-  if (state === 'processing') return '通话转录处理中'
+  if (state === 'processing') return hasContent ? '录音文本转写中，已展示部分内容' : '通话转录处理中'
   if (state === 'failed') return '通话转录失败'
   return '暂无转录内容'
 }

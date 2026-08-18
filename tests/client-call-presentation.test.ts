@@ -4,11 +4,13 @@ import {
   callMediaLabel,
   formatCallDuration,
   formatCallTime,
+  formatTranscriptTime,
   isCurrentCallRequest,
   mergeCallListItems,
   nextSelectedCallRef,
   sectionStatusMessage,
 } from '../src/client/call-presentation.js'
+import * as callPresentation from '../src/client/call-presentation.js'
 import type { JotmoCallListItem } from '../src/types.js'
 
 function call(callRef: string, displayName: string): JotmoCallListItem {
@@ -29,6 +31,25 @@ function call(callRef: string, displayName: string): JotmoCallListItem {
 }
 
 describe('call history client presentation', () => {
+  it('uses a tighter transcript gap until the speaker changes', () => {
+    const transcriptRowGap = (callPresentation as {
+      transcriptRowGap?: (
+        previous: { speakerLabel: string; isSelf: boolean } | undefined,
+        current: { speakerLabel: string; isSelf: boolean },
+      ) => number
+    }).transcriptRowGap
+
+    expect(transcriptRowGap?.(
+      { speakerLabel: '小林', isSelf: false },
+      { speakerLabel: '小林', isSelf: false },
+    )).toBe(4)
+    expect(transcriptRowGap?.(
+      { speakerLabel: '小林', isSelf: false },
+      { speakerLabel: '我', isSelf: true },
+    )).toBe(8)
+    expect(transcriptRowGap?.(undefined, { speakerLabel: '我', isSelf: true })).toBe(0)
+  })
+
   it('appends unseen calls without replacing an existing page item', () => {
     const first = call('call-a', '原名称')
     const current = [first]
@@ -44,6 +65,13 @@ describe('call history client presentation', () => {
     [3_661_000, '1小时01分01秒'],
   ])('formats %i milliseconds as %s', (durationMillis, label) => {
     expect(formatCallDuration(durationMillis)).toBe(label)
+  })
+
+  it('formats a transcript offset as the Shanghai speech time with seconds', () => {
+    expect(formatTranscriptTime(
+      Date.UTC(2026, 5, 2, 6, 30),
+      5_721,
+    )).toBe('14:30:05')
   })
 
   it('formats missing and same-day call timestamps deterministically', () => {
@@ -67,6 +95,7 @@ describe('call history client presentation', () => {
     expect(sectionStatusMessage('summary', 'failed')).toBe('AI 摘要生成失败')
     expect(sectionStatusMessage('transcript', 'empty')).toBe('暂无转录内容')
     expect(sectionStatusMessage('transcript', 'processing')).toBe('通话转录处理中')
+    expect(sectionStatusMessage('transcript', 'processing', true)).toBe('录音文本转写中，已展示部分内容')
     expect(sectionStatusMessage('transcript', 'failed')).toBe('通话转录失败')
   })
 

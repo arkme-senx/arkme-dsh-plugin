@@ -672,6 +672,7 @@ describe('JotmoService', () => {
       nextCursor: 'opaque-next',
     })
     expect(page.items[0]?.callRef).toMatch(/^jotmo-call-v1\./)
+    expect(page.items[0]?.avatarRef).toMatch(/^jotmo-profile-image-v1\./)
     expect(JSON.stringify(page)).not.toMatch(/room-a|10001|20002/)
   })
 
@@ -772,7 +773,12 @@ describe('JotmoService', () => {
           start_time: 1_700_000_000, accept_time: 1_700_000_005, end_time: 1_700_000_065,
           call_summary: '发布节奏', call_summary_status: 'done',
           call_transcription_progress: { enabled: true, overall_status: 'done' },
-          room_transcript_segments: [],
+          room_transcript_segments: [{
+            start_ms: 1_000,
+            end_ms: 2_000,
+            text: '我来跟进。',
+            speaker_user_id: 20002,
+          }],
           participant_profiles: [
             { user_id: 10001, display_name: '我' },
             { user_id: 20002, display_name: '小林' },
@@ -783,10 +789,21 @@ describe('JotmoService', () => {
     })
 
     const callRef = (await service.listCalls()).items[0]!.callRef
-    await expect(service.readCall(callRef)).resolves.toMatchObject({
+    const detail = await service.readCall(callRef)
+    expect(detail).toMatchObject({
       callRef,
       displayName: '小林',
       summary: { state: 'ready', content: '发布节奏' },
+      participants: [
+        { displayName: '我', avatarRef: expect.stringMatching(/^jotmo-profile-image-v1\./) },
+        { displayName: '小林', avatarRef: expect.stringMatching(/^jotmo-profile-image-v1\./) },
+      ],
+      transcript: {
+        items: [{
+          speakerLabel: '小林',
+          avatarRef: expect.stringMatching(/^jotmo-profile-image-v1\./),
+        }],
+      },
     })
     expect(webRtcBodies).toEqual([{ room_id: 'room-a' }])
 

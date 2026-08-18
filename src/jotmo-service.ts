@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import OSS from 'ali-oss'
 import {
+  callDetailParticipantUserIds,
   callListParticipantUserIds,
   callListRoomIds,
   projectCallDetail,
@@ -403,10 +404,11 @@ export class JotmoService {
       options.signal,
     )
     const currentSession = await this.requireSession()
+    const participantUserIds = callListParticipantUserIds(raw)
     let displayNamesByUserId = new Map<number, string>()
     try {
       displayNamesByUserId = await this.publicDisplayNamesByUserIds(
-        callListParticipantUserIds(raw),
+        participantUserIds,
         currentSession,
         options.signal,
       )
@@ -417,10 +419,15 @@ export class JotmoService {
     await Promise.all(callListRoomIds(raw).map(async roomId => {
       callRefByRoomId.set(roomId, await this.sealCallRef(currentSession.userId, roomId))
     }))
+    const avatarRefsByUserId = await this.profileImageRefsByUserIds(
+      currentSession.userId,
+      participantUserIds,
+    )
     return projectCallListPage(raw, {
       viewerUserId: currentSession.userId,
       displayNamesByUserId,
       callRefByRoomId,
+      avatarRefsByUserId,
     })
   }
 
@@ -433,10 +440,15 @@ export class JotmoService {
       session,
       options.signal,
     )
+    const avatarRefsByUserId = await this.profileImageRefsByUserIds(
+      session.userId,
+      callDetailParticipantUserIds(raw),
+    )
     return projectCallDetail(raw, {
       viewerUserId: session.userId,
       expectedRoomId: opened.roomId,
       callRef,
+      avatarRefsByUserId,
     })
   }
 
@@ -856,6 +868,18 @@ export class JotmoService {
     const payload = encodeOpaqueJson({ version: 1, viewerUserId, targetUserId } satisfies JotmoProfileImageRefPayload)
     const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `jotmo-profile-image-v1.${payload}.${signature}`
+  }
+
+  private async profileImageRefsByUserIds(
+    viewerUserId: number,
+    userIds: readonly number[],
+  ): Promise<Map<number, string>> {
+    const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
+    const entries = await Promise.all(normalized.map(async userId => [
+      userId,
+      await this.sealProfileImageRef(viewerUserId, userId),
+    ] as const))
+    return new Map(entries)
   }
 
   private async openProfileImageRef(

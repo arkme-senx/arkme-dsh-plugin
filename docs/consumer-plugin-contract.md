@@ -57,6 +57,7 @@ type JotmoCallSectionState = 'ready' | 'empty' | 'processing' | 'failed'
 interface JotmoCallListItem {
   callRef: string
   displayName: string
+  avatarRef?: string
   participantCount: number
   mediaType: JotmoCallMediaType
   direction: JotmoCallDirection
@@ -77,6 +78,7 @@ interface JotmoCallList {
 
 interface JotmoCallParticipant {
   displayName: string
+  avatarRef?: string
   isSelf: boolean
   connected: boolean
 }
@@ -86,6 +88,7 @@ interface JotmoCallTranscriptItem {
   startOffsetMillis: number
   endOffsetMillis: number
   speakerLabel: string
+  avatarRef?: string
   isSelf: boolean
   text: string
 }
@@ -112,7 +115,11 @@ interface JotmoCallDetail {
 
 The Host projects Data/Auth/WebRTC payloads field by field. Numeric user IDs, room IDs, TRTC accounts, member actions, media/recording URLs, object keys, file IDs/names/sizes, speaker IDs, profile segment keys, voiceprints, confidence and quota data are excluded. Display-name hydration is best-effort and cannot turn a valid list page into an error.
 
+Call-list peers, detail participants, and transcript speakers may expose an opaque `avatarRef`. Consumers resolve it only through `readImage()` / `image.read`; upstream profile URLs and user IDs never enter the browser contract. A missing or unreadable reference must degrade to a local visual fallback without hiding the participant name.
+
 Summary and transcript content are plain text. Consumers must render them as text nodes with preserved whitespace and must never use HTML injection. Call list/detail bodies are fetched on demand and must not be persisted in SQLite, browser storage, navigation caches, analytics payloads, or cross-account state.
+
+A transcript with `state: 'processing'` may already contain partial `items`. Consumers should render those items together with the progress `message`; `processing` describes the non-terminal pipeline state and does not imply an empty transcript. Failed transcripts do not expose partial items.
 
 ## Host service
 

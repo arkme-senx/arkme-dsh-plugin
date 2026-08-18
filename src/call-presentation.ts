@@ -14,6 +14,7 @@ export interface JotmoCallListProjectionContext {
   viewerUserId: number
   displayNamesByUserId: ReadonlyMap<number, string>
   callRefByRoomId: ReadonlyMap<string, string>
+  avatarRefsByUserId?: ReadonlyMap<number, string>
 }
 
 interface TrtcAggregateRow {
@@ -89,6 +90,16 @@ function normalizedEpochMillis(value: unknown): number {
 
 function normalizedOffsetMillis(value: unknown): number {
   return Math.max(0, Math.trunc(numberValue(value)))
+}
+
+function normalizedTranscriptOffsetMillis(value: unknown, callStartedAtMillis: number): number {
+  const rawOffset = normalizedOffsetMillis(value)
+  if (rawOffset === 0 || callStartedAtMillis <= 0) return rawOffset
+  const possibleEpochMillis = normalizedEpochMillis(value)
+  if (Math.abs(possibleEpochMillis - callStartedAtMillis) <= 86_400_000) {
+    return Math.max(0, possibleEpochMillis - callStartedAtMillis)
+  }
+  return rawOffset
 }
 
 function mediaType(value: unknown): JotmoCallMediaType {
@@ -188,12 +199,17 @@ function projectListItem(
   const callRef = stringValue(context.callRefByRoomId.get(row.roomId)).trim()
   if (callRef === '') return undefined
   const participants = participantUserIds(row.trtc)
+  const primaryPeerUserId = peerDisplayOrder(row.trtc, context.viewerUserId)[0]
+  const avatarRef = primaryPeerUserId === undefined
+    ? ''
+    : stringValue(context.avatarRefsByUserId?.get(primaryPeerUserId)).trim()
   const callerUserId = positiveUserId(row.trtc.caller_user_id) ?? 0
   const times = callTimes(row.trtc, row.aggregate)
   const preview = summaryPreview(row.trtc.call_summary)
   return {
     callRef,
     displayName: callDisplayName(row.trtc, participants, context.viewerUserId, context.displayNamesByUserId),
+    ...(avatarRef === '' ? {} : { avatarRef }),
     participantCount: participants.length,
     mediaType: mediaType(row.trtc.call_media_type ?? row.aggregate.call_media_type),
     direction: callDirection(participants, callerUserId, context.viewerUserId),
@@ -224,6 +240,10 @@ export function callListParticipantUserIds(raw: unknown): number[] {
   const values: unknown[] = []
   for (const row of trtcRows(raw)) values.push(...participantUserIds(row.trtc))
   return uniquePositiveUserIds(values)
+}
+
+export function callDetailParticipantUserIds(raw: unknown): number[] {
+  return participantUserIds(objectValue(raw))
 }
 
 export function projectCallListPage(raw: unknown, context: JotmoCallListProjectionContext): JotmoCallList {
@@ -264,23 +284,32 @@ function detailParticipants(
   participantIds: readonly number[],
   viewerUserId: number,
   names: ReadonlyMap<number, string>,
+  avatarRefsByUserId?: ReadonlyMap<number, string>,
 ): JotmoCallParticipant[] {
   const connected = new Set(uniquePositiveUserIds(listValue(raw.connected_user_ids)))
-  return participantIds.map(userId => ({
-    displayName: userId === viewerUserId ? '我' : displayNameForUser(userId, names) || '即我用户',
-    isSelf: userId === viewerUserId,
-    connected: connected.has(userId),
-  }))
+  return participantIds.map(userId => {
+    const avatarRef = stringValue(avatarRefsByUserId?.get(userId)).trim()
+    return {
+      displayName: userId === viewerUserId ? '我' : displayNameForUser(userId, names) || '即我用户',
+      ...(avatarRef === '' ? {} : { avatarRef }),
+      isSelf: userId === viewerUserId,
+      connected: connected.has(userId),
+    }
+  })
 }
 
-function sectionMessage(kind: 'summary' | 'transcript', state: JotmoCallSectionState): string {
+function sectionMessage(
+  kind: 'summary' | 'transcript',
+  state: JotmoCallSectionState,
+  hasContent = false,
+): string {
   if (state === 'ready') return ''
   if (kind === 'summary') {
     if (state === 'processing') return 'AI 摘要生成中'
     if (state === 'failed') return 'AI 摘要生成失败'
     return '暂无 AI 摘要'
   }
-  if (state === 'processing') return '通话转录处理中'
+  if (state === 'processing') return hasContent ? '录音文本转写中，已展示部分内容' : '通话转录处理中'
   if (state === 'failed') return '通话转录失败'
   return '暂无转录内容'
 }
@@ -289,14 +318,19 @@ function transcriptItems(
   raw: Record<string, unknown>,
   viewerUserId: number,
   names: ReadonlyMap<number, string>,
+  callStartedAtMillis: number,
+  avatarRefsByUserId?: ReadonlyMap<number, string>,
 ): JotmoCallTranscriptItem[] {
   const result: JotmoCallTranscriptItem[] = []
   for (const value of listValue(raw.room_transcript_segments)) {
     const segment = objectValue(value)
     const text = stringValue(segment.text).trim()
     if (text === '') continue
-    const startOffsetMillis = normalizedOffsetMillis(segment.start_ms)
-    const endOffsetMillis = Math.max(startOffsetMillis, normalizedOffsetMillis(segment.end_ms))
+    const startOffsetMillis = normalizedTranscriptOffsetMillis(segment.start_ms, callStartedAtMillis)
+    const endOffsetMillis = Math.max(
+      startOffsetMillis,
+      normalizedTranscriptOffsetMillis(segment.end_ms, callStartedAtMillis),
+    )
     const speakerUserId = positiveUserId(segment.speaker_user_id)
     const isSelf = speakerUserId === viewerUserId
     const participantName = speakerUserId === undefined ? '' : displayNameForUser(speakerUserId, names)
@@ -305,11 +339,15 @@ function transcriptItems(
     const speakerLabel = isSelf
       ? '我'
       : participantName || remark || (speakerNumber > 0 ? `说话人 ${String(speakerNumber)}` : '说话人')
+    const avatarRef = speakerUserId === undefined
+      ? ''
+      : stringValue(avatarRefsByUserId?.get(speakerUserId)).trim()
     result.push({
       itemId: `segment-${String(result.length + 1)}-${String(startOffsetMillis)}-${String(endOffsetMillis)}`,
       startOffsetMillis,
       endOffsetMillis,
       speakerLabel,
+      ...(avatarRef === '' ? {} : { avatarRef }),
       isSelf,
       text,
     })
@@ -327,7 +365,12 @@ function transcriptState(raw: Record<string, unknown>, itemCount: number): Jotmo
 
 export function projectCallDetail(
   raw: unknown,
-  context: { viewerUserId: number; expectedRoomId: string; callRef: string },
+  context: {
+    viewerUserId: number
+    expectedRoomId: string
+    callRef: string
+    avatarRefsByUserId?: ReadonlyMap<number, string>
+  },
 ): JotmoCallDetail {
   const detail = objectValue(raw)
   const roomId = stringValue(detail.room_id).trim()
@@ -342,11 +385,23 @@ export function projectCallDetail(
   const participantIds = participantUserIds(detail)
   const callerUserId = positiveUserId(detail.caller_user_id) ?? 0
   const names = detailDisplayNames(detail)
-  const participants = detailParticipants(detail, participantIds, context.viewerUserId, names)
+  const participants = detailParticipants(
+    detail,
+    participantIds,
+    context.viewerUserId,
+    names,
+    context.avatarRefsByUserId,
+  )
   const times = callTimes(detail)
   const summaryContent = stringValue(detail.call_summary).trim()
   const projectedSummaryState = summaryState(detail.call_summary_status, summaryContent)
-  const visibleTranscriptItems = transcriptItems(detail, context.viewerUserId, names)
+  const visibleTranscriptItems = transcriptItems(
+    detail,
+    context.viewerUserId,
+    names,
+    times.startedAtMillis,
+    context.avatarRefsByUserId,
+  )
   const projectedTranscriptState = transcriptState(detail, visibleTranscriptItems.length)
   return {
     callRef: context.callRef,
@@ -363,8 +418,10 @@ export function projectCallDetail(
     },
     transcript: {
       state: projectedTranscriptState,
-      items: projectedTranscriptState === 'ready' ? visibleTranscriptItems : [],
-      message: sectionMessage('transcript', projectedTranscriptState),
+      items: projectedTranscriptState === 'ready' || projectedTranscriptState === 'processing'
+        ? visibleTranscriptItems
+        : [],
+      message: sectionMessage('transcript', projectedTranscriptState, visibleTranscriptItems.length > 0),
     },
   }
 }

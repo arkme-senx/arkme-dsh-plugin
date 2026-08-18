@@ -97,6 +97,8 @@ export type JotmoCallSectionState = 'ready' | 'empty' | 'processing' | 'failed'
 export interface JotmoCallListItem {
   callRef: string
   displayName: string
+  /** Opaque provider-scoped reference; resolve through `image.read`. */
+  avatarRef?: string
   participantCount: number
   mediaType: JotmoCallMediaType
   direction: JotmoCallDirection
@@ -117,6 +119,8 @@ export interface JotmoCallList {
 
 export interface JotmoCallParticipant {
   displayName: string
+  /** Opaque provider-scoped reference; resolve through `image.read`. */
+  avatarRef?: string
   isSelf: boolean
   connected: boolean
 }
@@ -126,6 +130,8 @@ export interface JotmoCallTranscriptItem {
   startOffsetMillis: number
   endOffsetMillis: number
   speakerLabel: string
+  /** Opaque provider-scoped reference; resolve through `image.read`. */
+  avatarRef?: string
   isSelf: boolean
   text: string
 }
@@ -138,6 +144,7 @@ export interface JotmoCallTextSection {
 
 export interface JotmoCallTranscriptSection {
   state: JotmoCallSectionState
+  /** Partial plain-text items may be present while state is `processing`. */
   items: JotmoCallTranscriptItem[]
   message: string
 }

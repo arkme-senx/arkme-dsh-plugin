@@ -70,12 +70,18 @@ const callRefs = new Map([
   ['room-group', 'jotmo-call-ref-group'],
 ])
 const names = new Map([[101, '我自己'], [202, '小林'], [303, '阿青']])
+const avatarRefs = new Map([
+  [101, 'jotmo-avatar-ref-self'],
+  [202, 'jotmo-avatar-ref-lin'],
+  [303, 'jotmo-avatar-ref-qing'],
+])
 
 function listProjection(raw: unknown = listPage) {
   return projectCallListPage(raw, {
     viewerUserId: 101,
     displayNamesByUserId: names,
     callRefByRoomId: callRefs,
+    avatarRefsByUserId: avatarRefs,
   })
 }
 
@@ -152,6 +158,7 @@ describe('call list projection', () => {
         {
           callRef: 'jotmo-call-ref-a',
           displayName: '小林',
+          avatarRef: 'jotmo-avatar-ref-lin',
           participantCount: 2,
           mediaType: 'audio',
           direction: 'outgoing',
@@ -166,6 +173,7 @@ describe('call list projection', () => {
         {
           callRef: 'jotmo-call-ref-group',
           displayName: '小林、阿青（3人）',
+          avatarRef: 'jotmo-avatar-ref-lin',
           participantCount: 3,
           mediaType: 'video',
           direction: 'group',
@@ -238,14 +246,15 @@ describe('call detail projection', () => {
       viewerUserId: 101,
       expectedRoomId: 'room-a',
       callRef: 'jotmo-call-ref-a',
+      avatarRefsByUserId: avatarRefs,
     })
 
     expect(detail).toEqual({
       callRef: 'jotmo-call-ref-a',
       displayName: '小林',
       participants: [
-        { displayName: '我', isSelf: true, connected: true },
-        { displayName: '小林', isSelf: false, connected: true },
+        { displayName: '我', avatarRef: 'jotmo-avatar-ref-self', isSelf: true, connected: true },
+        { displayName: '小林', avatarRef: 'jotmo-avatar-ref-lin', isSelf: false, connected: true },
       ],
       mediaType: 'audio',
       direction: 'outgoing',
@@ -264,6 +273,7 @@ describe('call detail projection', () => {
             startOffsetMillis: 0,
             endOffsetMillis: 1_500,
             speakerLabel: '我',
+            avatarRef: 'jotmo-avatar-ref-self',
             isSelf: true,
             text: '今天确认发布节奏。',
           },
@@ -272,6 +282,7 @@ describe('call detail projection', () => {
             startOffsetMillis: 1_600,
             endOffsetMillis: 3_200,
             speakerLabel: '小林',
+            avatarRef: 'jotmo-avatar-ref-lin',
             isSelf: false,
             text: '我来跟进。',
           },
@@ -283,21 +294,58 @@ describe('call detail projection', () => {
     for (const sentinel of ['SECRET_URL', 'SECRET_KEY', 'SECRET_FILE', 'SECRET_ACCOUNT', 'SECRET_SPK']) {
       expect(serialized).not.toContain(sentinel)
     }
-    expect(serialized).not.toMatch(/room-a|"userId"|speaker_user_id|confidence|quota/)
+    expect(serialized).not.toMatch(/room-a|"userId"|speaker_user_id|confidence|quota|SECRET_PROFILE_URL/)
   })
 
-  it.each([
-    ['processing', 'processing'],
-    ['failed', 'failed'],
-  ] as const)('lets %s transcription progress override visible segments', (overallStatus, state) => {
+  it('keeps visible transcript segments while transcription is still processing', () => {
     const detail = projectCallDetail(detailFixture({
-      call_transcription_progress: { enabled: true, overall_status: overallStatus },
+      call_transcription_progress: { enabled: true, overall_status: 'processing' },
     }), {
       viewerUserId: 101,
       expectedRoomId: 'room-a',
       callRef: 'safe-ref',
     })
-    expect(detail.transcript).toMatchObject({ state, items: [] })
+    expect(detail.transcript).toMatchObject({
+      state: 'processing',
+      message: '录音文本转写中，已展示部分内容',
+      items: [
+        { itemId: 'segment-1-0-1500', text: '今天确认发布节奏。' },
+        { itemId: 'segment-2-1600-3200', text: '我来跟进。' },
+      ],
+    })
+  })
+
+  it('converts legacy epoch transcript timestamps into call-relative offsets', () => {
+    const detail = projectCallDetail(detailFixture({
+      room_transcript_segments: [
+        {
+          start_ms: 1_700_000_005_721,
+          end_ms: 1_700_000_011_159,
+          text: '历史时间戳片段',
+          speaker_user_id: 101,
+        },
+      ],
+    }), {
+      viewerUserId: 101,
+      expectedRoomId: 'room-a',
+      callRef: 'safe-ref',
+    })
+
+    expect(detail.transcript.items[0]).toMatchObject({
+      startOffsetMillis: 5_721,
+      endOffsetMillis: 11_159,
+    })
+  })
+
+  it('does not expose partial transcript segments after transcription fails', () => {
+    const detail = projectCallDetail(detailFixture({
+      call_transcription_progress: { enabled: true, overall_status: 'failed' },
+    }), {
+      viewerUserId: 101,
+      expectedRoomId: 'room-a',
+      callRef: 'safe-ref',
+    })
+    expect(detail.transcript).toMatchObject({ state: 'failed', items: [] })
   })
 
   it('uses anonymous speaker remarks and terminal empty section states', () => {
