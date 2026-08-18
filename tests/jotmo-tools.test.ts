@@ -36,6 +36,11 @@ function fakeService(): JotmoConversationReadService & {
         search: true as const, createText: true as const, retryOutbox: true as const, revisionPolling: true as const,
         userProfile: true as const,
         imageRead: true as const,
+        sourceDirectory: true as const,
+        sourceTimeline: true as const,
+        sourceTextSend: true as const,
+        callHistory: true as const,
+        callDetail: true as const,
       },
       limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
     }),
@@ -137,6 +142,9 @@ describe('Jotmo conversation tools', () => {
     expect(output).toContain('@senqisi/dsh-jotmo/sdk')
     expect(output).toContain('createJotmoSdk')
     expect(output).toContain('readImage')
+    expect(output).toContain('listCalls')
+    expect(output).toContain('readCall')
+    expect(output).toContain('callRef')
     expect(consumerPluginContract(service.providerCapabilities())).toBe(output)
     expect(JOTMO_TOOL_PROMPT).toContain('jotmo_plugin_contract')
     expect(tool.description).toContain('does not read Jiwo account data')
