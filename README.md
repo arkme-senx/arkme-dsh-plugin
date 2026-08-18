@@ -12,6 +12,8 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 - 写入失败时保留账号隔离的本地 outbox。
 - 向 DSH 对话注册读取工具：`jotmo_records_recent`、`jotmo_records_search`；
 - 注册 `jotmo_record_create`，在用户明确要求时把纯文本写入默认分类，且始终先落 SQLite 再同步远端。
+- 注册 `jotmo_world_recent`，按时间顺序查询世界中的公开快记，不暴露内部用户标识和资源地址。
+- 注册 `jotmo_world_publish_text`，仅在用户明确要求“发到世界”时先保存快记、再公开发布纯文本；普通“保存/记住/发给自己”不会触发公开发布。
 - 注册 `jotmo_image_read`：把个人资料或会话列表返回的头像引用经即我鉴权转换为图片，并作为 DSH 图片附件交给支持视觉输入的模型；签名 OSS 地址不会暴露给浏览器或模型。
 - 未登录时在 Footer 的“即我”行右侧显示红色“未登录”徽标；点击后只在右侧打开登录页面，不展开下拉目录。登录成功后目录自动展开；已登录状态下点击 Footer 正常展开。
 - “发给自己”使用二级钻取展示默认分类及主题，默认分类、主题、私聊、群聊共享 Provider 读取/发送外观但保持 Record/Chat owner 隔离。
@@ -59,7 +61,7 @@ Host 侧受信任插件可以声明 `inject: ['jotmoData']` 并使用 `ctx.jotmo
 
 ## 开发
 
-测试环境默认使用 `https://jotmo-audio.senguo.me` 作为 `audioBaseUrl`。自定义配置必须是不带路径、用户名或密码的 HTTPS Origin；生产环境需与其他 Base URL 一样显式覆盖并开启 `allowProduction`。
+测试环境默认使用 `https://jotmo-audio.senguo.me` 作为 `audioBaseUrl`，使用 `https://jotmo-world.senguo.me` 作为 `worldBaseUrl`。自定义配置必须是不带路径、用户名或密码的 HTTPS Origin；生产环境需与其他 Base URL 一样显式覆盖并开启 `allowProduction`。
 
 ```sh
 pnpm install

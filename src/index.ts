@@ -17,6 +17,7 @@ export interface Config {
   recordBaseUrl: string
   chatBaseUrl: string
   audioBaseUrl: string
+  worldBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -33,6 +34,7 @@ export const Config: Schema<Config> = Schema.object({
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
+  worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
   routePath: Schema.string().default('/jotmo-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -94,6 +96,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['recordBaseUrl', config.recordBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
+    ['worldBaseUrl', config.worldBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -127,6 +130,10 @@ export type {
   JotmoProviderState,
   JotmoUserProfile,
   JotmoUserProfileSnapshot,
+  JotmoWorldPublishResult,
+  JotmoWorldRecordItem,
+  JotmoWorldRecordList,
+  JotmoWorldVisibility,
 } from './types.js'
 export { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
 export { JotmoService } from './jotmo-service.js'

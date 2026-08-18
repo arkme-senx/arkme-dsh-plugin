@@ -38,6 +38,10 @@ import type {
   JotmoTimelinePage,
   JotmoUserProfile,
   JotmoUserProfileSnapshot,
+  JotmoWorldPublishResult,
+  JotmoWorldRecordItem,
+  JotmoWorldRecordList,
+  JotmoWorldVisibility,
 } from './types.js'
 
 interface SessionStore {
@@ -70,6 +74,7 @@ export interface JotmoServiceConfig {
   recordBaseUrl: string
   chatBaseUrl: string
   audioBaseUrl: string
+  worldBaseUrl: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -233,6 +238,17 @@ function chunksOf<T>(values: readonly T[], size: number): T[][] {
   const chunks: T[][] = []
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size))
   return chunks
+}
+
+function worldVisibility(checkStatus: number): JotmoWorldVisibility {
+  if (checkStatus === 1) return 'pending_review'
+  if (checkStatus === 4) return 'rejected'
+  if (checkStatus === 0 || checkStatus === 2 || checkStatus === 3) return 'visible'
+  return 'unknown'
+}
+
+function worldTags(text: string): string[] {
+  return [...text.matchAll(/#(\S+)/gu)].map(match => match[1] ?? '').filter(tag => tag !== '')
 }
 
 function trustedSignedImageUrl(environment: JotmoEnvironment, raw: string): URL {
@@ -1288,6 +1304,146 @@ export class JotmoService {
     return page
   }
 
+  async listWorldRecords(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<JotmoWorldRecordList> {
+    const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 10)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const data = await this.post<Record<string, unknown>>(
+      this.config.worldBaseUrl,
+      '/api/public/v1/public-record/world-list',
+      { limit, offset },
+      undefined,
+      [200],
+      options.signal,
+    )
+    const rawItems = listValue(data.list)
+    const items = rawItems.map(raw => this.worldRecordItem(raw)).filter(
+      (item): item is JotmoWorldRecordItem => item !== undefined,
+    )
+    const total = Math.max(0, Math.trunc(numberValue(data.total)))
+    const nextOffset = offset + rawItems.length
+    const hasMore = rawItems.length > 0 && nextOffset < total
+    return {
+      items,
+      total,
+      hasMore,
+      ...(hasMore ? { nextOffset } : {}),
+    }
+  }
+
+  async publishWorldTextForConversation(
+    recordUid: string,
+    textContent: string,
+    signal?: AbortSignal,
+  ): Promise<JotmoWorldPublishResult> {
+    const normalizedUid = recordUid.trim()
+    const normalizedText = textContent.trim()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
+      throw new JotmoPluginError('record-uid-invalid', '写入标识无效，请重试', false)
+    }
+    if (normalizedText === '') {
+      throw new JotmoPluginError('world-text-empty', '请输入要发到世界的内容', false)
+    }
+    if (normalizedText.length > this.config.maxTextLength) {
+      throw new JotmoPluginError('world-text-too-long', `内容不能超过 ${this.config.maxTextLength} 个字符`, false)
+    }
+
+    let profile: JotmoUserProfile
+    try {
+      const snapshot = await this.refreshProfile()
+      if (snapshot.profile === null) throw new JotmoPluginError('profile-unavailable', '无法读取当前即我账号资料', true)
+      profile = snapshot.profile
+    } catch (error) {
+      return this.worldPublishFailure(false, error)
+    }
+    if (profile.contact.phoneMasked === undefined) {
+      return {
+        recordSaved: false,
+        recordState: 'not_saved',
+        worldPublished: false,
+        visibility: 'not_published',
+        checkStatus: 0,
+        retryable: false,
+        error: '请先在即我客户端绑定手机号，再发到世界',
+      }
+    }
+
+    try {
+      if (await this.worldRecordIsPublic(normalizedUid, signal)) {
+        return {
+          recordSaved: true,
+          recordState: 'synced',
+          worldPublished: true,
+          visibility: 'unknown',
+          checkStatus: 0,
+          retryable: false,
+        }
+      }
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      // 公开状态预检不可用时继续正常发布；失败后的确认仍会再查一次。
+    }
+
+    const createdAtMillis = Date.now()
+    const recordResult = await this.createTextForConversation(normalizedUid, normalizedText)
+    if (recordResult.localState !== 'synced') {
+      return {
+        recordSaved: true,
+        recordState: 'pending',
+        worldPublished: false,
+        visibility: 'not_published',
+        checkStatus: 0,
+        retryable: true,
+        ...(recordResult.error === undefined ? {} : { error: recordResult.error }),
+      }
+    }
+
+    try {
+      const published = await this.authenticatedWorldPost<Record<string, unknown>>(
+        '/api/v1/public-record/publish',
+        {
+          record_uid: normalizedUid,
+          content: normalizedText,
+          text_content: normalizedText,
+          tags: worldTags(normalizedText),
+          original_topic_id: 0,
+          created_at: createdAtMillis,
+          nick_name: profile.nickname || profile.displayName,
+          avatar: profile.avatarRef,
+          template_kind: 1,
+        },
+        undefined,
+        signal,
+      )
+      const checkStatus = Math.trunc(numberValue(published.check_status))
+      return {
+        recordSaved: true,
+        recordState: 'synced',
+        worldPublished: true,
+        visibility: worldVisibility(checkStatus),
+        checkStatus,
+        retryable: false,
+      }
+    } catch (error) {
+      try {
+        if (await this.worldRecordIsPublic(normalizedUid, signal)) {
+          return {
+            recordSaved: true,
+            recordState: 'synced',
+            worldPublished: true,
+            visibility: 'unknown',
+            checkStatus: 0,
+            retryable: false,
+          }
+        }
+      } catch {
+        // 保留原始发布错误，向用户说明快记已保存但公开结果未成功确认。
+      }
+      return this.worldPublishFailure(true, error, 'synced')
+    }
+  }
+
   async createText(recordUid: string, textContent: string): Promise<JotmoCreateTextResult> {
     const session = await this.requireSession()
     const normalizedUid = recordUid.trim()
@@ -1493,6 +1649,64 @@ export class JotmoService {
     }
   }
 
+  private worldRecordItem(raw: unknown): JotmoWorldRecordItem | undefined {
+    const item = objectValue(raw)
+    const textContent = stringValue(item.text_content ?? item.content).trim()
+    const headline = stringValue(item.headline).trim()
+    const imageCount = listValue(item.images).length
+    const videoCount = listValue(item.videos).length
+    const voiceCount = listValue(item.voices).length
+    if (textContent === '' && headline === '' && imageCount + videoCount + voiceCount === 0) return undefined
+    return {
+      authorName: stringValue(item.nick_name).trim() || '即我用户',
+      headline,
+      textContent,
+      tags: listValue(item.tags).map(stringValue).map(tag => tag.trim()).filter(tag => tag !== ''),
+      templateKind: Math.trunc(numberValue(item.template_kind)),
+      createdAtMillis: Math.trunc(numberValue(item.created_at)),
+      publishedAtMillis: Math.trunc(numberValue(item.published_at)),
+      imageCount,
+      videoCount,
+      voiceCount,
+      extendCount: Math.max(0, Math.trunc(numberValue(item.extend_count))),
+    }
+  }
+
+  private worldPublishFailure(
+    recordSaved: boolean,
+    error: unknown,
+    recordState: JotmoWorldPublishResult['recordState'] = recordSaved ? 'synced' : 'not_saved',
+  ): JotmoWorldPublishResult {
+    const code = error instanceof JotmoPluginError ? error.code : ''
+    const retryable = error instanceof JotmoPluginError
+      ? error.retryable || ['jotmo-code-10005', 'jotmo-http-error', 'jotmo-network-error', 'jotmo-timeout'].includes(code)
+      : true
+    return {
+      recordSaved,
+      recordState,
+      worldPublished: false,
+      visibility: 'not_published',
+      checkStatus: 0,
+      retryable,
+      error: safeFailureMessage(error),
+    }
+  }
+
+  private async worldRecordIsPublic(recordUid: string, signal?: AbortSignal): Promise<boolean> {
+    const data = await this.post<Record<string, unknown>>(
+      this.config.worldBaseUrl,
+      '/api/public/v1/public-record/status-batch',
+      { record_uids: [recordUid] },
+      undefined,
+      [200],
+      signal,
+    )
+    return listValue(data.items).some(raw => {
+      const item = objectValue(raw)
+      return stringValue(item.record_uid).trim() === recordUid && item.is_public === true
+    })
+  }
+
   private normalizedPhone(phone: string): string {
     const normalized = phone.replace(/[\s-]/g, '')
     if (!/^1[3-9][0-9]{9}$/.test(normalized)) {
@@ -1622,6 +1836,25 @@ export class JotmoService {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedWorldPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError)
+        || !['auth-http-401', 'auth-http-403', 'jotmo-code-10002'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal)
     }
   }
 
