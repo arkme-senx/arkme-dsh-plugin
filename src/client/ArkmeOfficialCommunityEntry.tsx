@@ -54,13 +54,13 @@ const styles: Record<string, CSSProperties> = {
   chevron: { flex: 'none', marginLeft: -6, color: colors.caption, fontSize: 20, lineHeight: '20px' },
   bottomLine: { height: 1, background: colors.border },
   backdrop: {
-    position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+    position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
     background: colors.mask,
   },
   sheet: {
-    width: 'min(460px, 100%)', maxHeight: 'calc(100vh - 24px)', overflowY: 'auto',
-    borderRadius: '34px 34px 0 0', padding: '10px 20px 22px', boxSizing: 'border-box',
-    background: colors.surface, color: colors.text, boxShadow: '0 -4px 30px rgba(23, 25, 28, .12)',
+    width: 'min(460px, calc(100% - 32px))', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto',
+    borderRadius: 34, padding: '10px 20px 22px', boxSizing: 'border-box',
+    background: colors.surface, color: colors.text, boxShadow: '0 12px 40px rgba(23, 25, 28, .16)',
   },
   handle: { width: 48, height: 5, margin: '0 auto', borderRadius: 999, background: colors.caption, opacity: .88 },
   cancel: {
