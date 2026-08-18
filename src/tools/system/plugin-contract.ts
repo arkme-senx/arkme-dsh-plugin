@@ -29,7 +29,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
     ],
     limits: capabilities.limits,
     securityRules: [
-      'Do not read Keychain, SQLite files, or tokens directly.',
+      'Do not read the OS credential store, SQLite files, or tokens directly.',
       'Do not construct OSS URLs or fetch avatarRef/avatarRefs directly; use readImage through the Provider.',
       'Use the SDK over the same-origin Provider route.',
       'Default generated UI plugins to read-only unless the human explicitly requests write controls.',

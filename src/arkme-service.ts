@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import OSS from 'ali-oss'
-import type { ArkmeSessionCredentials } from './keychain-store.js'
+import type { ArkmeSessionCredentials, ArkmeSessionStore } from './keychain-store.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
   ArkmeAuthSnapshot,
@@ -31,12 +31,6 @@ import type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from './types.js'
-
-interface SessionStore {
-  read(): Promise<ArkmeSessionCredentials | undefined>
-  write(session: ArkmeSessionCredentials): Promise<void>
-  delete(): Promise<void>
-}
 
 interface StateStore {
   uniqueCode(): Promise<string>
@@ -300,7 +294,7 @@ export class ArkmeService {
 
   constructor(
     private readonly config: ArkmeServiceConfig,
-    private readonly sessionStore: SessionStore,
+    private readonly sessionStore: ArkmeSessionStore,
     private readonly stateStore: StateStore,
     private readonly fetchImpl: FetchLike = fetch,
   ) {}

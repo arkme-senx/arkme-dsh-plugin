@@ -1,6 +1,6 @@
 # Arkme Consumer Plugin Contract v1
 
-`@senguoyun/dsh-arkme` owns authentication, Keychain access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
+`@senguoyun/dsh-arkme` owns authentication, OS credential-store access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
 
 The bundled UI uses only official DSH slots: `sidebar.footer.action` owns the launcher, inline Arkme directory, and a non-modal translucent React portal that floats the Arkme message surface over the center column; `settings.general.item` owns account controls. The plugin never registers or replaces `conversation`, so the native DSH Conversation remains mounted and remains perceptible through and around the frosted card. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
 
@@ -29,7 +29,7 @@ await arkme.retry(recordUid)
 const dispose = arkme.subscribe(state => refreshWhen(state.revision))
 ```
 
-The SDK communicates only with the same-origin Provider route. Consumers must not read Keychain entries, SQLite files, state files, or tokens directly.
+The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
 
 `profile()` exposes only UI-safe fields: display name, nickname, avatar reference, Arkme id, account type, creation time, binding flags, and masked phone/email. Raw phone, raw email, real name, and credentials are intentionally excluded from contract v1.
 

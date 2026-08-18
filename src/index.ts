@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createArkmeHostApi } from './host-api.js'
-import { ArkmeKeychainStore } from './keychain-store.js'
+import { createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { ArkmeService } from './arkme-service.js'
 import { ArkmeStateStore } from './state-store.js'
@@ -60,8 +60,8 @@ export function apply(ctx: Context, config: Config): void {
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
-  const keychain = new ArkmeKeychainStore(`${config.keychainServicePrefix}.${config.environment}`)
-  const service = new ArkmeService(config, keychain, localDatabase)
+  const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
+  const service = new ArkmeService(config, sessionStore, localDatabase)
   ctx.provide('arkmeData', service)
   registerArkmeTools(ctx, service, config.toolProfile)
   const handler = createArkmeHostApi(service, {
