@@ -4,6 +4,7 @@ import { callArkme } from './api.js'
 import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -111,6 +112,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
     }
   }, [auth?.status, ui.authRevision])
   return <>
+    <ArkmeOutgoingCallHost />
     <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
     {hasOpened.current && <div
       id="arkme-footer-directory" role="region" aria-label="Arkme 下拉列表"

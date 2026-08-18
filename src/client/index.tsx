@@ -82,10 +82,13 @@ export function apply(ctx: ClientContext): void {
 
 export { ArkmeFooterAction } from './ArkmeFooterAction.js'
 export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
+export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
+export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+export { outgoingCallUi } from './outgoing-call-ui-controller.js'
 export {
   isOfficialConversationTarget, isOfficialNewSessionTarget,
   watchOfficialConversationSelection, watchOfficialNewSession,

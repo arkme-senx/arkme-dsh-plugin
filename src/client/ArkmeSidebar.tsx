@@ -12,6 +12,7 @@ import { verifyPhoneCaptcha } from './geetest.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
+import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -38,7 +39,7 @@ const styles: Record<string, CSSProperties> = {
   panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   header: {
     flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
-    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
   title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
@@ -522,7 +523,14 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   return (
     <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
       <section style={styles.panel} role="region" aria-label={source?.displayName ?? 'Arkme'}>
-        <header style={styles.header}><h2 style={styles.title}>{source?.displayName ?? 'Arkme'}</h2></header>
+        <header style={styles.header}>
+          <h2 style={styles.title}>{source?.displayName ?? 'Arkme'}</h2>
+          {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
+            sourceRef={source.sourceRef}
+            displayName={source.displayName}
+            assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
+          />}
+        </header>
         {authView === 'checking' ? <div style={styles.authChecking} role="status">
           {error === '' ? '正在确认 Arkme 登录状态…' : error}
         </div> : authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
