@@ -49,6 +49,7 @@ interface ProfileRow {
   avatar_ref: string
   avatar_url: string | null
   arkme_id: string
+  can_update_arkme_id: number | null
   account_type: number
   created_at: number
   bind_apple: number
@@ -110,6 +111,7 @@ export class ArkmeLocalDatabase {
         avatar_ref TEXT NOT NULL,
         avatar_url TEXT,
         arkme_id TEXT NOT NULL,
+        can_update_arkme_id INTEGER,
         account_type INTEGER NOT NULL,
         created_at INTEGER NOT NULL,
         bind_apple INTEGER NOT NULL,
@@ -126,6 +128,10 @@ export class ArkmeLocalDatabase {
     }
     if (!metaColumns.some(column => column.name === 'revision')) {
       this.database.exec('ALTER TABLE cache_meta ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
+    }
+    const profileColumns = this.database.prepare('PRAGMA table_info(user_profile_cache)').all() as unknown as Array<{ name: string }>
+    if (!profileColumns.some(column => column.name === 'can_update_arkme_id')) {
+      this.database.exec('ALTER TABLE user_profile_cache ADD COLUMN can_update_arkme_id INTEGER')
     }
     this.secureDatabaseFiles()
   }
@@ -214,7 +220,7 @@ export class ArkmeLocalDatabase {
     await this.ensureMigrated(userId)
     const row = this.database.prepare(`
       SELECT user_id, display_name, nickname, avatar_ref, avatar_url, arkme_id,
-             account_type, created_at, bind_apple, bind_wechat, bind_google,
+             can_update_arkme_id, account_type, created_at, bind_apple, bind_wechat, bind_google,
              phone_masked, email_masked, updated_at_millis
       FROM user_profile_cache WHERE user_id = ?
     `).get(userId) as unknown as ProfileRow | undefined
@@ -232,15 +238,16 @@ export class ArkmeLocalDatabase {
       this.database.prepare(`
         INSERT INTO user_profile_cache (
           user_id, display_name, nickname, avatar_ref, avatar_url, arkme_id,
-          account_type, created_at, bind_apple, bind_wechat, bind_google,
+          can_update_arkme_id, account_type, created_at, bind_apple, bind_wechat, bind_google,
           phone_masked, email_masked, updated_at_millis
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           display_name = excluded.display_name,
           nickname = excluded.nickname,
           avatar_ref = excluded.avatar_ref,
           avatar_url = excluded.avatar_url,
           arkme_id = excluded.arkme_id,
+          can_update_arkme_id = excluded.can_update_arkme_id,
           account_type = excluded.account_type,
           created_at = excluded.created_at,
           bind_apple = excluded.bind_apple,
@@ -251,7 +258,9 @@ export class ArkmeLocalDatabase {
           updated_at_millis = excluded.updated_at_millis
       `).run(
         userId, profile.displayName, profile.nickname, profile.avatarRef,
-        profile.avatarUrl ?? null, profile.arkmeId, profile.accountType, profile.createdAt,
+        profile.avatarUrl ?? null, profile.arkmeId,
+        profile.canUpdateArkmeId === undefined ? null : profile.canUpdateArkmeId ? 1 : 0,
+        profile.accountType, profile.createdAt,
         profile.bindings.apple ? 1 : 0, profile.bindings.wechat ? 1 : 0, profile.bindings.google ? 1 : 0,
         profile.contact.phoneMasked ?? null, profile.contact.emailMasked ?? null, now,
       )
@@ -380,6 +389,7 @@ export class ArkmeLocalDatabase {
       avatarRef: row.avatar_ref,
       ...(row.avatar_url == null || row.avatar_url === '' ? {} : { avatarUrl: row.avatar_url }),
       arkmeId: row.arkme_id,
+      ...(row.can_update_arkme_id == null ? {} : { canUpdateArkmeId: row.can_update_arkme_id === 1 }),
       accountType: row.account_type,
       createdAt: row.created_at,
       bindings: { apple: row.bind_apple === 1, wechat: row.bind_wechat === 1, google: row.bind_google === 1 },

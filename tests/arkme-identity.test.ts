@@ -35,14 +35,18 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('jotmo-userfiles.senguo.me', '')
     .replaceAll('userfiles.jotmo.cc', '')
     .replaceAll('data.jotmo_id', '')
+    .replaceAll('data.can_update_jotmo_id', '')
+    .replaceAll('/api/v1/auth/check-jotmo-id-available', '')
+    .replaceAll('/api/v1/auth/update-jotmo-id', '')
     .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')
     .replaceAll("'jotmo-userfiles'", '')
     .replaceAll('dsh-worktrees/jotmo-virtual-workspace', '')
 }
 
-function withoutRecipientIdCompatibilityAliases(file: string, content: string): string {
+function withoutArkmeIdCompatibilityAliases(file: string, content: string): string {
   const allowedFiles = new Set([
+    join(root, 'src/tools/business/account/set-id.ts'),
     join(root, 'src/tools/business/conversation/send-direct-text.ts'),
     join(root, 'src/tools/prompts/business.ts'),
   ])
@@ -75,7 +79,7 @@ describe('Arkme plugin identity', () => {
     const residuals = files.flatMap(file => {
       const source = withoutOfficialCommunityProductCopy(
         file,
-        withoutRecipientIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+        withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
       )
       const content = withoutInfrastructureNames(source)
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
@@ -92,7 +96,7 @@ describe('Arkme plugin identity', () => {
     expect(patch).toContain("name: '@senguoyun/dsh-arkme'")
     expect(patch).toContain('routePath: /arkme-self/api')
     expect(arkmeToolCatalog.toolNamesFor('business')).toEqual(expect.arrayContaining([
-      'arkme_sources_list', 'arkme_source_read', 'arkme_text_send',
+      'arkme_user_profile', 'arkme_id_set', 'arkme_sources_list', 'arkme_source_read', 'arkme_text_send',
     ]))
   })
 

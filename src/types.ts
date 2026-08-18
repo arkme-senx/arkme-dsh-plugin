@@ -172,6 +172,8 @@ export interface ArkmeUserProfile {
   avatarRef: string
   avatarUrl?: string
   arkmeId: string
+  /** Whether this account can still use its one-time Arkme ID change. Omitted for legacy cached profiles. */
+  canUpdateArkmeId?: boolean
   accountType: number
   createdAt: number
   bindings: {
@@ -188,6 +190,21 @@ export interface ArkmeUserProfile {
 export interface ArkmeUserProfileSnapshot {
   profile: ArkmeUserProfile | null
   cachedAtMillis: number
+  revision: number
+}
+
+export type ArkmeIdAvailabilityReason = '' | 'invalid' | 'taken' | 'modify_limited' | 'server_busy'
+
+export interface ArkmeIdAvailabilitySnapshot {
+  available: boolean
+  reason: ArkmeIdAvailabilityReason
+  arkmeId: string
+}
+
+export interface ArkmeIdMutationResult {
+  arkmeId: string
+  changed: boolean
+  canUpdate: boolean
   revision: number
 }
 

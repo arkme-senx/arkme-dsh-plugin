@@ -19,7 +19,7 @@ Every module declares an internal versioned ID, model-facing tool name, `system`
 
 Business and atomic tools share typed application Ports; a business tool must not invoke another tool's `execute()` method. This keeps authorization, cancellation, logging and output projection owned by one model tool call.
 
-Per-tool instructions stay in `ToolDefinition.description`. Cross-tool guidance is selected by Profile and registered in the same Arkme registrar. Prompt text must not name a tool outside the selected Profile or an unavailable dependency phase; attachment guidance appears and disappears with the attachment-backed tool. Prompt visibility is not authorization: write metadata is prepared for a future grant resolver backed by DSH `tools.guard()`.
+Per-tool instructions stay in `ToolDefinition.description`. Cross-tool guidance is selected by Profile and registered in the same Arkme registrar. Prompt text must not name a tool outside the selected Profile or an unavailable dependency phase; attachment guidance appears and disappears with the attachment-backed tool. Prompt visibility is not authorization: write metadata declares ownership, and the one-time Arkme ID mutation additionally installs a DSH `tools/pre-execute` approval decision before execution. Other write grants remain available for a future shared guard resolver.
 
 ## Adding a tool
 

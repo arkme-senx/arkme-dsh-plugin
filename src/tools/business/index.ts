@@ -1,5 +1,5 @@
 import type { ArkmeToolModule } from '../contract/module.js'
-import { userProfileToolModule } from './account/profile.js'
+import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule } from './conversation/list-sources.js'
 import { readSourceToolModule } from './conversation/read-source.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -15,7 +15,7 @@ import { wechatToolModules } from './wechat/index.js'
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
   recentRecordsToolModule,
-  userProfileToolModule,
+  ...accountBusinessToolModules,
   searchRecordsToolModule,
   createRecordToolModule,
   worldRecentToolModule,
