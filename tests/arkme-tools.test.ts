@@ -26,6 +26,7 @@ function fakeService(): ArkmeCoreToolPorts & {
   queryCached: ReturnType<typeof vi.fn>
   createTextForConversation: ReturnType<typeof vi.fn>
   setArkmeIdOnce: ReturnType<typeof vi.fn>
+  requestOutgoingCall: ReturnType<typeof vi.fn>
 } {
   return {
     providerCapabilities: () => ({
@@ -90,6 +91,11 @@ function fakeService(): ArkmeCoreToolPorts & {
       relationUid: options?.relationUid ?? 'relation-direct-1',
       sequence: 11,
       targetKind: 'direct' as const,
+    })),
+    requestOutgoingCall: vi.fn(async (_sourceRef: string, mediaType: 'audio' | 'video') => ({
+      status: 'calling' as const,
+      displayName: '小林',
+      mediaType,
     })),
     aiVideoPreflight: vi.fn(async () => ({
       allowed: true,
@@ -369,6 +375,28 @@ describe('Arkme conversation tools', () => {
       expect(ARKME_TOOL_PROMPT).toContain(name)
     }
   })
+
+  it('starts an explicitly requested outgoing private call through the source port', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_call_start')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { source_ref: 'signed-private-ref', media_type: 'video' },
+      { callId: 'outgoing-call-1', signal } as never,
+    ) as string
+
+    expect(service.requestOutgoingCall).toHaveBeenCalledWith('signed-private-ref', 'video', signal)
+    expect(output).toContain('"status": "calling"')
+    expect(output).toContain('"displayName": "小林"')
+    expect(output).toContain('"mediaType": "video"')
+    expect(tool.description).toContain('explicitly asks')
+    expect(tool.description).toContain('arkme_sources_list')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_call_start')
+    expect(ARKME_TOOL_PROMPT).toContain('outgoing')
+  })
+
   it('registers AI video creation in the business profile', () => {
     const names = createArkmeCoreToolDefinitions(fakeService()).map(tool => tool.name)
     expect(names).toContain('arkme_ai_video')
