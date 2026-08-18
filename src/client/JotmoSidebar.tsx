@@ -58,11 +58,17 @@ const styles: Record<string, CSSProperties> = {
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 16px 8px' },
   composerInner: {
-    width: 'min(780px,100%)', minHeight: 88, display: 'flex', flexDirection: 'column', paddingTop: 10,
-    border: '1px solid rgba(0,0,0,.1)', borderRadius: 22, background: '#fff', boxShadow: '0 4px 16px rgba(0,0,0,.08)',
+    position: 'relative', width: 'min(780px,100%)', minHeight: 96, overflow: 'hidden',
+    border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 22,
+    background: 'var(--dsw-specific-input-major, #fff)', boxShadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.08))',
   },
-  textarea: { minHeight: 28, maxHeight: 336, resize: 'none', border: 0, outline: 0, padding: '4px 16px', font: 'inherit', fontSize: 16 },
-  tools: { display: 'flex', justifyContent: 'flex-end', padding: '4px 8px 7px' },
+  textarea: {
+    width: '100%', minHeight: 96, maxHeight: 336, resize: 'none', overflowY: 'auto',
+    boxSizing: 'border-box', border: 0, outline: 0, borderRadius: 22, padding: '14px 58px 44px 16px',
+    background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
+    font: 'inherit', fontSize: 16, lineHeight: '24px', caretColor: 'var(--dsw-alias-state-business-primary, #3964fe)',
+  },
+  tools: { position: 'absolute', right: 10, bottom: 10, display: 'flex', padding: 0 },
   send: { width: 34, height: 34, border: 0, borderRadius: 999, background: colors.accent, color: '#fff', cursor: 'pointer' },
   login: { minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28, boxSizing: 'border-box' },
   loginCard: {
@@ -111,12 +117,6 @@ function mergeItems(current: JotmoTimelineItem[], incoming: JotmoTimelineItem[])
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
 }
 
-function avatarInitials(item: JotmoTimelineItem): string {
-  if (item.isMe) return '我'
-  const name = item.senderName.trim()
-  return name === '' ? '即' : [...name].slice(-2).join('')
-}
-
 function MessageAvatar({ item }: { item: JotmoTimelineItem }) {
   const [src, setSrc] = useState('')
   useEffect(() => {
@@ -129,7 +129,7 @@ function MessageAvatar({ item }: { item: JotmoTimelineItem }) {
     return () => { active = false }
   }, [item.avatarRef])
   return <span style={styles.messageAvatar} aria-hidden>
-    {src === '' ? avatarInitials(item) : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
+    {src === '' ? <JotmoMark size={32} /> : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
   </span>
 }
 
@@ -279,6 +279,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   }
 
   const displayItems = useMemo(() => [...items].sort((a, b) => a.sendAtMillis - b.sendAtMillis), [items])
+  const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
 
   return (
     <div style={styles.surface}>
@@ -319,7 +320,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
                   <li style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
                     <div style={{ ...styles.messageLine, ...(item.isMe ? styles.messageLineMe : {}) }}>
-                      <MessageAvatar item={item} />
+                      {showMessageAvatars && <MessageAvatar item={item} />}
                       <div style={{ ...styles.messageBody, ...(item.isMe ? styles.messageBodyMe : {}) }}>
                         {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
                         <div style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}><p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p></div>

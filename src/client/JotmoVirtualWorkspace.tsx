@@ -32,9 +32,9 @@ const styles: Record<string, CSSProperties> = {
   shell: { width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', color: colors.text },
   header: {
     flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
-    padding: '0 14px 0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+    padding: '0 12px 0 14px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
   },
-  headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 16, lineHeight: '22px', fontWeight: 650 },
+  headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 500 },
   headerButton: {
     width: 30, height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.text,
@@ -42,8 +42,8 @@ const styles: Record<string, CSSProperties> = {
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
   chatRow: {
-    position: 'relative', width: '100%', minHeight: 66, display: 'flex', alignItems: 'center', gap: 11,
-    padding: '8px 14px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
+    position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
+    padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
     background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
   chatRowActive: { background: colors.active, boxShadow: `inset 3px 0 ${colors.accent}` },
@@ -84,14 +84,14 @@ const styles: Record<string, CSSProperties> = {
     background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
   },
   topicRow: {
-    position: 'relative', width: 'calc(100% - 16px)', minHeight: 44, margin: '2px 8px',
+    position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
     display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', boxSizing: 'border-box',
     border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
   topicActive: { background: '#dcf4e8', boxShadow: `inset 4px 0 ${colors.accent}` },
   topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
-  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '22px' },
-  topicCount: { flex: 'none', color: colors.caption, fontSize: 13 },
+  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
+  topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
@@ -117,11 +117,6 @@ export function loadJotmoImageDataUrl(imageRef: string): Promise<string> {
     })
   avatarDataUrlCache.set(imageRef, pending)
   return pending
-}
-
-function initials(value: string): string {
-  const normalized = value.trim()
-  return normalized === '' ? '即' : [...normalized].slice(-2).join('')
 }
 
 function SelfAvatar() {
@@ -167,7 +162,7 @@ function SourceAvatar({ source }: { source: JotmoSourceItem }) {
   const columns = count <= 1 ? 1 : 2
   const rows = count <= 2 ? 1 : 2
   return <span ref={container} style={styles.avatar} aria-hidden>
-    {count === 0 ? initials(source.displayName) : count === 1
+    {count === 0 ? <JotmoMark size={44} /> : count === 1
       ? <img src={urls[0]} alt="" draggable={false} style={styles.avatarImage} />
       : <span style={{ ...styles.avatarGrid, gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
         {urls.map((url, index) => <img key={`${url.slice(-20)}-${String(index)}`} src={url} alt="" draggable={false} style={styles.avatarImage} />)}
