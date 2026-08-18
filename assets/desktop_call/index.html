@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jotmo 通话</title>
+    <style>
+      html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      (() => {
+        let context = {};
+        try {
+          const parsed = JSON.parse(window.name || "{}");
+          context = { callRequestId: String(parsed.callRequestId || "") };
+        } catch (_) {
+          context = {};
+        }
+
+        const pending = [];
+        const listeners = [];
+        window.JotmoDesktopCallBridge = {
+          postMessage(message) {
+            parent.postMessage({
+              channel: "jotmo-desktop-call",
+              callRequestId: context.callRequestId,
+              message,
+            }, location.origin);
+          },
+        };
+        window.__JOTMO_DESKTOP_CALL_HOST__ = {
+          postFlutterMessage(message) {
+            window.JotmoDesktopCallBridge.postMessage(message);
+            return true;
+          },
+          onHostMessage(message) {
+            pending.push(message);
+            listeners.forEach((listener) => listener());
+          },
+          drain() {
+            return pending.splice(0, pending.length);
+          },
+          subscribe(listener) {
+            listeners.push(listener);
+            return () => {
+              const index = listeners.indexOf(listener);
+              if (index >= 0) listeners.splice(index, 1);
+            };
+          },
+        };
+
+        const blockGlobal = (name) => {
+          try {
+            Object.defineProperty(globalThis, name, {
+              configurable: true,
+              enumerable: false,
+              get() { return undefined; },
+              set(_) {},
+            });
+          } catch (_) {
+            try { globalThis[name] = undefined; } catch (_) {}
+          }
+        };
+        ["process", "global", "module", "require"].forEach(blockGlobal);
+        import("./bundle.js").catch((error) => {
+          window.__JOTMO_DESKTOP_CALL_HOST__.postFlutterMessage(JSON.stringify({
+            type: "fatal_error",
+            message: error instanceof Error ? error.message : "呼叫界面加载失败",
+          }));
+        });
+      })();
+    </script>
+  </body>
+</html>
