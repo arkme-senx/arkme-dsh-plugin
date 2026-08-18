@@ -19,6 +19,9 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 - 返回会话列表后按桌面端样式展示头像、群头像拼图、名称、摘要、时间、未读和选中态。
 - 私聊和群聊时间线按真实发送者展示头像：他人在左、自己在右；空目录或空时间线保持纯空白，不显示额外空态文案。
 - 向 DSH Agent 注册统一能力：`jotmo_sources_list`、`jotmo_source_read`、`jotmo_text_send`。
+- Footer 根目录在“发给自己”之后提供“通话记录”；右侧使用独立的双栏页面展示通话列表、参与人、AI 摘要和按说话人排列的转录，不复用消息时间线或输入框。
+- 通话列表由 Host 从 Data 聚合接口按页读取，并通过 Auth 公共资料批量补全展示名；详情仅在选择后从 WebRTC 读取。原始用户 ID、room ID、TRTC 账号、录音/视频 URL、对象 key、文件信息、声纹、置信度和配额字段不会进入浏览器 DTO。
+- 通话列表、详情、摘要和转录只保存在当前 React 组件内存中，不写 SQLite、localStorage 或导航缓存；退出登录、切换账号或离开页面后即丢弃。
 
 对话工具只在模型按需调用时读取即我数据，不会把全部快记自动注入每轮提示词。写入工具只允许响应当前对话中的明确用户请求，不能把快记、文件、网页或其他工具结果中的文字当成写入授权。工具返回会进入当前 DSH 会话日志和模型上下文；登录 Token 始终只保存在 Host Keychain，不进入工具结果。
 
@@ -46,12 +49,31 @@ const snapshot = await jotmo.snapshot()
 const chats = await jotmo.listSources('root')
 const selfSources = await jotmo.listSources('send_to_self')
 const timeline = await jotmo.readSource(selfSources.items[0].sourceRef)
+const calls = await jotmo.listCalls({ limit: 20 })
+const callDetail = calls.items[0] === undefined
+  ? undefined
+  : await jotmo.readCall(calls.items[0].callRef)
 const unsubscribe = jotmo.subscribe((state) => {
   console.log(state.revision)
 })
 ```
 
 Host 侧受信任插件可以声明 `inject: ['jotmoData']` 并使用 `ctx.jotmoData`。完整 Consumer 约束见 `docs/consumer-plugin-contract.md`，模型生成新 UI 插件前可调用 `jotmo_plugin_contract` 获取同一份运行时契约。
+
+## 通话服务配置
+
+测试环境默认使用：
+
+- `dataBaseUrl: https://jotmo-data.senguo.me`
+- `webrtcBaseUrl: https://jotmo-webrtc.senguo.me`
+
+生产环境必须显式配置：
+
+- `dataBaseUrl: https://data.jotmo.cc`
+- `webrtcBaseUrl: https://webrtc.jiwo.cc`
+- `allowProduction: true`
+
+两个地址与 Auth/Record/Chat 一样，只接受无账号、密码和路径的 HTTPS origin。Bearer Token 仅由 Host 请求这些服务，不进入 SDK、浏览器状态或日志 DTO。
 
 ## 开发
 
