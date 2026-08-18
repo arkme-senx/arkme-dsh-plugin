@@ -11,6 +11,11 @@ import type {
   JotmoPluginResponse,
   JotmoProviderCapabilities,
   JotmoProviderState,
+  JotmoSourceDirectory,
+  JotmoSourceList,
+  JotmoSourceSendResult,
+  JotmoTimelineCursor,
+  JotmoTimelinePage,
   JotmoUserProfileSnapshot,
 } from '../types.js'
 
@@ -24,6 +29,14 @@ export type {
   JotmoPendingWrite,
   JotmoProviderCapabilities,
   JotmoProviderState,
+  JotmoSourceDirectory,
+  JotmoSourceItem,
+  JotmoSourceKind,
+  JotmoSourceList,
+  JotmoSourceSendResult,
+  JotmoTimelineCursor,
+  JotmoTimelineItem,
+  JotmoTimelinePage,
   JotmoUserProfile,
   JotmoUserProfileSnapshot,
   JotmoSelfRecordItem,
@@ -107,6 +120,45 @@ export class JotmoSdk {
   /** Convert a Provider image payload into a browser-renderable data URL. */
   imageDataUrl(image: JotmoImagePayload): string {
     return `data:${image.mediaType};base64,${image.dataBase64}`
+  }
+
+  async listSources(
+    directory: JotmoSourceDirectory,
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoSourceList> {
+    return await this.call<JotmoSourceList>('sources.list', {
+      directory,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    }, options.signal)
+  }
+
+  async readSource(
+    sourceRef: string,
+    options: { limit?: number; cursor?: JotmoTimelineCursor; signal?: AbortSignal } = {},
+  ): Promise<JotmoTimelinePage> {
+    if (sourceRef.trim() === '') throw new TypeError('Jiwo source reference must not be empty')
+    return await this.call<JotmoTimelinePage>('source.timeline', {
+      sourceRef,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    }, options.signal)
+  }
+
+  async sendText(
+    sourceRef: string,
+    textContent: string,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoSourceSendResult> {
+    if (sourceRef.trim() === '' || textContent.trim() === '') {
+      throw new TypeError('Jiwo source reference and text must not be empty')
+    }
+    return await this.call<JotmoSourceSendResult>('source.send-text', {
+      sourceRef,
+      textContent,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
   }
 
   async snapshot(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<JotmoCachedSnapshot> {

@@ -5,6 +5,7 @@
         environment: test
         authBaseUrl: https://jotmo.senguo.me
         recordBaseUrl: https://jotmo-record.senguo.me
+        chatBaseUrl: https://jotmo-chat.senguo.me
         routePath: /jotmo-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000

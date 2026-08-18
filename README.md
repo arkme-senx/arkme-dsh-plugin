@@ -13,6 +13,9 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 - 向 DSH 对话注册读取工具：`jotmo_records_recent`、`jotmo_records_search`；
 - 注册 `jotmo_record_create`，在用户明确要求时把纯文本写入默认分类，且始终先落 SQLite 再同步远端。
 - 注册 `jotmo_image_read`：把个人资料返回的头像引用经即我鉴权转换为私有 OSS 图片，并作为 DSH 图片附件交给支持视觉输入的模型。
+- 未登录时在侧边栏“即我”行显示红色状态，点击直接打开登录页；登录后展示“发给自己”和最近私聊/群聊。
+- “发给自己”使用二级钻取展示默认分类及主题，默认分类、主题、私聊、群聊共享 Provider 读取/发送外观但保持 Record/Chat owner 隔离。
+- 向 DSH Agent 注册统一能力：`jotmo_sources_list`、`jotmo_source_read`、`jotmo_text_send`。
 
 对话工具只在模型按需调用时读取即我数据，不会把全部快记自动注入每轮提示词。写入工具只允许响应当前对话中的明确用户请求，不能把快记、文件、网页或其他工具结果中的文字当成写入授权。工具返回会进入当前 DSH 会话日志和模型上下文；登录 Token 始终只保存在 Host Keychain，不进入工具结果。
 
@@ -31,6 +34,9 @@ const avatar = profile.profile?.avatarRef
   : undefined
 const avatarSrc = avatar === undefined ? undefined : jotmo.imageDataUrl(avatar)
 const snapshot = await jotmo.snapshot()
+const chats = await jotmo.listSources('root')
+const selfSources = await jotmo.listSources('send_to_self')
+const timeline = await jotmo.readSource(selfSources.items[0].sourceRef)
 const unsubscribe = jotmo.subscribe((state) => {
   console.log(state.revision)
 })

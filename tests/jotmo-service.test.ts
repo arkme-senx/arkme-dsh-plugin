@@ -86,6 +86,7 @@ const config: JotmoServiceConfig = {
   environment: 'test',
   authBaseUrl: 'https://auth.test',
   recordBaseUrl: 'https://record.test',
+  chatBaseUrl: 'https://chat.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -338,6 +339,113 @@ describe('JotmoService', () => {
     expect(result.items[0]).toMatchObject({ recordUid: 'record-1', textContent: 'hello', version: 2 })
     expect(result.nextCursor).toEqual({ sendAtMillis: 120, recordUid: 'record-next' })
     expect(state.cached.get(10001)?.[0]).toMatchObject({ recordUid: 'record-1', textContent: 'hello' })
+  })
+
+  it('lists, reads, and writes default-category and topic sources through one contract', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
+        topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
+        summary: { record_count: 2, latest_send_at: 99 },
+        latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 99 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+        records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
+        has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
+      } })
+      if (url.endsWith('/api/v1/topics/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const sources = await service.listSources('send_to_self', { limit: 20 })
+    expect(sources.items.map(item => [item.kind, item.displayName])).toEqual([
+      ['default_category', '默认分类'], ['topic', '工作'],
+    ])
+    expect(sources.items[1]?.sourceRef).not.toContain('topic-1')
+    const topicRef = sources.items[1]!.sourceRef
+    await expect(service.readSource(topicRef)).resolves.toMatchObject({
+      source: { kind: 'topic', displayName: '工作' },
+      items: [{ textContent: '主题内容', isMe: true }],
+      hasMore: true,
+      nextCursor: { sendAtMillis: 79, itemUid: 'record-next' },
+    })
+    await expect(service.sendSourceText(topicRef, '写进主题', { recordUid: 'record-create-1' })).resolves.toMatchObject({
+      itemUid: 'record-create-1', localState: 'synced',
+    })
+    expect(calls.at(-1)?.body).toMatchObject({ topic_uid: 'topic-1', text_content: '写进主题' })
+  })
+
+  it('invalidates opaque source references after an account switch', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async () => json({ code: 0, data: { items: [] } }))
+    const service = new JotmoService(config, sessions, state, fetchImpl)
+    const source = (await service.listSources('send_to_self')).items[0]!
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+
+    await expect(service.readSource(source.sourceRef)).rejects.toMatchObject({ code: 'source-ref-invalid' })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('lists, reads, and sends private/group chat sources through the Chat owner', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [
+          {
+            session: { chat_session_uid: 'chat-private', session_kind: 1, title: '', last_active_at: 200 },
+            private_counterpart: { user_id: 20002, display_name_snapshot: '小林' },
+            sort_active_at: 210,
+            latest_preview: { record: { payload: { text_content: '你好' } } },
+            unread_snapshot: { unread_count: 2 },
+          },
+          {
+            session: { chat_session_uid: 'chat-group', session_kind: 2, title: '项目群', last_active_at: 190 },
+            sort_active_at: 195, unread_snapshot: { unread_count: 0 },
+          },
+        ],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+        items: [{
+          relation: { record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
+          record: { status: 1, payload: { text_content: '聊天正文' } },
+        }],
+        has_more: true, next_before_seq: 6,
+      } })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 8,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const sources = await service.listSources('root')
+    expect(sources.items).toMatchObject([
+      { kind: 'private_chat', displayName: '小林', latestPreview: '你好', unreadCount: 2 },
+      { kind: 'group_chat', displayName: '项目群' },
+    ])
+    const privateRef = sources.items[0]!.sourceRef
+    await expect(service.readSource(privateRef)).resolves.toMatchObject({
+      items: [{ textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7 }],
+      nextCursor: { beforeSequence: 6 },
+    })
+    await expect(service.sendSourceText(privateRef, '回复', { recordUid: 'record-send', relationUid: 'rel-send' })).resolves.toMatchObject({
+      itemUid: 'record-send', sequence: 8, localState: 'synced',
+    })
+    expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', text_content: '回复' })
   })
 
   it('keeps failed writes in the account outbox and retries with the same record uid', async () => {

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import OSS from 'ali-oss'
 import type { JotmoSessionCredentials } from './keychain-store.js'
 import { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
@@ -19,6 +19,14 @@ import type {
   JotmoSelfSummary,
   JotmoProviderCapabilities,
   JotmoProviderState,
+  JotmoSourceDirectory,
+  JotmoSourceItem,
+  JotmoSourceKind,
+  JotmoSourceList,
+  JotmoSourceSendResult,
+  JotmoTimelineCursor,
+  JotmoTimelineItem,
+  JotmoTimelinePage,
   JotmoUserProfile,
   JotmoUserProfileSnapshot,
 } from './types.js'
@@ -51,6 +59,7 @@ export interface JotmoServiceConfig {
   environment: JotmoEnvironment
   authBaseUrl: string
   recordBaseUrl: string
+  chatBaseUrl: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -80,6 +89,14 @@ interface JotmoOssCredentials {
   accessKeySecret: string
   stsToken: string
   expiration: string
+}
+
+interface JotmoSourceRefPayload {
+  version: 1
+  userId: number
+  kind: JotmoSourceKind
+  ownerRef: string
+  displayName: string
 }
 
 interface ScanResponse {
@@ -164,6 +181,22 @@ function safeFailureMessage(error: unknown): string {
 
 function md5Text(value: string): string {
   return createHash('md5').update(value).digest('hex')
+}
+
+function encodeOpaqueJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
+}
+
+function decodeOpaqueJson(value: string): unknown {
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown
+}
+
+function isSourceKind(value: unknown): value is JotmoSourceKind {
+  return value === 'default_category' || value === 'topic' || value === 'private_chat' || value === 'group_chat'
+}
+
+function textPreview(raw: Record<string, unknown>): string {
+  return stringValue(raw.text_content ?? raw.title).trim().slice(0, 300)
 }
 
 function imageFileIdFromRef(imageRef: string, userId: number): string {
@@ -266,6 +299,9 @@ export class JotmoService {
         revisionPolling: true,
         userProfile: true,
         imageRead: true,
+        sourceDirectory: true,
+        sourceTimeline: true,
+        sourceTextSend: true,
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
@@ -329,6 +365,228 @@ export class JotmoService {
       },
     }
     return await this.stateStore.cacheProfile(userId, profile)
+  }
+
+  async listSources(
+    directory: JotmoSourceDirectory,
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoSourceList> {
+    const session = await this.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
+    if (directory === 'send_to_self') {
+      if (options.cursor !== undefined && options.cursor.trim() !== '') {
+        throw new JotmoPluginError('source-cursor-invalid', '发给自己的主题目录不支持该分页游标', false)
+      }
+      const data = await this.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/display/list',
+        { limit: Math.min(100, Math.max(1, limit)) },
+        session,
+      )
+      const defaultCategory: JotmoSourceItem = {
+        sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '默认分类'),
+        kind: 'default_category',
+        displayName: '默认分类',
+        activeAtMillis: 0,
+        unreadCount: 0,
+      }
+      const topics: JotmoSourceItem[] = []
+      for (const raw of listValue(data.items)) {
+        const item = objectValue(raw)
+        const core = objectValue(item.topic_core)
+        const summary = objectValue(item.summary)
+        const latest = objectValue(item.latest_record_core)
+        const topicUid = stringValue(core.topic_uid).trim()
+        const title = stringValue(core.title).trim()
+        if (topicUid === '' || title === '') continue
+        topics.push({
+          sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
+          kind: 'topic',
+          displayName: title,
+          ...(textPreview(latest) === '' ? {} : { latestPreview: textPreview(latest) }),
+          activeAtMillis: numberValue(latest.send_at ?? summary.latest_send_at ?? core.update_at),
+          unreadCount: 0,
+          recordCount: numberValue(summary.record_count),
+        })
+      }
+      return { directory, items: [defaultCategory, ...topics], hasMore: false }
+    }
+    if (directory !== 'root') throw new JotmoPluginError('source-directory-invalid', '即我数据源目录无效', false)
+    const pageCursor = options.cursor === undefined || options.cursor.trim() === ''
+      ? undefined
+      : this.decodeCursor(options.cursor)
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/list',
+      { limit, ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }) },
+      session,
+    )
+    const items: JotmoSourceItem[] = []
+    for (const raw of listValue(data.items)) {
+      const bundle = objectValue(raw)
+      const chatSession = objectValue(bundle.session)
+      const counterpart = objectValue(bundle.private_counterpart)
+      const latestPreview = objectValue(bundle.latest_preview)
+      const latestRecord = objectValue(latestPreview.record)
+      const latestPayload = objectValue(latestRecord.payload)
+      const unread = objectValue(bundle.unread_snapshot)
+      const uid = stringValue(chatSession.chat_session_uid).trim()
+      const sessionKind = numberValue(chatSession.session_kind)
+      const kind: JotmoSourceKind | undefined = sessionKind === 2
+        ? 'group_chat'
+        : sessionKind === 1 || sessionKind === 3 ? 'private_chat' : undefined
+      if (uid === '' || kind === undefined) continue
+      const displayName = (kind === 'private_chat'
+        ? stringValue(counterpart.display_name_snapshot)
+        : stringValue(chatSession.title)).trim() || '未命名会话'
+      const preview = textPreview(latestPayload)
+      items.push({
+        sourceRef: await this.sealSourceRef(session.userId, kind, uid, displayName),
+        kind,
+        displayName,
+        ...(preview === '' ? {} : { latestPreview: preview }),
+        activeAtMillis: numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
+        unreadCount: numberValue(unread.unread_count),
+      })
+    }
+    const hasMore = data.has_more === true
+    const nextPageCursor = objectValue(data.next_page_cursor)
+    return {
+      directory,
+      items,
+      hasMore,
+      ...(hasMore && Object.keys(nextPageCursor).length > 0
+        ? { nextCursor: this.encodeCursor(nextPageCursor) }
+        : {}),
+    }
+  }
+
+  async readSource(
+    sourceRef: string,
+    options: { limit?: number; cursor?: JotmoTimelineCursor; signal?: AbortSignal } = {},
+  ): Promise<JotmoTimelinePage> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
+    if (source.kind === 'default_category') {
+      const page = await this.list(limit, options.cursor?.sendAtMillis !== undefined && options.cursor.itemUid !== undefined
+        ? { sendAtMillis: options.cursor.sendAtMillis, recordUid: options.cursor.itemUid }
+        : undefined)
+      return {
+        source: await this.sourceItem(source),
+        items: page.items.map(item => this.recordTimelineItem(item)),
+        hasMore: page.hasMore,
+        ...(page.nextCursor === undefined ? {} : {
+          nextCursor: { sendAtMillis: page.nextCursor.sendAtMillis, itemUid: page.nextCursor.recordUid },
+        }),
+      }
+    }
+    if (source.kind === 'topic') {
+      const data = await this.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/display/detail',
+        {
+          topic_uid: source.ownerRef,
+          limit,
+          ...(options.cursor?.sendAtMillis === undefined ? {} : { cursor_send_at: options.cursor.sendAtMillis }),
+          ...(options.cursor?.itemUid === undefined ? {} : { cursor_record_uid: options.cursor.itemUid }),
+        },
+        session,
+      )
+      const records = listValue(data.records).map(raw => this.recordTimelineItemFromRaw(raw, session.userId))
+      const nextSendAt = numberValue(data.next_cursor_send_at)
+      const nextUid = stringValue(data.next_cursor_record_uid).trim()
+      return {
+        source: await this.sourceItem(source),
+        items: records,
+        hasMore: data.has_more === true,
+        ...(nextSendAt > 0 && nextUid !== '' ? { nextCursor: { sendAtMillis: nextSendAt, itemUid: nextUid } } : {}),
+      }
+    }
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chat/timeline/page',
+      {
+        chat_session_uid: source.ownerRef,
+        before_seq: Math.max(0, Math.trunc(options.cursor?.beforeSequence ?? 0)),
+        limit,
+      },
+      session,
+    )
+    const items: JotmoTimelineItem[] = []
+    for (const raw of listValue(data.items)) {
+      const item = objectValue(raw)
+      const relation = objectValue(item.relation)
+      const record = objectValue(item.record)
+      const payload = objectValue(record.payload)
+      const uid = stringValue(relation.record_uid ?? payload.record_uid).trim()
+      if (uid === '') continue
+      items.push({
+        itemUid: uid,
+        senderName: stringValue(relation.display_name_snapshot).trim() || '即我用户',
+        isMe: numberValue(relation.sender_user_id) === session.userId,
+        sendAtMillis: numberValue(relation.attach_at ?? payload.send_at),
+        title: stringValue(payload.title),
+        textContent: stringValue(payload.text_content),
+        status: numberValue(record.status),
+        sequence: numberValue(relation.seq),
+      })
+    }
+    const beforeSequence = numberValue(data.next_before_seq)
+    return {
+      source: await this.sourceItem(source),
+      items,
+      hasMore: data.has_more === true,
+      ...(beforeSequence > 0 ? { nextCursor: { beforeSequence } } : {}),
+    }
+  }
+
+  async sendSourceText(
+    sourceRef: string,
+    textContent: string,
+    options: { recordUid?: string; relationUid?: string } = {},
+  ): Promise<JotmoSourceSendResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    const text = textContent.trim()
+    if (text === '' || text.length > this.config.maxTextLength) {
+      throw new JotmoPluginError('source-text-invalid', '发送内容为空或超过长度限制', false)
+    }
+    const recordUid = options.recordUid?.trim() || crypto.randomUUID()
+    if (source.kind === 'default_category') {
+      const result = await this.createTextForConversation(recordUid, text)
+      return {
+        sourceRef,
+        itemUid: result.recordUid,
+        status: result.status,
+        localState: result.localState,
+        ...(result.error === undefined ? {} : { error: result.error }),
+      }
+    }
+    if (source.kind === 'topic') {
+      const result = await this.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/records/create',
+        { topic_uid: source.ownerRef, record_uid: recordUid, template_kind: 1, title: '', text_content: text, send_at: Date.now() },
+        session,
+      )
+      return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
+    }
+    const relationUid = options.relationUid?.trim() || crypto.randomUUID()
+    const result = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/records/send',
+      {
+        chat_session_uid: source.ownerRef,
+        record_uid: recordUid,
+        rel_uid: relationUid,
+        template_kind: 1,
+        text_content: text,
+        send_at: Date.now(),
+      },
+      session,
+    )
+    return {
+      sourceRef,
+      itemUid: stringValue(result.record_uid).trim() || recordUid,
+      status: numberValue(result.audit_status),
+      sequence: numberValue(result.seq),
+      localState: 'synced',
+    }
   }
 
   /** Resolve and download one current-user Jiwo profile image without exposing OSS credentials or signed URLs. */
@@ -724,6 +982,102 @@ export class JotmoService {
     }
   }
 
+  private async sealSourceRef(
+    userId: number,
+    kind: JotmoSourceKind,
+    ownerRef: string,
+    displayName: string,
+  ): Promise<string> {
+    const payload = encodeOpaqueJson({ version: 1, userId, kind, ownerRef, displayName } satisfies JotmoSourceRefPayload)
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `jotmo-source-v1.${payload}.${signature}`
+  }
+
+  private async openSourceRef(sourceRef: string, expectedUserId: number): Promise<JotmoSourceRefPayload> {
+    const parts = sourceRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'jotmo-source-v1') {
+      throw new JotmoPluginError('source-ref-invalid', '即我数据源引用无效', false)
+    }
+    const payload = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new JotmoPluginError('source-ref-invalid', '即我数据源引用无效', false)
+    }
+    let parsed: Record<string, unknown>
+    try {
+      parsed = objectValue(decodeOpaqueJson(payload))
+    } catch (error) {
+      throw new JotmoPluginError('source-ref-invalid', '即我数据源引用无效', false, 400, { cause: error })
+    }
+    const kind = parsed.kind
+    const result: JotmoSourceRefPayload = {
+      version: 1,
+      userId: numberValue(parsed.userId),
+      kind: isSourceKind(kind) ? kind : 'default_category',
+      ownerRef: stringValue(parsed.ownerRef).trim(),
+      displayName: stringValue(parsed.displayName).trim(),
+    }
+    if (parsed.version !== 1 || result.userId !== expectedUserId || !isSourceKind(kind)
+      || result.ownerRef === '' || result.displayName === '') {
+      throw new JotmoPluginError('source-ref-invalid', '即我数据源引用与当前账号不匹配', false, 403)
+    }
+    return result
+  }
+
+  private async sourceItem(source: JotmoSourceRefPayload): Promise<JotmoSourceItem> {
+    return {
+      sourceRef: await this.sealSourceRef(source.userId, source.kind, source.ownerRef, source.displayName),
+      kind: source.kind,
+      displayName: source.displayName,
+      activeAtMillis: 0,
+      unreadCount: 0,
+    }
+  }
+
+  private encodeCursor(value: Record<string, unknown>): string {
+    return `jotmo-cursor-v1.${encodeOpaqueJson(value)}`
+  }
+
+  private decodeCursor(cursor: string): Record<string, unknown> {
+    const [prefix, payload, ...extra] = cursor.trim().split('.')
+    if (prefix !== 'jotmo-cursor-v1' || payload === undefined || extra.length > 0) {
+      throw new JotmoPluginError('source-cursor-invalid', '即我数据源分页游标无效', false)
+    }
+    try {
+      const decoded = objectValue(decodeOpaqueJson(payload))
+      if (Object.keys(decoded).length === 0) throw new Error('empty cursor')
+      return decoded
+    } catch (error) {
+      throw new JotmoPluginError('source-cursor-invalid', '即我数据源分页游标无效', false, 400, { cause: error })
+    }
+  }
+
+  private recordTimelineItem(item: JotmoSelfRecordItem): JotmoTimelineItem {
+    return {
+      itemUid: item.recordUid,
+      senderName: '我',
+      isMe: true,
+      sendAtMillis: item.sendAtMillis,
+      title: item.title,
+      textContent: item.textContent,
+      status: item.status,
+    }
+  }
+
+  private recordTimelineItemFromRaw(raw: unknown, userId: number): JotmoTimelineItem {
+    const item = objectValue(raw)
+    return {
+      itemUid: stringValue(item.record_uid).trim(),
+      senderName: stringValue(item.nickname).trim() || '我',
+      isMe: numberValue(item.creator_user_id ?? item.owner_user_id) === userId,
+      sendAtMillis: numberValue(item.send_at),
+      title: stringValue(item.title),
+      textContent: stringValue(item.text_content),
+      status: numberValue(item.status),
+    }
+  }
+
   private recordItem(raw: unknown): JotmoSelfRecordItem | undefined {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
@@ -815,6 +1169,23 @@ export class JotmoService {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0])
+    }
+  }
+
+  private async authenticatedChatPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200])
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200])
     }
   }
 

@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { JotmoPluginError, JotmoService } from './jotmo-service.js'
-import type { JotmoPluginRequest, JotmoPluginResponse, JotmoRecordCursor } from './types.js'
+import type {
+  JotmoPluginRequest, JotmoPluginResponse, JotmoRecordCursor, JotmoSourceDirectory, JotmoTimelineCursor,
+} from './types.js'
 import type { JotmoCaptchaResult } from './types.js'
 
 const MAX_REQUEST_BYTES = 128 * 1024
@@ -72,6 +74,17 @@ function cursorParam(params: Record<string, unknown>): JotmoRecordCursor | undef
   const sendAtMillis = numberParam(cursor, 'sendAtMillis', 0)
   const recordUid = stringParam(cursor, 'recordUid')
   return sendAtMillis > 0 && recordUid !== '' ? { sendAtMillis, recordUid } : undefined
+}
+
+function timelineCursorParam(params: Record<string, unknown>): JotmoTimelineCursor | undefined {
+  const raw = params.cursor
+  if (raw === null || typeof raw !== 'object') return undefined
+  const cursor = raw as Record<string, unknown>
+  const sendAtMillis = numberParam(cursor, 'sendAtMillis', 0)
+  const itemUid = stringParam(cursor, 'itemUid')
+  const beforeSequence = numberParam(cursor, 'beforeSequence', 0)
+  if (beforeSequence > 0) return { beforeSequence }
+  return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
 function captchaParam(params: Record<string, unknown>): JotmoCaptchaResult {
@@ -178,6 +191,28 @@ async function dispatch(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'sources.list': return await service.listSources(
+      stringParam(params, 'directory') as JotmoSourceDirectory,
+      {
+        limit: numberParam(params, 'limit', 30),
+        ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+      },
+    )
+    case 'source.timeline': {
+      const cursor = timelineCursorParam(params)
+      return await service.readSource(
+        stringParam(params, 'sourceRef'),
+        { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
+      )
+    }
+    case 'source.send-text': return await service.sendSourceText(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'textContent'),
+      {
+        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+      },
+    )
     default: throw new JotmoPluginError('operation-unknown', '不支持的即我插件操作', false, 404)
   }
 }
