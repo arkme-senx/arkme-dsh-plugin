@@ -263,6 +263,7 @@ const defaultSdk = createArkmeSdk()
 export async function callArkme<T>(
   operation: ArkmePluginOperation,
   params?: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  return await defaultSdk.call<T>(operation, params)
+  return await defaultSdk.call<T>(operation, params, signal)
 }

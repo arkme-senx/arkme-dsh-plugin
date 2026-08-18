@@ -645,12 +645,21 @@ export class ArkmeService {
         { limit: Math.min(100, Math.max(1, limit)) },
         session,
       )
+      let defaultRecordCount: number | undefined
+      try {
+        defaultRecordCount = (await this.summary()).recordCount
+      } catch {
+        // Count decoration is best-effort and must not make the source directory unavailable.
+        const cached = await this.stateStore.cachedSnapshot(session.userId).catch(() => undefined)
+        defaultRecordCount = cached?.summary?.recordCount
+      }
       const defaultCategory: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '默认分类'),
         kind: 'default_category',
         displayName: '默认分类',
         activeAtMillis: 0,
         unreadCount: 0,
+        ...(defaultRecordCount === undefined ? {} : { recordCount: defaultRecordCount }),
       }
       const topics: ArkmeSourceItem[] = []
       for (const raw of listValue(data.items)) {
