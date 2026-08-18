@@ -39,6 +39,11 @@ describe('official community entry UI', () => {
     expect(markup).toContain('即我官方群')
     expect(markup).toContain('加入群聊')
     expect(markup.match(/<img/g)).toHaveLength(2)
+    expect(markup).toContain('align-items:center')
+    expect(markup).toContain('justify-content:center')
+    expect(markup).toContain('width:min(460px, calc(100% - 32px))')
+    expect(markup).toContain('border-radius:34px')
+    expect(markup).not.toContain('align-items:flex-end')
   })
 
   it('disables the entry while one join is already in flight', () => {
