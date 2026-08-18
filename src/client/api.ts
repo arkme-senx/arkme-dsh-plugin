@@ -9,6 +9,7 @@ type JotmoUiOperation = JotmoPluginOperation | 'recordings.calendar' | 'recordin
 export async function callJotmo<T>(
   operation: JotmoUiOperation,
   params?: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  return await callProvider<T>(operation as JotmoPluginOperation, params)
+  return await callProvider<T>(operation as JotmoPluginOperation, params, signal)
 }

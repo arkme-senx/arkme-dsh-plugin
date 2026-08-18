@@ -79,6 +79,10 @@ function fakeService(): JotmoConversationReadService & {
     sendSourceText: vi.fn(async (sourceRef: string, _text: string, options?: { recordUid?: string }) => ({
       sourceRef, itemUid: options?.recordUid ?? 'record-1', status: 1, localState: 'synced' as const,
     })),
+    relatedRecordings: vi.fn(async () => ({
+      state: 'empty' as const, stateCode: 1, stateMessage: '', hasEntry: true, items: [],
+      hasMore: false, partial: false, timeIndexComplete: true, monthBuckets: [], legacyTimeIndexFallback: false,
+    })),
     recordingCalendar: vi.fn(async (fromStamp: number, toStamp: number) => ({
       fromStamp, toStamp, days: [],
     })),
@@ -271,12 +275,13 @@ describe('Jotmo conversation tools', () => {
     }))
   })
 
-  it('registers only the two read-only all-day recording tools', () => {
+  it('registers the two all-day recording tools and the private-chat related-recording reader', () => {
     const names = createAllJotmoToolDefinitions(fakeService()).map(tool => tool.name)
 
     expect(names).toEqual(expect.arrayContaining([
       'jotmo_recording_days_list',
       'jotmo_recording_read',
+      'jotmo_related_recordings_read',
     ]))
     expect(names).not.toEqual(expect.arrayContaining([
       'jotmo_recording_create',

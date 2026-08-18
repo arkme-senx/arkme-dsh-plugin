@@ -108,12 +108,15 @@ export interface JotmoProviderCapabilities {
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
+    relatedRecordings?: true
   }
   limits: {
     maxTextLength: number
     maxSearchResults: number
     maxSyncPages: number
     maxImageBytes: number
+    maxRelatedRecordingPageSize?: number
+    maxRelatedRecordingCursorLength?: number
   }
 }
 
@@ -209,6 +212,78 @@ export interface JotmoSourceSendResult {
   sequence?: number
   localState: 'synced' | 'failed'
   error?: string
+}
+
+export type JotmoRelatedRecordingPageState = 'empty' | 'generating' | 'success' | 'partial' | 'error'
+
+export interface JotmoRelatedRecordingEligibility {
+  allowed: boolean
+}
+
+export interface JotmoRelatedRecordingSpeaker {
+  speakerId: string
+  refUserId?: number
+  nickname?: string
+}
+
+export interface JotmoRelatedRecordingParticipant {
+  speakerId: string
+  refUserId?: number
+  nickname?: string
+  displayName: string
+  role: number
+}
+
+export interface JotmoRelatedRecordingItem {
+  /** Stable opaque identity from the recording owner; consumers must not parse it. */
+  recordingRef: string
+  momentId: string
+  sessionId: string
+  summaryId?: string
+  originalName?: string
+  startAtMillis: number
+  endAtMillis: number
+  dateStamp?: number
+  timezoneOffsetMillis?: number
+  timeRangeText: string
+  title: string
+  summary: string
+  summaryStatus: number
+  transcript?: string
+  transcriptAvailable: boolean
+  speakers: JotmoRelatedRecordingSpeaker[]
+  participants: JotmoRelatedRecordingParticipant[]
+  isSharedByOther: boolean
+}
+
+export interface JotmoRelatedRecordingMonthBucket {
+  monthKey: string
+  itemCount: number
+}
+
+export interface JotmoRelatedRecordingPage {
+  state: JotmoRelatedRecordingPageState
+  stateCode: number
+  stateMessage: string
+  hasEntry: boolean
+  items: JotmoRelatedRecordingItem[]
+  hasMore: boolean
+  nextCursor?: string
+  partial: boolean
+  monthBuckets?: JotmoRelatedRecordingMonthBucket[]
+  timeIndexComplete: boolean
+  legacyTimeIndexFallback: boolean
+}
+
+export interface JotmoRelatedRecordingPageOptions {
+  limit?: number
+  cursor?: string
+  monthKey?: string
+  timezoneOffsetMillis?: number
+  includeTimeIndex?: boolean
+  /** Host-side diagnostic classification only; browser SDK does not forward this field. */
+  consumer?: 'ui' | 'tool'
+  signal?: AbortSignal
 }
 
 export interface JotmoRecordingCalendarDay {
@@ -335,6 +410,8 @@ export type JotmoPluginOperation =
   | 'sources.list'
   | 'source.timeline'
   | 'source.send-text'
+  | 'related-recordings.eligibility'
+  | 'related-recordings.page'
 
 export type JotmoHostOperation = JotmoPluginOperation
   | 'recordings.calendar'
