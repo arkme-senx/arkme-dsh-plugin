@@ -13,7 +13,9 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
-import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from './source-tree.js'
+import {
+  arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort,
+} from './source-list.js'
 
 export interface ArkmeNavigationProps {
   wide?: boolean
@@ -42,6 +44,17 @@ const styles: Record<string, CSSProperties> = {
     width: 30, height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.text,
     fontSize: 20, cursor: 'pointer',
+  },
+  sortControl: {
+    position: 'relative', flex: 'none', display: 'inline-flex', alignItems: 'center', color: colors.secondary,
+  },
+  sortSelect: {
+    minWidth: 54, height: 30, padding: '0 18px 0 4px', border: 0, outline: 0,
+    appearance: 'none', WebkitAppearance: 'none', background: 'transparent', color: 'inherit',
+    font: 'inherit', fontSize: 12, cursor: 'pointer',
+  },
+  sortArrow: {
+    position: 'absolute', right: 4, width: 10, height: 10, pointerEvents: 'none',
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
   chatRow: {
@@ -84,28 +97,32 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', left: 10, top: 17, width: 18, height: 14, borderRadius: 7,
     background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
   },
-  topicRow: {
-    position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
-    display: 'flex', alignItems: 'center', boxSizing: 'border-box', overflow: 'hidden',
-    borderRadius: 7, background: 'transparent', color: 'inherit',
+  sourceCard: {
+    width: 'calc(100% - 16px)', minHeight: 56, margin: '6px 8px 0', padding: '8px 10px',
+    display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 3, boxSizing: 'border-box',
+    overflow: 'hidden', border: 0, borderRadius: 8,
+    background: 'var(--dsw-alias-fill-secondary, #f4f4f5)', color: 'inherit',
+    textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
-  topicActive: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
-  topicGuide: { position: 'absolute', top: 0, bottom: 0, width: 1, background: colors.border, pointerEvents: 'none' },
-  topicLead: {
-    position: 'relative', zIndex: 1, width: 30, height: 38, flex: 'none', display: 'inline-flex',
-    alignItems: 'center', justifyContent: 'center', padding: 0, border: 0, background: 'transparent',
-    color: colors.caption, cursor: 'default', font: 'inherit',
+  sourceCardActive: {
+    background: 'var(--dsw-alias-fill-tertiary, #e9f4ee)', boxShadow: `inset 3px 0 ${colors.accent}`,
   },
-  topicToggle: { cursor: 'pointer' },
-  topicChevron: { display: 'inline-block', fontSize: 17, lineHeight: 1, transformOrigin: '50% 50%' },
-  topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
-  topicSelect: {
-    position: 'relative', zIndex: 1, minWidth: 0, minHeight: 38, flex: 1, display: 'flex',
-    alignItems: 'center', gap: 10, padding: '0 10px 0 0', border: 0, background: 'transparent',
-    color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  sourceCardName: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 14, lineHeight: '20px', fontWeight: 400,
   },
-  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
-  topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
+  sourceCardMeta: {
+    minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, color: colors.secondary,
+    fontSize: 12, lineHeight: '17px',
+  },
+  sourceCardCount: {
+    minWidth: 18, height: 17, padding: '0 4px', boxSizing: 'border-box', borderRadius: 4,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none',
+    background: 'var(--dsw-alias-fill-tertiary, #e9eaec)', color: colors.secondary,
+  },
+  sourceCardPreview: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
@@ -173,14 +190,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     initialCache?.sources[initialCache.directory] ?? [],
   )
-  const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
+  const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('latest')
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
-  const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
-  const visibleSourceRows = useMemo(
-    () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
-    [collapsedSourceRefs, sourceTree],
-  )
+  const sortedSources = useMemo(() => sortArkmeSources(sources, sourceSort), [sourceSort, sources])
   const bindingRequired = auth?.status === 'binding-required'
 
   const persistCache = useCallback((patch: {
@@ -303,24 +316,6 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       onActivateSurface?.()
     }
   }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
-  useEffect(() => {
-    const sourcesByRef = new Map(sources.map(source => [source.sourceRef, source]))
-    setCollapsedSourceRefs(current => {
-      const next = new Set([...current].filter(sourceRef => sourcesByRef.has(sourceRef)))
-      let parentRef = ui.selectedSource === undefined
-        ? undefined
-        : sourcesByRef.get(ui.selectedSource.sourceRef)?.parentSourceRef
-      const visited = new Set<string>()
-      while (parentRef !== undefined && !visited.has(parentRef)) {
-        visited.add(parentRef)
-        next.delete(parentRef)
-        parentRef = sourcesByRef.get(parentRef)?.parentSourceRef
-      }
-      if (next.size === current.size && [...next].every(sourceRef => current.has(sourceRef))) return current
-      return next
-    })
-  }, [sources, ui.selectedSource])
-
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
@@ -333,14 +328,6 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     arkmeUi.selectSource(source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
-  }
-  const toggleSource = (sourceRef: string) => {
-    setCollapsedSourceRefs(current => {
-      const next = new Set(current)
-      if (next.has(sourceRef)) next.delete(sourceRef)
-      else next.add(sourceRef)
-      return next
-    })
   }
   const joinedOfficialCommunity = async (source: ArkmeSourceItem): Promise<void> => {
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
@@ -368,13 +355,28 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         onClick={() => { changeDirectory('root') }}
       >‹</button>
       <h2 style={styles.headerTitle}>发给自己</h2>
+      <label style={styles.sortControl}>
+        <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}>排序</span>
+        <select
+          style={styles.sortSelect} aria-label="发给自己排序" value={sourceSort}
+          onChange={event => { setSourceSort(event.currentTarget.value as ArkmeSourceSort) }}
+        >
+          <option value="latest">最新</option>
+          <option value="most">最多</option>
+          <option value="name">名称</option>
+        </select>
+        <svg aria-hidden viewBox="0 0 10 10" style={styles.sortArrow}>
+          <path d="m2 3.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </label>
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
 
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <div
-      style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
+      style={styles.list} role={directory === 'send_to_self' ? 'listbox' : 'tree'}
+      aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
         {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
@@ -417,31 +419,21 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         })}
       </>}
 
-      {directory === 'send_to_self' && visibleSourceRows.map(row => {
-        const source = row.source
+      {directory === 'send_to_self' && sortedSources.map(source => {
         const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
-        return <div
-          key={source.sourceRef} role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
-          aria-expanded={row.hasChildren ? row.expanded : undefined}
-          style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }}
+        const time = arkmeSourceTimeLabel(source.activeAtMillis)
+        const preview = [time, source.latestPreview].filter(value => value !== undefined && value !== '').join(' · ')
+        return <button
+          key={source.sourceRef} type="button" role="option" aria-selected={selected}
+          style={{ ...styles.sourceCard, ...(selected ? styles.sourceCardActive : {}) }}
+          onClick={() => { selectSource(source) }}
         >
-          {Array.from({ length: row.depth }, (_, index) => <span
-            key={index} aria-hidden style={{ ...styles.topicGuide, left: 21 + index * 20 }}
-          />)}
-          {row.hasChildren ? <button
-            type="button"
-            style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 6 + row.depth * 20 }}
-            aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
-            title={row.expanded ? '收起子主题' : '展开子主题'}
-            onClick={() => { toggleSource(source.sourceRef) }}
-          ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
-            aria-hidden style={{ ...styles.topicLead, marginLeft: 6 + row.depth * 20 }}
-          ><span style={styles.topicDot} /></span>}
-          <button type="button" style={styles.topicSelect} onClick={() => { selectSource(source) }}>
-            <span style={styles.topicName}>{source.displayName}</span>
-            {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
-          </button>
-        </div>
+          <span style={styles.sourceCardName}>{source.displayName}</span>
+          {(source.recordCount !== undefined || preview !== '') && <span style={styles.sourceCardMeta}>
+            {source.recordCount !== undefined && <span style={styles.sourceCardCount}>{source.recordCount}</span>}
+            {preview !== '' && <span style={styles.sourceCardPreview}>{preview}</span>}
+          </span>}
+        </button>
       })}
 
       {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
