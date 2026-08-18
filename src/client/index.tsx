@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { JotmoConversationSurface } from './JotmoConversationSurface.js'
 import { JotmoFooterAction } from './JotmoFooterAction.js'
 import { JotmoSettingsRow } from './JotmoSettingsRow.js'
+import { watchOfficialNewSession } from './new-session-activation.js'
 import { jotmoUi } from './ui-controller.js'
 
 export const inject = ['slots']
@@ -12,7 +13,11 @@ export const inject = ['slots']
 /** Register Jiwo only through official additive DSH slots. */
 export function apply(ctx: ClientContext): void {
   let disposeJotmoConversation: (() => void) | undefined
+  let stopWatchingNewSession: (() => void) | undefined
   const closeJotmo = () => {
+    const stop = stopWatchingNewSession
+    stopWatchingNewSession = undefined
+    stop?.()
     const dispose = disposeJotmoConversation
     disposeJotmoConversation = undefined
     dispose?.()
@@ -25,6 +30,7 @@ export function apply(ctx: ClientContext): void {
       priority: -10,
       inject: () => ({ close: closeJotmo, openedFromSession }),
     }, JotmoConversationSurface)
+    stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
     jotmoUi.open()
   }
   const toggleJotmo = (openedFromSession: SessionId | undefined) => {
@@ -55,3 +61,4 @@ export { JotmoSettingsRow } from './JotmoSettingsRow.js'
 export { JotmoConversationSurface } from './JotmoConversationSurface.js'
 export { JotmoSurface } from './JotmoSidebar.js'
 export { JotmoNavigation } from './JotmoVirtualWorkspace.js'
+export { isOfficialNewSessionTarget, watchOfficialNewSession } from './new-session-activation.js'
