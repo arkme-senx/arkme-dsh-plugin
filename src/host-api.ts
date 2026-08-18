@@ -207,6 +207,11 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'recordings.calendar': return await service.recordingCalendar(
+      numberParam(params, 'fromStamp', 0),
+      numberParam(params, 'toStamp', 0),
+    )
+    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
     case 'records.cache': return await service.cachedSnapshot()
     case 'records.refresh': return await service.refreshSnapshot()
     case 'records.search': {

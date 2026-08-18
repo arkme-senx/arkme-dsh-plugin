@@ -7,6 +7,7 @@ import { sendTextToolModule } from './conversation/send-text.js'
 import { startCallToolModule } from './conversation/start-call.js'
 import { aiVideoToolModule } from './media/ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
+import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
 import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
@@ -21,6 +22,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   createRecordToolModule,
   worldRecentToolModule,
   worldPublishTextToolModule,
+  ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
   readSourceToolModule,

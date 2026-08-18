@@ -33,6 +33,8 @@ describe('Arkme tool catalog', () => {
       'arkme_record_create',
       'arkme_world_recent',
       'arkme_world_publish_text',
+      'arkme_recording_days_list',
+      'arkme_recording_read',
       'arkme_wechat_conversations',
       'arkme_wechat_messages',
       'arkme_wechat_conversation_detail',

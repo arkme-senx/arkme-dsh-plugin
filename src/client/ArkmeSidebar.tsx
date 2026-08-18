@@ -13,6 +13,7 @@ import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
+import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -20,6 +21,7 @@ import { arkmeUi } from './ui-controller.js'
 export interface ArkmeSurfaceProps {
   floating?: boolean
   initialAuth?: ArkmeAuthSnapshot | undefined
+  initialPhoneBindingGate?: ArkmePhoneBindingGate
 }
 
 export type ArkmeAuthView = 'checking' | 'login' | 'content'
@@ -184,10 +186,18 @@ function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
   </span>
 }
 
-export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProps = {}) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
-  const authStoreSnapshot = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
-  const chatDelta = useSyncExternalStore(arkmeChatTimelineDelta.subscribe, arkmeChatTimelineDelta.getSnapshot)
+export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindingGate: phoneGate }: ArkmeSurfaceProps = {}) {
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const authStoreSnapshot = useSyncExternalStore(
+    arkmeAuthStore.subscribe,
+    arkmeAuthStore.getSnapshot,
+    arkmeAuthStore.getSnapshot,
+  )
+  const chatDelta = useSyncExternalStore(
+    arkmeChatTimelineDelta.subscribe,
+    arkmeChatTimelineDelta.getSnapshot,
+    arkmeChatTimelineDelta.getSnapshot,
+  )
   const source = ui.mode === 'source' ? ui.selectedSource : undefined
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -210,7 +220,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
-  const [phoneBindingGate, setPhoneBindingGate] = useState<ArkmePhoneBindingGate>(initialPhoneBindingGate(initialAuth))
+  const [phoneBindingGate, setPhoneBindingGate] = useState<ArkmePhoneBindingGate>(phoneGate ?? initialPhoneBindingGate(initialAuth))
   const [phoneCheckRevision, setPhoneCheckRevision] = useState(0)
   const qrRequestStartedRef = useRef(false)
   const lastReadAckRef = useRef('')
@@ -519,12 +529,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
 
   const displayItems = useMemo(() => [...items].sort((a, b) => a.sendAtMillis - b.sendAtMillis), [items])
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
+  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : source?.displayName ?? 'Arkme'
 
   return (
     <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
-      <section style={styles.panel} role="region" aria-label={source?.displayName ?? 'Arkme'}>
+      <section style={styles.panel} role="region" aria-label={surfaceTitle}>
         <header style={styles.header}>
-          <h2 style={styles.title}>{source?.displayName ?? 'Arkme'}</h2>
+          <h2 style={styles.title}>{surfaceTitle}</h2>
           {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}
@@ -555,7 +566,8 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           onVerifyCode={() => { void verifyCode() }}
           onTestLogin={() => { void testLogin() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : source === undefined ? <div style={styles.body} /> : <>
+        /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
+          : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />

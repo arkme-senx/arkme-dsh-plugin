@@ -6,8 +6,10 @@ export { ArkmeClientError } from '../sdk/index.js'
 type ArkmeUiOperation = ArkmePluginOperation
   | 'official-community.entry-state'
   | 'official-community.join'
+  | 'recordings.calendar'
+  | 'recordings.day'
 
-/** Built-in UI bridge. Community operations intentionally stay out of the public Consumer SDK. */
+/** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,

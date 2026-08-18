@@ -2,6 +2,34 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 
 describe('ArkmeUiController', () => {
+  it('isolates the recording view from message source selection and login changes', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1',
+      kind: 'private_chat' as const,
+      displayName: '小林',
+      activeAtMillis: 1,
+      unreadCount: 0,
+    }
+
+    controller.selectSource(source)
+    controller.showRecordings()
+    expect(controller.getSnapshot()).toEqual({
+      open: true,
+      surfaceOpen: true,
+      authRevision: 0,
+      chatRevision: 0,
+      mode: 'recordings',
+    })
+
+    controller.selectSource(source)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    controller.showRecordings()
+    controller.authChanged(false)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'login' })
+    expect(controller.getSnapshot().selectedSource).toBeUndefined()
+  })
+
   it('switches between login and an account-bound source selection', () => {
     const controller = new ArkmeUiController()
     const listener = vi.fn()

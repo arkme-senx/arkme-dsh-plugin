@@ -289,6 +289,95 @@ export interface ArkmeSourceReadResult {
   unreadCount: number
 }
 
+export interface ArkmeRecordingCalendarDay {
+  dateStamp: number
+  durationMillis: number
+  hasRecording: boolean
+  unreviewedCount: number
+}
+
+export interface ArkmeRecordingCalendarMonth {
+  fromStamp: number
+  toStamp: number
+  days: ArkmeRecordingCalendarDay[]
+}
+
+export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
+export type ArkmeRecordingToolContent = 'transcript' | ArkmeRecordingProjectionKind
+
+export interface ArkmeRecordingCursorPayload {
+  version: 1
+  dateStamp: number
+  content: ArkmeRecordingToolContent
+  versionId?: string
+  itemOffset: number
+  textOffset: number
+  fingerprint: string
+}
+
+export interface ArkmeRecordingTranscriptItem {
+  itemId: string
+  sessionId: string
+  childId: string
+  startAtMillis: number
+  endAtMillis: number
+  speakerNumber: number
+  speakerColorIndex: number
+  speakerLabel: string
+  isSelf: boolean
+  isBackground: boolean
+  text: string
+}
+
+export interface ArkmeRecordingTimelineEvent {
+  eventId: string
+  startAt: string
+  endAt: string
+  timeRange: string
+  title: string
+  description: string
+  scene: string
+  emotion: string
+  todo: string
+  tags: string[]
+  participants: string[]
+  rawText: string
+}
+
+export type ArkmeRecordingVersionStatus = 'processing' | 'done' | 'failed'
+export type ArkmeRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
+
+export interface ArkmeRecordingVersion {
+  id: string
+  status: ArkmeRecordingVersionStatus
+  selectable: boolean
+  generationStage: number
+  generatedAtMillis: number
+  modelDisplayName: string
+  content: string
+  timelineEvents: ArkmeRecordingTimelineEvent[]
+  error: string
+}
+
+export interface ArkmeRecordingSection<T> {
+  state: ArkmeRecordingSectionState
+  items: T[]
+  message: string
+}
+
+export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<ArkmeRecordingTranscriptItem> {
+  identityCoverage?: 'complete' | 'partial'
+  totalDurationMillis: number
+}
+
+export interface ArkmeRecordingDay {
+  dateStamp: number
+  totalDurationMillis: number
+  transcript: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
+  summary: ArkmeRecordingSection<ArkmeRecordingVersion>
+  timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
+}
+
 export type ArkmeWechatMessageFilter =
   | 'all'
   | 'image'
@@ -558,6 +647,8 @@ export type ArkmePluginOperation =
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'official-community.entry-state'
   | 'official-community.join'
+  | 'recordings.calendar'
+  | 'recordings.day'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

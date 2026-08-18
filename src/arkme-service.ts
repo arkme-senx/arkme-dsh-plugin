@@ -10,6 +10,7 @@ import type {
   ArkmeOutgoingCallPrepareResult,
   ArkmeOutgoingCallToolResult,
 } from './outgoing-call-contract.js'
+import { projectRecordingTranscripts, projectRecordingVersions } from './recording-presentation.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
   ArkmeOfficialCommunityEntryState,
@@ -44,6 +45,14 @@ import type {
   ArkmeSelfSummary,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
+  ArkmeRecordingCalendarMonth,
+  ArkmeRecordingCursorPayload,
+  ArkmeRecordingDay,
+  ArkmeRecordingProjectionKind,
+  ArkmeRecordingSection,
+  ArkmeRecordingTranscriptSection,
+  ArkmeRecordingTranscriptItem,
+  ArkmeRecordingVersion,
   ArkmeSourceDirectory,
   ArkmeSourceItem,
   ArkmeSourceKind,
@@ -104,6 +113,7 @@ export interface ArkmeServiceConfig {
   relationBaseUrl: string
   intelligentBaseUrl: string
   routePath: string
+  audioBaseUrl: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -869,6 +879,186 @@ export class ArkmeService {
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
     const session = await this.requireAuthFlowSession()
     return await this.stateStore.cachedProfile(session.userId)
+  }
+
+  /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
+  async recordingCalendar(
+    fromStamp: number,
+    toStamp: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingCalendarMonth> {
+    const from = Math.trunc(fromStamp)
+    const to = Math.trunc(toStamp)
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from <= 0 || to <= from
+      || to - from > 33 * 24 * 60 * 60 * 1000) {
+      throw new ArkmePluginError('recording-range-invalid', '录音日历范围无效', false)
+    }
+    const session = await this.requireSession()
+    const data = await this.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-calender-summary',
+      { from_stamp: from, to_stamp: to },
+      session,
+      signal,
+    )
+    const durations = listValue(data.duration_ls)
+    const unreviewed = listValue(data.un_click_session_ids_per_day)
+    const count = Math.max(durations.length, unreviewed.length)
+    const cursor = new Date(from)
+    const days = []
+    for (let index = 0; index < count; index += 1) {
+      const durationMillis = Math.max(0, numberValue(durations[index]))
+      const unreviewedCount = listValue(unreviewed[index]).length
+      days.push({
+        dateStamp: cursor.getTime(),
+        durationMillis,
+        hasRecording: durationMillis > 0 || unreviewedCount > 0,
+        unreviewedCount,
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return { fromStamp: from, toStamp: to, days }
+  }
+
+  /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
+  async recordingTranscript(
+    dateStamp: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingTranscriptSection> {
+    const dayStart = this.recordingDayStart(dateStamp)
+    const date = dayStart.getTime()
+    const session = await this.requireSession()
+    const [transcriptResult, speakerResult] = await Promise.allSettled([
+      this.authenticatedAudioPost<Record<string, unknown>>(
+        '/api/v1/audio/one-day-trans-v2',
+        { start_at: date, tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+        session,
+        signal,
+      ),
+      this.authenticatedAudioPost<Record<string, unknown>>(
+        '/api/v1/audio/get-speaker-ls', {}, session, signal,
+      ),
+    ])
+    if (transcriptResult.status === 'rejected') throw transcriptResult.reason
+    let totalDurationMillis = 0
+    for (const rawSession of listValue(transcriptResult.value.session_ls)) {
+      totalDurationMillis += Math.max(0, numberValue(objectValue(rawSession).duration))
+    }
+    const speakerData = speakerResult.status === 'fulfilled'
+      ? listValue(speakerResult.value.spk_ls)
+      : []
+    const items = projectRecordingTranscripts(transcriptResult.value, speakerData)
+    return {
+      state: items.length > 0 ? 'ready' : 'empty',
+      items,
+      message: items.length > 0 ? '' : '当天无录音',
+      identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
+      totalDurationMillis,
+    }
+  }
+
+  /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
+  async recordingProjection(
+    dateStamp: number,
+    kind: ArkmeRecordingProjectionKind,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
+    const dayStart = this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    const session = await this.requireSession()
+    const data = await this.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/summary/list-timeline-by-range',
+      {
+        from_stamp: dayStart.getTime(),
+        to_stamp: dayEnd.getTime(),
+        date_stamp: dayStart.getTime(),
+        kind: kind === 'timeline' ? 1 : 2,
+      },
+      session,
+      signal,
+    )
+    return this.recordingVersionSection(projectRecordingVersions(data, kind))
+  }
+
+  async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> {
+    const session = await this.requireSession()
+    const encoded = encodeOpaqueJson(payload)
+    const signature = createHmac('sha256', await this.recordingCursorKey(session.userId))
+      .update(encoded)
+      .digest('base64url')
+    return `arkme-recording-cursor-v1.${encoded}.${signature}`
+  }
+
+  async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> {
+    const session = await this.requireSession()
+    const [prefix, encoded, suppliedText, ...extra] = cursor.trim().split('.')
+    if (prefix !== 'arkme-recording-cursor-v1' || encoded === undefined
+      || suppliedText === undefined || extra.length > 0) {
+      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
+    }
+    const supplied = Buffer.from(suppliedText, 'base64url')
+    const expected = createHmac('sha256', await this.recordingCursorKey(session.userId))
+      .update(encoded)
+      .digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
+    }
+    let raw: Record<string, unknown>
+    try {
+      raw = objectValue(decodeOpaqueJson(encoded))
+    } catch (error) {
+      throw new ArkmePluginError(
+        'recording-cursor-invalid',
+        '录音分页游标无效',
+        false,
+        400,
+        { cause: error },
+      )
+    }
+    const content = raw.content
+    const payload: ArkmeRecordingCursorPayload = {
+      version: 1,
+      dateStamp: numberValue(raw.dateStamp),
+      content: content === 'summary' || content === 'timeline' ? content : 'transcript',
+      itemOffset: numberValue(raw.itemOffset),
+      textOffset: numberValue(raw.textOffset),
+      fingerprint: stringValue(raw.fingerprint),
+      ...(stringValue(raw.versionId) === '' ? {} : { versionId: stringValue(raw.versionId) }),
+    }
+    if (raw.version !== 1 || !['transcript', 'summary', 'timeline'].includes(String(content))
+      || !Number.isSafeInteger(payload.dateStamp) || payload.dateStamp <= 0
+      || !Number.isSafeInteger(payload.itemOffset) || payload.itemOffset < 0
+      || !Number.isSafeInteger(payload.textOffset) || payload.textOffset < 0
+      || payload.fingerprint === '') {
+      throw new ArkmePluginError('recording-cursor-invalid', '录音分页游标无效', false)
+    }
+    return payload
+  }
+
+  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
+  async recordingDay(dateStamp: number): Promise<ArkmeRecordingDay> {
+    const date = this.recordingDayStart(dateStamp).getTime()
+    const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
+      this.recordingTranscript(date),
+      this.recordingProjection(date, 'summary'),
+      this.recordingProjection(date, 'timeline'),
+    ])
+    const transcript: ArkmeRecordingDay['transcript'] = transcriptResult.status === 'fulfilled'
+      ? transcriptResult.value
+      : { state: 'error', items: [], message: safeFailureMessage(transcriptResult.reason) }
+    return {
+      dateStamp: date,
+      totalDurationMillis: transcriptResult.status === 'fulfilled'
+        ? transcriptResult.value.totalDurationMillis
+        : 0,
+      transcript,
+      summary: summaryResult.status === 'fulfilled' ? summaryResult.value : {
+        state: 'error', items: [], message: safeFailureMessage(summaryResult.reason),
+      },
+      timeline: timelineResult.status === 'fulfilled' ? timelineResult.value : {
+        state: 'error', items: [], message: safeFailureMessage(timelineResult.reason),
+      },
+    }
   }
 
   async refreshProfile(): Promise<ArkmeUserProfileSnapshot> {
@@ -3186,6 +3376,54 @@ export class ArkmeService {
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
     }
+  }
+
+  private async authenticatedAudioPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async recordingCursorKey(userId: number): Promise<Buffer> {
+    return createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`arkme-recording-cursor:${String(userId)}`)
+      .digest()
+  }
+
+  private recordingDayStart(dateStamp: number): Date {
+    const date = Math.trunc(dateStamp)
+    const dayStart = new Date(date)
+    if (!Number.isSafeInteger(date) || date <= 0 || dayStart.getTime() !== date
+      || dayStart.getHours() !== 0 || dayStart.getMinutes() !== 0
+      || dayStart.getSeconds() !== 0 || dayStart.getMilliseconds() !== 0) {
+      throw new ArkmePluginError('recording-date-invalid', '录音日期必须是本地零点', false)
+    }
+    return dayStart
+  }
+
+  private recordingVersionSection(
+    items: ArkmeRecordingVersion[],
+  ): ArkmeRecordingSection<ArkmeRecordingVersion> {
+    if (items[0]?.status === 'processing') {
+      return { state: 'processing', items, message: '内容仍在生成' }
+    }
+    if (items[0]?.status === 'failed') {
+      return { state: 'failed', items, message: '最近一次生成失败' }
+    }
+    if (items.some(item => item.selectable)) return { state: 'ready', items, message: '' }
+    return { state: 'empty', items, message: '暂无已生成内容' }
   }
 
   private async authenticatedRelationPost<T>(
