@@ -83,6 +83,23 @@ function fakeService(): ArkmeCoreToolPorts & {
       sequence: 11,
       targetKind: 'direct' as const,
     })),
+    aiVideoPreflight: vi.fn(async () => ({
+      allowed: true,
+      message: '所选内容可以生成视频',
+      selectedDurationMillis: 5_000,
+      minimumDurationMillis: 3_000,
+      selectedSegmentCount: 1,
+      retryable: false,
+      proof: 'proof',
+    })),
+    aiVideoCreate: vi.fn(async () => ({
+      jobId: 'job-1', status: 'queued' as const, stage: 'queued', progress: 0,
+      selectedSegmentCount: 1, retryable: false,
+    })),
+    aiVideoStatus: vi.fn(async () => ({
+      jobId: 'job-1', status: 'succeeded' as const, stage: 'succeeded', progress: 100,
+      selectedSegmentCount: 1, retryable: false, videoAssetUid: 'video-1',
+    })),
   }
 }
 
@@ -294,5 +311,9 @@ describe('Arkme conversation tools', () => {
       expect(ARKME_TOOL_PROMPT).toContain(name)
     }
   })
-})
 
+  it('registers AI video creation in the business profile', () => {
+    const names = createArkmeCoreToolDefinitions(fakeService()).map(tool => tool.name)
+    expect(names).toContain('arkme_ai_video')
+  })
+})

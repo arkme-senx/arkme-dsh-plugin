@@ -9,6 +9,7 @@
         imBaseUrl: https://im.jotmo.cc
         worldBaseUrl: https://world.jotmo.cc
         relationBaseUrl: https://relation.jotmo.cc
+        intelligentBaseUrl: https://intelligent.jotmo.cc
         routePath: /arkme-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000
@@ -16,4 +17,3 @@
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         allowNonLoopback: false
         allowProduction: true
-
