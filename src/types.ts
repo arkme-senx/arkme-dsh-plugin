@@ -159,7 +159,10 @@ export interface JotmoSourceItem {
   sourceRef: string
   kind: JotmoSourceKind
   displayName: string
+  /** Opaque Provider image reference; consumers resolve it through image.read. */
   avatarRef?: string
+  /** Ordered group-avatar tiles, also resolved only through image.read. */
+  avatarRefs?: string[]
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number

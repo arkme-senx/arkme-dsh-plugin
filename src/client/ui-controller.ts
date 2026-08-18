@@ -22,6 +22,11 @@ export class JotmoUiController {
     this.publish({ ...this.state, open: true })
   }
 
+  focusSendToSelf(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, mode: 'source' })
+  }
+
   close(): void {
     this.publish({ ...this.state, open: false })
   }

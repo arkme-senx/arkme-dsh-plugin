@@ -1,38 +1,97 @@
-import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type { JotmoAuthSnapshot, JotmoSourceDirectory, JotmoSourceItem, JotmoSourceList } from '../types.js'
+import {
+  useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
+} from 'react'
+import type {
+  JotmoAuthSnapshot, JotmoImagePayload, JotmoSourceDirectory, JotmoSourceItem, JotmoSourceList,
+} from '../types.js'
 import { callJotmo } from './api.js'
 import { JotmoMark } from './JotmoFooterAction.js'
 import { jotmoUi } from './ui-controller.js'
 
-export interface JotmoNavigationProps { wide?: boolean }
+export interface JotmoNavigationProps {
+  wide?: boolean
+  onClose?: () => void
+}
+
+const colors = {
+  panel: 'var(--dsw-specific-sidebar-fill, #f8f9fa)',
+  text: 'var(--dsw-alias-label-primary, #242629)',
+  secondary: 'var(--dsw-alias-label-secondary, #8a9099)',
+  caption: 'var(--dsw-alias-label-caption, #b0b5bc)',
+  border: 'var(--dsw-alias-border-l1, #eceef0)',
+  active: '#def3e8',
+  accent: '#20c66a',
+}
 
 const styles: Record<string, CSSProperties> = {
-  group: { flex: 'none', margin: '0 0 6px', color: 'var(--dsw-alias-label-primary, #17191c)' },
-  row: {
-    width: '100%', minHeight: 34, display: 'flex', alignItems: 'center', gap: 6,
-    boxSizing: 'border-box', border: 0, borderRadius: 8, outline: 0, padding: '0 8px', background: 'transparent',
-    color: 'inherit', cursor: 'pointer', font: 'inherit', textAlign: 'left', userSelect: 'none',
+  shell: { width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', color: colors.text },
+  header: {
+    flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
+    padding: '0 14px 0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
   },
-  leading: { flex: 'none', width: 16, display: 'inline-flex', justifyContent: 'center', alignItems: 'center' },
-  trailing: { flex: 'none', width: 14, display: 'inline-flex', justifyContent: 'center', color: '#9097a1' },
-  chevron: {
-    width: 0, height: 0, borderTop: '4px solid transparent', borderBottom: '4px solid transparent',
-    borderLeft: '6px solid currentColor', transition: 'transform 150ms var(--ds-ease-in-out)',
+  headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 16, lineHeight: '22px', fontWeight: 650 },
+  headerButton: {
+    width: 30, height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.text,
+    fontSize: 20, cursor: 'pointer',
   },
-  title: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14 },
-  badge: {
-    flex: 'none', padding: '1px 6px', borderRadius: 999, color: '#c2413b',
-    background: 'rgba(194, 65, 59, .1)', fontSize: 11, lineHeight: '18px',
+  list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
+  chatRow: {
+    position: 'relative', width: '100%', minHeight: 66, display: 'flex', alignItems: 'center', gap: 11,
+    padding: '8px 14px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
+    background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
-  child: { paddingLeft: 24, minHeight: 32, marginTop: 2 },
-  active: { background: 'var(--dsw-alias-interactive-bg-hover, #eef1f5)' },
-  meta: { flex: 'none', color: 'var(--dsw-alias-label-caption, #adb2b8)', fontSize: 11 },
+  chatRowActive: { background: colors.active, boxShadow: `inset 3px 0 ${colors.accent}` },
+  chatContent: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
+  chatTop: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
+  chatName: {
+    flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 15, lineHeight: '20px', fontWeight: 500,
+  },
+  chatTime: { flex: 'none', color: colors.caption, fontSize: 11, lineHeight: '16px' },
+  chatBottom: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   preview: {
-    display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 11, lineHeight: '16px',
+    flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.secondary, fontSize: 12, lineHeight: '17px',
   },
-  kind: { width: 16, color: 'var(--dsw-alias-label-caption, #adb2b8)', fontSize: 10, textAlign: 'center' },
-  status: { padding: '5px 32px', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 11 },
+  unread: {
+    minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ff5f57',
+    color: '#fff', fontSize: 10, lineHeight: '17px',
+  },
+  privateBadge: { flex: 'none', padding: '1px 6px', borderRadius: 999, background: '#f0f1f2', color: '#777d85', fontSize: 10 },
+  avatar: {
+    width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
+    display: 'grid', placeItems: 'center', background: '#eceeef', color: '#727982', fontSize: 15, fontWeight: 600,
+  },
+  avatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
+  avatarGrid: { width: '100%', height: '100%', display: 'grid', gap: 1, padding: 2, boxSizing: 'border-box', background: '#eef0f1' },
+  selfAvatar: {
+    width: 44, height: 44, flex: 'none', position: 'relative', borderRadius: 999,
+    background: '#f0f1f2', border: '1px solid #e1e3e5', boxSizing: 'border-box',
+  },
+  selfBubbleBack: {
+    position: 'absolute', left: 15, top: 11, width: 18, height: 14, borderRadius: 7,
+    background: '#a9e8bb', boxShadow: '0 0 0 2px #f0f1f2',
+  },
+  selfBubbleFront: {
+    position: 'absolute', left: 10, top: 17, width: 18, height: 14, borderRadius: 7,
+    background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
+  },
+  topicRow: {
+    position: 'relative', width: 'calc(100% - 20px)', minHeight: 42, margin: '2px 10px',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', boxSizing: 'border-box',
+    border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  },
+  topicActive: { background: colors.active, boxShadow: `inset 3px 0 ${colors.accent}` },
+  topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
+  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14 },
+  topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
+  status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
+  loginButton: {
+    margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
+    color: '#176d3d', cursor: 'pointer', font: 'inherit', fontWeight: 600,
+  },
   rail: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 0 6px' },
   railButton: {
     width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -40,18 +99,99 @@ const styles: Record<string, CSSProperties> = {
   },
 }
 
-function sourceKindLabel(source: JotmoSourceItem): string {
-  if (source.kind === 'group_chat') return '群'
-  if (source.kind === 'private_chat') return '私'
-  return ''
+const avatarDataUrlCache = new Map<string, Promise<string>>()
+
+function avatarDataUrl(imageRef: string): Promise<string> {
+  const cached = avatarDataUrlCache.get(imageRef)
+  if (cached !== undefined) return cached
+  const pending = callJotmo<JotmoImagePayload>('image.read', { imageRef })
+    .then(image => `data:${image.mediaType};base64,${image.dataBase64}`)
+    .catch(error => {
+      avatarDataUrlCache.delete(imageRef)
+      throw error
+    })
+  avatarDataUrlCache.set(imageRef, pending)
+  return pending
 }
 
-export function JotmoNavigation({ wide = true }: JotmoNavigationProps) {
-  const selectedSurface = true
+function initials(value: string): string {
+  const normalized = value.trim()
+  return normalized === '' ? '即' : [...normalized].slice(-2).join('')
+}
+
+function SelfAvatar() {
+  return <span style={styles.selfAvatar} aria-hidden>
+    <span style={styles.selfBubbleBack} />
+    <span style={styles.selfBubbleFront} />
+  </span>
+}
+
+function SourceAvatar({ source }: { source: JotmoSourceItem }) {
+  const container = useRef<HTMLSpanElement>(null)
+  const refs = useMemo(
+    () => (source.avatarRefs ?? (source.avatarRef === undefined ? [] : [source.avatarRef])).slice(0, 4),
+    [source.avatarRef, source.avatarRefs],
+  )
+  const refsKey = refs.join('|')
+  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
+  const [urls, setUrls] = useState<string[]>([])
+
+  useEffect(() => {
+    const target = container.current
+    if (target === null || visible) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting !== true) return
+      setVisible(true); observer.disconnect()
+    }, { rootMargin: '160px 0px' })
+    observer.observe(target)
+    return () => { observer.disconnect() }
+  }, [visible])
+
+  useEffect(() => {
+    let active = true
+    setUrls([])
+    if (!visible || refs.length === 0) return () => { active = false }
+    void Promise.all(refs.map(async ref => {
+      try { return await avatarDataUrl(ref) }
+      catch { return '' }
+    })).then(values => { if (active) setUrls(values.filter(value => value !== '')) })
+    return () => { active = false }
+  }, [refsKey, visible])
+
+  const count = urls.length
+  const columns = count <= 1 ? 1 : 2
+  const rows = count <= 2 ? 1 : 2
+  return <span ref={container} style={styles.avatar} aria-hidden>
+    {count === 0 ? initials(source.displayName) : count === 1
+      ? <img src={urls[0]} alt="" draggable={false} style={styles.avatarImage} />
+      : <span style={{ ...styles.avatarGrid, gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
+        {urls.map((url, index) => <img key={`${url.slice(-20)}-${String(index)}`} src={url} alt="" draggable={false} style={styles.avatarImage} />)}
+      </span>}
+  </span>
+}
+
+function timeLabel(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
+  if (day === start) return time
+  if (day === start - 86_400_000) return `昨天 ${time}`
+  if (day > start - 7 * 86_400_000) return new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(date)
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)
+}
+
+function isSendToSelfSource(source: JotmoSourceItem | undefined): boolean {
+  return source?.kind === 'default_category' || source?.kind === 'topic'
+}
+
+export function JotmoNavigation({ wide = true, onClose }: JotmoNavigationProps) {
   const ui = useSyncExternalStore(jotmoUi.subscribe, jotmoUi.getSnapshot)
   const [auth, setAuth] = useState<JotmoAuthSnapshot>()
-  const [expanded, setExpanded] = useState(true)
-  const [directory, setDirectory] = useState<JotmoSourceDirectory>('root')
+  const [directory, setDirectory] = useState<JotmoSourceDirectory>('send_to_self')
   const [sources, setSources] = useState<JotmoSourceItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -63,8 +203,7 @@ export function JotmoNavigation({ wide = true }: JotmoNavigationProps) {
   }, [])
 
   const loadDirectory = useCallback(async (next: JotmoSourceDirectory) => {
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     try {
       const loaded: JotmoSourceItem[] = []
       let cursor: string | undefined
@@ -83,102 +222,94 @@ export function JotmoNavigation({ wide = true }: JotmoNavigationProps) {
     } catch (caught) {
       setSources([])
       setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { void refreshAuth() }, [refreshAuth, ui.authRevision])
   useEffect(() => {
-    if (authenticated && expanded) void loadDirectory(directory)
-    else if (!authenticated) setSources([])
-  }, [authenticated, directory, expanded, loadDirectory])
+    avatarDataUrlCache.clear()
+    setSources([])
+    void refreshAuth()
+  }, [refreshAuth, ui.authRevision])
+  useEffect(() => {
+    if (authenticated) void loadDirectory(directory)
+    else setSources([])
+  }, [authenticated, directory, loadDirectory])
+  useEffect(() => {
+    if (!authenticated || directory !== 'send_to_self') return
+    const defaultCategory = sources.find(source => source.kind === 'default_category')
+    if (defaultCategory !== undefined && !isSendToSelfSource(ui.selectedSource)) jotmoUi.selectSource(defaultCategory)
+  }, [authenticated, directory, sources, ui.selectedSource])
 
   const showLogin = () => { jotmoUi.showLogin() }
   const selectSource = (source: JotmoSourceItem) => { jotmoUi.selectSource(source) }
 
   if (!wide) {
-    return (
-      <div style={styles.rail}>
-        <button
-          type="button"
-          style={{ ...styles.railButton, ...(selectedSurface ? styles.active : {}) }}
-          aria-label={authenticated ? '即我' : '即我 · 未登录'}
-          title={authenticated ? '即我' : '即我 · 未登录'}
-          onClick={() => {
-            if (!authenticated || ui.selectedSource === undefined) showLogin()
-            else { jotmoUi.selectSource(ui.selectedSource) }
-          }}
-        ><JotmoMark size={20} /></button>
-      </div>
-    )
+    return <div style={styles.rail}><button
+      type="button" style={styles.railButton} aria-label={authenticated ? '即我' : '即我 · 未登录'}
+      title={authenticated ? '即我' : '即我 · 未登录'} onClick={() => { if (!authenticated) showLogin() }}
+    ><JotmoMark size={20} /></button></div>
   }
 
-  return (
-    <section style={styles.group} role="tree" aria-label="即我工作区">
-      <button
-        type="button"
-        role="treeitem"
-        aria-expanded={authenticated ? expanded : undefined}
-        aria-label="即我"
-        style={styles.row}
-        onClick={() => {
-          if (!authenticated) { showLogin(); return }
-          if (directory === 'send_to_self') { setDirectory('root'); setExpanded(true); return }
-          setExpanded(value => !value)
-        }}
-      >
-        <span style={styles.leading} aria-hidden>
-          <JotmoMark size={16} />
-        </span>
-        <span style={styles.title}>{directory === 'send_to_self' ? '‹ 发给自己' : '即我'}</span>
-        {authenticated && directory === 'root' && <span style={styles.trailing} aria-hidden>
-          <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
-        </span>}
-        {!authenticated && <span style={styles.badge}>未登录</span>}
-      </button>
+  return <section style={styles.shell} aria-label="即我会话列表">
+    <header style={styles.header}>
+      {directory === 'send_to_self' && <button
+        type="button" style={styles.headerButton} aria-label="返回即我会话列表" title="返回"
+        onClick={() => { setDirectory('root') }}
+      >‹</button>}
+      <h2 style={styles.headerTitle}>{directory === 'send_to_self' ? '发给自己' : '即我'}</h2>
+      {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭即我" title="关闭即我" onClick={onClose}>×</button>}
+    </header>
 
-      {authenticated && expanded && directory === 'root' && (
-        <>
-          <button type="button" role="treeitem" style={{ ...styles.row, ...styles.child }} onClick={() => { setDirectory('send_to_self') }}>
-            <span style={styles.kind}>自</span><span style={styles.title}>发给自己</span><span style={styles.meta}>›</span>
-          </button>
-          {sources.map(source => (
-            <button
-              key={source.sourceRef}
-              type="button"
-              role="treeitem"
-              aria-selected={ui.selectedSource?.sourceRef === source.sourceRef && selectedSurface}
-              style={{ ...styles.row, ...styles.child, ...(ui.selectedSource?.sourceRef === source.sourceRef && selectedSurface ? styles.active : {}) }}
-              onClick={() => { selectSource(source) }}
-            >
-              <span style={styles.kind}>{sourceKindLabel(source)}</span>
-              <span style={styles.title}>
-                {source.displayName}
-                {source.latestPreview !== undefined && <span style={styles.preview}>{source.latestPreview}</span>}
-              </span>
-              {source.unreadCount > 0 && <span style={styles.meta}>{source.unreadCount}</span>}
-            </button>
-          ))}
-        </>
-      )}
-
-      {authenticated && expanded && directory === 'send_to_self' && sources.map(source => (
+    {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>登录即我</button> : <div
+      style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : '即我会话'}
+    >
+      {directory === 'root' && <>
         <button
-          key={source.sourceRef}
-          type="button"
-          role="treeitem"
-          aria-selected={ui.selectedSource?.sourceRef === source.sourceRef && selectedSurface}
-          style={{ ...styles.row, ...styles.child, ...(ui.selectedSource?.sourceRef === source.sourceRef && selectedSurface ? styles.active : {}) }}
-          onClick={() => { selectSource(source) }}
+          type="button" role="treeitem" aria-selected={isSendToSelfSource(ui.selectedSource)}
+          style={{ ...styles.chatRow, ...(isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
+          onClick={() => { setDirectory('send_to_self') }}
         >
-          <span style={styles.kind}>·</span><span style={styles.title}>{source.displayName}</span>
-          {source.recordCount !== undefined && <span style={styles.meta}>{source.recordCount}</span>}
+          <SelfAvatar />
+          <span style={styles.chatContent}>
+            <span style={styles.chatTop}><span style={styles.chatName}>发给自己</span><span style={styles.privateBadge}>私密</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>默认分类与主题</span></span>
+          </span>
         </button>
-      ))}
+        {sources.map(source => {
+          const selected = ui.selectedSource?.sourceRef === source.sourceRef
+          return <button
+            key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
+            style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
+          >
+            <SourceAvatar source={source} />
+            <span style={styles.chatContent}>
+              <span style={styles.chatTop}>
+                <span style={styles.chatName}>{source.displayName}</span>
+                <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
+              </span>
+              <span style={styles.chatBottom}>
+                <span style={styles.preview}>{source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : '')}</span>
+                {source.unreadCount > 0 && <span style={styles.unread}>{source.unreadCount > 99 ? '99+' : source.unreadCount}</span>}
+              </span>
+            </span>
+          </button>
+        })}
+      </>}
 
-      {authenticated && expanded && loading && <div style={styles.status}>正在读取…</div>}
-      {authenticated && expanded && error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
-    </section>
-  )
+      {directory === 'send_to_self' && sources.map(source => {
+        const selected = ui.selectedSource?.sourceRef === source.sourceRef
+        return <button
+          key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
+          style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }} onClick={() => { selectSource(source) }}
+        >
+          <span style={styles.topicDot} />
+          <span style={styles.topicName}>{source.displayName}</span>
+          {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
+        </button>
+      })}
+
+      {loading && <div style={styles.status}>正在读取…</div>}
+      {!loading && error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
+    </div>}
+  </section>
 }

@@ -31,7 +31,7 @@ export function apply(ctx: ClientContext): void {
       inject: () => ({ close: closeJotmo, openedFromSession }),
     }, JotmoConversationSurface)
     stopWatchingNewSession = watchOfficialNewSession(closeJotmo)
-    jotmoUi.open()
+    jotmoUi.focusSendToSelf()
   }
   const toggleJotmo = (openedFromSession: SessionId | undefined) => {
     if (disposeJotmoConversation === undefined) openJotmo(openedFromSession)

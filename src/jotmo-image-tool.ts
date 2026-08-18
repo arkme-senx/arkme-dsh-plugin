@@ -65,12 +65,12 @@ async function assertImageCapableRoute(ctx: Context, exec: ToolRunContext): Prom
 export function createJotmoImageToolDefinition(ctx: Context, service: JotmoImageReadService): ToolDefinition {
   return defineTool({
     name: 'jotmo_image_read',
-    description: 'Read an image referenced by the signed-in user\'s Jiwo profile and return the image itself. The tool resolves the current user\'s private OSS object through Jiwo authorization; it does not accept arbitrary URLs or cross-user references. Requires the current model to accept image input.',
+    description: 'Read an image reference returned by the Jiwo Provider and return the image itself. This includes the signed-in profile avatar and authorized private/group chat avatars. The Provider refreshes Jiwo authorization without exposing signed OSS URLs and rejects guessed or cross-account references. Requires the current model to accept image input.',
     parameters: {
       image_ref: {
         type: 'string',
         required: true,
-        description: 'An image reference returned by jotmo_user_profile, such as profile.avatarRef. Never construct or guess this value.',
+        description: 'An image reference returned by jotmo_user_profile or jotmo_sources_list. Never construct, parse, or guess this value.',
       },
     },
     output: {
@@ -124,7 +124,7 @@ export function createJotmoImageToolDefinition(ctx: Context, service: JotmoImage
         throw new Error('cannot read the Jiwo image: the downloaded bytes failed image validation', { cause: error })
       }
       const value: JotmoImageToolValue = {
-        source: 'Jiwo current-user profile image',
+        source: 'Jiwo Provider-authorized image',
         image: {
           attachmentId: ref.attachmentId,
           mediaType: ref.mediaType,
