@@ -4,6 +4,11 @@ import { ArkmeChatRealtimeRuntime, type ArkmeChatRealtimeNotice } from './chat-r
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from './keychain-store.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
+  ArkmeOfficialCommunityEntryState,
+  ArkmeOfficialCommunityJoinResult,
+  ArkmeOfficialCommunityStatus,
+} from './official-community.js'
+import type {
   ArkmeAiVideoJob,
   ArkmeAiVideoJobStatus,
   ArkmeAiVideoPreflightResult,
@@ -818,6 +823,98 @@ export class ArkmeService {
     }
   }
 
+  async officialCommunityEntryState(signal?: AbortSignal): Promise<ArkmeOfficialCommunityEntryState> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/community/entry-state',
+      {},
+      session,
+      signal,
+    )
+    const status = this.officialCommunityStatus(data.status)
+    const visible = booleanValue(data.visible)
+    const groupTitle = stringValue(data.group_title).trim()
+    const snapshot = objectValue(data.group_avatar_snapshot)
+    const memberCount = Math.max(0, Math.trunc(numberValue(snapshot.member_count)))
+    const memberIds = listValue(snapshot.members)
+      .map(member => numberValue(objectValue(member).user_id))
+      .filter(userId => Number.isSafeInteger(userId) && userId > 0)
+      .slice(0, 4)
+    let avatarRefs: string[] = []
+    if (visible && status === 'ready' && memberIds.length > 0) {
+      try {
+        const profiles = await this.publicProfilesByUserIds(memberIds, session, signal)
+        avatarRefs = await Promise.all(
+          memberIds
+            .filter(userId => profiles.has(userId))
+            .map(userId => this.sealProfileImageRef(session.userId, userId)),
+        )
+      } catch {
+        // The optional entry must never degrade the normal conversation directory.
+      }
+    }
+    return { status, visible, groupTitle, memberCount, avatarRefs }
+  }
+
+  async joinOfficialCommunity(signal?: AbortSignal): Promise<ArkmeOfficialCommunityJoinResult> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/community/join',
+      {},
+      session,
+      signal,
+    )
+    const status = this.officialCommunityStatus(data.status)
+    const chatSessionUid = stringValue(data.chat_session_uid).trim()
+    if ((status !== 'joined' && status !== 'already_member') || chatSessionUid === '') {
+      throw new ArkmePluginError(
+        'official-community-contract-invalid',
+        '即我官方群入群响应不完整',
+        true,
+        502,
+      )
+    }
+    let groupTitle = stringValue(data.group_title).trim()
+    if (groupTitle === '') {
+      try {
+        const detail = await this.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/detail',
+          { chat_session_uid: chatSessionUid },
+          session,
+          signal,
+        )
+        const chatSession = objectValue(detail.session)
+        if (stringValue(chatSession.chat_session_uid).trim() === chatSessionUid
+          && numberValue(chatSession.session_kind) === 2) {
+          groupTitle = stringValue(chatSession.title).trim()
+        }
+      } catch {
+        // Membership is already committed; detail hydration must not make the join look failed.
+      }
+    }
+    if (groupTitle === '') groupTitle = '即我官方群'
+    const source: ArkmeSourceItem = {
+      sourceRef: await this.sealSourceRef(session.userId, 'group_chat', chatSessionUid, groupTitle),
+      kind: 'group_chat',
+      displayName: groupTitle,
+      activeAtMillis: 0,
+      unreadCount: 0,
+    }
+    try {
+      await this.hydrateSourceAvatars(
+        [source],
+        new Map(),
+        new Map([[0, chatSessionUid]]),
+        session,
+        signal,
+      )
+    } catch {
+      // Membership is committed by Chat; avatar decoration cannot turn it into a failed join.
+    }
+    this.chatSourceCache.set(`${String(session.userId)}:${chatSessionUid}`, source)
+    return { status, source }
+  }
+
   async readSource(
     sourceRef: string,
     options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
@@ -1569,6 +1666,16 @@ export class ArkmeService {
         visibleIds.map(userId => this.sealProfileImageRef(session.userId, userId)),
       )
     }
+  }
+
+  private officialCommunityStatus(value: unknown): ArkmeOfficialCommunityStatus {
+    if (value === 'ready' || value === 'already_member' || value === 'joined') return value
+    throw new ArkmePluginError(
+      'official-community-contract-invalid',
+      '即我官方群状态响应无效',
+      true,
+      502,
+    )
   }
 
   private async publicProfilesByUserIds(
