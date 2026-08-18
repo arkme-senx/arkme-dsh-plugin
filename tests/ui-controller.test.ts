@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { JotmoUiController } from '../src/client/ui-controller.js'
+import { ArkmeUiController } from '../src/client/ui-controller.js'
 
-describe('JotmoUiController', () => {
-  it('isolates recording mode from login and account-bound source selection', () => {
-    const controller = new JotmoUiController()
+describe('ArkmeUiController', () => {
+  it('switches between login and an account-bound source selection', () => {
+    const controller = new ArkmeUiController()
     const listener = vi.fn()
     const unsubscribe = controller.subscribe(listener)
     const source = {
@@ -17,23 +17,21 @@ describe('JotmoUiController', () => {
     controller.selectSource(source)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.focusSendToSelf()
-    expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, mode: 'source' })
+    expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'source' })
     controller.deactivateSurface()
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: false })
     controller.activateSurface()
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
-    controller.showRecordings()
-    expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, mode: 'recordings' })
-    controller.selectSource(source)
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.showLogin()
-    expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, mode: 'login' })
+    expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'login' })
     controller.showLoginSurface()
     expect(controller.getSnapshot()).toMatchObject({ open: false, surfaceOpen: true, mode: 'login' })
     controller.authChanged(true)
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
     expect(controller.getSnapshot().authRevision).toBe(1)
-    expect(listener).toHaveBeenCalledTimes(9)
+    controller.chatChanged()
+    expect(controller.getSnapshot().chatRevision).toBe(1)
+    expect(listener).toHaveBeenCalledTimes(8)
     unsubscribe()
   })
 })

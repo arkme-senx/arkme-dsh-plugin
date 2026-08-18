@@ -1,11 +1,11 @@
-import type { JotmoCaptchaResult } from '../types.js'
+import type { ArkmeCaptchaResult } from '../types.js'
 
 interface GeetestInstance {
   onReady(callback: () => void): void
   onSuccess(callback: () => void): void
   onError(callback: (error: unknown) => void): void
   onClose?(callback: () => void): void
-  getValidate(): JotmoCaptchaResult | undefined | null
+  getValidate(): ArkmeCaptchaResult | undefined | null
   showCaptcha(): void
   destroy?(): void
 }
@@ -33,7 +33,7 @@ function loadGeetestScript(): Promise<void> {
   if (window.initGeetest4 !== undefined) return Promise.resolve()
   if (scriptPromise !== undefined) return scriptPromise
   scriptPromise = new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[data-dsh-jotmo-geetest]')
+    const existing = document.querySelector<HTMLScriptElement>('script[data-dsh-arkme-geetest]')
     if (existing !== null) {
       existing.addEventListener('load', () => { resolve() }, { once: true })
       existing.addEventListener('error', () => { reject(new Error('安全验证组件加载失败')) }, { once: true })
@@ -43,7 +43,7 @@ function loadGeetestScript(): Promise<void> {
     script.src = 'https://static.geetest.com/v4/gt4.js'
     script.async = true
     script.defer = true
-    script.dataset.dshJotmoGeetest = 'true'
+    script.dataset.dshArkmeGeetest = 'true'
     script.addEventListener('load', () => { resolve() }, { once: true })
     script.addEventListener('error', () => { reject(new Error('安全验证组件加载失败')) }, { once: true })
     document.head.appendChild(script)
@@ -54,15 +54,15 @@ function loadGeetestScript(): Promise<void> {
   return scriptPromise
 }
 
-export async function verifyPhoneCaptcha(captchaId: string, phone: string): Promise<JotmoCaptchaResult> {
+export async function verifyPhoneCaptcha(captchaId: string, phone: string): Promise<ArkmeCaptchaResult> {
   if (captchaId.trim() === '') throw new Error('安全验证未配置')
   await loadGeetestScript()
   const init = window.initGeetest4
   if (init === undefined) throw new Error('安全验证组件不可用')
-  return await new Promise<JotmoCaptchaResult>((resolve, reject) => {
+  return await new Promise<ArkmeCaptchaResult>((resolve, reject) => {
     let settled = false
     let instance: GeetestInstance | undefined
-    const finish = (result: JotmoCaptchaResult | Error): void => {
+    const finish = (result: ArkmeCaptchaResult | Error): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)

@@ -1,18 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
-import { jotmoUi } from '../src/client/ui-controller.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 
 describe('official DSH client adapter', () => {
-  it('temporarily shadows the official conversation while the Footer owns the directory', () => {
-    const registered: Array<{ name: string; id?: string; priority?: number; inject?: () => unknown; dispose: ReturnType<typeof vi.fn> }> = []
-    const inject = vi.fn((key: string, register: () => unknown) => {
+  it('keeps the native conversation mounted while the Footer owns a floating Arkme surface', () => {
+    const registered: Array<{ name: string; id?: string; inject?: () => unknown }> = []
+    const inject = vi.fn((_key: string, register: () => unknown) => {
       register()
       return () => {}
     })
-    const register = vi.fn((options: { name: string; id?: string; priority?: number; inject?: () => unknown }) => {
-      const dispose = vi.fn()
-      registered.push({ ...options, dispose })
-      return dispose
+    const register = vi.fn((options: { name: string; id?: string; inject?: () => unknown }) => {
+      registered.push(options)
+      return vi.fn()
     })
     apply({
       slots: { inject, register },
@@ -27,21 +26,26 @@ describe('official DSH client adapter', () => {
     const face = footer.inject?.() as {
       toggle(sessionId: string | undefined, authenticated: boolean): void
       activate(sessionId: string | undefined): void
+      closeSurface(): void
+      surfaceSession(): string | undefined
     }
+
     face.toggle('session-1', true)
-    const conversation = registered.find(item => item.name === 'conversation')!
-    expect(conversation.priority).toBe(-10)
-    expect(conversation.inject?.()).toMatchObject({ openedFromSession: 'session-1' })
-    const surface = conversation.inject?.() as { close(): void }
-    surface.close()
-    expect(conversation.dispose).toHaveBeenCalledOnce()
+    expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'source' })
+    expect(face.surfaceSession()).toBe('session-1')
+    face.closeSurface()
+    expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: false })
+    expect(face.surfaceSession()).toBeUndefined()
     face.activate('session-2')
-    expect(registered.filter(item => item.name === 'conversation')).toHaveLength(2)
-    const secondConversation = registered.filter(item => item.name === 'conversation')[1]!
+    expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
+    expect(face.surfaceSession()).toBe('session-2')
     face.toggle('session-2', true)
-    expect(secondConversation.dispose).toHaveBeenCalledOnce()
+    expect(arkmeUi.getSnapshot()).toMatchObject({ open: false, surfaceOpen: false })
     face.toggle('session-3', false)
-    expect(jotmoUi.getSnapshot()).toMatchObject({ open: false, surfaceOpen: true, mode: 'login' })
+    expect(arkmeUi.getSnapshot()).toMatchObject({ open: false, surfaceOpen: true, mode: 'login' })
+    expect(face.surfaceSession()).toBe('session-3')
+
+    expect(registered.map(item => item.name)).not.toContain('conversation')
     expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
     expect(registered.map(item => item.name)).not.toContain('main.surface')
     expect(registered.map(item => item.name)).not.toContain('shell.overlay')

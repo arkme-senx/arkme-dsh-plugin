@@ -1,6 +1,6 @@
-import type { JotmoSelfRecordItem } from '../types.js'
+import type { ArkmeSelfRecordItem } from '../types.js'
 
-export function chronologicalRecords(items: readonly JotmoSelfRecordItem[]): JotmoSelfRecordItem[] {
+export function chronologicalRecords(items: readonly ArkmeSelfRecordItem[]): ArkmeSelfRecordItem[] {
   return [...items].sort((left, right) => {
     if (left.sendAtMillis !== right.sendAtMillis) return left.sendAtMillis - right.sendAtMillis
     return left.recordUid.localeCompare(right.recordUid)
@@ -8,9 +8,9 @@ export function chronologicalRecords(items: readonly JotmoSelfRecordItem[]): Jot
 }
 
 export function mergeRecordPages(
-  existing: readonly JotmoSelfRecordItem[],
-  incoming: readonly JotmoSelfRecordItem[],
-): JotmoSelfRecordItem[] {
+  existing: readonly ArkmeSelfRecordItem[],
+  incoming: readonly ArkmeSelfRecordItem[],
+): ArkmeSelfRecordItem[] {
   const byUid = new Map(existing.map(item => [item.recordUid, item]))
   for (const item of incoming) byUid.set(item.recordUid, item)
   return [...byUid.values()]

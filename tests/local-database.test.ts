@@ -2,11 +2,11 @@ import { mkdtemp, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { JotmoLocalDatabase } from '../src/local-database.js'
-import { JotmoStateStore } from '../src/state-store.js'
-import type { JotmoPendingWrite, JotmoSelfRecordItem, JotmoUserProfile } from '../src/types.js'
+import { ArkmeLocalDatabase } from '../src/local-database.js'
+import { ArkmeStateStore } from '../src/state-store.js'
+import type { ArkmePendingWrite, ArkmeSelfRecordItem, ArkmeUserProfile } from '../src/types.js'
 
-function pending(recordUid: string, textContent: string): JotmoPendingWrite {
+function pending(recordUid: string, textContent: string): ArkmePendingWrite {
   return {
     recordUid,
     textContent,
@@ -16,7 +16,7 @@ function pending(recordUid: string, textContent: string): JotmoPendingWrite {
   }
 }
 
-function remote(recordUid: string, textContent: string): JotmoSelfRecordItem {
+function remote(recordUid: string, textContent: string): ArkmeSelfRecordItem {
   return {
     recordUid,
     sendAtMillis: 200,
@@ -28,12 +28,12 @@ function remote(recordUid: string, textContent: string): JotmoSelfRecordItem {
   }
 }
 
-describe('JotmoLocalDatabase', () => {
+describe('ArkmeLocalDatabase', () => {
   it('migrates legacy outbox data and isolates cached records by account', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'dsh-jotmo-db-'))
-    const legacy = new JotmoStateStore(directory)
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
+    const legacy = new ArkmeStateStore(directory)
     await legacy.putPending(10001, pending('pending-1', 'offline'))
-    const database = new JotmoLocalDatabase(directory, legacy)
+    const database = new ArkmeLocalDatabase(directory, legacy)
 
     const first = await database.cachedSnapshot(10001)
     expect(first.items).toMatchObject([{
@@ -49,8 +49,8 @@ describe('JotmoLocalDatabase', () => {
   })
 
   it('persists remote pages, summary metadata, and pending sync transitions', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'dsh-jotmo-db-'))
-    const database = new JotmoLocalDatabase(directory, new JotmoStateStore(directory))
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
+    const database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
     const userId = 10001
 
     await database.cacheSummary(userId, { recordCount: 7, wordsCount: 12, totalSec: 3 })
@@ -90,12 +90,12 @@ describe('JotmoLocalDatabase', () => {
     await database.cachePage(userId, { items: [], hasMore: false }, { sendAtMillis: 199, recordUid: 'next' })
     expect((await database.queryCached(userId, { limit: 10 })).cacheComplete).toBe(true)
 
-    const profile: JotmoUserProfile = {
+    const profile: ArkmeUserProfile = {
       userId,
       displayName: '测试用户',
       nickname: '测试用户',
       avatarRef: 'avatar-file-id',
-      jotmoId: 'jotmo-id',
+      arkmeId: 'arkme-id',
       accountType: 1,
       createdAt: 123,
       bindings: { apple: true, wechat: false, google: true },

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   chronologicalRecords, mergeRecordPages, recordDayKey, recordDayLabel, recordTimeLabel,
 } from '../src/client/record-presentation.js'
-import type { JotmoSelfRecordItem } from '../src/types.js'
+import type { ArkmeSelfRecordItem } from '../src/types.js'
 
-function record(recordUid: string, sendAtMillis: number): JotmoSelfRecordItem {
+function record(recordUid: string, sendAtMillis: number): ArkmeSelfRecordItem {
   return { recordUid, sendAtMillis, title: '', textContent: recordUid, templateKind: 1, status: 1, version: 1 }
 }
 

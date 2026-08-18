@@ -1,17 +1,17 @@
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { JotmoStateStore } from './state-store.js'
+import type { ArkmeStateStore } from './state-store.js'
 import type {
-  JotmoCachedSnapshot,
-  JotmoCachedQueryResult,
-  JotmoPendingWrite,
-  JotmoRecordCursor,
-  JotmoSelfRecordItem,
-  JotmoSelfRecordList,
-  JotmoSelfSummary,
-  JotmoUserProfile,
-  JotmoUserProfileSnapshot,
+  ArkmeCachedSnapshot,
+  ArkmeCachedQueryResult,
+  ArkmePendingWrite,
+  ArkmeRecordCursor,
+  ArkmeSelfRecordItem,
+  ArkmeSelfRecordList,
+  ArkmeSelfSummary,
+  ArkmeUserProfile,
+  ArkmeUserProfileSnapshot,
 } from './types.js'
 
 type CacheState = 'synced' | 'pending' | 'failed'
@@ -48,7 +48,7 @@ interface ProfileRow {
   nickname: string
   avatar_ref: string
   avatar_url: string | null
-  jotmo_id: string
+  arkme_id: string
   account_type: number
   created_at: number
   bind_apple: number
@@ -59,12 +59,12 @@ interface ProfileRow {
   updated_at_millis: number
 }
 
-export class JotmoLocalDatabase {
+export class ArkmeLocalDatabase {
   private readonly path: string
   private readonly database: DatabaseSync
   private readonly migrations = new Map<number, Promise<void>>()
 
-  constructor(directory: string, private readonly legacy: JotmoStateStore) {
+  constructor(directory: string, private readonly legacy: ArkmeStateStore) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     chmodSync(directory, 0o700)
     this.path = join(directory, 'records.sqlite3')
@@ -109,7 +109,7 @@ export class JotmoLocalDatabase {
         nickname TEXT NOT NULL,
         avatar_ref TEXT NOT NULL,
         avatar_url TEXT,
-        jotmo_id TEXT NOT NULL,
+        arkme_id TEXT NOT NULL,
         account_type INTEGER NOT NULL,
         created_at INTEGER NOT NULL,
         bind_apple INTEGER NOT NULL,
@@ -134,7 +134,7 @@ export class JotmoLocalDatabase {
     return await this.legacy.uniqueCode()
   }
 
-  async cachedSnapshot(userId: number): Promise<JotmoCachedSnapshot> {
+  async cachedSnapshot(userId: number): Promise<ArkmeCachedSnapshot> {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
       SELECT record_uid, send_at_millis, title, text_content, template_kind,
@@ -167,7 +167,7 @@ export class JotmoLocalDatabase {
   async queryCached(
     userId: number,
     options: { query?: string; limit: number; beforeMillis?: number },
-  ): Promise<JotmoCachedQueryResult> {
+  ): Promise<ArkmeCachedQueryResult> {
     await this.ensureMigrated(userId)
     const limit = Math.min(30, Math.max(1, Math.trunc(options.limit)))
     const query = options.query?.trim() ?? ''
@@ -210,10 +210,10 @@ export class JotmoLocalDatabase {
     return row?.revision ?? 0
   }
 
-  async cachedProfile(userId: number): Promise<JotmoUserProfileSnapshot> {
+  async cachedProfile(userId: number): Promise<ArkmeUserProfileSnapshot> {
     await this.ensureMigrated(userId)
     const row = this.database.prepare(`
-      SELECT user_id, display_name, nickname, avatar_ref, avatar_url, jotmo_id,
+      SELECT user_id, display_name, nickname, avatar_ref, avatar_url, arkme_id,
              account_type, created_at, bind_apple, bind_wechat, bind_google,
              phone_masked, email_masked, updated_at_millis
       FROM user_profile_cache WHERE user_id = ?
@@ -225,13 +225,13 @@ export class JotmoLocalDatabase {
     }
   }
 
-  async cacheProfile(userId: number, profile: JotmoUserProfile): Promise<JotmoUserProfileSnapshot> {
+  async cacheProfile(userId: number, profile: ArkmeUserProfile): Promise<ArkmeUserProfileSnapshot> {
     await this.ensureMigrated(userId)
     const now = Date.now()
     this.transaction(() => {
       this.database.prepare(`
         INSERT INTO user_profile_cache (
-          user_id, display_name, nickname, avatar_ref, avatar_url, jotmo_id,
+          user_id, display_name, nickname, avatar_ref, avatar_url, arkme_id,
           account_type, created_at, bind_apple, bind_wechat, bind_google,
           phone_masked, email_masked, updated_at_millis
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -240,7 +240,7 @@ export class JotmoLocalDatabase {
           nickname = excluded.nickname,
           avatar_ref = excluded.avatar_ref,
           avatar_url = excluded.avatar_url,
-          jotmo_id = excluded.jotmo_id,
+          arkme_id = excluded.arkme_id,
           account_type = excluded.account_type,
           created_at = excluded.created_at,
           bind_apple = excluded.bind_apple,
@@ -251,7 +251,7 @@ export class JotmoLocalDatabase {
           updated_at_millis = excluded.updated_at_millis
       `).run(
         userId, profile.displayName, profile.nickname, profile.avatarRef,
-        profile.avatarUrl ?? null, profile.jotmoId, profile.accountType, profile.createdAt,
+        profile.avatarUrl ?? null, profile.arkmeId, profile.accountType, profile.createdAt,
         profile.bindings.apple ? 1 : 0, profile.bindings.wechat ? 1 : 0, profile.bindings.google ? 1 : 0,
         profile.contact.phoneMasked ?? null, profile.contact.emailMasked ?? null, now,
       )
@@ -260,7 +260,7 @@ export class JotmoLocalDatabase {
     return await this.cachedProfile(userId)
   }
 
-  async cacheSummary(userId: number, summary: JotmoSelfSummary): Promise<void> {
+  async cacheSummary(userId: number, summary: ArkmeSelfSummary): Promise<void> {
     await this.ensureMigrated(userId)
     this.database.prepare(`
       INSERT INTO cache_meta (
@@ -276,7 +276,7 @@ export class JotmoLocalDatabase {
     this.secureDatabaseFiles()
   }
 
-  async cachePage(userId: number, page: JotmoSelfRecordList, requestCursor?: JotmoRecordCursor): Promise<void> {
+  async cachePage(userId: number, page: ArkmeSelfRecordList, requestCursor?: ArkmeRecordCursor): Promise<void> {
     await this.ensureMigrated(userId)
     this.transaction(() => {
       for (const item of page.items) this.upsertSyncedRecord(userId, item)
@@ -305,7 +305,7 @@ export class JotmoLocalDatabase {
     })
   }
 
-  async listPending(userId: number): Promise<JotmoPendingWrite[]> {
+  async listPending(userId: number): Promise<ArkmePendingWrite[]> {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
       SELECT record_uid, text_content, created_at_millis, send_at_millis, attempts, last_error
@@ -325,7 +325,7 @@ export class JotmoLocalDatabase {
     }))
   }
 
-  async putPending(userId: number, pending: JotmoPendingWrite): Promise<void> {
+  async putPending(userId: number, pending: ArkmePendingWrite): Promise<void> {
     await this.ensureMigrated(userId)
     this.insertPending(userId, pending)
     this.bumpRevision(userId)
@@ -358,7 +358,7 @@ export class JotmoLocalDatabase {
     this.database.close()
   }
 
-  private recordFromRow(row: RecordRow): JotmoSelfRecordItem {
+  private recordFromRow(row: RecordRow): ArkmeSelfRecordItem {
     return {
       recordUid: row.record_uid,
       sendAtMillis: row.send_at_millis,
@@ -372,14 +372,14 @@ export class JotmoLocalDatabase {
     }
   }
 
-  private profileFromRow(row: ProfileRow): JotmoUserProfile {
+  private profileFromRow(row: ProfileRow): ArkmeUserProfile {
     return {
       userId: row.user_id,
       displayName: row.display_name,
       nickname: row.nickname,
       avatarRef: row.avatar_ref,
       ...(row.avatar_url == null || row.avatar_url === '' ? {} : { avatarUrl: row.avatar_url }),
-      jotmoId: row.jotmo_id,
+      arkmeId: row.arkme_id,
       accountType: row.account_type,
       createdAt: row.created_at,
       bindings: { apple: row.bind_apple === 1, wechat: row.bind_wechat === 1, google: row.bind_google === 1 },
@@ -390,7 +390,7 @@ export class JotmoLocalDatabase {
     }
   }
 
-  private insertPending(userId: number, pending: JotmoPendingWrite): void {
+  private insertPending(userId: number, pending: ArkmePendingWrite): void {
     const now = Date.now()
     this.database.prepare(`
       INSERT INTO record_cache (
@@ -412,7 +412,7 @@ export class JotmoLocalDatabase {
     )
   }
 
-  private upsertSyncedRecord(userId: number, item: JotmoSelfRecordItem): void {
+  private upsertSyncedRecord(userId: number, item: ArkmeSelfRecordItem): void {
     const now = Date.now()
     this.database.prepare(`
       INSERT INTO record_cache (

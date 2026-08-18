@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile, chmod } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { JotmoPendingWrite } from './types.js'
+import type { ArkmePendingWrite } from './types.js'
 
 interface PersistedState {
   version: 1
   uniqueCode: string
-  pendingByUser: Record<string, JotmoPendingWrite[]>
+  pendingByUser: Record<string, ArkmePendingWrite[]>
 }
 
 function emptyState(): PersistedState {
@@ -17,9 +17,9 @@ function emptyState(): PersistedState {
   }
 }
 
-function normalizedPending(value: unknown): JotmoPendingWrite[] {
+function normalizedPending(value: unknown): ArkmePendingWrite[] {
   if (!Array.isArray(value)) return []
-  const result: JotmoPendingWrite[] = []
+  const result: ArkmePendingWrite[] = []
   for (const item of value) {
     if (item === null || typeof item !== 'object') continue
     const source = item as Record<string, unknown>
@@ -43,7 +43,7 @@ function parseState(raw: string): PersistedState {
   const parsed = JSON.parse(raw) as unknown
   if (parsed === null || typeof parsed !== 'object') return emptyState()
   const source = parsed as Record<string, unknown>
-  const pendingByUser: Record<string, JotmoPendingWrite[]> = {}
+  const pendingByUser: Record<string, ArkmePendingWrite[]> = {}
   if (source.pendingByUser !== null && typeof source.pendingByUser === 'object') {
     for (const [userId, pending] of Object.entries(source.pendingByUser as Record<string, unknown>)) {
       pendingByUser[userId] = normalizedPending(pending)
@@ -58,7 +58,7 @@ function parseState(raw: string): PersistedState {
   }
 }
 
-export class JotmoStateStore {
+export class ArkmeStateStore {
   private readonly path: string
   private state: PersistedState | undefined
   private queue: Promise<void> = Promise.resolve()
@@ -71,11 +71,11 @@ export class JotmoStateStore {
     return await this.read(state => state.uniqueCode)
   }
 
-  async listPending(userId: number): Promise<JotmoPendingWrite[]> {
+  async listPending(userId: number): Promise<ArkmePendingWrite[]> {
     return await this.read(state => [...(state.pendingByUser[String(userId)] ?? [])])
   }
 
-  async putPending(userId: number, pending: JotmoPendingWrite): Promise<void> {
+  async putPending(userId: number, pending: ArkmePendingWrite): Promise<void> {
     await this.update(state => {
       const key = String(userId)
       const current = state.pendingByUser[key] ?? []

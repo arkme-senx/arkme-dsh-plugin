@@ -1,15 +1,15 @@
-import type { JotmoSourceDirectory, JotmoSourceItem, JotmoSourceKind } from '../types.js'
+import type { ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceKind } from '../types.js'
 
-const POINTER_KEY = 'dsh-jotmo:navigation:v1:last-user'
-const CACHE_KEY_PREFIX = 'dsh-jotmo:navigation:v1:user:'
+const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
+const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
 const MAX_CACHED_SOURCES = 200
 
-export interface JotmoNavigationCache {
+export interface ArkmeNavigationCache {
   version: 1
   userId: number
-  directory: JotmoSourceDirectory
+  directory: ArkmeSourceDirectory
   selectedSourceRef?: string
-  sources: Partial<Record<JotmoSourceDirectory, JotmoSourceItem[]>>
+  sources: Partial<Record<ArkmeSourceDirectory, ArkmeSourceItem[]>>
   updatedAtMillis: number
 }
 
@@ -19,15 +19,15 @@ function storageOrUndefined(storage?: Storage): Storage | undefined {
   catch { return undefined }
 }
 
-function isDirectory(value: unknown): value is JotmoSourceDirectory {
+function isDirectory(value: unknown): value is ArkmeSourceDirectory {
   return value === 'root' || value === 'send_to_self'
 }
 
-function isKind(value: unknown): value is JotmoSourceKind {
+function isKind(value: unknown): value is ArkmeSourceKind {
   return value === 'default_category' || value === 'topic' || value === 'private_chat' || value === 'group_chat'
 }
 
-function sourceItem(value: unknown): JotmoSourceItem | undefined {
+function sourceItem(value: unknown): ArkmeSourceItem | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const item = value as Record<string, unknown>
   if (typeof item.sourceRef !== 'string' || item.sourceRef === '' || !isKind(item.kind)
@@ -45,13 +45,16 @@ function sourceItem(value: unknown): JotmoSourceItem | undefined {
     ...(typeof item.latestPreview === 'string' ? { latestPreview: item.latestPreview } : {}),
     activeAtMillis: item.activeAtMillis,
     unreadCount: Math.max(0, Math.trunc(item.unreadCount)),
+    ...(typeof item.latestSequence === 'number' && Number.isSafeInteger(item.latestSequence) && item.latestSequence > 0
+      ? { latestSequence: item.latestSequence }
+      : {}),
     ...(typeof item.recordCount === 'number' && Number.isFinite(item.recordCount)
       ? { recordCount: Math.max(0, Math.trunc(item.recordCount)) }
       : {}),
   }
 }
 
-function parseCache(raw: string | null, expectedUserId?: number): JotmoNavigationCache | undefined {
+function parseCache(raw: string | null, expectedUserId?: number): ArkmeNavigationCache | undefined {
   if (raw === null || raw.length > 2_000_000) return undefined
   try {
     const value = JSON.parse(raw) as Record<string, unknown>
@@ -61,11 +64,11 @@ function parseCache(raw: string | null, expectedUserId?: number): JotmoNavigatio
     const rawSources = value.sources !== null && typeof value.sources === 'object' && !Array.isArray(value.sources)
       ? value.sources as Record<string, unknown>
       : {}
-    const sources: JotmoNavigationCache['sources'] = {}
+    const sources: ArkmeNavigationCache['sources'] = {}
     for (const directory of ['root', 'send_to_self'] as const) {
       if (!Array.isArray(rawSources[directory])) continue
       sources[directory] = rawSources[directory]
-        .map(sourceItem).filter((item): item is JotmoSourceItem => item !== undefined)
+        .map(sourceItem).filter((item): item is ArkmeSourceItem => item !== undefined)
         .slice(0, MAX_CACHED_SOURCES)
     }
     return {
@@ -83,14 +86,14 @@ function parseCache(raw: string | null, expectedUserId?: number): JotmoNavigatio
   } catch { return undefined }
 }
 
-export function readNavigationCache(userId: number, storage?: Storage): JotmoNavigationCache | undefined {
+export function readNavigationCache(userId: number, storage?: Storage): ArkmeNavigationCache | undefined {
   const target = storageOrUndefined(storage)
   if (target === undefined || !Number.isSafeInteger(userId) || userId <= 0) return undefined
   try { return parseCache(target.getItem(`${CACHE_KEY_PREFIX}${String(userId)}`), userId) }
   catch { return undefined }
 }
 
-export function readLastNavigationCache(storage?: Storage): JotmoNavigationCache | undefined {
+export function readLastNavigationCache(storage?: Storage): ArkmeNavigationCache | undefined {
   const target = storageOrUndefined(storage)
   if (target === undefined) return undefined
   try {
@@ -99,7 +102,7 @@ export function readLastNavigationCache(storage?: Storage): JotmoNavigationCache
   } catch { return undefined }
 }
 
-export function writeNavigationCache(cache: JotmoNavigationCache, storage?: Storage): void {
+export function writeNavigationCache(cache: ArkmeNavigationCache, storage?: Storage): void {
   const target = storageOrUndefined(storage)
   if (target === undefined) return
   try {
@@ -115,11 +118,23 @@ export function clearLastNavigationCache(storage?: Storage): void {
   catch { /* Ignore unavailable browser storage. */ }
 }
 
-export function cachedSelectedSource(cache: JotmoNavigationCache): JotmoSourceItem | undefined {
+export function cachedSelectedSource(cache: ArkmeNavigationCache): ArkmeSourceItem | undefined {
   if (cache.selectedSourceRef === undefined) return undefined
   for (const directory of ['root', 'send_to_self'] as const) {
     const source = cache.sources[directory]?.find(item => item.sourceRef === cache.selectedSourceRef)
     if (source !== undefined) return source
   }
   return undefined
+}
+
+/** Rebind a cached selection to a source reference issued by the current Provider instance. */
+export function reconcileSelectedSource(
+  selected: ArkmeSourceItem | undefined,
+  loaded: ArkmeSourceItem[],
+): ArkmeSourceItem | undefined {
+  if (selected === undefined) return undefined
+  const exact = loaded.find(item => item.sourceRef === selected.sourceRef)
+  if (exact !== undefined) return exact
+  const equivalent = loaded.filter(item => item.kind === selected.kind && item.displayName === selected.displayName)
+  return equivalent.length === 1 ? equivalent[0] : undefined
 }
