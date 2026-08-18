@@ -88,6 +88,7 @@ const config: JotmoServiceConfig = {
   recordBaseUrl: 'https://record.test',
   chatBaseUrl: 'https://chat.test',
   audioBaseUrl: 'https://audio.test',
+  worldBaseUrl: 'https://world.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -101,6 +102,198 @@ function json(data: unknown, status = 200): Response {
 }
 
 describe('JotmoService', () => {
+  it('reads the public World feed through a safe text-only projection', async () => {
+    const sessions = new MemorySessionStore()
+    const state = new MemoryStateStore()
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
+      expect(new Headers(init?.headers).get('Authorization')).toBeNull()
+      expect(JSON.parse(String(init?.body))).toEqual({ limit: 2, offset: 4 })
+      return json({ code: 200, data: { total: 7, list: [{
+        record_uid: 'internal-record-1',
+        user_id: 90001,
+        nick_name: '世界用户',
+        text_content: '公开快记正文',
+        tags: ['生活'],
+        images: ['https://signed.example/image'],
+        videos: [],
+        voices: [],
+        created_at: 100,
+        published_at: 200,
+        extend_count: 3,
+      }] } })
+    })
+
+    await expect(service.listWorldRecords({ limit: 2, offset: 4 })).resolves.toEqual({
+      items: [{
+        authorName: '世界用户',
+        headline: '',
+        textContent: '公开快记正文',
+        tags: ['生活'],
+        templateKind: 0,
+        createdAtMillis: 100,
+        publishedAtMillis: 200,
+        imageCount: 1,
+        videoCount: 0,
+        voiceCount: 0,
+        extendCount: 3,
+      }],
+      total: 7,
+      hasMore: true,
+      nextOffset: 5,
+    })
+  })
+
+  it('saves a text note before publishing it to World', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/auth/get-user-info')) {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', head_img: 'avatar-ref', phone: '13800138000' } })
+      }
+      if (url.endsWith('/api/public/v1/public-record/status-batch')) {
+        return json({ code: 200, data: { items: [{ record_uid: Array.isArray(body.record_uids) ? body.record_uids[0] : '', is_public: false }] } })
+      }
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/public-record/publish')) {
+        return json({ code: 200, data: { record_uid: body.record_uid, check_status: 2 } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const recordUid = 'c3b246b9-2c13-58d4-a97f-3c00c4096be4'
+
+    await expect(service.publishWorldTextForConversation(recordUid, '今天很好 #生活')).resolves.toEqual({
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: true,
+      visibility: 'visible',
+      checkStatus: 2,
+      retryable: false,
+    })
+    expect(calls.map(call => call.url)).toEqual([
+      'https://auth.test/api/v1/auth/get-user-info',
+      'https://world.test/api/public/v1/public-record/status-batch',
+      'https://record.test/api/v1/records/create',
+      'https://world.test/api/v1/public-record/publish',
+    ])
+    expect(calls[3]?.body).toMatchObject({
+      record_uid: recordUid,
+      content: '今天很好 #生活',
+      text_content: '今天很好 #生活',
+      tags: ['生活'],
+      nick_name: '昵称',
+      avatar: 'avatar-ref',
+      template_kind: 1,
+    })
+  })
+
+  it('reports a private save when World publishing fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    let statusChecks = 0
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/auth/get-user-info')) {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', phone: '13800138000' } })
+      }
+      if (url.endsWith('/api/public/v1/public-record/status-batch')) {
+        statusChecks += 1
+        return json({ code: 200, data: { items: [{ record_uid: Array.isArray(body.record_uids) ? body.record_uids[0] : '', is_public: false }] } })
+      }
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/public-record/publish')) return json({ code: 10005, message: '服务繁忙' })
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.publishWorldTextForConversation(
+      'd7924b0c-8421-58ea-80a5-c61f08ac3eaf',
+      '先保存再尝试公开',
+    )).resolves.toEqual({
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: false,
+      visibility: 'not_published',
+      checkStatus: 0,
+      retryable: true,
+      error: '服务繁忙',
+    })
+    expect(statusChecks).toBe(2)
+  })
+
+  it('does not create a Record when the account has no bound phone', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: string[] = []
+    const service = new JotmoService(config, sessions, state, async (input) => {
+      requests.push(String(input))
+      return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', phone: '' } })
+    })
+
+    await expect(service.publishWorldTextForConversation(
+      '27ab8607-70d4-52f7-a19d-e5adf87fbb8d',
+      '需要手机号才能公开',
+    )).resolves.toEqual({
+      recordSaved: false,
+      recordState: 'not_saved',
+      worldPublished: false,
+      visibility: 'not_published',
+      checkStatus: 0,
+      retryable: false,
+      error: '请先在即我客户端绑定手机号，再发到世界',
+    })
+    expect(requests).toEqual(['https://auth.test/api/v1/auth/get-user-info'])
+  })
+
+  it('confirms a committed World publish after the response is lost', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    let statusChecks = 0
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/auth/get-user-info')) {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', phone: '13800138000' } })
+      }
+      if (url.endsWith('/api/public/v1/public-record/status-batch')) {
+        statusChecks += 1
+        return json({ code: 200, data: {
+          items: [{ record_uid: Array.isArray(body.record_uids) ? body.record_uids[0] : '', is_public: statusChecks > 1 }],
+        } })
+      }
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/public-record/publish')) throw new TypeError('response lost')
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.publishWorldTextForConversation(
+      '437abbd0-1390-54d8-b2ad-f3b33cd12c7c',
+      '响应丢失但服务端已提交',
+    )).resolves.toEqual({
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: true,
+      visibility: 'unknown',
+      checkStatus: 0,
+      retryable: false,
+    })
+    expect(statusChecks).toBe(2)
+  })
+
   it('reads the recording calendar from the Audio origin with bearer authorization', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

@@ -74,6 +74,39 @@ export interface JotmoConversationWriteResult {
   error?: string
 }
 
+export interface JotmoWorldRecordItem {
+  authorName: string
+  headline: string
+  textContent: string
+  tags: string[]
+  templateKind: number
+  createdAtMillis: number
+  publishedAtMillis: number
+  imageCount: number
+  videoCount: number
+  voiceCount: number
+  extendCount: number
+}
+
+export interface JotmoWorldRecordList {
+  items: JotmoWorldRecordItem[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export type JotmoWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
+
+export interface JotmoWorldPublishResult {
+  recordSaved: boolean
+  recordState: 'synced' | 'pending' | 'not_saved'
+  worldPublished: boolean
+  visibility: JotmoWorldVisibility
+  checkStatus: number
+  retryable: boolean
+  error?: string
+}
+
 export interface JotmoCachedSnapshot {
   items: JotmoSelfRecordItem[]
   hasMore: boolean
