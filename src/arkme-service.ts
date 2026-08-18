@@ -652,25 +652,62 @@ export class ArkmeService {
         activeAtMillis: 0,
         unreadCount: 0,
       }
-      const topics: ArkmeSourceItem[] = []
+      const topicDescriptors: Array<{
+        topicUid: string
+        parentTopicUid?: string
+        title: string
+        latestPreview: string
+        activeAtMillis: number
+        recordCount: number
+      }> = []
+      const seenTopicUids = new Set<string>()
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
         const core = objectValue(item.topic_core)
         const summary = objectValue(item.summary)
         const latest = objectValue(item.latest_record_core)
+        const parent = objectValue(
+          core.parent_topic_core ?? core.parent_topic ?? item.parent_topic_core ?? item.parent_topic,
+        )
         const topicUid = stringValue(core.topic_uid).trim()
         const title = stringValue(core.title).trim()
-        if (topicUid === '' || title === '') continue
-        topics.push({
-          sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
-          kind: 'topic',
-          displayName: title,
-          ...(textPreview(latest) === '' ? {} : { latestPreview: textPreview(latest) }),
+        if (topicUid === '' || title === '' || seenTopicUids.has(topicUid)) continue
+        seenTopicUids.add(topicUid)
+        const parentTopicUid = stringValue(
+          core.parent_topic_uid ?? core.parent_uid ?? item.parent_topic_uid ?? item.parent_uid
+          ?? parent.topic_uid ?? parent.uid,
+        ).trim()
+        topicDescriptors.push({
+          topicUid,
+          ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
+          title,
+          latestPreview: textPreview(latest),
           activeAtMillis: numberValue(latest.send_at ?? summary.latest_send_at ?? core.update_at),
-          unreadCount: 0,
           recordCount: numberValue(summary.record_count),
         })
       }
+      const sourceRefByTopicUid = new Map<string, string>()
+      for (const topic of topicDescriptors) {
+        sourceRefByTopicUid.set(
+          topic.topicUid,
+          await this.sealSourceRef(session.userId, 'topic', topic.topicUid, topic.title),
+        )
+      }
+      const topics: ArkmeSourceItem[] = topicDescriptors.map(topic => {
+        const parentSourceRef = topic.parentTopicUid === undefined
+          ? undefined
+          : sourceRefByTopicUid.get(topic.parentTopicUid)
+        return {
+          sourceRef: sourceRefByTopicUid.get(topic.topicUid)!,
+          ...(parentSourceRef === undefined ? {} : { parentSourceRef }),
+          kind: 'topic',
+          displayName: topic.title,
+          ...(topic.latestPreview === '' ? {} : { latestPreview: topic.latestPreview }),
+          activeAtMillis: topic.activeAtMillis,
+          unreadCount: 0,
+          recordCount: topic.recordCount,
+        }
+      })
       return { directory, items: [defaultCategory, ...topics], hasMore: false }
     }
     if (directory !== 'root') throw new ArkmePluginError('source-directory-invalid', 'Arkme 数据源目录无效', false)

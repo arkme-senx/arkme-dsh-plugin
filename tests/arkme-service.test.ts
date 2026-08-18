@@ -357,6 +357,9 @@ describe('ArkmeService', () => {
         topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
         summary: { record_count: 2, latest_send_at: 99 },
         latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 99 },
+      }, {
+        topic_core: { topic_uid: 'topic-child', parent_topic_uid: 'topic-1', title: '周报', update_at: 98 },
+        summary: { record_count: 1, latest_send_at: 97 },
       }] } })
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
@@ -368,9 +371,11 @@ describe('ArkmeService', () => {
 
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName])).toEqual([
-      ['default_category', '默认分类'], ['topic', '工作'],
+      ['default_category', '默认分类'], ['topic', '工作'], ['topic', '周报'],
     ])
     expect(sources.items[1]?.sourceRef).not.toContain('topic-1')
+    expect(sources.items[2]?.parentSourceRef).toBe(sources.items[1]?.sourceRef)
+    expect(sources.items[2]?.parentSourceRef).not.toContain('topic-1')
     const topicRef = sources.items[1]!.sourceRef
     await expect(service.readSource(topicRef)).resolves.toMatchObject({
       source: { kind: 'topic', displayName: '工作' },

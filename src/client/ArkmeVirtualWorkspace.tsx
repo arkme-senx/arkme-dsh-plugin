@@ -12,6 +12,7 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
+import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from './source-tree.js'
 
 export interface ArkmeNavigationProps {
   wide?: boolean
@@ -86,11 +87,24 @@ const styles: Record<string, CSSProperties> = {
   },
   topicRow: {
     position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
-    display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', boxSizing: 'border-box',
-    border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+    display: 'flex', alignItems: 'center', boxSizing: 'border-box', overflow: 'hidden',
+    borderRadius: 7, background: 'transparent', color: 'inherit',
   },
-  topicActive: { background: '#dcf4e8', boxShadow: `inset 4px 0 ${colors.accent}` },
+  topicActive: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
+  topicGuide: { position: 'absolute', top: 0, bottom: 0, width: 1, background: colors.border, pointerEvents: 'none' },
+  topicLead: {
+    position: 'relative', zIndex: 1, width: 30, height: 38, flex: 'none', display: 'inline-flex',
+    alignItems: 'center', justifyContent: 'center', padding: 0, border: 0, background: 'transparent',
+    color: colors.caption, cursor: 'default', font: 'inherit',
+  },
+  topicToggle: { cursor: 'pointer' },
+  topicChevron: { display: 'inline-block', fontSize: 17, lineHeight: 1, transformOrigin: '50% 50%' },
   topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
+  topicSelect: {
+    position: 'relative', zIndex: 1, minWidth: 0, minHeight: 38, flex: 1, display: 'flex',
+    alignItems: 'center', gap: 10, padding: '0 10px 0 0', border: 0, background: 'transparent',
+    color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  },
   topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
   topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
@@ -201,8 +215,14 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     initialCache?.sources[initialCache.directory] ?? [],
   )
+  const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
+  const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
+  const visibleSourceRows = useMemo(
+    () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
+    [collapsedSourceRefs, sourceTree],
+  )
 
   const persistCache = useCallback((patch: {
     directory?: ArkmeSourceDirectory
@@ -323,6 +343,23 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       onActivateSurface?.()
     }
   }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
+  useEffect(() => {
+    const sourcesByRef = new Map(sources.map(source => [source.sourceRef, source]))
+    setCollapsedSourceRefs(current => {
+      const next = new Set([...current].filter(sourceRef => sourcesByRef.has(sourceRef)))
+      let parentRef = ui.selectedSource === undefined
+        ? undefined
+        : sourcesByRef.get(ui.selectedSource.sourceRef)?.parentSourceRef
+      const visited = new Set<string>()
+      while (parentRef !== undefined && !visited.has(parentRef)) {
+        visited.add(parentRef)
+        next.delete(parentRef)
+        parentRef = sourcesByRef.get(parentRef)?.parentSourceRef
+      }
+      if (next.size === current.size && [...next].every(sourceRef => current.has(sourceRef))) return current
+      return next
+    })
+  }, [sources, ui.selectedSource])
 
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
@@ -334,6 +371,14 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     arkmeUi.selectSource(source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
+  }
+  const toggleSource = (sourceRef: string) => {
+    setCollapsedSourceRefs(current => {
+      const next = new Set(current)
+      if (next.has(sourceRef)) next.delete(sourceRef)
+      else next.add(sourceRef)
+      return next
+    })
   }
 
   if (!wide) {
@@ -392,16 +437,31 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         })}
       </>}
 
-      {directory === 'send_to_self' && sources.map(source => {
+      {directory === 'send_to_self' && visibleSourceRows.map(row => {
+        const source = row.source
         const selected = ui.selectedSource?.sourceRef === source.sourceRef
-        return <button
-          key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
-          style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }} onClick={() => { selectSource(source) }}
+        return <div
+          key={source.sourceRef} role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
+          aria-expanded={row.hasChildren ? row.expanded : undefined}
+          style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }}
         >
-          <span style={styles.topicDot} />
-          <span style={styles.topicName}>{source.displayName}</span>
-          {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
-        </button>
+          {Array.from({ length: row.depth }, (_, index) => <span
+            key={index} aria-hidden style={{ ...styles.topicGuide, left: 21 + index * 20 }}
+          />)}
+          {row.hasChildren ? <button
+            type="button"
+            style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 6 + row.depth * 20 }}
+            aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
+            title={row.expanded ? '收起子主题' : '展开子主题'}
+            onClick={() => { toggleSource(source.sourceRef) }}
+          ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
+            aria-hidden style={{ ...styles.topicLead, marginLeft: 6 + row.depth * 20 }}
+          ><span style={styles.topicDot} /></span>}
+          <button type="button" style={styles.topicSelect} onClick={() => { selectSource(source) }}>
+            <span style={styles.topicName}>{source.displayName}</span>
+            {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
+          </button>
+        </div>
       })}
 
       {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}

@@ -36,6 +36,9 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     || typeof item.unreadCount !== 'number' || !Number.isFinite(item.unreadCount)) return undefined
   return {
     sourceRef: item.sourceRef,
+    ...(typeof item.parentSourceRef === 'string' && item.parentSourceRef !== ''
+      ? { parentSourceRef: item.parentSourceRef }
+      : {}),
     kind: item.kind,
     displayName: item.displayName,
     ...(typeof item.avatarRef === 'string' && item.avatarRef !== '' ? { avatarRef: item.avatarRef } : {}),

@@ -35,7 +35,7 @@ The SDK communicates only with the same-origin Provider route. Consumers must no
 
 `readImage(avatarRef)` resolves an opaque image reference returned by `profile()` or `listSources()`. Private chats expose one optional `avatarRef`; groups expose ordered `avatarRefs` for the desktop-style composite avatar. The Provider refreshes the authorized public profile image before downloading it and returns bounded PNG/JPEG/WebP/GIF base64 bytes; signed URLs, STS credentials and bearer tokens never enter the browser contract. Consumers must use `imageDataUrl()` (or decode the payload themselves) instead of concatenating OSS URLs or fetching an avatar reference directly.
 
-`listSources()` is the only directory entrypoint. `root` returns private/group chats; `send_to_self` returns the default category and topics. Every returned `sourceRef` is opaque, account-bound and integrity-protected. Consumers pass it unchanged to `readSource()` or `sendText()` and must never parse, persist across accounts, or construct one themselves.
+`listSources()` is the only directory entrypoint. `root` returns private/group chats; `send_to_self` returns the default category and topics. A nested topic may include `parentSourceRef`, which points to another topic in the same response and is also opaque and account-bound; missing parents are treated as top-level topics. Every returned source reference is integrity-protected. Consumers pass it unchanged to `readSource()` or `sendText()` and must never parse, persist across accounts, or construct one themselves.
 
 Chat items returned by `readSource()` may include an opaque sender `avatarRef`. Consumers resolve it with `readImage()` and must not infer or construct avatar URLs from sender identity.
 
