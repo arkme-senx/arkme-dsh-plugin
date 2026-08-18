@@ -15,6 +15,7 @@ export interface Config {
   environment: JotmoEnvironment
   authBaseUrl: string
   recordBaseUrl: string
+  chatBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -29,6 +30,7 @@ export const Config: Schema<Config> = Schema.object({
   environment: Schema.union(['test', 'prod']).default('test'),
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
+  chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   routePath: Schema.string().default('/jotmo-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -88,6 +90,7 @@ function validateConfig(ctx: Context, config: Config): void {
   for (const [label, raw] of [
     ['authBaseUrl', config.authBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
+    ['chatBaseUrl', config.chatBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -105,6 +108,14 @@ export type {
   JotmoPendingWrite,
   JotmoImageMediaType,
   JotmoImagePayload,
+  JotmoSourceDirectory,
+  JotmoSourceItem,
+  JotmoSourceKind,
+  JotmoSourceList,
+  JotmoSourceSendResult,
+  JotmoTimelineCursor,
+  JotmoTimelineItem,
+  JotmoTimelinePage,
   JotmoRecordCursor,
   JotmoSelfRecordItem,
   JotmoSelfRecordList,

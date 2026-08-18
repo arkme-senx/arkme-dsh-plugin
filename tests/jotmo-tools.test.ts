@@ -66,6 +66,14 @@ function fakeService(): JotmoConversationReadService & {
       cachedAtMillis: 1,
       revision: 8,
     })),
+    listSources: vi.fn(async (directory: 'root' | 'send_to_self') => ({ directory, items: [], hasMore: false })),
+    readSource: vi.fn(async (sourceRef: string) => ({
+      source: { sourceRef, kind: 'private_chat' as const, displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
+      items: [], hasMore: false,
+    })),
+    sendSourceText: vi.fn(async (sourceRef: string, _text: string, options?: { recordUid?: string }) => ({
+      sourceRef, itemUid: options?.recordUid ?? 'record-1', status: 1, localState: 'synced' as const,
+    })),
   }
 }
 
@@ -215,5 +223,27 @@ describe('Jotmo conversation tools', () => {
       expect.objectContaining({ type: 'text' }),
       expect.objectContaining({ type: 'image', attachment: expect.objectContaining({ attachmentId: 'attachment-1' }) }),
     ]))
+  })
+
+  it('exposes unified list, read, and explicit-send tools', async () => {
+    const service = fakeService()
+    const tools = createJotmoToolDefinitions(service)
+    const list = tools.find(definition => definition.name === 'jotmo_sources_list')!
+    const read = tools.find(definition => definition.name === 'jotmo_source_read')!
+    const send = tools.find(definition => definition.name === 'jotmo_text_send')!
+    const signal = new AbortController().signal
+
+    await expect(list.execute({ directory: 'root' }, { signal } as never)).resolves.toContain('<data_from_jotmo>')
+    await expect(read.execute({ source_ref: 'source-1' }, { signal } as never)).resolves.toContain('小林')
+    await expect(send.execute(
+      { source_ref: 'source-1', text: '你好' },
+      { callId: 'source-send-call', signal } as never,
+    )).resolves.toContain('localState')
+    expect(service.listSources).toHaveBeenCalledWith('root', expect.objectContaining({ limit: 30 }))
+    expect(service.readSource).toHaveBeenCalledWith('source-1', expect.objectContaining({ limit: 30 }))
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-1', '你好', expect.objectContaining({
+      recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    }))
   })
 })

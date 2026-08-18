@@ -91,6 +91,35 @@ describe('Jotmo SDK', () => {
     expect(() => createJotmoSdk({ route: 'https://example.com/api' })).toThrow(/same-origin/)
   })
 
+  it('exposes unified source directory, timeline, and send operations', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createJotmoSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'sources.list') return success({ directory: 'root', items: [], hasMore: false })
+        if (request.operation === 'source.timeline') return success({
+          source: { sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
+          items: [], hasMore: false,
+        })
+        if (request.operation === 'source.send-text') return success({
+          sourceRef: 'source-1', itemUid: request.params?.recordUid, status: 1, localState: 'synced',
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.listSources('root')).resolves.toMatchObject({ directory: 'root' })
+    await expect(sdk.readSource('source-1')).resolves.toMatchObject({ source: { displayName: '小林' } })
+    await expect(sdk.sendText('source-1', '你好', { recordUid: 'record-1', relationUid: 'rel-1' }))
+      .resolves.toMatchObject({ itemUid: 'record-1' })
+    expect(calls).toMatchObject([
+      { operation: 'sources.list', params: { directory: 'root' } },
+      { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
+      { operation: 'source.send-text', params: { sourceRef: 'source-1', textContent: '你好', recordUid: 'record-1', relationUid: 'rel-1' } },
+    ])
+  })
+
   it('notifies subscribers only when auth identity or revision changes', async () => {
     vi.useFakeTimers()
     const states: JotmoProviderState[] = [

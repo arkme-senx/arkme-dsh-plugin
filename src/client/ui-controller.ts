@@ -1,10 +1,14 @@
+import type { JotmoSourceItem } from '../types.js'
+
 export interface JotmoUiState {
   open: boolean
   authRevision: number
+  mode: 'login' | 'source'
+  selectedSource?: JotmoSourceItem
 }
 
 export class JotmoUiController {
-  private state: JotmoUiState = { open: false, authRevision: 0 }
+  private state: JotmoUiState = { open: false, authRevision: 0, mode: 'login' }
   private readonly listeners = new Set<() => void>()
 
   readonly getSnapshot = (): JotmoUiState => this.state
@@ -23,11 +27,22 @@ export class JotmoUiController {
   }
 
   authChanged(): void {
-    this.publish({ ...this.state, authRevision: this.state.authRevision + 1 })
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, mode: 'login', authRevision: this.state.authRevision + 1 })
+  }
+
+  showLogin(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, mode: 'login' })
+  }
+
+  selectSource(source: JotmoSourceItem): void {
+    this.publish({ ...this.state, open: true, mode: 'source', selectedSource: source })
   }
 
   private publish(next: JotmoUiState): void {
-    if (next.open === this.state.open && next.authRevision === this.state.authRevision) return
+    if (next.open === this.state.open && next.authRevision === this.state.authRevision
+      && next.mode === this.state.mode && next.selectedSource?.sourceRef === this.state.selectedSource?.sourceRef) return
     this.state = next
     for (const listener of this.listeners) listener()
   }

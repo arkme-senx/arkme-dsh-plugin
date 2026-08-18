@@ -105,6 +105,9 @@ export interface JotmoProviderCapabilities {
     revisionPolling: true
     userProfile: true
     imageRead: true
+    sourceDirectory: true
+    sourceTimeline: true
+    sourceTextSend: true
   }
   limits: {
     maxTextLength: number
@@ -149,6 +152,60 @@ export interface JotmoUserProfileSnapshot {
   revision: number
 }
 
+export type JotmoSourceKind = 'default_category' | 'topic' | 'private_chat' | 'group_chat'
+export type JotmoSourceDirectory = 'root' | 'send_to_self'
+
+export interface JotmoSourceItem {
+  sourceRef: string
+  kind: JotmoSourceKind
+  displayName: string
+  avatarRef?: string
+  latestPreview?: string
+  activeAtMillis: number
+  unreadCount: number
+  recordCount?: number
+}
+
+export interface JotmoSourceList {
+  directory: JotmoSourceDirectory
+  items: JotmoSourceItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoTimelineCursor {
+  sendAtMillis?: number
+  itemUid?: string
+  beforeSequence?: number
+}
+
+export interface JotmoTimelineItem {
+  itemUid: string
+  senderName: string
+  isMe: boolean
+  sendAtMillis: number
+  title: string
+  textContent: string
+  status: number
+  sequence?: number
+}
+
+export interface JotmoTimelinePage {
+  source: JotmoSourceItem
+  items: JotmoTimelineItem[]
+  hasMore: boolean
+  nextCursor?: JotmoTimelineCursor
+}
+
+export interface JotmoSourceSendResult {
+  sourceRef: string
+  itemUid: string
+  status: number
+  sequence?: number
+  localState: 'synced' | 'failed'
+  error?: string
+}
+
 export interface JotmoProviderState {
   contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
   environment: JotmoEnvironment
@@ -178,6 +235,9 @@ export type JotmoPluginOperation =
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
+  | 'sources.list'
+  | 'source.timeline'
+  | 'source.send-text'
 
 export interface JotmoPluginRequest {
   operation: JotmoPluginOperation

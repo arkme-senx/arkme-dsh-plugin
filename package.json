@@ -37,8 +37,7 @@
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-sidebar",
-        "@deepseek-ai/dsh-client-ui-workspace"
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ],
       "platform": "web"
     }
@@ -62,7 +61,6 @@
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.5",
-    "@deepseek-ai/dsh-client-ui-workspace": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.5",
@@ -80,7 +78,6 @@
     "@deepseek-ai/dsh-client-ui-settings": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/client/ui-settings",
     "@deepseek-ai/dsh-client-ui-sidebar": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/client/ui-sidebar",
     "@deepseek-ai/dsh-client-ui-slots": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/client/ui-slots",
-    "@deepseek-ai/dsh-client-ui-workspace": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/client/ui-workspace",
     "@deepseek-ai/dsh-host-webserver": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/host/webserver",
     "@deepseek-ai/dsh-llm": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/llm/llm",
     "@deepseek-ai/dsh-system-prompt": "link:../dsh-worktrees/jotmo-virtual-workspace/packages/core/system-prompt",
