@@ -8,6 +8,7 @@
         chatBaseUrl: https://chat.jotmo.cc
         audioBaseUrl: https://audio.jotmo.cc
         worldBaseUrl: https://world.jotmo.cc
+        relationBaseUrl: https://relation.jotmo.cc
         routePath: /jotmo-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000

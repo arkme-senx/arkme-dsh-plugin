@@ -89,6 +89,7 @@ const config: JotmoServiceConfig = {
   chatBaseUrl: 'https://chat.test',
   audioBaseUrl: 'https://audio.test',
   worldBaseUrl: 'https://world.test',
+  relationBaseUrl: 'https://relation.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -1042,6 +1043,135 @@ describe('JotmoService', () => {
       textContent: 'conversation note',
       attempts: 1,
     }])
+  })
+
+  it('queries every supported imported-WeChat capability through the Relation owner', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown>; authorization: string | null }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body, authorization: new Headers(init?.headers).get('Authorization') })
+      if (url.endsWith('/wechat-import-conversations/list')) return json({ code: 200, data: {
+        conversations: [
+          {
+            import_session_key: 'session-mom', name: '妈妈', remark: '妈妈', nickname: 'Alice',
+            ext_is_group: false, message_count: 42, last_send_at: 200,
+          },
+          {
+            import_session_key: 'session-group', name: '家人群', ext_is_group: true,
+            message_count: 80, last_send_at: 190, bound_chat_session_uid: 'bound-chat',
+          },
+        ],
+        total: 2, has_more: false, next_offset: 2,
+      } })
+      if (url.endsWith('/wechat-import-conversation-records/list')) return json({ code: 200, data: {
+        records: [{
+          content: '周末回家吃饭', sender_display_name: '妈妈', sender_is_self: false,
+          send_at: 180, msg_type: 1, media_path: 'image.jpg', media_duration: 3, mime_type: 'image/jpeg',
+        }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-conversation-detail')) return json({ code: 200, data: {
+        name: '妈妈', remark: '妈妈', nickname: 'Alice', ext_is_group: false,
+        wechat_alias: 'alice', wechat_id: 'wx-alice', message_count: 42,
+        voice_count: 2, image_count: 3, emoji_count: 4, video_count: 5,
+        first_send_at: 10, last_send_at: 200, imported_at: 300, common_group_count: 2,
+      } })
+      if (url.endsWith('/wechat-import-group-members/list')) return json({ code: 200, data: {
+        members: [{ name: '我', message_count: 10, is_self: true, is_in_group: true }],
+        inactive_speakers: [{ name: '已退群成员', message_count: 2, last_send_at: 100, is_in_group: false }],
+        total_speakers: 2,
+      } })
+      if (url.endsWith('/wechat-import-phones/list')) return json({ code: 200, data: {
+        phones: [{
+          phone: '13800138000', likely_owner: '妈妈', confidence: 0.9, reason: '聊天上下文',
+          record_count: 2, last_send_at: 170, is_registered: true, registered_nick_name: 'Alice',
+          phone_location_label: '浙江 杭州', task_status: 'done',
+          evidence: [{ why: '明确提到手机号', content: '电话 13800138000', send_at: 160 }],
+        }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-common-groups/list')) return json({ code: 200, data: {
+        friends: [{ name: '小林', common_group_count: 3, last_send_at: 150, sample_group_keys: ['session-group'] }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-money-flows/list')) return json({ code: 200, data: {
+        records: [{
+          import_session_key: 'session-mom', content: '转账 100 元', sender_display_name: '妈妈',
+          sender_is_self: false, send_at: 140,
+        }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-location-entries')) return json({ code: 200, data: {
+        entry_ls: [{
+          import_session_key: 'session-group', entry_type: 'sent_manual_location', lat: 30.1, lon: 120.2,
+          poi_name: '西湖', address: '杭州', sender_display_name: '妈妈', sender_is_self: false, send_at: 130,
+          conversation: { import_session_key: 'session-group', name: '家人群' },
+        }],
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const conversations = await service.listWechatConversations()
+    expect(conversations.conversations).toMatchObject([
+      { name: '妈妈', isGroup: false, messageCount: 42, isBound: false },
+      { name: '家人群', isGroup: true, messageCount: 80, isBound: true },
+    ])
+    expect(conversations.conversations[0]?.conversationRef).not.toContain('session-mom')
+    const momRef = conversations.conversations[0]!.conversationRef
+    const groupRef = conversations.conversations[1]!.conversationRef
+
+    await expect(service.readWechatMessages(momRef, { messageType: 'image' })).resolves.toMatchObject({
+      conversationRef: momRef,
+      messages: [{ content: '周末回家吃饭', senderName: '妈妈', messageType: 'image', hasMedia: true }],
+    })
+    await expect(service.getWechatConversationDetail(momRef)).resolves.toMatchObject({
+      name: '妈妈', wechatAlias: 'alice', wechatId: 'wx-alice', messageCount: 42,
+    })
+    await expect(service.listWechatGroupMembers(groupRef)).resolves.toMatchObject({
+      members: [{ name: '我', isMe: true, isInGroup: true }, { name: '已退群成员', isInGroup: false }],
+      total: 2,
+    })
+    await expect(service.listWechatPhones()).resolves.toMatchObject({
+      phones: [{ phone: '13800138000', likelyOwner: '妈妈', location: '浙江 杭州', isRegistered: true }],
+    })
+    await expect(service.listWechatCommonGroups()).resolves.toMatchObject({
+      friends: [{ name: '小林', commonGroupCount: 3, sampleConversationRefs: [expect.stringMatching(/^jotmo-wechat-conversation-v1\./)] }],
+    })
+    await expect(service.listWechatMoneyFlows()).resolves.toMatchObject({
+      moneyFlows: [{ content: '转账 100 元', senderName: '妈妈', conversationRef: expect.stringMatching(/^jotmo-wechat-conversation-v1\./) }],
+    })
+    await expect(service.listWechatLocations()).resolves.toMatchObject({
+      locations: [{ conversationName: '家人群', poiName: '西湖', latitude: 30.1, longitude: 120.2 }],
+    })
+    expect(calls.every(call => call.url.startsWith('https://relation.test/api/v1/entity/'))).toBe(true)
+    expect(calls.every(call => call.authorization === 'Bearer access')).toBe(true)
+    expect(calls[0]?.body).toMatchObject({ limit: 30, offset: 0, include_bound: true })
+    expect(calls[1]?.body).toMatchObject({ import_session_key: 'session-mom', msg_type: 1 })
+  })
+
+  it('binds imported-WeChat references and cursors to the current account and query', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async () => json({ code: 200, data: {
+      conversations: [{ import_session_key: 'session-1', name: '会话', message_count: 1 }],
+      total: 2, has_more: true, next_offset: 1,
+    } }))
+    const service = new JotmoService(config, sessions, state, fetchImpl)
+    const page = await service.listWechatConversations({ limit: 1 })
+
+    await expect(service.listWechatPhones({ cursor: page.nextCursor! })).rejects.toMatchObject({
+      code: 'wechat-cursor-invalid',
+    })
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+    await expect(service.getWechatConversationDetail(page.conversations[0]!.conversationRef)).rejects.toMatchObject({
+      code: 'wechat-conversation-ref-invalid',
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('refreshes the short token once after an authenticated 403', async () => {

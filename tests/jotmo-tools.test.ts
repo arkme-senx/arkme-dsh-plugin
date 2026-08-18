@@ -43,6 +43,7 @@ function fakeService(): JotmoConversationReadService & {
         search: true as const, createText: true as const, retryOutbox: true as const, revisionPolling: true as const,
         userProfile: true as const,
         imageRead: true as const,
+        sourceDirectory: true as const, sourceTimeline: true as const, sourceTextSend: true as const,
       },
       limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
     }),
@@ -116,6 +117,21 @@ function fakeService(): JotmoConversationReadService & {
     openRecordingCursor: vi.fn(async () => {
       throw new Error('unexpected cursor')
     }),
+    listWechatConversations: vi.fn(async () => ({ conversations: [], total: 0, hasMore: false })),
+    readWechatMessages: vi.fn(async (conversationRef: string) => ({
+      conversationRef, messages: [], total: 0, hasMore: false,
+    })),
+    getWechatConversationDetail: vi.fn(async (conversationRef: string) => ({
+      conversationRef, name: '妈妈', isGroup: false, messageCount: 0, voiceCount: 0,
+      imageCount: 0, emojiCount: 0, videoCount: 0,
+    })),
+    listWechatGroupMembers: vi.fn(async (conversationRef: string) => ({
+      conversationRef, members: [], total: 0, hasMore: false,
+    })),
+    listWechatPhones: vi.fn(async () => ({ phones: [], total: 0, hasMore: false })),
+    listWechatCommonGroups: vi.fn(async () => ({ friends: [], total: 0, hasMore: false })),
+    listWechatMoneyFlows: vi.fn(async () => ({ moneyFlows: [], total: 0, hasMore: false })),
+    listWechatLocations: vi.fn(async () => ({ locations: [], total: 0, hasMore: false })),
   }
 }
 
@@ -321,13 +337,21 @@ describe('Jotmo conversation tools', () => {
     }))
   })
 
-  it('registers the two all-day recording tools and the private-chat related-recording reader', () => {
+  it('registers the read-only recording, related-recording, and imported-WeChat tools', () => {
     const names = createAllJotmoToolDefinitions(fakeService()).map(tool => tool.name)
 
     expect(names).toEqual(expect.arrayContaining([
       'jotmo_recording_days_list',
       'jotmo_recording_read',
       'jotmo_related_recordings_read',
+      'jotmo_wechat_conversations',
+      'jotmo_wechat_messages',
+      'jotmo_wechat_conversation_detail',
+      'jotmo_wechat_group_members',
+      'jotmo_wechat_phones',
+      'jotmo_wechat_common_groups',
+      'jotmo_wechat_money_flows',
+      'jotmo_wechat_locations',
     ]))
     expect(names).not.toEqual(expect.arrayContaining([
       'jotmo_recording_create',

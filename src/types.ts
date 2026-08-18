@@ -319,6 +319,174 @@ export interface JotmoRelatedRecordingPageOptions {
   signal?: AbortSignal
 }
 
+export type JotmoWechatMessageFilter =
+  | 'all'
+  | 'image'
+  | 'voice'
+  | 'video'
+  | 'emoji'
+  | 'location'
+  | 'location_share'
+  | 'call'
+  | 'chat_record'
+  | 'reply'
+
+export type JotmoWechatCallFilter = 'all' | 'audio' | 'video'
+
+export interface JotmoWechatConversation {
+  /** Account-bound opaque reference used by the other WeChat tools. */
+  conversationRef: string
+  name: string
+  remark?: string
+  nickname?: string
+  isGroup: boolean
+  messageCount: number
+  lastSendAtMillis: number
+  isBound: boolean
+}
+
+export interface JotmoWechatConversationPage {
+  conversations: JotmoWechatConversation[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatMessage {
+  content: string
+  senderName: string
+  isMe: boolean
+  sentAtMillis: number
+  messageType: string
+  hasMedia: boolean
+  mediaDuration?: number
+  mimeType?: string
+}
+
+export interface JotmoWechatMessagePage {
+  conversationRef: string
+  messages: JotmoWechatMessage[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatConversationDetail {
+  conversationRef: string
+  name: string
+  remark?: string
+  nickname?: string
+  isGroup: boolean
+  wechatAlias?: string
+  wechatId?: string
+  messageCount: number
+  voiceCount: number
+  imageCount: number
+  emojiCount: number
+  videoCount: number
+  firstSendAtMillis?: number
+  lastSendAtMillis?: number
+  importedAtMillis?: number
+  commonGroupCount?: number
+  groupOwnerName?: string
+  groupMemberCount?: number
+  groupCommonFriendCount?: number
+}
+
+export interface JotmoWechatGroupMember {
+  name: string
+  messageCount: number
+  lastSendAtMillis?: number
+  isOwner: boolean
+  isFriend: boolean
+  isMe: boolean
+  isInGroup: boolean
+}
+
+export interface JotmoWechatGroupMemberPage {
+  conversationRef: string
+  members: JotmoWechatGroupMember[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatPhoneEvidence {
+  why?: string
+  content?: string
+  sentAtMillis?: number
+}
+
+export interface JotmoWechatPhone {
+  phone: string
+  likelyOwner?: string
+  confidence?: number
+  reason?: string
+  occurrenceCount: number
+  lastSeenAtMillis: number
+  evidence: JotmoWechatPhoneEvidence[]
+  isRegistered: boolean
+  registeredNickname?: string
+  location?: string
+  taskStatus?: string
+}
+
+export interface JotmoWechatPhonePage {
+  phones: JotmoWechatPhone[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatCommonGroupFriend {
+  name: string
+  commonGroupCount: number
+  lastSendAtMillis?: number
+  sampleConversationRefs: string[]
+}
+
+export interface JotmoWechatCommonGroupPage {
+  friends: JotmoWechatCommonGroupFriend[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatMoneyFlow {
+  conversationRef?: string
+  content: string
+  senderName: string
+  isMe: boolean
+  sentAtMillis: number
+}
+
+export interface JotmoWechatMoneyFlowPage {
+  moneyFlows: JotmoWechatMoneyFlow[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatLocation {
+  conversationRef?: string
+  conversationName: string
+  entryType: string
+  latitude: number
+  longitude: number
+  poiName?: string
+  address?: string
+  senderName?: string
+  isMe: boolean
+  sentAtMillis?: number
+}
+
+export interface JotmoWechatLocationPage {
+  locations: JotmoWechatLocation[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
 export interface JotmoRecordingCalendarDay {
   dateStamp: number
   durationMillis: number
