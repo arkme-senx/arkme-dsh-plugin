@@ -1,6 +1,6 @@
 - insert:
     - id: arkme-self
-      name: '@senqisi/dsh-arkme'
+      name: '@senguoyun/dsh-arkme'
       config:
         environment: prod
         authBaseUrl: https://api.jotmo.cc

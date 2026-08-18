@@ -37,8 +37,8 @@ describe('Arkme SDK', () => {
         if (request.operation === 'provider.capabilities') {
           return success({
             contractVersion: 1,
-            provider: '@senqisi/dsh-arkme',
-            sdk: '@senqisi/dsh-arkme/sdk',
+            provider: '@senguoyun/dsh-arkme',
+            sdk: '@senguoyun/dsh-arkme/sdk',
             environment: 'test',
             features: {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,

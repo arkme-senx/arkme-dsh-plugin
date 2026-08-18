@@ -54,8 +54,8 @@ describe('Arkme plugin identity', () => {
     const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
     const tools = readFileSync(join(root, 'src/arkme-tools.ts'), 'utf8')
 
-    expect(manifest.name).toBe('@senqisi/dsh-arkme')
-    expect(patch).toContain("name: '@senqisi/dsh-arkme'")
+    expect(manifest.name).toBe('@senguoyun/dsh-arkme')
+    expect(patch).toContain("name: '@senguoyun/dsh-arkme'")
     expect(patch).toContain('routePath: /arkme-self/api')
     expect(tools).toContain("name: 'arkme_sources_list'")
     expect(tools).toContain("name: 'arkme_source_read'")

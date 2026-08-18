@@ -11,7 +11,7 @@ const CLIENT_EXTERNALS = [
 
 export default defineConfig([
   {
-    name: '@senqisi/dsh-arkme',
+    name: '@senguoyun/dsh-arkme',
     entry: { index: 'src/index.ts' },
     outDir: 'lib',
     format: 'esm',
@@ -22,7 +22,7 @@ export default defineConfig([
     clean: false,
   },
   {
-    name: '@senqisi/dsh-arkme/client',
+    name: '@senguoyun/dsh-arkme/client',
     entry: { client: 'src/client/index.tsx' },
     outDir: 'lib',
     format: 'cjs',
@@ -39,13 +39,13 @@ export default defineConfig([
     },
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "@senqisi/dsh-arkme", factory: (require) => {',
+      banner: 'window.__ModuleLoader__.load({ id: "@senguoyun/dsh-arkme", factory: (require) => {',
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },
   },
   {
-    name: '@senqisi/dsh-arkme/sdk',
+    name: '@senguoyun/dsh-arkme/sdk',
     entry: { sdk: 'src/sdk/index.ts' },
     outDir: 'lib',
     format: 'esm',

@@ -92,8 +92,8 @@ export interface ArkmeCachedQueryResult {
 
 export interface ArkmeProviderCapabilities {
   contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
-  provider: '@senqisi/dsh-arkme'
-  sdk: '@senqisi/dsh-arkme/sdk'
+  provider: '@senguoyun/dsh-arkme'
+  sdk: '@senguoyun/dsh-arkme/sdk'
   environment: ArkmeEnvironment
   features: {
     authStatus: true

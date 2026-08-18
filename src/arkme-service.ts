@@ -328,8 +328,8 @@ export class ArkmeService {
   providerCapabilities(): ArkmeProviderCapabilities {
     return {
       contractVersion: ARKME_PROVIDER_CONTRACT_VERSION,
-      provider: '@senqisi/dsh-arkme',
-      sdk: '@senqisi/dsh-arkme/sdk',
+      provider: '@senguoyun/dsh-arkme',
+      sdk: '@senguoyun/dsh-arkme/sdk',
       environment: this.config.environment,
       features: {
         authStatus: true,

@@ -166,7 +166,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
       'Require human confirmation before installing generated executable plugin code.',
     ],
     lifecycle: [
-      'Declare @senqisi/dsh-arkme as a dependency.',
+      'Declare @senguoyun/dsh-arkme as a dependency.',
       'Build and validate the generated consumer in isolation.',
       'Preview before adding it to a DSH profile.',
       'Uninstalling the consumer must not delete Provider cache or credentials.',

@@ -29,10 +29,10 @@ DSH 的 Footer action 容器默认横排；当 Cordis Runner 等插件占满整�
 
 ## Headless Provider / Consumer SDK
 
-独立 UI 插件通过 `@senqisi/dsh-arkme/sdk` 读取 Arkme Provider，不依赖本插件的 React 页面：
+独立 UI 插件通过 `@senguoyun/dsh-arkme/sdk` 读取 Arkme Provider，不依赖本插件的 React 页面：
 
 ```ts
-import { createArkmeSdk } from '@senqisi/dsh-arkme/sdk'
+import { createArkmeSdk } from '@senguoyun/dsh-arkme/sdk'
 
 const arkme = createArkmeSdk()
 const capabilities = await arkme.capabilities()
@@ -54,7 +54,7 @@ Host 侧受信任插件可以声明 `inject: ['arkmeData']` 并使用 `ctx.arkme
 
 ## 运行身份与服务 owner
 
-插件使用独立的 `@senqisi/dsh-arkme` 包名、`/arkme-self/api` 本机路由、Arkme Keychain 前缀和 Arkme 状态目录，不读取旧插件的凭据或本地缓存。
+插件使用独立的 `@senguoyun/dsh-arkme` 包名、`/arkme-self/api` 本机路由、Arkme Keychain 前缀和 Arkme 状态目录，不读取旧插件的凭据或本地缓存。
 
 按当前部署要求，正式环境的业务服务 owner 域名保持不变：Auth 使用 `https://api.jotmo.cc`，Record 使用 `https://record.jotmo.cc`，Chat 使用 `https://chat.jotmo.cc`。
 
@@ -67,6 +67,13 @@ pnpm run build
 ```
 
 安装到本机 DSH Web profile：
+
+```sh
+DSH_HOME=<arkme-dsh-home> dsh plugin --profile web add @senguoyun/dsh-arkme
+DSH_HOME=<arkme-dsh-home> dsh web --port 3081
+```
+
+从本地源码检出安装用于开发：
 
 ```sh
 cd <deepseek-harness-checkout>

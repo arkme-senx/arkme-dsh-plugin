@@ -142,8 +142,8 @@ describe('ArkmeService', () => {
 
     expect(service.providerCapabilities()).toMatchObject({
       contractVersion: 1,
-      provider: '@senqisi/dsh-arkme',
-      sdk: '@senqisi/dsh-arkme/sdk',
+      provider: '@senguoyun/dsh-arkme',
+      sdk: '@senguoyun/dsh-arkme/sdk',
       features: { cachedSnapshot: true, revisionPolling: true, userProfile: true, imageRead: true },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })

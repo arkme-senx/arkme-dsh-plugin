@@ -28,8 +28,8 @@ function fakeService(): ArkmeConversationReadService & {
   return {
     providerCapabilities: () => ({
       contractVersion: 1,
-      provider: '@senqisi/dsh-arkme' as const,
-      sdk: '@senqisi/dsh-arkme/sdk' as const,
+      provider: '@senguoyun/dsh-arkme' as const,
+      sdk: '@senguoyun/dsh-arkme/sdk' as const,
       environment: 'test' as const,
       features: {
         authStatus: true as const, cachedSnapshot: true as const, remoteRefresh: true as const,
@@ -134,7 +134,7 @@ describe('Arkme conversation tools', () => {
     const tool = createArkmeToolDefinitions(service).find(definition => definition.name === 'arkme_plugin_contract')!
     const output = await tool.execute({}, { signal: new AbortController().signal } as never) as string
     expect(output).toContain('"contractVersion": 1')
-    expect(output).toContain('@senqisi/dsh-arkme/sdk')
+    expect(output).toContain('@senguoyun/dsh-arkme/sdk')
     expect(output).toContain('createArkmeSdk')
     expect(output).toContain('readImage')
     expect(consumerPluginContract(service.providerCapabilities())).toBe(output)
