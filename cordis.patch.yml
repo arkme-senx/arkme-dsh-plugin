@@ -6,6 +6,8 @@
         authBaseUrl: https://jotmo.senguo.me
         recordBaseUrl: https://jotmo-record.senguo.me
         chatBaseUrl: https://jotmo-chat.senguo.me
+        dataBaseUrl: https://jotmo-data.senguo.me
+        webrtcBaseUrl: https://jotmo-webrtc.senguo.me
         routePath: /jotmo-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000

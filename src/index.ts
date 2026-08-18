@@ -16,6 +16,8 @@ export interface Config {
   authBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
+  dataBaseUrl: string
+  webrtcBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -31,6 +33,8 @@ export const Config: Schema<Config> = Schema.object({
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
+  dataBaseUrl: Schema.string().default('https://jotmo-data.senguo.me'),
+  webrtcBaseUrl: Schema.string().default('https://jotmo-webrtc.senguo.me'),
   routePath: Schema.string().default('/jotmo-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -52,7 +56,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  validateConfig(ctx, config)
+  validateJotmoConfig(config, ctx.webServer.host)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'jotmo-self', config.environment)
   const stateStore = new JotmoStateStore(stateDirectory)
@@ -74,11 +78,11 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info('dsh-jotmo: mounted %s for %s environment', config.routePath, config.environment)
 }
 
-function validateConfig(ctx: Context, config: Config): void {
+export function validateJotmoConfig(config: Config, webServerHost: string): void {
   if (config.environment === 'prod' && !config.allowProduction) {
     throw new Error('dsh-jotmo: production environment requires allowProduction: true')
   }
-  if (!config.allowNonLoopback && ctx.webServer.host !== '127.0.0.1') {
+  if (!config.allowNonLoopback && webServerHost !== '127.0.0.1') {
     throw new Error('dsh-jotmo: Web UI must bind 127.0.0.1 unless allowNonLoopback is true')
   }
   if (!/^\/[A-Za-z0-9/_-]+$/.test(config.routePath) || config.routePath.endsWith('/')) {
@@ -91,6 +95,8 @@ function validateConfig(ctx: Context, config: Config): void {
     ['authBaseUrl', config.authBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
+    ['dataBaseUrl', config.dataBaseUrl],
+    ['webrtcBaseUrl', config.webrtcBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -101,6 +107,16 @@ function validateConfig(ctx: Context, config: Config): void {
 
 export type {
   JotmoAuthSnapshot,
+  JotmoCallDetail,
+  JotmoCallDirection,
+  JotmoCallList,
+  JotmoCallListItem,
+  JotmoCallMediaType,
+  JotmoCallParticipant,
+  JotmoCallSectionState,
+  JotmoCallTextSection,
+  JotmoCallTranscriptItem,
+  JotmoCallTranscriptSection,
   JotmoCachedQueryResult,
   JotmoCachedSnapshot,
   JotmoConversationWriteResult,

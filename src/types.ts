@@ -90,6 +90,73 @@ export interface JotmoCachedQueryResult {
   revision: number
 }
 
+export type JotmoCallMediaType = 'audio' | 'video' | 'unknown'
+export type JotmoCallDirection = 'incoming' | 'outgoing' | 'group' | 'unknown'
+export type JotmoCallSectionState = 'ready' | 'empty' | 'processing' | 'failed'
+
+export interface JotmoCallListItem {
+  callRef: string
+  displayName: string
+  participantCount: number
+  mediaType: JotmoCallMediaType
+  direction: JotmoCallDirection
+  connected: boolean
+  startedAtMillis: number
+  acceptedAtMillis: number
+  endedAtMillis: number
+  durationMillis: number
+  summaryState: JotmoCallSectionState
+  summaryPreview: string
+}
+
+export interface JotmoCallList {
+  items: JotmoCallListItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoCallParticipant {
+  displayName: string
+  isSelf: boolean
+  connected: boolean
+}
+
+export interface JotmoCallTranscriptItem {
+  itemId: string
+  startOffsetMillis: number
+  endOffsetMillis: number
+  speakerLabel: string
+  isSelf: boolean
+  text: string
+}
+
+export interface JotmoCallTextSection {
+  state: JotmoCallSectionState
+  content: string
+  message: string
+}
+
+export interface JotmoCallTranscriptSection {
+  state: JotmoCallSectionState
+  items: JotmoCallTranscriptItem[]
+  message: string
+}
+
+export interface JotmoCallDetail {
+  callRef: string
+  displayName: string
+  participants: JotmoCallParticipant[]
+  mediaType: JotmoCallMediaType
+  direction: JotmoCallDirection
+  connected: boolean
+  startedAtMillis: number
+  acceptedAtMillis: number
+  endedAtMillis: number
+  durationMillis: number
+  summary: JotmoCallTextSection
+  transcript: JotmoCallTranscriptSection
+}
+
 export interface JotmoProviderCapabilities {
   contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
   provider: '@senqisi/dsh-jotmo'
@@ -108,6 +175,8 @@ export interface JotmoProviderCapabilities {
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
+    callHistory: true
+    callDetail: true
   }
   limits: {
     maxTextLength: number
@@ -243,6 +312,8 @@ export type JotmoPluginOperation =
   | 'sources.list'
   | 'source.timeline'
   | 'source.send-text'
+  | 'calls.list'
+  | 'calls.detail'
 
 export interface JotmoPluginRequest {
   operation: JotmoPluginOperation

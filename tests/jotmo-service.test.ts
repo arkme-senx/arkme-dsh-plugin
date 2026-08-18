@@ -87,6 +87,8 @@ const config: JotmoServiceConfig = {
   authBaseUrl: 'https://auth.test',
   recordBaseUrl: 'https://record.test',
   chatBaseUrl: 'https://chat.test',
+  dataBaseUrl: 'https://data.test',
+  webrtcBaseUrl: 'https://webrtc.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -144,7 +146,14 @@ describe('JotmoService', () => {
       contractVersion: 1,
       provider: '@senqisi/dsh-jotmo',
       sdk: '@senqisi/dsh-jotmo/sdk',
-      features: { cachedSnapshot: true, revisionPolling: true, userProfile: true, imageRead: true },
+      features: {
+        cachedSnapshot: true,
+        revisionPolling: true,
+        userProfile: true,
+        imageRead: true,
+        callHistory: true,
+        callDetail: true,
+      },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })
     await expect(service.providerState()).resolves.toEqual({

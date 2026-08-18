@@ -60,6 +60,8 @@ export interface JotmoServiceConfig {
   authBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
+  dataBaseUrl: string
+  webrtcBaseUrl: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -344,6 +346,8 @@ export class JotmoService {
         sourceDirectory: true,
         sourceTimeline: true,
         sourceTextSend: true,
+        callHistory: true,
+        callDetail: true,
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
