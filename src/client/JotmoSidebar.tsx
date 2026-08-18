@@ -9,6 +9,7 @@ import type {
 } from '../types.js'
 import { callJotmo, JotmoClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
+import { JotmoCallHistorySurface } from './JotmoCallHistorySurface.js'
 import { JotmoMark } from './JotmoFooterAction.js'
 import { loadJotmoImageDataUrl } from './JotmoVirtualWorkspace.js'
 import { jotmoUi } from './ui-controller.js'
@@ -307,7 +308,7 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
               <a href="https://www.jiwo.cc/article/privacy-aggrement-v1.html" target="_blank" rel="noreferrer">《隐私政策》</a>
             </label>
           </div></div></div>
-        ) : source === undefined ? <div style={styles.body} /> : <>
+        ) : ui.mode === 'calls' ? <JotmoCallHistorySurface /> : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />

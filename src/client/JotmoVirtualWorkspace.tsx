@@ -83,6 +83,10 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', left: 10, top: 17, width: 18, height: 14, borderRadius: 7,
     background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
   },
+  callAvatar: {
+    width: 44, height: 44, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
+    background: '#e4f6ec', color: '#16824c', fontSize: 20, lineHeight: 1,
+  },
   topicRow: {
     position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
     display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', boxSizing: 'border-box',
@@ -307,6 +311,7 @@ export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: Jot
   }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
 
   const showLogin = () => { jotmoUi.showLogin(); onActivateSurface?.() }
+  const showCalls = () => { jotmoUi.showCalls(); onActivateSurface?.() }
   const changeDirectory = (next: JotmoSourceDirectory) => {
     setDirectory(next)
     setSources(cacheRef.current?.sources[next] ?? [])
@@ -340,11 +345,15 @@ export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: Jot
     >
       {directory === 'root' && <>
         <button
-          type="button" role="treeitem" aria-selected={isSendToSelfSource(ui.selectedSource)}
-          style={{ ...styles.chatRow, ...(isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
+          type="button" role="treeitem" aria-selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
+          style={{ ...styles.chatRow, ...(ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={() => {
+            const selectedSource = ui.selectedSource
             changeDirectory('send_to_self')
-            if (isSendToSelfSource(ui.selectedSource)) onActivateSurface?.()
+            if (selectedSource !== undefined && isSendToSelfSource(selectedSource)) {
+              jotmoUi.selectSource(selectedSource)
+              onActivateSurface?.()
+            }
           }}
         >
           <SelfAvatar />
@@ -353,8 +362,19 @@ export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: Jot
             <span style={styles.chatBottom}><span style={styles.preview}>默认分类与主题</span></span>
           </span>
         </button>
+        <button
+          type="button" role="treeitem" aria-selected={ui.mode === 'calls'}
+          style={{ ...styles.chatRow, ...(ui.mode === 'calls' ? styles.chatRowActive : {}) }}
+          onClick={showCalls}
+        >
+          <span style={styles.callAvatar} aria-hidden>☎</span>
+          <span style={styles.chatContent}>
+            <span style={styles.chatTop}><span style={styles.chatName}>通话记录</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>转录与 AI 摘要</span></span>
+          </span>
+        </button>
         {sources.map(source => {
-          const selected = ui.selectedSource?.sourceRef === source.sourceRef
+          const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
@@ -375,7 +395,7 @@ export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: Jot
       </>}
 
       {directory === 'send_to_self' && sources.map(source => {
-        const selected = ui.selectedSource?.sourceRef === source.sourceRef
+        const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
         return <button
           key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
           style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }} onClick={() => { selectSource(source) }}

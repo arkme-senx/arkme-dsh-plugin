@@ -32,6 +32,18 @@ export function mergeCallListItems(
   return result
 }
 
+export function nextSelectedCallRef(
+  current: string | undefined,
+  items: readonly Pick<JotmoCallListItem, 'callRef'>[],
+): string | undefined {
+  if (current !== undefined && items.some(item => item.callRef === current)) return current
+  return items[0]?.callRef
+}
+
+export function isCurrentCallRequest(requestGeneration: number, currentGeneration: number): boolean {
+  return requestGeneration === currentGeneration
+}
+
 export function formatCallDuration(value: number): string {
   const totalSeconds = Math.max(0, Math.floor((Number.isFinite(value) ? value : 0) / 1_000))
   const hours = Math.floor(totalSeconds / 3_600)

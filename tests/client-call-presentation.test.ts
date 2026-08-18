@@ -4,7 +4,9 @@ import {
   callMediaLabel,
   formatCallDuration,
   formatCallTime,
+  isCurrentCallRequest,
   mergeCallListItems,
+  nextSelectedCallRef,
   sectionStatusMessage,
 } from '../src/client/call-presentation.js'
 import type { JotmoCallListItem } from '../src/types.js'
@@ -66,5 +68,18 @@ describe('call history client presentation', () => {
     expect(sectionStatusMessage('transcript', 'empty')).toBe('暂无转录内容')
     expect(sectionStatusMessage('transcript', 'processing')).toBe('通话转录处理中')
     expect(sectionStatusMessage('transcript', 'failed')).toBe('通话转录失败')
+  })
+
+  it('keeps a valid selection and otherwise selects the first call', () => {
+    const calls = [call('call-a', '小林'), call('call-b', '阿青')]
+    expect(nextSelectedCallRef(undefined, calls)).toBe('call-a')
+    expect(nextSelectedCallRef('call-a', calls)).toBe('call-a')
+    expect(nextSelectedCallRef('missing', calls)).toBe('call-a')
+    expect(nextSelectedCallRef('call-a', [])).toBeUndefined()
+  })
+
+  it('accepts state updates only from the current request generation', () => {
+    expect(isCurrentCallRequest(3, 3)).toBe(true)
+    expect(isCurrentCallRequest(2, 3)).toBe(false)
   })
 })
