@@ -89,6 +89,9 @@ const config: JotmoServiceConfig = {
   chatBaseUrl: 'https://chat.test',
   dataBaseUrl: 'https://data.test',
   webrtcBaseUrl: 'https://webrtc.test',
+  audioBaseUrl: 'https://audio.test',
+  worldBaseUrl: 'https://world.test',
+  relationBaseUrl: 'https://relation.test',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -102,6 +105,424 @@ function json(data: unknown, status = 200): Response {
 }
 
 describe('JotmoService', () => {
+  it('reads the public World feed through a safe text-only projection', async () => {
+    const sessions = new MemorySessionStore()
+    const state = new MemoryStateStore()
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
+      expect(new Headers(init?.headers).get('Authorization')).toBeNull()
+      expect(JSON.parse(String(init?.body))).toEqual({ limit: 2, offset: 4 })
+      return json({ code: 200, data: { total: 7, list: [{
+        record_uid: 'internal-record-1',
+        user_id: 90001,
+        nick_name: '世界用户',
+        text_content: '公开快记正文',
+        tags: ['生活'],
+        images: ['https://signed.example/image'],
+        videos: [],
+        voices: [],
+        created_at: 100,
+        published_at: 200,
+        extend_count: 3,
+      }] } })
+    })
+
+    await expect(service.listWorldRecords({ limit: 2, offset: 4 })).resolves.toEqual({
+      items: [{
+        authorName: '世界用户',
+        headline: '',
+        textContent: '公开快记正文',
+        tags: ['生活'],
+        templateKind: 0,
+        createdAtMillis: 100,
+        publishedAtMillis: 200,
+        imageCount: 1,
+        videoCount: 0,
+        voiceCount: 0,
+        extendCount: 3,
+      }],
+      total: 7,
+      hasMore: true,
+      nextOffset: 5,
+    })
+  })
+
+  it('saves a text note before publishing it to World', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/auth/get-user-info')) {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', head_img: 'avatar-ref', phone: '13800138000' } })
+      }
+      if (url.endsWith('/api/public/v1/public-record/status-batch')) {
+        return json({ code: 200, data: { items: [{ record_uid: Array.isArray(body.record_uids) ? body.record_uids[0] : '', is_public: false }] } })
+      }
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/public-record/publish')) {
+        return json({ code: 200, data: { record_uid: body.record_uid, check_status: 2 } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const recordUid = 'c3b246b9-2c13-58d4-a97f-3c00c4096be4'
+
+    await expect(service.publishWorldTextForConversation(recordUid, '今天很好 #生活')).resolves.toEqual({
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: true,
+      visibility: 'visible',
+      checkStatus: 2,
+      retryable: false,
+    })
+    expect(calls.map(call => call.url)).toEqual([
+      'https://auth.test/api/v1/auth/get-user-info',
+      'https://world.test/api/public/v1/public-record/status-batch',
+      'https://record.test/api/v1/records/create',
+      'https://world.test/api/v1/public-record/publish',
+    ])
+    expect(calls[3]?.body).toMatchObject({
+      record_uid: recordUid,
+      content: '今天很好 #生活',
+      text_content: '今天很好 #生活',
+      tags: ['生活'],
+      nick_name: '昵称',
+      avatar: 'avatar-ref',
+      template_kind: 1,
+    })
+  })
+
+  it('reports a private save when World publishing fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    let statusChecks = 0
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/auth/get-user-info')) {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', phone: '13800138000' } })
+      }
+      if (url.endsWith('/api/public/v1/public-record/status-batch')) {
+        statusChecks += 1
+        return json({ code: 200, data: { items: [{ record_uid: Array.isArray(body.record_uids) ? body.record_uids[0] : '', is_public: false }] } })
+      }
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/public-record/publish')) return json({ code: 10005, message: '服务繁忙' })
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.publishWorldTextForConversation(
+      'd7924b0c-8421-58ea-80a5-c61f08ac3eaf',
+      '先保存再尝试公开',
+    )).resolves.toEqual({
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: false,
+      visibility: 'not_published',
+      checkStatus: 0,
+      retryable: true,
+      error: '服务繁忙',
+    })
+    expect(statusChecks).toBe(2)
+  })
+
+  it('does not create a Record when the account has no bound phone', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: string[] = []
+    const service = new JotmoService(config, sessions, state, async (input) => {
+      requests.push(String(input))
+      return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', phone: '' } })
+    })
+
+    await expect(service.publishWorldTextForConversation(
+      '27ab8607-70d4-52f7-a19d-e5adf87fbb8d',
+      '需要手机号才能公开',
+    )).resolves.toEqual({
+      recordSaved: false,
+      recordState: 'not_saved',
+      worldPublished: false,
+      visibility: 'not_published',
+      checkStatus: 0,
+      retryable: false,
+      error: '请先在即我客户端绑定手机号，再发到世界',
+    })
+    expect(requests).toEqual(['https://auth.test/api/v1/auth/get-user-info'])
+  })
+
+  it('confirms a committed World publish after the response is lost', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    let statusChecks = 0
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/auth/get-user-info')) {
+        return json({ code: 200, data: { user_id: 10001, nick_name: '昵称', phone: '13800138000' } })
+      }
+      if (url.endsWith('/api/public/v1/public-record/status-batch')) {
+        statusChecks += 1
+        return json({ code: 200, data: {
+          items: [{ record_uid: Array.isArray(body.record_uids) ? body.record_uids[0] : '', is_public: statusChecks > 1 }],
+        } })
+      }
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/public-record/publish')) throw new TypeError('response lost')
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.publishWorldTextForConversation(
+      '437abbd0-1390-54d8-b2ad-f3b33cd12c7c',
+      '响应丢失但服务端已提交',
+    )).resolves.toEqual({
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: true,
+      visibility: 'unknown',
+      checkStatus: 0,
+      retryable: false,
+    })
+    expect(statusChecks).toBe(2)
+  })
+
+  it('reads the recording calendar from the Audio origin with bearer authorization', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://audio.test/api/v1/audio/get-calender-summary')
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
+      expect(JSON.parse(String(init?.body))).toEqual({ from_stamp: 1_700_000_000_000, to_stamp: 1_700_172_800_000 })
+      return json({ code: 200, data: {
+        duration_ls: [0, 90_000],
+        un_click_session_ids_per_day: [[], ['session-1', 'session-2']],
+      } })
+    })
+    const service = new JotmoService(config, sessions, state, fetchImpl)
+
+    await expect(service.recordingCalendar(1_700_000_000_000, 1_700_172_800_000)).resolves.toEqual({
+      fromStamp: 1_700_000_000_000,
+      toStamp: 1_700_172_800_000,
+      days: [
+        { dateStamp: 1_700_000_000_000, durationMillis: 0, hasRecording: false, unreviewedCount: 0 },
+        { dateStamp: 1_700_086_400_000, durationMillis: 90_000, hasRecording: true, unreviewedCount: 2 },
+      ],
+    })
+  })
+
+  it('loads recording day sections independently and refreshes an expired Audio bearer', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'expired', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization: string; body: Record<string, unknown> }> = []
+    let rejected = false
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const authorization = new Headers(init?.headers).get('Authorization') ?? ''
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, authorization, body })
+      if (url === 'https://audio.test/api/v1/audio/one-day-trans-v2' && !rejected) {
+        rejected = true
+        return json({}, 401)
+      }
+      if (url === 'https://auth.test/api/public/v1/auth/new-short') {
+        return json({ code: 200, data: { access_token: 'renewed' } })
+      }
+      if (url.endsWith('/api/v1/audio/one-day-trans-v2')) {
+        return json({ code: 200, data: {
+          session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
+            spk_ls: [{ num: 1, spk_id: 'speaker-1', label: '' }] }],
+          child_ls: [{ id: 'child-1', session_id: 'session-1', start_at: 500,
+            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', effective_spk_id: 'speaker-1', b: 0 }] }],
+        } })
+      }
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 10001, nick_name: '本人' }] } })
+      }
+      if (url.endsWith('/api/v1/summary/list-timeline-by-range') && body.kind === 1) {
+        return json({ code: 200, data: { audio_summary_ls: [
+          { id: 'timeline-1', kind: 1, status: 2, update_at: dayStamp + 5_000, answer: '09:00-09:30 早会' },
+        ] } })
+      }
+      if (url.endsWith('/api/v1/summary/list-timeline-by-range') && body.kind === 2) {
+        return json({ code: 500, message: '总结服务暂不可用' })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const day = await service.recordingDay(dayStamp)
+    expect(day).toMatchObject({
+      dateStamp: dayStamp,
+      totalDurationMillis: 6_000,
+      transcript: { state: 'ready', items: [{ speakerLabel: '说话人 1', startAtMillis: dayStamp + 1_600 }] },
+      timeline: { state: 'ready', items: [{ id: 'timeline-1', selectable: true }] },
+      summary: { state: 'error', items: [] },
+    })
+    expect(sessions.session?.accessToken).toBe('renewed')
+    expect(requests.filter(item => item.url.endsWith('/one-day-trans-v2')).map(item => item.authorization))
+      .toEqual(['Bearer expired', 'Bearer renewed'])
+    expect(requests.filter(item => item.url.endsWith('/list-timeline-by-range')).map(item => item.body.kind).sort())
+      .toEqual([1, 2])
+  })
+
+  it('loads only transcript and speaker endpoints for a transcript query', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const urls: string[] = []
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const service = new JotmoService(config, sessions, state, async (input) => {
+      const url = String(input)
+      urls.push(url)
+      if (url.endsWith('/api/v1/audio/one-day-trans-v2')) {
+        return json({ code: 200, data: { session_ls: [], child_ls: [] } })
+      }
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 200, data: { spk_ls: [] } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.recordingTranscript(dayStamp)).resolves.toEqual({
+      state: 'empty',
+      items: [],
+      message: '当天无录音',
+      identityCoverage: 'complete',
+      totalDurationMillis: 0,
+    })
+    expect(urls).toEqual([
+      'https://audio.test/api/v1/audio/one-day-trans-v2',
+      'https://audio.test/api/v1/audio/get-speaker-ls',
+    ])
+  })
+
+  it.each([
+    ['summary' as const, 2],
+    ['timeline' as const, 1],
+  ])('loads only the %s endpoint for a projection query', async (kind, apiKind) => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      return json({ code: 200, data: { audio_summary_ls: [] } })
+    })
+
+    await expect(service.recordingProjection(dayStamp, kind)).resolves.toEqual({
+      state: 'empty',
+      items: [],
+      message: '暂无已生成内容',
+    })
+    expect(requests).toEqual([{
+      url: 'https://audio.test/api/v1/summary/list-timeline-by-range',
+      body: {
+        from_stamp: dayStamp,
+        to_stamp: new Date(2023, 10, 16).getTime(),
+        date_stamp: dayStamp,
+        kind: apiKind,
+      },
+    }])
+  })
+
+  it('keeps transcript readable when speaker identity lookup fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const service = new JotmoService(config, sessions, state, async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/audio/one-day-trans-v2')) {
+        return json({ code: 200, data: {
+          session_ls: [{
+            id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
+            spk_ls: [{ num: 1, spk_id: 'speaker-1' }],
+          }],
+          child_ls: [{
+            id: 'child-1', session_id: 'session-1', start_at: 500,
+            asr: [{ s: 100, e: 800, n: 1, t: '今天很顺利', effective_spk_id: 'speaker-1', b: 0 }],
+          }],
+        } })
+      }
+      if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
+        return json({ code: 500, message: '说话人服务暂不可用' })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.recordingTranscript(dayStamp)).resolves.toMatchObject({
+      state: 'ready',
+      identityCoverage: 'partial',
+      totalDurationMillis: 6_000,
+      items: [{ text: '今天很顺利', speakerLabel: '说话人 1', isSelf: false }],
+    })
+  })
+
+  it('propagates cancellation to transcript Audio requests', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const dayStamp = new Date(2023, 10, 15).getTime()
+    const seenSignals: AbortSignal[] = []
+    const service = new JotmoService(config, sessions, state, async (_input, init) => {
+      const signal = init?.signal as AbortSignal
+      seenSignals.push(signal)
+      return await new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+      })
+    })
+    const controller = new AbortController()
+    const pending = service.recordingTranscript(dayStamp, controller.signal)
+    await vi.waitFor(() => expect(seenSignals).toHaveLength(2))
+
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ code: 'jotmo-timeout' })
+    expect(seenSignals.every(signal => signal.aborted)).toBe(true)
+  })
+
+  it('binds recording cursors to the current account and rejects tampering', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new JotmoService(config, sessions, state, vi.fn())
+    const payload = {
+      version: 1 as const,
+      dateStamp: new Date(2026, 7, 17).getTime(),
+      content: 'transcript' as const,
+      itemOffset: 10,
+      textOffset: 0,
+      fingerprint: 'sha256-value',
+    }
+
+    const cursor = await service.sealRecordingCursor(payload)
+
+    await expect(service.openRecordingCursor(cursor)).resolves.toEqual(payload)
+    await expect(service.openRecordingCursor(`${cursor.slice(0, -1)}x`)).rejects.toMatchObject({
+      code: 'recording-cursor-invalid',
+    })
+    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other-refresh' }
+    await expect(service.openRecordingCursor(cursor)).rejects.toMatchObject({
+      code: 'recording-cursor-invalid',
+    })
+  })
+
   it('completes QR login without exposing tokens in the auth snapshot', async () => {
     const sessions = new MemorySessionStore()
     const state = new MemoryStateStore()
@@ -144,8 +565,8 @@ describe('JotmoService', () => {
 
     expect(service.providerCapabilities()).toMatchObject({
       contractVersion: 1,
-      provider: '@senqisi/dsh-jotmo',
-      sdk: '@senqisi/dsh-jotmo/sdk',
+      provider: '@senguoyun/dsh-arkme',
+      sdk: '@senguoyun/dsh-arkme/sdk',
       features: {
         cachedSnapshot: true,
         revisionPolling: true,
@@ -153,6 +574,7 @@ describe('JotmoService', () => {
         imageRead: true,
         callHistory: true,
         callDetail: true,
+        relatedRecordings: true,
       },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })
@@ -475,6 +897,53 @@ describe('JotmoService', () => {
     expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', text_content: '回复' })
   })
 
+  it('checks private-chat eligibility and reads normalized related recordings', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [{
+          session: { chat_session_uid: 'chat-private', session_kind: 1, last_active_at: 200 },
+          private_counterpart: { user_id: 20002, display_name_snapshot: '小林' },
+          unread_snapshot: { unread_count: 0 },
+        }],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: { items: [] } })
+      if (url.endsWith('/api/v1/auth/able-func')) {
+        expect(body).toEqual({ func_type: 17 })
+        return json({ code: 200, data: { able: true } })
+      }
+      if (url.endsWith('/api/v1/chats/records/related-recordings/page')) return json({ code: 200, data: {
+        state: 3,
+        state_msg: '已找到相关录音',
+        has_entry: true,
+        moment_ls: [{
+          moment_id: 'moment-1', session_id: 'session-1', start_at: 1_785_000_000_000,
+          end_at: 1_785_000_120_000, time_range_text: '14:00 - 14:02', title: '版本讨论',
+          summary: '讨论版本计划。', summary_status: 3, transcript: '原文', transcript_available: true,
+          participant_ls: [{ speaker_id: 'speaker-1', display_name: '小林', role: 1 }],
+        }],
+        has_more: false,
+        partial: false,
+        time_index_complete: true,
+        month_bucket_ls: [{ month_key: '2026-08', item_count: 1 }],
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const source = (await service.listSources('root')).items[0]!
+    await expect(service.relatedRecordingEligibility(source.sourceRef)).resolves.toEqual({ allowed: true })
+    await expect(service.relatedRecordings(source.sourceRef, { includeTimeIndex: true })).resolves.toMatchObject({
+      state: 'success',
+      items: [{ recordingRef: 'moment-1', title: '版本讨论', transcript: '原文' }],
+      monthBuckets: [{ monthKey: '2026-08', itemCount: 1 }],
+    })
+  })
+
   it('hydrates private and group avatars as opaque refs and reads them through fresh authorization', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -584,6 +1053,135 @@ describe('JotmoService', () => {
       textContent: 'conversation note',
       attempts: 1,
     }])
+  })
+
+  it('queries every supported imported-WeChat capability through the Relation owner', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown>; authorization: string | null }> = []
+    const service = new JotmoService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body, authorization: new Headers(init?.headers).get('Authorization') })
+      if (url.endsWith('/wechat-import-conversations/list')) return json({ code: 200, data: {
+        conversations: [
+          {
+            import_session_key: 'session-mom', name: '妈妈', remark: '妈妈', nickname: 'Alice',
+            ext_is_group: false, message_count: 42, last_send_at: 200,
+          },
+          {
+            import_session_key: 'session-group', name: '家人群', ext_is_group: true,
+            message_count: 80, last_send_at: 190, bound_chat_session_uid: 'bound-chat',
+          },
+        ],
+        total: 2, has_more: false, next_offset: 2,
+      } })
+      if (url.endsWith('/wechat-import-conversation-records/list')) return json({ code: 200, data: {
+        records: [{
+          content: '周末回家吃饭', sender_display_name: '妈妈', sender_is_self: false,
+          send_at: 180, msg_type: 1, media_path: 'image.jpg', media_duration: 3, mime_type: 'image/jpeg',
+        }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-conversation-detail')) return json({ code: 200, data: {
+        name: '妈妈', remark: '妈妈', nickname: 'Alice', ext_is_group: false,
+        wechat_alias: 'alice', wechat_id: 'wx-alice', message_count: 42,
+        voice_count: 2, image_count: 3, emoji_count: 4, video_count: 5,
+        first_send_at: 10, last_send_at: 200, imported_at: 300, common_group_count: 2,
+      } })
+      if (url.endsWith('/wechat-import-group-members/list')) return json({ code: 200, data: {
+        members: [{ name: '我', message_count: 10, is_self: true, is_in_group: true }],
+        inactive_speakers: [{ name: '已退群成员', message_count: 2, last_send_at: 100, is_in_group: false }],
+        total_speakers: 2,
+      } })
+      if (url.endsWith('/wechat-import-phones/list')) return json({ code: 200, data: {
+        phones: [{
+          phone: '13800138000', likely_owner: '妈妈', confidence: 0.9, reason: '聊天上下文',
+          record_count: 2, last_send_at: 170, is_registered: true, registered_nick_name: 'Alice',
+          phone_location_label: '浙江 杭州', task_status: 'done',
+          evidence: [{ why: '明确提到手机号', content: '电话 13800138000', send_at: 160 }],
+        }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-common-groups/list')) return json({ code: 200, data: {
+        friends: [{ name: '小林', common_group_count: 3, last_send_at: 150, sample_group_keys: ['session-group'] }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-money-flows/list')) return json({ code: 200, data: {
+        records: [{
+          import_session_key: 'session-mom', content: '转账 100 元', sender_display_name: '妈妈',
+          sender_is_self: false, send_at: 140,
+        }],
+        total: 1, has_more: false, next_offset: 1,
+      } })
+      if (url.endsWith('/wechat-import-location-entries')) return json({ code: 200, data: {
+        entry_ls: [{
+          import_session_key: 'session-group', entry_type: 'sent_manual_location', lat: 30.1, lon: 120.2,
+          poi_name: '西湖', address: '杭州', sender_display_name: '妈妈', sender_is_self: false, send_at: 130,
+          conversation: { import_session_key: 'session-group', name: '家人群' },
+        }],
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const conversations = await service.listWechatConversations()
+    expect(conversations.conversations).toMatchObject([
+      { name: '妈妈', isGroup: false, messageCount: 42, isBound: false },
+      { name: '家人群', isGroup: true, messageCount: 80, isBound: true },
+    ])
+    expect(conversations.conversations[0]?.conversationRef).not.toContain('session-mom')
+    const momRef = conversations.conversations[0]!.conversationRef
+    const groupRef = conversations.conversations[1]!.conversationRef
+
+    await expect(service.readWechatMessages(momRef, { messageType: 'image' })).resolves.toMatchObject({
+      conversationRef: momRef,
+      messages: [{ content: '周末回家吃饭', senderName: '妈妈', messageType: 'image', hasMedia: true }],
+    })
+    await expect(service.getWechatConversationDetail(momRef)).resolves.toMatchObject({
+      name: '妈妈', wechatAlias: 'alice', wechatId: 'wx-alice', messageCount: 42,
+    })
+    await expect(service.listWechatGroupMembers(groupRef)).resolves.toMatchObject({
+      members: [{ name: '我', isMe: true, isInGroup: true }, { name: '已退群成员', isInGroup: false }],
+      total: 2,
+    })
+    await expect(service.listWechatPhones()).resolves.toMatchObject({
+      phones: [{ phone: '13800138000', likelyOwner: '妈妈', location: '浙江 杭州', isRegistered: true }],
+    })
+    await expect(service.listWechatCommonGroups()).resolves.toMatchObject({
+      friends: [{ name: '小林', commonGroupCount: 3, sampleConversationRefs: [expect.stringMatching(/^jotmo-wechat-conversation-v1\./)] }],
+    })
+    await expect(service.listWechatMoneyFlows()).resolves.toMatchObject({
+      moneyFlows: [{ content: '转账 100 元', senderName: '妈妈', conversationRef: expect.stringMatching(/^jotmo-wechat-conversation-v1\./) }],
+    })
+    await expect(service.listWechatLocations()).resolves.toMatchObject({
+      locations: [{ conversationName: '家人群', poiName: '西湖', latitude: 30.1, longitude: 120.2 }],
+    })
+    expect(calls.every(call => call.url.startsWith('https://relation.test/api/v1/entity/'))).toBe(true)
+    expect(calls.every(call => call.authorization === 'Bearer access')).toBe(true)
+    expect(calls[0]?.body).toMatchObject({ limit: 30, offset: 0, include_bound: true })
+    expect(calls[1]?.body).toMatchObject({ import_session_key: 'session-mom', msg_type: 1 })
+  })
+
+  it('binds imported-WeChat references and cursors to the current account and query', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async () => json({ code: 200, data: {
+      conversations: [{ import_session_key: 'session-1', name: '会话', message_count: 1 }],
+      total: 2, has_more: true, next_offset: 1,
+    } }))
+    const service = new JotmoService(config, sessions, state, fetchImpl)
+    const page = await service.listWechatConversations({ limit: 1 })
+
+    await expect(service.listWechatPhones({ cursor: page.nextCursor! })).rejects.toMatchObject({
+      code: 'wechat-cursor-invalid',
+    })
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+    await expect(service.getWechatConversationDetail(page.conversations[0]!.conversationRef)).rejects.toMatchObject({
+      code: 'wechat-conversation-ref-invalid',
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('refreshes the short token once after an authenticated 403', async () => {

@@ -10,6 +10,9 @@ const config = {
   chatBaseUrl: 'https://jotmo-chat.senguo.me',
   dataBaseUrl: 'https://jotmo-data.senguo.me',
   webrtcBaseUrl: 'https://jotmo-webrtc.senguo.me',
+  audioBaseUrl: 'https://jotmo-audio.senguo.me',
+  worldBaseUrl: 'https://jotmo-world.senguo.me',
+  relationBaseUrl: 'https://jotmo-relation.senguo.me',
   routePath: '/jotmo-self/api',
   requestTimeoutMs: 30_000,
   maxTextLength: 20_000,
@@ -53,6 +56,9 @@ describe('Jotmo plugin configuration', () => {
       environment: 'prod',
       dataBaseUrl: 'https://data.jotmo.cc',
       webrtcBaseUrl: 'https://webrtc.jiwo.cc',
+      audioBaseUrl: 'https://audio.jotmo.cc',
+      worldBaseUrl: 'https://world.jotmo.cc',
+      relationBaseUrl: 'https://relation.jotmo.cc',
     }
     expect(() => validate(production, '127.0.0.1')).toThrow(/allowProduction/)
     expect(() => validate({ ...production, allowProduction: true }, '127.0.0.1')).not.toThrow()

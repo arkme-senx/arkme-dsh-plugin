@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { JotmoUiController } from '../src/client/ui-controller.js'
 
 describe('JotmoUiController', () => {
-  it('switches between login and an account-bound source selection', () => {
+  it('isolates recording mode from login and account-bound source selection', () => {
     const controller = new JotmoUiController()
     const listener = vi.fn()
     const unsubscribe = controller.subscribe(listener)
@@ -22,6 +22,10 @@ describe('JotmoUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: false })
     controller.activateSurface()
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
+    controller.showRecordings()
+    expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, mode: 'recordings' })
+    controller.selectSource(source)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.showLogin()
     expect(controller.getSnapshot()).toEqual({ open: true, surfaceOpen: true, authRevision: 0, mode: 'login' })
     controller.showLoginSurface()
@@ -29,7 +33,7 @@ describe('JotmoUiController', () => {
     controller.authChanged(true)
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
     expect(controller.getSnapshot().authRevision).toBe(1)
-    expect(listener).toHaveBeenCalledTimes(7)
+    expect(listener).toHaveBeenCalledTimes(9)
     unsubscribe()
   })
 

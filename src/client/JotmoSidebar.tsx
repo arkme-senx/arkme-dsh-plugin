@@ -4,7 +4,8 @@ import {
 } from 'react'
 import qrcode from 'qrcode-generator'
 import type {
-  JotmoAuthSnapshot, JotmoClientConfig, JotmoSourceSendResult, JotmoTimelineCursor,
+  JotmoAuthSnapshot, JotmoClientConfig, JotmoRelatedRecordingItem, JotmoRelatedRecordingMonthBucket,
+  JotmoRelatedRecordingPage, JotmoRelatedRecordingPageState, JotmoSourceSendResult, JotmoTimelineCursor,
   JotmoTimelineItem, JotmoTimelinePage,
 } from '../types.js'
 import { callJotmo, JotmoClientError } from './api.js'
@@ -12,7 +13,12 @@ import { verifyPhoneCaptcha } from './geetest.js'
 import { JotmoCallHistorySurface } from './JotmoCallHistorySurface.js'
 import { JotmoMark } from './JotmoFooterAction.js'
 import { JotmoLogin, type JotmoLoginMode } from './JotmoLogin.js'
+import { JotmoRecordingSurface } from './JotmoRecordingSurface.js'
 import { loadJotmoImageDataUrl } from './JotmoVirtualWorkspace.js'
+import {
+  isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
+  RelatedRecordingsPanel, shouldShowRelatedRecordingsEntry,
+} from './related-recordings.js'
 import { jotmoUi } from './ui-controller.js'
 
 export interface JotmoSurfaceProps {}
@@ -27,13 +33,20 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  surface: { width: '100%', height: '100%', minWidth: 0, display: 'flex', background: colors.panel, color: colors.text },
+  surface: {
+    position: 'relative', width: '100%', height: '100%', minWidth: 0, overflow: 'hidden',
+    display: 'flex', background: colors.panel, color: colors.text,
+  },
   panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   header: {
-    flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 28px 12px 20px',
+    position: 'relative', flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
   },
   title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
+  headerActions: { marginLeft: 'auto', display: 'flex', alignItems: 'center' },
+  moreButton: { width: 36, height: 36, border: 0, borderRadius: 10, background: 'transparent', color: colors.text, fontSize: 22, lineHeight: '22px', cursor: 'pointer' },
+  popover: { position: 'absolute', zIndex: 20, right: 18, top: 48, width: 180, padding: 6, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.14)' },
+  menuItem: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, border: 0, borderRadius: 8, padding: '10px 12px', background: 'transparent', color: colors.text, textAlign: 'left', cursor: 'pointer', fontSize: 14 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
   error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
@@ -141,6 +154,24 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   const [qr, setQr] = useState('')
   const qrRequestStartedRef = useRef(false)
   const authenticated = auth?.status === 'authenticated'
+  const [relatedEligibility, setRelatedEligibility] = useState<'idle' | 'loading' | 'allowed' | 'denied' | 'error'>('idle')
+  const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
+  const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
+  const [relatedState, setRelatedState] = useState<'loading' | JotmoRelatedRecordingPageState>('loading')
+  const [relatedStateMessage, setRelatedStateMessage] = useState('')
+  const [relatedError, setRelatedError] = useState('')
+  const [relatedItems, setRelatedItems] = useState<JotmoRelatedRecordingItem[]>([])
+  const [relatedMonths, setRelatedMonths] = useState<JotmoRelatedRecordingMonthBucket[]>([])
+  const [relatedMonth, setRelatedMonth] = useState('')
+  const [relatedHasMore, setRelatedHasMore] = useState(false)
+  const [relatedNextCursor, setRelatedNextCursor] = useState<string>()
+  const [relatedLoadingMore, setRelatedLoadingMore] = useState(false)
+  const [relatedDetail, setRelatedDetail] = useState<JotmoRelatedRecordingItem>()
+  const relatedEligibilityAbortRef = useRef<AbortController>()
+  const relatedPageAbortRef = useRef<AbortController>()
+  const relatedGenerationRef = useRef(0)
+  const relatedLoadingMoreRef = useRef(false)
+  const activeRelatedSourceRef = useRef('')
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -158,6 +189,127 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
   }, [])
+
+  const loadRelatedPage = useCallback(async (
+    month: string,
+    cursor: string | undefined,
+    append: boolean,
+    generation: number,
+  ) => {
+    if (source === undefined || source.kind !== 'private_chat') return
+    const sourceRef = source.sourceRef
+    const controller = new AbortController()
+    relatedPageAbortRef.current?.abort()
+    relatedPageAbortRef.current = controller
+    if (append) {
+      if (relatedLoadingMoreRef.current) return
+      relatedLoadingMoreRef.current = true
+      setRelatedLoadingMore(true)
+    } else {
+      setRelatedState('loading')
+      setRelatedStateMessage('')
+      setRelatedError('')
+      setRelatedItems([])
+      setRelatedHasMore(false)
+      setRelatedNextCursor(undefined)
+    }
+    try {
+      const page = await callJotmo<JotmoRelatedRecordingPage>('related-recordings.page', {
+        sourceRef,
+        limit: 10,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(month === '' ? {} : { monthKey: month }),
+        timezoneOffsetMillis: -new Date().getTimezoneOffset() * 60_000,
+        includeTimeIndex: !append && month === '',
+      }, controller.signal)
+      if (!isCurrentRelatedRecordingRequest(
+        generation, relatedGenerationRef.current, sourceRef, activeRelatedSourceRef.current,
+      )) return
+      setRelatedItems(current => append ? mergeRelatedRecordingItems(current, page.items) : page.items)
+      setRelatedState(page.state)
+      setRelatedStateMessage(page.stateMessage)
+      setRelatedError(page.state === 'error' ? page.stateMessage || '相关录音暂时无法读取' : '')
+      setRelatedHasMore(page.hasMore)
+      setRelatedNextCursor(page.nextCursor)
+      if (!append && month === '') setRelatedMonths(page.timeIndexComplete ? page.monthBuckets ?? [] : [])
+    } catch (caught) {
+      if (controller.signal.aborted || !isCurrentRelatedRecordingRequest(
+        generation, relatedGenerationRef.current, sourceRef, activeRelatedSourceRef.current,
+      )) return
+      setRelatedState('error')
+      setRelatedError(errorMessage(caught))
+    } finally {
+      if (append) {
+        relatedLoadingMoreRef.current = false
+        if (generation === relatedGenerationRef.current) setRelatedLoadingMore(false)
+      }
+      if (relatedPageAbortRef.current === controller) relatedPageAbortRef.current = undefined
+    }
+  }, [source])
+
+  const reloadRelated = useCallback((month: string) => {
+    relatedGenerationRef.current += 1
+    const generation = relatedGenerationRef.current
+    setRelatedMonth(month)
+    setRelatedDetail(undefined)
+    void loadRelatedPage(month, undefined, false, generation)
+  }, [loadRelatedPage])
+
+  const openRelatedPanel = useCallback(() => {
+    if (relatedEligibility !== 'allowed') return
+    setRelatedMenuOpen(false)
+    setRelatedPanelOpen(true)
+    reloadRelated('')
+  }, [relatedEligibility, reloadRelated])
+
+  const closeRelatedPanel = useCallback(() => {
+    relatedGenerationRef.current += 1
+    relatedPageAbortRef.current?.abort()
+    relatedPageAbortRef.current = undefined
+    relatedLoadingMoreRef.current = false
+    setRelatedPanelOpen(false)
+    setRelatedDetail(undefined)
+    setRelatedLoadingMore(false)
+  }, [])
+
+  const loadMoreRelated = useCallback(() => {
+    if (relatedLoadingMoreRef.current || !relatedHasMore || relatedNextCursor === undefined) return
+    void loadRelatedPage(relatedMonth, relatedNextCursor, true, relatedGenerationRef.current)
+  }, [loadRelatedPage, relatedHasMore, relatedMonth, relatedNextCursor])
+
+  useEffect(() => {
+    relatedEligibilityAbortRef.current?.abort()
+    relatedPageAbortRef.current?.abort()
+    relatedGenerationRef.current += 1
+    activeRelatedSourceRef.current = source?.sourceRef ?? ''
+    relatedLoadingMoreRef.current = false
+    setRelatedEligibility('idle')
+    setRelatedMenuOpen(false)
+    setRelatedPanelOpen(false)
+    setRelatedDetail(undefined)
+    setRelatedItems([])
+    setRelatedMonths([])
+    setRelatedMonth('')
+    setRelatedHasMore(false)
+    setRelatedNextCursor(undefined)
+    setRelatedLoadingMore(false)
+    setRelatedError('')
+    if (!authenticated || source?.kind !== 'private_chat') return
+    const controller = new AbortController()
+    relatedEligibilityAbortRef.current = controller
+    const sourceRef = source.sourceRef
+    setRelatedEligibility('loading')
+    void callJotmo<{ allowed: boolean }>('related-recordings.eligibility', { sourceRef }, controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted && activeRelatedSourceRef.current === sourceRef) {
+          setRelatedEligibility(result.allowed ? 'allowed' : 'denied')
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && activeRelatedSourceRef.current === sourceRef) setRelatedEligibility('error')
+      })
+    return () => { controller.abort() }
+  }, [authenticated, source?.kind, source?.sourceRef, ui.authRevision])
 
   const loadTimeline = useCallback(async (cursor?: JotmoTimelineCursor, preserve = false) => {
     if (source === undefined) return
@@ -285,7 +437,18 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
   return (
     <div style={styles.surface}>
       <section style={styles.panel} role="region" aria-label={source?.displayName ?? '即我'}>
-        <header style={styles.header}><h2 style={styles.title}>{source?.displayName ?? '即我'}</h2></header>
+        <header style={styles.header}>
+          <h2 style={styles.title}>{ui.mode === 'recordings' ? '全天候录音' : source?.displayName ?? '即我'}</h2>
+          {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div style={styles.headerActions}>
+            <button type="button" style={styles.moreButton} aria-label="更多私聊操作" aria-expanded={relatedMenuOpen}
+              onClick={() => { setRelatedMenuOpen(value => !value) }}>•••</button>
+            {relatedMenuOpen && <div style={styles.popover} role="menu">
+              <button type="button" role="menuitem" style={styles.menuItem} onClick={openRelatedPanel}>
+                <span aria-hidden>◉</span><span>相关录音</span>
+              </button>
+            </div>}
+          </div>}
+        </header>
         {!authenticated ? <div style={styles.loginBody}><JotmoLogin
           mode={loginMode}
           agreed={agreed}
@@ -301,7 +464,9 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
           onSmsCodeChange={setSmsCode}
           onSendCode={() => { void sendCode() }}
           onVerifyCode={() => { void verifyCode() }}
-        /></div> : ui.mode === 'calls' ? <JotmoCallHistorySurface /> : source === undefined ? <div style={styles.body} /> : <>
+        /></div> : ui.mode === 'calls' ? <JotmoCallHistorySurface />
+          : ui.mode === 'recordings' ? <JotmoRecordingSurface />
+          : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
@@ -333,6 +498,23 @@ export function JotmoSurface(_props: JotmoSurfaceProps = {}) {
           </div></footer>
         </>}
       </section>
+      {relatedPanelOpen && source?.kind === 'private_chat' && <RelatedRecordingsPanel
+        contactName={source.displayName}
+        state={relatedState}
+        stateMessage={relatedStateMessage}
+        error={relatedError}
+        items={relatedItems}
+        hasMore={relatedHasMore}
+        loadingMore={relatedLoadingMore}
+        monthBuckets={relatedMonths}
+        selectedMonth={relatedMonth}
+        onClose={closeRelatedPanel}
+        onRetry={() => { reloadRelated(relatedMonth) }}
+        onLoadMore={loadMoreRelated}
+        onMonthChange={reloadRelated}
+        onSelect={setRelatedDetail}
+      />}
+      {relatedDetail !== undefined && <RelatedRecordingDetail item={relatedDetail} onClose={() => { setRelatedDetail(undefined) }} />}
     </div>
   )
 }

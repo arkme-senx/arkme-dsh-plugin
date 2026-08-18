@@ -218,6 +218,24 @@ async function dispatch(
       ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
     })
     case 'calls.detail': return await service.readCall(stringParam(params, 'callRef'))
+    case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'related-recordings.page': return await service.relatedRecordings(
+      stringParam(params, 'sourceRef'),
+      {
+        limit: numberParam(params, 'limit', 10),
+        ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+        ...(stringParam(params, 'monthKey') === '' ? {} : { monthKey: stringParam(params, 'monthKey') }),
+        timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
+        includeTimeIndex: booleanParam(params, 'includeTimeIndex'),
+      },
+    )
+    case 'recordings.calendar': return await service.recordingCalendar(
+      numberParam(params, 'fromStamp', 0),
+      numberParam(params, 'toStamp', 0),
+    )
+    case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
     default: throw new JotmoPluginError('operation-unknown', '不支持的即我插件操作', false, 404)
   }
 }

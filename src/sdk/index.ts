@@ -8,6 +8,9 @@ import type {
   JotmoCreateTextResult,
   JotmoImagePayload,
   JotmoPendingWrite,
+  JotmoRelatedRecordingEligibility,
+  JotmoRelatedRecordingPage,
+  JotmoRelatedRecordingPageOptions,
   JotmoPluginErrorBody,
   JotmoPluginOperation,
   JotmoPluginResponse,
@@ -39,6 +42,14 @@ export type {
   JotmoImageMediaType,
   JotmoImagePayload,
   JotmoPendingWrite,
+  JotmoRelatedRecordingEligibility,
+  JotmoRelatedRecordingItem,
+  JotmoRelatedRecordingMonthBucket,
+  JotmoRelatedRecordingPage,
+  JotmoRelatedRecordingPageOptions,
+  JotmoRelatedRecordingPageState,
+  JotmoRelatedRecordingParticipant,
+  JotmoRelatedRecordingSpeaker,
   JotmoProviderCapabilities,
   JotmoProviderState,
   JotmoSourceDirectory,
@@ -189,6 +200,33 @@ export class JotmoSdk {
     }, options.signal)
   }
 
+  async relatedRecordingEligibility(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<JotmoRelatedRecordingEligibility> {
+    if (sourceRef.trim() === '') throw new TypeError('Jiwo private-chat source reference must not be empty')
+    return await this.call<JotmoRelatedRecordingEligibility>(
+      'related-recordings.eligibility',
+      { sourceRef },
+      signal,
+    )
+  }
+
+  async relatedRecordings(
+    sourceRef: string,
+    options: JotmoRelatedRecordingPageOptions = {},
+  ): Promise<JotmoRelatedRecordingPage> {
+    if (sourceRef.trim() === '') throw new TypeError('Jiwo private-chat source reference must not be empty')
+    return await this.call<JotmoRelatedRecordingPage>('related-recordings.page', {
+      sourceRef,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.monthKey === undefined ? {} : { monthKey: options.monthKey }),
+      ...(options.timezoneOffsetMillis === undefined ? {} : { timezoneOffsetMillis: options.timezoneOffsetMillis }),
+      ...(options.includeTimeIndex === undefined ? {} : { includeTimeIndex: options.includeTimeIndex }),
+    }, options.signal)
+  }
+
   async snapshot(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<JotmoCachedSnapshot> {
     return await this.call<JotmoCachedSnapshot>(
       options.refresh === true ? 'records.refresh' : 'records.cache',
@@ -289,6 +327,7 @@ const defaultSdk = createJotmoSdk()
 export async function callJotmo<T>(
   operation: JotmoPluginOperation,
   params?: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  return await defaultSdk.call<T>(operation, params)
+  return await defaultSdk.call<T>(operation, params, signal)
 }

@@ -18,9 +18,13 @@ export interface Config {
   chatBaseUrl: string
   dataBaseUrl: string
   webrtcBaseUrl: string
+  audioBaseUrl: string
+  worldBaseUrl: string
+  relationBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
+  relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   stateDirectory: string
   keychainServicePrefix: string
@@ -35,9 +39,13 @@ export const Config: Schema<Config> = Schema.object({
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   dataBaseUrl: Schema.string().default('https://jotmo-data.senguo.me'),
   webrtcBaseUrl: Schema.string().default('https://jotmo-webrtc.senguo.me'),
+  audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
+  worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
+  relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   routePath: Schema.string().default('/jotmo-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
+  relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-jotmo'),
@@ -97,6 +105,9 @@ export function validateJotmoConfig(config: Config, webServerHost: string): void
     ['chatBaseUrl', config.chatBaseUrl],
     ['dataBaseUrl', config.dataBaseUrl],
     ['webrtcBaseUrl', config.webrtcBaseUrl],
+    ['audioBaseUrl', config.audioBaseUrl],
+    ['worldBaseUrl', config.worldBaseUrl],
+    ['relationBaseUrl', config.relationBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -124,6 +135,14 @@ export type {
   JotmoPendingWrite,
   JotmoImageMediaType,
   JotmoImagePayload,
+  JotmoRelatedRecordingEligibility,
+  JotmoRelatedRecordingItem,
+  JotmoRelatedRecordingMonthBucket,
+  JotmoRelatedRecordingPage,
+  JotmoRelatedRecordingPageOptions,
+  JotmoRelatedRecordingPageState,
+  JotmoRelatedRecordingParticipant,
+  JotmoRelatedRecordingSpeaker,
   JotmoSourceDirectory,
   JotmoSourceItem,
   JotmoSourceKind,
@@ -140,6 +159,28 @@ export type {
   JotmoProviderState,
   JotmoUserProfile,
   JotmoUserProfileSnapshot,
+  JotmoWorldPublishResult,
+  JotmoWorldRecordItem,
+  JotmoWorldRecordList,
+  JotmoWorldVisibility,
+  JotmoWechatCallFilter,
+  JotmoWechatCommonGroupFriend,
+  JotmoWechatCommonGroupPage,
+  JotmoWechatConversation,
+  JotmoWechatConversationDetail,
+  JotmoWechatConversationPage,
+  JotmoWechatGroupMember,
+  JotmoWechatGroupMemberPage,
+  JotmoWechatLocation,
+  JotmoWechatLocationPage,
+  JotmoWechatMessage,
+  JotmoWechatMessageFilter,
+  JotmoWechatMessagePage,
+  JotmoWechatMoneyFlow,
+  JotmoWechatMoneyFlowPage,
+  JotmoWechatPhone,
+  JotmoWechatPhoneEvidence,
+  JotmoWechatPhonePage,
 } from './types.js'
 export { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
 export { JotmoService } from './jotmo-service.js'

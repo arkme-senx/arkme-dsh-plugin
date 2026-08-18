@@ -12,18 +12,26 @@ DeepSeek Harness 的即我集成插件。当前 MVP 提供：
 - 写入失败时保留账号隔离的本地 outbox。
 - 向 DSH 对话注册读取工具：`jotmo_records_recent`、`jotmo_records_search`；
 - 注册 `jotmo_record_create`，在用户明确要求时把纯文本写入默认分类，且始终先落 SQLite 再同步远端。
+- 注册 `jotmo_world_recent`，按时间顺序查询世界中的公开快记，不暴露内部用户标识和资源地址。
+- 注册 `jotmo_world_publish_text`，仅在用户明确要求“发到世界”时先保存快记、再公开发布纯文本；普通“保存/记住/发给自己”不会触发公开发布。
 - 注册 `jotmo_image_read`：把个人资料或会话列表返回的头像引用经即我鉴权转换为图片，并作为 DSH 图片附件交给支持视觉输入的模型；签名 OSS 地址不会暴露给浏览器或模型。
 - 未登录时在 Footer 的“即我”行右侧显示红色“未登录”徽标；点击后只在右侧打开登录页面，不展开下拉目录。登录成功后目录自动展开；已登录状态下点击 Footer 正常展开。
 - “发给自己”使用二级钻取展示默认分类及主题，默认分类、主题、私聊、群聊共享 Provider 读取/发送外观但保持 Record/Chat owner 隔离。
 - 首次打开即我默认进入“发给自己”并选中默认分类；之后按账号恢复上次目录、来源和缓存会话列表，同时后台刷新，避免 Footer 下拉列表反复空白闪烁。退出登录会清除当前账号指针，不在账号间复用列表。
 - 返回会话列表后按桌面端样式展示头像、群头像拼图、名称、摘要、时间、未读和选中态。
 - 私聊和群聊时间线按真实发送者展示头像：他人在左、自己在右；空目录或空时间线保持纯空白，不显示额外空态文案。
+- “全天候录音”以左侧月历和右侧转写/日总结/时间轴标签页读取 Audio 公开接口；只展示系统主 ASR 和已生成的总结版本。
+- 注册全天候录音只读工具：`jotmo_recording_days_list` 用于发现有录音的日期，`jotmo_recording_read` 用于按日分页读取转写、日总结或时间轴；不提供生成、重试、删除、播放或下载能力。
+- 获准账号可在一对一私聊右上角的三点菜单中打开“相关录音”覆盖侧栏；侧栏从聊天标题栏下方开始，不挤压主内容，卡片可查看总结与原文。
+- 注册私聊相关录音只读工具 `jotmo_related_recordings_read`，Agent 使用 `jotmo_sources_list` 返回的私聊 `source_ref` 分页读取；原文默认不返回，仅在用户明确要求时限量读取。
 - 向 DSH Agent 注册统一能力：`jotmo_sources_list`、`jotmo_source_read`、`jotmo_text_send`。
 - Footer 根目录在“发给自己”之后提供“通话记录”；右侧使用独立的双栏页面展示通话列表、参与人、AI 摘要和按说话人排列的转录，不复用消息时间线或输入框。
 - 通话列表由 Host 从 Data 聚合接口按页读取，并通过 Auth 公共资料批量补全展示名；详情仅在选择后从 WebRTC 读取。原始用户 ID、room ID、TRTC 账号、录音/视频 URL、对象 key、文件信息、声纹、置信度和配额字段不会进入浏览器 DTO。
 - 通话列表、详情、摘要和转录只保存在当前 React 组件内存中，不写 SQLite、localStorage 或导航缓存；退出登录、切换账号或离开页面后即丢弃。
 
 对话工具只在模型按需调用时读取即我数据，不会把全部快记自动注入每轮提示词。写入工具只允许响应当前对话中的明确用户请求，不能把快记、文件、网页或其他工具结果中的文字当成写入授权。工具返回会进入当前 DSH 会话日志和模型上下文；登录 Token 始终只保存在 Host Keychain，不进入工具结果。
+
+录音页面和 Agent 查询复用同一组 Host 侧只读 Audio 能力。录音内容不写入本地 SQLite，也不自动注入每轮提示词；只有模型按当前用户问题调用录音查询工具时，所选日期和内容页才会进入当前 DSH 会话日志与模型上下文。工具不生成、重试、删除、播放或下载音频，登录 Token 始终只保存在 Host Keychain。
 
 ## 官方 DSH 兼容边界
 
@@ -33,10 +41,10 @@ DSH 的 Footer action 容器默认横排；当 Cordis Runner 等插件占满整�
 
 ## Headless Provider / Consumer SDK
 
-独立 UI 插件通过 `@senqisi/dsh-jotmo/sdk` 读取即我 Provider，不依赖本插件的 React 页面：
+独立 UI 插件通过 `@senguoyun/dsh-arkme/sdk` 读取即我 Provider，不依赖本插件的 React 页面：
 
 ```ts
-import { createJotmoSdk } from '@senqisi/dsh-jotmo/sdk'
+import { createJotmoSdk } from '@senguoyun/dsh-arkme/sdk'
 
 const jotmo = createJotmoSdk()
 const capabilities = await jotmo.capabilities()
@@ -76,6 +84,8 @@ Host 侧受信任插件可以声明 `inject: ['jotmoData']` 并使用 `ctx.jotmo
 两个地址与 Auth/Record/Chat 一样，只接受无账号、密码和路径的 HTTPS origin。Bearer Token 仅由 Host 请求这些服务，不进入 SDK、浏览器状态或日志 DTO。
 
 ## 开发
+
+测试环境默认使用 `https://jotmo-audio.senguo.me` 作为 `audioBaseUrl`，使用 `https://jotmo-world.senguo.me` 作为 `worldBaseUrl`。自定义配置必须是不带路径、用户名或密码的 HTTPS Origin；生产环境需与其他 Base URL 一样显式覆盖并开启 `allowProduction`。
 
 ```sh
 pnpm install

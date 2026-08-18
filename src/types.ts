@@ -74,6 +74,39 @@ export interface JotmoConversationWriteResult {
   error?: string
 }
 
+export interface JotmoWorldRecordItem {
+  authorName: string
+  headline: string
+  textContent: string
+  tags: string[]
+  templateKind: number
+  createdAtMillis: number
+  publishedAtMillis: number
+  imageCount: number
+  videoCount: number
+  voiceCount: number
+  extendCount: number
+}
+
+export interface JotmoWorldRecordList {
+  items: JotmoWorldRecordItem[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export type JotmoWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
+
+export interface JotmoWorldPublishResult {
+  recordSaved: boolean
+  recordState: 'synced' | 'pending' | 'not_saved'
+  worldPublished: boolean
+  visibility: JotmoWorldVisibility
+  checkStatus: number
+  retryable: boolean
+  error?: string
+}
+
 export interface JotmoCachedSnapshot {
   items: JotmoSelfRecordItem[]
   hasMore: boolean
@@ -166,8 +199,8 @@ export interface JotmoCallDetail {
 
 export interface JotmoProviderCapabilities {
   contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
-  provider: '@senqisi/dsh-jotmo'
-  sdk: '@senqisi/dsh-jotmo/sdk'
+  provider: '@senguoyun/dsh-arkme'
+  sdk: '@senguoyun/dsh-arkme/sdk'
   environment: JotmoEnvironment
   features: {
     authStatus: true
@@ -184,12 +217,15 @@ export interface JotmoProviderCapabilities {
     sourceTextSend: true
     callHistory: true
     callDetail: true
+    relatedRecordings?: true
   }
   limits: {
     maxTextLength: number
     maxSearchResults: number
     maxSyncPages: number
     maxImageBytes: number
+    maxRelatedRecordingPageSize?: number
+    maxRelatedRecordingCursorLength?: number
   }
 }
 
@@ -287,6 +323,338 @@ export interface JotmoSourceSendResult {
   error?: string
 }
 
+export type JotmoRelatedRecordingPageState = 'empty' | 'generating' | 'success' | 'partial' | 'error'
+
+export interface JotmoRelatedRecordingEligibility {
+  allowed: boolean
+}
+
+export interface JotmoRelatedRecordingSpeaker {
+  speakerId: string
+  refUserId?: number
+  nickname?: string
+}
+
+export interface JotmoRelatedRecordingParticipant {
+  speakerId: string
+  refUserId?: number
+  nickname?: string
+  displayName: string
+  role: number
+}
+
+export interface JotmoRelatedRecordingItem {
+  /** Stable opaque identity from the recording owner; consumers must not parse it. */
+  recordingRef: string
+  momentId: string
+  sessionId: string
+  summaryId?: string
+  originalName?: string
+  startAtMillis: number
+  endAtMillis: number
+  dateStamp?: number
+  timezoneOffsetMillis?: number
+  timeRangeText: string
+  title: string
+  summary: string
+  summaryStatus: number
+  transcript?: string
+  transcriptAvailable: boolean
+  speakers: JotmoRelatedRecordingSpeaker[]
+  participants: JotmoRelatedRecordingParticipant[]
+  isSharedByOther: boolean
+}
+
+export interface JotmoRelatedRecordingMonthBucket {
+  monthKey: string
+  itemCount: number
+}
+
+export interface JotmoRelatedRecordingPage {
+  state: JotmoRelatedRecordingPageState
+  stateCode: number
+  stateMessage: string
+  hasEntry: boolean
+  items: JotmoRelatedRecordingItem[]
+  hasMore: boolean
+  nextCursor?: string
+  partial: boolean
+  monthBuckets?: JotmoRelatedRecordingMonthBucket[]
+  timeIndexComplete: boolean
+  legacyTimeIndexFallback: boolean
+}
+
+export interface JotmoRelatedRecordingPageOptions {
+  limit?: number
+  cursor?: string
+  monthKey?: string
+  timezoneOffsetMillis?: number
+  includeTimeIndex?: boolean
+  /** Host-side diagnostic classification only; browser SDK does not forward this field. */
+  consumer?: 'ui' | 'tool'
+  signal?: AbortSignal
+}
+
+export type JotmoWechatMessageFilter =
+  | 'all'
+  | 'image'
+  | 'voice'
+  | 'video'
+  | 'emoji'
+  | 'location'
+  | 'location_share'
+  | 'call'
+  | 'chat_record'
+  | 'reply'
+
+export type JotmoWechatCallFilter = 'all' | 'audio' | 'video'
+
+export interface JotmoWechatConversation {
+  /** Account-bound opaque reference used by the other WeChat tools. */
+  conversationRef: string
+  name: string
+  remark?: string
+  nickname?: string
+  isGroup: boolean
+  messageCount: number
+  lastSendAtMillis: number
+  isBound: boolean
+}
+
+export interface JotmoWechatConversationPage {
+  conversations: JotmoWechatConversation[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatMessage {
+  content: string
+  senderName: string
+  isMe: boolean
+  sentAtMillis: number
+  messageType: string
+  hasMedia: boolean
+  mediaDuration?: number
+  mimeType?: string
+}
+
+export interface JotmoWechatMessagePage {
+  conversationRef: string
+  messages: JotmoWechatMessage[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatConversationDetail {
+  conversationRef: string
+  name: string
+  remark?: string
+  nickname?: string
+  isGroup: boolean
+  wechatAlias?: string
+  wechatId?: string
+  messageCount: number
+  voiceCount: number
+  imageCount: number
+  emojiCount: number
+  videoCount: number
+  firstSendAtMillis?: number
+  lastSendAtMillis?: number
+  importedAtMillis?: number
+  commonGroupCount?: number
+  groupOwnerName?: string
+  groupMemberCount?: number
+  groupCommonFriendCount?: number
+}
+
+export interface JotmoWechatGroupMember {
+  name: string
+  messageCount: number
+  lastSendAtMillis?: number
+  isOwner: boolean
+  isFriend: boolean
+  isMe: boolean
+  isInGroup: boolean
+}
+
+export interface JotmoWechatGroupMemberPage {
+  conversationRef: string
+  members: JotmoWechatGroupMember[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatPhoneEvidence {
+  why?: string
+  content?: string
+  sentAtMillis?: number
+}
+
+export interface JotmoWechatPhone {
+  phone: string
+  likelyOwner?: string
+  confidence?: number
+  reason?: string
+  occurrenceCount: number
+  lastSeenAtMillis: number
+  evidence: JotmoWechatPhoneEvidence[]
+  isRegistered: boolean
+  registeredNickname?: string
+  location?: string
+  taskStatus?: string
+}
+
+export interface JotmoWechatPhonePage {
+  phones: JotmoWechatPhone[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatCommonGroupFriend {
+  name: string
+  commonGroupCount: number
+  lastSendAtMillis?: number
+  sampleConversationRefs: string[]
+}
+
+export interface JotmoWechatCommonGroupPage {
+  friends: JotmoWechatCommonGroupFriend[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatMoneyFlow {
+  conversationRef?: string
+  content: string
+  senderName: string
+  isMe: boolean
+  sentAtMillis: number
+}
+
+export interface JotmoWechatMoneyFlowPage {
+  moneyFlows: JotmoWechatMoneyFlow[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoWechatLocation {
+  conversationRef?: string
+  conversationName: string
+  entryType: string
+  latitude: number
+  longitude: number
+  poiName?: string
+  address?: string
+  senderName?: string
+  isMe: boolean
+  sentAtMillis?: number
+}
+
+export interface JotmoWechatLocationPage {
+  locations: JotmoWechatLocation[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface JotmoRecordingCalendarDay {
+  dateStamp: number
+  durationMillis: number
+  hasRecording: boolean
+  unreviewedCount: number
+}
+
+export interface JotmoRecordingCalendarMonth {
+  fromStamp: number
+  toStamp: number
+  days: JotmoRecordingCalendarDay[]
+}
+
+export interface JotmoRecordingTranscriptItem {
+  itemId: string
+  sessionId: string
+  childId: string
+  startAtMillis: number
+  endAtMillis: number
+  speakerNumber: number
+  speakerColorIndex: number
+  speakerLabel: string
+  isSelf: boolean
+  isBackground: boolean
+  text: string
+}
+
+export interface JotmoRecordingTimelineEvent {
+  eventId: string
+  startAt: string
+  endAt: string
+  timeRange: string
+  title: string
+  description: string
+  scene: string
+  emotion: string
+  todo: string
+  tags: string[]
+  participants: string[]
+  rawText: string
+}
+
+export type JotmoRecordingVersionStatus = 'processing' | 'done' | 'failed'
+export type JotmoRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
+export type JotmoRecordingProjectionKind = 'summary' | 'timeline'
+export type JotmoRecordingIdentityCoverage = 'complete' | 'partial'
+export type JotmoRecordingToolContent = 'transcript' | 'summary' | 'timeline'
+
+export interface JotmoRecordingVersion {
+  id: string
+  status: JotmoRecordingVersionStatus
+  selectable: boolean
+  generationStage: number
+  generatedAtMillis: number
+  modelDisplayName: string
+  content: string
+  timelineEvents: JotmoRecordingTimelineEvent[]
+  error: string
+}
+
+export interface JotmoRecordingSection<T> {
+  state: JotmoRecordingSectionState
+  items: T[]
+  message: string
+}
+
+export interface JotmoRecordingTranscriptSection
+  extends JotmoRecordingSection<JotmoRecordingTranscriptItem> {
+  identityCoverage: JotmoRecordingIdentityCoverage
+  totalDurationMillis: number
+}
+
+export type JotmoRecordingVersionSection = JotmoRecordingSection<JotmoRecordingVersion>
+
+export interface JotmoRecordingCursorPayload {
+  version: 1
+  dateStamp: number
+  content: JotmoRecordingToolContent
+  versionId?: string
+  itemOffset: number
+  textOffset: number
+  fingerprint: string
+}
+
+export interface JotmoRecordingDay {
+  dateStamp: number
+  totalDurationMillis: number
+  transcript: JotmoRecordingSection<JotmoRecordingTranscriptItem>
+  summary: JotmoRecordingSection<JotmoRecordingVersion>
+  timeline: JotmoRecordingSection<JotmoRecordingVersion>
+}
+
 export interface JotmoProviderState {
   contractVersion: typeof JOTMO_PROVIDER_CONTRACT_VERSION
   environment: JotmoEnvironment
@@ -321,9 +689,15 @@ export type JotmoPluginOperation =
   | 'source.send-text'
   | 'calls.list'
   | 'calls.detail'
+  | 'related-recordings.eligibility'
+  | 'related-recordings.page'
+
+export type JotmoHostOperation = JotmoPluginOperation
+  | 'recordings.calendar'
+  | 'recordings.day'
 
 export interface JotmoPluginRequest {
-  operation: JotmoPluginOperation
+  operation: JotmoHostOperation
   params?: Record<string, unknown>
 }
 

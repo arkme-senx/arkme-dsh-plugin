@@ -9,6 +9,7 @@ import {
 } from './call-presentation.js'
 import type { JotmoSessionCredentials } from './keychain-store.js'
 import { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
+import { projectRecordingTranscripts, projectRecordingVersions } from './recording-presentation.js'
 import type {
   JotmoAuthSnapshot,
   JotmoCachedSnapshot,
@@ -23,6 +24,20 @@ import type {
   JotmoImageMediaType,
   JotmoPendingWrite,
   JotmoRecordCursor,
+  JotmoRelatedRecordingEligibility,
+  JotmoRelatedRecordingItem,
+  JotmoRelatedRecordingMonthBucket,
+  JotmoRelatedRecordingPage,
+  JotmoRelatedRecordingPageOptions,
+  JotmoRelatedRecordingPageState,
+  JotmoRecordingCalendarMonth,
+  JotmoRecordingCursorPayload,
+  JotmoRecordingDay,
+  JotmoRecordingProjectionKind,
+  JotmoRecordingSection,
+  JotmoRecordingTranscriptSection,
+  JotmoRecordingVersion,
+  JotmoRecordingVersionSection,
   JotmoSelfRecordItem,
   JotmoSelfRecordList,
   JotmoSelfSummary,
@@ -38,6 +53,24 @@ import type {
   JotmoTimelinePage,
   JotmoUserProfile,
   JotmoUserProfileSnapshot,
+  JotmoWorldPublishResult,
+  JotmoWorldRecordItem,
+  JotmoWorldRecordList,
+  JotmoWorldVisibility,
+  JotmoWechatCallFilter,
+  JotmoWechatCommonGroupPage,
+  JotmoWechatConversationDetail,
+  JotmoWechatConversationPage,
+  JotmoWechatGroupMember,
+  JotmoWechatGroupMemberPage,
+  JotmoWechatLocation,
+  JotmoWechatLocationPage,
+  JotmoWechatMessage,
+  JotmoWechatMessageFilter,
+  JotmoWechatMessagePage,
+  JotmoWechatMoneyFlow,
+  JotmoWechatMoneyFlowPage,
+  JotmoWechatPhonePage,
 } from './types.js'
 
 interface SessionStore {
@@ -71,9 +104,26 @@ export interface JotmoServiceConfig {
   chatBaseUrl: string
   dataBaseUrl: string
   webrtcBaseUrl: string
+  audioBaseUrl: string
+  worldBaseUrl: string
+  relationBaseUrl: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
+  relatedRecordingsEnabled?: boolean
+}
+
+export interface JotmoServiceEvent {
+  operation: 'related-recordings-eligibility' | 'related-recordings-page' | 'related-recordings-tool'
+  result: 'allowed' | 'denied' | 'success' | 'error' | 'legacy-fallback'
+  durationMs: number
+  itemCount?: number
+  cursorPresent?: boolean
+  partial?: boolean
+  consumer?: 'ui' | 'tool'
+  transcriptRequested?: boolean
+  transcriptTruncated?: boolean
+  errorCode?: string
 }
 
 interface LoginAttempt {
@@ -122,6 +172,19 @@ interface JotmoCallRefPayload {
   roomId: string
 }
 
+interface JotmoWechatConversationRefPayload {
+  version: 1
+  userId: number
+  importSessionKey: string
+}
+
+interface JotmoWechatCursorPayload {
+  version: 1
+  userId: number
+  scope: string
+  offset: number
+}
+
 interface JotmoPublicProfile {
   userId: number
   displayName: string
@@ -141,6 +204,10 @@ interface PhoneLoginResponse extends ScanResponse {
 type FetchLike = typeof fetch
 
 export const MAX_JOTMO_IMAGE_BYTES = 2 * 1024 * 1024
+export const MAX_JOTMO_RELATED_RECORDING_PAGE_SIZE = 20
+export const MAX_JOTMO_RELATED_RECORDING_CURSOR_LENGTH = 1024
+const MAX_JOTMO_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
+const RELATED_RECORDINGS_FUNC_TYPE = 17
 
 export interface JotmoImageBytes {
   mediaType: JotmoImageMediaType
@@ -171,6 +238,47 @@ function numberValue(value: unknown): number {
 
 function booleanValue(value: unknown): boolean {
   return value === true
+}
+
+function optionalPositiveNumber(value: unknown): number | undefined {
+  const number = numberValue(value)
+  return number > 0 ? number : undefined
+}
+
+function optionalString(value: unknown): string | undefined {
+  const text = stringValue(value).trim()
+  return text === '' ? undefined : text
+}
+
+function clippedText(value: unknown, limit = 4_000): string {
+  const text = stringValue(value).trim()
+  return text.length > limit ? `${text.slice(0, limit)}…[已截断]` : text
+}
+
+const WECHAT_MESSAGE_TYPES: Readonly<Record<number, string>> = {
+  0: 'text',
+  1: 'image',
+  2: 'voice',
+  3: 'video',
+  5: 'emoji',
+  8: 'location',
+  23: 'call',
+  25: 'reply',
+  49: 'chat_record',
+  81: 'location_share',
+  99: 'money_flow',
+}
+
+const WECHAT_FILTER_TYPES: Readonly<Record<Exclude<JotmoWechatMessageFilter, 'all'>, number>> = {
+  image: 1,
+  voice: 2,
+  video: 3,
+  emoji: 5,
+  location: 8,
+  call: 23,
+  reply: 25,
+  chat_record: 49,
+  location_share: 81,
 }
 
 function maskedPhone(value: string): string | undefined {
@@ -240,6 +348,17 @@ function chunksOf<T>(values: readonly T[], size: number): T[][] {
   const chunks: T[][] = []
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size))
   return chunks
+}
+
+function worldVisibility(checkStatus: number): JotmoWorldVisibility {
+  if (checkStatus === 1) return 'pending_review'
+  if (checkStatus === 4) return 'rejected'
+  if (checkStatus === 0 || checkStatus === 2 || checkStatus === 3) return 'visible'
+  return 'unknown'
+}
+
+function worldTags(text: string): string[] {
+  return [...text.matchAll(/#(\S+)/gu)].map(match => match[1] ?? '').filter(tag => tag !== '')
 }
 
 function trustedSignedImageUrl(environment: JotmoEnvironment, raw: string): URL {
@@ -345,8 +464,8 @@ export class JotmoService {
   providerCapabilities(): JotmoProviderCapabilities {
     return {
       contractVersion: JOTMO_PROVIDER_CONTRACT_VERSION,
-      provider: '@senqisi/dsh-jotmo',
-      sdk: '@senqisi/dsh-jotmo/sdk',
+      provider: '@senguoyun/dsh-arkme',
+      sdk: '@senguoyun/dsh-arkme/sdk',
       environment: this.config.environment,
       features: {
         authStatus: true,
@@ -363,12 +482,17 @@ export class JotmoService {
         sourceTextSend: true,
         callHistory: true,
         callDetail: true,
+        ...(this.relatedRecordingsEnabled() ? { relatedRecordings: true as const } : {}),
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
         maxSearchResults: 30,
         maxSyncPages: 20,
         maxImageBytes: MAX_JOTMO_IMAGE_BYTES,
+        ...(this.relatedRecordingsEnabled() ? {
+          maxRelatedRecordingPageSize: MAX_JOTMO_RELATED_RECORDING_PAGE_SIZE,
+          maxRelatedRecordingCursorLength: MAX_JOTMO_RELATED_RECORDING_CURSOR_LENGTH,
+        } : {}),
       },
     }
   }
@@ -455,6 +579,185 @@ export class JotmoService {
   async cachedProfile(): Promise<JotmoUserProfileSnapshot> {
     const session = await this.requireSession()
     return await this.stateStore.cachedProfile(session.userId)
+  }
+
+  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
+  async recordingCalendar(
+    fromStamp: number,
+    toStamp: number,
+    signal?: AbortSignal,
+  ): Promise<JotmoRecordingCalendarMonth> {
+    const from = Math.trunc(fromStamp)
+    const to = Math.trunc(toStamp)
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from <= 0 || to <= from
+      || to - from > 33 * 24 * 60 * 60 * 1000) {
+      throw new JotmoPluginError('recording-range-invalid', '录音日历范围无效', false)
+    }
+    const session = await this.requireSession()
+    const data = await this.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-calender-summary',
+      { from_stamp: from, to_stamp: to },
+      session,
+      signal,
+    )
+    const durations = listValue(data.duration_ls)
+    const unreviewed = listValue(data.un_click_session_ids_per_day)
+    const count = Math.max(durations.length, unreviewed.length)
+    const cursor = new Date(from)
+    const days = []
+    for (let index = 0; index < count; index += 1) {
+      const durationMillis = Math.max(0, numberValue(durations[index]))
+      const unreviewedCount = listValue(unreviewed[index]).length
+      days.push({
+        dateStamp: cursor.getTime(),
+        durationMillis,
+        hasRecording: durationMillis > 0 || unreviewedCount > 0,
+        unreviewedCount,
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return { fromStamp: from, toStamp: to, days }
+  }
+
+  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
+  async recordingTranscript(
+    dateStamp: number,
+    signal?: AbortSignal,
+  ): Promise<JotmoRecordingTranscriptSection> {
+    const dayStart = this.recordingDayStart(dateStamp)
+    const date = dayStart.getTime()
+    const session = await this.requireSession()
+    const [transcriptResult, speakerResult] = await Promise.allSettled([
+      this.authenticatedAudioPost<Record<string, unknown>>(
+        '/api/v1/audio/one-day-trans-v2',
+        { start_at: date, tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
+        session,
+        signal,
+      ),
+      this.authenticatedAudioPost<Record<string, unknown>>(
+        '/api/v1/audio/get-speaker-ls', {}, session, signal,
+      ),
+    ])
+    if (transcriptResult.status === 'rejected') throw transcriptResult.reason
+    let totalDurationMillis = 0
+    for (const rawSession of listValue(transcriptResult.value.session_ls)) {
+      totalDurationMillis += Math.max(0, numberValue(objectValue(rawSession).duration))
+    }
+    const speakerData = speakerResult.status === 'fulfilled'
+      ? listValue(speakerResult.value.spk_ls)
+      : []
+    const items = projectRecordingTranscripts(transcriptResult.value, speakerData)
+    return {
+      state: items.length > 0 ? 'ready' : 'empty',
+      items,
+      message: items.length > 0 ? '' : '当天无录音',
+      identityCoverage: speakerResult.status === 'fulfilled' ? 'complete' : 'partial',
+      totalDurationMillis,
+    }
+  }
+
+  async recordingProjection(
+    dateStamp: number,
+    kind: JotmoRecordingProjectionKind,
+    signal?: AbortSignal,
+  ): Promise<JotmoRecordingVersionSection> {
+    const dayStart = this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    const session = await this.requireSession()
+    const data = await this.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/summary/list-timeline-by-range',
+      {
+        from_stamp: dayStart.getTime(),
+        to_stamp: dayEnd.getTime(),
+        date_stamp: dayStart.getTime(),
+        kind: kind === 'timeline' ? 1 : 2,
+      },
+      session,
+      signal,
+    )
+    return this.recordingVersionSection(projectRecordingVersions(data, kind))
+  }
+
+  async sealRecordingCursor(payload: JotmoRecordingCursorPayload): Promise<string> {
+    const session = await this.requireSession()
+    const encoded = encodeOpaqueJson(payload)
+    const signature = createHmac('sha256', await this.recordingCursorKey(session.userId))
+      .update(encoded)
+      .digest('base64url')
+    return `jotmo-recording-cursor-v1.${encoded}.${signature}`
+  }
+
+  async openRecordingCursor(cursor: string): Promise<JotmoRecordingCursorPayload> {
+    const session = await this.requireSession()
+    const [prefix, encoded, suppliedText, ...extra] = cursor.trim().split('.')
+    if (prefix !== 'jotmo-recording-cursor-v1' || encoded === undefined
+      || suppliedText === undefined || extra.length > 0) {
+      throw new JotmoPluginError('recording-cursor-invalid', '录音分页游标无效', false)
+    }
+    const supplied = Buffer.from(suppliedText, 'base64url')
+    const expected = createHmac('sha256', await this.recordingCursorKey(session.userId))
+      .update(encoded)
+      .digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new JotmoPluginError('recording-cursor-invalid', '录音分页游标无效', false)
+    }
+    let raw: Record<string, unknown>
+    try {
+      raw = objectValue(decodeOpaqueJson(encoded))
+    } catch (error) {
+      throw new JotmoPluginError(
+        'recording-cursor-invalid',
+        '录音分页游标无效',
+        false,
+        400,
+        { cause: error },
+      )
+    }
+    const content = raw.content
+    const payload: JotmoRecordingCursorPayload = {
+      version: 1,
+      dateStamp: numberValue(raw.dateStamp),
+      content: content === 'summary' || content === 'timeline' ? content : 'transcript',
+      itemOffset: numberValue(raw.itemOffset),
+      textOffset: numberValue(raw.textOffset),
+      fingerprint: stringValue(raw.fingerprint),
+      ...(stringValue(raw.versionId) === '' ? {} : { versionId: stringValue(raw.versionId) }),
+    }
+    if (raw.version !== 1 || !['transcript', 'summary', 'timeline'].includes(String(content))
+      || !Number.isSafeInteger(payload.dateStamp) || payload.dateStamp <= 0
+      || !Number.isSafeInteger(payload.itemOffset) || payload.itemOffset < 0
+      || !Number.isSafeInteger(payload.textOffset) || payload.textOffset < 0
+      || payload.fingerprint === '') {
+      throw new JotmoPluginError('recording-cursor-invalid', '录音分页游标无效', false)
+    }
+    return payload
+  }
+
+  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
+  async recordingDay(dateStamp: number): Promise<JotmoRecordingDay> {
+    const date = this.recordingDayStart(dateStamp).getTime()
+    const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
+      this.recordingTranscript(date),
+      this.recordingProjection(date, 'summary'),
+      this.recordingProjection(date, 'timeline'),
+    ])
+    const transcript: JotmoRecordingDay['transcript'] = transcriptResult.status === 'fulfilled'
+      ? transcriptResult.value
+      : { state: 'error', items: [], message: safeFailureMessage(transcriptResult.reason) }
+    return {
+      dateStamp: date,
+      totalDurationMillis: transcriptResult.status === 'fulfilled'
+        ? transcriptResult.value.totalDurationMillis
+        : 0,
+      transcript,
+      summary: summaryResult.status === 'fulfilled' ? summaryResult.value : {
+        state: 'error', items: [], message: safeFailureMessage(summaryResult.reason),
+      },
+      timeline: timelineResult.status === 'fulfilled' ? timelineResult.value : {
+        state: 'error', items: [], message: safeFailureMessage(timelineResult.reason),
+      },
+    }
   }
 
   async refreshProfile(): Promise<JotmoUserProfileSnapshot> {
@@ -752,6 +1055,669 @@ export class JotmoService {
       status: numberValue(result.audit_status),
       sequence: numberValue(result.seq),
       localState: 'synced',
+    }
+  }
+
+  async relatedRecordingEligibility(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<JotmoRelatedRecordingEligibility> {
+    const startedAt = Date.now()
+    try {
+      const session = await this.requireSession()
+      await this.requirePrivateSource(sourceRef, session.userId)
+      const allowed = this.relatedRecordingsEnabled()
+        && await this.loadRelatedRecordingEligibility(session, signal)
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-eligibility',
+        result: allowed ? 'allowed' : 'denied',
+        durationMs: Date.now() - startedAt,
+      })
+      return { allowed }
+    } catch (error) {
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-eligibility',
+        result: 'error',
+        durationMs: Date.now() - startedAt,
+        errorCode: error instanceof JotmoPluginError ? error.code : 'internal-error',
+      })
+      throw error
+    }
+  }
+
+  async relatedRecordings(
+    sourceRef: string,
+    options: JotmoRelatedRecordingPageOptions = {},
+  ): Promise<JotmoRelatedRecordingPage> {
+    const startedAt = Date.now()
+    const limit = options.limit ?? 10
+    const cursor = options.cursor?.trim() ?? ''
+    const monthKey = options.monthKey?.trim() ?? ''
+    const timezoneOffsetMillis = options.timezoneOffsetMillis ?? 0
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_JOTMO_RELATED_RECORDING_PAGE_SIZE) {
+      throw new JotmoPluginError('related-recordings-limit-invalid', '相关录音每页条数必须在 1 到 20 之间', false)
+    }
+    if (cursor.length > MAX_JOTMO_RELATED_RECORDING_CURSOR_LENGTH) {
+      throw new JotmoPluginError('related-recordings-cursor-invalid', '相关录音分页游标无效', false)
+    }
+    if (monthKey !== '' && !/^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey)) {
+      throw new JotmoPluginError('related-recordings-month-invalid', '相关录音月份参数无效', false)
+    }
+    if (!Number.isInteger(timezoneOffsetMillis)
+      || Math.abs(timezoneOffsetMillis) > MAX_JOTMO_TIMEZONE_OFFSET_MILLIS) {
+      throw new JotmoPluginError('related-recordings-timezone-invalid', '相关录音时区参数无效', false)
+    }
+    try {
+      const session = await this.requireSession()
+      const source = await this.requirePrivateSource(sourceRef, session.userId)
+      if (!this.relatedRecordingsEnabled() || !await this.loadRelatedRecordingEligibility(session, options.signal)) {
+        throw new JotmoPluginError('related-recordings-not-allowed', '当前账号暂未开放相关录音能力', false, 403)
+      }
+      const legacyBody: Record<string, unknown> = {
+        chat_session_uid: source.ownerRef,
+        page_size: limit,
+        ...(cursor === '' ? {} : { cursor }),
+      }
+      const shouldUseModernContract = options.includeTimeIndex === true || monthKey !== ''
+      let raw: Record<string, unknown>
+      let legacyTimeIndexFallback = false
+      if (shouldUseModernContract) {
+        try {
+          raw = await this.authenticatedChatPost<Record<string, unknown>>(
+            '/api/v1/chats/records/related-recordings/page',
+            {
+              ...legacyBody,
+              ...(monthKey === '' ? {} : { month_key: monthKey }),
+              timezone_offset: timezoneOffsetMillis,
+              include_time_index: options.includeTimeIndex === true,
+            },
+            session,
+            options.signal,
+          )
+        } catch (error) {
+          const safeLegacyProbe = error instanceof JotmoPluginError
+            && error.code === 'jotmo-code-1001'
+            && cursor === ''
+            && monthKey === ''
+            && options.includeTimeIndex === true
+          if (!safeLegacyProbe) throw error
+          raw = await this.authenticatedChatPost<Record<string, unknown>>(
+            '/api/v1/chats/records/related-recordings/page',
+            legacyBody,
+            session,
+            options.signal,
+          )
+          legacyTimeIndexFallback = true
+          this.emitRelatedRecordingEvent({
+            operation: 'related-recordings-page',
+            result: 'legacy-fallback',
+            durationMs: Date.now() - startedAt,
+            cursorPresent: false,
+            consumer: options.consumer ?? 'ui',
+          })
+        }
+      } else {
+        raw = await this.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/records/related-recordings/page',
+          legacyBody,
+          session,
+          options.signal,
+        )
+      }
+      const page = this.relatedRecordingPage(raw, legacyTimeIndexFallback)
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-page',
+        result: 'success',
+        durationMs: Date.now() - startedAt,
+        itemCount: page.items.length,
+        cursorPresent: cursor !== '',
+        partial: page.partial,
+        consumer: options.consumer ?? 'ui',
+      })
+      return page
+    } catch (error) {
+      this.emitRelatedRecordingEvent({
+        operation: 'related-recordings-page',
+        result: 'error',
+        durationMs: Date.now() - startedAt,
+        cursorPresent: cursor !== '',
+        consumer: options.consumer ?? 'ui',
+        errorCode: error instanceof JotmoPluginError ? error.code : 'internal-error',
+      })
+      throw error
+    }
+  }
+
+  private relatedRecordingsEnabled(): boolean {
+    return this.config.relatedRecordingsEnabled !== false
+  }
+
+  private emitRelatedRecordingEvent(_event: JotmoServiceEvent): void {
+    // Diagnostics remain best-effort; the current Jotmo service has no external event sink.
+  }
+
+  recordRelatedRecordingsToolEvent(event: {
+    result: 'success' | 'error'
+    durationMs: number
+    itemCount?: number
+    cursorPresent?: boolean
+    transcriptRequested?: boolean
+    transcriptTruncated?: boolean
+  }): void {
+    this.emitRelatedRecordingEvent({
+      operation: 'related-recordings-tool',
+      consumer: 'tool',
+      ...event,
+    })
+  }
+
+  private async requirePrivateSource(sourceRef: string, userId: number): Promise<JotmoSourceRefPayload> {
+    const source = await this.openSourceRef(sourceRef, userId)
+    if (source.kind !== 'private_chat') {
+      throw new JotmoPluginError('related-recordings-private-source-required', '相关录音仅支持一对一私聊', false, 400)
+    }
+    return source
+  }
+
+  private async loadRelatedRecordingEligibility(
+    session: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/able-func',
+      { func_type: RELATED_RECORDINGS_FUNC_TYPE },
+      session,
+      signal,
+    )
+    return data.able === true
+  }
+
+  private relatedRecordingPage(
+    raw: Record<string, unknown>,
+    legacyTimeIndexFallback: boolean,
+  ): JotmoRelatedRecordingPage {
+    const items = listValue(raw.moment_ls).flatMap(item => {
+      const normalized = this.relatedRecordingItem(item)
+      return normalized === undefined ? [] : [normalized]
+    })
+    const partial = raw.partial === true
+    const stateCode = numberValue(raw.state)
+    const state: JotmoRelatedRecordingPageState = partial
+      ? items.length > 0 ? 'partial' : 'error'
+      : items.length > 0 ? 'success'
+        : stateCode === 2 ? 'generating'
+          : stateCode === 4 ? 'error'
+            : 'empty'
+    const nextCursor = stringValue(raw.next_cursor).trim()
+    const timeIndexComplete = raw.time_index_complete === true && !legacyTimeIndexFallback
+    const monthBuckets: JotmoRelatedRecordingMonthBucket[] = timeIndexComplete
+      ? listValue(raw.month_bucket_ls).flatMap(value => {
+          const bucket = objectValue(value)
+          const key = stringValue(bucket.month_key).trim()
+          const itemCount = numberValue(bucket.item_count)
+          return /^\d{4}-(0[1-9]|1[0-2])$/.test(key) && Number.isInteger(itemCount) && itemCount >= 0
+            ? [{ monthKey: key, itemCount }]
+            : []
+        })
+      : []
+    return {
+      state,
+      stateCode,
+      stateMessage: stringValue(raw.state_msg).trim(),
+      hasEntry: raw.has_entry === true,
+      items,
+      hasMore: raw.has_more === true && nextCursor !== '',
+      ...(raw.has_more === true && nextCursor !== '' ? { nextCursor } : {}),
+      partial,
+      ...(timeIndexComplete ? { monthBuckets } : {}),
+      timeIndexComplete,
+      legacyTimeIndexFallback,
+    }
+  }
+
+  private relatedRecordingItem(raw: unknown): JotmoRelatedRecordingItem | undefined {
+    const item = objectValue(raw)
+    const momentId = stringValue(item.moment_id).trim()
+    const sessionId = stringValue(item.session_id).trim()
+    const startAtMillis = numberValue(item.start_at)
+    if (momentId === '' || sessionId === '' || !Number.isSafeInteger(startAtMillis) || startAtMillis <= 0) return undefined
+    const summaryId = stringValue(item.summary_id).trim()
+    const originalName = stringValue(item.orig_name).trim()
+    const transcript = stringValue(item.transcript)
+    const speakers = listValue(item.speaker_ls).flatMap(value => {
+      const speaker = objectValue(value)
+      const speakerId = stringValue(speaker.speaker_id).trim()
+      if (speakerId === '') return []
+      const refUserId = numberValue(speaker.ref_usr_id)
+      const nickname = stringValue(speaker.nick_name).trim()
+      return [{
+        speakerId,
+        ...(Number.isSafeInteger(refUserId) && refUserId > 0 ? { refUserId } : {}),
+        ...(nickname === '' ? {} : { nickname }),
+      }]
+    })
+    const participants = listValue(item.participant_ls).flatMap(value => {
+      const participant = objectValue(value)
+      const speakerId = stringValue(participant.speaker_id).trim()
+      const nickname = stringValue(participant.nick_name).trim()
+      const displayName = stringValue(participant.display_name).trim() || nickname
+      if (speakerId === '' || displayName === '') return []
+      const refUserId = numberValue(participant.ref_usr_id)
+      return [{
+        speakerId,
+        ...(Number.isSafeInteger(refUserId) && refUserId > 0 ? { refUserId } : {}),
+        ...(nickname === '' ? {} : { nickname }),
+        displayName,
+        role: numberValue(participant.role),
+      }]
+    })
+    const dateStamp = numberValue(item.date_stamp)
+    const timezoneOffsetMillis = numberValue(item.tz_offset)
+    return {
+      recordingRef: momentId,
+      momentId,
+      sessionId,
+      ...(summaryId === '' ? {} : { summaryId }),
+      ...(originalName === '' ? {} : { originalName }),
+      startAtMillis,
+      endAtMillis: numberValue(item.end_at),
+      ...(Number.isSafeInteger(dateStamp) && dateStamp > 0 ? { dateStamp } : {}),
+      ...(Number.isSafeInteger(timezoneOffsetMillis) ? { timezoneOffsetMillis } : {}),
+      timeRangeText: stringValue(item.time_range_text).trim(),
+      title: stringValue(item.title).trim(),
+      summary: stringValue(item.summary).trim(),
+      summaryStatus: numberValue(item.summary_status),
+      ...(transcript === '' ? {} : { transcript }),
+      transcriptAvailable: item.transcript_available === true && transcript !== '',
+      speakers,
+      participants,
+      isSharedByOther: item.is_shared_by_other === true,
+    }
+  }
+
+  async listWechatConversations(
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatConversationPage> {
+    const session = await this.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
+    const scope = 'conversations'
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-conversations/list',
+      { limit, offset, include_bound: true },
+      session,
+      options.signal,
+    )
+    const conversations = []
+    for (const raw of listValue(data.conversations)) {
+      const item = objectValue(raw)
+      const importSessionKey = stringValue(item.import_session_key).trim()
+      if (importSessionKey === '') continue
+      const remark = optionalString(item.remark)
+      const nickname = optionalString(item.nickname)
+      conversations.push({
+        conversationRef: await this.sealWechatConversationRef(session.userId, importSessionKey),
+        name: optionalString(item.name) ?? remark ?? nickname ?? '未命名微信会话',
+        ...(remark === undefined ? {} : { remark }),
+        ...(nickname === undefined ? {} : { nickname }),
+        isGroup: booleanValue(item.ext_is_group),
+        messageCount: numberValue(item.message_count),
+        lastSendAtMillis: numberValue(item.last_send_at),
+        isBound: numberValue(item.bound_rm_subject_id) > 0
+          || stringValue(item.bound_chat_session_uid).trim() !== '',
+      })
+    }
+    const hasMore = data.has_more === true
+    const nextOffset = numberValue(data.next_offset) || offset + conversations.length
+    return {
+      conversations,
+      total: numberValue(data.total),
+      hasMore,
+      ...(hasMore && nextOffset > offset
+        ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) }
+        : {}),
+    }
+  }
+
+  async readWechatMessages(
+    conversationRef: string,
+    options: {
+      limit?: number
+      cursor?: string
+      messageType?: JotmoWechatMessageFilter
+      callType?: JotmoWechatCallFilter
+      signal?: AbortSignal
+    } = {},
+  ): Promise<JotmoWechatMessagePage> {
+    const session = await this.requireSession()
+    const conversation = await this.openWechatConversationRef(conversationRef, session.userId)
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
+    const messageType = options.messageType ?? 'all'
+    const callType = options.callType ?? 'all'
+    if (callType !== 'all' && messageType !== 'call') {
+      throw new JotmoPluginError('wechat-call-filter-invalid', '微信通话类型只能与通话消息筛选一起使用', false)
+    }
+    const scope = `messages:${conversation.importSessionKey}:${messageType}:${callType}`
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const msgType = messageType === 'all' ? undefined : WECHAT_FILTER_TYPES[messageType]
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-conversation-records/list',
+      {
+        import_session_key: conversation.importSessionKey,
+        limit,
+        offset,
+        ...(msgType === undefined ? {} : { msg_type: msgType }),
+        ...(callType === 'all' ? {} : { call_type: callType }),
+      },
+      session,
+      options.signal,
+    )
+    const messages = listValue(data.records).map(raw => this.wechatMessage(raw))
+    const hasMore = data.has_more === true
+    const nextOffset = numberValue(data.next_offset) || offset + messages.length
+    return {
+      conversationRef,
+      messages,
+      total: numberValue(data.total),
+      hasMore,
+      ...(hasMore && nextOffset > offset
+        ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) }
+        : {}),
+    }
+  }
+
+  async getWechatConversationDetail(
+    conversationRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatConversationDetail> {
+    const session = await this.requireSession()
+    const conversation = await this.openWechatConversationRef(conversationRef, session.userId)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-conversation-detail',
+      { import_session_key: conversation.importSessionKey },
+      session,
+      options.signal,
+    )
+    const remark = optionalString(data.remark)
+    const nickname = optionalString(data.nickname)
+    const wechatAlias = optionalString(data.wechat_alias)
+    const wechatId = optionalString(data.wechat_id)
+    const groupOwnerName = optionalString(data.group_owner_name)
+    const firstSendAtMillis = optionalPositiveNumber(data.first_send_at)
+    const lastSendAtMillis = optionalPositiveNumber(data.last_send_at)
+    const importedAtMillis = optionalPositiveNumber(data.imported_at)
+    const commonGroupCount = optionalPositiveNumber(data.common_group_count)
+    const groupMemberCount = optionalPositiveNumber(data.group_member_count)
+    const groupCommonFriendCount = optionalPositiveNumber(data.group_common_friend_count)
+    return {
+      conversationRef,
+      name: optionalString(data.name) ?? remark ?? nickname ?? '未命名微信会话',
+      ...(remark === undefined ? {} : { remark }),
+      ...(nickname === undefined ? {} : { nickname }),
+      isGroup: booleanValue(data.ext_is_group),
+      ...(wechatAlias === undefined ? {} : { wechatAlias }),
+      ...(wechatId === undefined ? {} : { wechatId }),
+      messageCount: numberValue(data.message_count),
+      voiceCount: numberValue(data.voice_count),
+      imageCount: numberValue(data.image_count),
+      emojiCount: numberValue(data.emoji_count),
+      videoCount: numberValue(data.video_count),
+      ...(firstSendAtMillis === undefined ? {} : { firstSendAtMillis }),
+      ...(lastSendAtMillis === undefined ? {} : { lastSendAtMillis }),
+      ...(importedAtMillis === undefined ? {} : { importedAtMillis }),
+      ...(commonGroupCount === undefined ? {} : { commonGroupCount }),
+      ...(groupOwnerName === undefined ? {} : { groupOwnerName }),
+      ...(groupMemberCount === undefined ? {} : { groupMemberCount }),
+      ...(groupCommonFriendCount === undefined ? {} : { groupCommonFriendCount }),
+    }
+  }
+
+  async listWechatGroupMembers(
+    conversationRef: string,
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatGroupMemberPage> {
+    const session = await this.requireSession()
+    const conversation = await this.openWechatConversationRef(conversationRef, session.userId)
+    const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 50)))
+    const scope = `group-members:${conversation.importSessionKey}`
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-group-members/list',
+      { import_session_key: conversation.importSessionKey },
+      session,
+      options.signal,
+    )
+    const members = [
+      ...listValue(data.members).map(raw => this.wechatGroupMember(raw, true)),
+      ...listValue(data.inactive_speakers).map(raw => this.wechatGroupMember(raw, false)),
+    ]
+    const page = members.slice(offset, offset + limit)
+    const nextOffset = offset + page.length
+    const hasMore = nextOffset < members.length
+    return {
+      conversationRef,
+      members: page,
+      total: numberValue(data.total_speakers) || members.length,
+      hasMore,
+      ...(hasMore ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) } : {}),
+    }
+  }
+
+  async listWechatPhones(
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatPhonePage> {
+    const session = await this.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const scope = 'phones'
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-phones/list',
+      { limit, offset },
+      session,
+      options.signal,
+    )
+    const phones = listValue(data.phones).map(raw => {
+      const item = objectValue(raw)
+      const likelyOwner = optionalString(item.likely_owner)
+      const reason = optionalString(clippedText(item.reason, 500))
+      const registeredNickname = optionalString(item.registered_nick_name)
+      const location = optionalString(item.phone_location_label)
+      const taskStatus = optionalString(item.task_status)
+      const evidence = listValue(item.evidence).slice(0, 2).map(rawEvidence => {
+        const value = objectValue(rawEvidence)
+        const why = optionalString(clippedText(value.why, 200))
+        const content = optionalString(clippedText(value.content, 500))
+        const sentAtMillis = optionalPositiveNumber(value.send_at)
+        return {
+          ...(why === undefined ? {} : { why }),
+          ...(content === undefined ? {} : { content }),
+          ...(sentAtMillis === undefined ? {} : { sentAtMillis }),
+        }
+      })
+      return {
+        phone: stringValue(item.phone).trim(),
+        ...(likelyOwner === undefined ? {} : { likelyOwner }),
+        ...(typeof item.confidence === 'number' && Number.isFinite(item.confidence)
+          ? { confidence: item.confidence }
+          : {}),
+        ...(reason === undefined ? {} : { reason }),
+        occurrenceCount: numberValue(item.record_count),
+        lastSeenAtMillis: numberValue(item.last_send_at),
+        evidence,
+        isRegistered: booleanValue(item.is_registered),
+        ...(registeredNickname === undefined ? {} : { registeredNickname }),
+        ...(location === undefined ? {} : { location }),
+        ...(taskStatus === undefined ? {} : { taskStatus }),
+      }
+    }).filter(item => item.phone !== '')
+    const hasMore = data.has_more === true
+    const nextOffset = numberValue(data.next_offset) || offset + phones.length
+    return {
+      phones,
+      total: numberValue(data.total),
+      hasMore,
+      ...(hasMore && nextOffset > offset
+        ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) }
+        : {}),
+    }
+  }
+
+  async listWechatCommonGroups(
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatCommonGroupPage> {
+    const session = await this.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const scope = 'common-groups'
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-common-groups/list',
+      { limit, offset },
+      session,
+      options.signal,
+    )
+    const friends = []
+    for (const raw of listValue(data.friends)) {
+      const item = objectValue(raw)
+      const sampleConversationRefs = await Promise.all(listValue(item.sample_group_keys)
+        .map(key => stringValue(key).trim())
+        .filter(key => key !== '')
+        .map(key => this.sealWechatConversationRef(session.userId, key)))
+      const lastSendAtMillis = optionalPositiveNumber(item.last_send_at)
+      friends.push({
+        name: optionalString(item.name) ?? '未命名微信联系人',
+        commonGroupCount: numberValue(item.common_group_count),
+        ...(lastSendAtMillis === undefined ? {} : { lastSendAtMillis }),
+        sampleConversationRefs,
+      })
+    }
+    const hasMore = data.has_more === true
+    const nextOffset = numberValue(data.next_offset) || offset + friends.length
+    return {
+      friends,
+      total: numberValue(data.total),
+      hasMore,
+      ...(hasMore && nextOffset > offset
+        ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) }
+        : {}),
+    }
+  }
+
+  async listWechatMoneyFlows(
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatMoneyFlowPage> {
+    const session = await this.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const scope = 'money-flows'
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-money-flows/list',
+      { limit, offset },
+      session,
+      options.signal,
+    )
+    const moneyFlows: JotmoWechatMoneyFlow[] = []
+    for (const raw of listValue(data.records)) {
+      const item = objectValue(raw)
+      const importSessionKey = stringValue(item.import_session_key).trim()
+      moneyFlows.push({
+        ...(importSessionKey === '' ? {} : {
+          conversationRef: await this.sealWechatConversationRef(session.userId, importSessionKey),
+        }),
+        content: clippedText(item.content, 1_500),
+        senderName: optionalString(item.sender_display_name) ?? (booleanValue(item.sender_is_self) ? '我' : '未知发送者'),
+        isMe: booleanValue(item.sender_is_self),
+        sentAtMillis: numberValue(item.send_at ?? item.created_at),
+      })
+    }
+    const hasMore = data.has_more === true
+    const nextOffset = numberValue(data.next_offset) || offset + moneyFlows.length
+    return {
+      moneyFlows,
+      total: numberValue(data.total),
+      hasMore,
+      ...(hasMore && nextOffset > offset
+        ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) }
+        : {}),
+    }
+  }
+
+  async listWechatLocations(
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<JotmoWechatLocationPage> {
+    const session = await this.requireSession()
+    const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
+    const scope = 'locations'
+    const offset = await this.wechatOffset(options.cursor, session.userId, scope)
+    const data = await this.authenticatedRelationPost<Record<string, unknown>>(
+      '/api/v1/entity/wechat-import-location-entries',
+      {},
+      session,
+      options.signal,
+    )
+    const locations: JotmoWechatLocation[] = []
+    for (const raw of listValue(data.entry_ls)) {
+      const item = objectValue(raw)
+      const conversation = objectValue(item.conversation)
+      const importSessionKey = stringValue(item.import_session_key ?? conversation.import_session_key).trim()
+      const poiName = optionalString(item.poi_name)
+      const address = optionalString(item.address)
+      const senderName = optionalString(item.sender_display_name)
+      const sentAtMillis = optionalPositiveNumber(item.send_at)
+      locations.push({
+        ...(importSessionKey === '' ? {} : {
+          conversationRef: await this.sealWechatConversationRef(session.userId, importSessionKey),
+        }),
+        conversationName: optionalString(conversation.name) ?? '未命名微信会话',
+        entryType: optionalString(item.entry_type) ?? 'location',
+        latitude: numberValue(item.lat),
+        longitude: numberValue(item.lon),
+        ...(poiName === undefined ? {} : { poiName }),
+        ...(address === undefined ? {} : { address }),
+        ...(senderName === undefined ? {} : { senderName }),
+        isMe: booleanValue(item.sender_is_self),
+        ...(sentAtMillis === undefined ? {} : { sentAtMillis }),
+      })
+    }
+    const page = locations.slice(offset, offset + limit)
+    const nextOffset = offset + page.length
+    const hasMore = nextOffset < locations.length
+    return {
+      locations: page,
+      total: locations.length,
+      hasMore,
+      ...(hasMore ? { nextCursor: await this.sealWechatCursor(session.userId, scope, nextOffset) } : {}),
+    }
+  }
+
+  private wechatMessage(raw: unknown): JotmoWechatMessage {
+    const item = objectValue(raw)
+    const msgType = numberValue(item.msg_type)
+    const mediaDuration = optionalPositiveNumber(item.media_duration)
+    const mimeType = optionalString(item.mime_type)
+    const isMe = booleanValue(item.sender_is_self)
+    return {
+      content: clippedText(item.content, 1_500),
+      senderName: optionalString(item.sender_display_name) ?? (isMe ? '我' : '未知发送者'),
+      isMe,
+      sentAtMillis: numberValue(item.send_at ?? item.created_at),
+      messageType: WECHAT_MESSAGE_TYPES[msgType] ?? `other_${String(msgType)}`,
+      hasMedia: stringValue(item.oss_key).trim() !== '' || stringValue(item.media_path).trim() !== '',
+      ...(mediaDuration === undefined ? {} : { mediaDuration }),
+      ...(mimeType === undefined ? {} : { mimeType }),
+    }
+  }
+
+  private wechatGroupMember(raw: unknown, defaultIsInGroup: boolean): JotmoWechatGroupMember {
+    const item = objectValue(raw)
+    const lastSendAtMillis = optionalPositiveNumber(item.last_send_at)
+    return {
+      name: optionalString(item.name) ?? '未命名群成员',
+      messageCount: numberValue(item.message_count),
+      ...(lastSendAtMillis === undefined ? {} : { lastSendAtMillis }),
+      isOwner: booleanValue(item.is_owner),
+      isFriend: booleanValue(item.is_friend),
+      isMe: booleanValue(item.is_self),
+      isInGroup: item.is_in_group === undefined ? defaultIsInGroup : booleanValue(item.is_in_group),
     }
   }
 
@@ -1224,6 +2190,146 @@ export class JotmoService {
     return page
   }
 
+  async listWorldRecords(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<JotmoWorldRecordList> {
+    const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 10)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const data = await this.post<Record<string, unknown>>(
+      this.config.worldBaseUrl,
+      '/api/public/v1/public-record/world-list',
+      { limit, offset },
+      undefined,
+      [200],
+      options.signal,
+    )
+    const rawItems = listValue(data.list)
+    const items = rawItems.map(raw => this.worldRecordItem(raw)).filter(
+      (item): item is JotmoWorldRecordItem => item !== undefined,
+    )
+    const total = Math.max(0, Math.trunc(numberValue(data.total)))
+    const nextOffset = offset + rawItems.length
+    const hasMore = rawItems.length > 0 && nextOffset < total
+    return {
+      items,
+      total,
+      hasMore,
+      ...(hasMore ? { nextOffset } : {}),
+    }
+  }
+
+  async publishWorldTextForConversation(
+    recordUid: string,
+    textContent: string,
+    signal?: AbortSignal,
+  ): Promise<JotmoWorldPublishResult> {
+    const normalizedUid = recordUid.trim()
+    const normalizedText = textContent.trim()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
+      throw new JotmoPluginError('record-uid-invalid', '写入标识无效，请重试', false)
+    }
+    if (normalizedText === '') {
+      throw new JotmoPluginError('world-text-empty', '请输入要发到世界的内容', false)
+    }
+    if (normalizedText.length > this.config.maxTextLength) {
+      throw new JotmoPluginError('world-text-too-long', `内容不能超过 ${this.config.maxTextLength} 个字符`, false)
+    }
+
+    let profile: JotmoUserProfile
+    try {
+      const snapshot = await this.refreshProfile()
+      if (snapshot.profile === null) throw new JotmoPluginError('profile-unavailable', '无法读取当前即我账号资料', true)
+      profile = snapshot.profile
+    } catch (error) {
+      return this.worldPublishFailure(false, error)
+    }
+    if (profile.contact.phoneMasked === undefined) {
+      return {
+        recordSaved: false,
+        recordState: 'not_saved',
+        worldPublished: false,
+        visibility: 'not_published',
+        checkStatus: 0,
+        retryable: false,
+        error: '请先在即我客户端绑定手机号，再发到世界',
+      }
+    }
+
+    try {
+      if (await this.worldRecordIsPublic(normalizedUid, signal)) {
+        return {
+          recordSaved: true,
+          recordState: 'synced',
+          worldPublished: true,
+          visibility: 'unknown',
+          checkStatus: 0,
+          retryable: false,
+        }
+      }
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      // 公开状态预检不可用时继续正常发布；失败后的确认仍会再查一次。
+    }
+
+    const createdAtMillis = Date.now()
+    const recordResult = await this.createTextForConversation(normalizedUid, normalizedText)
+    if (recordResult.localState !== 'synced') {
+      return {
+        recordSaved: true,
+        recordState: 'pending',
+        worldPublished: false,
+        visibility: 'not_published',
+        checkStatus: 0,
+        retryable: true,
+        ...(recordResult.error === undefined ? {} : { error: recordResult.error }),
+      }
+    }
+
+    try {
+      const published = await this.authenticatedWorldPost<Record<string, unknown>>(
+        '/api/v1/public-record/publish',
+        {
+          record_uid: normalizedUid,
+          content: normalizedText,
+          text_content: normalizedText,
+          tags: worldTags(normalizedText),
+          original_topic_id: 0,
+          created_at: createdAtMillis,
+          nick_name: profile.nickname || profile.displayName,
+          avatar: profile.avatarRef,
+          template_kind: 1,
+        },
+        undefined,
+        signal,
+      )
+      const checkStatus = Math.trunc(numberValue(published.check_status))
+      return {
+        recordSaved: true,
+        recordState: 'synced',
+        worldPublished: true,
+        visibility: worldVisibility(checkStatus),
+        checkStatus,
+        retryable: false,
+      }
+    } catch (error) {
+      try {
+        if (await this.worldRecordIsPublic(normalizedUid, signal)) {
+          return {
+            recordSaved: true,
+            recordState: 'synced',
+            worldPublished: true,
+            visibility: 'unknown',
+            checkStatus: 0,
+            retryable: false,
+          }
+        }
+      } catch {
+        // 保留原始发布错误，向用户说明快记已保存但公开结果未成功确认。
+      }
+      return this.worldPublishFailure(true, error, 'synced')
+    }
+  }
+
   async createText(recordUid: string, textContent: string): Promise<JotmoCreateTextResult> {
     const session = await this.requireSession()
     const normalizedUid = recordUid.trim()
@@ -1315,6 +2421,92 @@ export class JotmoService {
       await this.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
       throw error
     }
+  }
+
+  private async sealWechatConversationRef(userId: number, importSessionKey: string): Promise<string> {
+    const payload = encodeOpaqueJson({ version: 1, userId, importSessionKey } satisfies JotmoWechatConversationRefPayload)
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `jotmo-wechat-conversation-v1.${payload}.${signature}`
+  }
+
+  private async openWechatConversationRef(
+    conversationRef: string,
+    expectedUserId: number,
+  ): Promise<JotmoWechatConversationRefPayload> {
+    const parts = conversationRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'jotmo-wechat-conversation-v1') {
+      throw new JotmoPluginError('wechat-conversation-ref-invalid', '微信会话引用无效，请先重新查询微信会话列表', false)
+    }
+    const payload = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new JotmoPluginError('wechat-conversation-ref-invalid', '微信会话引用无效，请先重新查询微信会话列表', false)
+    }
+    let parsed: Record<string, unknown>
+    try {
+      parsed = objectValue(decodeOpaqueJson(payload))
+    } catch (error) {
+      throw new JotmoPluginError(
+        'wechat-conversation-ref-invalid',
+        '微信会话引用无效，请先重新查询微信会话列表',
+        false,
+        400,
+        { cause: error },
+      )
+    }
+    const result: JotmoWechatConversationRefPayload = {
+      version: 1,
+      userId: numberValue(parsed.userId),
+      importSessionKey: stringValue(parsed.importSessionKey).trim(),
+    }
+    if (parsed.version !== 1 || result.userId !== expectedUserId || result.importSessionKey === '') {
+      throw new JotmoPluginError('wechat-conversation-ref-invalid', '微信会话引用与当前账号不匹配', false, 403)
+    }
+    return result
+  }
+
+  private async sealWechatCursor(userId: number, scope: string, offset: number): Promise<string> {
+    const payload = encodeOpaqueJson({ version: 1, userId, scope, offset } satisfies JotmoWechatCursorPayload)
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `jotmo-wechat-cursor-v1.${payload}.${signature}`
+  }
+
+  private async wechatOffset(cursor: string | undefined, expectedUserId: number, expectedScope: string): Promise<number> {
+    if (cursor === undefined || cursor.trim() === '') return 0
+    const parts = cursor.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'jotmo-wechat-cursor-v1') {
+      throw new JotmoPluginError('wechat-cursor-invalid', '微信数据分页游标无效，请从第一页重新查询', false)
+    }
+    const payload = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new JotmoPluginError('wechat-cursor-invalid', '微信数据分页游标无效，请从第一页重新查询', false)
+    }
+    let parsed: Record<string, unknown>
+    try {
+      parsed = objectValue(decodeOpaqueJson(payload))
+    } catch (error) {
+      throw new JotmoPluginError(
+        'wechat-cursor-invalid',
+        '微信数据分页游标无效，请从第一页重新查询',
+        false,
+        400,
+        { cause: error },
+      )
+    }
+    const result: JotmoWechatCursorPayload = {
+      version: 1,
+      userId: numberValue(parsed.userId),
+      scope: stringValue(parsed.scope),
+      offset: numberValue(parsed.offset),
+    }
+    if (parsed.version !== 1 || result.userId !== expectedUserId || result.scope !== expectedScope
+      || !Number.isSafeInteger(result.offset) || result.offset < 0) {
+      throw new JotmoPluginError('wechat-cursor-invalid', '微信数据分页游标与当前查询不匹配', false, 403)
+    }
+    return result.offset
   }
 
   private async sealSourceRef(
@@ -1468,6 +2660,64 @@ export class JotmoService {
     }
   }
 
+  private worldRecordItem(raw: unknown): JotmoWorldRecordItem | undefined {
+    const item = objectValue(raw)
+    const textContent = stringValue(item.text_content ?? item.content).trim()
+    const headline = stringValue(item.headline).trim()
+    const imageCount = listValue(item.images).length
+    const videoCount = listValue(item.videos).length
+    const voiceCount = listValue(item.voices).length
+    if (textContent === '' && headline === '' && imageCount + videoCount + voiceCount === 0) return undefined
+    return {
+      authorName: stringValue(item.nick_name).trim() || '即我用户',
+      headline,
+      textContent,
+      tags: listValue(item.tags).map(stringValue).map(tag => tag.trim()).filter(tag => tag !== ''),
+      templateKind: Math.trunc(numberValue(item.template_kind)),
+      createdAtMillis: Math.trunc(numberValue(item.created_at)),
+      publishedAtMillis: Math.trunc(numberValue(item.published_at)),
+      imageCount,
+      videoCount,
+      voiceCount,
+      extendCount: Math.max(0, Math.trunc(numberValue(item.extend_count))),
+    }
+  }
+
+  private worldPublishFailure(
+    recordSaved: boolean,
+    error: unknown,
+    recordState: JotmoWorldPublishResult['recordState'] = recordSaved ? 'synced' : 'not_saved',
+  ): JotmoWorldPublishResult {
+    const code = error instanceof JotmoPluginError ? error.code : ''
+    const retryable = error instanceof JotmoPluginError
+      ? error.retryable || ['jotmo-code-10005', 'jotmo-http-error', 'jotmo-network-error', 'jotmo-timeout'].includes(code)
+      : true
+    return {
+      recordSaved,
+      recordState,
+      worldPublished: false,
+      visibility: 'not_published',
+      checkStatus: 0,
+      retryable,
+      error: safeFailureMessage(error),
+    }
+  }
+
+  private async worldRecordIsPublic(recordUid: string, signal?: AbortSignal): Promise<boolean> {
+    const data = await this.post<Record<string, unknown>>(
+      this.config.worldBaseUrl,
+      '/api/public/v1/public-record/status-batch',
+      { record_uids: [recordUid] },
+      undefined,
+      [200],
+      signal,
+    )
+    return listValue(data.items).some(raw => {
+      const item = objectValue(raw)
+      return stringValue(item.record_uid).trim() === recordUid && item.is_public === true
+    })
+  }
+
   private normalizedPhone(phone: string): string {
     const normalized = phone.replace(/[\s-]/g, '')
     if (!/^1[3-9][0-9]{9}$/.test(normalized)) {
@@ -1616,6 +2866,91 @@ export class JotmoService {
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal)
     }
+  }
+
+  private async authenticatedRelationPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedAudioPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedWorldPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: JotmoSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof JotmoPluginError)
+        || !['auth-http-401', 'auth-http-403', 'jotmo-code-10002'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async recordingCursorKey(userId: number): Promise<Buffer> {
+    return createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`jotmo-recording-cursor:${String(userId)}`)
+      .digest()
+  }
+
+  private recordingDayStart(dateStamp: number): Date {
+    const date = Math.trunc(dateStamp)
+    const dayStart = new Date(date)
+    if (!Number.isSafeInteger(date) || date <= 0 || dayStart.getTime() !== date
+      || dayStart.getHours() !== 0 || dayStart.getMinutes() !== 0
+      || dayStart.getSeconds() !== 0 || dayStart.getMilliseconds() !== 0) {
+      throw new JotmoPluginError('recording-date-invalid', '录音日期必须是本地零点', false)
+    }
+    return dayStart
+  }
+
+  private recordingVersionSection(
+    items: JotmoRecordingVersion[],
+  ): JotmoRecordingSection<JotmoRecordingVersion> {
+    if (items[0]?.status === 'processing') {
+      return { state: 'processing', items, message: '内容仍在生成' }
+    }
+    if (items[0]?.status === 'failed') {
+      return { state: 'failed', items, message: '最近一次生成失败' }
+    }
+    if (items.some(item => item.selectable)) return { state: 'ready', items, message: '' }
+    return { state: 'empty', items, message: '暂无已生成内容' }
   }
 
   private async downloadSignedImage(

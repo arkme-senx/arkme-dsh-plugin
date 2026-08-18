@@ -312,6 +312,7 @@ export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: Jot
 
   const showLogin = () => { jotmoUi.showLogin(); onActivateSurface?.() }
   const showCalls = () => { jotmoUi.showCalls(); onActivateSurface?.() }
+  const showRecordings = () => { jotmoUi.showRecordings(); onActivateSurface?.() }
   const changeDirectory = (next: JotmoSourceDirectory) => {
     setDirectory(next)
     setSources(cacheRef.current?.sources[next] ?? [])
@@ -371,6 +372,19 @@ export function JotmoNavigation({ wide = true, onClose, onActivateSurface }: Jot
           <span style={styles.chatContent}>
             <span style={styles.chatTop}><span style={styles.chatName}>通话记录</span></span>
             <span style={styles.chatBottom}><span style={styles.preview}>转录与 AI 摘要</span></span>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="treeitem"
+          aria-selected={ui.mode === 'recordings'}
+          style={{ ...styles.chatRow, ...(ui.mode === 'recordings' ? styles.chatRowActive : {}) }}
+          onClick={showRecordings}
+        >
+          <span style={styles.avatar} aria-hidden><JotmoMark size={44} /></span>
+          <span style={styles.chatContent}>
+            <span style={styles.chatTop}><span style={styles.chatName}>全天候录音</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>转写、日总结与时间轴</span></span>
           </span>
         </button>
         {sources.map(source => {
