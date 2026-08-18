@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmePluginError, ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
@@ -88,9 +89,11 @@ const config: ArkmeServiceConfig = {
   recordBaseUrl: 'https://record.test',
   chatBaseUrl: 'https://chat.test',
   imBaseUrl: 'https://im.test',
+  webrtcBaseUrl: 'https://webrtc.test',
   worldBaseUrl: 'https://world.test',
   relationBaseUrl: 'https://relation.test',
   intelligentBaseUrl: 'https://intelligent.test',
+  routePath: '/arkme-self/api',
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
@@ -117,6 +120,18 @@ function userInfo(userId: number, phone = '13800138000'): Record<string, unknown
     has_bind_wechat: false,
     has_bind_google: false,
   }
+}
+
+function sourceRefFor(kind: 'private_chat' | 'group_chat', ownerRef: string, displayName: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    userId: 10001,
+    kind,
+    ownerRef,
+    displayName,
+  }), 'utf8').toString('base64url')
+  const signature = createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')
+  return `arkme-source-v1.${payload}.${signature}`
 }
 
 describe('ArkmeService', () => {
@@ -167,7 +182,13 @@ describe('ArkmeService', () => {
       contractVersion: 1,
       provider: '@senguoyun/dsh-arkme',
       sdk: '@senguoyun/dsh-arkme/sdk',
-      features: { cachedSnapshot: true, revisionPolling: true, userProfile: true, imageRead: true },
+      features: {
+        cachedSnapshot: true,
+        revisionPolling: true,
+        userProfile: true,
+        imageRead: true,
+        outgoingCall: true,
+      },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })
     await expect(service.providerState()).resolves.toEqual({
@@ -188,7 +209,118 @@ describe('ArkmeService', () => {
       captchaId: 'captcha-test-id-1234567890',
       environment: 'test',
       testLoginEnabled: true,
+      callAssetBasePath: '/arkme-self/api/call',
     })
+  })
+
+  it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+        session: { chat_session_uid: 'chat-private-1', session_kind: 1 },
+        private_counterpart: { user_id: 20002, display_name_snapshot: '接口昵称' },
+        private_supplement: { remark: '小林' },
+      } })
+      if (url.endsWith('/api/v1/auth/get-user-info')) return json({ code: 200, data: {
+        ...userInfo(10001), nick_name: '我的昵称', head_img: '10001_avatar.png',
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: { items: [{
+        user_id: 20002,
+        nick_name: '公开昵称',
+        head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+      }] } })
+      if (url.endsWith('/api/v1/trtc/credentials')) return json({ code: 200, data: {
+        sdk_app_id: 1400001, user_id: 'me__c1', user_sig: 'user-sig-secret',
+      } })
+      if (url.endsWith('/api/v1/trtc/create-room')) return json({ code: 200, data: {
+        room_id: 'room-private-1', shared_topic_id: 99, callee_accounts: ['peer__c2'],
+      } })
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const result = await service.prepareOutgoingCall({
+      sourceRef: sourceRefFor('private_chat', 'chat-private-1', '旧名称'),
+      mediaType: 'video',
+      callRequestId: 'request-1',
+    })
+
+    expect(requests.map(item => item.url)).toEqual([
+      'https://chat.test/api/v1/chats/detail',
+      'https://auth.test/api/v1/auth/get-user-info',
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
+      'https://webrtc.test/api/v1/trtc/credentials',
+      'https://webrtc.test/api/v1/trtc/create-room',
+    ])
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'chat-private-1',
+      callee_user_ids: [20002],
+      call_media_type: 1,
+      caller_name: '我的昵称',
+    })
+    expect(result).toMatchObject({
+      callRequestId: 'request-1',
+      displayName: '小林',
+      peerAvatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
+      bootstrap: {
+        sdkAppId: 1400001,
+        userId: 'me__c1',
+        userSig: 'user-sig-secret',
+        nickName: '我的昵称',
+        avatar: '',
+        outgoingOnly: true,
+      },
+      call: {
+        roomId: 'room-private-1',
+        mediaType: 'video',
+        calleeAccounts: ['peer__c2'],
+        calleeName: '小林',
+        callerName: '我的昵称',
+        timeoutSec: 30,
+      },
+    })
+  })
+
+  it('rejects a non-private outgoing source before contacting remote services', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>()
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    await expect(service.prepareOutgoingCall({
+      sourceRef: sourceRefFor('group_chat', 'group-1', '项目群'),
+      mediaType: 'audio',
+      callRequestId: 'request-1',
+    })).rejects.toMatchObject({ code: 'call-source-invalid' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('returns only safe fields when a tool intent reaches calling', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => {
+      throw new Error('not used')
+    })
+    const pending = service.requestOutgoingCall(
+      sourceRefFor('private_chat', 'chat-private-1', '小林'),
+      'video',
+    )
+    let claim: Awaited<ReturnType<ArkmeService['claimOutgoingCallIntent']>> = null
+    await vi.waitFor(async () => {
+      claim = await service.claimOutgoingCallIntent()
+      expect(claim).not.toBeNull()
+    })
+    await service.resolveOutgoingCallIntent({
+      intentId: claim!.intentId,
+      claimToken: claim!.claimToken,
+      outcome: { status: 'calling' },
+    })
+
+    await expect(pending).resolves.toEqual({ status: 'calling', displayName: '小林', mediaType: 'video' })
   })
 
   it('logs in with a test user only on the test environment', async () => {

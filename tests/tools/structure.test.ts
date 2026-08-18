@@ -28,5 +28,6 @@ describe('Arkme tool source boundaries', () => {
 
     expect(violations).toEqual([])
     expect(readFileSync(join(root, 'src/tools/ports/media.ts'), 'utf8')).not.toContain('arkme-service')
+    expect(readFileSync(join(root, 'src/tools/ports/outgoing-call.ts'), 'utf8')).not.toContain('arkme-service')
   })
 })

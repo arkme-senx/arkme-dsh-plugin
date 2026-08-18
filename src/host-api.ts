@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor, ArkmeSourceDirectory, ArkmeTimelineCursor,
 } from './types.js'
@@ -67,6 +68,46 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean {
   return params[key] === true
 }
 
+function requiredCallParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  maxLength = 512,
+): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > maxLength) {
+    throw new ArkmePluginError(code, '呼叫请求参数无效', false)
+  }
+  return value
+}
+
+function outgoingMediaTypeParam(params: Record<string, unknown>): 'audio' | 'video' {
+  const value = stringParam(params, 'mediaType')
+  if (value !== 'audio' && value !== 'video') {
+    throw new ArkmePluginError('call-media-type-invalid', '呼叫媒体类型无效', false)
+  }
+  return value
+}
+
+const OUTGOING_FAILURE_CODES = new Set<ArkmeOutgoingCallFailureCode>([
+  'call-ui-unavailable',
+  'call-active',
+  'call-source-invalid',
+  'call-peer-unavailable',
+  'call-permission-denied',
+  'call-bootstrap-failed',
+  'call-engine-failed',
+  'call-cancelled',
+])
+
+function outgoingFailureCodeParam(params: Record<string, unknown>): ArkmeOutgoingCallFailureCode {
+  const code = stringParam(params, 'code') as ArkmeOutgoingCallFailureCode
+  if (!OUTGOING_FAILURE_CODES.has(code)) {
+    throw new ArkmePluginError('call-failure-invalid', '呼叫失败类型无效', false)
+  }
+  return code
+}
+
 function cursorParam(params: Record<string, unknown>): ArkmeRecordCursor | undefined {
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
@@ -127,12 +168,14 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      const value = await dispatch(service, request.operation, params)
+      const value = await dispatchArkmeHostOperation(service, request.operation, params)
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       const known = error instanceof ArkmePluginError
         ? error
-        : new ArkmePluginError('internal-error', 'Arkme 插件处理失败', true, 500, { cause: error })
+        : error instanceof ArkmeOutgoingCallError
+          ? new ArkmePluginError(error.code, error.message, error.retryable, error.code === 'call-active' ? 409 : 400)
+          : new ArkmePluginError('internal-error', 'Arkme 插件处理失败', true, 500, { cause: error })
       writeJson(res, known.httpStatus, {
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable },
@@ -141,7 +184,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
   }
 }
 
-async function dispatch(
+export async function dispatchArkmeHostOperation(
   service: ArkmeService,
   operation: ArkmePluginRequest['operation'],
   params: Record<string, unknown>,
@@ -220,6 +263,42 @@ async function dispatch(
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
+    )
+    case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
+    case 'calls.outgoing.intent.resolve': {
+      const intentId = requiredCallParam(params, 'intentId', 'call-intent-invalid')
+      const claimToken = requiredCallParam(params, 'claimToken', 'call-intent-invalid')
+      const status = stringParam(params, 'status')
+      if (status === 'calling') {
+        return await service.resolveOutgoingCallIntent({
+          intentId,
+          claimToken,
+          outcome: { status: 'calling' },
+        })
+      }
+      if (status !== 'failed') {
+        throw new ArkmePluginError('call-intent-invalid', '呼叫意图状态无效', false)
+      }
+      return await service.resolveOutgoingCallIntent({
+        intentId,
+        claimToken,
+        outcome: {
+          status: 'failed',
+          code: outgoingFailureCodeParam(params),
+          message: requiredCallParam(params, 'message', 'call-failure-invalid', 500),
+        },
+      })
+    }
+    case 'calls.outgoing.prepare': return await service.prepareOutgoingCall({
+      sourceRef: requiredCallParam(params, 'sourceRef', 'call-source-invalid', 4096),
+      mediaType: outgoingMediaTypeParam(params),
+      callRequestId: requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
+    })
+    case 'calls.outgoing.heartbeat': return await service.heartbeatOutgoingCall(
+      requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
+    )
+    case 'calls.outgoing.release': return await service.releaseOutgoingCall(
+      requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
     default: throw new ArkmePluginError('operation-unknown', '不支持的Arkme 插件操作', false, 404)
   }

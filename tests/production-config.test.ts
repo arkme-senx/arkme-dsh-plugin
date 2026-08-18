@@ -10,6 +10,7 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('recordBaseUrl: https://record.jotmo.cc')
     expect(patch).toContain('chatBaseUrl: https://chat.jotmo.cc')
     expect(patch).toContain('imBaseUrl: https://im.jotmo.cc')
+    expect(patch).toContain('webrtcBaseUrl: https://webrtc.jiwo.cc')
     expect(patch).toContain('worldBaseUrl: https://world.jotmo.cc')
     expect(patch).toContain('relationBaseUrl: https://relation.jotmo.cc')
     expect(patch).toContain('intelligentBaseUrl: https://intelligent.jotmo.cc')

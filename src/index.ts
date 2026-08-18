@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createArkmeHostApi } from './host-api.js'
+import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
@@ -19,6 +20,7 @@ export interface Config {
   recordBaseUrl: string
   chatBaseUrl: string
   imBaseUrl: string
+  webrtcBaseUrl: string
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
@@ -39,6 +41,7 @@ export const Config: Schema<Config> = Schema.object({
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
+  webrtcBaseUrl: Schema.string().default('https://jotmo-webrtc.senguo.me'),
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
@@ -78,17 +81,26 @@ export function apply(ctx: Context, config: Config): void {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
   })
+  const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
   })
-  ctx.effect(() => () => { localDatabase.close() }, 'dsh-arkme: local cache database')
+  ctx.effect(() => () => {
+    service.dispose()
+    localDatabase.close()
+  }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: config.routePath,
     handler,
   }), 'dsh-arkme: local BFF route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: `${config.routePath}/call`,
+    handler: callAssetHandler,
+  }), 'dsh-arkme: outgoing call assets')
   ctx.effect(() => {
     const disposeRoute = ctx.webServer.register({
       kind: 'exact',
@@ -121,6 +133,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['recordBaseUrl', config.recordBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
+    ['webrtcBaseUrl', config.webrtcBaseUrl],
     ['worldBaseUrl', config.worldBaseUrl],
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
@@ -192,4 +205,13 @@ export type {
   ArkmeWechatPhonePage,
 } from './types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+export type {
+  ArkmeOutgoingCallFailureCode,
+  ArkmeOutgoingCallIntentClaim,
+  ArkmeOutgoingCallIntentResolutionInput,
+  ArkmeOutgoingCallMediaType,
+  ArkmeOutgoingCallPrepareResult,
+  ArkmeOutgoingCallToolResult,
+} from './outgoing-call-contract.js'
+export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'

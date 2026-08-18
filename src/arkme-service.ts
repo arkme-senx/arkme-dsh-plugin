@@ -2,6 +2,14 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import OSS from 'ali-oss'
 import { ArkmeChatRealtimeRuntime, type ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from './keychain-store.js'
+import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
+import type {
+  ArkmeOutgoingCallIntentClaim,
+  ArkmeOutgoingCallIntentResolutionInput,
+  ArkmeOutgoingCallMediaType,
+  ArkmeOutgoingCallPrepareResult,
+  ArkmeOutgoingCallToolResult,
+} from './outgoing-call-contract.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
   ArkmeOfficialCommunityEntryState,
@@ -91,9 +99,11 @@ export interface ArkmeServiceConfig {
   recordBaseUrl: string
   chatBaseUrl: string
   imBaseUrl: string
+  webrtcBaseUrl: string
   worldBaseUrl: string
   relationBaseUrl: string
   intelligentBaseUrl: string
+  routePath: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -479,6 +489,7 @@ export class ArkmeService {
     private readonly stateStore: StateStore,
     private readonly fetchImpl: FetchLike = fetch,
     private readonly pendingSessionStore?: ArkmeSessionStore,
+    private readonly outgoingCallBroker = new ArkmeOutgoingCallBroker(),
   ) {
     this.chatRealtime = new ArkmeChatRealtimeRuntime({
       imBaseUrl: config.imBaseUrl,
@@ -636,6 +647,7 @@ export class ArkmeService {
       captchaId: this.config.geetestCaptchaId,
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',
+      callAssetBasePath: `${this.config.routePath}/call`,
     }
   }
 
@@ -658,6 +670,7 @@ export class ArkmeService {
         sourceDirectory: true,
         sourceTimeline: true,
         sourceTextSend: true,
+        outgoingCall: true,
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
@@ -677,6 +690,180 @@ export class ArkmeService {
       ...(auth.userId === undefined ? {} : { userId: auth.userId }),
       revision: auth.userId === undefined ? 0 : await this.stateStore.revision(auth.userId),
     }
+  }
+
+  async requestOutgoingCall(
+    sourceRef: string,
+    mediaType: ArkmeOutgoingCallMediaType,
+    signal?: AbortSignal,
+  ): Promise<ArkmeOutgoingCallToolResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
+    }
+    return await this.outgoingCallBroker.request({
+      userId: session.userId,
+      sourceRef,
+      displayName: source.displayName,
+      mediaType,
+      ...(signal === undefined ? {} : { signal }),
+    })
+  }
+
+  async claimOutgoingCallIntent(): Promise<ArkmeOutgoingCallIntentClaim | null> {
+    const session = await this.requireSession()
+    return this.outgoingCallBroker.claim(session.userId)
+  }
+
+  async resolveOutgoingCallIntent(
+    input: Omit<ArkmeOutgoingCallIntentResolutionInput, 'userId'>,
+  ): Promise<void> {
+    const session = await this.requireSession()
+    this.outgoingCallBroker.resolveIntent({ ...input, userId: session.userId })
+  }
+
+  async prepareOutgoingCall(input: {
+    sourceRef: string
+    mediaType: ArkmeOutgoingCallMediaType
+    callRequestId: string
+    signal?: AbortSignal
+  }): Promise<ArkmeOutgoingCallPrepareResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(input.sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
+    }
+    this.outgoingCallBroker.acquireLease(session.userId, input.callRequestId)
+    try {
+      const detail = await this.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/detail',
+        { chat_session_uid: source.ownerRef },
+        session,
+        input.signal,
+      )
+      const chatSession = objectValue(detail.session)
+      const sessionUid = stringValue(chatSession.chat_session_uid).trim()
+      const sessionKind = numberValue(chatSession.session_kind)
+      if (sessionUid !== source.ownerRef || (sessionKind !== 1 && sessionKind !== 3)) {
+        throw new ArkmePluginError('call-source-invalid', '当前私聊会话不可用，请刷新后重试', false, 409)
+      }
+      const counterpart = objectValue(detail.private_counterpart)
+      const supplement = objectValue(detail.private_supplement)
+      const counterpartUserId = numberValue(counterpart.user_id)
+      if (!Number.isSafeInteger(counterpartUserId) || counterpartUserId <= 0 || counterpartUserId === session.userId) {
+        throw new ArkmePluginError('call-peer-unavailable', '当前私聊用户不可用，请刷新后重试', false, 409)
+      }
+      const detailDisplayName = stringValue(
+        supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
+        ?? supplement.pending_name ?? counterpart.visible_phone,
+      ).trim()
+      const callerProfile = (await this.refreshProfile()).profile
+      if (callerProfile === null) {
+        throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应不完整', false, 502)
+      }
+      const publicProfiles = await this.publicProfilesByUserIds([counterpartUserId], session, input.signal)
+      const peerProfile = publicProfiles.get(counterpartUserId)
+      const displayName = detailDisplayName || peerProfile?.displayName || source.displayName || 'Arkme 用户'
+      const credentials = await this.authenticatedWebrtcPost<Record<string, unknown>>(
+        '/api/v1/trtc/credentials',
+        {},
+        session,
+        input.signal,
+      )
+      const sdkAppId = numberValue(credentials.sdk_app_id)
+      const trtcUserId = stringValue(credentials.user_id).trim()
+      const userSig = stringValue(credentials.user_sig).trim()
+      if (!Number.isSafeInteger(sdkAppId) || sdkAppId <= 0 || trtcUserId === '' || userSig === '') {
+        throw new ArkmePluginError('call-credentials-invalid', '桌面通话初始化失败', true, 502)
+      }
+      const callerName = callerProfile.displayName.trim() || 'Arkme 用户'
+      const callerAvatarRef = callerProfile.avatarRef.trim()
+      const room = await this.authenticatedWebrtcPost<Record<string, unknown>>(
+        '/api/v1/trtc/create-room',
+        {
+          shared_topic_id: 0,
+          chat_session_uid: source.ownerRef,
+          callee_user_ids: [counterpartUserId],
+          call_media_type: input.mediaType === 'video' ? 1 : 0,
+          caller_name: callerName,
+          ...(callerAvatarRef === '' ? {} : {
+            sender_avatar_url: callerAvatarRef,
+            caller_avatar_url: callerAvatarRef,
+          }),
+        },
+        session,
+        input.signal,
+      )
+      const roomId = stringValue(room.room_id).trim()
+      const calleeAccounts = [...new Set(listValue(room.callee_accounts)
+        .map(value => stringValue(value).trim())
+        .filter(value => value !== ''))]
+      if (roomId === '') {
+        throw new ArkmePluginError('call-room-invalid', '呼叫房间创建失败，请重试', true, 502)
+      }
+      if (calleeAccounts.length === 0) {
+        throw new ArkmePluginError('call-peer-unavailable', '对方未开通通话，请对方先登录后再试', false, 409)
+      }
+      const sharedTopicId = numberValue(room.shared_topic_id)
+      const userData = JSON.stringify({
+        sharedTopicId: sharedTopicId > 0 ? sharedTopicId : 0,
+        sourceTag: 'arkme-private-chat-header',
+        callerName,
+        callerAvatar: '',
+      })
+      const description = input.mediaType === 'video' ? '邀请你进行视频通话' : '邀请你进行语音通话'
+      return {
+        callRequestId: input.callRequestId,
+        displayName,
+        ...(peerProfile === undefined ? {} : {
+          peerAvatarRef: await this.sealProfileImageRef(session.userId, counterpartUserId),
+        }),
+        bootstrap: {
+          sdkAppId,
+          userId: trtcUserId,
+          userSig,
+          nickName: callerName,
+          avatar: '',
+          outgoingOnly: true,
+        },
+        call: {
+          roomId,
+          mediaType: input.mediaType,
+          calleeAccounts,
+          calleeName: displayName,
+          calleeAvatar: '',
+          callerName,
+          callerAvatar: '',
+          timeoutSec: 30,
+          userData,
+          offlinePushInfo: {
+            title: callerName,
+            description,
+            extension: userData,
+            ignoreIOSBadge: true,
+            iOSPushType: 1,
+          },
+        },
+      }
+    } catch (error) {
+      this.outgoingCallBroker.releaseLease(session.userId, input.callRequestId)
+      throw error
+    }
+  }
+
+  async heartbeatOutgoingCall(callRequestId: string): Promise<{ expiresAtMillis: number }> {
+    const session = await this.requireSession()
+    return { expiresAtMillis: this.outgoingCallBroker.heartbeatLease(session.userId, callRequestId) }
+  }
+
+  async releaseOutgoingCall(callRequestId: string): Promise<void> {
+    const session = await this.requireSession()
+    this.outgoingCallBroker.releaseLease(session.userId, callRequestId)
+  }
+
+  dispose(): void {
+    this.outgoingCallBroker.dispose()
   }
 
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
@@ -2298,6 +2485,11 @@ export class ArkmeService {
   }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
+    const activeSession = await this.sessionStore.read()
+    const pendingSession = await this.readPendingBindingSession()
+    for (const userId of new Set([activeSession?.userId, pendingSession?.userId])) {
+      if (userId !== undefined) this.outgoingCallBroker.clearUser(userId, '账号已退出，呼叫已取消')
+    }
     await this.sessionStore.delete()
     await this.clearPendingBindingSession()
     this.chatRealtime.reconnect()
@@ -2975,6 +3167,24 @@ export class ArkmeService {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal)
+    }
+  }
+
+  private async authenticatedWebrtcPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
     }
   }
 

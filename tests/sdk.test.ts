@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createArkmeSdk, ArkmeClientError } from '../src/sdk/index.js'
+import type {
+  ArkmeOutgoingCallIntentClaim,
+  ArkmeOutgoingCallPrepareResult,
+  ArkmeOutgoingCallToolResult,
+} from '../src/index.js'
 import type { ArkmeProviderState } from '../src/types.js'
 
 function success(value: unknown): Response {
@@ -43,6 +49,7 @@ describe('Arkme SDK', () => {
             features: {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
+              sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
             },
             limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
           })
@@ -68,7 +75,10 @@ describe('Arkme SDK', () => {
       },
     })
 
-    await expect(sdk.capabilities()).resolves.toMatchObject({ contractVersion: 1 })
+    await expect(sdk.capabilities()).resolves.toMatchObject({
+      contractVersion: 1,
+      features: { outgoingCall: true },
+    })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
     await expect(sdk.profile({ refresh: true })).resolves.toMatchObject({
       profile: { displayName: '昵称' }, revision: 5,
@@ -118,6 +128,59 @@ describe('Arkme SDK', () => {
       { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
       { operation: 'source.send-text', params: { sourceRef: 'source-1', textContent: '你好', recordUid: 'record-1', relationUid: 'rel-1' } },
     ])
+  })
+
+  it('keeps all five outgoing-call Host operations typed while credentials stay off dedicated SDK methods', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'calls.outgoing.intent.claim') return success(null satisfies ArkmeOutgoingCallIntentClaim | null)
+        if (request.operation === 'calls.outgoing.prepare') return success({} as ArkmeOutgoingCallPrepareResult)
+        return success(undefined)
+      },
+    })
+
+    await sdk.call<ArkmeOutgoingCallIntentClaim | null>('calls.outgoing.intent.claim')
+    await sdk.call<void>('calls.outgoing.intent.resolve', {
+      intentId: 'intent-1', claimToken: 'claim-1', status: 'calling',
+    })
+    await sdk.call<ArkmeOutgoingCallPrepareResult>('calls.outgoing.prepare', {
+      sourceRef: 'private-ref', mediaType: 'audio', callRequestId: 'call-1',
+    })
+    await sdk.call<void>('calls.outgoing.heartbeat', { callRequestId: 'call-1' })
+    await sdk.call<void>('calls.outgoing.release', { callRequestId: 'call-1' })
+
+    expect(calls.map(call => call.operation)).toEqual([
+      'calls.outgoing.intent.claim',
+      'calls.outgoing.intent.resolve',
+      'calls.outgoing.prepare',
+      'calls.outgoing.heartbeat',
+      'calls.outgoing.release',
+    ])
+    expect('prepareOutgoingCall' in sdk).toBe(false)
+    const safeResult: ArkmeOutgoingCallToolResult = { status: 'calling', displayName: '小林', mediaType: 'audio' }
+    expect(safeResult).not.toHaveProperty('userSig')
+  })
+
+  it('packages the pinned call assets and exports the public Arkme call contract', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      files: string[]
+      scripts: Record<string, string>
+    }
+    const rootSource = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+
+    expect(manifest.files).toContain('assets/desktop_call')
+    expect(manifest.scripts['verify:call-assets']).toBe('node scripts/verify-call-assets.mjs')
+    for (const name of [
+      'ArkmeOutgoingCallFailureCode',
+      'ArkmeOutgoingCallMediaType',
+      'ArkmeOutgoingCallIntentClaim',
+      'ArkmeOutgoingCallIntentResolutionInput',
+      'ArkmeOutgoingCallPrepareResult',
+      'ArkmeOutgoingCallToolResult',
+    ]) expect(rootSource).toContain(name)
   })
 
   it('notifies subscribers only when auth identity or revision changes', async () => {

@@ -95,6 +95,7 @@ describe('registerArkmeTools', () => {
       'arkme_source_read',
       'arkme_text_send',
       'arkme_direct_text_send',
+      'arkme_call_start',
       'arkme_ai_video',
     ])
     const assembly = await ctx.systemPrompt.assemble()

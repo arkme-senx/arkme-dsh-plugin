@@ -8,6 +8,7 @@ Arkme 的 DeepSeek Harness 集成插件，无需修改 DSH 源码即可使用 Ar
 - 查询当前账号的 Arkme ID，并在账号仍有资格时完成一次性修改；提交前会再次请求用户确认。
 - 浏览“发给自己”、主题、私聊和群聊，支持时间线读取与纯文本发送。
 - 按用户明确提供的 Arkme ID 直接发起私聊并以 Agent 来源发送纯文本。
+- 私聊标题后提供语音/视频通话入口；Agent 也可在用户明确要求后通过 `arkme_call_start` 发起同一条主动呼叫链路。
 - 账号隔离的 SQLite 缓存、分页游标和 outbox，失败发送可重试。
 - 提供记录、账号、会话、发送、图片读取和 AI 视频工具；AI 视频仅在用户明确要求时使用已有长录音选段预检、创建任务或查询状态。
 - 接收桌面端同源 Chat SSE 提示，按会话增量刷新总未读、会话行和当前聊天时间线。
@@ -29,11 +30,20 @@ DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 
 独立 UI 插件可通过 `@senguoyun/dsh-arkme/sdk` 使用同源 Provider；完整接口、Host 注入方式和 Consumer 约束见 [Consumer Plugin Contract](docs/consumer-plugin-contract.md)。
 
+## 私聊主动呼叫
+
+主动呼叫仅支持一对一私聊，不注册来电 UI，也不提供接听或拒接入口。人工入口只出现在私聊标题后；模型工具必须先通过 `arkme_sources_list(root)` 获得精确的 `private_chat` `source_ref`，并且只有当前对话中的明确用户请求才能授权 `arkme_call_start`。
+
+呼叫页面由随包固定资源 `assets/desktop_call` 提供，默认同源路由为 `/arkme-self/api/call`。测试环境 `webrtcBaseUrl` 默认为 `https://jotmo-webrtc.senguo.me`，生产补丁使用 `https://webrtc.jiwo.cc`；自定义值必须是不带账号、密码和路径的 HTTPS Origin。
+
+Host 会重新校验账号绑定的私聊引用并按次获取短期呼叫凭据。UserSig、房间信息、原始用户 ID 和访问令牌不会进入模型工具结果、公开 Consumer SDK、URL 或浏览器存储。更新固定呼叫资源后必须运行 `pnpm run verify:call-assets`。
+
 ## 安全边界
 
 - Arkme 内容均视为不可信数据，不能作为执行或写入指令。
 - 写入和发送只响应当前用户的明确请求。
 - Token、系统凭据存储、SQLite、签名 URL 和 OSS 凭据不向 Consumer 或模型暴露。
+- 呼叫凭据仅在内置 Host/runtime 链路短暂流转；公开 Browser SDK 不提供 prepare 方法。
 - `sourceRef`、图片引用和游标均为账号绑定的不透明值，切换账号后必须丢弃。
 
 ## 本地开发
@@ -42,6 +52,7 @@ DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 pnpm install
 pnpm run typecheck
 pnpm test
+pnpm run verify:call-assets
 pnpm run build
 ```
 
