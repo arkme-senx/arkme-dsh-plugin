@@ -16,13 +16,19 @@ import {
   JOTMO_RECORDING_TOOL_PROMPT,
   type JotmoRecordingReadService,
 } from './recording-tools.js'
+import {
+  createJotmoWechatToolDefinitions,
+  JOTMO_WECHAT_TOOL_PROMPT,
+  type JotmoWechatReadService,
+} from './wechat-tools.js'
 import type {
   JotmoCachedQueryResult, JotmoConversationWriteResult, JotmoProviderCapabilities,
   JotmoSourceDirectory, JotmoSourceList, JotmoSourceSendResult, JotmoTimelineCursor, JotmoTimelinePage,
   JotmoUserProfileSnapshot, JotmoWorldPublishResult, JotmoWorldRecordList,
 } from './types.js'
 
-export interface JotmoConversationReadService extends JotmoRecordingReadService, JotmoRelatedRecordingReadService {
+export interface JotmoConversationReadService
+  extends JotmoRecordingReadService, JotmoRelatedRecordingReadService, JotmoWechatReadService {
   providerCapabilities(): JotmoProviderCapabilities
   refreshLatest(): Promise<void>
   syncHistory(maxPages?: number, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }>
@@ -436,6 +442,7 @@ export function createAllJotmoToolDefinitions(
     ...createJotmoToolDefinitions(service),
     ...createJotmoRecordingToolDefinitions(service),
     createJotmoRelatedRecordingToolDefinition(service),
+    ...createJotmoWechatToolDefinitions(service),
   ]
 }
 
@@ -454,6 +461,7 @@ export function registerJotmoConversationTools(
     order: 118,
     text: JOTMO_RELATED_RECORDING_TOOL_PROMPT,
   })
+  ctx.systemPrompt.section({ name: 'tool:jotmo-wechat', order: 119, text: JOTMO_WECHAT_TOOL_PROMPT })
   for (const definition of createAllJotmoToolDefinitions(service)) ctx.tools.register(definition)
   ctx.inject(['attachments'], imageCtx => {
     imageCtx.tools.register(createJotmoImageToolDefinition(imageCtx, service))

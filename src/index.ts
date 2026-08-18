@@ -18,6 +18,7 @@ export interface Config {
   chatBaseUrl: string
   audioBaseUrl: string
   worldBaseUrl: string
+  relationBaseUrl: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -36,6 +37,7 @@ export const Config: Schema<Config> = Schema.object({
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
+  relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   routePath: Schema.string().default('/jotmo-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -99,6 +101,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['chatBaseUrl', config.chatBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
     ['worldBaseUrl', config.worldBaseUrl],
+    ['relationBaseUrl', config.relationBaseUrl],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -144,6 +147,24 @@ export type {
   JotmoWorldRecordItem,
   JotmoWorldRecordList,
   JotmoWorldVisibility,
+  JotmoWechatCallFilter,
+  JotmoWechatCommonGroupFriend,
+  JotmoWechatCommonGroupPage,
+  JotmoWechatConversation,
+  JotmoWechatConversationDetail,
+  JotmoWechatConversationPage,
+  JotmoWechatGroupMember,
+  JotmoWechatGroupMemberPage,
+  JotmoWechatLocation,
+  JotmoWechatLocationPage,
+  JotmoWechatMessage,
+  JotmoWechatMessageFilter,
+  JotmoWechatMessagePage,
+  JotmoWechatMoneyFlow,
+  JotmoWechatMoneyFlowPage,
+  JotmoWechatPhone,
+  JotmoWechatPhoneEvidence,
+  JotmoWechatPhonePage,
 } from './types.js'
 export { JOTMO_PROVIDER_CONTRACT_VERSION } from './types.js'
 export { JotmoService } from './jotmo-service.js'
