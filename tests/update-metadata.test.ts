@@ -15,9 +15,9 @@ describe('published update metadata', () => {
       notice: {
         schemaVersion: 1,
         level: 'normal',
-        title: 'Arkme 插件更新',
-        summary: '新增插件版本检查、应用内更新、自动重启与失败回滚。',
-        publishedAt: '2026-08-19T07:46:49.000Z',
+        title: 'Arkme 插件 0.1.5 更新',
+        summary: '新增扩展市场与发布应用能力、云端 Arko 对话、群成员与群设置、相关录音读取，并优化世界交织时刻加载。',
+        publishedAt: '2026-08-19T12:12:05.000Z',
         releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
       },
     })
