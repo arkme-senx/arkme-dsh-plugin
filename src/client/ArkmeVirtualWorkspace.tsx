@@ -8,7 +8,7 @@ import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
-import { ArkmeOfficialCommunityEntry } from './ArkmeOfficialCommunityEntry.js'
+import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
@@ -843,7 +843,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       setTopicCreateSubmitting(false)
     }
   }
-  const joinedOfficialCommunity = async (source: ArkmeSourceItem): Promise<void> => {
+  const joinedDSHBetaCommunity = async (source: ArkmeSourceItem): Promise<void> => {
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
     const currentSources = sharedSources.length > 0 ? sharedSources : sources
     const nextSources = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
@@ -889,7 +889,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
-        {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
+        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
         <ArkmeArkoRow
           selected={ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}

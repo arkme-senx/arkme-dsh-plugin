@@ -4,8 +4,8 @@ import type { ArkmePluginOperation } from '../types.js'
 export { ArkmeClientError } from '../sdk/index.js'
 
 type ArkmeUiOperation = ArkmePluginOperation
-  | 'official-community.entry-state'
-  | 'official-community.join'
+  | 'dsh-beta-community.entry-state'
+  | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
   | 'topic.create'

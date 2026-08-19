@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type {
-  ArkmeOfficialCommunityEntryState,
-  ArkmeOfficialCommunityJoinResult,
-} from '../official-community.js'
+  ArkmeDSHBetaCommunityEntryState,
+  ArkmeDSHBetaCommunityJoinResult,
+} from '../dsh-beta-community.js'
 import type { ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeAvatarMosaic, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
@@ -14,7 +14,7 @@ interface ReadyEntry {
   avatarUrls: string[]
 }
 
-export interface ArkmeOfficialCommunityEntryProps {
+export interface ArkmeDSHBetaCommunityEntryProps {
   onJoined(source: ArkmeSourceItem): void | Promise<void>
 }
 
@@ -87,7 +87,7 @@ const styles: Record<string, CSSProperties> = {
   },
 }
 
-export function ArkmeOfficialCommunityEntryContent({
+export function ArkmeDSHBetaCommunityEntryContent({
   avatarUrls,
   joining,
   onActivate,
@@ -98,13 +98,13 @@ export function ArkmeOfficialCommunityEntryContent({
 }) {
   return <div style={styles.section} role="none">
     <div style={styles.sectionHeader} aria-hidden>
-      <span style={styles.sectionLabel}>即我社区</span>
+      <span style={styles.sectionLabel}>DSH 内测</span>
       <span style={styles.sectionLine} />
     </div>
     <button
       type="button"
       role="treeitem"
-      aria-label="加入即我社区官方群"
+      aria-label="加入 DSH 内测群"
       aria-busy={joining}
       style={{ ...styles.row, cursor: joining ? 'default' : 'pointer' }}
       disabled={joining}
@@ -112,8 +112,8 @@ export function ArkmeOfficialCommunityEntryContent({
     >
       <ArkmeAvatarMosaic urls={avatarUrls} size={40} fallback={false} />
       <span style={styles.content}>
-        <span style={styles.title}>还没加入即我官方群？</span>
-        <span style={styles.subtitle}>和大家一起聊聊</span>
+        <span style={styles.title}>还没加入 DSH 内测群？</span>
+        <span style={styles.subtitle}>和内测用户一起聊聊</span>
       </span>
       <span style={styles.action}>{joining ? '加入中…' : '去加入'}</span>
       {!joining && <span style={styles.chevron} aria-hidden>›</span>}
@@ -122,7 +122,7 @@ export function ArkmeOfficialCommunityEntryContent({
   </div>
 }
 
-export function ArkmeOfficialCommunityJoinConfirmation({
+export function ArkmeDSHBetaCommunityJoinConfirmation({
   avatarUrls,
   onCancel,
   onConfirm,
@@ -149,8 +149,8 @@ export function ArkmeOfficialCommunityJoinConfirmation({
       <button type="button" style={styles.cancel} aria-label="取消加入群聊" onClick={onCancel}>‹</button>
       <div style={styles.sheetContent}>
         <ArkmeAvatarMosaic urls={avatarUrls} size={86} fallback={false} />
-        <h2 id="arkme-community-join-title" style={styles.sheetTitle}>即我官方群</h2>
-        <p style={styles.sheetSubtitle}>和大家一起聊聊</p>
+        <h2 id="arkme-community-join-title" style={styles.sheetTitle}>DSH 内测群</h2>
+        <p style={styles.sheetSubtitle}>和内测用户一起聊聊</p>
         <button ref={confirmRef} type="button" style={styles.confirm} onClick={onConfirm}>
           <span>加入群聊</span>
           <span style={styles.confirmArrow} aria-hidden>›</span>
@@ -160,7 +160,7 @@ export function ArkmeOfficialCommunityJoinConfirmation({
   </div>
 }
 
-export function ArkmeOfficialCommunityEntry({ onJoined }: ArkmeOfficialCommunityEntryProps) {
+export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEntryProps) {
   const [phase, setPhase] = useState<EntryPhase>('loading')
   const [ready, setReady] = useState<ReadyEntry>()
   const [confirmationOpen, setConfirmationOpen] = useState(false)
@@ -169,7 +169,7 @@ export function ArkmeOfficialCommunityEntry({ onJoined }: ArkmeOfficialCommunity
 
   useEffect(() => {
     const epoch = ++epochRef.current
-    void callArkme<ArkmeOfficialCommunityEntryState>('official-community.entry-state')
+    void callArkme<ArkmeDSHBetaCommunityEntryState>('dsh-beta-community.entry-state')
       .then(async entry => {
         if (!entry.visible || entry.status !== 'ready' || entry.memberCount <= 0 || entry.avatarRefs.length === 0) return undefined
         const avatarUrls = (await Promise.all(entry.avatarRefs.map(async ref => {
@@ -203,7 +203,7 @@ export function ArkmeOfficialCommunityEntry({ onJoined }: ArkmeOfficialCommunity
     setPhase('joining')
     const epoch = epochRef.current
     let pending: Promise<void>
-    pending = callArkme<ArkmeOfficialCommunityJoinResult>('official-community.join')
+    pending = callArkme<ArkmeDSHBetaCommunityJoinResult>('dsh-beta-community.join')
       .then(async result => {
         if (epochRef.current !== epoch) return
         setPhase('hidden')
@@ -226,13 +226,13 @@ export function ArkmeOfficialCommunityEntry({ onJoined }: ArkmeOfficialCommunity
   if (phase === 'hidden') return null
   if (phase === 'loading' || ready === undefined) return <div style={styles.loading} aria-hidden />
   return <>
-    <ArkmeOfficialCommunityEntryContent
+    <ArkmeDSHBetaCommunityEntryContent
       avatarUrls={ready.avatarUrls}
       joining={phase === 'joining'}
       onActivate={() => { if (phase === 'ready') setConfirmationOpen(true) }}
     />
     {confirmationOpen && typeof document !== 'undefined' && createPortal(
-      <ArkmeOfficialCommunityJoinConfirmation
+      <ArkmeDSHBetaCommunityJoinConfirmation
         avatarUrls={ready.avatarUrls}
         onCancel={() => { setConfirmationOpen(false) }}
         onConfirm={confirmJoin}

@@ -950,8 +950,8 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.release'
 
 export type ArkmeHostOperation = ArkmePluginOperation
-  | 'official-community.entry-state'
-  | 'official-community.join'
+  | 'dsh-beta-community.entry-state'
+  | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
   | 'topic.create'

@@ -1,26 +1,26 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
-  ArkmeOfficialCommunityEntryContent,
-  ArkmeOfficialCommunityJoinConfirmation,
-} from '../src/client/ArkmeOfficialCommunityEntry.js'
+  ArkmeDSHBetaCommunityEntryContent,
+  ArkmeDSHBetaCommunityJoinConfirmation,
+} from '../src/client/ArkmeDSHBetaCommunityEntry.js'
 
 const avatars = [
   'data:image/png;base64,b3duZXI=',
   'data:image/png;base64,bWVtYmVy',
 ]
 
-describe('official community entry UI', () => {
+describe('DSH beta community entry UI', () => {
   it('reuses the approved copy, real avatar mosaic, and non-sticky list placement', () => {
-    const markup = renderToStaticMarkup(<ArkmeOfficialCommunityEntryContent
+    const markup = renderToStaticMarkup(<ArkmeDSHBetaCommunityEntryContent
       avatarUrls={avatars}
       joining={false}
       onActivate={() => {}}
     />)
 
-    expect(markup).toContain('即我社区')
-    expect(markup).toContain('还没加入即我官方群？')
-    expect(markup).toContain('和大家一起聊聊')
+    expect(markup).toContain('DSH 内测')
+    expect(markup).toContain('还没加入 DSH 内测群？')
+    expect(markup).toContain('和内测用户一起聊聊')
     expect(markup).toContain('去加入')
     expect(markup.match(/<img/g)).toHaveLength(2)
     expect(markup).not.toContain('position:sticky')
@@ -28,7 +28,7 @@ describe('official community entry UI', () => {
   })
 
   it('shows the existing confirmation sheet before the join action', () => {
-    const markup = renderToStaticMarkup(<ArkmeOfficialCommunityJoinConfirmation
+    const markup = renderToStaticMarkup(<ArkmeDSHBetaCommunityJoinConfirmation
       avatarUrls={avatars}
       onCancel={() => {}}
       onConfirm={() => {}}
@@ -36,7 +36,7 @@ describe('official community entry UI', () => {
 
     expect(markup).toContain('role="dialog"')
     expect(markup).toContain('aria-modal="true"')
-    expect(markup).toContain('即我官方群')
+    expect(markup).toContain('DSH 内测群')
     expect(markup).toContain('加入群聊')
     expect(markup.match(/<img/g)).toHaveLength(2)
     expect(markup).toContain('align-items:center')
@@ -47,7 +47,7 @@ describe('official community entry UI', () => {
   })
 
   it('disables the entry while one join is already in flight', () => {
-    const markup = renderToStaticMarkup(<ArkmeOfficialCommunityEntryContent
+    const markup = renderToStaticMarkup(<ArkmeDSHBetaCommunityEntryContent
       avatarUrls={avatars}
       joining
       onActivate={() => {}}
