@@ -1369,7 +1369,7 @@ describe('ArkmeService', () => {
     })
   })
 
-  it('generates a new rule without writing and writes it only after confirmation', async () => {
+  it('lets an active regular member generate a rule and writes it only after confirmation', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -1379,7 +1379,7 @@ describe('ArkmeService', () => {
       requests.push({ url, body })
       if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) return json({ code: 200, data: {
         config: { enabled: false, active_rule_uid: '', update_at: 10 }, rules: [],
-        viewer_role: 1, can_manage: true,
+        viewer_role: 3, can_manage: true,
       } })
       if (url.endsWith('/api/v1/chats/ai-polish/rules/generate')) return json({ code: 200, data: {
         candidate: { candidate_uid: 'candidate-1', name: '清晰友好', rule_text: '表达清晰友好并保留事实。', prompt_version: 'v1' },
@@ -1493,7 +1493,7 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chats/ai-polish/notices/query')) return json({ code: 200, data: {
         notices: [{
           notice_uid: 'notice-1', source_key: 'config:400', notice_kind: 1,
-          rule_text: '表达友好。', created_at: 450,
+          actor_display_name_snapshot: '产品经理小林', rule_text: '表达友好。', created_at: 450,
         }],
       } })
       throw new Error(`unexpected ${url}`)
@@ -1508,7 +1508,7 @@ describe('ArkmeService', () => {
         groupName: '历史群', enabled: true, canManage: true, activeRuleName: '友好规则',
       },
       aiPolishNotices: [{
-        noticeUid: 'notice-1', message: 'AI润色已开启：表达友好。', createdAtMillis: 450,
+        noticeUid: 'notice-1', message: '产品经理…开启了 AI 润色：表达友好。', createdAtMillis: 450,
       }],
     })
   })

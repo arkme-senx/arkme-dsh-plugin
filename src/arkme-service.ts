@@ -292,6 +292,14 @@ function booleanValue(value: unknown): boolean {
   return value === true
 }
 
+function compactAiPolishActorLabel(value: unknown): string {
+  const normalized = stringValue(value).replace(/\s+/g, ' ').trim()
+  if (normalized === '') return ''
+  const characters = [...new Intl.Segmenter('zh-CN', { granularity: 'grapheme' }).segment(normalized)]
+    .map(segment => segment.segment)
+  return characters.length <= 4 ? normalized : `${characters.slice(0, 4).join('')}…`
+}
+
 function optionalPositiveNumber(value: unknown): number | undefined {
   const number = numberValue(value)
   return number > 0 ? number : undefined
@@ -1687,7 +1695,7 @@ export class ArkmeService {
     }
     const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
     if (!config.canManage) {
-      throw new ArkmePluginError('group-ai-polish-forbidden', '只有群主或管理员可以管理 AI 表达润色', false, 403)
+      throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
     }
     const generated = await this.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/ai-polish/rules/generate',
@@ -1735,7 +1743,7 @@ export class ArkmeService {
     const pending = this.requireAiPolishConfirmation(confirmationRef, session.userId, 'enable')
     const current = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal)
     if (!current.canManage) {
-      throw new ArkmePluginError('group-ai-polish-forbidden', '只有群主或管理员可以管理 AI 表达润色', false, 403)
+      throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
     }
     const updateAt = Date.now()
     const upserted = await this.authenticatedChatPost<Record<string, unknown>>(
@@ -1784,7 +1792,7 @@ export class ArkmeService {
     const source = await this.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
     const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
-    if (!config.canManage) throw new ArkmePluginError('group-ai-polish-forbidden', '只有群主或管理员可以管理 AI 表达润色', false, 403)
+    if (!config.canManage) throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
     this.cleanupAiPolishState()
     const confirmationRef = `arkme-ai-polish-confirm-v1.${crypto.randomUUID()}`
     this.aiPolishConfirmations.set(confirmationRef, {
@@ -1815,7 +1823,7 @@ export class ArkmeService {
     const session = await this.requireSession()
     const pending = this.requireAiPolishConfirmation(confirmationRef, session.userId, 'disable')
     const current = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal)
-    if (!current.canManage) throw new ArkmePluginError('group-ai-polish-forbidden', '只有群主或管理员可以管理 AI 表达润色', false, 403)
+    if (!current.canManage) throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
     const updated = await this.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/ai-polish/settings/update',
       { chat_session_uid: pending.chatSessionUid, enabled: false, active_rule_uid: '', update_at: Date.now() },
@@ -2432,12 +2440,15 @@ export class ArkmeService {
     return listValue(data.notices).map(raw => objectValue(raw)).map(notice => {
       const kind = numberValue(notice.notice_kind)
       const rule = stringValue(notice.rule_name).trim() || stringValue(notice.rule_text).trim()
+      const actor = compactAiPolishActorLabel(notice.actor_display_name_snapshot)
       return {
         noticeUid: stringValue(notice.notice_uid).trim(),
         sourceKey: stringValue(notice.source_key).trim(),
         message: kind === 1
-          ? `AI润色已开启：${rule}`
-          : kind === 2 ? `AI润色规则已修改：${rule}` : '',
+          ? actor === '' ? `AI润色已开启：${rule}` : `${actor}开启了 AI 润色：${rule}`
+          : kind === 2
+            ? actor === '' ? `AI润色规则已修改：${rule}` : `${actor}修改了 AI 润色规则：${rule}`
+            : '',
         createdAtMillis: numberValue(notice.created_at),
         status: numberValue(notice.status),
       }

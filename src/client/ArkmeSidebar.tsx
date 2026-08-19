@@ -4,8 +4,7 @@ import {
 } from 'react'
 import qrcode from 'qrcode-generator'
 import type {
-  ArkmeAuthSnapshot, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishNotice,
-  ArkmeGroupAiPolishRuleCandidate, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
+  ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
@@ -45,8 +44,9 @@ const styles: Record<string, CSSProperties> = {
     flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
-  title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
-  headerAction: { marginLeft: 'auto', border: 0, borderRadius: 9, padding: '6px 10px', background: '#f1f3f6', color: colors.text, cursor: 'pointer', fontSize: 12 },
+  titleBlock: { minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
   error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
@@ -64,15 +64,14 @@ const styles: Record<string, CSSProperties> = {
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },
-  bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box' },
-  bubbleButton: { border: 0, textAlign: 'left', color: 'inherit', cursor: 'pointer', fontFamily: 'inherit' },
+  bubble: { maxWidth: 560, padding: '8px 16px 10px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
   bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)' },
   bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
   meta: { color: '#adb2b8', fontSize: 11 },
-  polishMeta: { color: '#7b64d8', fontSize: 11, display: 'flex', gap: 8, alignItems: 'center' },
+  polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
   retry: { border: 0, padding: 0, background: 'transparent', color: '#c2413b', cursor: 'pointer', fontSize: 11 },
-  notice: { alignSelf: 'center', maxWidth: 520, padding: '7px 12px', borderRadius: 10, background: '#f4f1ff', color: '#6d56bf', textAlign: 'center', fontSize: 12, lineHeight: '18px' },
+  notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
@@ -106,11 +105,6 @@ const styles: Record<string, CSSProperties> = {
   drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 },
   detailText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' },
   toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: '#f1efff', color: '#694fd0', cursor: 'pointer', fontSize: 12 },
-  settingCard: { padding: 14, border: `1px solid ${colors.border}`, borderRadius: 12, marginBottom: 14 },
-  settingLabel: { display: 'block', color: colors.secondary, fontSize: 12, marginBottom: 6 },
-  settingInput: { width: '100%', minHeight: 96, resize: 'vertical', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 10, padding: 10, font: 'inherit', color: colors.text, background: colors.panel },
-  primaryAction: { border: 0, borderRadius: 10, padding: '8px 12px', background: '#3964fe', color: '#fff', cursor: 'pointer' },
-  secondaryAction: { border: `1px solid ${colors.border}`, borderRadius: 10, padding: '8px 12px', background: colors.panel, color: colors.text, cursor: 'pointer' },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
   authChecking: {
     flex: 1, minHeight: 0, display: 'grid', placeItems: 'center',
@@ -252,13 +246,9 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
   const [aiPolishSettings, setAiPolishSettings] = useState<ArkmeGroupAiPolishSnapshot>()
-  const [drawer, setDrawer] = useState<'settings' | 'detail'>()
+  const [drawer, setDrawer] = useState<'detail'>()
   const [detailItemUid, setDetailItemUid] = useState('')
   const [showOriginal, setShowOriginal] = useState(false)
-  const [ruleRequirement, setRuleRequirement] = useState('')
-  const [ruleCandidate, setRuleCandidate] = useState<ArkmeGroupAiPolishRuleCandidate>()
-  const [settingsBusy, setSettingsBusy] = useState(false)
-  const [noticeRetryRevision, setNoticeRetryRevision] = useState(0)
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState('')
@@ -445,7 +435,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     if (ui.surfaceOpen) void refreshAuth()
   }, [refreshAuth, ui.surfaceOpen])
   useEffect(() => {
-    setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined); setRuleCandidate(undefined)
+    setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined)
     setDrawer(undefined); setDetailItemUid(''); setNextCursor(undefined); setHasMore(false); setError('')
     if (authenticated && source !== undefined) {
       setBusy(true)
@@ -464,19 +454,19 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   }, [acknowledgeRead, authenticated, chatDelta, source?.sourceRef])
 
   useEffect(() => {
-    if (!authenticated || source?.kind !== 'group_chat' || aiPolishNotices.length > 0) return
+    if (!authenticated || !ui.surfaceOpen || source?.kind !== 'group_chat') return
     let cancelled = false
-    const timers = [600, 1_400, 2_600].map(delay => setTimeout(() => {
-      if (cancelled) return
+    const refreshPresentation = () => {
+      void callArkme<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', {
+        sourceRef: source.sourceRef,
+      }).then(snapshot => { if (!cancelled) setAiPolishSettings(snapshot) }).catch(() => undefined)
       void callArkme<ArkmeGroupAiPolishNotice[]>('source.ai-polish.notices', {
         sourceRef: source.sourceRef,
-      }).then(notices => {
-        if (cancelled) return
-        if (notices.length > 0) setAiPolishNotices(notices)
-      }).catch(() => undefined)
-    }, delay))
-    return () => { cancelled = true; for (const timer of timers) clearTimeout(timer) }
-  }, [aiPolishNotices.length, authenticated, noticeRetryRevision, source?.sourceRef])
+      }).then(notices => { if (!cancelled) setAiPolishNotices(notices) }).catch(() => undefined)
+    }
+    const timer = setInterval(refreshPresentation, 3_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [authenticated, source?.sourceRef, ui.surfaceOpen])
 
   useEffect(() => {
     const root = bodyRef.current; const sentinel = sentinelRef.current
@@ -653,72 +643,11 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     }
   }
 
-  const generateRule = async () => {
-    if (source === undefined || ruleRequirement.trim() === '') return
-    setSettingsBusy(true); setError('')
-    try {
-      const candidate = await callArkme<ArkmeGroupAiPolishRuleCandidate>(
-        'source.ai-polish.generate-rule',
-        { sourceRef: source.sourceRef, requirement: ruleRequirement.trim() },
-      )
-      setRuleCandidate(candidate)
-    } catch (caught) { setError(errorMessage(caught)) }
-    finally { setSettingsBusy(false) }
-  }
-
-  const openAiPolishSettings = () => {
-    setDrawer('settings'); setRuleCandidate(undefined); setError('')
-    if (source === undefined || aiPolishSettings !== undefined) return
-    setSettingsBusy(true)
-    void callArkme<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', {
-      sourceRef: source.sourceRef,
-    }).then(setAiPolishSettings)
-      .catch(caught => { setError(errorMessage(caught)) })
-      .finally(() => { setSettingsBusy(false) })
-  }
-
-  const applyGeneratedRule = async () => {
-    if (ruleCandidate === undefined) return
-    setSettingsBusy(true); setError('')
-    try {
-      await callArkme<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-enable', {
-        confirmationRef: ruleCandidate.confirmationRef,
-      })
-      if (source !== undefined) {
-        const snapshot = await callArkme<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', {
-          sourceRef: source.sourceRef,
-        })
-        setAiPolishSettings(snapshot)
-      }
-      setRuleCandidate(undefined); setRuleRequirement('')
-      await loadTimeline()
-      setNoticeRetryRevision(value => value + 1)
-    } catch (caught) { setError(errorMessage(caught)) }
-    finally { setSettingsBusy(false) }
-  }
-
-  const disableAiPolish = async () => {
-    if (source === undefined) return
-    setSettingsBusy(true); setError('')
-    try {
-      const prepared = await callArkme<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.prepare-disable', {
-        sourceRef: source.sourceRef,
-      })
-      await callArkme<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-disable', {
-        confirmationRef: prepared.confirmationRef,
-      })
-      setAiPolishSettings(current => current === undefined ? current : { ...current, enabled: false, activeRuleName: '' })
-      setRuleCandidate(undefined)
-    } catch (caught) { setError(errorMessage(caught)) }
-    finally { setSettingsBusy(false) }
-  }
-
   const displayEvents = useMemo<TimelineDisplayEvent[]>(() => [
     ...items.map(item => ({ kind: 'message' as const, at: item.sendAtMillis, key: `message:${item.itemUid}`, item })),
     ...aiPolishNotices.map(notice => ({ kind: 'notice' as const, at: notice.createdAtMillis, key: `notice:${notice.noticeUid}`, notice })),
   ].sort((left, right) => left.at - right.at || left.key.localeCompare(right.key)), [aiPolishNotices, items])
   const detailItem = items.find(item => item.itemUid === detailItemUid)
-  const activeAiPolishRule = aiPolishSettings?.rules.find(rule => rule.isActive)
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : source?.displayName ?? 'Arkme'
 
@@ -726,17 +655,17 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
       <section style={styles.panel} role="region" aria-label={surfaceTitle}>
         <header style={styles.header}>
-          <h2 style={styles.title}>{surfaceTitle}</h2>
+          <div style={styles.titleBlock}>
+            <h2 style={styles.title}>{surfaceTitle}</h2>
+            {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
+              && aiPolishSettings?.enabled === true
+              && <span style={styles.headerSubtitle}>AI润色已开启</span>}
+          </div>
           {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}
             assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
           />}
-          {authenticated && ui.mode === 'source' && source?.kind === 'group_chat' && <button
-            type="button"
-            style={styles.headerAction}
-            onClick={openAiPolishSettings}
-          >AI 表达润色</button>}
         </header>
         {authView === 'checking' ? <div style={styles.authChecking} role="status">
           {error === '' ? '正在确认 Arkme 登录状态…' : error}
@@ -785,17 +714,23 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
                       {showMessageAvatars && <MessageAvatar item={item} />}
                       <div style={{ ...styles.messageBody, ...(item.isMe ? styles.messageBodyMe : {}) }}>
                         {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
-                        <button
-                          type="button"
-                          style={{ ...styles.bubble, ...styles.bubbleButton, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}
                           onClick={() => { setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail') }}
+                          onKeyDown={event => {
+                            if (event.key !== 'Enter' && event.key !== ' ') return
+                            event.preventDefault(); setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
+                          }}
                           aria-label="打开快记详情"
-                        ><p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p></button>
-                        {polishStatus !== '' && <span style={styles.polishMeta}>
+                        >{polishStatus !== '' && <span style={styles.polishMeta}>
                           {item.aiPolish?.state === 'failed' ? <button
-                            type="button" style={styles.retry} onClick={() => { void retryAiPolish(item) }}
+                            type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
                           >{polishStatus}</button> : polishStatus}
                         </span>}
+                          <p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p>
+                        </div>
                         <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
                       </div>
                     </div>
@@ -849,58 +784,6 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
               : detailItem.aiPolish?.state === 'polished' && detailItem.aiPolish.polishedText !== undefined
                 ? detailItem.aiPolish.polishedText
                 : detailItem.textContent || detailItem.title || '非文本内容'}</p>
-          </div>
-        </aside>}
-        {drawer === 'settings' && source?.kind === 'group_chat' && <aside style={styles.drawer} aria-label="AI 表达润色设置">
-          <header style={styles.drawerHeader}>
-            <h3 style={styles.drawerTitle}>AI 表达润色</h3>
-            <button type="button" style={styles.close} aria-label="关闭设置" onClick={() => { setDrawer(undefined) }}>×</button>
-          </header>
-          <div style={styles.drawerBody}>
-            {error !== '' && <div style={{ ...styles.error, marginBottom: 14 }}>{error}</div>}
-            <div style={styles.settingCard}>
-              <span style={styles.settingLabel}>当前状态</span>
-              <strong>{aiPolishSettings === undefined ? '读取中…' : aiPolishSettings.enabled ? '已开启' : '未开启'}</strong>
-              {aiPolishSettings !== undefined && aiPolishSettings.activeRuleName !== '' && <p style={{ margin: '8px 0 0', fontSize: 13 }}>
-                当前规则：{aiPolishSettings.activeRuleName}
-              </p>}
-              {activeAiPolishRule !== undefined && <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap', color: colors.secondary, fontSize: 12, lineHeight: '18px' }}>
-                {activeAiPolishRule.ruleText}
-              </p>}
-              {aiPolishSettings?.enabled === true && aiPolishSettings.canManage && <button
-                type="button" style={{ ...styles.secondaryAction, marginTop: 12 }} disabled={settingsBusy}
-                onClick={() => { void disableAiPolish() }}
-              >关闭 AI 润色</button>}
-            </div>
-            {aiPolishSettings === undefined ? <p style={{ color: colors.secondary, fontSize: 13 }}>
-              暂时无法读取当前设置，请稍后重试。
-            </p> : aiPolishSettings.canManage === false ? <p style={{ color: colors.secondary, fontSize: 13 }}>
-              只有群主或管理员可以修改 AI 润色设置。
-            </p> : <>
-              <label style={styles.settingLabel} htmlFor="arkme-ai-polish-requirement">新增润色规则</label>
-              <textarea
-                id="arkme-ai-polish-requirement"
-                style={styles.settingInput}
-                value={ruleRequirement}
-                maxLength={2000}
-                placeholder="例如：语气更友好、简洁，保留事实和专有名词"
-                disabled={settingsBusy}
-                onChange={event => { setRuleRequirement(event.target.value); setRuleCandidate(undefined) }}
-              />
-              <button
-                type="button" style={{ ...styles.primaryAction, marginTop: 10 }}
-                disabled={settingsBusy || ruleRequirement.trim() === ''}
-                onClick={() => { void generateRule() }}
-              >{settingsBusy ? '处理中…' : '生成规则'}</button>
-              {ruleCandidate !== undefined && <div style={{ ...styles.settingCard, marginTop: 16 }}>
-                <span style={styles.settingLabel}>请确认生成的规则</span>
-                <strong>{ruleCandidate.ruleName}</strong>
-                <p style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: '20px' }}>{ruleCandidate.ruleText}</p>
-                <button type="button" style={styles.primaryAction} disabled={settingsBusy} onClick={() => { void applyGeneratedRule() }}>
-                  确认并开启
-                </button>
-              </div>}
-            </>}
           </div>
         </aside>}
       </section>
