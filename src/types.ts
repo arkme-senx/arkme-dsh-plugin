@@ -941,6 +941,7 @@ export type ArkmeChatClientEvent = {
   type: 'reconcile'
   revision: number
   connected: boolean
+  refresh?: 'none' | 'if-stale' | 'force'
 } | {
   type: 'sessions-delta'
   revision: number

@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type { ArkmeChatClientEvent, ArkmeSourceList } from '../types.js'
-import { callArkme } from './api.js'
+import type { ArkmeChatClientEvent } from '../types.js'
 import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
@@ -55,29 +54,19 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
   useEffect(() => {
     if (auth?.status !== 'authenticated') {
       setUnreadCount(0)
-      arkmeChatDirectory.clear()
+      arkmeChatDirectory.activateAccount(undefined)
       return
     }
+    arkmeChatDirectory.activateAccount(auth.userId)
     let stopped = false
     let observedRevision: number | undefined
     let refreshGeneration = 0
-    const refreshUnread = async () => {
+    const refreshUnread = async (force = false) => {
       const generation = ++refreshGeneration
-      let cursor: string | undefined
-      let total = 0
-      const sources: ArkmeSourceList['items'] = []
-      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
-        const page = await callArkme<ArkmeSourceList>('sources.list', {
-          directory: 'root', limit: 100, ...(cursor === undefined ? {} : { cursor }),
-        })
-        sources.push(...page.items)
-        total += page.items.reduce((sum, source) => sum + Math.max(0, Math.trunc(source.unreadCount)), 0)
-        if (!page.hasMore || page.nextCursor === undefined) break
-        cursor = page.nextCursor
-      }
+      const sources = await arkmeChatDirectory.refreshRoot({ force })
+      const total = sources.reduce((sum, source) => sum + Math.max(0, Math.trunc(source.unreadCount)), 0)
       if (!stopped && generation === refreshGeneration) {
         setUnreadCount(total)
-        arkmeChatDirectory.publish(sources)
       }
     }
     const events = new EventSource('/arkme-self/api/events')
@@ -89,7 +78,8 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
           || (observedRevision !== undefined && update.revision <= observedRevision)) return
         observedRevision = update.revision
         if (update.type === 'reconcile') {
-          void refreshUnread().catch(() => undefined)
+          if (update.refresh === 'none') return
+          void refreshUnread(update.refresh === 'force').catch(() => undefined)
           return
         }
         if (update.type === 'read-ack') {
@@ -114,7 +104,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
       refreshGeneration += 1
       events.close()
     }
-  }, [auth?.status, ui.authRevision])
+  }, [auth?.status, auth?.userId, ui.authRevision])
   return <>
     <ArkmeOutgoingCallHost />
     <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>

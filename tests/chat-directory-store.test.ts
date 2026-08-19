@@ -40,6 +40,32 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['source-2', 'source-1'])
   })
 
+  it('single-flights a paginated refresh and reuses its last-success TTL cache', async () => {
+    const loadPage = vi.fn(async (cursor?: string) => cursor === undefined
+      ? {
+          directory: 'root' as const,
+          items: [{ sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '第一', activeAtMillis: 2, unreadCount: 0 }],
+          hasMore: true,
+          nextCursor: 'next',
+        }
+      : {
+          directory: 'root' as const,
+          items: [{ sourceRef: 'source-2', kind: 'group_chat' as const, displayName: '第二', activeAtMillis: 1, unreadCount: 0 }],
+          hasMore: false,
+        })
+    const store = new ArkmeChatDirectoryStore({ loadPage, maxAgeMs: 60_000 })
+
+    const [first, concurrent] = await Promise.all([store.refreshRoot(), store.refreshRoot()])
+    expect(loadPage).toHaveBeenCalledTimes(2)
+    expect(first.map(item => item.sourceRef)).toEqual(['source-1', 'source-2'])
+    expect(concurrent).toEqual(first)
+
+    await expect(store.refreshRoot()).resolves.toEqual(first)
+    expect(loadPage).toHaveBeenCalledTimes(2)
+    await store.refreshRoot({ force: true })
+    expect(loadPage).toHaveBeenCalledTimes(4)
+  })
+
   it('publishes timeline deltas independently from directory snapshots', () => {
     const store = new ArkmeChatTimelineDeltaStore()
     store.publish([{ sourceRef: 'source-1', items: [{

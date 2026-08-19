@@ -318,6 +318,7 @@ export async function dispatchArkmeHostOperation(
       {
         limit: numberParam(params, 'limit', 30),
         ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+        refresh: booleanParam(params, 'refresh'),
       },
     )
     case 'source.timeline': {

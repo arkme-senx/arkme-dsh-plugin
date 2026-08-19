@@ -238,6 +238,35 @@ describe('ArkmeService', () => {
     expect(sessions.session?.accessToken).toBe('renewed')
   })
 
+  it('honors Retry-After as a service-wide admission cooldown', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const startedAt: number[] = []
+      const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => {
+        startedAt.push(Date.now())
+        if (startedAt.length === 1) {
+          return new Response('{}', { status: 429, headers: { 'Retry-After': '1' } })
+        }
+        return json({ code: 200, data: { duration_ls: [], un_click_session_ids_per_day: [] } })
+      })
+      const first = service.recordingCalendar(1_700_000_000_000, 1_700_086_400_000).catch(error => error as Error)
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(first).resolves.toMatchObject({ upstreamStatus: 429, retryAfterMillis: 1_000 })
+
+      const second = service.recordingCalendar(1_700_000_000_000, 1_700_086_400_000)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(startedAt).toEqual([0])
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toMatchObject({ days: [] })
+      expect(startedAt).toEqual([0, 1000])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps transcript rows readable when the speaker directory fails', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -693,6 +722,27 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(snapshot)).not.toContain('13800138000')
     expect(JSON.stringify(snapshot)).not.toContain('test@example.com')
     await expect(service.cachedProfile()).resolves.toEqual(snapshot)
+  })
+
+  it('single-flights and TTL-caches authenticated profile reads', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      expect(String(input)).toBe('https://auth.test/api/v1/auth/get-user-info')
+      return json({ code: 200, data: userInfo(10001) })
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    const [first, concurrent, provider] = await Promise.all([
+      service.authStatus(), service.authStatus(), service.providerState(),
+    ])
+    expect(first).toMatchObject({ status: 'authenticated', userId: 10001 })
+    expect(concurrent).toEqual(first)
+    expect(provider).toMatchObject({ authStatus: 'authenticated', userId: 10001 })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    await expect(service.authStatus()).resolves.toEqual(first)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('falls back to the legacy name slug when the Arkme ID is absent', async () => {
@@ -1435,6 +1485,129 @@ describe('ArkmeService', () => {
     expect(clientEvents[0]).toMatchObject({ type: 'read-ack', sourceRef: privateRef, unreadCount: 0 })
   })
 
+  it('single-flights and TTL-caches identical Chat directory pages', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      expect(String(input)).toBe('https://chat.test/api/v1/chats/list')
+      return json({ code: 200, data: { items: [], has_more: false } })
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    const [first, concurrent] = await Promise.all([
+      service.listSources('root', { limit: 50 }),
+      service.listSources('root', { limit: 100 }),
+    ])
+    expect(first).toEqual(concurrent)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    await expect(service.listSources('root', { limit: 50 })).resolves.toEqual(first)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps group avatar snapshots cached independently from a forced directory refresh', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let directoryReads = 0
+    let avatarReads = 0
+    let profileReads = 0
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) {
+        directoryReads += 1
+        return json({ code: 200, data: { items: [{
+          session: { chat_session_uid: 'group-1', session_kind: 2, title: '群聊', last_active_at: 1 },
+          unread_snapshot: { unread_count: 0 },
+        }], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) {
+        avatarReads += 1
+        expect(body).toEqual({ chat_session_uids: ['group-1'] })
+        return json({ code: 200, data: {
+          items: [{ chat_session_uid: 'group-1', members: [{ user_id: 20001 }] }],
+        } })
+      }
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        profileReads += 1
+        return json({ code: 200, data: { items: [{
+          user_id: 20001,
+          nick_name: '成员',
+          head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20001/member.png?x-oss-signature=member',
+        }] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await service.listSources('root')
+    await service.listSources('root', { refresh: true })
+
+    expect(directoryReads).toBe(2)
+    expect(avatarReads).toBe(1)
+    expect(profileReads).toBe(1)
+    expect(service.requestStats()).toMatchObject({
+      'interactive-read:chat': { started: 2 },
+      'background-read:chat': { started: 1 },
+      'background-read:auth': { started: 1 },
+    })
+  })
+
+  it('checkpoints successful Chat projections and retries only failed sessions', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const tailCalls = new Map<string, number>()
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/display-snapshots')) {
+        return json({ code: 200, data: {
+          items: (body.chat_session_uids as string[]).map(uid => ({
+            session: { chat_session_uid: uid, session_kind: 2, title: `群聊-${uid}`, last_seq: 9, last_active_at: 100 },
+            unread_snapshot: { unread_count: 1, session_last_seq: 9 },
+          })),
+        } })
+      }
+      if (url.endsWith('/api/v1/chat/timeline/tail')) {
+        const uid = String(body.chat_session_uid)
+        tailCalls.set(uid, (tailCalls.get(uid) ?? 0) + 1)
+        if (uid === 'chat-2' && tailCalls.get(uid) === 1) return json({ code: 500, message: 'temporarily unavailable' })
+        return json({ code: 200, data: { items: [] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    const internal = service as unknown as {
+      refreshChatSessionProjectionBatch(pending: Array<[string, number]>): Promise<Array<[string, number]>>
+    }
+
+    const failed = await internal.refreshChatSessionProjectionBatch([['chat-1', 9], ['chat-2', 9]])
+    expect(failed).toEqual([['chat-2', 9]])
+    expect(events[0]).toMatchObject({ type: 'sessions-delta', updates: [{ source: { displayName: '群聊-chat-1' } }] })
+    await expect(internal.refreshChatSessionProjectionBatch(failed)).resolves.toEqual([])
+    expect(tailCalls).toEqual(new Map([['chat-1', 1], ['chat-2', 2]]))
+  })
+
+  it('keeps browser bootstrap reconciliation cache-aware and does not refresh the directory on upstream reconnect', () => {
+    const service = new ArkmeService(
+      config,
+      new MemorySessionStore(),
+      new MemoryStateStore(),
+      vi.fn(),
+    )
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    const internal = service as unknown as {
+      handleChatRealtimeNotice(notice: {
+        cause: 'reconcile'
+        state: { revision: number; connected: boolean }
+      }): void
+    }
+
+    expect(service.chatRealtimeInitialEvent()).toMatchObject({ type: 'reconcile', refresh: 'if-stale' })
+    internal.handleChatRealtimeNotice({ cause: 'reconcile', state: { revision: 1, connected: true } })
+    expect(events).toEqual([expect.objectContaining({ type: 'reconcile', refresh: 'none', connected: true })])
+  })
+
   it('polishes only enabled group text and preserves the original in the initial revision payload', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -1772,6 +1945,8 @@ describe('ArkmeService', () => {
     const privateAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/20002_avatar.png?x-oss-signature=private-signature'
     const groupAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/import/avatar/member.png?x-oss-signature=group-signature'
     const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2])
+    let publicProfileReads = 0
+    let imageDownloads = 0
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
@@ -1795,13 +1970,17 @@ describe('ArkmeService', () => {
           items: [{ chat_session_uid: 'group-1', members: [{ user_id: 20003 }, { user_id: 20002 }] }],
         } })
       }
-      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        publicProfileReads += 1
+        return json({ code: 200, data: {
         items: [
           { user_id: 20002, nick_name: '联系人', head_img: privateAvatar },
           { user_id: 20003, nick_name: '群成员', head_img: groupAvatar },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
-      } })
+        } })
+      }
       if (url === privateAvatar || url === groupAvatar) {
+        imageDownloads += 1
         return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } })
       }
       throw new Error(`unexpected ${url}`)
@@ -1816,8 +1995,32 @@ describe('ArkmeService', () => {
     await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
     })
+    await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
+      mediaType: 'image/png', bytes: png.byteLength,
+    })
+    expect(publicProfileReads).toBe(1)
+    expect(imageDownloads).toBe(1)
     sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
     await expect(service.readImage(sources.items[0]!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
+  })
+
+  it('bounds concurrent image downloads at the Host cache boundary', async () => {
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), vi.fn())
+    const internal = service as unknown as {
+      withImageDownloadPermit<T>(operation: () => Promise<T>): Promise<T>
+    }
+    let active = 0
+    let peak = 0
+    const results = await Promise.all(Array.from({ length: 9 }, async (_, index) => await internal.withImageDownloadPermit(async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      active -= 1
+      return index
+    })))
+
+    expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
+    expect(peak).toBe(4)
   })
 
   it('projects the DSH beta community entry with only opaque real-avatar refs', async () => {
