@@ -51,9 +51,9 @@ DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 
 ## 插件更新提醒
 
-插件 Host 默认每 12 小时从 npm Registry 检查一次稳定版本，不依赖 Arkme 登录，也不会发送账号、Token、设备 ID 或业务数据。发现新版本后，侧边栏 Arkme 行会直接出现紧凑“更新”按钮；设置页账号行标题显示当前安装版本，例如 `Arkme v0.1.2`。离线或检查失败时保留最后一次成功结果，不会把失败误报成“已是最新版”。
+Web App 每次首次进入或从后台重新变为可见时都会请求插件 Host 检查 npm Registry，不受上次成功结果的 12 小时缓存限制；Host 只对 60 秒内的重复进入做突发限流，并继续每 12 小时为长期运行实例执行后台检查。更新检查不依赖 Arkme 登录，也不会发送账号、Token、设备 ID 或业务数据。发现新版本后，侧边栏 Arkme 行会直接出现紧凑“更新”按钮；设置页账号行标题显示当前安装版本，例如 `Arkme v0.1.2`。离线或检查失败时保留最后一次成功结果，不会把失败误报成“已是最新版”。
 
-Registry 安装的插件会提供“立即更新并重启”：当前 DSH 启动一个独立 updater 后退出，updater 调用 DSH 官方插件 CLI、按原参数重启并执行健康检查；新版本启动失败时自动恢复旧版本。本地 `link:`/`file:` 开发安装不会被覆盖，只显示下面的固定兜底命令：
+Registry 安装的插件会提供“立即更新并重启”：当前 DSH 启动一个独立 updater 后退出，updater 调用 DSH 官方插件 CLI、保留完整 Node `execArgv` 与应用参数重启并执行健康检查；新版本启动失败时自动恢复旧版本。本地 `link:`/`file:` 开发安装不会被覆盖，只显示下面的固定兜底命令：
 
 ```sh
 dsh plugin --profile web up @senguoyun/dsh-arkme --latest

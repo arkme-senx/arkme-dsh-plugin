@@ -60,6 +60,7 @@ export interface PluginUpdateInstallRuntime {
   profileName: string
   healthUrl: string
   execPath?: string
+  execArgv?: string[]
   dshBinPath?: string
   restartArgv?: string[]
   helperPath?: string
@@ -346,6 +347,7 @@ export class ArkmePluginUpdateManager {
     }
 
     const runtime = this.installRuntime
+    const execArgv = runtime.execArgv ?? process.execArgv
     const jobId = randomUUID()
     const now = this.now()
     const snapshot: ArkmePluginUpdateInstallSnapshot = {
@@ -366,8 +368,9 @@ export class ArkmePluginUpdateManager {
       jobId,
       parentPid: process.pid,
       execPath: runtime.execPath ?? process.execPath,
+      execArgv,
       dshBinPath: runtime.dshBinPath ?? process.argv[1] ?? '',
-      restartArgv: runtime.restartArgv ?? process.argv.slice(1),
+      restartArgv: runtime.restartArgv ?? [...execArgv, ...process.argv.slice(1)],
       dshHome: runtime.dshHome,
       profileName: runtime.profileName,
       previousVersion: this.installedVersion,
@@ -541,8 +544,9 @@ export class ArkmePluginUpdateManager {
     const runtime = this.installRuntime
     if (runtime === undefined) return { canInstall: false, reason: 'runtime-unavailable' }
     const execPath = runtime.execPath ?? process.execPath
+    const execArgv = runtime.execArgv ?? process.execArgv
     const dshBinPath = runtime.dshBinPath ?? process.argv[1]
-    const restartArgv = runtime.restartArgv ?? process.argv.slice(1)
+    const restartArgv = runtime.restartArgv ?? [...execArgv, ...process.argv.slice(1)]
     const helperPath = runtime.helperPath ?? fileURLToPath(new URL('./plugin-updater-helper.js', import.meta.url))
     if (dshBinPath === undefined || !isAbsolute(execPath) || !isAbsolute(dshBinPath)
       || restartArgv.length === 0 || !existsSync(execPath) || !existsSync(dshBinPath) || !existsSync(helperPath)) {

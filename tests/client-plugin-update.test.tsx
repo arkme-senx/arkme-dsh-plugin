@@ -24,6 +24,33 @@ function updateStatus(patch: Partial<ArkmePluginUpdateStatus> = {}): ArkmePlugin
 }
 
 describe('ArkmePluginUpdateStore', () => {
+  it('checks for a fresh version whenever the Web App starts or becomes visible', async () => {
+    const documentTarget = new EventTarget()
+    Object.defineProperty(documentTarget, 'visibilityState', { configurable: true, value: 'visible' })
+    vi.stubGlobal('document', documentTarget)
+    const call = vi.fn(async (operation: string) => {
+      if (operation === 'plugin.update.install-status') return undefined
+      return updateStatus()
+    })
+    const store = new ArkmePluginUpdateStore(call as never)
+    const stop = store.start()
+    try {
+      await vi.waitFor(() => {
+        expect(call).toHaveBeenCalledWith('plugin.update.check')
+        expect(store.getSnapshot().checked).toBe(true)
+      })
+      call.mockClear()
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      await vi.waitFor(() => {
+        expect(call).toHaveBeenCalledWith('plugin.update.check')
+      })
+    } finally {
+      stop()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('loads Host-owned status and acknowledges only through the typed operation', async () => {
     const call = vi.fn(async (operation: string) => {
       if (operation === 'plugin.update.acknowledge') return updateStatus({ acknowledged: true })
