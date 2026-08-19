@@ -4134,7 +4134,7 @@ export class ArkmeService {
   async sendSourceText(
     sourceRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string } = {},
+    options: { recordUid?: string; relationUid?: string; botRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     const session = await this.requireSession()
     const source = await this.openSourceRef(sourceRef, session.userId)
@@ -4163,12 +4163,98 @@ export class ArkmeService {
     }
     const relationUid = options.relationUid?.trim() || crypto.randomUUID()
     if (source.kind === 'group_chat') {
+      if (options.botRefs !== undefined && options.botRefs.length > 0) {
+        const mentionSend = await this.groupBotMentionSend(
+          sourceRef, source, text, options.botRefs, recordUid, relationUid, session, options.signal,
+        )
+        return mentionSend
+      }
       return await this.sendGroupSourceTextWithAiPolish(
         sourceRef, source.ownerRef, text, recordUid, relationUid, session,
       )
     }
+    if (options.botRefs !== undefined && options.botRefs.length > 0) {
+      throw new ArkmePluginError('bot-mention-group-required', 'Bot mention 只能发送到群聊', false)
+    }
     return await this.sendChatSourceTextRaw(
       sourceRef, source.ownerRef, text, recordUid, relationUid, session,
+    )
+  }
+
+  private async groupBotMentionSend(
+    sourceRef: string,
+    source: ArkmeSourceRefPayload,
+    text: string,
+    botRefs: readonly string[],
+    recordUid: string,
+    relationUid: string,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeSourceSendResult> {
+    const uniqueRefs = new Set(botRefs.map(ref => ref.trim()))
+    if (uniqueRefs.has('') || uniqueRefs.size !== botRefs.length) {
+      throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用为空或重复', false)
+    }
+    const references = await Promise.all([...uniqueRefs].map(async ref => ({
+      ref,
+      value: await this.openBotRef(ref, session.userId),
+    })))
+    const requestedById = new Map(references.map(item => [item.value.botId, item.ref]))
+    if (requestedById.size !== references.length) {
+      throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用重复', false)
+    }
+    const groupData = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/group/list', { subject_uid: source.ownerRef }, session, signal,
+    )
+    const mentions: Array<{ bot_uid: string; display_name_snapshot: string; start_index: number; length: number }> = []
+    let visibleText = ''
+    for (const value of listValue(groupData.bots)) {
+      const raw = objectValue(value)
+      const botId = stringValue(raw.bot_id).trim()
+      if (!requestedById.has(botId)) continue
+      if (stringValue(raw.provider).trim() !== 'openclaw' || !booleanValue(raw.installed)) {
+        throw new ArkmePluginError('bot-mention-not-installed', '所选 Bot 未安装到该群聊', false, 409)
+      }
+      const name = stringValue(raw.name).trim()
+      if (name === '') throw new ArkmePluginError('bot-contract-invalid', 'Bot 响应不完整', true, 502)
+      const display = `@${name}`
+      const startIndex = visibleText.length
+      visibleText += `${display} `
+      mentions.push({
+        bot_uid: botId,
+        display_name_snapshot: name,
+        start_index: startIndex,
+        length: display.length,
+      })
+      requestedById.delete(botId)
+    }
+    if (requestedById.size > 0) {
+      throw new ArkmePluginError('bot-mention-not-installed', '所选 Bot 未安装到该群聊', false, 409)
+    }
+    visibleText += text
+    if (visibleText.length > this.config.maxTextLength) {
+      throw new ArkmePluginError('source-text-invalid', '发送内容超过长度限制', false)
+    }
+    const checksumInput = {
+      text_content: visibleText,
+      human_mentions: [],
+      bot_mentions: mentions.map(mention => ({
+        bot_uid: mention.bot_uid,
+        start_index: mention.start_index,
+        length: mention.length,
+      })),
+    }
+    const contentPayload = {
+      payload_kind: 2,
+      schema_version: 1,
+      mention_metadata: {
+        schema_version: 1,
+        source_checksum: createHash('sha256').update(JSON.stringify(checksumInput)).digest('hex'),
+        bot_mentions: mentions,
+      },
+    }
+    return await this.sendChatSourceTextRaw(
+      sourceRef, source.ownerRef, visibleText, recordUid, relationUid, session, undefined, contentPayload, signal,
     )
   }
 
@@ -4235,6 +4321,8 @@ export class ArkmeService {
     relationUid: string,
     session: ArkmeSessionCredentials,
     initialAiPolish?: Record<string, unknown>,
+    contentPayload?: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<ArkmeSourceSendResult> {
     const result = await this.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/records/send',
@@ -4245,9 +4333,11 @@ export class ArkmeService {
         template_kind: 1,
         text_content: text,
         ...(initialAiPolish === undefined ? {} : { initial_ai_polish: initialAiPolish }),
+        ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
         send_at: Date.now(),
       },
       session,
+      signal,
     )
     return {
       sourceRef,

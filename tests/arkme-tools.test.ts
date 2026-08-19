@@ -557,7 +557,7 @@ describe('Arkme conversation tools', () => {
     await expect(list.execute({ directory: 'root' }, { signal } as never)).resolves.toContain('<data_from_arkme>')
     await expect(read.execute({ source_ref: 'source-1' }, { signal } as never)).resolves.toContain('小林')
     await expect(send.execute(
-      { source_ref: 'source-1', text: '你好' },
+      { source_ref: 'source-1', text: '你好', bot_refs: ['arkme-bot-v1.bot'] },
       { callId: 'source-send-call', signal } as never,
     )).resolves.toContain('localState')
     expect(service.listSources).toHaveBeenCalledWith('root', expect.objectContaining({ limit: 30 }))
@@ -565,6 +565,7 @@ describe('Arkme conversation tools', () => {
     expect(service.sendSourceText).toHaveBeenCalledWith('source-1', '你好', expect.objectContaining({
       recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      botRefs: ['arkme-bot-v1.bot'],
     }))
   })
 

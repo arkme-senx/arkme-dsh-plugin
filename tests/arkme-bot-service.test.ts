@@ -242,4 +242,84 @@ describe('ArkmeService Bot owner adapter', () => {
       { url: 'https://bot.test/api/v1/bot/group/list', body: { subject_uid: 'group-session-1' } },
     ])
   })
+
+  it('sends installed Bot mentions with client-compatible visible offsets and content payload', async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/bot/list')) return json({ code: 200, data: { bots: [
+        { bot_id: 'bot-summary', name: '总结', provider: 'openclaw', description: '', status: 'online', subject_uid: 'direct-1' },
+        { bot_id: 'bot-rocket', name: '🚀助手', provider: 'openclaw', description: '', status: 'online', subject_uid: 'direct-2' },
+      ] } })
+      if (url.endsWith('/bot/group/list')) return json({ code: 200, data: {
+        subject_uid: 'group-session-2', subject_title: '讨论群', can_current_user_add_bots: true,
+        bots: [
+          { bot_id: 'bot-summary', name: '总结', provider: 'openclaw', description: '', status: 'online', installed: true },
+          { bot_id: 'bot-rocket', name: '🚀助手', provider: 'openclaw', description: '', status: 'online', installed: true },
+        ],
+      } })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 12, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const bots = await service.listBots()
+    const groupRef = groupSourceRef(10001, 'group-session-2', '讨论群')
+
+    const result = await service.sendSourceText(groupRef, '请总结', {
+      recordUid: 'record-mention-1', relationUid: 'relation-mention-1',
+      botRefs: [bots.items[0]!.botRef, bots.items[1]!.botRef],
+    })
+
+    expect(result).toMatchObject({ itemUid: 'record-mention-1', sequence: 12, localState: 'synced' })
+    const sent = requests.at(-1)!.body
+    expect(sent).toEqual({
+      chat_session_uid: 'group-session-2', record_uid: 'record-mention-1', rel_uid: 'relation-mention-1',
+      template_kind: 1,
+      text_content: '@总结 @🚀助手 请总结',
+      content_payload: {
+        payload_kind: 2,
+        schema_version: 1,
+        mention_metadata: {
+          schema_version: 1,
+          source_checksum: '5a0d9a5890dec9b3d84777d74b1aa2e7e260f13adced19f490bcc36f790ab9ef',
+          bot_mentions: [
+            { bot_uid: 'bot-summary', display_name_snapshot: '总结', start_index: 0, length: 3 },
+            { bot_uid: 'bot-rocket', display_name_snapshot: '🚀助手', start_index: 4, length: 5 },
+          ],
+        },
+      },
+      send_at: expect.any(Number),
+    })
+    expect(requests.some(request => request.url.includes('/ai-polish/'))).toBe(false)
+  })
+
+  it('fails closed for duplicate or uninstalled Bot mentions before sending chat text', async () => {
+    const urls: string[] = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async (input) => {
+      const url = String(input)
+      urls.push(url)
+      if (url.endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
+        bot_id: 'bot-uninstalled', name: '未安装', provider: 'openclaw', description: '', status: 'offline', subject_uid: 'direct-3',
+      }] } })
+      if (url.endsWith('/bot/group/list')) return json({ code: 200, data: {
+        subject_uid: 'group-session-3', subject_title: '讨论群', bots: [{
+          bot_id: 'bot-uninstalled', name: '未安装', provider: 'openclaw', description: '', status: 'offline', installed: false,
+        }],
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const botRef = (await service.listBots()).items[0]!.botRef
+    const sourceRef = groupSourceRef(10001, 'group-session-3', '讨论群')
+
+    await expect(service.sendSourceText(sourceRef, '消息', { botRefs: [botRef, botRef] }))
+      .rejects.toMatchObject({ code: 'bot-mention-ref-invalid' })
+    await expect(service.sendSourceText(sourceRef, '消息', { botRefs: [botRef] }))
+      .rejects.toMatchObject({ code: 'bot-mention-not-installed' })
+    expect(urls.filter(url => url.endsWith('/api/v1/chats/records/send'))).toEqual([])
+  })
 })

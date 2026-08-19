@@ -28,7 +28,7 @@ export interface ArkmeConversationToolPort {
   sendSourceText(
     sourceRef: string,
     textContent: string,
-    options?: { recordUid?: string; relationUid?: string },
+    options?: { recordUid?: string; relationUid?: string; botRefs?: readonly string[]; signal?: AbortSignal },
   ): Promise<ArkmeSourceSendResult>
   sendDirectText(
     recipientArkmeId: string,
