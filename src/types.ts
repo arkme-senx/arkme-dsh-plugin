@@ -149,12 +149,15 @@ export interface ArkmeProviderCapabilities {
     userCard: true
     openPrivateChat: true
     groupSettings: true
+    relatedRecordings?: true
   }
   limits: {
     maxTextLength: number
     maxSearchResults: number
     maxSyncPages: number
     maxImageBytes: number
+    maxRelatedRecordingPageSize?: number
+    maxRelatedRecordingCursorLength?: number
   }
 }
 
@@ -340,6 +343,74 @@ export interface ArkmeSourceSendResult {
   localState: 'synced' | 'failed'
   error?: string
   aiPolish?: ArkmeTimelineAiPolish
+}
+
+export type ArkmeRelatedRecordingPageState = 'empty' | 'generating' | 'success' | 'partial' | 'error'
+
+export interface ArkmeRelatedRecordingEligibility {
+  allowed: boolean
+}
+
+export interface ArkmeRelatedRecordingSpeaker {
+  speakerId: string
+  refUserId?: number
+  nickname?: string
+}
+
+export interface ArkmeRelatedRecordingParticipant {
+  speakerId: string
+  refUserId?: number
+  nickname?: string
+  displayName: string
+  role: number
+}
+
+export interface ArkmeRelatedRecordingItem {
+  /** Account-bound opaque identity. Browser and Agent consumers must not parse it. */
+  recordingRef: string
+  startAtMillis: number
+  endAtMillis: number
+  dateStamp?: number
+  timezoneOffsetMillis?: number
+  timeRangeText: string
+  title: string
+  summary: string
+  summaryStatus: number
+  transcript?: string
+  transcriptAvailable: boolean
+  speakers: ArkmeRelatedRecordingSpeaker[]
+  participants: ArkmeRelatedRecordingParticipant[]
+  isSharedByOther: boolean
+}
+
+export interface ArkmeRelatedRecordingMonthBucket {
+  monthKey: string
+  itemCount: number
+}
+
+export interface ArkmeRelatedRecordingPage {
+  state: ArkmeRelatedRecordingPageState
+  stateCode: number
+  stateMessage: string
+  hasEntry: boolean
+  items: ArkmeRelatedRecordingItem[]
+  hasMore: boolean
+  nextCursor?: string
+  partial: boolean
+  monthBuckets?: ArkmeRelatedRecordingMonthBucket[]
+  timeIndexComplete: boolean
+  legacyTimeIndexFallback: boolean
+}
+
+export interface ArkmeRelatedRecordingPageOptions {
+  limit?: number
+  cursor?: string
+  monthKey?: string
+  timezoneOffsetMillis?: number
+  includeTimeIndex?: boolean
+  /** Host-side diagnostic classification only; browser SDK does not forward this field. */
+  consumer?: 'ui' | 'tool'
+  signal?: AbortSignal
 }
 
 export interface ArkmeDirectTextSendResult {
@@ -759,6 +830,8 @@ export type ArkmePluginOperation =
   | 'source.timeline'
   | 'source.mark-read'
   | 'source.send-text'
+  | 'related-recordings.eligibility'
+  | 'related-recordings.page'
   | 'source.ai-polish.settings'
   | 'source.ai-polish.notices'
   | 'source.ai-polish.generate-rule'

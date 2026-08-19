@@ -6,6 +6,9 @@ import type {
   ArkmeCreateTextResult,
   ArkmeImagePayload,
   ArkmePendingWrite,
+  ArkmeRelatedRecordingEligibility,
+  ArkmeRelatedRecordingPage,
+  ArkmeRelatedRecordingPageOptions,
   ArkmePluginErrorBody,
   ArkmePluginOperation,
   ArkmePluginResponse,
@@ -28,6 +31,14 @@ export type {
   ArkmeImageMediaType,
   ArkmeImagePayload,
   ArkmePendingWrite,
+  ArkmeRelatedRecordingEligibility,
+  ArkmeRelatedRecordingItem,
+  ArkmeRelatedRecordingMonthBucket,
+  ArkmeRelatedRecordingPage,
+  ArkmeRelatedRecordingPageOptions,
+  ArkmeRelatedRecordingPageState,
+  ArkmeRelatedRecordingParticipant,
+  ArkmeRelatedRecordingSpeaker,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
   ArkmeSourceDirectory,
@@ -165,6 +176,31 @@ export class ArkmeSdk {
       textContent,
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async relatedRecordingEligibility(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRelatedRecordingEligibility> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    return await this.call<ArkmeRelatedRecordingEligibility>(
+      'related-recordings.eligibility', { sourceRef }, signal,
+    )
+  }
+
+  async relatedRecordings(
+    sourceRef: string,
+    options: ArkmeRelatedRecordingPageOptions = {},
+  ): Promise<ArkmeRelatedRecordingPage> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme private-chat source reference must not be empty')
+    return await this.call<ArkmeRelatedRecordingPage>('related-recordings.page', {
+      sourceRef,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.monthKey === undefined ? {} : { monthKey: options.monthKey }),
+      ...(options.timezoneOffsetMillis === undefined ? {} : { timezoneOffsetMillis: options.timezoneOffsetMillis }),
+      ...(options.includeTimeIndex === undefined ? {} : { includeTimeIndex: options.includeTimeIndex }),
     }, options.signal)
   }
 

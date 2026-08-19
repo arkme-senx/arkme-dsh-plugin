@@ -273,6 +273,19 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
     )
+    case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'related-recordings.page': return await service.relatedRecordings(
+      stringParam(params, 'sourceRef'),
+      {
+        limit: numberParam(params, 'limit', 10),
+        ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+        ...(stringParam(params, 'monthKey') === '' ? {} : { monthKey: stringParam(params, 'monthKey') }),
+        timezoneOffsetMillis: numberParam(params, 'timezoneOffsetMillis', 0),
+        includeTimeIndex: booleanParam(params, 'includeTimeIndex'),
+      },
+    )
     case 'source.ai-polish.settings': return await service.inspectGroupAiPolish(
       stringParam(params, 'sourceRef'),
     )

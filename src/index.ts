@@ -29,6 +29,7 @@ export interface Config {
   requestTimeoutMs: number
   maxTextLength: number
   toolProfile: ArkmeToolProfile
+  relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   stateDirectory: string
   keychainServicePrefix: string
@@ -51,6 +52,7 @@ export const Config: Schema<Config> = Schema.object({
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
   toolProfile: Schema.union(['business', 'atomic', 'hybrid', 'disabled']).default('business'),
+  relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
@@ -165,6 +167,14 @@ export type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmePendingWrite,
+  ArkmeRelatedRecordingEligibility,
+  ArkmeRelatedRecordingItem,
+  ArkmeRelatedRecordingMonthBucket,
+  ArkmeRelatedRecordingPage,
+  ArkmeRelatedRecordingPageOptions,
+  ArkmeRelatedRecordingPageState,
+  ArkmeRelatedRecordingParticipant,
+  ArkmeRelatedRecordingSpeaker,
   ArkmeImageMediaType,
   ArkmeImagePayload,
   ArkmeSourceDirectory,

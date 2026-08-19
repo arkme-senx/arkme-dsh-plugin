@@ -16,6 +16,8 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('intelligentBaseUrl: https://intelligent.jotmo.cc')
     expect(patch).toContain('audioBaseUrl: https://audio.jotmo.cc')
     expect(patch).toContain('toolProfile: business')
+    expect(patch).toContain('relatedRecordingsEnabled: true')
+    expect(patch).not.toContain('relatedRecordingSharingEnabled:')
     expect(patch).toContain('allowProduction: true')
     expect(patch).not.toContain('chatBaseUrl: https://im.jotmo.cc')
   })

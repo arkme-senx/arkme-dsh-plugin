@@ -1,7 +1,7 @@
 import type {
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
-  ArkmeTimelineCursor, ArkmeTimelinePage,
+  ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
@@ -13,6 +13,18 @@ export interface ArkmeConversationToolPort {
     sourceRef: string,
     options?: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal },
   ): Promise<ArkmeTimelinePage>
+  relatedRecordings(
+    sourceRef: string,
+    options?: ArkmeRelatedRecordingPageOptions,
+  ): Promise<ArkmeRelatedRecordingPage>
+  recordRelatedRecordingsToolEvent?(event: {
+    result: 'success' | 'error'
+    durationMs: number
+    itemCount?: number
+    cursorPresent?: boolean
+    transcriptRequested?: boolean
+    transcriptTruncated?: boolean
+  }): void
   sendSourceText(
     sourceRef: string,
     textContent: string,
