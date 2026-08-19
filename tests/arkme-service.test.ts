@@ -1511,6 +1511,27 @@ describe('ArkmeService', () => {
     expect(tailCalls).toEqual(new Map([['chat-1', 1], ['chat-2', 2]]))
   })
 
+  it('keeps browser bootstrap reconciliation cache-aware and does not refresh the directory on upstream reconnect', () => {
+    const service = new ArkmeService(
+      config,
+      new MemorySessionStore(),
+      new MemoryStateStore(),
+      vi.fn(),
+    )
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    const internal = service as unknown as {
+      handleChatRealtimeNotice(notice: {
+        cause: 'reconcile'
+        state: { revision: number; connected: boolean }
+      }): void
+    }
+
+    expect(service.chatRealtimeInitialEvent()).toMatchObject({ type: 'reconcile', refresh: 'if-stale' })
+    internal.handleChatRealtimeNotice({ cause: 'reconcile', state: { revision: 1, connected: true } })
+    expect(events).toEqual([expect.objectContaining({ type: 'reconcile', refresh: 'none', connected: true })])
+  })
+
   it('polishes only enabled group text and preserves the original in the initial revision payload', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

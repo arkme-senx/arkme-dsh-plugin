@@ -9,7 +9,8 @@ const DEFAULT_INACTIVITY_TIMEOUT_MS = 75_000
 const DEFAULT_LEASE_DURATION_MS = 9 * 60_000 + 30_000
 const DEFAULT_IDLE_POLL_MS = 2_000
 const DEFAULT_RETRY_BASE_MS = 1_000
-const MAX_RETRY_MS = 15_000
+const DEFAULT_MAX_RETRY_MS = 60_000
+const DEFAULT_STABLE_CONNECTION_MS = 30_000
 const MAX_SEEN_EVENTS = 256
 
 type FetchLike = typeof fetch
@@ -39,7 +40,10 @@ export interface ArkmeChatRealtimeRuntimeOptions {
   leaseDurationMs?: number
   idlePollMs?: number
   retryBaseMs?: number
+  maxRetryMs?: number
+  stableConnectionMs?: number
   random?: () => number
+  now?: () => number
 }
 
 class ArkmeChatRealtimeAuthError extends Error {}
@@ -117,13 +121,17 @@ export class ArkmeChatRealtimeRuntime {
   private readonly leaseDurationMs: number
   private readonly idlePollMs: number
   private readonly retryBaseMs: number
+  private readonly maxRetryMs: number
+  private readonly stableConnectionMs: number
   private readonly random: () => number
+  private readonly now: () => number
   private rootController: AbortController | undefined
   private connectionController: AbortController | undefined
   private loop: Promise<void> | undefined
   private revision = 0
   private connected = false
   private lastAcceptedAccessToken: string | undefined
+  private lastConnectionLifetimeMs = 0
   private lastEventAtMillis: number | undefined
   private readonly seenEventUids = new Set<string>()
   private readonly listeners = new Set<(notice: ArkmeChatRealtimeNotice) => void>()
@@ -135,7 +143,10 @@ export class ArkmeChatRealtimeRuntime {
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS
     this.idlePollMs = options.idlePollMs ?? DEFAULT_IDLE_POLL_MS
     this.retryBaseMs = options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS
+    this.maxRetryMs = Math.max(this.retryBaseMs, options.maxRetryMs ?? DEFAULT_MAX_RETRY_MS)
+    this.stableConnectionMs = Math.max(0, options.stableConnectionMs ?? DEFAULT_STABLE_CONNECTION_MS)
     this.random = options.random ?? Math.random
+    this.now = options.now ?? Date.now
   }
 
   start(): () => void {
@@ -196,12 +207,16 @@ export class ArkmeChatRealtimeRuntime {
         continue
       }
       blockedAccessToken = undefined
+      let stableConnection = false
       try {
         await this.consume(session, signal)
+        stableConnection = this.lastConnectionLifetimeMs >= this.stableConnectionMs
         if (this.lastAcceptedAccessToken === session.accessToken) refreshedButUnacceptedToken = undefined
-        retryMs = this.retryBaseMs
+        if (stableConnection) retryMs = this.retryBaseMs
       } catch (error) {
         if (signal.aborted) break
+        stableConnection = this.lastConnectionLifetimeMs >= this.stableConnectionMs
+        if (stableConnection) retryMs = this.retryBaseMs
         if (this.lastAcceptedAccessToken === session.accessToken) refreshedButUnacceptedToken = undefined
         if (error instanceof ArkmeChatRealtimeAuthError) {
           if (refreshedButUnacceptedToken === session.accessToken) {
@@ -227,17 +242,21 @@ export class ArkmeChatRealtimeRuntime {
       }
       const jitteredRetryMs = Math.max(1, Math.round(retryMs * (0.8 + this.random() * 0.4)))
       await waitFor(jitteredRetryMs, signal)
-      retryMs = Math.min(MAX_RETRY_MS, Math.max(this.retryBaseMs, retryMs * 2))
+      if (!stableConnection) {
+        retryMs = Math.min(this.maxRetryMs, Math.max(this.retryBaseMs, retryMs * 2))
+      }
     }
   }
 
   private async consume(session: ArkmeSessionCredentials, rootSignal: AbortSignal): Promise<void> {
+    this.lastConnectionLifetimeMs = 0
     const controller = new AbortController()
     this.connectionController = controller
     const abortFromRoot = () => controller.abort(rootSignal.reason)
     rootSignal.addEventListener('abort', abortFromRoot, { once: true })
     const connectTimer = setTimeout(() => controller.abort(new Error('chat SSE connect timeout')), this.connectTimeoutMs)
     let leaseTimer: ReturnType<typeof setTimeout> | undefined
+    let acceptedAtMillis: number | undefined
     try {
       const response = await this.fetchImpl(new URL(ARKME_CHAT_SSE_PATH, this.options.imBaseUrl), {
         method: 'POST',
@@ -254,6 +273,12 @@ export class ArkmeChatRealtimeRuntime {
       clearTimeout(connectTimer)
       if (response.status === 401 || response.status === 403) throw new ArkmeChatRealtimeAuthError()
       if (!response.ok || response.body === null) throw new Error(`chat SSE returned HTTP ${String(response.status)}`)
+      const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+      if (!contentType.includes('text/event-stream')) {
+        await response.body.cancel().catch(() => undefined)
+        throw new Error('chat SSE returned a non-event-stream response')
+      }
+      acceptedAtMillis = this.now()
       this.connected = true
       this.lastAcceptedAccessToken = session.accessToken
       this.advanceRevision('reconcile')
@@ -273,6 +298,9 @@ export class ArkmeChatRealtimeRuntime {
       if (buffer !== '') this.acceptLine(buffer)
       await reader.cancel().catch(() => undefined)
     } finally {
+      if (acceptedAtMillis !== undefined) {
+        this.lastConnectionLifetimeMs = Math.max(0, this.now() - acceptedAtMillis)
+      }
       clearTimeout(connectTimer)
       if (leaseTimer !== undefined) clearTimeout(leaseTimer)
       rootSignal.removeEventListener('abort', abortFromRoot)

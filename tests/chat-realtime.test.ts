@@ -71,7 +71,10 @@ describe('Arkme Chat realtime', () => {
     const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
       const authorization = new Headers(init?.headers).get('Authorization')
       if (authorization === 'Bearer expired-access') return new Response(null, { status: 403 })
-      return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }), { status: 200 })
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
     })
     const refreshSession = vi.fn(async () => {
       currentSession = refreshed
@@ -139,5 +142,71 @@ describe('Arkme Chat realtime', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(refreshSession).toHaveBeenCalledOnce()
     stop()
+  })
+
+  it('backs off exponentially when a nominal SSE response closes before becoming stable', async () => {
+    vi.useFakeTimers()
+    try {
+      const attempts: number[] = []
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        attempts.push(Date.now())
+        return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close() } }), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      })
+      const runtime = new ArkmeChatRealtimeRuntime({
+        imBaseUrl: 'https://im.example.test',
+        readSession: async () => ({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' }),
+        fetchImpl,
+        retryBaseMs: 100,
+        maxRetryMs: 1_000,
+        stableConnectionMs: 10_000,
+        random: () => 0.5,
+      })
+
+      const stop = runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(99)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(199)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+      expect(attempts.map(value => value - attempts[0]!)).toEqual([0, 100, 300])
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects a successful non-SSE response and applies the same bounded backoff', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('{}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      const runtime = new ArkmeChatRealtimeRuntime({
+        imBaseUrl: 'https://im.example.test',
+        readSession: async () => ({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' }),
+        fetchImpl,
+        retryBaseMs: 100,
+        maxRetryMs: 1_000,
+        random: () => 0.5,
+      })
+
+      const stop = runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

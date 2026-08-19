@@ -78,6 +78,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
           || (observedRevision !== undefined && update.revision <= observedRevision)) return
         observedRevision = update.revision
         if (update.type === 'reconcile') {
+          if (update.refresh === 'none') return
           void refreshUnread(update.refresh === 'force').catch(() => undefined)
           return
         }

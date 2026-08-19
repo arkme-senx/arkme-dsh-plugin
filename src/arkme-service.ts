@@ -852,7 +852,7 @@ export class ArkmeService {
   private handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
     if (notice.cause === 'reconcile') {
       this.emitChatClientEvent({
-        type: 'reconcile', revision: this.nextChatClientRevision(), connected: notice.state.connected, refresh: 'force',
+        type: 'reconcile', revision: this.nextChatClientRevision(), connected: notice.state.connected, refresh: 'none',
       })
       return
     }
