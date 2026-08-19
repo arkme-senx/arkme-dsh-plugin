@@ -43,6 +43,17 @@ describe('extension center Host BFF', () => {
     expect(service.extensionAuthors).toHaveBeenCalledWith([77])
   })
 
+  it('routes author soft deletion through the authenticated Host manager', async () => {
+    const deleteExtension = vi.fn(async () => ({
+      extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.delete', { extensionId: 'ext-owned' }, undefined, { delete: deleteExtension } as never,
+    )).resolves.toEqual({ extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123 })
+    expect(deleteExtension).toHaveBeenCalledWith('ext-owned')
+  })
+
   it('starts and reads a Host-owned install task without exposing the artifact URL', async () => {
     const start = vi.fn(() => ({ taskId: 'task-1', phase: 'resolving' }))
     const status = vi.fn(() => ({ taskId: 'task-1', phase: 'downloading', downloadedBytes: 7, totalBytes: 10 }))

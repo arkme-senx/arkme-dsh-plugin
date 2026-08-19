@@ -255,4 +255,27 @@ describe('extension signature and runtime bridge', () => {
     expect((requests[0]?.body.manifest as { permissions?: unknown }).permissions).toEqual([])
     store.close()
   })
+
+  it('soft deletes an exact owned extension through the authenticated registry client', async () => {
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const client = new ExtensionPublishClient(async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
+      requests.push({ path, body })
+      return { extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123 } as T
+    })
+    const directory = temporaryDirectory()
+    const store = new ArkmeExtensionInstallStore(directory)
+    const manager = new ArkmeExtensionManager(client, store, {
+      inspectPackage: () => { throw new Error('not used') },
+      define: () => { throw new Error('not used') },
+      run: async () => { throw new Error('not used') },
+    }, { artifactDirectory: join(directory, 'artifacts'), trustedSigningKeys: '{}' })
+
+    await expect(manager.delete('ext-owned')).resolves.toEqual({
+      extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
+    })
+    expect(requests).toEqual([{
+      path: '/api/v1/extensions/delete', body: { extension_id: 'ext-owned' },
+    }])
+    store.close()
+  })
 })

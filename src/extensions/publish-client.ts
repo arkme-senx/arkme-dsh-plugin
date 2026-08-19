@@ -1,6 +1,6 @@
 import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_EXTENSION_MAX_BYTES, type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
-  type ArkmeExtensionCatalogPage, type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
+  type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
   type ArkmeExtensionPublishSession, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeInstalledExtension,
 } from './types.js'
@@ -125,6 +125,10 @@ export class ExtensionPublishClient {
 
   async myList(input: { cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/v1/extensions/my-list', input, signal)
+  }
+
+  async deleteExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
+    return await this.post('/api/v1/extensions/delete', { extension_id: extensionId }, signal)
   }
 
   async resolveInstall(extensionId: string, version?: string, signal?: AbortSignal): Promise<ArkmeExtensionInstallResolution> {

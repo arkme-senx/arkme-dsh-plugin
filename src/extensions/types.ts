@@ -72,6 +72,12 @@ export interface ArkmeExtensionPublishResult {
   validation_error_message?: string
 }
 
+export interface ArkmeExtensionDeleteResult {
+  extension_id: string
+  status: 'deleted'
+  deleted_at: number
+}
+
 export interface ArkmeExtensionInstallResolution {
   extension_id: string
   version: string

@@ -62,7 +62,7 @@ dsh plugin --profile web up @senguoyun/dsh-arkme --latest
 
 ## 扩展中心 MVP
 
-当 DSH 已加载 `dynamicCordisRunner` 时，插件会注册发布、搜索、详情和应用工具。发布对象是当前 Agent 所有的精确 Dynamic Cordis Package；插件将现有 Host/Client JavaScript 确定性封装为 `.arkext`，不会重新生成或执行服务端构建。
+当 DSH 已加载 `dynamicCordisRunner` 时，插件会注册发布、作者软删除、搜索、详情和应用工具。发布对象是当前 Agent 所有的精确 Dynamic Cordis Package；插件将现有 Host/Client JavaScript 确定性封装为 `.arkext`，不会重新生成或执行服务端构建。作者软删除必须由当前用户明确确认，并只接受可信发布结果或本人扩展列表中的精确 `extension_id`。
 
 当前补丁面向真实测试场景：Arkme owner API 使用 `*.senguo.me` 测试服务，扩展中心使用 `https://jotmo-extension-publish.senguo.me`，并信任测试服务的 `test-ed25519-20260819-1` Ed25519 公钥。正式发布前必须替换为正式环境 Origin 和正式签名公钥。
 

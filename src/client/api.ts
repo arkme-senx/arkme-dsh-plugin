@@ -29,6 +29,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'extensions.catalog.list'
   | 'extensions.catalog.detail'
   | 'extensions.my-list'
+  | 'extensions.delete'
   | 'extensions.installed-list'
   | 'extensions.updates'
   | 'extensions.install.preview'

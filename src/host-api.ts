@@ -252,7 +252,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke']
+      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -573,6 +573,9 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.my-list': return await enrichExtensionPageAuthors(
       service,
       await requireExtensionManager(extensionManager).myList(),
+    )
+    case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
+      stringParam(params, 'extensionId'),
     )
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
     case 'extensions.updates': return await requireExtensionManager(extensionManager).updates()

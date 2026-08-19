@@ -15,7 +15,7 @@ import { verifyExtensionResolutionSignature } from './signature.js'
 export { verifyExtensionResolutionSignature } from './signature.js'
 import {
   type ArkmeExtensionCatalogItem, type ArkmeExtensionCatalogPage,
-  type ArkmeExtensionInstallPreview, type ArkmeExtensionPublishResult, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+  type ArkmeExtensionDeleteResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionPublishResult, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
 } from './types.js'
@@ -230,6 +230,10 @@ export class ArkmeExtensionManager {
 
   async myList(signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.client.myList({ limit: 50 }, signal)
+  }
+
+  async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
+    return await this.client.deleteExtension(requiredId(extensionId, 'extension_id'), signal)
   }
 
   listInstalled(): ArkmeInstalledExtension[] {
