@@ -42,7 +42,7 @@ describe('topic create UI', () => {
     expect(root).toContain('确认')
     expect(`${child}${root}`).not.toContain('话题磁铁')
     expect(`${child}${root}`).toContain('#a7dfbd')
-    expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#176d3d')
+    expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#09B83E')
   })
 
   it('shows the child-topic shortcut only for a hovered topic row', () => {
