@@ -7,7 +7,7 @@ const integration = process.env.ARKME_OPENCLAW_INTEGRATION === '1' ? describe : 
 integration('local OpenClaw CLI', () => {
   it('validates the configured profile without invoking a model', async () => {
     const profile = process.env.ARKME_OPENCLAW_PROFILE?.trim() || 'dev'
-    const observed: Array<{ args: readonly string[]; exitCode: number; stdout: string; stderr: string }> = []
+    const observed: Array<{ args: readonly string[]; exitCode: number }> = []
     const adapter = createOpenClawCliAdapter({
       profile,
       async run(args) {
@@ -23,7 +23,7 @@ integration('local OpenClaw CLI', () => {
               stdout,
               stderr,
             }
-            observed.push({ args: [...args], ...commandResult })
+            observed.push({ args: [...args], exitCode: commandResult.exitCode })
             resolve(commandResult)
           })
         })
@@ -33,5 +33,6 @@ integration('local OpenClaw CLI', () => {
     const result = await adapter.preflight()
     expect(result.status, JSON.stringify(observed)).toBe('ready')
     expect(result).toHaveProperty('version')
+    expect(result).toHaveProperty('gateway')
   }, 120_000)
 })
