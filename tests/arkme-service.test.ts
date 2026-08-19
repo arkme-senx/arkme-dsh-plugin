@@ -1252,6 +1252,267 @@ describe('ArkmeService', () => {
     expect(clientEvents[0]).toMatchObject({ type: 'read-ack', sourceRef: privateRef, unreadCount: 0 })
   })
 
+  it('polishes only enabled group text and preserves the original in the initial revision payload', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) return json({ code: 200, data: {
+        config: { enabled: true, active_rule_uid: 'rule-1', update_at: 10 },
+        rules: [{ rule_uid: 'rule-1', name: '友好表达', rule_text: '保持事实，语气友好。', rule_version: 2 }],
+        viewer_role: 3, can_manage: false,
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/text/polish')) return json({ code: 200, data: {
+        task_uid: body.task_uid, attempt: 1, state: 1, action: 1,
+        polished_text: '你好，方便帮我看一下吗？', rule_uid: 'rule-1', rule_version: 2,
+        model_version: 'qwen-flash', prompt_version: 'group_text_polish_apply_v1',
+      } })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 9, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const sourceRef = sourceRefFor('group_chat', 'group-1', '产品群')
+
+    await expect(service.sendSourceText(sourceRef, '帮我看一下', {
+      recordUid: 'record-polish-1', relationUid: 'relation-polish-1',
+    })).resolves.toMatchObject({
+      itemUid: 'record-polish-1', sequence: 9,
+      aiPolish: {
+        state: 'polished', originalText: '帮我看一下', polishedText: '你好，方便帮我看一下吗？',
+      },
+    })
+    expect(requests.map(request => request.url)).toEqual([
+      'https://chat.test/api/v1/chats/ai-polish/settings/query',
+      'https://chat.test/api/v1/chats/ai-polish/text/polish',
+      'https://chat.test/api/v1/chats/records/send',
+    ])
+    expect(requests[2]?.body).toMatchObject({
+      chat_session_uid: 'group-1', record_uid: 'record-polish-1', rel_uid: 'relation-polish-1',
+      text_content: '帮我看一下',
+      initial_ai_polish: {
+        original_text: '帮我看一下', polished_text: '你好，方便帮我看一下吗？',
+        rule_uid: 'rule-1', rule_name: '友好表达', model: 'qwen-flash',
+      },
+    })
+  })
+
+  it('fails open to the unchanged group send when polish settings cannot be read', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) throw new TypeError('settings unavailable')
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 4, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const result = await service.sendSourceText(
+      sourceRefFor('group_chat', 'group-2', '稳定性群'),
+      '原样发送',
+      { recordUid: 'record-plain-1', relationUid: 'relation-plain-1' },
+    )
+    expect(result).not.toHaveProperty('aiPolish')
+    expect(requests[1]?.body).toEqual({
+      chat_session_uid: 'group-2', record_uid: 'record-plain-1', rel_uid: 'relation-plain-1',
+      template_kind: 1, text_content: '原样发送', send_at: expect.any(Number),
+    })
+  })
+
+  it('sends the original once after polish failure and retries against the same record relation', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) return json({ code: 200, data: {
+        config: { enabled: true, active_rule_uid: 'rule-1', update_at: 10 },
+        rules: [{ rule_uid: 'rule-1', name: '友好表达', rule_text: '友好', rule_version: 1 }],
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/text/polish')) return json({ code: 200, data: {
+        task_uid: body.task_uid, attempt: 1, state: 2, action: 0, failure_message: 'provider timeout',
+      } })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 5, audit_status: 1,
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/text/retry-apply')) return json({ code: 200, data: {
+        task_uid: body.task_uid, attempt: 2, state: 1, action: 1,
+        record_uid: body.record_uid, rel_uid: body.rel_uid, polished_text: '重试后润色文', record_version: 2,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const sent = await service.sendSourceText(
+      sourceRefFor('group_chat', 'group-3', '重试群'),
+      '重试原文',
+      { recordUid: 'record-retry-1', relationUid: 'relation-retry-1' },
+    )
+    expect(sent.aiPolish).toMatchObject({ state: 'failed', retryRef: expect.any(String) })
+    const retried = await service.retryGroupAiPolish(sent.aiPolish!.retryRef!)
+    expect(retried.aiPolish).toEqual({
+      state: 'polished', originalText: '重试原文', polishedText: '重试后润色文',
+    })
+    expect(requests.filter(request => request.url.endsWith('/api/v1/chats/records/send'))).toHaveLength(1)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-3', record_uid: 'record-retry-1', rel_uid: 'relation-retry-1',
+      original_text: '重试原文', attempt: 2,
+    })
+  })
+
+  it('generates a new rule without writing and writes it only after confirmation', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) return json({ code: 200, data: {
+        config: { enabled: false, active_rule_uid: '', update_at: 10 }, rules: [],
+        viewer_role: 1, can_manage: true,
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/rules/generate')) return json({ code: 200, data: {
+        candidate: { candidate_uid: 'candidate-1', name: '清晰友好', rule_text: '表达清晰友好并保留事实。', prompt_version: 'v1' },
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/rules/upsert')) return json({ code: 200, data: {
+        rule: { rule_uid: 'candidate-1', name: body.name, rule_text: body.rule_text }, outcome: 'inserted',
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/update')) return json({ code: 200, data: {
+        config: { enabled: true, active_rule_uid: 'candidate-1', update_at: body.update_at }, outcome: 'updated',
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const ref = sourceRefFor('group_chat', 'group-4', '规则群')
+
+    const candidate = await service.generateGroupAiPolishRuleForSource(ref, '清晰友好')
+    expect(candidate).toMatchObject({
+      groupName: '规则群', ruleName: '清晰友好', ruleText: '表达清晰友好并保留事实。',
+      confirmationRef: expect.any(String),
+    })
+    expect(requests.some(request => request.url.endsWith('/rules/upsert'))).toBe(false)
+    expect(requests.some(request => request.url.endsWith('/settings/update'))).toBe(false)
+
+    await expect(service.confirmEnableGroupAiPolish(candidate.confirmationRef)).resolves.toEqual({
+      groupName: '规则群', enabled: true, ruleName: '清晰友好', changed: true,
+    })
+    expect(requests.slice(-2).map(request => request.url)).toEqual([
+      'https://chat.test/api/v1/chats/ai-polish/rules/upsert',
+      'https://chat.test/api/v1/chats/ai-polish/settings/update',
+    ])
+  })
+
+  it('resolves one exact group name before generating its rule', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [
+          { session: { chat_session_uid: 'group-exact', session_kind: 2, title: '产品群' }, unread_snapshot: {} },
+          { session: { chat_session_uid: 'group-similar', session_kind: 2, title: '产品群二期' }, unread_snapshot: {} },
+        ],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: { items: [] } })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) return json({ code: 200, data: {
+        config: { enabled: false, active_rule_uid: '', update_at: 1 }, rules: [], can_manage: true,
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/rules/generate')) return json({ code: 200, data: {
+        candidate: { candidate_uid: 'candidate-exact', name: '简洁', rule_text: '表达简洁。' },
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.generateGroupAiPolishRule('产品群', '表达简洁')).resolves.toMatchObject({
+      groupName: '产品群', ruleName: '简洁', ruleText: '表达简洁。',
+    })
+    expect(requests.find(request => request.url.endsWith('/rules/generate'))?.body)
+      .toMatchObject({ chat_session_uid: 'group-exact', instruction: '表达简洁' })
+  })
+
+  it('does not guess when multiple groups have the same exact name', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [
+          { session: { chat_session_uid: 'group-same-1', session_kind: 2, title: '同名群' }, unread_snapshot: {} },
+          { session: { chat_session_uid: 'group-same-2', session_kind: 2, title: '同名群' }, unread_snapshot: {} },
+        ],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: { items: [] } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.inspectGroupAiPolishByName('同名群')).rejects.toMatchObject({
+      code: 'group-name-ambiguous', httpStatus: 409,
+    })
+  })
+
+  it('restores historical polish previews and rule notices in the group timeline', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+        items: [{
+          relation: { record_uid: 'record-history-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 500, seq: 8 },
+          record: {
+            status: 1, version: 2,
+            payload: {
+              text_content: '历史润色文', has_polish: true,
+              ai_polish_preview: { original_text: '历史原文', polished_text: '历史润色文' },
+            },
+          },
+        }],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [{ user_id: 10001, nick_name: '我', head_img: '' }],
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/settings/query')) return json({ code: 200, data: {
+        config: { enabled: true, active_rule_uid: 'rule-history', update_at: 400 },
+        rules: [{ rule_uid: 'rule-history', name: '友好规则', rule_text: '表达友好。', rule_version: 1 }],
+        viewer_role: 1, can_manage: true,
+      } })
+      if (url.endsWith('/api/v1/chats/ai-polish/notices/query')) return json({ code: 200, data: {
+        notices: [{
+          notice_uid: 'notice-1', source_key: 'config:400', notice_kind: 1,
+          rule_text: '表达友好。', created_at: 450,
+        }],
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await expect(service.readSource(sourceRefFor('group_chat', 'group-history', '历史群'))).resolves.toMatchObject({
+      items: [{
+        itemUid: 'record-history-1', textContent: '历史润色文', recordVersion: 2,
+        aiPolish: { state: 'polished', originalText: '历史原文', polishedText: '历史润色文' },
+      }],
+      aiPolishSettings: {
+        groupName: '历史群', enabled: true, canManage: true, activeRuleName: '友好规则',
+      },
+      aiPolishNotices: [{
+        noticeUid: 'notice-1', message: 'AI润色已开启：表达友好。', createdAtMillis: 450,
+      }],
+    })
+  })
+
   it('sends Agent-authored direct text by recipient Jotmo ID through the Chat owner facade', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

@@ -94,6 +94,22 @@ function fakeService(): ArkmeCoreToolPorts & {
       sequence: 11,
       targetKind: 'direct' as const,
     })),
+    inspectGroupAiPolishByName: vi.fn(async (groupName: string) => ({
+      sourceRef: 'group-source-1', groupName, enabled: false, canManage: true, viewerRole: 1,
+      activeRuleName: '', rules: [], updatedAtMillis: 0,
+    })),
+    generateGroupAiPolishRule: vi.fn(async (groupName: string) => ({
+      groupName, ruleName: '友好简洁', ruleText: '表达友好、简洁，并保留事实。', confirmationRef: 'confirm-1',
+    })),
+    confirmEnableGroupAiPolish: vi.fn(async () => ({
+      groupName: '产品群', enabled: true, ruleName: '友好简洁', changed: true,
+    })),
+    prepareDisableGroupAiPolish: vi.fn(async (groupName: string) => ({
+      groupName, ruleName: '友好简洁', ruleText: '关闭后不再自动润色。', confirmationRef: 'confirm-off-1',
+    })),
+    confirmDisableGroupAiPolish: vi.fn(async () => ({
+      groupName: '产品群', enabled: false, ruleName: '友好简洁', changed: true,
+    })),
     requestOutgoingCall: vi.fn(async (_sourceRef: string, mediaType: 'audio' | 'video') => ({
       status: 'calling' as const,
       displayName: '小林',
@@ -338,6 +354,32 @@ describe('Arkme conversation tools', () => {
       recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }))
+  })
+
+  it('generates a group polish rule without writing and enables only with its confirmation reference', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_group_ai_polish_manage')!
+    const signal = new AbortController().signal
+
+    const preview = await tool.execute(
+      { operation: 'generate_rule', group_name: '产品群', requirement: '更友好简洁' },
+      { signal } as never,
+    ) as string
+    expect(service.generateGroupAiPolishRule).toHaveBeenCalledWith(
+      '产品群', '更友好简洁', { signal },
+    )
+    expect(service.confirmEnableGroupAiPolish).not.toHaveBeenCalled()
+    expect(preview).toContain('尚未开启')
+    expect(preview).toContain('表达友好、简洁，并保留事实。')
+    expect(preview).toContain('confirm-1')
+
+    const enabled = await tool.execute(
+      { operation: 'confirm_enable', confirmation_ref: 'confirm-1' },
+      { signal } as never,
+    ) as string
+    expect(service.confirmEnableGroupAiPolish).toHaveBeenCalledWith('confirm-1', { signal })
+    expect(enabled).toContain('"enabled": true')
   })
 
   it('direct-sends to an explicit recipient with stable hidden ids and no text echo', async () => {

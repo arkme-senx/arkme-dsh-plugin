@@ -269,6 +269,28 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
     )
+    case 'source.ai-polish.settings': return await service.inspectGroupAiPolish(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'source.ai-polish.notices': return await service.readGroupAiPolishNotices(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'source.ai-polish.generate-rule': return await service.generateGroupAiPolishRuleForSource(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'requirement'),
+    )
+    case 'source.ai-polish.confirm-enable': return await service.confirmEnableGroupAiPolish(
+      stringParam(params, 'confirmationRef'),
+    )
+    case 'source.ai-polish.prepare-disable': return await service.prepareDisableGroupAiPolishForSource(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'source.ai-polish.confirm-disable': return await service.confirmDisableGroupAiPolish(
+      stringParam(params, 'confirmationRef'),
+    )
+    case 'source.ai-polish.retry': return await service.retryGroupAiPolish(
+      stringParam(params, 'retryRef'),
+    )
     case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
     case 'calls.outgoing.intent.resolve': {
       const intentId = requiredCallParam(params, 'intentId', 'call-intent-invalid')
