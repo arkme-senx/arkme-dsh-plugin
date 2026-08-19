@@ -26,6 +26,12 @@ function fakeService(): ArkmeCoreToolPorts & {
   queryCached: ReturnType<typeof vi.fn>
   createTextForConversation: ReturnType<typeof vi.fn>
   setArkmeIdOnce: ReturnType<typeof vi.fn>
+  arkoAsk: ReturnType<typeof vi.fn>
+  arkoCancel: ReturnType<typeof vi.fn>
+  arkoEnsureSession: ReturnType<typeof vi.fn>
+  arkoHistoryPage: ReturnType<typeof vi.fn>
+  arkoProfile: ReturnType<typeof vi.fn>
+  arkoRunStatus: ReturnType<typeof vi.fn>
   requestOutgoingCall: ReturnType<typeof vi.fn>
 } {
   return {
@@ -77,6 +83,62 @@ function fakeService(): ArkmeCoreToolPorts & {
       changed: true,
       canUpdate: false,
       revision: 9,
+    })),
+    arkoProfile: vi.fn(async () => ({
+      displayName: 'Arko',
+      version: 2,
+    })),
+    arkoEnsureSession: vi.fn(async () => ({
+      sessionId: 88,
+      created: false,
+      name: 'Arko',
+    })),
+    arkoAsk: vi.fn(async (_text: string, options: { clientTurnUid?: string; sessionId?: number }) => ({
+      sessionId: options.sessionId ?? 88,
+      userMsgId: 1001,
+      assistantMsgId: 1002,
+      runUid: '11111111-1111-4111-8111-111111111111',
+      text: '已经帮你处理好了',
+      reasoning: '',
+      status: 'completed',
+      terminal: true,
+      timedOut: false,
+      createdRecordUids: ['record-by-arko'],
+      profile: { displayName: 'Arko', version: 2 },
+      run: {
+        runUid: '11111111-1111-4111-8111-111111111111',
+        status: 'completed',
+        retryable: false,
+      },
+    })),
+    arkoHistoryPage: vi.fn(async () => ({
+      items: [{
+        messageId: 1002,
+        sessionId: 88,
+        role: 'assistant' as const,
+        text: '已经帮你处理好了',
+        reasoning: '',
+        createdAtMillis: 1_786_000_000_000,
+        status: 1,
+        runUid: '11111111-1111-4111-8111-111111111111',
+        runStatus: 'completed',
+        createdRecordUids: ['record-by-arko'],
+      }],
+      hasMore: false,
+    })),
+    arkoRunStatus: vi.fn(async (sessionId: number, runUid: string) => ({
+      sessionId,
+      runUid,
+      status: 'completed',
+      sequence: 3,
+      surfaceAssistantMsgId: 1002,
+      retryable: false,
+    })),
+    arkoCancel: vi.fn(async (sessionId: number, assistantMsgId: number, runUid: string) => ({
+      sessionId,
+      assistantMsgId,
+      runUid,
+      status: 'cancel_requested',
     })),
     listSources: vi.fn(async (directory: 'root' | 'send_to_self') => ({ directory, items: [], hasMore: false })),
     readSource: vi.fn(async (sourceRef: string) => ({
@@ -236,6 +298,110 @@ describe('Arkme conversation tools', () => {
     expect(output).toContain('can_update_again=false')
     expect(output).toContain('"arkmeId": "Chosen_01"')
     expect(output).not.toContain('138****8000')
+  })
+
+  it('routes explicit Arko requests through the cloud AgentDirect runtime with stable turn id', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_arko_ask')!
+    const callId = 'arko-call-1'
+    const signal = new AbortController().signal
+    const output = await tool.execute({
+      text: '请让 Arko 总结我今天的快记',
+      session_id: 88,
+      wait_seconds: 2,
+    }, { callId, signal } as never)
+
+    expect(service.arkoAsk).toHaveBeenCalledWith('请让 Arko 总结我今天的快记', expect.objectContaining({
+      sessionId: 88,
+      waitMillis: 2000,
+      clientTurnUid: stableUidForToolCall('arko-turn', callId),
+    }))
+    expect(output).toContain('"status": "completed"')
+    expect(output).toContain('"display_name": "Arko"')
+    expect(output).toContain('"created_record_uids"')
+    expect(output).toContain('已经帮你处理好了')
+  })
+
+  it('continues the exact waiting Arko run and exposes the next continuation identity', async () => {
+    const service = fakeService()
+    const runUid = '11111111-1111-4111-8111-111111111111'
+    service.arkoAsk.mockResolvedValueOnce({
+      sessionId: 88,
+      userMsgId: 1003,
+      assistantMsgId: 1004,
+      runUid,
+      text: '请再确认一次',
+      reasoning: '',
+      status: 'waiting_user',
+      terminal: true,
+      timedOut: false,
+      createdRecordUids: [],
+      run: { runUid, status: 'waiting_user', retryable: false },
+    })
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_arko_ask')!
+    const output = await tool.execute({
+      text: '确认',
+      session_id: 88,
+      reply_to_run_uid: runUid,
+      reply_to_assistant_msg_id: 1002,
+    }, { callId: 'arko-continuation', signal: new AbortController().signal } as never) as string
+
+    expect(service.arkoAsk).toHaveBeenCalledWith('确认', expect.objectContaining({
+      sessionId: 88,
+      replyToRunUid: runUid,
+      replyToAssistantMsgId: 1002,
+    }))
+    expect(output).toContain('continue_with_arkme_arko_ask')
+    expect(output).toContain('"reply_to_assistant_msg_id": 1004')
+  })
+
+  it('exposes Arko profile, session, run status and cancel tools', async () => {
+    const service = fakeService()
+    const tools = createArkmeCoreToolDefinitions(service)
+    const profile = tools.find(definition => definition.name === 'arkme_arko_profile')!
+    const sessionTool = tools.find(definition => definition.name === 'arkme_arko_session')!
+    const status = tools.find(definition => definition.name === 'arkme_arko_run_status')!
+    const cancel = tools.find(definition => definition.name === 'arkme_arko_cancel')!
+    const signal = new AbortController().signal
+
+    await expect(profile.execute({}, { signal } as never)).resolves.toContain('"display_name": "Arko"')
+    await expect(sessionTool.execute({}, { signal } as never)).resolves.toContain('"session_id": 88')
+    await expect(status.execute({
+      session_id: 88,
+      run_uid: '11111111-1111-4111-8111-111111111111',
+    }, { signal } as never)).resolves.toEqual(expect.stringContaining('"surface_assistant_msg_id": 1002'))
+    await expect(status.execute({
+      session_id: 88,
+      run_uid: '11111111-1111-4111-8111-111111111111',
+    }, { signal } as never)).resolves.toEqual(expect.stringContaining('"text": "已经帮你处理好了"'))
+    expect(service.arkoHistoryPage).toHaveBeenCalledWith(50, 0, signal)
+    await expect(cancel.execute({
+      session_id: 88,
+      assistant_msg_id: 1002,
+      run_uid: '11111111-1111-4111-8111-111111111111',
+    }, { signal } as never)).resolves.toContain('"status": "cancel_requested"')
+  })
+
+  it('does not scan Arko history while a run is still active', async () => {
+    const service = fakeService()
+    service.arkoRunStatus.mockResolvedValueOnce({
+      sessionId: 88,
+      runUid: '11111111-1111-4111-8111-111111111111',
+      status: 'running',
+      sequence: 2,
+      surfaceAssistantMsgId: 1002,
+      retryable: false,
+    })
+    const status = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_arko_run_status')!
+    const output = await status.execute({
+      session_id: 88,
+      run_uid: '11111111-1111-4111-8111-111111111111',
+    }, { signal: new AbortController().signal } as never) as string
+
+    expect(output).toContain('"status": "running"')
+    expect(output).not.toContain('result_available')
+    expect(service.arkoHistoryPage).not.toHaveBeenCalled()
   })
 
   it('requires explicit approval for the one-time Arkme ID write and preserves downstream decisions', async () => {

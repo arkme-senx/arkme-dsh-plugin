@@ -774,6 +774,101 @@ export interface ArkmeAiVideoJob {
   failureStage?: string
 }
 
+export interface ArkmeArkoProfile {
+  displayName: string
+  version: number
+}
+
+export interface ArkmeArkoSession {
+  sessionId: number
+  created: boolean
+  name: string
+}
+
+export interface ArkmeArkoModelOption {
+  routeKey: string
+  displayName: string
+  provider: string
+  description: string
+  recommended: boolean
+  selected: boolean
+}
+
+export interface ArkmeArkoModelCatalog {
+  defaultRouteKey: string
+  effectiveRouteKey: string
+  selectionSource: 'default' | 'personal'
+  options: ArkmeArkoModelOption[]
+}
+
+export type ArkmeArkoMessageRole = 'user' | 'assistant'
+
+export interface ArkmeArkoHistoryItem {
+  messageId: number
+  sessionId: number
+  role: ArkmeArkoMessageRole
+  text: string
+  reasoning: string
+  createdAtMillis: number
+  status: number
+  runUid?: string
+  runStatus?: string
+  retryable?: boolean
+  errorCode?: string
+  retryOfRunUid?: string
+  createdRecordUids: string[]
+}
+
+export interface ArkmeArkoHistoryPage {
+  items: ArkmeArkoHistoryItem[]
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export interface ArkmeArkoRunProjection {
+  runUid: string
+  status: string
+  retryable: boolean
+  errorCode?: string
+  retryOfRunUid?: string
+  clientAction?: Record<string, unknown>
+}
+
+export interface ArkmeArkoAskResult {
+  sessionId: number
+  userMsgId: number
+  assistantMsgId: number
+  runUid?: string
+  text: string
+  reasoning: string
+  status: string
+  terminal: boolean
+  timedOut: boolean
+  errorMessage?: string
+  createdRecordUids: string[]
+  profile?: ArkmeArkoProfile
+  run?: ArkmeArkoRunProjection
+}
+
+export interface ArkmeArkoRunStatus {
+  sessionId: number
+  runUid: string
+  status: string
+  sequence: number
+  surfaceAssistantMsgId: number
+  retryable: boolean
+  errorCode?: string
+  retryOfRunUid?: string
+  clientAction?: Record<string, unknown>
+}
+
+export interface ArkmeArkoCancelResult {
+  sessionId: number
+  assistantMsgId: number
+  runUid: string
+  status: string
+}
+
 export interface ArkmeProviderState {
   contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
   environment: ArkmeEnvironment
@@ -860,6 +955,15 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.day'
   | 'topic.create'
+  | 'arko.profile'
+  | 'arko.session'
+  | 'arko.new-session'
+  | 'arko.models'
+  | 'arko.model.activate'
+  | 'arko.history'
+  | 'arko.ask'
+  | 'arko.run.status'
+  | 'arko.cancel'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

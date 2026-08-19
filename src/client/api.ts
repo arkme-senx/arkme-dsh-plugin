@@ -9,6 +9,15 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.day'
   | 'topic.create'
+  | 'arko.profile'
+  | 'arko.session'
+  | 'arko.new-session'
+  | 'arko.models'
+  | 'arko.model.activate'
+  | 'arko.history'
+  | 'arko.ask'
+  | 'arko.run.status'
+  | 'arko.cancel'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(

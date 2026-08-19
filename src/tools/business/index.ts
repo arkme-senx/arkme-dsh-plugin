@@ -1,3 +1,4 @@
+import { arkoToolModules } from './arko/index.js'
 import type { ArkmeToolModule } from '../contract/module.js'
 import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule } from './conversation/list-sources.js'
@@ -20,6 +21,7 @@ import { wechatToolModules } from './wechat/index.js'
 export const businessToolModules: readonly ArkmeToolModule[] = [
   recentRecordsToolModule,
   ...accountBusinessToolModules,
+  ...arkoToolModules,
   searchRecordsToolModule,
   createRecordToolModule,
   worldRecentToolModule,

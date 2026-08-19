@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
 import {
-  aiPolishStatus, arkmeAuthView, arkmeLoginNeedsPhoneBinding, arkmeProfileHasBoundPhone,
+  aiPolishStatus, ArkmeAuthChecking, arkmeAuthView, arkmeLoginNeedsPhoneBinding, arkmeProfileHasBoundPhone,
   arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
 
@@ -32,6 +33,16 @@ describe('Arkme floating conversation frame', () => {
     expect(arkmeAuthView({ status: 'binding-required', environment: 'prod', userId: 1 })).toBe('login')
     expect(arkmeAuthView({ status: 'logged-out', environment: 'prod' })).toBe('login')
     expect(arkmeAuthView({ status: 'expired', environment: 'prod' })).toBe('login')
+  })
+
+  it('offers an explicit retry after phone binding status validation fails', () => {
+    const markup = renderToStaticMarkup(ArkmeAuthChecking({
+      error: '网络连接失败', busy: false, onRetry: () => undefined,
+    }))
+
+    expect(markup).toContain('网络连接失败')
+    expect(markup).toContain('重新检查')
+    expect(markup).toContain('type="button"')
   })
 
   it('treats the remote profile phone projection as the bound-phone signal', () => {
