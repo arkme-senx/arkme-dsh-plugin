@@ -174,10 +174,6 @@ const styles: Record<string, CSSProperties> = {
   topicCardMetaText: { flex: 'none', whiteSpace: 'nowrap' },
   topicCardPreview: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   topicCardHover: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
-  topicCardCreateMask: {
-    position: 'absolute', zIndex: 3, top: 7, right: 8, width: 24, height: 24,
-    display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
-  },
   topicCreateFooter: {
     position: 'absolute', zIndex: 4, left: 0, right: 0, bottom: 0,
     display: 'flex', justifyContent: 'center', padding: '10px 12px 22px',
@@ -315,12 +311,11 @@ export interface ArkmeTopicCardProps {
   rowRef?: (node: HTMLDivElement | null) => void
   onHoverChange: (hovered: boolean) => void
   onSelect: () => void
-  onCreateChild: () => void
 }
 
 export function ArkmeTopicCard({
   source, selected, hovered, createdHighlightActive = false, createdHighlightVisible = false, rowRef,
-  onHoverChange, onSelect, onCreateChild,
+  onHoverChange, onSelect,
 }: ArkmeTopicCardProps) {
   const time = arkmeSourceTimeLabel(source.activeAtMillis)
   const preview = source.latestPreview?.trim() ?? ''
@@ -345,15 +340,6 @@ export function ArkmeTopicCard({
         {preview !== '' && <span style={styles.topicCardPreview}>{preview}</span>}
       </span>
     </button>
-    {source.kind === 'topic' && hovered && <span style={styles.topicCardCreateMask}>
-      <button
-        type="button" style={styles.topicCreateIcon}
-        aria-label={`在${source.displayName}下创建子主题`} title="创建子主题"
-        onClick={event => { event.stopPropagation(); onCreateChild() }}
-      ><svg aria-hidden viewBox="0 0 16 16" style={styles.topicCreatePlus}>
-        <path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
-      </svg></button>
-    </span>}
   </div>
 }
 
@@ -478,9 +464,6 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     () => sourceSort === 'default' ? [] : sortArkmeSources(sources, sourceSort),
     [sourceSort, sources],
   )
-  const sourceLevelByRef = useMemo(() => new Map(
-    flattenVisibleArkmeSourceTree(sourceTree, new Set()).map(row => [row.source.sourceRef, row.depth + 1]),
-  ), [sourceTree])
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
 
@@ -863,7 +846,6 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           }}
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onSelect={() => { selectSource(source) }}
-          onCreateChild={() => { openTopicCreate(source, sourceLevelByRef.get(source.sourceRef)) }}
         />
       })}
 

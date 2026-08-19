@@ -50,7 +50,11 @@ describe('topic create UI', () => {
           recordCount: 433, latestPreview: '是第三十四',
         }}
         selected={false} hovered={false} onHoverChange={() => {}}
-        onSelect={() => {}} onCreateChild={() => {}}
+        onSelect={() => {}}
+      />)
+      const hoveredTopicCard = renderToStaticMarkup(<ArkmeTopicCard
+        source={{ ...topicRow.source, latestPreview: '卡片预览' }}
+        selected={false} hovered onHoverChange={() => {}} onSelect={() => {}}
       />)
 
       expect(card).toContain('role="listitem"')
@@ -61,6 +65,7 @@ describe('topic create UI', () => {
       expect(card).toContain('昨天 16:13：')
       expect(card).toContain('是第三十四')
       expect(card).not.toContain('创建子主题')
+      expect(hoveredTopicCard).not.toContain('创建子主题')
     } finally {
       vi.useRealTimers()
     }
