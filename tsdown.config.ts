@@ -15,6 +15,8 @@ export default defineConfig([
     entry: {
       index: 'src/index.ts',
       'plugin-updater-helper': 'src/plugin-updater-helper.ts',
+      'persistent-extension': 'src/extensions/persistent-runtime.ts',
+      'extension-profile-restart-helper': 'src/extensions/profile-restart-helper.ts',
     },
     outDir: 'lib',
     format: 'esm',

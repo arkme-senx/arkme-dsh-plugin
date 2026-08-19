@@ -9,6 +9,8 @@ import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
+import { ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
+import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
@@ -25,6 +27,7 @@ import {
 
 export interface ArkmeNavigationProps {
   wide?: boolean
+  currentSessionId?: string | undefined
   onClose?: () => void
   onActivateSurface?: () => void
 }
@@ -112,6 +115,10 @@ const styles: Record<string, CSSProperties> = {
   avatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
+  },
+  extensionAvatar: {
+    width: 44, height: 44, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 12,
+    background: 'rgba(9, 184, 62, .10)', color: ARKME_EXTENSION_BRAND_GREEN,
   },
   selfAvatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', borderRadius: 999,
@@ -516,7 +523,7 @@ export function ArkmeSourceSortControl({
   </div>
 }
 
-export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: ArkmeNavigationProps) {
+export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActivateSurface }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
@@ -549,6 +556,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     arkmeArkoProfileStore.getSnapshot,
   )
   const [error, setError] = useState('')
+  const [extensionCenterOpen, setExtensionCenterOpen] = useState(false)
   const authenticated = auth?.status === 'authenticated'
   const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
     ? arkoProfileSnapshot.profile
@@ -867,6 +875,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   }
 
   return <section style={styles.shell} aria-label="Arkme 会话列表">
+    {extensionCenterOpen && <ArkmeExtensionCenter
+      currentSessionId={currentSessionId}
+      onClose={() => { setExtensionCenterOpen(false) }}
+    />}
     {directory === 'send_to_self' && <header style={styles.header}>
       <button
         type="button" style={styles.headerButton} aria-label="返回 Arkme 会话列表" title="返回"
@@ -899,6 +911,16 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           displayName={arkoPresentationName(arkoProfile)}
           onClick={showArko}
         />
+        {authenticated && <button
+          type="button" role="treeitem" aria-selected={false} style={styles.chatRow}
+          onClick={() => { setExtensionCenterOpen(true) }}
+        >
+          <span style={styles.extensionAvatar} aria-hidden><ArkmeExtensionIcon size={22} /></span>
+          <span style={styles.chatContent}>
+            <span style={styles.chatTop}><span style={styles.chatName}>扩展中心</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>发现、安装和更新 Arkme 扩展</span></span>
+          </span>
+        </button>}
         <button
           type="button" role="treeitem" aria-selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}

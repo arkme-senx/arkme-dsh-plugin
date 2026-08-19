@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -11,7 +12,14 @@ import { ArkmeLocalDatabase } from './local-database.js'
 import { ArkmePluginUpdateManager, validateUpdateRegistryOrigin } from './plugin-update.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmeService } from './arkme-service.js'
+import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
+import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
+import { ArkmeExtensionManager } from './extensions/manager.js'
+import { ExtensionPublishClient } from './extensions/publish-client.js'
+import { ArkmeExtensionProfileInstaller } from './extensions/profile-installer.js'
+import type { DynamicCordisRunnerLike } from './extensions/types.js'
 import { ArkmeStateStore } from './state-store.js'
+import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
 import type { ArkmeEnvironment } from './types.js'
@@ -28,6 +36,9 @@ export interface Config {
   relationBaseUrl: string
   intelligentBaseUrl: string
   audioBaseUrl: string
+  extensionPublishBaseUrl: string
+  extensionArtifactDirectory: string
+  extensionTrustedSigningKeys: string
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -61,6 +72,9 @@ export const Config: Schema<Config> = Schema.object({
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
+  extensionPublishBaseUrl: Schema.string().default(''),
+  extensionArtifactDirectory: Schema.string().default(''),
+  extensionTrustedSigningKeys: Schema.string().default('{}'),
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -115,12 +129,62 @@ export function apply(ctx: Context, config: Config): void {
       allowLocalInstall: config.updateAllowLocalInstall,
     },
   })
+  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
+  const extensionProfileDirectory = join(dshHome, 'profiles', 'web')
+  const extensionProfileInstaller = new ArkmeExtensionProfileInstaller({
+    dshHome,
+    profileName: 'web',
+    execPath: process.execPath,
+    dshBinPath: process.argv[1] ?? '',
+    execArgv: process.execArgv,
+    stateDirectory,
+    healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
+    restartArgv: [...process.execArgv, ...process.argv.slice(1)],
+    helperPath: fileURLToPath(new URL('../lib/extension-profile-restart-helper.js', import.meta.url)),
+    installStoreDirectory: extensionDirectory,
+  })
+  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
+  const extensionClient = new ExtensionPublishClient(
+    async <T>(path: string, body: Record<string, unknown>, signal?: AbortSignal) => await service.extensionPost<T>(path, body, signal),
+    fetch,
+    config.requestTimeoutMs,
+  )
+  let extensionManager: ArkmeExtensionManager | undefined
+  let extensionInstallTasks: ArkmeExtensionInstallTasks | undefined
   ctx.provide('arkmeData', service)
   registerArkmeTools(ctx, service, config.toolProfile)
+  ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
+    const manager = new ArkmeExtensionManager(
+      extensionClient,
+      extensionStore,
+      (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner,
+      {
+        artifactDirectory: extensionDirectory,
+        trustedSigningKeys: config.extensionTrustedSigningKeys,
+        profileDirectory: extensionProfileDirectory,
+        profileInstaller: extensionProfileInstaller,
+        clientApiPath: config.routePath,
+      },
+    )
+    extensionManager = manager
+    const tasks = new ArkmeExtensionInstallTasks(
+      manager,
+      (dynamicCtx as Context & { agents: ArkmeAgentRegistryLike }).agents,
+    )
+    extensionInstallTasks = tasks
+    registerArkmeExtensionTools(dynamicCtx, manager, config.toolProfile)
+    dynamicCtx.effect(() => () => {
+      if (extensionManager === manager) extensionManager = undefined
+      if (extensionInstallTasks === tasks) extensionInstallTasks = undefined
+      tasks.dispose()
+    }, 'dsh-arkme: extension center dynamic runner bridge')
+  })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
+    extensionManager: () => extensionManager,
+    extensionInstallTasks: () => extensionInstallTasks,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -138,6 +202,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => () => {
     service.dispose()
     localDatabase.close()
+    extensionStore.close()
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
@@ -220,6 +285,13 @@ function validateConfig(ctx: Context, config: Config): void {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
       throw new Error(`dsh-arkme: ${label} must be an HTTPS origin without credentials or path`)
+    }
+  }
+  if (config.extensionPublishBaseUrl.trim() !== '') {
+    const url = new URL(config.extensionPublishBaseUrl)
+    const localHttp = url.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1'].includes(url.hostname)
+    if ((!localHttp && url.protocol !== 'https:') || url.username !== '' || url.password !== '' || url.pathname !== '/') {
+      throw new Error('dsh-arkme: extensionPublishBaseUrl must be an HTTPS origin or loopback HTTP origin without credentials or path')
     }
   }
 }

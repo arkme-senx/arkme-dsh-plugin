@@ -150,6 +150,48 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('resolves extension authors from public Arkme profiles without requiring an avatar', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://auth.test/api/v1/auth/get-public-users-by-ids')
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
+      expect(JSON.parse(String(init?.body))).toEqual({ user_ids: [77] })
+      return json({ code: 200, data: { items: [{
+        user_id: 77, nick_name: '发布者', name_slug: 'publisher', head_img: '',
+      }] } })
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    await expect(service.extensionAuthors([77])).resolves.toEqual(new Map([[
+      77, { displayName: '发布者', arkmeId: 'publisher' },
+    ]]))
+  })
+
+  it('preserves an extension service validation error so the calling agent can correct the package', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extension.test' },
+      sessions,
+      new MemoryStateStore(),
+      async (input, init) => {
+        expect(String(input)).toBe('https://extension.test/api/v1/extensions/publish-session/complete')
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
+        return json({ code: 40001, message: 'client.js 禁止 import 或 require', data: null }, 400)
+      },
+    )
+
+    await expect(service.extensionPost('/api/v1/extensions/publish-session/complete', {
+      publish_session_id: 'pub_test',
+    })).rejects.toMatchObject({
+      code: 'arkme-code-40001',
+      message: 'client.js 禁止 import 或 require（服务错误码 40001）',
+      retryable: false,
+      httpStatus: 400,
+    } satisfies Partial<ArkmePluginError>)
+  })
+
   it('reads the recording calendar from the Audio origin with bearer authorization', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

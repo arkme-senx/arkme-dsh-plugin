@@ -164,6 +164,7 @@ export interface ArkmeServiceConfig {
   intelligentBaseUrl: string
   routePath: string
   audioBaseUrl: string
+  extensionPublishBaseUrl?: string
   requestTimeoutMs: number
   maxTextLength: number
   geetestCaptchaId: string
@@ -1402,6 +1403,18 @@ export class ArkmeService {
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
     const session = await this.requireAuthFlowSession()
     return await this.stateStore.cachedProfile(session.userId)
+  }
+
+  async extensionAuthors(
+    userIds: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<Map<number, { displayName: string; arkmeId?: string }>> {
+    const session = await this.requireSession()
+    const profiles = await this.publicProfileSummariesByUserIds(userIds, session, signal)
+    return new Map([...profiles].map(([userId, profile]) => [userId, {
+      displayName: profile.displayName,
+      ...(profile.arkmeId === undefined ? {} : { arkmeId: profile.arkmeId }),
+    }]))
   }
 
   /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
@@ -6400,6 +6413,31 @@ export class ArkmeService {
     }
   }
 
+  /** Authenticated transport owned by the Arkme Host for the extension registry client. */
+  async extensionPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const baseUrl = this.config.extensionPublishBaseUrl?.trim() ?? ''
+    if (baseUrl === '') {
+      throw new ArkmePluginError('extension-service-disabled', '扩展中心服务尚未配置', false, 503)
+    }
+    let session = await this.requireSession()
+    const requestOptions = (): ArkmeRemoteRequestOptions => ({
+      scope: this.requestScope(session.userId),
+      service: 'extension',
+      lane: 'write',
+    })
+    try {
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true)
+    }
+  }
+
   private authenticatedRequestOptions(
     session: ArkmeSessionCredentials,
     service: ArkmeRequestService,
@@ -7089,6 +7127,7 @@ export class ArkmeService {
     signal?: AbortSignal,
     preferDataError = false,
     options: ArkmeRemoteRequestOptions = {},
+    preserveHttpError = false,
   ): Promise<T> {
     return await this.requestCoordinator.run({
       scope: options.scope ?? 'public',
@@ -7103,7 +7142,7 @@ export class ArkmeService {
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
       operation: async coordinatedSignal => await this.postDirect(
-        baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
+        baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError, preserveHttpError,
       ),
     })
   }
@@ -7116,6 +7155,7 @@ export class ArkmeService {
     successCodes: readonly number[],
     signal: AbortSignal,
     preferDataError: boolean,
+    preserveHttpError = false,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -7144,6 +7184,28 @@ export class ArkmeService {
       }
       if (!response.ok) {
         const retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        if (preserveHttpError) {
+          let errorEnvelope: ArkmeEnvelope<unknown> | undefined
+          try {
+            errorEnvelope = await response.json() as ArkmeEnvelope<unknown>
+          } catch { /* Non-JSON upstream failures retain the HTTP fallback below. */ }
+          const serviceCode = typeof errorEnvelope?.code === 'number' && Number.isFinite(errorEnvelope.code)
+            ? errorEnvelope.code
+            : undefined
+          const serviceMessage = clippedText(errorEnvelope?.message, 1_000)
+          throw new ArkmePluginError(
+            serviceCode === undefined ? 'arkme-http-error' : `arkme-code-${serviceCode}`,
+            serviceMessage === ''
+              ? `Arkme 服务返回 HTTP ${response.status}`
+              : `${serviceMessage}（服务错误码 ${serviceCode ?? response.status}）`,
+            response.status === 408 || response.status === 429 || response.status >= 500,
+            response.status,
+            {
+              upstreamStatus: response.status,
+              ...(retryAfter === undefined ? {} : { retryAfterMillis: retryAfter }),
+            },
+          )
+        }
         throw new ArkmePluginError(
           'arkme-http-error',
           `Arkme 服务返回 HTTP ${response.status}`,

@@ -26,6 +26,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://jotmo-relation.senguo.me', '')
     .replaceAll('https://jotmo-intelligent.senguo.me', '')
     .replaceAll('https://jotmo-audio.senguo.me', '')
+    .replaceAll('https://jotmo-extension-publish.senguo.me', '')
     .replaceAll('https://api.jotmo.cc', '')
     .replaceAll('https://subject.jotmo.cc', '')
     .replaceAll('https://record.jotmo.cc', '')

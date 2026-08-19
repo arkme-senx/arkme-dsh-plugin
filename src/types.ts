@@ -1116,6 +1116,7 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.release'
 
 export type ArkmeHostOperation = ArkmePluginOperation
+  | 'provider.instance'
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
@@ -1137,6 +1138,19 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'plugin.update.install-status'
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
+  | 'extensions.catalog.list'
+  | 'extensions.catalog.detail'
+  | 'extensions.my-list'
+  | 'extensions.installed-list'
+  | 'extensions.updates'
+  | 'extensions.install.preview'
+  | 'extensions.install.start'
+  | 'extensions.install.status'
+  | 'extensions.install.pause'
+  | 'extensions.install.resume'
+  | 'extensions.uninstall'
+  | 'extensions.restart'
+  | 'extensions.persistent.invoke'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

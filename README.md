@@ -60,6 +60,18 @@ dsh plugin --profile web up @senguoyun/dsh-arkme --latest
 
 手动命令执行成功后仍需重启 `dsh web`。应用内更新会自动重启并让页面重新连接。使用本地路径开发插件时，可以在 profile 覆盖层设置 `updateCheckEnabled: false`；企业镜像可通过 `updateRegistryUrl` 配置无账号、密码和路径的 HTTPS Registry Origin。
 
+## 扩展中心 MVP
+
+当 DSH 已加载 `dynamicCordisRunner` 时，插件会注册发布、搜索、详情和应用工具。发布对象是当前 Agent 所有的精确 Dynamic Cordis Package；插件将现有 Host/Client JavaScript 确定性封装为 `.arkext`，不会重新生成或执行服务端构建。
+
+当前补丁面向真实测试场景：Arkme owner API 使用 `*.senguo.me` 测试服务，扩展中心使用 `https://jotmo-extension-publish.senguo.me`，并信任测试服务的 `test-ed25519-20260819-1` Ed25519 公钥。正式发布前必须替换为正式环境 Origin 和正式签名公钥。
+
+扩展制品和 `extensions.sqlite3` 默认位于 `$DSH_HOME/arkme-self/extensions`，也可通过 `extensionArtifactDirectory` 指定其他本机目录。压缩制品与安全解包总量的 v1 上限均为 100 MiB（104857600 bytes）。下载后必须依次通过制品 SHA-256、manifest SHA-256、Ed25519 平台签名、运行时兼容性和文件摘要校验，才会原子落盘并交给 Dynamic Cordis。
+
+“已安装”和“当前进程已激活”是两个独立状态；只有新进程从 Profile/Loader 成功挂载扩展后才报告为 active。
+
+验签成功后，Arkme 会从不可变 `.arkext` 生成一个位于当前 DSH Profile 下的本地 Bundle，并通过官方 `dsh plugin --profile web add link:<bundle>` 写入 `dependencies` 与 `dsh.profile.bundles`。独立助手随后重启 DSH，并以原生插件列表中的 Loader 状态和 Arkme 持久运行态完成健康检查；启动失败会自动恢复旧 Bundle。成功重启后扩展由 Profile/Loader 加载，不再占用 Dynamic Cordis 列表。卸载执行相反事务，确认新进程不再加载后再清理 Bundle 与制品。
+
 ## 私聊主动呼叫
 
 主动呼叫仅支持一对一私聊，不注册来电 UI，也不提供接听或拒接入口。人工入口只出现在私聊标题后；模型工具必须先通过 `arkme_sources_list(root)` 获得精确的 `private_chat` `source_ref`，并且只有当前对话中的明确用户请求才能授权 `arkme_call_start`。

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
@@ -6,8 +7,13 @@ import type {
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor, ArkmeRichSendInput, ArkmeSourceDirectory, ArkmeTimelineCursor,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
+import type { ArkmeExtensionManager } from './extensions/manager.js'
+import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
+import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from './extensions/types.js'
+import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
 
 const MAX_REQUEST_BYTES = 128 * 1024
+const ARKME_HOST_INSTANCE_ID = randomUUID()
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
@@ -72,6 +78,34 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean {
 function optionalPositiveIntegerParam(params: Record<string, unknown>, key: string): number | undefined {
   const value = params[key]
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+async function enrichExtensionAuthors(
+  service: ArkmeService,
+  items: readonly ArkmeExtensionCatalogItem[],
+): Promise<ArkmeExtensionCatalogItem[]> {
+  const ownerUserIds = [...new Set(items
+    .map(item => item.owner_user_id)
+    .filter((userId): userId is number => Number.isSafeInteger(userId) && (userId ?? 0) > 0))]
+  if (ownerUserIds.length === 0) return [...items]
+  const authors = await service.extensionAuthors(ownerUserIds).catch(() => new Map())
+  return items.map(item => {
+    if (item.owner_user_id === undefined) return item
+    const author = authors.get(item.owner_user_id)
+    if (author === undefined) return item
+    return {
+      ...item,
+      owner_name: author.displayName,
+      ...(author.arkmeId === undefined ? {} : { owner_arkme_id: author.arkmeId }),
+    }
+  })
+}
+
+async function enrichExtensionPageAuthors(
+  service: ArkmeService,
+  page: ArkmeExtensionCatalogPage,
+): Promise<ArkmeExtensionCatalogPage> {
+  return { ...page, items: await enrichExtensionAuthors(service, page.items) }
 }
 
 function requiredCallParam(
@@ -190,6 +224,8 @@ export interface ArkmeHostApiOptions {
     ArkmePluginUpdateManager,
     'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
   >
+  extensionManager?: () => ArkmeExtensionManager | undefined
+  extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -216,7 +252,18 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      const value = await dispatchArkmeHostOperation(service, request.operation, params, options.updateManager)
+      if (['extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke']
+        .includes(request.operation) && origin === undefined) {
+        throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
+      }
+      const value = await dispatchArkmeHostOperation(
+        service,
+        request.operation,
+        params,
+        options.updateManager,
+        options.extensionManager?.(),
+        options.extensionInstallTasks?.(),
+      )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       const known = error instanceof ArkmePluginError
@@ -242,9 +289,12 @@ export async function dispatchArkmeHostOperation(
     ArkmePluginUpdateManager,
     'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
   >,
+  extensionManager?: ArkmeExtensionManager,
+  extensionInstallTasks?: ArkmeExtensionInstallTasks,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
+    case 'provider.instance': return { instanceId: ARKME_HOST_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
     case 'plugin.update.status': return await requireUpdateManager(updateManager).status()
@@ -512,6 +562,53 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
+    case 'extensions.catalog.list': return await requireExtensionManager(extensionManager).search(
+      stringParam(params, 'query'),
+      numberParam(params, 'limit', 20),
+    )
+    case 'extensions.catalog.detail': {
+      const item = await requireExtensionManager(extensionManager).inspect(stringParam(params, 'extensionId'))
+      return (await enrichExtensionAuthors(service, [item]))[0]
+    }
+    case 'extensions.my-list': return await enrichExtensionPageAuthors(
+      service,
+      await requireExtensionManager(extensionManager).myList(),
+    )
+    case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
+    case 'extensions.updates': return await requireExtensionManager(extensionManager).updates()
+    case 'extensions.install.preview': return await requireExtensionManager(extensionManager).previewInstall(
+      stringParam(params, 'extensionId'),
+      stringParam(params, 'version') || undefined,
+    )
+    case 'extensions.install.start': return requireExtensionInstallTasks(extensionInstallTasks).start({
+      extensionId: stringParam(params, 'extensionId'),
+      ...(stringParam(params, 'version') === '' ? {} : { version: stringParam(params, 'version') }),
+      sessionId: stringParam(params, 'sessionId'),
+    })
+    case 'extensions.install.status': return requireExtensionInstallTasks(extensionInstallTasks).status(
+      stringParam(params, 'taskId'),
+      stringParam(params, 'sessionId'),
+    )
+    case 'extensions.install.pause': return requireExtensionInstallTasks(extensionInstallTasks).pause(
+      stringParam(params, 'taskId'),
+      stringParam(params, 'sessionId'),
+    )
+    case 'extensions.install.resume': return requireExtensionInstallTasks(extensionInstallTasks).resume(
+      stringParam(params, 'taskId'),
+      stringParam(params, 'sessionId'),
+    )
+    case 'extensions.uninstall': return await requireExtensionInstallTasks(extensionInstallTasks).uninstall({
+      extensionId: stringParam(params, 'extensionId'),
+      sessionId: stringParam(params, 'sessionId'),
+    })
+    case 'extensions.restart': return await requireExtensionInstallTasks(extensionInstallTasks).restart(
+      stringParam(params, 'extensionId'),
+    )
+    case 'extensions.persistent.invoke': return await invokePersistentArkmeExtension(
+      stringParam(params, 'extensionId'),
+      stringParam(params, 'method'),
+      params.args,
+    )
     default: throw new ArkmePluginError('operation-unknown', '不支持的Arkme 插件操作', false, 404)
   }
 }
@@ -529,4 +626,18 @@ function requireUpdateManager(
     throw new ArkmePluginError('plugin-update-unavailable', '插件更新检查暂不可用', true, 503)
   }
   return updateManager
+}
+
+function requireExtensionInstallTasks(tasks: ArkmeExtensionInstallTasks | undefined): ArkmeExtensionInstallTasks {
+  if (tasks === undefined) {
+    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载扩展安装运行时', false, 503)
+  }
+  return tasks
+}
+
+function requireExtensionManager(manager: ArkmeExtensionManager | undefined): ArkmeExtensionManager {
+  if (manager === undefined) {
+    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展中心不可用', false, 503)
+  }
+  return manager
 }

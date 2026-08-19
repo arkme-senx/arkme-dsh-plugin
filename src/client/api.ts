@@ -4,6 +4,7 @@ import type { ArkmePluginOperation } from '../types.js'
 export { ArkmeClientError } from '../sdk/index.js'
 
 type ArkmeUiOperation = ArkmePluginOperation
+  | 'provider.instance'
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
@@ -25,6 +26,19 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'plugin.update.install-status'
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
+  | 'extensions.catalog.list'
+  | 'extensions.catalog.detail'
+  | 'extensions.my-list'
+  | 'extensions.installed-list'
+  | 'extensions.updates'
+  | 'extensions.install.preview'
+  | 'extensions.install.start'
+  | 'extensions.install.status'
+  | 'extensions.install.pause'
+  | 'extensions.install.resume'
+  | 'extensions.uninstall'
+  | 'extensions.restart'
+  | 'extensions.persistent.invoke'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(
