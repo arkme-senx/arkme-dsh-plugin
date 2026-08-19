@@ -35,7 +35,10 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  shell: { width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', color: colors.text },
+  shell: {
+    position: 'relative', width: '100%', height: '100%', minHeight: 0,
+    display: 'flex', flexDirection: 'column', color: colors.text,
+  },
   header: {
     flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
     padding: '0 12px 0 14px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
@@ -47,6 +50,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 20, cursor: 'pointer',
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
+  topicList: { paddingBottom: 82 },
   chatRow: {
     position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
     padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
@@ -92,7 +96,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', alignItems: 'center', boxSizing: 'border-box', overflow: 'hidden',
     borderRadius: 7, background: 'transparent', color: 'inherit',
   },
-  topicActive: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
+  topicActive: { background: colors.active, boxShadow: `inset 2px 0 ${colors.accent}` },
   topicGuide: { position: 'absolute', top: 0, bottom: 0, width: 1, background: colors.border, pointerEvents: 'none' },
   topicLead: {
     position: 'relative', zIndex: 1, width: 30, height: 38, flex: 'none', display: 'inline-flex',
@@ -116,26 +120,29 @@ const styles: Record<string, CSSProperties> = {
     width: 20, flex: 'none', color: colors.caption, fontSize: 12, lineHeight: '22px', textAlign: 'center',
   },
   topicHover: { background: 'var(--dsw-alias-fill-secondary, #f3f4f5)' },
-  topicCreated: { background: 'var(--dsw-alias-fill-selected, #def3e8)' },
+  topicCreated: { background: colors.active, boxShadow: `inset 2px 0 ${colors.accent}` },
   topicCreateMask: {
     position: 'absolute', zIndex: 3, top: 8, right: 0, width: 58, height: 22,
-    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 10,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 12,
     boxSizing: 'border-box', pointerEvents: 'none',
   },
   topicCreateIcon: {
     width: 20, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    padding: 0, border: 0, borderRadius: 5, background: 'transparent', color: colors.text,
+    padding: 0, border: 0, borderRadius: 5, background: 'transparent',
+    color: 'var(--dsw-alias-brand-secondary, #62c98d)', opacity: 0.82,
     cursor: 'pointer', font: 'inherit', lineHeight: 1, pointerEvents: 'auto',
   },
-  topicCreatePlus: { width: 16, height: 16, transform: 'translateX(3px)' },
+  topicCreatePlus: { width: 16, height: 16 },
   topicCreateFooter: {
-    flex: 'none', display: 'flex', justifyContent: 'center', padding: '10px 12px 30px',
-    boxSizing: 'border-box', background: colors.panel,
+    position: 'absolute', zIndex: 4, left: 0, right: 0, bottom: 0,
+    display: 'flex', justifyContent: 'center', padding: '10px 12px 30px',
+    boxSizing: 'border-box', background: 'transparent', pointerEvents: 'none',
   },
   topicCreateButton: {
     minWidth: 100, height: 36, padding: '0 16px', border: 0, borderRadius: 8,
     background: 'var(--dsw-alias-fill-tertiary, #eceeef)', color: colors.text,
-    cursor: 'pointer', font: 'inherit', fontSize: 14,
+    boxShadow: '0 3px 12px rgba(25, 29, 33, 0.10)',
+    cursor: 'pointer', font: 'inherit', fontSize: 14, pointerEvents: 'auto',
   },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   loginButton: {
@@ -213,7 +220,7 @@ export function ArkmeTopicTreeRow({
     aria-expanded={row.hasChildren ? row.expanded : undefined}
     style={{
       ...styles.topicRow,
-      transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease`,
+      transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease, box-shadow ${createdHighlightVisible ? 140 : 800}ms ease`,
       ...(selected ? styles.topicActive : {}),
       ...(hovered && !selected ? styles.topicHover : {}),
       ...(createdHighlightVisible ? styles.topicCreated : {}),
@@ -591,7 +598,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
     <div
-      style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
+      style={{ ...styles.list, ...(directory === 'send_to_self' ? styles.topicList : {}) }}
+      role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
         {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}

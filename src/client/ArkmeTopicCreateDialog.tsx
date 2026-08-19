@@ -13,7 +13,7 @@ const colors = {
   secondary: 'var(--dsw-alias-label-secondary, #6f747b)',
   caption: 'var(--dsw-alias-label-caption, #a3a8ae)',
   border: 'var(--dsw-alias-border-l1, #dfe2e5)',
-  action: 'var(--dsw-alias-label-primary, #242629)',
+  action: 'var(--dsw-alias-brand-primary, #20c66a)',
   surface: 'var(--dsw-specific-dialog-fill, #fff)',
 }
 
@@ -50,7 +50,8 @@ const styles: Record<string, CSSProperties> = {
   cancel: { border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text },
   confirm: { border: 0, background: colors.action, color: colors.surface },
   confirmDisabled: {
-    background: 'var(--dsw-alias-fill-tertiary, #d9dcdf)', color: colors.secondary, cursor: 'default',
+    background: 'var(--dsw-alias-brand-disabled, #a7dfbd)',
+    color: 'rgba(255, 255, 255, 0.72)', cursor: 'default',
   },
 }
 

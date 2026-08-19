@@ -37,7 +37,7 @@ describe('topic create UI', () => {
     expect(root).toContain('取消')
     expect(root).toContain('确认')
     expect(`${child}${root}`).not.toContain('话题磁铁')
-    expect(`${child}${root}`).not.toContain('#20c66a')
+    expect(`${child}${root}`).toContain('#a7dfbd')
   })
 
   it('shows the child-topic shortcut only for a hovered topic row', () => {
@@ -51,6 +51,7 @@ describe('topic create UI', () => {
     }
     const resting = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} hovered={false} />)
     const hovered = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} hovered />)
+    const selected = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} selected hovered={false} />)
 
     expect(resting).toContain('>36</span>')
     expect(resting).not.toContain('创建子主题')
@@ -58,14 +59,18 @@ describe('topic create UI', () => {
     expect(hovered).not.toContain('>36</span>')
     expect(hovered).toContain('<svg')
     expect(hovered).toContain('width:58px')
-    expect(hovered).toContain('translateX(3px)')
+    expect(hovered).toContain('padding-right:12px')
+    expect(hovered).toContain('#62c98d')
     expect(hovered).not.toContain('＋')
+    expect(selected).toContain('background:#def3e8')
+    expect(selected).toContain('inset 2px 0 #20c66a')
   })
 
   it('keeps the root create action in a non-scrolling footer', () => {
     const footer = renderToStaticMarkup(<ArkmeTopicCreateFooter onCreate={() => {}} />)
     expect(footer).toContain('新建主题')
-    expect(footer).toContain('flex:none')
+    expect(footer).toContain('position:absolute')
+    expect(footer).toContain('background:transparent')
     expect(footer).toContain('padding:10px 12px 30px')
   })
 
