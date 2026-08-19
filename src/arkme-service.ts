@@ -3,6 +3,12 @@ import OSS from 'ali-oss'
 import { ArkmeChatRealtimeRuntime, type ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from './keychain-store.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
+import {
+  ArkmeRequestCoordinator,
+  type ArkmeRequestLane,
+  type ArkmeRequestService,
+  type ArkmeRequestStats,
+} from './request-coordinator.js'
 import type {
   ArkmeOutgoingCallIntentClaim,
   ArkmeOutgoingCallIntentResolutionInput,
@@ -285,6 +291,16 @@ interface BindPhoneResponse {
 
 type FetchLike = typeof fetch
 
+interface ArkmeRemoteRequestOptions {
+  lane?: ArkmeRequestLane
+  service?: ArkmeRequestService
+  scope?: string
+  key?: string
+  cacheMs?: number
+  failureCooldownMs?: number
+  bypassCache?: boolean
+}
+
 const ARKME_PHONE_BIND_SUCCESS = 1
 const ARKME_PHONE_BIND_REPEAT = 2
 const ARKME_PHONE_BIND_CODE_ERR = 3
@@ -304,6 +320,8 @@ const SOURCE_LIST_CACHE_MAX_ENTRIES = 200
 const PUBLIC_PROFILE_CACHE_TTL_MS = 60_000
 const PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS = 30_000
 const PUBLIC_PROFILE_CACHE_MAX_ENTRIES = 4_096
+const GROUP_AVATAR_CACHE_TTL_MS = 5 * 60_000
+const GROUP_AVATAR_NEGATIVE_CACHE_TTL_MS = 60_000
 const IMAGE_CACHE_TTL_MS = 5 * 60_000
 const IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024
 const IMAGE_CACHE_MAX_ENTRIES = 64
@@ -326,16 +344,30 @@ const ARKO_RUN_STATUSES = new Set([
 ])
 
 export class ArkmePluginError extends Error {
+  readonly upstreamStatus?: number
+  readonly retryAfterMillis?: number
+
   constructor(
     readonly code: string,
     message: string,
     readonly retryable: boolean,
     readonly httpStatus = 400,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number },
   ) {
     super(message, options)
     this.name = 'ArkmePluginError'
+    if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
+    if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
   }
+}
+
+function retryAfterMillis(value: string | null): number | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const seconds = Number(value.trim())
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(60_000, Math.round(seconds * 1000))
+  const date = Date.parse(value)
+  if (!Number.isFinite(date)) return undefined
+  return Math.min(60_000, Math.max(0, date - Date.now()))
 }
 
 function stringValue(value: unknown): string {
@@ -776,7 +808,8 @@ function cloneImageBytes(value: ArkmeImageBytes): ArkmeImageBytes {
 
 export class ArkmeService {
   private readonly attempts = new Map<string, LoginAttempt>()
-  private refreshInFlight: Promise<ArkmeSessionCredentials> | undefined
+  private readonly refreshInFlightByUserId = new Map<number, Promise<ArkmeSessionCredentials>>()
+  private readonly requestCoordinator = new ArkmeRequestCoordinator()
   private readonly chatRealtime: ArkmeChatRealtimeRuntime
   private readonly chatClientListeners = new Set<(event: ArkmeChatClientEvent) => void>()
   private readonly chatSourceCache = new Map<string, ArkmeSourceItem>()
@@ -785,6 +818,7 @@ export class ArkmeService {
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
   private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
+  private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<number[] | null>>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
   private readonly imageInFlight = new Map<string, Promise<ArkmeImageBytes>>()
   private imageCacheBytes = 0
@@ -925,9 +959,15 @@ export class ArkmeService {
     pending: Array<[string, number]>,
   ): Promise<Array<[string, number]>> {
     const session = await this.requireSession()
-    const sessionUids = pending.map(([uid]) => uid)
+    const sessionUids = pending.map(([uid]) => uid).sort()
+    const projectionBatchKey = sessionUids.join('|')
     const displayData = await this.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/display-snapshots', { chat_session_uids: sessionUids }, session,
+      undefined,
+      {
+        lane: 'background-read',
+        key: `projection:display:${projectionBatchKey}`,
+      },
     )
     const bundles = new Map(listValue(displayData.items).map(raw => {
       const bundle = objectValue(raw)
@@ -942,6 +982,11 @@ export class ArkmeService {
         const afterSequence = Math.max(0, cached?.latestSequence ?? hintedSequence - 1)
         const data = await this.authenticatedChatPost<Record<string, unknown>>(
           '/api/v1/chat/timeline/tail', { chat_session_uid: uid, after_seq: afterSequence, limit: 50 }, session,
+          undefined,
+          {
+            lane: 'background-read',
+            key: `projection:tail:${uid}:${String(afterSequence)}`,
+          },
         )
         return [uid, await this.chatTimelineItems(data, session)] as const
       }))
@@ -996,6 +1041,12 @@ export class ArkmeService {
       if (directory !== undefined && !key.startsWith(`${prefix}${directory}:`)) continue
       this.sourceListCache.delete(key)
     }
+  }
+
+  private invalidateAiPolishReadCache(userId: number, chatSessionUid: string): void {
+    const scope = this.requestScope(userId)
+    this.requestCoordinator.invalidateKey(scope, `ai-polish:settings:${chatSessionUid}`)
+    this.requestCoordinator.invalidateKey(scope, `ai-polish:notices:${chatSessionUid}`)
   }
 
   private pruneSourceListCache(): void {
@@ -1270,7 +1321,12 @@ export class ArkmeService {
   dispose(): void {
     this.aiPolishConfirmations.clear()
     this.aiPolishRetries.clear()
+    this.requestCoordinator.dispose()
     this.outgoingCallBroker.dispose()
+  }
+
+  requestStats(): Record<string, ArkmeRequestStats> {
+    return this.requestCoordinator.snapshotStats()
   }
 
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
@@ -1729,7 +1785,12 @@ export class ArkmeService {
     const existing = this.profileInFlight.get(session.userId)
     if (existing !== undefined) return await existing
     const pending = (async () => {
-      const data = await this.authenticatedAuthGet<Record<string, unknown>>('/api/v1/auth/get-user-info', session)
+      const data = await this.authenticatedAuthGet<Record<string, unknown>>(
+        '/api/v1/auth/get-user-info',
+        session,
+        undefined,
+        { lane: 'auth', key: 'profile:self', failureCooldownMs: 2_000 },
+      )
       const userId = numberValue(data.user_id)
       if (userId <= 0 || userId !== session.userId) {
         throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应缺少有效用户标识', false, 502)
@@ -1818,6 +1879,9 @@ export class ArkmeService {
   }
 
   private async acceptLoginSession(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
+    this.requestCoordinator.invalidateScope(this.requestScope(session.userId))
+    this.profileCache.delete(session.userId)
+    this.profileInFlight.delete(session.userId)
     const snapshot = await this.authSnapshotForSession(session, { forceProfile: true })
     if (snapshot.status === 'authenticated') {
       await this.clearPendingBindingSession()
@@ -2231,6 +2295,12 @@ export class ArkmeService {
       { limit, ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }) },
       session,
       options.signal,
+      {
+        lane: 'interactive-read',
+        key: `directory:root:${String(limit)}:${options.cursor?.trim() ?? ''}`,
+        failureCooldownMs: 2_000,
+        bypassCache: options.refresh === true,
+      },
     )
     const items: ArkmeSourceItem[] = []
     const privateUserIdByIndex = new Map<number, number>()
@@ -2370,6 +2440,7 @@ export class ArkmeService {
       }
     }
     if (groupTitle === '') groupTitle = 'DSH 内测群'
+    this.groupAvatarSnapshotCache.delete(`${String(session.userId)}:${chatSessionUid}`)
     const source: ArkmeSourceItem = {
       sourceRef: await this.sealSourceRef(session.userId, 'group_chat', chatSessionUid, groupTitle),
       kind: 'group_chat',
@@ -2527,6 +2598,7 @@ export class ArkmeService {
     if (!booleanValue(savedConfig.enabled) || stringValue(savedConfig.active_rule_uid).trim() !== ruleUid) {
       throw new ArkmePluginError('group-ai-polish-enable-invalid', '润色规则已保存，但开启状态确认失败，请重试', true, 502)
     }
+    this.invalidateAiPolishReadCache(session.userId, pending.chatSessionUid)
     this.aiPolishConfirmations.delete(confirmationRef.trim())
     return { groupName: pending.groupName, enabled: true, ruleName: pending.ruleName ?? '', changed: true }
   }
@@ -2580,6 +2652,7 @@ export class ArkmeService {
     if (booleanValue(objectValue(updated.config ?? updated).enabled)) {
       throw new ArkmePluginError('group-ai-polish-disable-invalid', '关闭 AI 表达润色失败，请重试', true, 502)
     }
+    this.invalidateAiPolishReadCache(session.userId, pending.chatSessionUid)
     this.aiPolishConfirmations.delete(confirmationRef.trim())
     return { groupName: pending.groupName, enabled: false, ruleName: pending.ruleName ?? '', changed: current.enabled }
   }
@@ -2934,6 +3007,11 @@ export class ArkmeService {
       },
       session,
       options.signal,
+      {
+        lane: 'interactive-read',
+        key: `timeline:${source.ownerRef}:${String(Math.max(0, Math.trunc(options.cursor?.beforeSequence ?? 0)))}:${String(limit)}`,
+        failureCooldownMs: 2_000,
+      },
     )
     const items: ArkmeTimelineItem[] = []
     const senderUserIdByIndex = new Map<number, number>()
@@ -3644,6 +3722,12 @@ export class ArkmeService {
       { chat_session_uid: chatSessionUid },
       session,
       signal,
+      {
+        lane: 'background-read',
+        key: `ai-polish:settings:${chatSessionUid}`,
+        cacheMs: 15_000,
+        failureCooldownMs: 5_000,
+      },
     )
     const config = objectValue(data.config ?? data.setting ?? data.settings ?? data)
     const activeRuleUid = stringValue(config.active_rule_uid).trim()
@@ -3696,6 +3780,12 @@ export class ArkmeService {
       { chat_session_uid: chatSessionUid, limit: 100 },
       session,
       signal,
+      {
+        lane: 'background-read',
+        key: `ai-polish:notices:${chatSessionUid}`,
+        cacheMs: 15_000,
+        failureCooldownMs: 5_000,
+      },
     )
     return listValue(data.notices).map(raw => objectValue(raw)).map(notice => {
       const kind = numberValue(notice.notice_kind)
@@ -4184,7 +4274,19 @@ export class ArkmeService {
   ): Promise<void> {
     const groupMemberIdsByIndex = new Map<number, number[]>()
     const indexByGroupUid = new Map([...groupSessionUidByIndex].map(([index, uid]) => [uid, index]))
-    for (const groupUids of chunksOf([...indexByGroupUid.keys()], 10)) {
+    const missingGroupUids: string[] = []
+    const now = Date.now()
+    for (const [uid, index] of indexByGroupUid) {
+      const cacheKey = `${String(session.userId)}:${uid}`
+      const cached = this.groupAvatarSnapshotCache.get(cacheKey)
+      if (cached === undefined || cached.expiresAtMillis <= now) {
+        if (cached !== undefined) this.groupAvatarSnapshotCache.delete(cacheKey)
+        missingGroupUids.push(uid)
+        continue
+      }
+      if (cached.value !== null && cached.value.length > 0) groupMemberIdsByIndex.set(index, [...cached.value])
+    }
+    for (const groupUids of chunksOf(missingGroupUids, 10)) {
       let data: Record<string, unknown>
       try {
         data = await this.authenticatedChatPost<Record<string, unknown>>(
@@ -4192,19 +4294,36 @@ export class ArkmeService {
           { chat_session_uids: groupUids },
           session,
           signal,
+          {
+            lane: 'background-read',
+            key: `group-avatar:${[...groupUids].sort().join('|')}`,
+            failureCooldownMs: 5_000,
+          },
         )
       } catch {
         continue
       }
+      const membersByUid = new Map<string, number[]>()
       for (const raw of listValue(data.items)) {
         const snapshot = objectValue(raw)
-        const index = indexByGroupUid.get(stringValue(snapshot.chat_session_uid).trim())
-        if (index === undefined) continue
+        const uid = stringValue(snapshot.chat_session_uid).trim()
+        const index = indexByGroupUid.get(uid)
+        if (index === undefined || !groupUids.includes(uid)) continue
         const memberIds = listValue(snapshot.members)
           .map(member => numberValue(objectValue(member).user_id))
           .filter(userId => Number.isSafeInteger(userId) && userId > 0)
           .slice(0, 4)
+        membersByUid.set(uid, memberIds)
         if (memberIds.length > 0) groupMemberIdsByIndex.set(index, memberIds)
+      }
+      for (const uid of groupUids) {
+        const memberIds = membersByUid.get(uid) ?? null
+        this.groupAvatarSnapshotCache.set(`${String(session.userId)}:${uid}`, {
+          value: memberIds,
+          expiresAtMillis: Date.now() + (memberIds === null
+            ? GROUP_AVATAR_NEGATIVE_CACHE_TTL_MS
+            : GROUP_AVATAR_CACHE_TTL_MS),
+        })
       }
     }
 
@@ -4242,6 +4361,7 @@ export class ArkmeService {
     signal?: AbortSignal,
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
+      .sort((left, right) => left - right)
     const profiles = new Map<number, ArkmePublicProfile>()
     const missing: number[] = []
     const now = Date.now()
@@ -4263,6 +4383,11 @@ export class ArkmeService {
         { user_ids: batch },
         session,
         signal,
+        {
+          lane: 'background-read',
+          key: `public-profiles:${batch.join('|')}`,
+          failureCooldownMs: 5_000,
+        },
       )
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
@@ -4441,7 +4566,7 @@ export class ArkmeService {
         throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
       }
       return await this.downloadSignedImage(
-        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal,
+        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal, this.requestScope(session.userId),
       )
     }
     const fileId = imageFileIdFromRef(imageRef, session.userId)
@@ -4491,7 +4616,7 @@ export class ArkmeService {
       || !allowedSignedImageHost(this.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
       throw new ArkmePluginError('image-sign-target-rejected', 'Arkme 图片授权目标不受信任', false, 502)
     }
-    return await this.downloadSignedImage(signedUrl, byteLimit, signal)
+    return await this.downloadSignedImage(signedUrl, byteLimit, signal, this.requestScope(session.userId))
   }
 
   async beginWechatLogin(): Promise<ArkmeAuthSnapshot> {
@@ -4697,7 +4822,11 @@ export class ArkmeService {
     const activeSession = await this.sessionStore.read()
     const pendingSession = await this.readPendingBindingSession()
     for (const userId of new Set([activeSession?.userId, pendingSession?.userId])) {
-      if (userId !== undefined) this.outgoingCallBroker.clearUser(userId, '账号已退出，呼叫已取消')
+      if (userId !== undefined) {
+        this.outgoingCallBroker.clearUser(userId, '账号已退出，呼叫已取消')
+        this.requestCoordinator.invalidateScope(this.requestScope(userId))
+        this.refreshInFlightByUserId.delete(userId)
+      }
     }
     await this.sessionStore.delete()
     await this.clearPendingBindingSession()
@@ -4706,6 +4835,7 @@ export class ArkmeService {
     this.sourceListCache.clear()
     this.sourceListInFlight.clear()
     this.publicProfileCache.clear()
+    this.groupAvatarSnapshotCache.clear()
     this.imageCache.clear()
     this.imageInFlight.clear()
     this.imageCacheBytes = 0
@@ -5296,20 +5426,36 @@ export class ArkmeService {
     }
   }
 
+  private authenticatedRequestOptions(
+    session: ArkmeSessionCredentials,
+    service: ArkmeRequestService,
+    defaultLane: ArkmeRequestLane,
+    options: ArkmeRemoteRequestOptions,
+  ): ArkmeRemoteRequestOptions {
+    return {
+      ...options,
+      scope: this.requestScope(session.userId),
+      service,
+      lane: options.lane ?? defaultLane,
+    }
+  }
+
   private async authenticatedAuthGet<T>(
     path: string,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'interactive-read', options)
     try {
-      return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal)
+      return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal)
+      return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions())
     }
   }
 
@@ -5340,16 +5486,18 @@ export class ArkmeService {
     path: string,
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'record', 'write', options)
     try {
-      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0])
+      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], undefined, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0])
+      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], undefined, false, requestOptions())
     }
   }
 
@@ -5358,16 +5506,18 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'write', options)
     try {
-      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 
@@ -5376,16 +5526,18 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'chat', 'write', options)
     try {
-      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 
@@ -5394,16 +5546,18 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'webrtc', 'write', options)
     try {
-      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.webrtcBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 
@@ -5412,16 +5566,18 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'audio', 'interactive-read', options)
     try {
-      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 
@@ -5460,16 +5616,18 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'relation', 'interactive-read', options)
     try {
-      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 
@@ -5478,15 +5636,17 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'world', 'write', options)
     try {
-      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'arkme-code-10002'].includes(error.code)) throw error
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal)
+      return await this.post<T>(this.config.worldBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 
@@ -5495,16 +5655,18 @@ export class ArkmeService {
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'intelligent', 'write', options)
     try {
-      return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true)
+      return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true)
+      return await this.post<T>(this.config.intelligentBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     }
   }
 
@@ -5751,6 +5913,23 @@ export class ArkmeService {
     signedUrl: URL,
     byteLimit: number,
     signal?: AbortSignal,
+    scope = 'public',
+  ): Promise<ArkmeImageBytes> {
+    return await this.requestCoordinator.run({
+      scope,
+      lane: 'image',
+      service: 'oss',
+      ...(signal === undefined ? {} : { signal }),
+      operation: async coordinatedSignal => await this.downloadSignedImageDirect(
+        signedUrl, byteLimit, coordinatedSignal,
+      ),
+    })
+  }
+
+  private async downloadSignedImageDirect(
+    signedUrl: URL,
+    byteLimit: number,
+    signal: AbortSignal,
   ): Promise<ArkmeImageBytes> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -5817,7 +5996,8 @@ export class ArkmeService {
   }
 
   private async refreshAccessToken(session: ArkmeSessionCredentials): Promise<ArkmeSessionCredentials> {
-    if (this.refreshInFlight !== undefined) return await this.refreshInFlight
+    const existing = this.refreshInFlightByUserId.get(session.userId)
+    if (existing !== undefined) return await existing
     const refresh = (async () => {
       try {
         const data = await this.post<Record<string, unknown>>(
@@ -5826,6 +6006,15 @@ export class ArkmeService {
           {},
           session.refreshToken,
           [200],
+          undefined,
+          false,
+          {
+            scope: this.requestScope(session.userId),
+            lane: 'auth',
+            service: 'auth',
+            key: 'token-refresh',
+            failureCooldownMs: 2_000,
+          },
         )
         const accessToken = stringValue(data.access_token)
         if (accessToken === '') {
@@ -5844,11 +6033,13 @@ export class ArkmeService {
         throw error
       }
     })()
-    this.refreshInFlight = refresh
+    this.refreshInFlightByUserId.set(session.userId, refresh)
     try {
       return await refresh
     } finally {
-      if (this.refreshInFlight === refresh) this.refreshInFlight = undefined
+      if (this.refreshInFlightByUserId.get(session.userId) === refresh) {
+        this.refreshInFlightByUserId.delete(session.userId)
+      }
     }
   }
 
@@ -5868,6 +6059,34 @@ export class ArkmeService {
     return session
   }
 
+  private requestService(baseUrl: string): ArkmeRequestService {
+    const normalized = baseUrl.replace(/\/+$/, '')
+    const services: Array<[string, ArkmeRequestService]> = [
+      [this.config.authBaseUrl, 'auth'],
+      [this.config.chatBaseUrl, 'chat'],
+      [this.config.recordBaseUrl, 'record'],
+      [this.config.audioBaseUrl, 'audio'],
+      [this.config.worldBaseUrl, 'world'],
+      [this.config.relationBaseUrl, 'relation'],
+      [this.config.intelligentBaseUrl, 'intelligent'],
+      [this.config.webrtcBaseUrl, 'webrtc'],
+    ]
+    return services.find(([candidate]) => candidate.replace(/\/+$/, '') === normalized)?.[1] ?? 'other'
+  }
+
+  private requestScope(userId: number | undefined): string {
+    return userId !== undefined && Number.isSafeInteger(userId) && userId > 0 ? `user:${String(userId)}` : 'public'
+  }
+
+  private remoteServiceCooldownMs(error: unknown): number {
+    if (!(error instanceof ArkmePluginError)
+      || ['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code)) return 0
+    if (error.upstreamStatus === 429 || error.upstreamStatus === 503) {
+      return Math.max(1_000, error.retryAfterMillis ?? 5_000)
+    }
+    return 0
+  }
+
   private async post<T>(
     baseUrl: string,
     path: string,
@@ -5876,6 +6095,34 @@ export class ArkmeService {
     successCodes: readonly number[],
     signal?: AbortSignal,
     preferDataError = false,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    return await this.requestCoordinator.run({
+      scope: options.scope ?? 'public',
+      lane: options.lane ?? 'write',
+      service: options.service ?? this.requestService(baseUrl),
+      ...(options.key === undefined ? {} : { key: options.key }),
+      ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),
+      ...(options.failureCooldownMs === undefined ? {} : { failureCooldownMs: options.failureCooldownMs }),
+      ...(options.bypassCache === undefined ? {} : { bypassCache: options.bypassCache }),
+      ...(signal === undefined ? {} : { signal }),
+      shouldCooldown: error => !(error instanceof ArkmePluginError)
+        || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
+      serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
+      operation: async coordinatedSignal => await this.postDirect(
+        baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
+      ),
+    })
+  }
+
+  private async postDirect<T>(
+    baseUrl: string,
+    path: string,
+    body: Record<string, unknown>,
+    bearer: string | undefined,
+    successCodes: readonly number[],
+    signal: AbortSignal,
+    preferDataError: boolean,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -5903,7 +6150,17 @@ export class ArkmeService {
         )
       }
       if (!response.ok) {
-        throw new ArkmePluginError('arkme-http-error', `Arkme 服务返回 HTTP ${response.status}`, true, 502)
+        const retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        throw new ArkmePluginError(
+          'arkme-http-error',
+          `Arkme 服务返回 HTTP ${response.status}`,
+          true,
+          502,
+          {
+            upstreamStatus: response.status,
+            ...(retryAfter === undefined ? {} : { retryAfterMillis: retryAfter }),
+          },
+        )
       }
       let envelope: ArkmeEnvelope<T>
       try {
@@ -5941,6 +6198,32 @@ export class ArkmeService {
     bearer: string | undefined,
     successCodes: readonly number[],
     signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    return await this.requestCoordinator.run({
+      scope: options.scope ?? 'public',
+      lane: options.lane ?? 'interactive-read',
+      service: options.service ?? this.requestService(baseUrl),
+      ...(options.key === undefined ? {} : { key: options.key }),
+      ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),
+      ...(options.failureCooldownMs === undefined ? {} : { failureCooldownMs: options.failureCooldownMs }),
+      ...(options.bypassCache === undefined ? {} : { bypassCache: options.bypassCache }),
+      ...(signal === undefined ? {} : { signal }),
+      shouldCooldown: error => !(error instanceof ArkmePluginError)
+        || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
+      serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
+      operation: async coordinatedSignal => await this.getDirect(
+        baseUrl, path, bearer, successCodes, coordinatedSignal,
+      ),
+    })
+  }
+
+  private async getDirect<T>(
+    baseUrl: string,
+    path: string,
+    bearer: string | undefined,
+    successCodes: readonly number[],
+    signal: AbortSignal,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -5966,7 +6249,17 @@ export class ArkmeService {
         )
       }
       if (!response.ok) {
-        throw new ArkmePluginError('arkme-http-error', `Arkme 服务返回 HTTP ${response.status}`, true, 502)
+        const retryAfter = retryAfterMillis(response.headers.get('retry-after'))
+        throw new ArkmePluginError(
+          'arkme-http-error',
+          `Arkme 服务返回 HTTP ${response.status}`,
+          true,
+          502,
+          {
+            upstreamStatus: response.status,
+            ...(retryAfter === undefined ? {} : { retryAfterMillis: retryAfter }),
+          },
+        )
       }
       let envelope: ArkmeEnvelope<T>
       try {

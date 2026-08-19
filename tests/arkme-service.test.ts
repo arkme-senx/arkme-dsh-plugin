@@ -238,6 +238,35 @@ describe('ArkmeService', () => {
     expect(sessions.session?.accessToken).toBe('renewed')
   })
 
+  it('honors Retry-After as a service-wide admission cooldown', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const startedAt: number[] = []
+      const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => {
+        startedAt.push(Date.now())
+        if (startedAt.length === 1) {
+          return new Response('{}', { status: 429, headers: { 'Retry-After': '1' } })
+        }
+        return json({ code: 200, data: { duration_ls: [], un_click_session_ids_per_day: [] } })
+      })
+      const first = service.recordingCalendar(1_700_000_000_000, 1_700_086_400_000).catch(error => error as Error)
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(first).resolves.toMatchObject({ upstreamStatus: 429, retryAfterMillis: 1_000 })
+
+      const second = service.recordingCalendar(1_700_000_000_000, 1_700_086_400_000)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(startedAt).toEqual([0])
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(second).resolves.toMatchObject({ days: [] })
+      expect(startedAt).toEqual([0, 1000])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps transcript rows readable when the speaker directory fails', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -1473,6 +1502,53 @@ describe('ArkmeService', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
     await expect(service.listSources('root', { limit: 50 })).resolves.toEqual(first)
     expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps group avatar snapshots cached independently from a forced directory refresh', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let directoryReads = 0
+    let avatarReads = 0
+    let profileReads = 0
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) {
+        directoryReads += 1
+        return json({ code: 200, data: { items: [{
+          session: { chat_session_uid: 'group-1', session_kind: 2, title: '群聊', last_active_at: 1 },
+          unread_snapshot: { unread_count: 0 },
+        }], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) {
+        avatarReads += 1
+        expect(body).toEqual({ chat_session_uids: ['group-1'] })
+        return json({ code: 200, data: {
+          items: [{ chat_session_uid: 'group-1', members: [{ user_id: 20001 }] }],
+        } })
+      }
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        profileReads += 1
+        return json({ code: 200, data: { items: [{
+          user_id: 20001,
+          nick_name: '成员',
+          head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20001/member.png?x-oss-signature=member',
+        }] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    await service.listSources('root')
+    await service.listSources('root', { refresh: true })
+
+    expect(directoryReads).toBe(2)
+    expect(avatarReads).toBe(1)
+    expect(profileReads).toBe(1)
+    expect(service.requestStats()).toMatchObject({
+      'interactive-read:chat': { started: 2 },
+      'background-read:chat': { started: 1 },
+      'background-read:auth': { started: 1 },
+    })
   })
 
   it('checkpoints successful Chat projections and retries only failed sessions', async () => {
