@@ -374,6 +374,18 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'world.feed': return await service.listWorldFeed({
+      limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+    })
+    case 'world.image.read': {
+      const image = await service.readWorldImage(stringParam(params, 'imageRef'))
+      return {
+        mediaType: image.mediaType,
+        bytes: image.bytes,
+        dataBase64: Buffer.from(image.data).toString('base64'),
+      }
+    }
     case 'dsh-beta-community.entry-state': return await service.dshBetaCommunityEntryState()
     case 'dsh-beta-community.join': return await service.joinDSHBetaCommunity()
     case 'topic.create': return await service.createTopic(

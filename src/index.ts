@@ -290,6 +290,8 @@ export type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeWorldPublishResult,
+  ArkmeWorldFeedItem,
+  ArkmeWorldFeedPage,
   ArkmeWorldRecordItem,
   ArkmeWorldRecordList,
   ArkmeWorldVisibility,
