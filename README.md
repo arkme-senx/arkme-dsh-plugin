@@ -65,7 +65,7 @@ dsh plugin --profile web up @senguoyun/dsh-arkme --latest
 
 当 DSH 已加载 `dynamicCordisRunner` 时，插件会注册发布、作者软删除、搜索、详情和应用工具。发布对象是当前 Agent 所有的精确 Dynamic Cordis Package；插件将现有 Host/Client JavaScript 确定性封装为 `.arkext`，不会重新生成或执行服务端构建。作者软删除必须由当前用户明确确认，并只接受可信发布结果或本人扩展列表中的精确 `extension_id`。
 
-当前补丁面向真实测试场景：Arkme owner API 使用 `*.senguo.me` 测试服务，扩展中心使用 `https://jotmo-extension-publish.senguo.me`，并信任测试服务的 `test-ed25519-20260819-1` Ed25519 公钥。正式发布前必须替换为正式环境 Origin 和正式签名公钥。
+当前补丁面向正式环境：Arkme owner API 使用正式服务域名，扩展中心使用 `https://extension-publish.jotmo.cc`，并只信任正式服务的 `prod-ed25519-20260819-1` Ed25519 公钥。
 
 扩展制品和 `extensions.sqlite3` 默认位于 `$DSH_HOME/arkme-self/extensions`，也可通过 `extensionArtifactDirectory` 指定其他本机目录。压缩制品与安全解包总量的 v1 上限均为 100 MiB（104857600 bytes）。下载后必须依次通过制品 SHA-256、manifest SHA-256、Ed25519 平台签名、运行时兼容性和文件摘要校验，才会原子落盘并交给 Dynamic Cordis。
 

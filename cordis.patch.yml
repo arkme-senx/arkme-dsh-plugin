@@ -2,20 +2,20 @@
     - id: arkme-self
       name: '@senguoyun/dsh-arkme'
       config:
-        environment: test
-        authBaseUrl: https://jotmo.senguo.me
-        subjectBaseUrl: https://jotmo-subject.senguo.me
-        recordBaseUrl: https://jotmo-record.senguo.me
-        chatBaseUrl: https://jotmo-chat.senguo.me
-        imBaseUrl: https://jotmo-im.senguo.me
-        webrtcBaseUrl: https://jotmo-webrtc.senguo.me
-        worldBaseUrl: https://jotmo-world.senguo.me
-        relationBaseUrl: https://jotmo-relation.senguo.me
-        intelligentBaseUrl: https://jotmo-intelligent.senguo.me
-        audioBaseUrl: https://jotmo-audio.senguo.me
-        extensionPublishBaseUrl: https://jotmo-extension-publish.senguo.me
+        environment: prod
+        authBaseUrl: https://api.jotmo.cc
+        subjectBaseUrl: https://subject.jotmo.cc
+        recordBaseUrl: https://record.jotmo.cc
+        chatBaseUrl: https://chat.jotmo.cc
+        imBaseUrl: https://im.jotmo.cc
+        webrtcBaseUrl: https://webrtc.jiwo.cc
+        worldBaseUrl: https://world.jotmo.cc
+        relationBaseUrl: https://relation.jotmo.cc
+        intelligentBaseUrl: https://intelligent.jotmo.cc
+        audioBaseUrl: https://audio.jotmo.cc
+        extensionPublishBaseUrl: https://extension-publish.jotmo.cc
         extensionArtifactDirectory: ''
-        extensionTrustedSigningKeys: '{"test-ed25519-20260819-1":"w5H0zPUJuNTUPwo0jIibUO31CNiKu1G+2pvvpx8tYSA="}'
+        extensionTrustedSigningKeys: '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
         routePath: /arkme-self/api
         requestTimeoutMs: 30000
         maxTextLength: 20000
@@ -24,7 +24,7 @@
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         interwovenMomentsEnabled: true
         allowNonLoopback: false
-        allowProduction: false
+        allowProduction: true
         updateCheckEnabled: true
         updateChannel: stable
         updateRegistryUrl: https://registry.npmjs.org

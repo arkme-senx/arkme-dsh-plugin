@@ -37,6 +37,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://relation.jotmo.cc', '')
     .replaceAll('https://intelligent.jotmo.cc', '')
     .replaceAll('https://audio.jotmo.cc', '')
+    .replaceAll('https://extension-publish.jotmo.cc', '')
     .replaceAll('jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.senguo.me', '')
