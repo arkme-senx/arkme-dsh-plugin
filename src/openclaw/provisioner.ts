@@ -40,7 +40,10 @@ export function createOpenClawProvisioner(options: {
         if (input.allowGatewayRestart !== true) {
           return { status: 'gateway_restart_confirmation_required', resource_ref: resourceRef, impact: 'profile_all_agents' }
         }
-        await options.cli.restartGateway(runOptions)
+        const restart = await options.cli.restartGateway(runOptions)
+        if (restart === 'service_not_installed') {
+          return { status: 'prerequisite_failed', reason: 'gateway_service' }
+        }
         await options.secretStore.clearRestartRequired(hash)
       }
       const gateway = await options.cli.gatewayStatus(runOptions)

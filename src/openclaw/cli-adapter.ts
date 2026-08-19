@@ -21,7 +21,7 @@ export interface OpenClawCliAdapter {
   ensureAccountSecretRef(input: { accountId: string; secretRef: import('./types.js').OpenClawSecretRef }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureBinding(input: { agentId: string; accountId: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   gatewayStatus(options?: { signal?: AbortSignal }): Promise<'reachable' | 'unreachable' | 'unknown'>
-  restartGateway(options?: { signal?: AbortSignal }): Promise<void>
+  restartGateway(options?: { signal?: AbortSignal }): Promise<'restarted' | 'service_not_installed'>
 }
 
 const JOTMO_CHANNEL_PACKAGE = '@jotmo/openclaw-channel@0.1.12'
@@ -151,8 +151,11 @@ export function createOpenClawCliAdapter(options: {
       return parseGatewayReachability(await options.run(profileArgs(profile, 'gateway', 'status'), runOptions))
     },
     async restartGateway(runOptions) {
+      const status = await options.run(profileArgs(profile, 'gateway', 'status'), runOptions)
+      if (/Service not installed/i.test(`${status.stdout}\n${status.stderr}`)) return 'service_not_installed'
       const result = await options.run(profileArgs(profile, 'gateway', 'restart'), runOptions)
       assertSucceeded(result, 'gateway restart')
+      return 'restarted'
     },
   }
 }

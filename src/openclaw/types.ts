@@ -18,10 +18,10 @@ export interface OpenClawCliPort {
   ensureAccountSecretRef(input: { accountId: string; secretRef: OpenClawSecretRef }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureBinding(input: { agentId: string; accountId: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   gatewayStatus(options?: { signal?: AbortSignal }): Promise<'reachable' | 'unreachable' | 'unknown'>
-  restartGateway(options?: { signal?: AbortSignal }): Promise<void>
+  restartGateway(options?: { signal?: AbortSignal }): Promise<'restarted' | 'service_not_installed'>
 }
 export type OpenClawProvisionResult =
   | { status: 'profile_not_found' }
-  | { status: 'prerequisite_failed'; reason: 'binary' | 'version' | 'config' | 'model_auth' }
+  | { status: 'prerequisite_failed'; reason: 'binary' | 'version' | 'config' | 'model_auth' | 'gateway_service' }
   | { status: 'gateway_restart_confirmation_required'; resource_ref: string; impact: 'profile_all_agents' }
   | { status: 'local_configured' | 'connected_unverified' | 'runtime_online'; resource_ref: string }

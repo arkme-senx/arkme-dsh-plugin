@@ -23,7 +23,7 @@ function fixture(overrides: Partial<OpenClawCliPort> = {}) {
     async ensureAccountSecretRef(input) { calls.push(`account:${input.accountId}:${input.secretRef.provider}`); resources = { ...resources, account: true }; return { changed: true } },
     async ensureBinding(input) { calls.push(`binding:${input.agentId}:${input.accountId}`); resources = { ...resources, binding: true }; return { changed: true } },
     async gatewayStatus() { return 'reachable' },
-    async restartGateway() { calls.push('restart') },
+    async restartGateway() { calls.push('restart'); return 'restarted' as const },
     ...overrides,
   }
   return { cli, calls, setResources(value: OpenClawLocalResources) { resources = value } }
@@ -136,5 +136,19 @@ describe('OpenClawProvisioner', () => {
     await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, revealSecret: async () => new SecretValue('unused') }))
       .resolves.toMatchObject({ status: 'runtime_online' })
     expect(calls).toContain('restart')
+  })
+
+  it('keeps the restart marker and reports an actionable prerequisite when Gateway is not service-managed', async () => {
+    const { cli, calls, setResources } = fixture({
+      async restartGateway() { calls.push('restart'); return 'service_not_installed' },
+    })
+    setResources({ channel: true, agent: true, account: true, binding: true })
+    const secretStore = secretStoreFixture()
+    await secretStore.markRestartRequired('902c9cd4cd1d2046')
+    const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
+
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, revealSecret: async () => new SecretValue('unused') }))
+      .resolves.toEqual({ status: 'prerequisite_failed', reason: 'gateway_service' })
+    expect(await secretStore.isRestartRequired('902c9cd4cd1d2046')).toBe(true)
   })
 })

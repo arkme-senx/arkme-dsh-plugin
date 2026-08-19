@@ -204,4 +204,23 @@ describe('OpenClawCliAdapter', () => {
       gateway: 'unreachable',
     })
   })
+
+  it('does not attempt a managed restart when the profile Gateway service is not installed', async () => {
+    const createAdapter = adapterFactory()
+    const calls: string[] = []
+    const adapter = createAdapter({
+      profile: 'dev',
+      async run(args) {
+        const command = args.slice(2).join(' ')
+        calls.push(command)
+        if (command === 'gateway status') {
+          return { exitCode: 0, stdout: 'Service not installed. Run: openclaw --profile dev gateway install\n', stderr: '' }
+        }
+        return { exitCode: 2, stdout: '', stderr: `unexpected command: ${command}` }
+      },
+    })
+
+    await expect(adapter.restartGateway()).resolves.toBe('service_not_installed')
+    expect(calls).toEqual(['gateway status'])
+  })
 })
