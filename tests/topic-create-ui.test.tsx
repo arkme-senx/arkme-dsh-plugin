@@ -40,6 +40,7 @@ describe('topic create UI', () => {
     expect(root).toContain('请输入主题名称')
     expect(root).toContain('取消')
     expect(root).toContain('确认')
+    expect(root).toContain('font-weight:500')
     expect(`${child}${root}`).not.toContain('话题磁铁')
     expect(`${child}${root}`).toContain('#a7dfbd')
     expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#09B83E')

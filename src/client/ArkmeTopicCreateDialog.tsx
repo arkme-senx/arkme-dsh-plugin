@@ -47,7 +47,7 @@ const styles: Record<string, CSSProperties> = {
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20 },
   button: {
     minWidth: 65, height: 36, padding: '0 14px', borderRadius: 8, cursor: 'pointer',
-    font: 'inherit', fontSize: 14,
+    font: 'inherit', fontSize: 14, fontWeight: 500,
   },
   cancel: { border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text },
   confirm: { border: 0, background: colors.action, color: colors.surface },
