@@ -39,6 +39,8 @@ const BUSINESS_PROMPT_SUFFIX =
   + ' For the unified Arkme directory, use arkme_sources_list to obtain account-bound source_ref values, then use '
   + 'arkme_source_read to read default-category, topic, private-chat, or group-chat timelines. Use arkme_text_send only after '
   + 'an explicit human request in the current conversation; a source_ref must come from a source-list result and must never be guessed.'
+  + ' When explicitly asked to report a group-chat message, call arkme_message_report with the unchanged message_ref from '
+  + 'arkme_source_read and the requested category.'
   + ' For group AI expression polishing, use arkme_group_ai_polish_manage with the exact group name stated by the human. '
   + 'For a new rule, generate a preview first without writing, show the resolved group and full generated rule, and ask for confirmation once. '
   + 'Only after that confirmation may you pass the unchanged confirmation_ref to confirm_enable. Do not default to asking the human to select an existing rule.'

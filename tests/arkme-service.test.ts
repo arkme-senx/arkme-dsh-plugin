@@ -1490,18 +1490,25 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
         items: [
           {
-            relation: { record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
+            relation: { rel_uid: 'chat-relation-1', record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
             record: { status: 1, payload: { text_content: '聊天正文' } },
           },
           {
-            relation: { record_uid: 'chat-record-2', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 181, seq: 8 },
+            relation: { rel_uid: 'chat-relation-2', record_uid: 'chat-record-2', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 181, seq: 8 },
             record: { status: 1, payload: { text_content: '我的回复' } },
+          },
+          {
+            relation: { rel_uid: 'chat-relation-hidden', record_uid: 'chat-record-hidden', sender_user_id: 20002, attach_at: 179, seq: 6 },
+            record: {},
           },
         ],
         has_more: true, next_before_seq: 6,
       } })
       if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
         record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 8,
+      } })
+      if (url.endsWith('/api/v1/chats/report')) return json({ code: 200, data: {
+        report: { report_uid: 'report-1', status: 1 }, outcome: 'inserted',
       } })
       if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
@@ -1559,6 +1566,34 @@ describe('ArkmeService', () => {
       effectiveReadSequence: 8,
       unreadCount: 0,
     })
+    const groupRef = sources.items[1]!.sourceRef
+    const groupTimeline = await service.readSource(groupRef)
+    expect(groupTimeline.items).toHaveLength(2)
+    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-hidden')).toBeUndefined()
+    expect(groupTimeline.items[0]?.messageRef).toMatch(/^arkme-message-v1\./)
+    expect(groupTimeline.items[1]?.messageRef).toBeUndefined()
+    await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
+      reason: '明确举报', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
+    })).resolves.toMatchObject({ reportUid: 'report-1', status: 1 })
+    expect(calls.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'chat-group', rel_uid: 'chat-relation-1', report_type: 2,
+      reason: '明确举报', request_uid: '019d8590-ebb4-7232-90f2-000000000001',
+    })
+    expect(calls.at(-1)?.body).not.toHaveProperty('created_at')
+    const messageRef = groupTimeline.items[0]!.messageRef!
+    const [messagePrefix, encodedMessage, messageSignature] = messageRef.split('.') as [string, string, string]
+    const crossSessionPayload = {
+      ...JSON.parse(Buffer.from(encodedMessage, 'base64url').toString('utf8')) as Record<string, unknown>,
+      chatSessionUid: 'chat-other',
+    }
+    const crossSessionRef = `${messagePrefix}.${Buffer.from(JSON.stringify(crossSessionPayload)).toString('base64url')}.${messageSignature}`
+    const callsBeforeInvalidReferences = calls.length
+    await expect(service.reportMessage(crossSessionRef, 2)).rejects.toMatchObject({ code: 'message-ref-invalid' })
+    expect(calls).toHaveLength(callsBeforeInvalidReferences)
+
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+    await expect(service.reportMessage(messageRef, 2)).rejects.toMatchObject({ code: 'message-ref-invalid' })
+    expect(calls).toHaveLength(callsBeforeInvalidReferences)
   })
 
   it('single-flights and TTL-caches identical Chat directory pages', async () => {
