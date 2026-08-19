@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type {
-  ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
+  ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeTopicCreateResult,
 } from '../types.js'
 import { callArkme } from './api.js'
@@ -20,6 +20,10 @@ import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
+import {
+  ARKO_CONVERSATION_PREVIEW_FALLBACK,
+  arkmeArkoConversationPreviewStore,
+} from './arko-conversation-preview-store.js'
 import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
@@ -260,10 +264,12 @@ export function ArkmeSearchRow({ selected, onClick }: { selected: boolean; onCli
 export function ArkmeArkoRow({
   selected,
   displayName = 'Arko',
+  latestPreview = ARKO_CONVERSATION_PREVIEW_FALLBACK,
   onClick,
 }: {
   selected: boolean
   displayName?: string
+  latestPreview?: string
   onClick(): void
 }) {
   return <button
@@ -279,7 +285,7 @@ export function ArkmeArkoRow({
         <span style={styles.entryName}>{displayName}</span>
         <ArkmeTopicTagBadge label="Agent" selected={selected} />
       </span>
-      <span style={styles.chatBottom}><span style={styles.preview}>对话并处理 Arkme 业务</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>{latestPreview}</span></span>
     </span>
   </button>
 }
@@ -567,10 +573,18 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     arkmeArkoProfileStore.getSnapshot,
     arkmeArkoProfileStore.getSnapshot,
   )
+  const arkoPreviewSnapshot = useSyncExternalStore(
+    arkmeArkoConversationPreviewStore.subscribe,
+    arkmeArkoConversationPreviewStore.getSnapshot,
+    arkmeArkoConversationPreviewStore.getSnapshot,
+  )
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
   const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
     ? arkoProfileSnapshot.profile
+    : undefined
+  const arkoLatestPreview = arkoPreviewSnapshot.userId === auth?.userId
+    ? arkoPreviewSnapshot.latestPreview
     : undefined
   const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
   const visibleSourceRows = useMemo(
@@ -715,6 +729,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
     arkmeArkoProfileStore.activateUser(userId)
+    arkmeArkoConversationPreviewStore.activateUser(userId)
     if (userId === undefined) {
       return
     }
@@ -724,6 +739,17 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       .catch(() => undefined)
     return () => { controller.abort() }
   }, [authenticated, auth?.userId])
+  useEffect(() => {
+    const userId = authenticated ? auth?.userId : undefined
+    if (userId === undefined || !ui.open) return
+    const request = arkmeArkoConversationPreviewStore.beginHistoryRequest(userId)
+    if (request === undefined) return
+    const controller = new AbortController()
+    void callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 10, offset: 0 }, controller.signal)
+      .then(page => { arkmeArkoConversationPreviewStore.setLatestFromHistory(request, page.items) })
+      .catch(() => undefined)
+    return () => { controller.abort() }
+  }, [authenticated, auth?.userId, ui.open])
   useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources
@@ -926,6 +952,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         <ArkmeArkoRow
           selected={ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
+          {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })}
           onClick={showArko}
         />
         <button

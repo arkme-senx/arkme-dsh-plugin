@@ -24,6 +24,7 @@ import {
   type ArkmeArkoPendingTurn,
 } from './arko-pending-turn-store.js'
 import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
+import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
 
 type ArkoMessageRole = 'user' | 'assistant' | 'divider'
@@ -225,10 +226,6 @@ export function arkoMessageActivityLabel(
   return role === 'assistant' ? arkoRunActivityLabel(runStatus) : undefined
 }
 
-export function arkoRunSyncFailureLabel(consecutiveFailures: number): string | undefined {
-  return consecutiveFailures >= 3 ? '状态同步失败，仍在重试' : undefined
-}
-
 export function arkoPreservedScrollTop(
   previousScrollTop: number,
   previousScrollHeight: number,
@@ -243,6 +240,25 @@ function isActiveRunStatus(status: string | undefined): boolean {
 
 function isActivityPlaceholderText(value: string): boolean {
   return /^(正在)?(思考|处理)(中)?[.。…]*$/.test(value.trim())
+}
+
+function isActiveHistoryRun(item: ArkmeArkoHistoryItem): boolean {
+  const placeholder = isActivityPlaceholderText(item.text)
+  return item.role === 'assistant' && (isActiveRunStatus(item.runStatus)
+    || (item.runStatus === undefined && item.status === 2 && (item.text.trim() === '' || placeholder)))
+}
+
+export function arkoHistoryHasTerminalRun(
+  items: ArkmeArkoHistoryItem[],
+  sessionId: number,
+  assistantMsgId: number,
+  runUid: string,
+): boolean {
+  const matchingItem = items.find(item => item.role === 'assistant'
+    && item.sessionId === sessionId
+    && item.messageId === assistantMsgId
+    && (item.runUid === undefined || item.runUid === runUid))
+  return matchingItem !== undefined && !isActiveHistoryRun(matchingItem)
 }
 
 function waitForNextPoll(signal: AbortSignal, delayMillis = 1_200): Promise<void> {
@@ -286,8 +302,7 @@ function ArkoThinkingPanel({ reasoning, activity }: { reasoning?: string; activi
 function historyMessage(item: ArkmeArkoHistoryItem): ArkoMessage {
   const placeholder = isActivityPlaceholderText(item.text)
   const reasoningPlaceholder = isActivityPlaceholderText(item.reasoning)
-  const active = item.role === 'assistant' && (isActiveRunStatus(item.runStatus)
-    || (item.runStatus === undefined && item.status === 2 && (item.text.trim() === '' || placeholder)))
+  const active = isActiveHistoryRun(item)
   const activity = arkoMessageActivityLabel(item.role, item.runStatus)
   return {
     id: `history:${String(item.messageId)}`,
@@ -401,7 +416,6 @@ export function ArkmeArkoSurface() {
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [error, setError] = useState('')
-  const [runSyncError, setRunSyncError] = useState('')
   const [notice, setNotice] = useState('')
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
@@ -414,7 +428,20 @@ export function ArkmeArkoSurface() {
 
   useEffect(() => {
     arkmeArkoProfileStore.activateUser(profileUserId)
+    arkmeArkoConversationPreviewStore.activateUser(profileUserId)
   }, [profileUserId])
+
+  useEffect(() => {
+    if (profileUserId === undefined) return
+    arkmeArkoConversationPreviewStore.setLatestFromSurface(profileUserId, messages
+      .filter(message => message.role !== 'divider')
+      .map(message => ({
+        key: message.id,
+        text: message.text,
+        ...(message.messageId === undefined ? {} : { messageId: message.messageId }),
+        ...(message.createdAtMillis === undefined ? {} : { createdAtMillis: message.createdAtMillis }),
+      })))
+  }, [messages, profileUserId])
 
   useEffect(() => {
     if (profileUserId === undefined) {
@@ -495,9 +522,11 @@ export function ArkmeArkoSurface() {
     if (activeRun === undefined) return
     const controller = new AbortController()
     let consecutiveFailures = 0
-    const finishRun = async (): Promise<void> => {
+    const finishRun = async (knownHistory?: ArkmeArkoHistoryPage): Promise<void> => {
       const [historyResult, profileResult] = await Promise.allSettled([
-        callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal),
+        knownHistory === undefined
+          ? callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 }, controller.signal)
+          : Promise.resolve(knownHistory),
         callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
       ])
       if (controller.signal.aborted) return
@@ -514,7 +543,6 @@ export function ArkmeArkoSurface() {
       }
       setActiveRun(current => current?.runUid === activeRun.runUid ? undefined : current)
       setSending(false)
-      setRunSyncError('')
     }
     const poll = async (): Promise<void> => {
       await waitForNextPoll(controller.signal)
@@ -526,7 +554,6 @@ export function ArkmeArkoSurface() {
           }, controller.signal)
           if (controller.signal.aborted) return
           consecutiveFailures = 0
-          setRunSyncError('')
           const activity = arkoRunActivityLabel(status.status)
           if (status.status === 'waiting_tool') {
             setNotice('当前任务需要 DSH 尚未支持的客户端操作，可以停止任务后换一种方式重试')
@@ -541,16 +568,27 @@ export function ArkmeArkoSurface() {
             await finishRun()
             return
           }
-        } catch (caught) {
+        } catch {
           if (controller.signal.aborted) return
           consecutiveFailures += 1
-          const failureLabel = arkoRunSyncFailureLabel(consecutiveFailures)
-          if (failureLabel !== undefined) {
-            const message = errorMessage(caught)
-            setRunSyncError(`Arko 状态同步暂时失败：${message}。任务仍在云端执行，正在继续重连。`)
-            setMessages(current => current.map(item => item.assistantMsgId === activeRun.assistantMsgId ? {
-              ...item, status: 'sending', meta: failureLabel,
-            } : item))
+          try {
+            const history = await callArkme<ArkmeArkoHistoryPage>(
+              'arko.history',
+              { limit: 50, offset: 0 },
+              controller.signal,
+            )
+            if (controller.signal.aborted) return
+            if (arkoHistoryHasTerminalRun(
+              history.items,
+              activeRun.sessionId,
+              activeRun.assistantMsgId,
+              activeRun.runUid,
+            )) {
+              await finishRun(history)
+              return
+            }
+          } catch {
+            if (controller.signal.aborted) return
           }
         }
         const retryDelay = consecutiveFailures === 0
@@ -864,7 +902,6 @@ export function ArkmeArkoSurface() {
     <div ref={bodyRef} style={styles.body}>
       {notice !== '' && <div style={styles.notice}>{notice}</div>}
       {error !== '' && <div style={styles.error}>{error}</div>}
-      {runSyncError !== '' && <div style={styles.error}>{runSyncError}</div>}
       {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
         <span>{historyError}</span>
         <button type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {

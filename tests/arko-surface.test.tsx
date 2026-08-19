@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
-  ArkmeArkoSurface, arkoMessageActivityLabel, arkoPreservedScrollTop, arkoRunActivityLabel, arkoRunSyncFailureLabel,
-  latestActiveRun, mergeHistory, shouldShowArkoThinking,
+  ArkmeArkoSurface, arkoHistoryHasTerminalRun, arkoMessageActivityLabel, arkoPreservedScrollTop,
+  arkoRunActivityLabel, latestActiveRun, mergeHistory, shouldShowArkoThinking,
 } from '../src/client/ArkmeArkoSurface.js'
 import type { ArkmeArkoHistoryItem } from '../src/types.js'
 
@@ -38,6 +38,8 @@ describe('Arko surface', () => {
     expect(markup).toContain('清除上下文')
     expect(markup).not.toContain('aria-label="AI"')
     expect(markup).not.toContain('DeepSeek-R1满血版')
+    expect(markup).not.toContain('状态同步失败')
+    expect(markup).not.toContain('正在重试')
   })
 
   it('maps authoritative run states to the client-facing interaction labels', () => {
@@ -60,10 +62,17 @@ describe('Arko surface', () => {
     expect(arkoMessageActivityLabel('user', 'queued')).toBeUndefined()
   })
 
-  it('does not report expected initial status projection delay as a broken connection', () => {
-    expect(arkoRunSyncFailureLabel(1)).toBeUndefined()
-    expect(arkoRunSyncFailureLabel(2)).toBeUndefined()
-    expect(arkoRunSyncFailureLabel(3)).toBe('状态同步失败，仍在重试')
+  it('uses matching terminal history as a silent fallback for status polling failures', () => {
+    expect(arkoHistoryHasTerminalRun([
+      historyItem({ messageId: 302, sessionId: 88, runUid: 'run-1', runStatus: 'completed', text: '最终回答' }),
+    ], 88, 302, 'run-1')).toBe(true)
+    expect(arkoHistoryHasTerminalRun([
+      historyItem({ messageId: 302, sessionId: 88, runUid: 'run-1', runStatus: 'running', text: '正在处理' }),
+    ], 88, 302, 'run-1')).toBe(false)
+    expect(arkoHistoryHasTerminalRun([
+      historyItem({ messageId: 302, sessionId: 77, runUid: 'run-1', runStatus: 'completed', text: '其他会话' }),
+      historyItem({ messageId: 303, sessionId: 88, runUid: 'run-2', runStatus: 'completed', text: '其他任务' }),
+    ], 88, 302, 'run-1')).toBe(false)
   })
 
   it('preserves the visible history position when older messages are prepended', () => {
