@@ -83,7 +83,7 @@ npm Registry
      │ HTTPS，固定包名，无账号信息
      ▼
 ArkmePluginUpdateManager（Host 单例）
-     │ 校验 / semver 比较 / 单飞 / TTL / 本地持久化
+     │ 校验 / semver 比较 / 单飞 / 周期调度 / 本地持久化
      ▼
 /arkme-self/api：plugin.update.status/check/acknowledge/install/install-status
      │ 同源、Browser 只接收安全 DTO
@@ -99,7 +99,7 @@ Browser 不直接访问 Registry，原因是：
 - 保证版本校验、缓存和错误策略只有一份实现。
 - 不把未来可能增加的发布策略暴露成不受控浏览器逻辑。
 
-更新事件不进入现有 Chat SSE。客户端首次挂载、页面重新可见以及长间隔定时器只读取本机 Host 状态；Host 根据 TTL 决定是否真正访问 Registry。
+更新事件不进入现有 Chat SSE。客户端首次挂载和页面重新可见时显式请求 Host 检查 Registry，不受 12 小时成功结果缓存限制；60 秒突发限流只用于合并短时间内的重复进入。长间隔定时器只读取本机 Host 状态，由 Host 的周期调度决定是否访问 Registry。
 
 ## Host 组件设计
 
@@ -113,8 +113,8 @@ Browser 不直接访问 Registry，原因是：
 - 将同一时刻的检查合并为一个 Promise，多个标签页不会并发访问 Registry。
 - 维护最后成功结果、最后检查时间、失败重试时间和当前提示确认状态。
 - 启动不阻塞：插件挂载完成后以 5～30 秒随机抖动触发首次后台检查。
-- 每 12 小时最多成功检查一次；失败按 15 分钟、30 分钟、1 小时退避，之后最多每 6 小时重试。
-- 手动“检查更新”受 60 秒最小间隔保护。
+- Web App 首次进入或重新变为可见时绕过 12 小时成功结果缓存；60 秒内的重复进入合并到已有结果。
+- 长期运行实例每 12 小时执行一次后台检查；失败按 15 分钟、30 分钟、1 小时退避，之后最多每 6 小时重试。
 - `dispose()` 清理定时器和未完成请求。
 
 ### 网络边界
@@ -240,7 +240,7 @@ Registry 安装中，用户点击“立即更新并重启”后：
 1. Host 只接受自己当前已知的目标版本，并拒绝 Browser 传入包名、命令或任意版本。
 2. Host 校验 profile 中的依赖是合法 semver 范围；`link:`、`file:`、Git 和 URL 安装全部阻断。
 3. Host 写入权限为 `0600` 的计划文件，启动打包在插件内的独立 updater，然后向当前 DSH 发送 `SIGTERM`。
-4. updater 在旧进程退出后，通过同一个 DSH `bin.js` 执行插件 CLI 更新，再按原 `argv`、`DSH_HOME`、profile、Host 和端口重启。
+4. updater 在旧进程退出后，通过同一个 DSH `bin.js` 和完整 Node `execArgv`，以 Host 已校验的精确目标版本执行插件 CLI `add`；它不再次解析可能陈旧的 `latest`。随后按原 `execArgv`、应用 `argv`、`DSH_HOME`、profile、Host 和端口重启；源码启动依赖的 loader 参数不能丢失。
 5. updater 调用 loopback Host API 验证目标版本已加载；失败则重新安装旧版本并再次重启。
 6. Browser 在服务离线期间保留“正在更新”状态，轮询恢复后的 Host；成功后自动刷新页面。
 

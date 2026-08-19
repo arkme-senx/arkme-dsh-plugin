@@ -43,7 +43,7 @@ export class ArkmePluginUpdateStore {
   private readonly onVisibilityChange = () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this.followUpCount = 0
-      void this.refresh()
+      void this.refresh(true)
     }
   }
 
@@ -62,7 +62,7 @@ export class ArkmePluginUpdateStore {
     if (this.running) return () => undefined
     this.running = true
     this.followUpCount = 0
-    void this.refresh()
+    void this.refresh(true)
     void this.refreshInstallStatus(false)
     this.interval = setInterval(() => { void this.refresh() }, POLL_INTERVAL_MS)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisibilityChange)

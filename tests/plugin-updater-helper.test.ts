@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmePluginUpdateManager } from '../src/plugin-update.js'
-import { buildLatestInstallArgs, parsePluginUpdaterPlan, runPluginUpdater } from '../src/plugin-updater-helper.js'
+import { buildTargetInstallArgs, parsePluginUpdaterPlan, runPluginUpdater } from '../src/plugin-updater-helper.js'
 import { PluginUpdateInstallStateStore } from '../src/plugin-update-install-state.js'
 
 function response(version: string): Response {
@@ -38,6 +38,8 @@ describe('companion plugin updater', () => {
         previousVersion: '0.1.3',
         previousSpec: '^0.1.3',
         targetVersion: '0.1.4',
+        execArgv: ['--import', 'tsx/esm'],
+        restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
       })
       expect(plan).not.toHaveProperty('accessToken')
       expect(plan).not.toHaveProperty('command')
@@ -55,9 +57,10 @@ describe('companion plugin updater', () => {
         dshHome: fixture.root,
         profileName: 'web',
         healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        execArgv: ['--import', 'tsx/esm'],
         dshBinPath: fixture.dshBinPath,
         helperPath: fixture.helperPath,
-        restartArgv: [fixture.dshBinPath, 'web', '--port', '3080'],
+        restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
         spawnUpdater,
         requestShutdown,
       },
@@ -69,6 +72,40 @@ describe('companion plugin updater', () => {
     })
     expect(spawnUpdater).toHaveBeenCalledOnce()
     expect(requestShutdown).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the current Node loader arguments in the default updater plan', async () => {
+    const fixture = await runtimeFixture('0.1.3')
+    const spawnUpdater = vi.fn(async (planPath: string) => {
+      const plan = JSON.parse(await readFile(planPath, 'utf8')) as {
+        execArgv: string[]
+        restartArgv: string[]
+      }
+      expect(plan.execArgv).toEqual(process.execArgv)
+      expect(plan.restartArgv).toEqual([...process.execArgv, ...process.argv.slice(1)])
+    })
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      registryUrl: 'https://registry.npmjs.org',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: async () => response('0.1.4'),
+      installRuntime: {
+        dshHome: fixture.root,
+        profileName: 'web',
+        healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        dshBinPath: fixture.dshBinPath,
+        helperPath: fixture.helperPath,
+        spawnUpdater,
+        requestShutdown: () => undefined,
+      },
+    })
+
+    await manager.check({ manual: true })
+    await manager.install()
+    expect(spawnUpdater).toHaveBeenCalledOnce()
   })
 
   it('blocks local link installs instead of overwriting a checkout', async () => {
@@ -85,6 +122,7 @@ describe('companion plugin updater', () => {
         dshHome: fixture.root,
         profileName: 'web',
         healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        execArgv: [],
         dshBinPath: fixture.dshBinPath,
         helperPath: fixture.helperPath,
         restartArgv: [fixture.dshBinPath, 'web'],
@@ -110,6 +148,7 @@ describe('companion plugin updater', () => {
         dshHome: fixture.root,
         profileName: 'web',
         healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        execArgv: [],
         dshBinPath: fixture.dshBinPath,
         helperPath: fixture.helperPath,
         restartArgv: [fixture.dshBinPath, 'web'],
@@ -130,8 +169,9 @@ describe('companion plugin updater', () => {
       jobId: 'job-1',
       parentPid: 123,
       execPath: '/usr/bin/node',
+      execArgv: ['--import', 'tsx/esm'],
       dshBinPath: '/tmp/dsh.js',
-      restartArgv: ['/tmp/dsh.js', 'web'],
+      restartArgv: ['--import', 'tsx/esm', '/tmp/dsh.js', 'web'],
       dshHome: '/tmp/dsh-home',
       profileName: 'web',
       previousVersion: '0.1.3',
@@ -142,20 +182,26 @@ describe('companion plugin updater', () => {
     }
     expect(() => parsePluginUpdaterPlan({ ...base, healthUrl: 'https://example.com/api' }))
       .toThrow(/loopback/)
+    expect(() => parsePluginUpdaterPlan({
+      ...base, execArgv: undefined, healthUrl: 'http://127.0.0.1:3080/api',
+    }))
+      .toThrow(/incomplete/)
     expect(parsePluginUpdaterPlan({ ...base, healthUrl: 'http://127.0.0.1:3080/api' }).targetVersion)
       .toBe('0.1.4')
-    expect(buildLatestInstallArgs(parsePluginUpdaterPlan({
+    expect(buildTargetInstallArgs(parsePluginUpdaterPlan({
       ...base,
       healthUrl: 'http://127.0.0.1:3080/api',
     }))).toEqual([
-      '/tmp/dsh.js', 'plugin', '--profile', 'web', 'up', '@senguoyun/dsh-arkme', '--latest',
+      '--import', 'tsx/esm', '/tmp/dsh.js',
+      'plugin', '--profile', 'web', 'add', '@senguoyun/dsh-arkme@0.1.4',
     ])
-    expect(buildLatestInstallArgs(parsePluginUpdaterPlan({
+    expect(buildTargetInstallArgs(parsePluginUpdaterPlan({
       ...base,
       previousSpec: 'link:/tmp/plugin',
       healthUrl: 'http://127.0.0.1:3080/api',
     }))).toEqual([
-      '/tmp/dsh.js', 'plugin', '--profile', 'web', 'add', '@senguoyun/dsh-arkme@latest',
+      '--import', 'tsx/esm', '/tmp/dsh.js',
+      'plugin', '--profile', 'web', 'add', '@senguoyun/dsh-arkme@0.1.4',
     ])
   })
 
@@ -217,6 +263,7 @@ if (args[0] === 'web') {
       jobId: 'integration-job',
       parentPid: deadParentPid,
       execPath: process.execPath,
+      execArgv: [],
       dshBinPath: fakeDsh,
       restartArgv: [fakeDsh, 'web', '--port', String(port)],
       dshHome: root,
@@ -246,7 +293,7 @@ if (args[0] === 'web') {
       const install = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(install).toMatchObject({ phase: 'succeeded', targetVersion: '0.1.4' })
       const trace = await readFile(tracePath, 'utf8')
-      expect(trace).toContain('"plugin","--profile","web","up","@senguoyun/dsh-arkme","--latest"')
+      expect(trace).toContain('"plugin","--profile","web","add","@senguoyun/dsh-arkme@0.1.4"')
       expect(trace).toContain(`"web","--port","${String(port)}"`)
       serverPid = Number(await readFile(pidPath, 'utf8'))
 

@@ -16,6 +16,7 @@ export interface PluginUpdaterPlan {
   jobId: string
   parentPid: number
   execPath: string
+  execArgv: string[]
   dshBinPath: string
   restartArgv: string[]
   dshHome: string
@@ -34,11 +35,19 @@ function nonEmptyString(value: unknown, maxLength = 4096): string | undefined {
   return normalized !== '' && normalized.length <= maxLength ? normalized : undefined
 }
 
+function stringArray(value: unknown, options: { allowEmpty?: boolean } = {}): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const result = value.map(item => nonEmptyString(item))
+  if (result.some(item => item === undefined) || (!options.allowEmpty && result.length === 0)) return undefined
+  return result as string[]
+}
+
 export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
   if (value === null || typeof value !== 'object') throw new Error('updater plan must be an object')
   const source = value as Record<string, unknown>
   const jobId = nonEmptyString(source.jobId, 128)
   const execPath = nonEmptyString(source.execPath)
+  const execArgv = stringArray(source.execArgv, { allowEmpty: true })
   const dshBinPath = nonEmptyString(source.dshBinPath)
   const dshHome = nonEmptyString(source.dshHome)
   const profileName = nonEmptyString(source.profileName, 64)
@@ -48,13 +57,12 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
   const stateDirectory = nonEmptyString(source.stateDirectory)
   const healthUrl = nonEmptyString(source.healthUrl)
   const logPath = nonEmptyString(source.logPath)
-  const restartArgv = Array.isArray(source.restartArgv)
-    ? source.restartArgv.map(value => nonEmptyString(value)).filter((value): value is string => value !== undefined)
-    : []
-  if (source.schemaVersion !== 1 || jobId === undefined || execPath === undefined || dshBinPath === undefined
+  const restartArgv = stringArray(source.restartArgv)
+  if (source.schemaVersion !== 1 || jobId === undefined || execPath === undefined || execArgv === undefined
+    || dshBinPath === undefined
     || dshHome === undefined || profileName === undefined || previousVersion === undefined
     || previousSpec === undefined || targetVersion === undefined || stateDirectory === undefined || healthUrl === undefined
-    || logPath === undefined || restartArgv.length === 0 || source.parentPid === undefined
+    || logPath === undefined || restartArgv === undefined || source.parentPid === undefined
     || typeof source.parentPid !== 'number' || !Number.isSafeInteger(source.parentPid) || source.parentPid <= 0) {
     throw new Error('updater plan is incomplete')
   }
@@ -67,6 +75,7 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
     jobId,
     parentPid: source.parentPid,
     execPath,
+    execArgv,
     dshBinPath,
     restartArgv,
     dshHome,
@@ -99,27 +108,32 @@ function isLocalPackageSpec(spec: string): boolean {
   return /^(?:link:|file:|git\+|https?:)/.test(spec)
 }
 
-export function buildLatestInstallArgs(plan: PluginUpdaterPlan): string[] {
-  if (isLocalPackageSpec(plan.previousSpec)) {
-    return [plan.dshBinPath, 'plugin', '--profile', plan.profileName, 'add', `${PACKAGE_NAME}@latest`]
-  }
+export function buildTargetInstallArgs(plan: PluginUpdaterPlan): string[] {
   return [
+    ...plan.execArgv,
     plan.dshBinPath,
     'plugin',
     '--profile',
     plan.profileName,
-    'up',
-    PACKAGE_NAME,
-    '--latest',
+    'add',
+    `${PACKAGE_NAME}@${plan.targetVersion}`,
   ]
 }
 
 function versionInstallArgs(plan: PluginUpdaterPlan, version: string): string[] {
-  return [plan.dshBinPath, 'plugin', '--profile', plan.profileName, 'up', `${PACKAGE_NAME}@${version}`]
+  return [
+    ...plan.execArgv,
+    plan.dshBinPath,
+    'plugin',
+    '--profile',
+    plan.profileName,
+    'add',
+    `${PACKAGE_NAME}@${version}`,
+  ]
 }
 
-function runLatestInstall(plan: PluginUpdaterPlan): boolean {
-  const result = spawnSync(plan.execPath, buildLatestInstallArgs(plan), {
+function runTargetInstall(plan: PluginUpdaterPlan): boolean {
+  const result = spawnSync(plan.execPath, buildTargetInstallArgs(plan), {
     env: { ...process.env, DSH_HOME: plan.dshHome },
     stdio: 'inherit',
     shell: false,
@@ -130,7 +144,7 @@ function runLatestInstall(plan: PluginUpdaterPlan): boolean {
 function runRollbackInstall(plan: PluginUpdaterPlan): boolean {
   const localSpec = isLocalPackageSpec(plan.previousSpec)
   const args = localSpec
-    ? [plan.dshBinPath, 'plugin', '--profile', plan.profileName, 'add', plan.previousSpec]
+    ? [...plan.execArgv, plan.dshBinPath, 'plugin', '--profile', plan.profileName, 'add', plan.previousSpec]
     : versionInstallArgs(plan, plan.previousVersion)
   const result = spawnSync(plan.execPath, args, {
     env: { ...process.env, DSH_HOME: plan.dshHome },
@@ -244,7 +258,7 @@ export async function runPluginUpdater(planPath: string): Promise<void> {
   }
 
   await writePhase(store, plan, 'installing', `正在安装 ${plan.targetVersion}…`)
-  if (!runLatestInstall(plan)) {
+  if (!runTargetInstall(plan)) {
     await writePhase(store, plan, 'failed', '新版本安装失败，正在恢复旧版本…')
     await rollbackAndRestart(plan, store, '新版本安装失败，已自动恢复旧版本。')
     return
