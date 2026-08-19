@@ -18,6 +18,11 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'
+  | 'plugin.update.status'
+  | 'plugin.update.check'
+  | 'plugin.update.acknowledge'
+  | 'plugin.update.install'
+  | 'plugin.update.install-status'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(

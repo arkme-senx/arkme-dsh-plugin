@@ -7,6 +7,7 @@ import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
+import { ArkmePluginUpdateManager, validateUpdateRegistryOrigin } from './plugin-update.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmeService } from './arkme-service.js'
 import { ArkmeStateStore } from './state-store.js'
@@ -35,6 +36,11 @@ export interface Config {
   keychainServicePrefix: string
   allowNonLoopback: boolean
   allowProduction: boolean
+  updateCheckEnabled: boolean
+  updateChannel: 'stable' | 'next'
+  updateRegistryUrl: string
+  updateCheckIntervalHours: number
+  updateAllowLocalInstall: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -58,6 +64,11 @@ export const Config: Schema<Config> = Schema.object({
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
   allowNonLoopback: Schema.boolean().default(false),
   allowProduction: Schema.boolean().default(false),
+  updateCheckEnabled: Schema.boolean().default(true),
+  updateChannel: Schema.union(['stable', 'next']).default('stable'),
+  updateRegistryUrl: Schema.string().default('https://registry.npmjs.org'),
+  updateCheckIntervalHours: Schema.number().min(1).max(168).default(12),
+  updateAllowLocalInstall: Schema.boolean().default(false),
 })
 
 export const name = 'dsh-arkme'
@@ -79,11 +90,26 @@ export function apply(ctx: Context, config: Config): void {
   const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService(config, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const updateManager = new ArkmePluginUpdateManager({
+    enabled: config.updateCheckEnabled,
+    channel: config.updateChannel,
+    registryUrl: config.updateRegistryUrl,
+    intervalMs: config.updateCheckIntervalHours * 60 * 60_000,
+    stateDirectory,
+    logger: ctx.logger,
+    installRuntime: {
+      dshHome,
+      profileName: 'web',
+      healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
+      allowLocalInstall: config.updateAllowLocalInstall,
+    },
+  })
   ctx.provide('arkmeData', service)
   registerArkmeTools(ctx, service, config.toolProfile)
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
+    updateManager,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
@@ -95,6 +121,7 @@ export function apply(ctx: Context, config: Config): void {
     localDatabase.close()
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
+  ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: config.routePath,
@@ -148,6 +175,7 @@ function validateConfig(ctx: Context, config: Config): void {
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(config.geetestCaptchaId)) {
     throw new Error('dsh-arkme: geetestCaptchaId is invalid')
   }
+  validateUpdateRegistryOrigin(config.updateRegistryUrl)
   for (const [label, raw] of [
     ['authBaseUrl', config.authBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
@@ -208,6 +236,10 @@ export type {
   ArkmeSelfSummary,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
+  ArkmePluginUpdateAvailability,
+  ArkmePluginUpdateLevel,
+  ArkmePluginUpdateNotice,
+  ArkmePluginUpdateStatus,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeWorldPublishResult,

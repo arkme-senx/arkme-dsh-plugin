@@ -20,3 +20,8 @@
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
         allowNonLoopback: false
         allowProduction: true
+        updateCheckEnabled: true
+        updateChannel: stable
+        updateRegistryUrl: https://registry.npmjs.org
+        updateCheckIntervalHours: 12
+        updateAllowLocalInstall: false

@@ -8,6 +8,7 @@ import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { arkmePluginUpdateStore } from './plugin-update-store.js'
 
 const styles: Record<string, CSSProperties> = {
   root: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' },
@@ -22,11 +23,14 @@ const styles: Record<string, CSSProperties> = {
 export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
+  const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
   const currentSession = props.useSessions(state => state.current)
   const [unreadCount, setUnreadCount] = useState(0)
   const hasOpened = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const auth = authState.auth
+  const updateInstalling = updateState.install !== undefined
+    && ['preparing', 'installing', 'restarting'].includes(updateState.install.phase)
   if (ui.open) hasOpened.current = true
   useLayoutEffect(() => {
     const slot = rootRef.current?.parentElement
@@ -129,6 +133,9 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
       authenticated={auth?.status === 'authenticated'}
       authPending={!authState.checked || authState.busy}
       unreadCount={unreadCount}
+      {...(updateState.status === undefined ? {} : { updateStatus: updateState.status })}
+      updateBusy={updateState.busy || updateInstalling}
+      onUpdate={() => { void arkmePluginUpdateStore.install() }}
     />
     </div>
     {ui.surfaceOpen && <ArkmeConversationSurface

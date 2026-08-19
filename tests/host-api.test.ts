@@ -110,3 +110,44 @@ describe('Arko Host API dispatch', () => {
     expect(service.arkoCancel).toHaveBeenCalledWith(1024, 2048, 'run-1')
   })
 })
+
+describe('plugin update Host API dispatch', () => {
+  it('reads and checks update state without touching the Arkme service', async () => {
+    const updates = {
+      status: vi.fn(async () => ({ availability: 'current' })),
+      check: vi.fn(async () => ({ availability: 'available' })),
+      acknowledge: vi.fn(async () => ({ acknowledged: true })),
+      install: vi.fn(async () => ({ phase: 'preparing' })),
+      installStatus: vi.fn(async () => ({ phase: 'installing' })),
+    }
+    const service = {} as never
+
+    await expect(dispatchArkmeHostOperation(service, 'plugin.update.status', {}, updates as never))
+      .resolves.toEqual({ availability: 'current' })
+    await expect(dispatchArkmeHostOperation(service, 'plugin.update.check', {}, updates as never))
+      .resolves.toEqual({ availability: 'available' })
+    expect(updates.check).toHaveBeenCalledWith({ manual: true })
+    await expect(dispatchArkmeHostOperation(service, 'plugin.update.acknowledge', {
+      snoozeHours: 12,
+      latestVersion: 'attacker-controlled',
+    }, updates as never)).resolves.toEqual({ acknowledged: true })
+    expect(updates.acknowledge).toHaveBeenCalledWith(12)
+    await expect(dispatchArkmeHostOperation(service, 'plugin.update.install', {}, updates as never))
+      .resolves.toEqual({ phase: 'preparing' })
+    await expect(dispatchArkmeHostOperation(service, 'plugin.update.install-status', {}, updates as never))
+      .resolves.toEqual({ phase: 'installing' })
+  })
+
+  it('rejects invalid snooze values and missing update runtime', async () => {
+    const updates = {
+      status: vi.fn(), check: vi.fn(), acknowledge: vi.fn(), install: vi.fn(), installStatus: vi.fn(),
+    }
+    await expect(dispatchArkmeHostOperation({} as never, 'plugin.update.acknowledge', {
+      snoozeHours: 25,
+    }, updates as never)).rejects.toMatchObject({ code: 'plugin-update-snooze-invalid' })
+    expect(updates.acknowledge).not.toHaveBeenCalled()
+
+    await expect(dispatchArkmeHostOperation({} as never, 'plugin.update.status', {}))
+      .rejects.toMatchObject({ code: 'plugin-update-unavailable' })
+  })
+})

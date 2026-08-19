@@ -30,6 +30,18 @@ DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 
 独立 UI 插件可通过 `@senguoyun/dsh-arkme/sdk` 使用同源 Provider；完整接口、Host 注入方式和 Consumer 约束见 [Consumer Plugin Contract](docs/consumer-plugin-contract.md)。
 
+## 插件更新提醒
+
+插件 Host 默认每 12 小时从 npm Registry 检查一次稳定版本，不依赖 Arkme 登录，也不会发送账号、Token、设备 ID 或业务数据。发现新版本后，侧边栏 Arkme 行会直接出现紧凑“更新”按钮；设置页账号行标题显示当前安装版本，例如 `Arkme v0.1.2`。离线或检查失败时保留最后一次成功结果，不会把失败误报成“已是最新版”。
+
+Registry 安装的插件会提供“立即更新并重启”：当前 DSH 启动一个独立 updater 后退出，updater 调用 DSH 官方插件 CLI、按原参数重启并执行健康检查；新版本启动失败时自动恢复旧版本。本地 `link:`/`file:` 开发安装不会被覆盖，只显示下面的固定兜底命令：
+
+```sh
+dsh plugin --profile web up @senguoyun/dsh-arkme --latest
+```
+
+手动命令执行成功后仍需重启 `dsh web`。应用内更新会自动重启并让页面重新连接。使用本地路径开发插件时，可以在 profile 覆盖层设置 `updateCheckEnabled: false`；企业镜像可通过 `updateRegistryUrl` 配置无账号、密码和路径的 HTTPS Registry Origin。
+
 ## 私聊主动呼叫
 
 主动呼叫仅支持一对一私聊，不注册来电 UI，也不提供接听或拒接入口。人工入口只出现在私聊标题后；模型工具必须先通过 `arkme_sources_list(root)` 获得精确的 `private_chat` `source_ref`，并且只有当前对话中的明确用户请求才能授权 `arkme_call_start`。
@@ -44,6 +56,7 @@ Host 会重新校验账号绑定的私聊引用并按次获取短期呼叫凭据
 - 写入和发送只响应当前用户的明确请求。
 - Token、系统凭据存储、SQLite、签名 URL 和 OSS 凭据不向 Consumer 或模型暴露。
 - 呼叫凭据仅在内置 Host/runtime 链路短暂流转；公开 Browser SDK 不提供 prepare 方法。
+- 插件更新状态只提供给内置 UI；公开 Consumer SDK 和模型工具不能检查、确认或执行插件更新。
 - `sourceRef`、图片引用和游标均为账号绑定的不透明值，切换账号后必须丢弃。
 
 ## 本地开发
