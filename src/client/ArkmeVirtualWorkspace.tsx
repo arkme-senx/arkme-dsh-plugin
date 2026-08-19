@@ -278,6 +278,28 @@ export function expandAncestorsForReveal(
   return next
 }
 
+export function expandTopicFromRowClick(
+  row: ArkmeSourceTreeRow,
+  collapsedSourceRefs: Set<string>,
+): Set<string> {
+  if (!row.hasChildren || row.expanded || !collapsedSourceRefs.has(row.source.sourceRef)) {
+    return collapsedSourceRefs
+  }
+  const next = new Set(collapsedSourceRefs)
+  next.delete(row.source.sourceRef)
+  return next
+}
+
+export function toggleTopicCollapsedState(
+  sourceRef: string,
+  collapsedSourceRefs: ReadonlySet<string>,
+): Set<string> {
+  const next = new Set(collapsedSourceRefs)
+  if (next.has(sourceRef)) next.delete(sourceRef)
+  else next.add(sourceRef)
+  return next
+}
+
 export function ArkmeTopicCreateFooter({ onCreate }: { onCreate: () => void }) {
   return <div style={styles.topicCreateFooter}>
     <button type="button" style={styles.topicCreateButton} onClick={onCreate}>新建主题</button>
@@ -522,13 +544,12 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
   }
+  const selectTopicSource = (row: ArkmeSourceTreeRow) => {
+    setCollapsedSourceRefs(current => expandTopicFromRowClick(row, current))
+    selectSource(row.source)
+  }
   const toggleSource = (sourceRef: string) => {
-    setCollapsedSourceRefs(current => {
-      const next = new Set(current)
-      if (next.has(sourceRef)) next.delete(sourceRef)
-      else next.add(sourceRef)
-      return next
-    })
+    setCollapsedSourceRefs(current => toggleTopicCollapsedState(sourceRef, current))
   }
   const openTopicCreate = (parent: ArkmeSourceItem | null) => {
     setTopicCreateParent(parent)
@@ -658,7 +679,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           }}
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onToggle={() => { toggleSource(source.sourceRef) }}
-          onSelect={() => { selectSource(source) }}
+          onSelect={() => { selectTopicSource(row) }}
           onCreateChild={() => { openTopicCreate(source) }}
         />
       })}

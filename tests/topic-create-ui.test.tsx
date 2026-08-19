@@ -6,7 +6,9 @@ import {
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
+  expandTopicFromRowClick, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
+import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
 
 function renderDialog(mode: 'topic' | 'child'): string {
@@ -99,5 +101,29 @@ describe('topic create UI', () => {
     ], 'created', collapsed)
 
     expect([...expanded]).toEqual(['unrelated'])
+  })
+
+  it('expands a collapsed topic from its row without collapsing an expanded topic', () => {
+    const collapsed = new Set(['topic-parent', 'other'])
+    const expanded = expandTopicFromRowClick({ ...topicRow, expanded: false }, collapsed)
+
+    expect([...expanded]).toEqual(['other'])
+    expect(expandTopicFromRowClick(topicRow, expanded)).toBe(expanded)
+  })
+
+  it('preserves every nested expansion state when an outer topic is collapsed and reopened', () => {
+    const nestedSources: ArkmeSourceItem[] = [
+      { ...topicRow.source, sourceRef: 'outer' },
+      { ...topicRow.source, sourceRef: 'inner', parentSourceRef: 'outer' },
+      { ...topicRow.source, sourceRef: 'leaf', parentSourceRef: 'inner' },
+    ]
+    const roots = buildArkmeSourceTree(nestedSources)
+    const outerCollapsed = toggleTopicCollapsedState('outer', new Set())
+    const outerReopened = toggleTopicCollapsedState('outer', outerCollapsed)
+
+    expect(flattenVisibleArkmeSourceTree(roots, outerCollapsed).map(row => row.source.sourceRef))
+      .toEqual(['outer'])
+    expect(flattenVisibleArkmeSourceTree(roots, outerReopened).map(row => row.source.sourceRef))
+      .toEqual(['outer', 'inner', 'leaf'])
   })
 })
