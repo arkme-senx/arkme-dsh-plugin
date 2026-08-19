@@ -53,14 +53,16 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 20, cursor: 'pointer',
   },
   sortControl: {
-    position: 'relative', flex: 'none', display: 'inline-flex', alignItems: 'center', color: colors.secondary,
+    position: 'relative', height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center',
+    color: 'var(--dsw-alias-label-secondary, #6f747b)',
   },
   sortTrigger: {
-    height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-    padding: '0 4px 0 8px', border: 0, borderRadius: 24, outline: 0,
-    background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+    height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+    padding: 0, border: 0, borderRadius: 6, outline: 0,
+    background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, fontWeight: 400,
+    lineHeight: '20px', cursor: 'pointer',
   },
-  sortArrow: { width: 10, height: 10, flex: 'none', pointerEvents: 'none' },
+  sortArrow: { width: 10, height: 10, flex: 'none', marginTop: 1, pointerEvents: 'none' },
   sortMenu: {
     position: 'absolute', zIndex: 30, top: 30, right: -8, width: 80, padding: 3,
     boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-inverted, #e2e4e7)',

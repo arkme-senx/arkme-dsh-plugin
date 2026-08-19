@@ -36,7 +36,10 @@ describe('topic create UI', () => {
 
     expect(control).toContain('aria-haspopup="menu"')
     expect(control).toContain('aria-expanded="false"')
-    expect(control).toContain('gap:4px')
+    expect(control).toContain('height:30px')
+    expect(control).toContain('gap:5px')
+    expect(control).toContain('font-size:12px')
+    expect(control).toContain('font-weight:400')
     expect(control).toContain('默认')
     expect(menu).toContain('role="menu"')
     expect(menu).toContain('width:80px')
