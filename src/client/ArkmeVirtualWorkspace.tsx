@@ -14,8 +14,9 @@ import {
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import {
-  arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort,
+  type ArkmeSourceSort,
 } from './source-list.js'
+import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree } from './source-tree.js'
 
 export interface ArkmeNavigationProps {
   wide?: boolean
@@ -97,32 +98,28 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', left: 10, top: 17, width: 18, height: 14, borderRadius: 7,
     background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
   },
-  sourceCard: {
-    width: 'calc(100% - 16px)', minHeight: 56, margin: '6px 8px 0', padding: '8px 10px',
-    display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 3, boxSizing: 'border-box',
-    overflow: 'hidden', border: 0, borderRadius: 8,
-    background: 'var(--dsw-alias-fill-secondary, #f4f4f5)', color: 'inherit',
-    textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  topicRow: {
+    position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
+    display: 'flex', alignItems: 'center', boxSizing: 'border-box', overflow: 'hidden',
+    borderRadius: 7, background: 'transparent', color: 'inherit',
   },
-  sourceCardActive: {
-    background: 'var(--dsw-alias-fill-tertiary, #e9f4ee)', boxShadow: `inset 3px 0 ${colors.accent}`,
+  topicActive: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
+  topicGuide: { position: 'absolute', top: 0, bottom: 0, width: 1, background: colors.border, pointerEvents: 'none' },
+  topicLead: {
+    position: 'relative', zIndex: 1, width: 30, height: 38, flex: 'none', display: 'inline-flex',
+    alignItems: 'center', justifyContent: 'center', padding: 0, border: 0, background: 'transparent',
+    color: colors.caption, cursor: 'default', font: 'inherit',
   },
-  sourceCardName: {
-    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    fontSize: 14, lineHeight: '20px', fontWeight: 400,
+  topicToggle: { cursor: 'pointer' },
+  topicChevron: { display: 'inline-block', fontSize: 17, lineHeight: 1, transformOrigin: '50% 50%' },
+  topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
+  topicSelect: {
+    position: 'relative', zIndex: 1, minWidth: 0, minHeight: 38, flex: 1, display: 'flex',
+    alignItems: 'center', gap: 10, padding: '0 10px 0 0', border: 0, background: 'transparent',
+    color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
-  sourceCardMeta: {
-    minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, color: colors.secondary,
-    fontSize: 12, lineHeight: '17px',
-  },
-  sourceCardCount: {
-    minWidth: 18, height: 17, padding: '0 4px', boxSizing: 'border-box', borderRadius: 4,
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none',
-    background: 'var(--dsw-alias-fill-tertiary, #e9eaec)', color: colors.secondary,
-  },
-  sourceCardPreview: {
-    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-  },
+  topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
+  topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
@@ -190,10 +187,18 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     initialCache?.sources[initialCache.directory] ?? [],
   )
+  const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('latest')
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
-  const sortedSources = useMemo(() => sortArkmeSources(sources, sourceSort), [sourceSort, sources])
+  const sourceTree = useMemo(
+    () => sortArkmeSourceTree(buildArkmeSourceTree(sources), sourceSort),
+    [sourceSort, sources],
+  )
+  const visibleSourceRows = useMemo(
+    () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
+    [collapsedSourceRefs, sourceTree],
+  )
   const bindingRequired = auth?.status === 'binding-required'
 
   const persistCache = useCallback((patch: {
@@ -316,6 +321,23 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       onActivateSurface?.()
     }
   }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
+  useEffect(() => {
+    const sourcesByRef = new Map(sources.map(source => [source.sourceRef, source]))
+    setCollapsedSourceRefs(current => {
+      const next = new Set([...current].filter(sourceRef => sourcesByRef.has(sourceRef)))
+      let parentRef = ui.selectedSource === undefined
+        ? undefined
+        : sourcesByRef.get(ui.selectedSource.sourceRef)?.parentSourceRef
+      const visited = new Set<string>()
+      while (parentRef !== undefined && !visited.has(parentRef)) {
+        visited.add(parentRef)
+        next.delete(parentRef)
+        parentRef = sourcesByRef.get(parentRef)?.parentSourceRef
+      }
+      if (next.size === current.size && [...next].every(sourceRef => current.has(sourceRef))) return current
+      return next
+    })
+  }, [sources, ui.selectedSource])
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
@@ -328,6 +350,14 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     arkmeUi.selectSource(source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
+  }
+  const toggleSource = (sourceRef: string) => {
+    setCollapsedSourceRefs(current => {
+      const next = new Set(current)
+      if (next.has(sourceRef)) next.delete(sourceRef)
+      else next.add(sourceRef)
+      return next
+    })
   }
   const joinedOfficialCommunity = async (source: ArkmeSourceItem): Promise<void> => {
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
@@ -375,7 +405,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <div
-      style={styles.list} role={directory === 'send_to_self' ? 'listbox' : 'tree'}
+      style={styles.list} role="tree"
       aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
@@ -419,21 +449,31 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         })}
       </>}
 
-      {directory === 'send_to_self' && sortedSources.map(source => {
+      {directory === 'send_to_self' && visibleSourceRows.map(row => {
+        const source = row.source
         const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
-        const time = arkmeSourceTimeLabel(source.activeAtMillis)
-        const preview = [time, source.latestPreview].filter(value => value !== undefined && value !== '').join(' · ')
-        return <button
-          key={source.sourceRef} type="button" role="option" aria-selected={selected}
-          style={{ ...styles.sourceCard, ...(selected ? styles.sourceCardActive : {}) }}
-          onClick={() => { selectSource(source) }}
+        return <div
+          key={source.sourceRef} role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
+          aria-expanded={row.hasChildren ? row.expanded : undefined}
+          style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}) }}
         >
-          <span style={styles.sourceCardName}>{source.displayName}</span>
-          {(source.recordCount !== undefined || preview !== '') && <span style={styles.sourceCardMeta}>
-            {source.recordCount !== undefined && <span style={styles.sourceCardCount}>{source.recordCount}</span>}
-            {preview !== '' && <span style={styles.sourceCardPreview}>{preview}</span>}
-          </span>}
-        </button>
+          {Array.from({ length: row.depth }, (_, index) => <span
+            key={index} aria-hidden style={{ ...styles.topicGuide, left: 21 + index * 20 }}
+          />)}
+          {row.hasChildren ? <button
+            type="button"
+            style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 6 + row.depth * 20 }}
+            aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
+            title={row.expanded ? '收起子主题' : '展开子主题'}
+            onClick={() => { toggleSource(source.sourceRef) }}
+          ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
+            aria-hidden style={{ ...styles.topicLead, marginLeft: 6 + row.depth * 20 }}
+          ><span style={styles.topicDot} /></span>}
+          <button type="button" style={styles.topicSelect} onClick={() => { selectSource(source) }}>
+            <span style={styles.topicName}>{source.displayName}</span>
+            {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
+          </button>
+        </div>
       })}
 
       {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}

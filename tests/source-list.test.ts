@@ -21,7 +21,7 @@ function source(
 }
 
 describe('Arkme send-to-self source list', () => {
-  it('sorts every parent and child as an independent row', () => {
+  it('sorts a sibling snapshot without mutating its input', () => {
     const sources = [
       source('parent', 'Beta', 20, 5),
       source('child', 'Alpha', 30, 1, 'parent'),
