@@ -7,6 +7,7 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
     && left.unreadCount === right.unreadCount && left.isMuted === right.isMuted
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
+    && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)
 }
 
 export interface ArkmeUiState {

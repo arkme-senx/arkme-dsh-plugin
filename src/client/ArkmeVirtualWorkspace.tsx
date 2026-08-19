@@ -700,6 +700,19 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory, ui.chatRevision])
   useEffect(() => {
+    if (!authenticated || directory !== 'root') return
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = (): void => {
+      timer = setTimeout(() => {
+        clearArkmeAvatarCache()
+        void loadDirectory('root').finally(() => { if (active) schedule() })
+      }, 10 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 1000))
+    }
+    schedule()
+    return () => { active = false; clearTimeout(timer) }
+  }, [authenticated, directory, loadDirectory])
+  useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
     arkmeArkoProfileStore.activateUser(userId)
     if (userId === undefined) {
@@ -943,6 +956,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
             <ArkmeSourceAvatar
               {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
               {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
+              {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
             />
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
