@@ -8,12 +8,14 @@ export interface ArkmeTopicCreateDialogProps {
   onConfirm: (title: string) => void
 }
 
+export const ARKME_TOPIC_CREATE_ACTION_COLOR = '#176d3d'
+
 const colors = {
   text: 'var(--dsw-alias-label-primary, #242629)',
   secondary: 'var(--dsw-alias-label-secondary, #6f747b)',
   caption: 'var(--dsw-alias-label-caption, #a3a8ae)',
   border: 'var(--dsw-alias-border-l1, #dfe2e5)',
-  action: 'var(--dsw-alias-brand-primary, #20c66a)',
+  action: ARKME_TOPIC_CREATE_ACTION_COLOR,
   surface: 'var(--dsw-specific-dialog-fill, #fff)',
 }
 

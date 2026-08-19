@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeTopicCreateDialog } from '../src/client/ArkmeTopicCreateDialog.js'
+import {
+  ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
+} from '../src/client/ArkmeTopicCreateDialog.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
@@ -38,6 +40,7 @@ describe('topic create UI', () => {
     expect(root).toContain('确认')
     expect(`${child}${root}`).not.toContain('话题磁铁')
     expect(`${child}${root}`).toContain('#a7dfbd')
+    expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#176d3d')
   })
 
   it('shows the child-topic shortcut only for a hovered topic row', () => {
