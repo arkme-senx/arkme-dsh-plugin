@@ -17,7 +17,7 @@ describe('published update metadata', () => {
         level: 'normal',
         title: 'Arkme 插件更新',
         summary: '新增插件版本检查、应用内更新、自动重启与失败回滚。',
-        publishedAt: '2026-08-19T00:00:00.000Z',
+        publishedAt: '2026-08-19T07:46:49.000Z',
         releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
       },
     })
