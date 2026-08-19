@@ -1,0 +1,89 @@
+import { describe, expect, it, vi } from 'vitest'
+import { businessToolModules } from '../src/tools/business/index.js'
+import type { ArkmeCoreToolPorts } from '../src/tools/ports/index.js'
+import { SecretValue } from '../src/secret-value.js'
+import { ARKME_BUSINESS_TOOL_PROMPT } from '../src/tools/prompts/business.js'
+
+function moduleFor(name: string) {
+  return businessToolModules.find(module => module.meta.toolName === name)
+}
+
+function fakePorts() {
+  return {
+    listBots: vi.fn(async () => ({ items: [{
+      botRef: 'arkme-bot-v1.opaque', name: '总结', provider: 'openclaw' as const,
+      description: '总结群聊', status: 'offline' as const, directChatAvailable: true,
+    }] })),
+    createBot: vi.fn(async () => ({
+      bot: {
+        botRef: 'arkme-bot-v1.created', name: '八卦雷达', provider: 'openclaw' as const,
+        description: '高亮八卦', status: 'offline' as const, directChatAvailable: true,
+      },
+      secret: new SecretValue('jbot_full_secret'),
+    })),
+    listGroupBots: vi.fn(async (groupSourceRef: string) => ({
+      groupSourceRef, displayName: '研发群', canAddBots: true, items: [],
+    })),
+    addGroupBot: vi.fn(async (groupSourceRef: string, botRef: string) => ({
+      groupSourceRef, botRef, installed: true,
+    })),
+    removeGroupBot: vi.fn(async (groupSourceRef: string, botRef: string) => ({
+      groupSourceRef, botRef, installed: false,
+    })),
+  } as unknown as ArkmeCoreToolPorts
+}
+
+describe('Arkme Bot tools', () => {
+  it('declares the minimal Bot catalog with explicit grants on every write', () => {
+    expect(['arkme_bots_list', 'arkme_group_bots_list'].map(moduleFor))
+      .toSatisfy(modules => modules.every(module => module?.meta.effect === 'read'))
+    expect(['arkme_bot_create', 'arkme_group_bot_add', 'arkme_group_bot_remove'].map(moduleFor))
+      .toSatisfy(modules => modules.every(module => module?.meta.effect === 'write'
+        && module.meta.grant === 'explicit-user-write'))
+  })
+
+  it('creates an OpenClaw Bot without serializing its token or raw owner ID', async () => {
+    const ports = fakePorts()
+    const module = moduleFor('arkme_bot_create')
+    expect(module).toBeDefined()
+    const tool = module!.create(ports)
+
+    const output = await tool.execute(
+      { name: '八卦雷达', description: '高亮八卦' },
+      { callId: 'bot-create-1', signal: new AbortController().signal } as never,
+    ) as string
+
+    expect(ports.createBot).toHaveBeenCalledWith(
+      { name: '八卦雷达', description: '高亮八卦' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(output).toContain('arkme-bot-v1.created')
+    expect(output).not.toContain('jbot_')
+    expect(output).not.toContain('secret')
+    expect(output).not.toContain('bot_id')
+  })
+
+  it('passes only opaque references through group Bot tools', async () => {
+    const ports = fakePorts()
+    const exec = { callId: 'group-bot-1', signal: new AbortController().signal } as never
+    const list = moduleFor('arkme_group_bots_list')!.create(ports)
+    const add = moduleFor('arkme_group_bot_add')!.create(ports)
+    const remove = moduleFor('arkme_group_bot_remove')!.create(ports)
+
+    await list.execute({ group_source_ref: 'arkme-source-v1.group' }, exec)
+    await add.execute({ group_source_ref: 'arkme-source-v1.group', bot_ref: 'arkme-bot-v1.bot' }, exec)
+    await remove.execute({ group_source_ref: 'arkme-source-v1.group', bot_ref: 'arkme-bot-v1.bot' }, exec)
+
+    expect(ports.listGroupBots).toHaveBeenCalledWith('arkme-source-v1.group', expect.any(Object))
+    expect(ports.addGroupBot).toHaveBeenCalledWith('arkme-source-v1.group', 'arkme-bot-v1.bot', expect.any(Object))
+    expect(ports.removeGroupBot).toHaveBeenCalledWith('arkme-source-v1.group', 'arkme-bot-v1.bot', expect.any(Object))
+  })
+
+  it('requires explicit authorization and reconciliation for Bot writes', () => {
+    expect(ARKME_BUSINESS_TOOL_PROMPT).toContain('arkme_bots_list')
+    expect(ARKME_BUSINESS_TOOL_PROMPT).toContain('arkme_bot_create')
+    expect(ARKME_BUSINESS_TOOL_PROMPT).toContain('arkme_group_bot_add')
+    expect(ARKME_BUSINESS_TOOL_PROMPT).toContain('explicit human request')
+    expect(ARKME_BUSINESS_TOOL_PROMPT).toContain('Never automatically retry Bot creation')
+  })
+})

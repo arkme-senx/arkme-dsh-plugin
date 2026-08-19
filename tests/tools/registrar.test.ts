@@ -70,7 +70,7 @@ async function mountArkmeTools(ctx: Context, profile: ArkmeToolProfile) {
 }
 
 describe('registerArkmeTools', () => {
-  it('registers the unchanged core business surface and matching prompt', async () => {
+  it('registers the core business surface and matching prompt', async () => {
     const ctx = await setup()
     await mountArkmeTools(ctx, 'business')
 
@@ -86,6 +86,11 @@ describe('registerArkmeTools', () => {
       'arkme_arko_cancel',
       'arkme_records_search',
       'arkme_record_create',
+      'arkme_bots_list',
+      'arkme_bot_create',
+      'arkme_group_bots_list',
+      'arkme_group_bot_add',
+      'arkme_group_bot_remove',
       'arkme_world_recent',
       'arkme_world_publish_text',
       'arkme_recording_days_list',
