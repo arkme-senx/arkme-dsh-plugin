@@ -32,12 +32,14 @@ export interface ArkmeChatRealtimeNotice {
 export interface ArkmeChatRealtimeRuntimeOptions {
   imBaseUrl: string
   readSession(): Promise<ArkmeSessionCredentials | undefined>
+  refreshSession?(session: ArkmeSessionCredentials): Promise<ArkmeSessionCredentials | undefined>
   fetchImpl?: FetchLike
   connectTimeoutMs?: number
   inactivityTimeoutMs?: number
   leaseDurationMs?: number
   idlePollMs?: number
   retryBaseMs?: number
+  random?: () => number
 }
 
 class ArkmeChatRealtimeAuthError extends Error {}
@@ -115,11 +117,13 @@ export class ArkmeChatRealtimeRuntime {
   private readonly leaseDurationMs: number
   private readonly idlePollMs: number
   private readonly retryBaseMs: number
+  private readonly random: () => number
   private rootController: AbortController | undefined
   private connectionController: AbortController | undefined
   private loop: Promise<void> | undefined
   private revision = 0
   private connected = false
+  private lastAcceptedAccessToken: string | undefined
   private lastEventAtMillis: number | undefined
   private readonly seenEventUids = new Set<string>()
   private readonly listeners = new Set<(notice: ArkmeChatRealtimeNotice) => void>()
@@ -131,6 +135,7 @@ export class ArkmeChatRealtimeRuntime {
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS
     this.idlePollMs = options.idlePollMs ?? DEFAULT_IDLE_POLL_MS
     this.retryBaseMs = options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS
+    this.random = options.random ?? Math.random
   }
 
   start(): () => void {
@@ -175,23 +180,53 @@ export class ArkmeChatRealtimeRuntime {
 
   private async run(signal: AbortSignal): Promise<void> {
     let retryMs = this.retryBaseMs
+    let blockedAccessToken: string | undefined
+    let refreshedButUnacceptedToken: string | undefined
     while (!signal.aborted) {
       const session = await this.options.readSession()
       if (session === undefined) {
         this.connected = false
+        blockedAccessToken = undefined
         await waitFor(this.idlePollMs, signal)
         continue
       }
+      if (blockedAccessToken === session.accessToken) {
+        this.connected = false
+        await waitFor(this.idlePollMs, signal)
+        continue
+      }
+      blockedAccessToken = undefined
       try {
         await this.consume(session, signal)
+        if (this.lastAcceptedAccessToken === session.accessToken) refreshedButUnacceptedToken = undefined
         retryMs = this.retryBaseMs
       } catch (error) {
         if (signal.aborted) break
-        if (error instanceof ArkmeChatRealtimeAuthError) retryMs = this.retryBaseMs
+        if (this.lastAcceptedAccessToken === session.accessToken) refreshedButUnacceptedToken = undefined
+        if (error instanceof ArkmeChatRealtimeAuthError) {
+          if (refreshedButUnacceptedToken === session.accessToken) {
+            blockedAccessToken = session.accessToken
+            refreshedButUnacceptedToken = undefined
+            await waitFor(this.idlePollMs, signal)
+            continue
+          }
+          let refreshed: ArkmeSessionCredentials | undefined
+          try { refreshed = await this.options.refreshSession?.(session) }
+          catch { refreshed = undefined }
+          if (refreshed !== undefined && refreshed.accessToken !== session.accessToken) {
+            refreshedButUnacceptedToken = refreshed.accessToken
+            retryMs = this.retryBaseMs
+            continue
+          }
+          blockedAccessToken = session.accessToken
+          await waitFor(this.idlePollMs, signal)
+          continue
+        }
       } finally {
         this.connected = false
       }
-      await waitFor(retryMs, signal)
+      const jitteredRetryMs = Math.max(1, Math.round(retryMs * (0.8 + this.random() * 0.4)))
+      await waitFor(jitteredRetryMs, signal)
       retryMs = Math.min(MAX_RETRY_MS, Math.max(this.retryBaseMs, retryMs * 2))
     }
   }
@@ -220,6 +255,7 @@ export class ArkmeChatRealtimeRuntime {
       if (response.status === 401 || response.status === 403) throw new ArkmeChatRealtimeAuthError()
       if (!response.ok || response.body === null) throw new Error(`chat SSE returned HTTP ${String(response.status)}`)
       this.connected = true
+      this.lastAcceptedAccessToken = session.accessToken
       this.advanceRevision('reconcile')
       leaseTimer = setTimeout(() => controller.abort(new Error('chat SSE lease rotation')), this.leaseDurationMs)
       const reader = response.body.getReader()

@@ -298,6 +298,22 @@ const ARKME_ID_MIN_LENGTH_DEFAULT = 6
 const ARKME_ID_MIN_LENGTH_STAFF = 5
 const ARKME_ID_MAX_LENGTH = 20
 const ARKME_STAFF_ACCOUNT_TYPE = 2
+const PROFILE_CACHE_TTL_MS = 60_000
+const SOURCE_LIST_CACHE_TTL_MS = 30_000
+const SOURCE_LIST_CACHE_MAX_ENTRIES = 200
+const PUBLIC_PROFILE_CACHE_TTL_MS = 60_000
+const PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS = 30_000
+const PUBLIC_PROFILE_CACHE_MAX_ENTRIES = 4_096
+const IMAGE_CACHE_TTL_MS = 5 * 60_000
+const IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024
+const IMAGE_CACHE_MAX_ENTRIES = 64
+const IMAGE_DOWNLOAD_CONCURRENCY = 4
+const MAX_PROJECTION_RETRIES = 5
+
+interface CacheEntry<T> {
+  value: T
+  expiresAtMillis: number
+}
 const ARKO_AGENT_DIRECT_SESSION_TYPE = 2
 const ARKO_DEFAULT_SESSION_NAME = 'Arko'
 const ARKO_COMPLETED_STATUS = 'completed'
@@ -744,13 +760,38 @@ function allowedSignedImageHost(environment: ArkmeEnvironment, hostname: string)
   return allowed.includes(hostname.toLowerCase())
 }
 
+function cloneSourceList(value: ArkmeSourceList): ArkmeSourceList {
+  return {
+    ...value,
+    items: value.items.map(item => ({
+      ...item,
+      ...(item.avatarRefs === undefined ? {} : { avatarRefs: [...item.avatarRefs] }),
+    })),
+  }
+}
+
+function cloneImageBytes(value: ArkmeImageBytes): ArkmeImageBytes {
+  return { mediaType: value.mediaType, bytes: value.bytes, data: value.data.slice() }
+}
+
 export class ArkmeService {
   private readonly attempts = new Map<string, LoginAttempt>()
   private refreshInFlight: Promise<ArkmeSessionCredentials> | undefined
   private readonly chatRealtime: ArkmeChatRealtimeRuntime
   private readonly chatClientListeners = new Set<(event: ArkmeChatClientEvent) => void>()
   private readonly chatSourceCache = new Map<string, ArkmeSourceItem>()
+  private readonly profileCache = new Map<number, CacheEntry<ArkmeUserProfileSnapshot>>()
+  private readonly profileInFlight = new Map<number, Promise<ArkmeUserProfileSnapshot>>()
+  private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
+  private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
+  private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
+  private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
+  private readonly imageInFlight = new Map<string, Promise<ArkmeImageBytes>>()
+  private imageCacheBytes = 0
+  private activeImageDownloads = 0
+  private readonly imageDownloadWaiters: Array<() => void> = []
   private readonly pendingProjectionSequences = new Map<string, number>()
+  private readonly projectionRetryCounts = new Map<string, number>()
   private projectionTimer: ReturnType<typeof setTimeout> | undefined
   private projectionInFlight = false
   private projectionFailureCount = 0
@@ -770,6 +811,13 @@ export class ArkmeService {
     this.chatRealtime = new ArkmeChatRealtimeRuntime({
       imBaseUrl: config.imBaseUrl,
       readSession: async () => await this.sessionStore.read(),
+      refreshSession: async session => {
+        try { return await this.refreshAccessToken(session) }
+        catch (error) {
+          console.warn('dsh-arkme: Chat SSE credential refresh paused:', safeFailureMessage(error))
+          return undefined
+        }
+      },
       fetchImpl,
     })
   }
@@ -783,6 +831,7 @@ export class ArkmeService {
       if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
       this.projectionTimer = undefined
       this.pendingProjectionSequences.clear()
+      this.projectionRetryCounts.clear()
     }
   }
 
@@ -797,13 +846,13 @@ export class ArkmeService {
 
   chatRealtimeInitialEvent(): ArkmeChatClientEvent {
     const state = this.chatRealtime.state()
-    return { type: 'reconcile', revision: this.chatClientRevision, connected: state.connected }
+    return { type: 'reconcile', revision: this.chatClientRevision, connected: state.connected, refresh: 'if-stale' }
   }
 
   private handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
     if (notice.cause === 'reconcile') {
       this.emitChatClientEvent({
-        type: 'reconcile', revision: this.nextChatClientRevision(), connected: notice.state.connected,
+        type: 'reconcile', revision: this.nextChatClientRevision(), connected: notice.state.connected, refresh: 'force',
       })
       return
     }
@@ -815,6 +864,7 @@ export class ArkmeService {
   private scheduleChatSessionProjection(chatSessionUid: string, latestSequence: number): void {
     const uid = chatSessionUid.trim()
     if (uid === '') return
+    if (latestSequence > (this.pendingProjectionSequences.get(uid) ?? 0)) this.projectionRetryCounts.delete(uid)
     this.pendingProjectionSequences.set(uid, Math.max(latestSequence, this.pendingProjectionSequences.get(uid) ?? 0))
     if (this.projectionTimer !== undefined || this.projectionInFlight) return
     this.projectionTimer = setTimeout(() => {
@@ -829,20 +879,27 @@ export class ArkmeService {
     const pending = [...this.pendingProjectionSequences.entries()].slice(0, 50)
     for (const [uid] of pending) this.pendingProjectionSequences.delete(uid)
     try {
-      await this.refreshChatSessionProjectionBatch(pending)
-      this.projectionFailureCount = 0
+      const failed = await this.refreshChatSessionProjectionBatch(pending)
+      for (const [uid] of pending) {
+        if (!failed.some(([failedUid]) => failedUid === uid)) this.projectionRetryCounts.delete(uid)
+      }
+      if (failed.length === 0) {
+        this.projectionFailureCount = 0
+      } else {
+        this.projectionFailureCount += 1
+        this.requeueProjectionFailures(failed)
+      }
     } catch (error) {
       console.warn('dsh-arkme: Chat incremental projection failed:', safeFailureMessage(error))
       this.projectionFailureCount += 1
-      for (const [uid, sequence] of pending) {
-        this.pendingProjectionSequences.set(uid, Math.max(sequence, this.pendingProjectionSequences.get(uid) ?? 0))
-      }
+      this.requeueProjectionFailures(pending)
     } finally {
       this.projectionInFlight = false
       if (this.pendingProjectionSequences.size > 0 && this.projectionTimer === undefined) {
-        const retryDelay = this.projectionFailureCount === 0
+        const retryDelayBase = this.projectionFailureCount === 0
           ? 200
           : Math.min(5_000, 500 * 2 ** Math.min(3, this.projectionFailureCount - 1))
+        const retryDelay = Math.max(100, Math.round(retryDelayBase * (0.8 + Math.random() * 0.4)))
         this.projectionTimer = setTimeout(() => {
           this.projectionTimer = undefined
           void this.flushChatSessionProjections()
@@ -851,7 +908,22 @@ export class ArkmeService {
     }
   }
 
-  private async refreshChatSessionProjectionBatch(pending: Array<[string, number]>): Promise<void> {
+  private requeueProjectionFailures(failed: Array<[string, number]>): void {
+    for (const [uid, sequence] of failed) {
+      const retries = (this.projectionRetryCounts.get(uid) ?? 0) + 1
+      if (retries > MAX_PROJECTION_RETRIES) {
+        this.projectionRetryCounts.delete(uid)
+        console.warn('dsh-arkme: Chat projection retry exhausted for one session')
+        continue
+      }
+      this.projectionRetryCounts.set(uid, retries)
+      this.pendingProjectionSequences.set(uid, Math.max(sequence, this.pendingProjectionSequences.get(uid) ?? 0))
+    }
+  }
+
+  private async refreshChatSessionProjectionBatch(
+    pending: Array<[string, number]>,
+  ): Promise<Array<[string, number]>> {
     const session = await this.requireSession()
     const sessionUids = pending.map(([uid]) => uid)
     const displayData = await this.authenticatedChatPost<Record<string, unknown>>(
@@ -862,9 +934,10 @@ export class ArkmeService {
       return [stringValue(objectValue(bundle.session).chat_session_uid).trim(), bundle] as const
     }).filter(([uid]) => uid !== ''))
     const tailItemsByUid = new Map<string, ArkmeTimelineItem[]>()
+    const failedUids = new Set<string>()
     for (let offset = 0; offset < pending.length; offset += 3) {
       const chunk = pending.slice(offset, offset + 3)
-      const results = await Promise.all(chunk.map(async ([uid, hintedSequence]) => {
+      const results = await Promise.allSettled(chunk.map(async ([uid, hintedSequence]) => {
         const cached = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
         const afterSequence = Math.max(0, cached?.latestSequence ?? hintedSequence - 1)
         const data = await this.authenticatedChatPost<Record<string, unknown>>(
@@ -872,24 +945,39 @@ export class ArkmeService {
         )
         return [uid, await this.chatTimelineItems(data, session)] as const
       }))
-      for (const [uid, items] of results) tailItemsByUid.set(uid, items)
+      results.forEach((result, index) => {
+        const uid = chunk[index]?.[0]
+        if (uid === undefined) return
+        if (result.status === 'fulfilled') tailItemsByUid.set(result.value[0], result.value[1])
+        else failedUids.add(uid)
+      })
     }
     const updates: Array<{ source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
     for (const [uid] of pending) {
       const bundle = bundles.get(uid)
-      if (bundle === undefined) continue
+      if (bundle === undefined || failedUids.has(uid)) {
+        failedUids.add(uid)
+        continue
+      }
       const cacheKey = `${String(session.userId)}:${uid}`
       const timelineItems = tailItemsByUid.get(uid) ?? []
-      const source = await this.chatSourceFromBundle(bundle, session, this.chatSourceCache.get(cacheKey), timelineItems)
-      this.chatSourceCache.set(cacheKey, source)
-      updates.push({ source, timelineItems })
+      try {
+        const source = await this.chatSourceFromBundle(bundle, session, this.chatSourceCache.get(cacheKey), timelineItems)
+        this.chatSourceCache.set(cacheKey, source)
+        updates.push({ source, timelineItems })
+      } catch {
+        failedUids.add(uid)
+      }
     }
-    if (updates.length === 0) throw new Error('chat display snapshot missing target sessions')
-    this.emitChatClientEvent({
-      type: 'sessions-delta',
-      revision: this.nextChatClientRevision(),
-      updates,
-    })
+    if (updates.length > 0) {
+      this.invalidateSourceListCache(session.userId, 'root')
+      this.emitChatClientEvent({
+        type: 'sessions-delta',
+        revision: this.nextChatClientRevision(),
+        updates,
+      })
+    }
+    return pending.filter(([uid]) => failedUids.has(uid))
   }
 
   private emitChatClientEvent(event: ArkmeChatClientEvent): void {
@@ -899,6 +987,27 @@ export class ArkmeService {
   private nextChatClientRevision(): number {
     this.chatClientRevision += 1
     return this.chatClientRevision
+  }
+
+  private invalidateSourceListCache(userId: number, directory?: ArkmeSourceDirectory): void {
+    const prefix = `${String(userId)}:`
+    for (const key of this.sourceListCache.keys()) {
+      if (!key.startsWith(prefix)) continue
+      if (directory !== undefined && !key.startsWith(`${prefix}${directory}:`)) continue
+      this.sourceListCache.delete(key)
+    }
+  }
+
+  private pruneSourceListCache(): void {
+    const now = Date.now()
+    for (const [key, cached] of this.sourceListCache) {
+      if (cached.expiresAtMillis <= now) this.sourceListCache.delete(key)
+    }
+    while (this.sourceListCache.size > SOURCE_LIST_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.sourceListCache.keys().next().value as string | undefined
+      if (oldestKey === undefined) break
+      this.sourceListCache.delete(oldestKey)
+    }
   }
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
@@ -1601,48 +1710,80 @@ export class ArkmeService {
     return { sessionId, assistantMsgId, runUid: normalizedRunUid, status }
   }
 
-  private async refreshProfileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
-    const data = await this.authenticatedAuthGet<Record<string, unknown>>('/api/v1/auth/get-user-info', session)
-    const userId = numberValue(data.user_id)
-    if (userId <= 0 || userId !== session.userId) {
-      throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应缺少有效用户标识', false, 502)
+  private async profileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
+    const memory = this.profileCache.get(session.userId)
+    if (memory !== undefined && memory.expiresAtMillis > Date.now()) return memory.value
+    const persisted = await this.stateStore.cachedProfile(session.userId).catch(() => undefined)
+    if (persisted?.profile?.userId === session.userId
+      && persisted.cachedAtMillis > 0 && Date.now() - persisted.cachedAtMillis < PROFILE_CACHE_TTL_MS) {
+      this.profileCache.set(session.userId, {
+        value: persisted,
+        expiresAtMillis: persisted.cachedAtMillis + PROFILE_CACHE_TTL_MS,
+      })
+      return persisted
     }
-    const nickname = stringValue(data.nick_name).trim()
-    const displayName = nickname
-      || stringValue(data.apple_nick_name).trim()
-      || stringValue(data.wechat_nick_name).trim()
-      || stringValue(data.google_given_name).trim()
-      || stringValue(data.name_slug).trim()
-      || 'Arkme用户'
-    const avatarRef = stringValue(data.head_img).trim()
-    const phone = maskedPhone(stringValue(data.phone))
-    const email = maskedEmail(stringValue(data.email))
-    const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
-    const profile: ArkmeUserProfile = {
-      userId,
-      displayName,
-      nickname,
-      avatarRef,
-      ...(/^https?:\/\//i.test(avatarRef) ? { avatarUrl: avatarRef } : {}),
-      arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
-      ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
-      accountType: numberValue(data.type),
-      createdAt: numberValue(data.create_at),
-      bindings: {
-        apple: booleanValue(data.has_bind_apple),
-        wechat: booleanValue(data.has_bind_wechat),
-        google: booleanValue(data.has_bind_google),
-      },
-      contact: {
-        ...(phone === undefined ? {} : { phoneMasked: phone }),
-        ...(email === undefined ? {} : { emailMasked: email }),
-      },
-    }
-    return await this.stateStore.cacheProfile(userId, profile)
+    return await this.refreshProfileForSession(session)
   }
 
-  private async authSnapshotForSession(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
-    const profile = await this.refreshProfileForSession(session)
+  private async refreshProfileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
+    const existing = this.profileInFlight.get(session.userId)
+    if (existing !== undefined) return await existing
+    const pending = (async () => {
+      const data = await this.authenticatedAuthGet<Record<string, unknown>>('/api/v1/auth/get-user-info', session)
+      const userId = numberValue(data.user_id)
+      if (userId <= 0 || userId !== session.userId) {
+        throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应缺少有效用户标识', false, 502)
+      }
+      const nickname = stringValue(data.nick_name).trim()
+      const displayName = nickname
+        || stringValue(data.apple_nick_name).trim()
+        || stringValue(data.wechat_nick_name).trim()
+        || stringValue(data.google_given_name).trim()
+        || stringValue(data.name_slug).trim()
+        || 'Arkme用户'
+      const avatarRef = stringValue(data.head_img).trim()
+      const phone = maskedPhone(stringValue(data.phone))
+      const email = maskedEmail(stringValue(data.email))
+      const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
+      const profile: ArkmeUserProfile = {
+        userId,
+        displayName,
+        nickname,
+        avatarRef,
+        ...(/^https?:\/\//i.test(avatarRef) ? { avatarUrl: avatarRef } : {}),
+        arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
+        ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
+        accountType: numberValue(data.type),
+        createdAt: numberValue(data.create_at),
+        bindings: {
+          apple: booleanValue(data.has_bind_apple),
+          wechat: booleanValue(data.has_bind_wechat),
+          google: booleanValue(data.has_bind_google),
+        },
+        contact: {
+          ...(phone === undefined ? {} : { phoneMasked: phone }),
+          ...(email === undefined ? {} : { emailMasked: email }),
+        },
+      }
+      const snapshot = await this.stateStore.cacheProfile(userId, profile)
+      this.profileCache.set(userId, { value: snapshot, expiresAtMillis: Date.now() + PROFILE_CACHE_TTL_MS })
+      return snapshot
+    })()
+    this.profileInFlight.set(session.userId, pending)
+    try {
+      return await pending
+    } finally {
+      if (this.profileInFlight.get(session.userId) === pending) this.profileInFlight.delete(session.userId)
+    }
+  }
+
+  private async authSnapshotForSession(
+    session: ArkmeSessionCredentials,
+    options: { forceProfile?: boolean } = {},
+  ): Promise<ArkmeAuthSnapshot> {
+    const profile = options.forceProfile === true
+      ? await this.refreshProfileForSession(session)
+      : await this.profileForSession(session)
     return {
       status: this.profileHasBoundPhone(profile) ? 'authenticated' : 'binding-required',
       environment: this.config.environment,
@@ -1677,7 +1818,7 @@ export class ArkmeService {
   }
 
   private async acceptLoginSession(session: ArkmeSessionCredentials): Promise<ArkmeAuthSnapshot> {
-    const snapshot = await this.authSnapshotForSession(session)
+    const snapshot = await this.authSnapshotForSession(session, { forceProfile: true })
     if (snapshot.status === 'authenticated') {
       await this.clearPendingBindingSession()
       await this.sessionStore.write(session)
@@ -1935,10 +2076,36 @@ export class ArkmeService {
 
   async listSources(
     directory: ArkmeSourceDirectory,
-    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     const session = await this.requireSession()
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
+    const cursor = options.cursor?.trim() ?? ''
+    const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}`
+    this.pruneSourceListCache()
+    const cached = this.sourceListCache.get(cacheKey)
+    if (options.refresh !== true && cached !== undefined && cached.expiresAtMillis > Date.now()) return cloneSourceList(cached.value)
+    const existing = this.sourceListInFlight.get(cacheKey)
+    if (existing !== undefined) return cloneSourceList(await existing)
+    const pending = this.listSourcesUncached(session, directory, { ...options, ...(cursor === '' ? {} : { cursor }) }, limit)
+    this.sourceListInFlight.set(cacheKey, pending)
+    try {
+      const result = await pending
+      this.sourceListCache.delete(cacheKey)
+      this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
+      this.pruneSourceListCache()
+      return cloneSourceList(result)
+    } finally {
+      if (this.sourceListInFlight.get(cacheKey) === pending) this.sourceListInFlight.delete(cacheKey)
+    }
+  }
+
+  private async listSourcesUncached(
+    session: ArkmeSessionCredentials,
+    directory: ArkmeSourceDirectory,
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean },
+    limit: number,
+  ): Promise<ArkmeSourceList> {
     if (directory === 'send_to_self') {
       if (options.cursor !== undefined && options.cursor.trim() !== '') {
         throw new ArkmePluginError('source-cursor-invalid', '发给自己的主题目录不支持该分页游标', false)
@@ -2222,6 +2389,7 @@ export class ArkmeService {
       // Membership is committed by Chat; avatar decoration cannot turn it into a failed join.
     }
     this.chatSourceCache.set(`${String(session.userId)}:${chatSessionUid}`, source)
+    this.invalidateSourceListCache(session.userId, 'root')
     return { status, source }
   }
 
@@ -4075,7 +4243,20 @@ export class ArkmeService {
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
     const profiles = new Map<number, ArkmePublicProfile>()
-    for (const batch of chunksOf(normalized, 50)) {
+    const missing: number[] = []
+    const now = Date.now()
+    for (const [key, cached] of this.publicProfileCache) {
+      if (cached.expiresAtMillis <= now) this.publicProfileCache.delete(key)
+    }
+    for (const userId of normalized) {
+      const cached = this.publicProfileCache.get(`${String(session.userId)}:${String(userId)}`)
+      if (cached === undefined || cached.expiresAtMillis <= now) {
+        missing.push(userId)
+        continue
+      }
+      if (cached.value !== null) profiles.set(userId, cached.value)
+    }
+    for (const batch of chunksOf(missing, 50)) {
       if (batch.length === 0) continue
       const data = await this.authenticatedAuthPost<Record<string, unknown>>(
         '/api/v1/auth/get-public-users-by-ids',
@@ -4105,6 +4286,20 @@ export class ArkmeService {
           ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
           ...(arkmeId === '' ? {} : { arkmeId }),
         })
+      }
+      for (const userId of batch) {
+        const value = profiles.get(userId) ?? null
+        this.publicProfileCache.set(`${String(session.userId)}:${String(userId)}`, {
+          value,
+          expiresAtMillis: Date.now() + (value === null
+            ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS
+            : PUBLIC_PROFILE_CACHE_TTL_MS),
+        })
+        while (this.publicProfileCache.size > PUBLIC_PROFILE_CACHE_MAX_ENTRIES) {
+          const oldestKey = this.publicProfileCache.keys().next().value as string | undefined
+          if (oldestKey === undefined) break
+          this.publicProfileCache.delete(oldestKey)
+        }
       }
     }
     return profiles
@@ -4161,6 +4356,48 @@ export class ArkmeService {
     return result
   }
 
+  private cachedImage(cacheKey: string): ArkmeImageBytes | undefined {
+    const cached = this.imageCache.get(cacheKey)
+    if (cached === undefined) return undefined
+    if (cached.expiresAtMillis <= Date.now()) {
+      this.imageCache.delete(cacheKey)
+      this.imageCacheBytes = Math.max(0, this.imageCacheBytes - cached.value.bytes)
+      return undefined
+    }
+    this.imageCache.delete(cacheKey)
+    this.imageCache.set(cacheKey, cached)
+    return cloneImageBytes(cached.value)
+  }
+
+  private cacheImage(cacheKey: string, value: ArkmeImageBytes): void {
+    const previous = this.imageCache.get(cacheKey)
+    if (previous !== undefined) this.imageCacheBytes = Math.max(0, this.imageCacheBytes - previous.value.bytes)
+    const cached = cloneImageBytes(value)
+    this.imageCache.delete(cacheKey)
+    this.imageCache.set(cacheKey, { value: cached, expiresAtMillis: Date.now() + IMAGE_CACHE_TTL_MS })
+    this.imageCacheBytes += cached.bytes
+    while (this.imageCache.size > IMAGE_CACHE_MAX_ENTRIES || this.imageCacheBytes > IMAGE_CACHE_MAX_BYTES) {
+      const oldestKey = this.imageCache.keys().next().value as string | undefined
+      if (oldestKey === undefined) break
+      const oldest = this.imageCache.get(oldestKey)
+      this.imageCache.delete(oldestKey)
+      if (oldest !== undefined) this.imageCacheBytes = Math.max(0, this.imageCacheBytes - oldest.value.bytes)
+    }
+  }
+
+  private async withImageDownloadPermit<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.activeImageDownloads >= IMAGE_DOWNLOAD_CONCURRENCY) {
+      await new Promise<void>(resolve => { this.imageDownloadWaiters.push(resolve) })
+    }
+    this.activeImageDownloads += 1
+    try {
+      return await operation()
+    } finally {
+      this.activeImageDownloads = Math.max(0, this.activeImageDownloads - 1)
+      this.imageDownloadWaiters.shift()?.()
+    }
+  }
+
   /** Resolve and download one Provider-authorized Arkme image without exposing OSS credentials or signed URLs. */
   async readImage(
     imageRef: string,
@@ -4168,9 +4405,33 @@ export class ArkmeService {
   ): Promise<ArkmeImageBytes> {
     const session = await this.requireSession()
     const byteLimit = Math.min(MAX_ARKME_IMAGE_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_ARKME_IMAGE_BYTES)))
+    const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
+    const cached = this.cachedImage(cacheKey)
+    if (cached !== undefined) return cached
+    const existing = this.imageInFlight.get(cacheKey)
+    if (existing !== undefined) return cloneImageBytes(await existing)
+    const pending = this.withImageDownloadPermit(
+      async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal),
+    )
+    this.imageInFlight.set(cacheKey, pending)
+    try {
+      const value = await pending
+      this.cacheImage(cacheKey, value)
+      return cloneImageBytes(value)
+    } finally {
+      if (this.imageInFlight.get(cacheKey) === pending) this.imageInFlight.delete(cacheKey)
+    }
+  }
+
+  private async readImageUncached(
+    session: ArkmeSessionCredentials,
+    imageRef: string,
+    byteLimit: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeImageBytes> {
     if (imageRef.trim().startsWith('arkme-profile-image-v1.')) {
       const reference = await this.openProfileImageRef(imageRef, session.userId)
-      const profile = (await this.publicProfilesByUserIds([reference.targetUserId], session, options.signal))
+      const profile = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
         .get(reference.targetUserId)
       if (profile === undefined) {
         throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
@@ -4180,12 +4441,12 @@ export class ArkmeService {
         throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
       }
       return await this.downloadSignedImage(
-        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, options.signal,
+        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal,
       )
     }
     const fileId = imageFileIdFromRef(imageRef, session.userId)
     const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/${fileId}`
-    const credentials = await this.ossCredentials(session, options.signal)
+    const credentials = await this.ossCredentials(session, signal)
     const bucket = this.config.environment === 'prod' ? 'jotmo-userfiles' : 'jotmo-userfiles-test'
     let signedUrlText: string
     try {
@@ -4198,7 +4459,7 @@ export class ArkmeService {
         stsToken: credentials.stsToken,
         refreshSTSTokenInterval: 10 * 60 * 1000,
         refreshSTSToken: async () => {
-          const refreshed = await this.ossCredentials(await this.requireSession(), options.signal)
+          const refreshed = await this.ossCredentials(await this.requireSession(), signal)
           return {
             accessKeyId: refreshed.accessKeyId,
             accessKeySecret: refreshed.accessKeySecret,
@@ -4230,7 +4491,7 @@ export class ArkmeService {
       || !allowedSignedImageHost(this.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
       throw new ArkmePluginError('image-sign-target-rejected', 'Arkme 图片授权目标不受信任', false, 502)
     }
-    return await this.downloadSignedImage(signedUrl, byteLimit, options.signal)
+    return await this.downloadSignedImage(signedUrl, byteLimit, signal)
   }
 
   async beginWechatLogin(): Promise<ArkmeAuthSnapshot> {
@@ -4440,6 +4701,14 @@ export class ArkmeService {
     }
     await this.sessionStore.delete()
     await this.clearPendingBindingSession()
+    this.profileCache.clear()
+    this.profileInFlight.clear()
+    this.sourceListCache.clear()
+    this.sourceListInFlight.clear()
+    this.publicProfileCache.clear()
+    this.imageCache.clear()
+    this.imageInFlight.clear()
+    this.imageCacheBytes = 0
     this.chatRealtime.reconnect()
     this.attempts.clear()
     this.aiPolishConfirmations.clear()

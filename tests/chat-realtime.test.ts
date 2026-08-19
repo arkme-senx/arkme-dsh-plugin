@@ -63,4 +63,81 @@ describe('Arkme Chat realtime', () => {
     unsubscribe()
     stop()
   })
+
+  it('refreshes one rejected access token and reconnects with the shared session', async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    const refreshed = { userId: 10001, accessToken: 'renewed-access', refreshToken: 'refresh-secret' }
+    let currentSession = { ...refreshed, accessToken: 'expired-access' }
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      const authorization = new Headers(init?.headers).get('Authorization')
+      if (authorization === 'Bearer expired-access') return new Response(null, { status: 403 })
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }), { status: 200 })
+    })
+    const refreshSession = vi.fn(async () => {
+      currentSession = refreshed
+      return refreshed
+    })
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.example.test',
+      readSession: async () => currentSession,
+      refreshSession,
+      fetchImpl,
+      retryBaseMs: 5,
+      inactivityTimeoutMs: 10_000,
+      leaseDurationMs: 10_000,
+    })
+
+    const stop = runtime.start()
+    await vi.waitFor(() => { expect(runtime.state().connected).toBe(true) })
+    expect(refreshSession).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls.map(call => new Headers(call[1]?.headers).get('Authorization'))).toEqual([
+      'Bearer expired-access', 'Bearer renewed-access',
+    ])
+    stream.close()
+    stop()
+  })
+
+  it('pauses a rejected session instead of retrying the same credential every second', async () => {
+    const session = { userId: 10001, accessToken: 'rejected-access', refreshToken: 'refresh-secret' }
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 403 }))
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.example.test',
+      readSession: async () => session,
+      refreshSession: async () => undefined,
+      fetchImpl,
+      idlePollMs: 5,
+      retryBaseMs: 5,
+    })
+
+    const stop = runtime.start()
+    await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledOnce() })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    stop()
+  })
+
+  it('does not refresh forever when a newly issued token is also rejected', async () => {
+    let session = { userId: 10001, accessToken: 'expired-access', refreshToken: 'refresh-secret' }
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 403 }))
+    const refreshSession = vi.fn(async () => {
+      session = { ...session, accessToken: 'renewed-but-rejected' }
+      return session
+    })
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.example.test',
+      readSession: async () => session,
+      refreshSession,
+      fetchImpl,
+      idlePollMs: 5,
+      retryBaseMs: 5,
+    })
+
+    const stop = runtime.start()
+    await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledTimes(2) })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(refreshSession).toHaveBeenCalledOnce()
+    stop()
+  })
 })

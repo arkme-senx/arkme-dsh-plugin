@@ -604,9 +604,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         authenticatedUserIdRef.current = undefined
         cacheRef.current = undefined
         clearLastNavigationCache()
+        arkmeChatDirectory.activateAccount(undefined)
         setDirectory('send_to_self'); setSources([])
         return
       }
+    arkmeChatDirectory.activateAccount(snapshot.userId)
     if (avatarCacheUserIdRef.current !== snapshot.userId) clearArkmeAvatarCache()
     avatarCacheUserIdRef.current = snapshot.userId
     authenticatedUserIdRef.current = snapshot.userId
@@ -628,18 +630,22 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     directoryRequestAbortRef.current = controller
     setError('')
     try {
-      const loaded: ArkmeSourceItem[] = []
-      let cursor: string | undefined
-      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
-        const page = await callArkme<ArkmeSourceList>('sources.list', {
-          directory: next,
-          limit: next === 'root' ? 50 : 100,
-          ...(cursor === undefined ? {} : { cursor }),
-        }, controller.signal)
-        const known = new Set(loaded.map(item => item.sourceRef))
-        loaded.push(...page.items.filter(item => !known.has(item.sourceRef)))
-        if (!page.hasMore || page.nextCursor === undefined) break
-        cursor = page.nextCursor
+      const loaded: ArkmeSourceItem[] = next === 'root'
+        ? await arkmeChatDirectory.refreshRoot()
+        : []
+      if (next !== 'root') {
+        let cursor: string | undefined
+        for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+          const page = await callArkme<ArkmeSourceList>('sources.list', {
+            directory: next,
+            limit: 100,
+            ...(cursor === undefined ? {} : { cursor }),
+          }, controller.signal)
+          const known = new Set(loaded.map(item => item.sourceRef))
+          loaded.push(...page.items.filter(item => !known.has(item.sourceRef)))
+          if (!page.hasMore || page.nextCursor === undefined) break
+          cursor = page.nextCursor
+        }
       }
       if (controller.signal.aborted) return
       if (next === 'send_to_self' && ensuredSource !== undefined) {
@@ -670,9 +676,6 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     }
   }, [persistCache])
 
-  useEffect(() => {
-    void arkmeAuthStore.refresh().catch(() => undefined)
-  }, [ui.authRevision])
   useEffect(() => { reconcileAuth(auth) }, [auth, reconcileAuth])
   useEffect(() => {
     if (authenticated) void loadDirectory(directory)
@@ -852,7 +855,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     arkmeUi.selectSource(source)
     persistCache({ directory: 'root', sources: { root: nextSources }, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
-    await loadDirectory('root')
+    const refreshed = await arkmeChatDirectory.refreshRoot({ force: true })
+    setSources(refreshed)
   }
 
   if (!wide) {

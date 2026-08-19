@@ -203,7 +203,8 @@ function qrDataUrl(content: string): string {
 }
 
 function initialPhoneBindingGate(auth: ArkmeAuthSnapshot | undefined): ArkmePhoneBindingGate {
-  return auth?.status === 'binding-required' ? 'required' : 'unknown'
+  if (auth?.status === 'binding-required') return 'required'
+  return auth?.status === 'authenticated' ? 'ready' : 'unknown'
 }
 
 function dayKey(value: number): string {
@@ -308,10 +309,8 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
   const [phoneBindingGate, setPhoneBindingGate] = useState<ArkmePhoneBindingGate>(phoneGate ?? initialPhoneBindingGate(initialAuth))
-  const [phoneCheckRevision, setPhoneCheckRevision] = useState(0)
   const qrRequestStartedRef = useRef(false)
   const lastReadAckRef = useRef('')
-  const checkedUserIdRef = useRef<number | undefined>()
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
   const ignoreStaleBindingAuthRef = useRef(false)
   const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
@@ -336,11 +335,12 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const relatedLoadingMoreRef = useRef(false)
   const activeRelatedSourceRef = useRef('')
 
-  const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot, options: { forcePhoneCheck?: boolean } = {}) => {
-    const previousStatus = arkmeAuthStore.getSnapshot().auth?.status
+  const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
+    const previous = arkmeAuthStore.getSnapshot().auth
+    const accountChanged = snapshot.status === 'authenticated'
+      && (previous?.status !== 'authenticated' || previous.userId !== snapshot.userId)
     arkmeAuthStore.setAuth(snapshot)
     if (snapshot.status === 'binding-required') {
-      checkedUserIdRef.current = snapshot.userId
       setPhoneBindingGate('required')
       setLoginMode('phone')
       setAgreed(true)
@@ -354,15 +354,12 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       return
     }
     bindingNotifiedUserIdRef.current = undefined
-    if (snapshot.status === 'authenticated' && previousStatus !== 'authenticated') {
-      arkmeUi.authChanged(true)
+    if (snapshot.status === 'authenticated') {
+      setPhoneBindingGate('ready')
+      if (accountChanged) arkmeUi.authChanged(true)
+      return
     }
-    if (options.forcePhoneCheck === true || snapshot.status !== 'authenticated' || checkedUserIdRef.current !== snapshot.userId) {
-      checkedUserIdRef.current = undefined
-      bindingNotifiedUserIdRef.current = undefined
-      setPhoneBindingGate('unknown')
-      setPhoneCheckRevision(value => value + 1)
-    }
+    setPhoneBindingGate('unknown')
   }, [])
 
   useEffect(() => {
@@ -405,52 +402,6 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
   }, [acceptAuthSnapshot])
-
-  useEffect(() => {
-    if (auth?.status !== 'authenticated') {
-      if (auth?.status !== 'binding-required') {
-        if (phoneBindingGate !== 'unknown') setPhoneBindingGate('unknown')
-        checkedUserIdRef.current = undefined
-      }
-      return
-    }
-    let active = true
-    const userId = auth.userId
-    setPhoneBindingGate('checking'); setBusy(true); setError('')
-    void callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
-      .then(snapshot => {
-        if (!active) return
-        checkedUserIdRef.current = userId
-        if (arkmeProfileHasBoundPhone(snapshot)) {
-          setPhoneBindingGate('ready')
-          return
-        }
-        setPhoneBindingGate('required')
-        setLoginMode('phone')
-        setAgreed(true)
-        setQr('')
-        setSmsCode('')
-        setError('请先绑定手机号，再继续使用 Arkme')
-      })
-      .catch(caught => {
-        if (!active) return
-        checkedUserIdRef.current = userId
-        if (caught instanceof ArkmeClientError && ['login-expired', 'login-required'].includes(caught.body.code)) {
-          arkmeAuthStore.setAuth({ status: 'expired', environment: auth.environment })
-          setPhoneBindingGate('unknown')
-          setLoginMode(testLoginEnabled ? 'test' : 'wechat')
-          setQr('')
-          setSmsCode('')
-          setError(errorMessage(caught))
-          arkmeUi.authChanged(false)
-          return
-        }
-        setPhoneBindingGate('unknown')
-        setError(errorMessage(caught))
-      })
-      .finally(() => { if (active) setBusy(false) })
-    return () => { active = false }
-  }, [auth?.environment, auth?.status, auth?.userId, phoneCheckRevision, testLoginEnabled])
 
   const loadRelatedPage = useCallback(async (
     month: string,
@@ -614,10 +565,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     if (cursor === undefined) await acknowledgeRead(page.items)
   }, [acknowledgeRead, source])
 
-  useEffect(() => { void refreshAuth() }, [refreshAuth, ui.authRevision])
-  useEffect(() => {
-    if (ui.surfaceOpen) void refreshAuth()
-  }, [refreshAuth, ui.surfaceOpen])
+  useEffect(() => { void refreshAuth() }, [refreshAuth])
   useEffect(() => {
     setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined)
     setDrawer(undefined); setDetailItemUid(''); setNextCursor(undefined); setHasMore(false); setError('')
@@ -706,7 +654,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     setBusy(true); setSubmitBusy(true); setError('')
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
-      acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
+      acceptAuthSnapshot(snapshot)
     } catch (caught) { setError(errorMessage(caught)) } finally { setSubmitBusy(false); setBusy(false) }
   }
 
@@ -717,7 +665,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     setBusy(true); setError('')
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.test.login', { userId })
-      acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
+      acceptAuthSnapshot(snapshot)
     } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
@@ -727,9 +675,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.logout')
       ignoreStaleBindingAuthRef.current = true
       arkmeAuthStore.setAuth(snapshot)
-      checkedUserIdRef.current = undefined
       setPhoneBindingGate('unknown')
-      setPhoneCheckRevision(value => value + 1)
       setPhone('')
       setSmsCode('')
       setQr('')
@@ -876,7 +822,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
         {authView === 'checking' ? <ArkmeAuthChecking
           error={error}
           busy={busy}
-          onRetry={() => { setPhoneCheckRevision(value => value + 1) }}
+          onRetry={() => { void refreshAuth() }}
         /> : authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           mode={loginMode}
           phoneBindingRequired={phoneBindingRequired}
