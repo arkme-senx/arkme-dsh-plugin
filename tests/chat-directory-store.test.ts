@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ArkmeChatDirectoryStore, ArkmeChatTimelineDeltaStore } from '../src/client/chat-directory-store.js'
+import {
+  ArkmeChatDirectoryStore, ArkmeChatTimelineDeltaStore, ArkmeInterwovenInvalidationStore,
+} from '../src/client/chat-directory-store.js'
 
 describe('ArkmeChatDirectoryStore', () => {
   it('publishes one authoritative source snapshot to every Chat surface', () => {
@@ -74,5 +76,18 @@ describe('ArkmeChatDirectoryStore', () => {
     }] }])
     expect(store.getSnapshot()).toMatchObject({ revision: 1 })
     expect(store.getSnapshot().itemsBySourceRef['source-1']?.[0]).toMatchObject({ itemUid: 'item-1', sequence: 9 })
+  })
+
+  it('publishes revision-only interwoven invalidations without carrying realtime content', () => {
+    const store = new ArkmeInterwovenInvalidationStore()
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    store.invalidate()
+    store.invalidate()
+
+    expect(store.getSnapshot()).toEqual({ revision: 2 })
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(store.getSnapshot())).not.toContain('content')
   })
 })

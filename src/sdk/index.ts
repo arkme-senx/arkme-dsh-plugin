@@ -3,8 +3,11 @@ import type {
   ArkmeAuthSnapshot,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
+  ArkmeContentBlock,
   ArkmeCreateTextResult,
   ArkmeImagePayload,
+  ArkmeLongArticleDetail,
+  ArkmeLongArticleDraft,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
@@ -14,6 +17,7 @@ import type {
   ArkmePluginResponse,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
+  ArkmeRichSendInput,
   ArkmeSourceDirectory,
   ArkmeSourceList,
   ArkmeSourceReadResult,
@@ -21,15 +25,20 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
+  ArkmeUploadedAsset,
 } from '../types.js'
 
 export type {
   ArkmeAuthSnapshot,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
+  ArkmeContentBlock,
+  ArkmeContentKind,
   ArkmeCreateTextResult,
   ArkmeImageMediaType,
   ArkmeImagePayload,
+  ArkmeLongArticleDetail,
+  ArkmeLongArticleDraft,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
@@ -41,6 +50,7 @@ export type {
   ArkmeRelatedRecordingSpeaker,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
+  ArkmeRichSendInput,
   ArkmeSourceDirectory,
   ArkmeSourceItem,
   ArkmeSourceKind,
@@ -52,6 +62,7 @@ export type {
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
+  ArkmeUploadedAsset,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -202,6 +213,81 @@ export class ArkmeSdk {
       ...(options.timezoneOffsetMillis === undefined ? {} : { timezoneOffsetMillis: options.timezoneOffsetMillis }),
       ...(options.includeTimeIndex === undefined ? {} : { includeTimeIndex: options.includeTimeIndex }),
     }, options.signal)
+  }
+
+  async sendRich(
+    sourceRef: string,
+    input: ArkmeRichSendInput,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
+    return await this.call<ArkmeSourceSendResult>('source.send-rich', {
+      sourceRef,
+      ...input,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
+    if (sourceRef.trim() === '' || itemUid.trim() === '') throw new TypeError('Arkme source and article references must not be empty')
+    return await this.call<ArkmeLongArticleDetail>('source.long-article.detail', { sourceRef, itemUid }, signal)
+  }
+
+  async updateLongArticle(
+    sourceRef: string,
+    itemUid: string,
+    input: { title: string; textContent: string; version: number; editDurationMillis: number },
+    signal?: AbortSignal,
+  ): Promise<ArkmeLongArticleDetail> {
+    if (sourceRef.trim() === '' || itemUid.trim() === '') throw new TypeError('Arkme source and article references must not be empty')
+    return await this.call<ArkmeLongArticleDetail>('source.long-article.update', { sourceRef, itemUid, ...input }, signal)
+  }
+
+  async longArticleDraft(
+    sourceRef: string,
+    itemUid?: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeLongArticleDraft | undefined> {
+    return await this.call<ArkmeLongArticleDraft | undefined>('source.long-article.draft.get', {
+      sourceRef, ...(itemUid === undefined ? {} : { itemUid }),
+    }, signal)
+  }
+
+  async saveLongArticleDraft(draft: Omit<ArkmeLongArticleDraft, 'updatedAtMillis'>, signal?: AbortSignal): Promise<void> {
+    if (draft.sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
+    await this.call<void>('source.long-article.draft.put', draft, signal)
+  }
+
+  async deleteLongArticleDraft(sourceRef: string, itemUid?: string, signal?: AbortSignal): Promise<void> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme source reference must not be empty')
+    await this.call<void>('source.long-article.draft.delete', {
+      sourceRef, ...(itemUid === undefined ? {} : { itemUid }),
+    }, signal)
+  }
+
+  async upload(
+    file: Blob & { name?: string },
+    options: { fileName?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeUploadedAsset> {
+    const fileName = (options.fileName ?? file.name ?? 'attachment').trim()
+    const response = await this.fetchImpl(`${this.route}/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'X-Arkme-File-Name': encodeURIComponent(fileName),
+      },
+      body: file,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    const payload = await response.json() as ArkmePluginResponse<ArkmeUploadedAsset>
+    if (!payload.ok) throw new ArkmeClientError(payload.error)
+    return payload.value
+  }
+
+  mediaUrl(mediaRef: string): string {
+    if (mediaRef.trim() === '') throw new TypeError('Arkme media reference must not be empty')
+    return `${this.route}/media?ref=${encodeURIComponent(mediaRef)}`
   }
 
   async snapshot(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeCachedSnapshot> {

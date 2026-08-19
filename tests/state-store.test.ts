@@ -29,4 +29,25 @@ describe('ArkmeStateStore', () => {
     expect(persisted).not.toHaveProperty('accessToken')
     expect(persisted).not.toHaveProperty('refreshToken')
   })
+
+  it('keeps long-article drafts isolated by account, source, and edited record', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-draft-'))
+    const store = new ArkmeStateStore(root)
+    await store.putLongArticleDraft(10001, {
+      sourceRef: 'source-a', title: '新建', textContent: '正文', durationMillis: 1200, updatedAtMillis: 1,
+    })
+    await store.putLongArticleDraft(10001, {
+      sourceRef: 'source-a', itemUid: 'record-1', title: '编辑', textContent: '编辑正文', durationMillis: 900, updatedAtMillis: 2,
+    })
+
+    const reloaded = new ArkmeStateStore(root)
+    await expect(reloaded.getLongArticleDraft(10001, 'source-a')).resolves.toMatchObject({ title: '新建' })
+    await expect(reloaded.getLongArticleDraft(10001, 'source-a', 'record-1')).resolves.toMatchObject({ title: '编辑' })
+    await expect(reloaded.getLongArticleDraft(10002, 'source-a')).resolves.toBeUndefined()
+    await expect(reloaded.getLongArticleDraft(10001, 'source-b')).resolves.toBeUndefined()
+
+    await reloaded.removeLongArticleDraft(10001, 'source-a', 'record-1')
+    await expect(reloaded.getLongArticleDraft(10001, 'source-a', 'record-1')).resolves.toBeUndefined()
+    await expect(reloaded.getLongArticleDraft(10001, 'source-a')).resolves.toMatchObject({ title: '新建' })
+  })
 })

@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile, chmod } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { ArkmePendingWrite } from './types.js'
+import type { ArkmeLongArticleDraft, ArkmePendingWrite } from './types.js'
 
 interface PersistedState {
   version: 1
   uniqueCode: string
   pendingByUser: Record<string, ArkmePendingWrite[]>
+  longArticleDraftsByUser: Record<string, Record<string, ArkmeLongArticleDraft>>
 }
 
 function emptyState(): PersistedState {
@@ -14,7 +15,32 @@ function emptyState(): PersistedState {
     version: 1,
     uniqueCode: randomUUID(),
     pendingByUser: {},
+    longArticleDraftsByUser: {},
   }
+}
+
+function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const source = value as Record<string, unknown>
+  if (typeof source.sourceRef !== 'string' || source.sourceRef.trim() === '') return undefined
+  if (typeof source.title !== 'string' || typeof source.textContent !== 'string') return undefined
+  const itemUid = typeof source.itemUid === 'string' && source.itemUid.trim() !== '' ? source.itemUid.trim() : undefined
+  return {
+    sourceRef: source.sourceRef,
+    ...(itemUid === undefined ? {} : { itemUid }),
+    title: source.title.slice(0, 100),
+    textContent: source.textContent.slice(0, 40000),
+    durationMillis: typeof source.durationMillis === 'number' && Number.isFinite(source.durationMillis)
+      ? Math.max(0, Math.trunc(source.durationMillis))
+      : 0,
+    updatedAtMillis: typeof source.updatedAtMillis === 'number' && Number.isFinite(source.updatedAtMillis)
+      ? Math.max(0, Math.trunc(source.updatedAtMillis))
+      : 0,
+  }
+}
+
+function longArticleDraftKey(sourceRef: string, itemUid?: string): string {
+  return `${sourceRef}\u0000${itemUid ?? ''}`
 }
 
 function normalizedPending(value: unknown): ArkmePendingWrite[] {
@@ -49,12 +75,25 @@ function parseState(raw: string): PersistedState {
       pendingByUser[userId] = normalizedPending(pending)
     }
   }
+  const longArticleDraftsByUser: Record<string, Record<string, ArkmeLongArticleDraft>> = {}
+  if (source.longArticleDraftsByUser !== null && typeof source.longArticleDraftsByUser === 'object') {
+    for (const [userId, rawDrafts] of Object.entries(source.longArticleDraftsByUser as Record<string, unknown>)) {
+      if (rawDrafts === null || typeof rawDrafts !== 'object') continue
+      const drafts: Record<string, ArkmeLongArticleDraft> = {}
+      for (const [key, rawDraft] of Object.entries(rawDrafts as Record<string, unknown>)) {
+        const draft = normalizedLongArticleDraft(rawDraft)
+        if (draft !== undefined) drafts[key] = draft
+      }
+      if (Object.keys(drafts).length > 0) longArticleDraftsByUser[userId] = drafts
+    }
+  }
   return {
     version: 1,
     uniqueCode: typeof source.uniqueCode === 'string' && source.uniqueCode.trim() !== ''
       ? source.uniqueCode
       : randomUUID(),
     pendingByUser,
+    longArticleDraftsByUser,
   }
 }
 
@@ -82,6 +121,32 @@ export class ArkmeStateStore {
       const next = current.filter(item => item.recordUid !== pending.recordUid)
       next.push(pending)
       state.pendingByUser[key] = next
+    })
+  }
+
+  async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
+    return await this.read(state => {
+      const draft = state.longArticleDraftsByUser[String(userId)]?.[longArticleDraftKey(sourceRef, itemUid)]
+      return draft === undefined ? undefined : { ...draft }
+    })
+  }
+
+  async putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void> {
+    await this.update(state => {
+      const userKey = String(userId)
+      const drafts = state.longArticleDraftsByUser[userKey] ?? {}
+      drafts[longArticleDraftKey(draft.sourceRef, draft.itemUid)] = { ...draft }
+      state.longArticleDraftsByUser[userKey] = drafts
+    })
+  }
+
+  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
+    await this.update(state => {
+      const userKey = String(userId)
+      const drafts = state.longArticleDraftsByUser[userKey]
+      if (drafts === undefined) return
+      delete drafts[longArticleDraftKey(sourceRef, itemUid)]
+      if (Object.keys(drafts).length === 0) delete state.longArticleDraftsByUser[userKey]
     })
   }
 

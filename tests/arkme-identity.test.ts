@@ -17,6 +17,7 @@ function textFiles(path: string): string[] {
 function withoutInfrastructureNames(content: string): string {
   return content
     .replaceAll('https://jotmo.senguo.me', '')
+    .replaceAll('https://jotmo-subject.senguo.me', '')
     .replaceAll('https://jotmo-record.senguo.me', '')
     .replaceAll('https://jotmo-chat.senguo.me', '')
     .replaceAll('https://jotmo-im.senguo.me', '')
@@ -26,6 +27,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://jotmo-intelligent.senguo.me', '')
     .replaceAll('https://jotmo-audio.senguo.me', '')
     .replaceAll('https://api.jotmo.cc', '')
+    .replaceAll('https://subject.jotmo.cc', '')
     .replaceAll('https://record.jotmo.cc', '')
     .replaceAll('https://chat.jotmo.cc', '')
     .replaceAll('https://im.jotmo.cc', '')

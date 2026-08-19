@@ -42,6 +42,10 @@ export interface ArkmeSelfRecordItem {
   version: number
   localState?: 'synced' | 'pending' | 'failed'
   lastError?: string
+  displayKind?: number
+  contentBlocks?: ArkmeContentBlock[]
+  /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
+  mediaUnavailable?: boolean
 }
 
 export interface ArkmeSelfRecordList {
@@ -144,6 +148,9 @@ export interface ArkmeProviderCapabilities {
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
+    richContentRead: boolean
+    richContentSend: boolean
+    fileUpload: boolean
     outgoingCall: true
     groupMembers: true
     userCard: true
@@ -158,6 +165,7 @@ export interface ArkmeProviderCapabilities {
     maxImageBytes: number
     maxRelatedRecordingPageSize?: number
     maxRelatedRecordingCursorLength?: number
+    maxUploadBytes: number
   }
 }
 
@@ -274,6 +282,15 @@ export interface ArkmeTimelineItem {
   sequence?: number
   recordVersion?: number
   aiPolish?: ArkmeTimelineAiPolish
+  templateKind?: number
+  displayKind?: number
+  version?: number
+  updateAtMillis?: number
+  recordDurationMillis?: number
+  editDurationMillis?: number
+  contentBlocks?: ArkmeContentBlock[]
+  /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
+  mediaUnavailable?: boolean
 }
 
 export type ArkmeAiPolishSendState = 'none' | 'polishing' | 'polished' | 'kept_original' | 'failed'
@@ -326,6 +343,59 @@ export interface ArkmeGroupAiPolishNotice {
   createdAtMillis: number
 }
 
+export type ArkmeContentKind = 'image' | 'video' | 'audio' | 'file'
+
+/** Browser-safe media metadata. `mediaRef` is opaque and resolves only through the local Provider route. */
+export interface ArkmeContentBlock {
+  kind: ArkmeContentKind
+  mediaRef: string
+  fileAssetUid?: string
+  fileName: string
+  mimeType: string
+  size: number
+  durationSec?: number
+  sortOrder: number
+}
+
+export interface ArkmeUploadedAsset {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1 | 2 | 3 | 4
+}
+
+export interface ArkmeRichSendInput {
+  title?: string
+  textContent?: string
+  displayKind?: 0 | 1
+  thinkingDurationMillis?: number
+  assets?: ArkmeUploadedAsset[]
+}
+
+export interface ArkmeLongArticleDetail {
+  sourceRef: string
+  itemUid: string
+  title: string
+  textContent: string
+  sendAtMillis: number
+  updateAtMillis: number
+  recordDurationMillis: number
+  editDurationMillis: number
+  thinkingDurationMillis: number
+  version: number
+  editable: boolean
+}
+
+export interface ArkmeLongArticleDraft {
+  sourceRef: string
+  itemUid?: string
+  title: string
+  textContent: string
+  durationMillis: number
+  updatedAtMillis: number
+}
+
 export interface ArkmeTimelinePage {
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
@@ -333,6 +403,41 @@ export interface ArkmeTimelinePage {
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot
   hasMore: boolean
   nextCursor?: ArkmeTimelineCursor
+}
+
+/** Built-in UI projection of private-chat group mention moments. References stay opaque to the Browser. */
+export type ArkmeInterwovenState = 'disabled' | 'empty' | 'partial' | 'success'
+
+export interface ArkmeInterwovenMention {
+  momentId: string
+  momentRef: string
+  occurredAtMillis: number
+  groupName: string
+  senderName: string
+  senderIsMe: boolean
+  senderAvatarRef?: string
+  summary: string
+  degraded: boolean
+}
+
+export interface ArkmeInterwovenBootstrap {
+  state: ArkmeInterwovenState
+  moments: ArkmeInterwovenMention[]
+  preparedAtMillis: number
+  message?: string
+}
+
+export interface ArkmeInterwovenDetail {
+  momentId: string
+  groupName: string
+  senderName: string
+  senderIsMe: boolean
+  senderAvatarRef?: string
+  occurredAtMillis: number
+  title: string
+  textContent: string
+  status: number
+  degraded: boolean
 }
 
 export interface ArkmeSourceSendResult {
@@ -998,6 +1103,12 @@ export type ArkmePluginOperation =
   | 'group.report'
   | 'user.card'
   | 'chat.private.open'
+  | 'source.send-rich'
+  | 'source.long-article.detail'
+  | 'source.long-article.update'
+  | 'source.long-article.draft.get'
+  | 'source.long-article.draft.put'
+  | 'source.long-article.draft.delete'
   | 'calls.outgoing.intent.claim'
   | 'calls.outgoing.intent.resolve'
   | 'calls.outgoing.prepare'
@@ -1024,6 +1135,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'plugin.update.acknowledge'
   | 'plugin.update.install'
   | 'plugin.update.install-status'
+  | 'source.interwoven-moments'
+  | 'source.interwoven-detail'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

@@ -7,6 +7,7 @@ describe('production plugin configuration', () => {
 
     expect(patch).toContain('environment: prod')
     expect(patch).toContain('authBaseUrl: https://api.jotmo.cc')
+    expect(patch).toContain('subjectBaseUrl: https://subject.jotmo.cc')
     expect(patch).toContain('recordBaseUrl: https://record.jotmo.cc')
     expect(patch).toContain('chatBaseUrl: https://chat.jotmo.cc')
     expect(patch).toContain('imBaseUrl: https://im.jotmo.cc')
@@ -18,6 +19,10 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('toolProfile: business')
     expect(patch).toContain('relatedRecordingsEnabled: true')
     expect(patch).not.toContain('relatedRecordingSharingEnabled:')
+    expect(patch).toContain('interwovenMomentsEnabled: true')
+    expect(patch).toContain('richMediaRenderEnabled: true')
+    expect(patch).toContain('richMediaSendEnabled: true')
+    expect(patch).toContain('maxUploadBytes: 104857600')
     expect(patch).toContain('allowProduction: true')
     expect(patch).toContain('updateCheckEnabled: true')
     expect(patch).toContain('updateChannel: stable')

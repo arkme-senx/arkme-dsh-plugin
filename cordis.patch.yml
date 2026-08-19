@@ -4,6 +4,7 @@
       config:
         environment: prod
         authBaseUrl: https://api.jotmo.cc
+        subjectBaseUrl: https://subject.jotmo.cc
         recordBaseUrl: https://record.jotmo.cc
         chatBaseUrl: https://chat.jotmo.cc
         imBaseUrl: https://im.jotmo.cc
@@ -18,6 +19,7 @@
         toolProfile: business
         relatedRecordingsEnabled: true
         geetestCaptchaId: ec81315ab8b0f18a7bfa13602d01e307
+        interwovenMomentsEnabled: true
         allowNonLoopback: false
         allowProduction: true
         updateCheckEnabled: true
@@ -25,3 +27,6 @@
         updateRegistryUrl: https://registry.npmjs.org
         updateCheckIntervalHours: 12
         updateAllowLocalInstall: false
+        richMediaRenderEnabled: true
+        richMediaSendEnabled: true
+        maxUploadBytes: 104857600

@@ -5,7 +5,9 @@ import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAct
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeChatDirectory, arkmeChatTimelineDelta } from './chat-directory-store.js'
+import {
+  arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
+} from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 
@@ -78,6 +80,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
           || (observedRevision !== undefined && update.revision <= observedRevision)) return
         observedRevision = update.revision
         if (update.type === 'reconcile') {
+          arkmeInterwovenInvalidation.invalidate()
           if (update.refresh === 'none') return
           void refreshUnread(update.refresh === 'force').catch(() => undefined)
           return
@@ -97,6 +100,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
           .filter(item => item.timelineItems.length > 0)
           .map(item => ({ sourceRef: item.source.sourceRef, items: item.timelineItems }))
         if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        arkmeInterwovenInvalidation.invalidate()
       } catch { /* Ignore malformed local frames; EventSource keeps the channel alive. */ }
     }
     return () => {

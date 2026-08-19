@@ -1,7 +1,7 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.4",
-  "description": "Arkme login and send-to-self sidebar integration for DeepSeek Harness",
+  "version": "0.2.12",
+  "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
     "access": "public"

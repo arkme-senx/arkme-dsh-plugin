@@ -156,3 +156,24 @@ export class ArkmeChatTimelineDeltaStore {
 }
 
 export const arkmeChatTimelineDelta = new ArkmeChatTimelineDeltaStore()
+
+export interface ArkmeInterwovenInvalidationSnapshot {
+  revision: number
+}
+
+/** Realtime frames are invalidation hints only; interwoven content always comes from its owner read endpoint. */
+export class ArkmeInterwovenInvalidationStore {
+  private snapshot: ArkmeInterwovenInvalidationSnapshot = { revision: 0 }
+  private readonly listeners = new Set<() => void>()
+  readonly getSnapshot = (): ArkmeInterwovenInvalidationSnapshot => this.snapshot
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+  invalidate(): void {
+    this.snapshot = { revision: this.snapshot.revision + 1 }
+    for (const listener of this.listeners) listener()
+  }
+}
+
+export const arkmeInterwovenInvalidation = new ArkmeInterwovenInvalidationStore()

@@ -3,7 +3,7 @@ import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
-  ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor, ArkmeSourceDirectory, ArkmeTimelineCursor,
+  ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor, ArkmeRichSendInput, ArkmeSourceDirectory, ArkmeTimelineCursor,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
 
@@ -87,6 +87,14 @@ function requiredCallParam(
   return value
 }
 
+function requiredInterwovenParam(params: Record<string, unknown>, key: string): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > 4096) {
+    throw new ArkmePluginError('interwoven-param-invalid', '交织瞬间请求参数无效', false, 400)
+  }
+  return value
+}
+
 function outgoingMediaTypeParam(params: Record<string, unknown>): 'audio' | 'video' {
   const value = stringParam(params, 'mediaType')
   if (value !== 'audio' && value !== 'video') {
@@ -138,6 +146,30 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   const beforeSequence = numberParam(cursor, 'beforeSequence', 0)
   if (beforeSequence > 0) return { beforeSequence }
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
+}
+
+function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
+  const rawAssets = Array.isArray(params.assets) ? params.assets : []
+  const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
+  return {
+    title: stringParam(params, 'title'),
+    textContent: stringParam(params, 'textContent'),
+    displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
+    ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
+    assets: rawAssets.flatMap(raw => {
+      if (raw === null || typeof raw !== 'object') return []
+      const asset = raw as Record<string, unknown>
+      const fileKind = numberParam(asset, 'fileKind', 0)
+      if (![1, 2, 3, 4].includes(fileKind)) return []
+      return [{
+        fileAssetUid: stringParam(asset, 'fileAssetUid'),
+        fileName: stringParam(asset, 'fileName'),
+        mimeType: stringParam(asset, 'mimeType'),
+        size: numberParam(asset, 'size', 0),
+        fileKind: fileKind as 1 | 2 | 3 | 4,
+      }]
+    }),
+  }
 }
 
 function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
@@ -328,6 +360,13 @@ export async function dispatchArkmeHostOperation(
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
       )
     }
+    case 'source.interwoven-moments': return await service.interwovenMoments(
+      requiredInterwovenParam(params, 'sourceRef'),
+    )
+    case 'source.interwoven-detail': return await service.interwovenMomentDetail(
+      requiredInterwovenParam(params, 'sourceRef'),
+      requiredInterwovenParam(params, 'momentRef'),
+    )
     case 'source.mark-read': return await service.markSourceRead(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
@@ -398,6 +437,44 @@ export async function dispatchArkmeHostOperation(
     case 'chat.private.open': return await service.openPrivateChatFromUser(
       numberParam(params, 'peerUserId', 0),
       { displayName: stringParam(params, 'displayName') },
+    )
+    case 'source.send-rich': return await service.sendSourceRich(
+      stringParam(params, 'sourceRef'),
+      richSendParam(params),
+      {
+        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+      },
+    )
+    case 'source.long-article.detail': return await service.longArticleDetail(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+    )
+    case 'source.long-article.update': return await service.updateLongArticle(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+      {
+        title: stringParam(params, 'title'),
+        textContent: stringParam(params, 'textContent'),
+        version: Math.trunc(numberParam(params, 'version', 0)),
+        editDurationMillis: Math.max(0, Math.trunc(numberParam(params, 'editDurationMillis', 0))),
+      },
+    )
+    case 'source.long-article.draft.get': return await service.getLongArticleDraft(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid') || undefined,
+    )
+    case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      sourceRef: stringParam(params, 'sourceRef'),
+      ...(stringParam(params, 'itemUid') === '' ? {} : { itemUid: stringParam(params, 'itemUid') }),
+      title: stringParam(params, 'title'),
+      textContent: stringParam(params, 'textContent'),
+      durationMillis: Math.max(0, Math.trunc(numberParam(params, 'durationMillis', 0))),
+      updatedAtMillis: Date.now(),
+    })
+    case 'source.long-article.draft.delete': return await service.removeLongArticleDraft(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid') || undefined,
     )
     case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
     case 'calls.outgoing.intent.resolve': {

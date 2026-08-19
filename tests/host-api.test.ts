@@ -10,6 +10,14 @@ function fakeService() {
     releaseOutgoingCall: vi.fn(async () => undefined),
     arkoRunStatus: vi.fn(async () => ({ status: 'running' })),
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
+    interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
+    interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    sendSourceRich: vi.fn(async () => undefined),
+    longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
+    updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
+    getLongArticleDraft: vi.fn(async () => undefined),
+    putLongArticleDraft: vi.fn(async () => undefined),
+    removeLongArticleDraft: vi.fn(async () => undefined),
   }
 }
 
@@ -86,6 +94,68 @@ describe('outgoing call Host API dispatch', () => {
       callRequestId: 'request-1', userId: 999,
     })
     expect(service.releaseOutgoingCall).toHaveBeenCalledWith('request-1')
+  })
+
+  it('dispatches strict UI-only interwoven operations', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'source.interwoven-moments', {
+      sourceRef: 'source-ref', rawLocator: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.interwoven-detail', {
+      sourceRef: 'source-ref', momentRef: 'moment-ref', recordUid: 'must-not-forward',
+    })
+
+    expect(service.interwovenMoments).toHaveBeenCalledWith('source-ref')
+    expect(service.interwovenMomentDetail).toHaveBeenCalledWith('source-ref', 'moment-ref')
+  })
+
+  it('rejects missing or oversized interwoven references', async () => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'source.interwoven-detail', {
+      sourceRef: 'source-ref', momentRef: '',
+    })).rejects.toMatchObject({ code: 'interwoven-param-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'source.interwoven-moments', {
+      sourceRef: 'x'.repeat(4097),
+    })).rejects.toMatchObject({ code: 'interwoven-param-invalid' })
+    expect(service.interwovenMomentDetail).not.toHaveBeenCalled()
+  })
+
+  it('normalizes rich-send assets and does not forward unknown browser fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-rich', {
+      sourceRef: 'source-1', title: '标题', textContent: '正文', displayKind: 1,
+      recordUid: 'record-1', relationUid: 'relation-1', accessToken: 'must-not-forward',
+      assets: [{ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 8, fileKind: 1, signedUrl: 'secret' }],
+    })
+    expect(service.sendSourceRich).toHaveBeenCalledWith('source-1', {
+      title: '标题', textContent: '正文', displayKind: 1,
+      assets: [{ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 8, fileKind: 1 }],
+    }, { recordUid: 'record-1', relationUid: 'relation-1' })
+  })
+
+  it('normalizes long-article detail, update, and draft operations', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.long-article.detail', {
+      sourceRef: 'source-1', itemUid: 'record-1', accessToken: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.long-article.update', {
+      sourceRef: 'source-1', itemUid: 'record-1', title: '标题', textContent: '正文',
+      version: 2.8, editDurationMillis: 1200.9, ownerUserId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.long-article.draft.put', {
+      sourceRef: 'source-1', itemUid: 'record-1', title: '草稿', textContent: '正文', durationMillis: 500,
+    })
+
+    expect(service.longArticleDetail).toHaveBeenCalledWith('source-1', 'record-1')
+    expect(service.updateLongArticle).toHaveBeenCalledWith('source-1', 'record-1', {
+      title: '标题', textContent: '正文', version: 2, editDurationMillis: 1200,
+    })
+    expect(service.putLongArticleDraft).toHaveBeenCalledWith({
+      sourceRef: 'source-1', itemUid: 'record-1', title: '草稿', textContent: '正文',
+      durationMillis: 500, updatedAtMillis: expect.any(Number),
+    })
   })
 })
 
