@@ -62,6 +62,7 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
   ArkmeTimelinePage,
+  ArkmeTopicCreateResult,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeWorldPublishResult,
@@ -1300,6 +1301,102 @@ export class ArkmeService {
       throw new ArkmePluginError('arkme-id-update-contract-invalid', 'Arkme ID 设置已受理，但刷新结果不一致，请重新查询确认', true, 502)
     }
     return this.arkmeIdMutationResult(after, profile.arkmeId)
+  }
+
+  async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
+    const session = await this.requireSession()
+    const title = titleInput.trim()
+    if (title === '' || Array.from(title).length > 100) {
+      throw new ArkmePluginError('topic-title-invalid', '主题名称不能为空或超过 100 个字符', false)
+    }
+
+    let parentTopicUid: string | undefined
+    if (parentSourceRef !== undefined) {
+      const parent = await this.openSourceRef(parentSourceRef, session.userId)
+      if (parent.kind !== 'topic') {
+        throw new ArkmePluginError('topic-parent-invalid', '只能在主题下创建子主题', false)
+      }
+      parentTopicUid = parent.ownerRef
+    }
+
+    const createdAtMillis = Date.now()
+    const created = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/topics/create',
+      {
+        title,
+        show_in_home: true,
+        privacy_state: 1,
+        extra: { source: 'dsh-arkme' },
+      },
+      session,
+    )
+    const topicUid = stringValue(created.topic_uid).trim()
+    if (topicUid === '' || numberValue(created.status) !== 1) {
+      throw new ArkmePluginError('topic-create-contract-invalid', '主题创建响应不完整', true, 502)
+    }
+
+    const sourceRef = await this.sealSourceRef(session.userId, 'topic', topicUid, title)
+    if (parentTopicUid !== undefined) {
+      try {
+        const bound = await this.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/topics/hierarchy/bind',
+          { parent_topic_uid: parentTopicUid, child_topic_uid: topicUid },
+          session,
+        )
+        if (numberValue(objectValue(bound.relation).status) !== 1) {
+          throw new ArkmePluginError('topic-hierarchy-bind-contract-invalid', '子主题层级响应不完整', true, 502)
+        }
+      } catch (bindError) {
+        try {
+          const rolledBack = await this.authenticatedPost<Record<string, unknown>>(
+            '/api/v1/topics/update',
+            {
+              topic_uid: topicUid,
+              title,
+              show_in_home: true,
+              privacy_state: 1,
+              status: 2,
+              extra: { source: 'dsh-arkme' },
+            },
+            session,
+          )
+          if (stringValue(rolledBack.topic_uid).trim() !== topicUid || !booleanValue(rolledBack.updated)) {
+            throw new ArkmePluginError('topic-rollback-contract-invalid', '子主题清理响应不完整', true, 502)
+          }
+        } catch {
+          return {
+            source: {
+              sourceRef,
+              kind: 'topic',
+              displayName: title,
+              activeAtMillis: createdAtMillis,
+              unreadCount: 0,
+              recordCount: 0,
+            },
+            warning: '主题已创建，但父子关系添加及自动清理均未完成，请在根主题列表中检查后重试',
+          }
+        }
+        throw new ArkmePluginError(
+          'topic-hierarchy-bind-failed',
+          '未能创建子主题，已自动清理，请重试',
+          true,
+          409,
+          { cause: bindError },
+        )
+      }
+    }
+
+    return {
+      source: {
+        sourceRef,
+        ...(parentSourceRef !== undefined ? { parentSourceRef } : {}),
+        kind: 'topic',
+        displayName: title,
+        activeAtMillis: createdAtMillis,
+        unreadCount: 0,
+        recordCount: 0,
+      },
+    }
   }
 
   async listSources(

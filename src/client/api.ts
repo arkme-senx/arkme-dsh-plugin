@@ -8,6 +8,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'official-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'topic.create'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(
