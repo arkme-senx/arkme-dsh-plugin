@@ -32,6 +32,7 @@ export interface Config {
   subjectBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
+  botBaseUrl: string
   imBaseUrl: string
   webrtcBaseUrl: string
   worldBaseUrl: string
@@ -68,6 +69,7 @@ export const Config: Schema<Config> = Schema.object({
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
+  botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
   webrtcBaseUrl: Schema.string().default('https://jotmo-webrtc.senguo.me'),
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
@@ -251,6 +253,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.authBaseUrl,
       config.recordBaseUrl,
       config.chatBaseUrl,
+      config.botBaseUrl,
       config.imBaseUrl,
       config.webrtcBaseUrl,
       config.worldBaseUrl,
@@ -277,6 +280,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['subjectBaseUrl', config.subjectBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
+    ['botBaseUrl', config.botBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
     ['webrtcBaseUrl', config.webrtcBaseUrl],
     ['worldBaseUrl', config.worldBaseUrl],

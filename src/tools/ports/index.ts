@@ -1,5 +1,6 @@
 import type { ArkmeAiVideoToolPort } from './ai-video.js'
 import type { ArkmeArkoToolPort } from './arko.js'
+import type { ArkmeBotToolPort } from './bots.js'
 import type { ArkmeConversationToolPort } from './conversations.js'
 import type { ArkmeMediaToolPort } from './media.js'
 import type { ArkmeOutgoingCallToolPort } from './outgoing-call.js'
@@ -12,6 +13,7 @@ import type { ArkmeWechatToolPort } from './wechat.js'
 export interface ArkmeCoreToolPorts extends
   ArkmeAiVideoToolPort,
   ArkmeArkoToolPort,
+  ArkmeBotToolPort,
   ArkmeRecordToolPort,
   ArkmeProfileToolPort,
   ArkmeRecordingToolPort,
@@ -23,7 +25,7 @@ export interface ArkmeCoreToolPorts extends
 export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {}
 
 export type {
-  ArkmeAiVideoToolPort, ArkmeArkoToolPort, ArkmeConversationToolPort, ArkmeMediaToolPort, ArkmeProfileToolPort,
+  ArkmeAiVideoToolPort, ArkmeArkoToolPort, ArkmeBotToolPort, ArkmeConversationToolPort, ArkmeMediaToolPort, ArkmeProfileToolPort,
   ArkmeOutgoingCallToolPort, ArkmeRecordingToolPort, ArkmeRecordToolPort,
   ArkmeWorldToolPort, ArkmeWechatToolPort,
 }
