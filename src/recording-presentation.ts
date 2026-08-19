@@ -142,6 +142,8 @@ export function projectRecordingTranscripts(
         itemId: `${childId || sessionId}:${index}`,
         sessionId,
         childId,
+        asrItemIndex: index,
+        transcriptSource: 'system',
         startAtMillis: childStart + startOffset,
         endAtMillis: childStart + endOffset,
         speakerNumber,

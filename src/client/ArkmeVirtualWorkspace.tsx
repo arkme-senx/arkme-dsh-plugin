@@ -241,6 +241,22 @@ export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; o
   </button>
 }
 
+export function ArkmeSearchRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><img src="/arkme-self/api/call/image_search.svg" alt="" width={25} height={24} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.chatName}>搜索</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>快记、主题、录音与 AI 视频</span></span>
+    </span>
+  </button>
+}
+
 export function ArkmeArkoRow({
   selected,
   displayName = 'Arko',
@@ -658,11 +674,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       }
       setSources(loaded)
       const uiSnapshot = arkmeUi.getSnapshot()
-      const selected = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
-        ? undefined
-        : uiSnapshot.selectedSource
+      const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
+      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko' || uiSnapshot.mode === 'search'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'default_category') : undefined)
@@ -701,11 +715,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources
     setSources(loaded)
-    const selected = ui.mode === 'recordings' || ui.mode === 'arko'
-      ? undefined
-      : arkmeUi.getSnapshot().selectedSource
+    const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'recordings' || ui.mode === 'arko'
+    const restored = ui.mode === 'recordings' || ui.mode === 'arko' || ui.mode === 'search'
       ? undefined
       : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)
@@ -784,6 +796,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
 
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
+  const showSearch = () => { arkmeUi.showSearch(); onActivateSurface?.() }
   const showArko = () => { arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
     directoryRequestAbortRef.current?.abort()
@@ -920,6 +933,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           </span>
         </button>
         <ArkmeRecordingsRow selected={ui.mode === 'recordings'} onClick={showRecordings} />
+        <ArkmeSearchRow selected={ui.mode === 'search'} onClick={showSearch} />
         {sources.map(source => {
           const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button

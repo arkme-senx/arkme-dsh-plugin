@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeRecordingCalendarDay,
   ArkmeRecordingCalendarMonth,
@@ -7,6 +7,7 @@ import type {
   ArkmeRecordingVersion,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { arkmeUi } from './ui-controller.js'
 
 type RecordingTab = 'transcript' | 'summary' | 'timeline'
 
@@ -223,6 +224,7 @@ function VersionPicker({ versions, selectedId, onChange }: {
 }
 
 export function ArkmeRecordingSurface() {
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const rootRef = useRef<HTMLDivElement>(null)
   const [compact, setCompact] = useState(false)
@@ -237,6 +239,15 @@ export function ArkmeRecordingSurface() {
   const [dayError, setDayError] = useState('')
   const [summaryVersionId, setSummaryVersionId] = useState('')
   const [timelineVersionId, setTimelineVersionId] = useState('')
+
+  useEffect(() => {
+    const target = ui.recordingTarget
+    if (target === undefined || target.dateStamp <= 0) return
+    const targetDate = startOfLocalDay(new Date(target.dateStamp))
+    setSelectedDate(targetDate)
+    setVisibleMonth(monthStart(targetDate))
+    setActiveTab('transcript')
+  }, [ui.recordingTarget])
 
   useEffect(() => {
     const root = rootRef.current

@@ -8,6 +8,15 @@ import {
 
 function fakeService(overrides: Partial<ArkmeAiVideoService> = {}): ArkmeAiVideoService {
   return {
+    aiVideoList: vi.fn(async () => ({
+      items: [{
+        jobId: 'job-list-1', sessionId: 'session-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+        title: '周会复盘', sourceStartedAtMillis: 1, selectedDurationMillis: 8_000,
+        selectedSegmentCount: 2, retryable: false, createdAtMillis: 2, updatedAtMillis: 3,
+        videoAssetUid: 'private-video-asset',
+      }],
+      hasMore: false,
+    })),
     aiVideoPreflight: vi.fn(async () => ({
       allowed: true,
       message: '所选内容可以生成视频',
@@ -104,6 +113,21 @@ describe('Jiwo AI video tool', () => {
     expect(service.aiVideoStatus).toHaveBeenCalledWith('job-1', expect.any(AbortSignal))
     expect(service.aiVideoPreflight).not.toHaveBeenCalled()
     expect(output).toContain('"action": "status"')
+  })
+
+  it('lists existing jobs without exposing file asset identifiers', async () => {
+    const service = fakeService()
+    const tool = createArkmeAiVideoToolDefinition(service)
+
+    const output = await tool.execute(
+      { action: 'list', limit: 20 },
+      { signal: new AbortController().signal } as never,
+    ) as string
+
+    expect(service.aiVideoList).toHaveBeenCalledWith({ limit: 20, signal: expect.any(AbortSignal) })
+    expect(output).toContain('"周会复盘"')
+    expect(output).toContain('"action": "list"')
+    expect(output).not.toContain('private-video-asset')
   })
 
   it('rejects missing, duplicate, or malformed selectors before network calls', async () => {

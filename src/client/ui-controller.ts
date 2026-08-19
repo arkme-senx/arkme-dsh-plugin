@@ -14,8 +14,9 @@ export interface ArkmeUiState {
   surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings' | 'arko'
+  mode: 'login' | 'source' | 'recordings' | 'search' | 'arko'
   selectedSource?: ArkmeSourceItem
+  recordingTarget?: { dateStamp: number; startAtMillis: number }
 }
 
 export class ArkmeUiController {
@@ -85,8 +86,18 @@ export class ArkmeUiController {
   }
 
   showRecordings(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'recordings' })
+  }
+
+  showRecordingTarget(dateStamp: number, startAtMillis: number): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis } })
+  }
+
+  showSearch(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'search' })
   }
 
   showArko(): void {
@@ -102,7 +113,10 @@ export class ArkmeUiController {
     if (next.open === this.state.open && next.surfaceOpen === this.state.surfaceOpen
       && next.authRevision === this.state.authRevision
       && next.chatRevision === this.state.chatRevision
-      && next.mode === this.state.mode && sameSource(next.selectedSource, this.state.selectedSource)) return
+      && next.mode === this.state.mode
+      && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
+      && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
+      && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next
     for (const listener of this.listeners) listener()
   }

@@ -58,6 +58,30 @@ function fakeService(): ArkmeCoreToolPorts & {
       cachedAtMillis: 123,
       revision: 7,
     })),
+    searchRemote: vi.fn(async () => ({
+      items: [{
+        recordUid: 'remote-record-1', sourceKind: 2, sourceUid: 'topic-1', routeTargetKind: 'home_feed',
+        sendAtMillis: 123, title: '项目复盘', textContent: '复盘正文', snippet: '命中复盘',
+        media: [{ fileAssetUid: 'private-asset-1' }], files: [],
+      }],
+      sourceAggregates: [{
+        sourceKind: 2, sourceUid: 'topic-1', routeTargetKind: 'home_feed', title: '项目主题',
+        matchedRecordCount: 1, matchedRecordCountExact: true,
+      }],
+      hasMore: false, queryGuard: { state: 'ok' },
+    })),
+    searchScene: vi.fn(async ({ scene }: { scene: string }) => ({
+      items: [{
+        recordUid: `scene-${scene}`, sourceKind: 1, routeTargetKind: 'home_feed', sendAtMillis: 123,
+        title: '媒体快记', textContent: '', snippet: '', sceneItemCount: 2,
+        media: [{ fileAssetUid: 'private-scene-asset-1' }], files: [],
+      }],
+      sourceAggregates: [], hasMore: false, queryGuard: { state: 'ok' },
+    })),
+    searchRecordings: vi.fn(async () => ({
+      items: [{ sessionId: 'recording-1', dateStamp: 123, startAtMillis: 456, snippet: '录音复盘', score: 1 }],
+      hasMore: false, queryGuard: { state: 'complete' },
+    })),
     createTextForConversation: vi.fn(async (recordUid: string) => ({
       recordUid, status: 1, localState: 'synced' as const,
     })),
@@ -186,6 +210,7 @@ function fakeService(): ArkmeCoreToolPorts & {
       retryable: false,
       proof: 'proof',
     })),
+    aiVideoList: vi.fn(async () => ({ items: [], hasMore: false })),
     aiVideoCreate: vi.fn(async () => ({
       jobId: 'job-1', status: 'queued' as const, stage: 'queued', progress: 0,
       selectedSegmentCount: 1, retryable: false,
@@ -229,6 +254,24 @@ describe('Arkme conversation tools', () => {
     await expect(tool.execute({ query: '   ' }, { signal } as never)).rejects.toThrow(/query 不能为空/)
   })
 
+  it('uses only the remote quick-note lane by default', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_records_search')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute({ query: '复盘' }, { signal } as never) as string
+    expect(service.searchRemote).toHaveBeenCalledWith({ query: '复盘', limit: 10, signal })
+    expect(service.searchRecordings).not.toHaveBeenCalled()
+    expect(service.searchScene).not.toHaveBeenCalled()
+    expect(output).toContain('"项目主题"')
+    expect(output).not.toContain('"录音复盘"')
+    expect(output).not.toContain('private-asset-1')
+    expect(output).toMatch(/"mediaCount":\s*1/)
+
+    await tool.execute({ query: '复盘', cursor: 'next-records' }, { signal } as never)
+    expect(service.searchRemote).toHaveBeenLastCalledWith({ query: '复盘', limit: 10, cursor: 'next-records', signal })
+  })
+
   it('writes with a stable call-derived uid without echoing the saved text', async () => {
     const service = fakeService()
     const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_record_create')!
@@ -264,9 +307,9 @@ describe('Arkme conversation tools', () => {
     expect(tool.description).toContain('does not authorize installing generated code')
   })
 
-  it('requires complete record coverage before claiming absence and hides internal details', () => {
-    expect(ARKME_TOOL_PROMPT).toContain('empty and cache_complete=true')
-    expect(ARKME_TOOL_PROMPT).toContain('absence could not be confirmed')
+  it('requires complete quick-note coverage before claiming absence and hides internal details', () => {
+    expect(ARKME_TOOL_PROMPT).toContain('no quick-note match when the search completed and has no further page')
+    expect(ARKME_TOOL_PROMPT).toContain('cache_complete=true')
     expect(ARKME_TOOL_PROMPT).toContain('do not expose Arkme tool names')
     expect(ARKME_TOOL_PROMPT).toContain('record_uid values')
   })

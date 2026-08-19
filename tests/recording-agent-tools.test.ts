@@ -102,7 +102,7 @@ describe('Arkme recording date discovery tool', () => {
 })
 
 describe('Arkme recording content tool', () => {
-  it('reads safe transcript fields without UI and resource identifiers', async () => {
+  it('reads transcript fields with exact trusted AI-video selectors', async () => {
     const ports = fakeRecordingPorts()
     vi.mocked(ports.recordingTranscript).mockResolvedValue({
       state: 'ready',
@@ -113,6 +113,8 @@ describe('Arkme recording content tool', () => {
         itemId: 'child-secret:0',
         sessionId: 'session-secret',
         childId: 'child-secret',
+        asrItemIndex: 7,
+        transcriptSource: 'system',
         startAtMillis: 100,
         endAtMillis: 200,
         speakerNumber: 4,
@@ -137,6 +139,10 @@ describe('Arkme recording content tool', () => {
       section_state: 'ready',
       coverage: { state: 'complete' },
       items: [{
+        session_id: 'session-secret',
+        child_id: 'child-secret',
+        asr_item_index: 7,
+        transcript_source: 'system',
         start_at_millis: 100,
         end_at_millis: 200,
         speaker: '我',
@@ -145,7 +151,7 @@ describe('Arkme recording content tool', () => {
       }],
       has_more: false,
     })
-    expect(JSON.stringify(output)).not.toMatch(/child-secret|session-secret|speakerColorIndex/)
+    expect(JSON.stringify(output)).not.toMatch(/speakerColorIndex/)
     expect(ports.recordingProjection).not.toHaveBeenCalled()
   })
 

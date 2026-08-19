@@ -226,6 +226,8 @@ function validateConfig(ctx: Context, config: Config): void {
 
 export type {
   ArkmeAiVideoJob,
+  ArkmeAiVideoListItem,
+  ArkmeAiVideoListResult,
   ArkmeAiVideoJobStatus,
   ArkmeAiVideoPreflightResult,
   ArkmeAiVideoSegmentSelector,
@@ -254,6 +256,14 @@ export type {
   ArkmeRichSendInput,
   ArkmeImageMediaType,
   ArkmeImagePayload,
+  ArkmeFileAssetDisplayItem,
+  ArkmeRecordSearchResult,
+  ArkmeRecordingSearchItem,
+  ArkmeRecordingSearchResult,
+  ArkmeSearchQueryGuard,
+  ArkmeSearchRecordItem,
+  ArkmeSearchSceneKind,
+  ArkmeSearchSourceAggregate,
   ArkmeSourceDirectory,
   ArkmeSourceItem,
   ArkmeSourceKind,

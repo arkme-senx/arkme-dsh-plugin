@@ -12,6 +12,12 @@ const ASSETS = {
   'index.html': { contentType: 'text/html; charset=utf-8', cacheControl: 'no-store' },
   'bundle.js': { contentType: 'text/javascript; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'call-linear-strong.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'image_search.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'image_search_grey.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'icon_close_round_bold.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'close.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'arrow_left.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'video_play_white.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'manifest.json': { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' },
 } as const
 
@@ -20,7 +26,7 @@ const DOCUMENT_CSP = [
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
-  "media-src 'self' blob:",
+  "media-src 'self' blob: https:",
   "worker-src 'self' blob:",
   "connect-src 'self' https: wss: data:",
   "frame-ancestors 'self'",

@@ -31,7 +31,8 @@ export function formatRecordResult(label: string, result: ArkmeCachedQueryResult
 }
 
 export function taggedJSON(label: string, value: unknown): string {
-  return `${label}\n<data_from_arkme>\n${JSON.stringify(value, undefined, 2)}\n</data_from_arkme>`
+  const json = JSON.stringify(value, undefined, 2).replaceAll('</data_from_arkme>', '<\\/data_from_arkme>')
+  return `${label}\n<data_from_arkme>\n${json}\n</data_from_arkme>`
 }
 
 export function formatWriteResult(result: ArkmeConversationWriteResult): string {

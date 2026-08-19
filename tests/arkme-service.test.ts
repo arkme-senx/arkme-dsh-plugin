@@ -2499,6 +2499,89 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('maps remote record, scene, and recording search contracts', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/search/recordings/query')) return json({ code: 0, data: {
+        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, start_at: 200, snippet: '北京复盘', score: 0.8 }],
+        has_more: false, query_guard: { state: 'complete' },
+      } })
+      return json({ code: 0, data: {
+        items: [{
+          record_uid: 'record-1', source_kind: 2, source_uid: 'topic-1', route_target_kind: 'home_feed',
+          send_at: 123, record_core: {
+            title: '项目复盘', text_content: '正文 https://example.com/detail', nickname: '小林',
+            template_kind: 3, display_kind: 4,
+            content_payload: {
+              media_refs: [{ file_asset_uid: 'image-1', file_uid: 'file-1', file_name: '截图.png', mime_type: 'image/png', size: 2048 }],
+              voice: { source_file_asset_uid: 'voice-1', file_name: '录音.m4a', mime_type: 'audio/mp4', duration_millis: 3000 },
+            },
+          },
+          match_summary: { snippet: '命中复盘' }, scene_item_count: 2,
+          file_ls: [{ file_asset_uid: 'document-1', file_name: '方案.pdf', mime_type: 'application/pdf', size: 4096 }],
+        }],
+        source_aggregates: [{
+          source_kind: 2, source_uid: 'topic-1', route_target_kind: 'home_feed', matched_record_count: 1,
+          matched_record_count_exact: true, topic_core: { title: '项目主题' },
+        }],
+        has_more: false, query_guard: { state: 'ok' }, page_summary: { item_count: 2, item_size: 2048 },
+      } })
+    })
+
+    await expect(service.searchRemote({ query: '复盘', limit: 20 })).resolves.toMatchObject({
+      items: [{
+        recordUid: 'record-1', title: '项目复盘', snippet: '命中复盘', templateKind: 3, displayKind: 4,
+        media: [{ fileAssetUid: 'image-1', fileName: '截图.png', mimeType: 'image/png', size: 2048 }],
+        files: [{ fileAssetUid: 'document-1', fileName: '方案.pdf', mimeType: 'application/pdf', size: 4096 }],
+        voice: { fileAssetUid: 'voice-1', fileName: '录音.m4a', mimeType: 'audio/mp4', durationMillis: 3000 },
+        linkUrl: 'https://example.com/detail',
+      }],
+      sourceAggregates: [{ sourceUid: 'topic-1', title: '项目主题' }],
+    })
+    await expect(service.searchScene({ scene: 'image_video', limit: 10 })).resolves.toMatchObject({ itemCount: 2, itemSize: 2048 })
+    await expect(service.searchRecordings({ query: '北京', limit: 9 })).resolves.toMatchObject({
+      items: [{ sessionId: 'session-1', snippet: '北京复盘' }],
+    })
+    expect(requests.map(item => item.body)).toEqual([
+      { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
+      { scene_kind: 3, limit: 10, search_scope: 'global' },
+      { keyword: '北京', limit: 9 },
+    ])
+  })
+
+  it('lists AI videos and resolves only safe display asset URLs', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/ai-comic-video/jobs/list')) return json({ code: 200, data: {
+        items: [{
+          job_id: 'job-1', session_id: 'session-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+          selected_segment_count: 2, source_recording: { title: '周会', started_at: 100, selected_duration_millis: 8_000 },
+          video_asset_uid: 'video-1', cover_asset_uid: 'cover-1', retryable: false, created_at: 200, updated_at: 300,
+        }],
+        has_more: false,
+      } })
+      return json({ code: 0, data: { items: [
+        { file_asset_uid: 'video-1', status: 'ready', download_url: 'https://oss.example/video.mp4' },
+        { file_asset_uid: 'cover-1', status: 'ready', preview_url: 'javascript:alert(1)' },
+      ] } })
+    })
+
+    await expect(service.aiVideoList({ limit: 20 })).resolves.toMatchObject({
+      items: [{ jobId: 'job-1', title: '周会', videoAssetUid: 'video-1', coverAssetUid: 'cover-1' }],
+    })
+    await expect(service.queryFileAssets(['video-1', 'cover-1'])).resolves.toEqual([
+      { fileAssetUid: 'video-1', status: 'ready', downloadUrl: 'https://oss.example/video.mp4' },
+      { fileAssetUid: 'cover-1', status: 'ready' },
+    ])
+  })
+
   it('asks Arko through the AgentDirect Intelligent session and projects the SSE tail', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

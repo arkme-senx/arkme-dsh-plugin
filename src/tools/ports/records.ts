@@ -1,5 +1,6 @@
 import type {
-  ArkmeCachedQueryResult, ArkmeConversationWriteResult,
+  ArkmeCachedQueryResult, ArkmeConversationWriteResult, ArkmeRecordSearchResult,
+  ArkmeRecordingSearchResult, ArkmeSearchSceneKind,
 } from '../../types.js'
 
 export interface ArkmeRecordToolPort {
@@ -10,5 +11,23 @@ export interface ArkmeRecordToolPort {
     limit: number
     beforeMillis?: number
   }): Promise<ArkmeCachedQueryResult>
+  searchRemote(options: {
+    query: string
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordSearchResult>
+  searchScene(options: {
+    scene: ArkmeSearchSceneKind
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordSearchResult>
+  searchRecordings(options: {
+    query: string
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordingSearchResult>
   createTextForConversation(recordUid: string, textContent: string): Promise<ArkmeConversationWriteResult>
 }
