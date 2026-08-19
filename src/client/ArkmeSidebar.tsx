@@ -26,6 +26,7 @@ import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichConten
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
+import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
 import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, resolveInterwovenGroupTarget,
@@ -104,14 +105,6 @@ const styles: Record<string, CSSProperties> = {
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
-  interwovenState: {
-    width: 'min(780px,100%)', margin: '0 auto 10px', color: colors.secondary,
-    textAlign: 'center', fontSize: 12, lineHeight: '18px',
-  },
-  inlineRetry: {
-    marginLeft: 8, border: 0, padding: 0, background: 'transparent',
-    color: 'var(--dsw-alias-state-business-primary, #3964fe)', cursor: 'pointer', fontSize: 12,
-  },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
   composerInner: {
     position: 'relative', width: 'min(780px,100%)', overflow: 'visible', boxSizing: 'border-box',
@@ -286,15 +279,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const fileInputRef = useRef<HTMLInputElement>(null)
   const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [timelineStateSourceRef, setTimelineStateSourceRef] = useState('')
   const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
   const [aiPolishSettings, setAiPolishSettings] = useState<ArkmeGroupAiPolishSnapshot>()
   const [drawer, setDrawer] = useState<'detail'>()
   const [detailItemUid, setDetailItemUid] = useState('')
   const [showOriginal, setShowOriginal] = useState(false)
   const [interwovenMoments, setInterwovenMoments] = useState<ArkmeInterwovenMention[]>([])
-  const [interwovenState, setInterwovenState] = useState<ArkmeInterwovenBootstrap['state']>('empty')
-  const [interwovenLoading, setInterwovenLoading] = useState(false)
-  const [interwovenError, setInterwovenError] = useState('')
   const [interwovenRefreshRevision, setInterwovenRefreshRevision] = useState(0)
   const [selectedMoment, setSelectedMoment] = useState<ArkmeInterwovenMention>()
   const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
@@ -319,6 +310,9 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
   const qrRequestStartedRef = useRef(false)
+  const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
+  const cacheAccountUserIdRef = useRef<number>()
+  const timelineGenerationRef = useRef(0)
   const interwovenRequestRef = useRef<AbortController>()
   const interwovenGenerationRef = useRef(0)
   const detailRequestRef = useRef<AbortController>()
@@ -570,18 +564,31 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
 
   const loadTimeline = useCallback(async (cursor?: ArkmeTimelineCursor, preserve = false) => {
     if (source === undefined) return
+    const sourceRef = source.sourceRef
+    const generation = timelineGenerationRef.current
     const body = bodyRef.current
     const oldHeight = body?.scrollHeight ?? 0
     const oldTop = body?.scrollTop ?? 0
     const page = await callArkme<ArkmeTimelinePage>('source.timeline', {
-      sourceRef: source.sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
+      sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
     })
-    setItems(current => cursor === undefined ? mergeItems([], page.items) : mergeItems(current, page.items))
-    if (cursor === undefined) {
-      setAiPolishSettings(page.aiPolishSettings)
-      setAiPolishNotices(page.aiPolishNotices ?? [])
+    if (generation !== timelineGenerationRef.current) return
+    const cached = conversationCacheRef.current.getTimeline(sourceRef)
+    const nextAiPolishSettings = cursor === undefined ? page.aiPolishSettings : cached?.aiPolishSettings
+    const snapshot = {
+      items: cursor === undefined ? mergeItems([], page.items) : mergeItems(cached?.items ?? [], page.items),
+      aiPolishNotices: cursor === undefined ? page.aiPolishNotices ?? [] : cached?.aiPolishNotices ?? [],
+      hasMore: page.hasMore,
+      ...(nextAiPolishSettings === undefined ? {} : { aiPolishSettings: nextAiPolishSettings }),
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     }
-    setHasMore(page.hasMore); setNextCursor(page.nextCursor)
+    const releasedMoments = conversationCacheRef.current.storeTimeline(sourceRef, snapshot)
+    setTimelineStateSourceRef(sourceRef)
+    setItems(snapshot.items)
+    setAiPolishSettings(snapshot.aiPolishSettings)
+    setAiPolishNotices(snapshot.aiPolishNotices)
+    setHasMore(snapshot.hasMore); setNextCursor(snapshot.nextCursor)
+    if (releasedMoments !== undefined) setInterwovenMoments(releasedMoments)
     requestAnimationFrame(() => {
       const target = bodyRef.current
       if (target === null) return
@@ -593,31 +600,58 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   useEffect(() => {
     if (!authStoreSnapshot.checked) void refreshAuth()
   }, [authStoreSnapshot.checked, refreshAuth, ui.authRevision])
-  useEffect(() => {
-    setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined)
+  useLayoutEffect(() => {
+    timelineGenerationRef.current += 1
+    const accountUserId = auth?.status === 'authenticated' ? auth.userId : undefined
+    if (cacheAccountUserIdRef.current !== accountUserId) {
+      conversationCacheRef.current.clear()
+      cacheAccountUserIdRef.current = accountUserId
+    }
+    const sourceRef = authenticated ? source?.sourceRef : undefined
+    const cachedTimeline = sourceRef === undefined
+      ? undefined
+      : conversationCacheRef.current.getTimeline(sourceRef)
+    setTimelineStateSourceRef(sourceRef ?? '')
+    setItems(cachedTimeline?.items ?? [])
+    setAiPolishNotices(cachedTimeline?.aiPolishNotices ?? [])
+    setAiPolishSettings(cachedTimeline?.aiPolishSettings)
+    setNextCursor(cachedTimeline?.nextCursor)
+    setHasMore(cachedTimeline?.hasMore ?? false)
     setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
-    setNextCursor(undefined); setHasMore(false)
     if (authenticated) setError('')
     setAttachments(current => { releaseAttachmentPreviews(current); return [] }); setLongArticleCreating(false); setAddMenuOpen(false)
-    if (authenticated && source !== undefined) {
-      setBusy(true)
-      void loadTimeline().catch(caught => { setError(errorMessage(caught)) }).finally(() => { setBusy(false) })
-    }
-  }, [authenticated, releaseAttachmentPreviews, source?.sourceRef])
-  useEffect(() => {
     interwovenRequestRef.current?.abort()
     interwovenGenerationRef.current += 1
     detailRequestRef.current?.abort()
     detailRequestMomentRef.current = ''
-    setInterwovenMoments([])
-    setInterwovenState('empty')
-    setInterwovenLoading(false)
-    setInterwovenError('')
+    setInterwovenMoments(sourceRef === undefined
+      ? []
+      : conversationCacheRef.current.getInterwovenMoments(sourceRef) ?? [])
     setSelectedMoment(undefined)
     setDetailState(undefined)
-  }, [authenticated, auth?.userId, source?.sourceRef])
+  }, [authenticated, auth?.userId, releaseAttachmentPreviews, source?.sourceRef])
+  useEffect(() => {
+    if (!authenticated || source === undefined) return
+    const generation = timelineGenerationRef.current
+    const hasCachedTimeline = conversationCacheRef.current.getTimeline(source.sourceRef) !== undefined
+    void loadTimeline().catch(caught => {
+      if (generation === timelineGenerationRef.current && !hasCachedTimeline) setError(errorMessage(caught))
+    })
+  }, [authenticated, source?.sourceRef])
+  useEffect(() => {
+    if (!authenticated || source === undefined || timelineStateSourceRef !== source.sourceRef) return
+    if (conversationCacheRef.current.getTimeline(source.sourceRef) === undefined) return
+    conversationCacheRef.current.storeTimeline(source.sourceRef, {
+      items,
+      aiPolishNotices,
+      hasMore,
+      ...(aiPolishSettings === undefined ? {} : { aiPolishSettings }),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    })
+  }, [aiPolishNotices, aiPolishSettings, authenticated, hasMore, items, nextCursor, source?.sourceRef, timelineStateSourceRef])
   useEffect(() => {
     if (!authenticated || source?.kind !== 'private_chat') return
+    const sourceRef = source.sourceRef
     const generation = ++interwovenGenerationRef.current
     const controller = new AbortController()
     const body = bodyRef.current
@@ -625,25 +659,20 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     interwovenRequestRef.current?.abort()
     interwovenRequestRef.current = controller
     let active = true
-    setInterwovenLoading(true)
-    setInterwovenError('')
     void callArkme<ArkmeInterwovenBootstrap>('source.interwoven-moments', {
-      sourceRef: source.sourceRef,
+      sourceRef,
     }, controller.signal).then(result => {
       if (!active || generation !== interwovenGenerationRef.current) return
-      setInterwovenState(result.state)
-      setInterwovenMoments(result.state === 'disabled' || result.state === 'empty' ? [] : result.moments)
-      if (result.state === 'partial') setInterwovenError(result.message ?? '部分交织瞬间暂时不可用')
+      const moments = result.state === 'disabled' || result.state === 'empty' ? [] : result.moments
+      const ready = conversationCacheRef.current.storeInterwovenMoments(sourceRef, moments)
+      if (!ready) return
+      setInterwovenMoments(moments)
       if (stickToBottom) requestAnimationFrame(() => {
         if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
       })
-    }).catch(caught => {
-      if (!active || generation !== interwovenGenerationRef.current) return
-      setInterwovenError(errorMessage(caught))
-    }).finally(() => {
+    }).catch(() => undefined).finally(() => {
       if (!active || generation !== interwovenGenerationRef.current) return
       if (interwovenRequestRef.current === controller) interwovenRequestRef.current = undefined
-      setInterwovenLoading(false)
     })
     return () => {
       active = false
@@ -1067,15 +1096,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {source.kind === 'private_chat' && interwovenLoading && interwovenMoments.length === 0
-              && <div style={styles.interwovenState} role="status">正在加载交织瞬间…</div>}
-            {source.kind === 'private_chat' && interwovenError !== '' && <div style={styles.interwovenState}>
-              {interwovenError}
-              <button
-                type="button" style={styles.inlineRetry}
-                onClick={() => { setInterwovenRefreshRevision(value => value + 1) }}
-              >重试</button>
-            </div>}
             {displayRows.length > 0 && <ul style={styles.records}>
               {displayRows.map((row, index) => {
                 const previous = index === 0 ? undefined : displayRows[index - 1]
