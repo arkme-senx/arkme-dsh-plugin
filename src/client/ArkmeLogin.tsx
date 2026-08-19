@@ -24,6 +24,7 @@ export interface ArkmeLoginProps {
   onSendCode: () => void
   onVerifyCode: () => void
   onTestLogin: () => void
+  onWechatLogin: () => void
   onCancelBinding: () => void
 }
 
@@ -156,6 +157,17 @@ const loginStyles = `
   }
   .dsh-arkme-login-qr-image { width: 200px; height: 200px; display: block; object-fit: contain; }
   .dsh-arkme-login-qr-loading { color: #6f7d73; font-size: 14px; line-height: 20px; }
+  .dsh-arkme-login-qr-relogin {
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    background: #17221b;
+    color: #fff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+  }
   .dsh-arkme-login-field + .dsh-arkme-login-field { margin-top: 20px; }
   .dsh-arkme-login-label { display: block; color: #2f3d34; font-size: 14px; font-weight: 600; line-height: 20px; }
   .dsh-arkme-login-input-shell {
@@ -370,7 +382,9 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
             <div className="dsh-arkme-login-qr-title">请使用微信扫码登录</div>
             <div className="dsh-arkme-login-qr-frame">
               {props.qrDataUrl === ''
-                ? <span className="dsh-arkme-login-qr-loading">二维码加载中</span>
+                ? props.error !== '' && !props.busy
+                  ? <button type="button" className="dsh-arkme-login-qr-relogin" onClick={props.onWechatLogin}>重新登录</button>
+                  : <span className="dsh-arkme-login-qr-loading">二维码加载中</span>
                 : <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt="微信扫码登录 Arkme" />}
             </div>
           </div> : effectiveMode === 'phone' ? <div role="tabpanel">

@@ -9,6 +9,7 @@ import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
 import { sendTextToolModule } from './conversation/send-text.js'
 import { startCallToolModule } from './conversation/start-call.js'
 import { aiVideoToolModule } from './media/ai-video.js'
+import { textAiVideoToolModule } from './media/text-ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
 import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
@@ -36,5 +37,6 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   sendDirectTextToolModule,
   startCallToolModule,
   aiVideoToolModule,
+  textAiVideoToolModule,
   readImageToolModule,
 ]

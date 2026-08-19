@@ -1,4 +1,4 @@
-import type { ArkmeSourceItem } from './types.js'
+import type { ArkmeGroupAvatarPresentation, ArkmeSourceItem } from './types.js'
 
 export type ArkmeDSHBetaCommunityStatus = 'ready' | 'already_member' | 'joined'
 
@@ -9,6 +9,7 @@ export interface ArkmeDSHBetaCommunityEntryState {
   groupTitle: string
   memberCount: number
   avatarRefs: string[]
+  groupAvatar?: ArkmeGroupAvatarPresentation
 }
 
 /** Internal join result; the raw Chat session id never crosses the Provider boundary. */

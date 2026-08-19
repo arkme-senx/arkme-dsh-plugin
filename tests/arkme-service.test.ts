@@ -1994,14 +1994,15 @@ describe('ArkmeService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('hydrates private and group avatars as opaque refs and reads them through fresh authorization', async () => {
+  it('hydrates opaque avatar refs and reuses authorized profile URLs for large images with stale content types', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const privateAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/20002_avatar.png?x-oss-signature=private-signature'
     const groupAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/import/avatar/member.png?x-oss-signature=group-signature'
-    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2])
-    let publicProfileReads = 0
+    const png = new Uint8Array(2 * 1024 * 1024 + 1)
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2])
+    let profileReads = 0
     let imageDownloads = 0
     const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
@@ -2023,21 +2024,25 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) {
         expect(body).toEqual({ chat_session_uids: ['group-1'] })
         return json({ code: 200, data: {
-          items: [{ chat_session_uid: 'group-1', members: [{ user_id: 20003 }, { user_id: 20002 }] }],
+          items: [{
+            chat_session_uid: 'group-1', member_count: 2,
+            strategy: 'owner_recent_speakers', computed_at: 1787036400000,
+            members: [{ user_id: 20003 }, { user_id: 20002 }],
+          }],
         } })
       }
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
-        publicProfileReads += 1
+        profileReads += 1
         return json({ code: 200, data: {
-        items: [
-          { user_id: 20002, nick_name: '联系人', head_img: privateAvatar },
-          { user_id: 20003, nick_name: '群成员', head_img: groupAvatar },
-        ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
+          items: [
+            { user_id: 20002, nick_name: '联系人', head_img: privateAvatar },
+            { user_id: 20003, nick_name: '群成员', head_img: groupAvatar },
+          ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
         } })
       }
       if (url === privateAvatar || url === groupAvatar) {
         imageDownloads += 1
-        return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } })
+        return new Response(png, { status: 200, headers: { 'Content-Type': 'image/jpeg' } })
       }
       throw new Error(`unexpected ${url}`)
     })
@@ -2046,7 +2051,14 @@ describe('ArkmeService', () => {
     expect(sources.items[0]).toMatchObject({ displayName: '联系人备注' })
     expect(sources.items[0]?.avatarRef).toMatch(/^arkme-profile-image-v1\./)
     expect(sources.items[1]?.avatarRefs).toHaveLength(2)
+    expect(sources.items[1]?.groupAvatar).toMatchObject({
+      memberCount: 2,
+      strategy: 'owner_recent_speakers',
+      computedAtMillis: 1787036400000,
+      slots: [{ avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) }, { avatarRef: expect.any(String) }],
+    })
     expect(JSON.stringify(sources)).not.toContain('x-oss-signature')
+    expect(profileReads).toBe(1)
 
     await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
@@ -2054,7 +2066,7 @@ describe('ArkmeService', () => {
     await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
       mediaType: 'image/png', bytes: png.byteLength,
     })
-    expect(publicProfileReads).toBe(1)
+    expect(profileReads).toBe(1)
     expect(imageDownloads).toBe(1)
     sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
     await expect(service.readImage(sources.items[0]!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
@@ -2077,6 +2089,53 @@ describe('ArkmeService', () => {
 
     expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
     expect(peak).toBe(4)
+  })
+
+  it('keeps all five server-selected group avatar slots when profiles are missing or use phone defaults', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const signedAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/21/avatar.png?x-oss-signature=member'
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: { items: [{
+        session: { chat_session_uid: 'group-five', session_kind: 2, title: '五人群', last_active_at: 1 },
+        unread_snapshot: { unread_count: 0 },
+      }] } })
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: { items: [{
+        chat_session_uid: 'group-five', member_count: 12, strategy: 'owner_recent_speakers', computed_at: 1787036400000,
+        members: [21, 22, 23, 24, 25, 26].map(user_id => ({ user_id })),
+      }] } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        expect(body.user_ids).toEqual([21, 22, 23, 24, 25])
+        return json({ code: 200, data: { items: [
+          { user_id: 21, nick_name: '真实头像', head_img: signedAvatar },
+          { user_id: 22, nick_name: '手机号头像', head_img: 'phone_avatar://v1/17/53' },
+          { user_id: 24, nick_name: '空头像', head_img: '' },
+          { user_id: 25, nick_name: '不可信头像', head_img: 'https://example.com/avatar.png' },
+        ] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const source = (await service.listSources('root')).items[0]!
+    expect(source.avatarRefs).toHaveLength(1)
+    expect(source.groupAvatar).toEqual({
+      memberCount: 12,
+      strategy: 'owner_recent_speakers',
+      computedAtMillis: 1787036400000,
+      slots: [
+        { avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
+        { fallback: { kind: 'phone_default', colorIndex: 5, label: '53' } },
+        { fallback: { kind: 'default' } },
+        { fallback: { kind: 'default' } },
+        { fallback: { kind: 'default' } },
+      ],
+    })
+    expect(JSON.stringify(source)).not.toContain('group-five')
+    expect(JSON.stringify(source)).not.toContain('x-oss-signature')
+    expect(JSON.stringify(source)).not.toContain('example.com')
   })
 
   it('projects the DSH beta community entry with only opaque real-avatar refs', async () => {
@@ -2112,6 +2171,7 @@ describe('ArkmeService', () => {
       status: 'ready', visible: true, groupTitle: 'DSH 内测群1号群', memberCount: 2,
     })
     expect(entry.avatarRefs).toHaveLength(2)
+    expect(entry.groupAvatar?.slots).toHaveLength(2)
     expect(entry.avatarRefs.every(ref => ref.startsWith('arkme-profile-image-v1.'))).toBe(true)
     expect(JSON.stringify(entry)).not.toContain('official-group-1')
     expect(JSON.stringify(entry)).not.toContain('x-oss-signature')
@@ -2138,6 +2198,10 @@ describe('ArkmeService', () => {
 
     await expect(service.dshBetaCommunityEntryState()).resolves.toEqual({
       status: 'ready', visible: true, groupTitle: 'DSH 内测群1号群', memberCount: 1, avatarRefs: [],
+      groupAvatar: {
+        memberCount: 1, strategy: '', computedAtMillis: 0,
+        slots: [{ fallback: { kind: 'default' } }],
+      },
     })
   })
 
@@ -2539,6 +2603,89 @@ describe('ArkmeService', () => {
       message: '当前已有3个视频正在生成，请完成或取消后再试',
       retryable: false,
     })
+  })
+
+  it('maps remote record, scene, and recording search contracts', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/search/recordings/query')) return json({ code: 0, data: {
+        items: [{ session_id: 'session-1', record_uid: 'recording-record-1', date_stamp: 100, start_at: 200, snippet: '北京复盘', score: 0.8 }],
+        has_more: false, query_guard: { state: 'complete' },
+      } })
+      return json({ code: 0, data: {
+        items: [{
+          record_uid: 'record-1', source_kind: 2, source_uid: 'topic-1', route_target_kind: 'home_feed',
+          send_at: 123, record_core: {
+            title: '项目复盘', text_content: '正文 https://example.com/detail', nickname: '小林',
+            template_kind: 3, display_kind: 4,
+            content_payload: {
+              media_refs: [{ file_asset_uid: 'image-1', file_uid: 'file-1', file_name: '截图.png', mime_type: 'image/png', size: 2048 }],
+              voice: { source_file_asset_uid: 'voice-1', file_name: '录音.m4a', mime_type: 'audio/mp4', duration_millis: 3000 },
+            },
+          },
+          match_summary: { snippet: '命中复盘' }, scene_item_count: 2,
+          file_ls: [{ file_asset_uid: 'document-1', file_name: '方案.pdf', mime_type: 'application/pdf', size: 4096 }],
+        }],
+        source_aggregates: [{
+          source_kind: 2, source_uid: 'topic-1', route_target_kind: 'home_feed', matched_record_count: 1,
+          matched_record_count_exact: true, topic_core: { title: '项目主题' },
+        }],
+        has_more: false, query_guard: { state: 'ok' }, page_summary: { item_count: 2, item_size: 2048 },
+      } })
+    })
+
+    await expect(service.searchRemote({ query: '复盘', limit: 20 })).resolves.toMatchObject({
+      items: [{
+        recordUid: 'record-1', title: '项目复盘', snippet: '命中复盘', templateKind: 3, displayKind: 4,
+        media: [{ fileAssetUid: 'image-1', fileName: '截图.png', mimeType: 'image/png', size: 2048 }],
+        files: [{ fileAssetUid: 'document-1', fileName: '方案.pdf', mimeType: 'application/pdf', size: 4096 }],
+        voice: { fileAssetUid: 'voice-1', fileName: '录音.m4a', mimeType: 'audio/mp4', durationMillis: 3000 },
+        linkUrl: 'https://example.com/detail',
+      }],
+      sourceAggregates: [{ sourceUid: 'topic-1', title: '项目主题' }],
+    })
+    await expect(service.searchScene({ scene: 'image_video', limit: 10 })).resolves.toMatchObject({ itemCount: 2, itemSize: 2048 })
+    await expect(service.searchRecordings({ query: '北京', limit: 9 })).resolves.toMatchObject({
+      items: [{ sessionId: 'session-1', snippet: '北京复盘' }],
+    })
+    expect(requests.map(item => item.body)).toEqual([
+      { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
+      { scene_kind: 3, limit: 10, search_scope: 'global' },
+      { keyword: '北京', limit: 9 },
+    ])
+  })
+
+  it('lists AI videos and resolves only safe display asset URLs', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/ai-comic-video/jobs/list')) return json({ code: 200, data: {
+        items: [{
+          job_id: 'job-1', session_id: 'session-1', status: 'succeeded', stage: 'succeeded', progress: 100,
+          selected_segment_count: 2, source_recording: { title: '周会', started_at: 100, selected_duration_millis: 8_000 },
+          video_asset_uid: 'video-1', cover_asset_uid: 'cover-1', retryable: false, created_at: 200, updated_at: 300,
+        }],
+        has_more: false,
+      } })
+      return json({ code: 0, data: { items: [
+        { file_asset_uid: 'video-1', status: 'ready', download_url: 'https://oss.example/video.mp4' },
+        { file_asset_uid: 'cover-1', status: 'ready', preview_url: 'javascript:alert(1)' },
+      ] } })
+    })
+
+    await expect(service.aiVideoList({ limit: 20 })).resolves.toMatchObject({
+      items: [{ jobId: 'job-1', title: '周会', videoAssetUid: 'video-1', coverAssetUid: 'cover-1' }],
+    })
+    await expect(service.queryFileAssets(['video-1', 'cover-1'])).resolves.toEqual([
+      { fileAssetUid: 'video-1', status: 'ready', downloadUrl: 'https://oss.example/video.mp4' },
+      { fileAssetUid: 'cover-1', status: 'ready' },
+    ])
   })
 
   it('asks Arko through the AgentDirect Intelligent session and projects the SSE tail', async () => {

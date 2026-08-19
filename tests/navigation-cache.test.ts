@@ -58,6 +58,37 @@ describe('Arkme navigation cache', () => {
     })
   })
 
+  it('preserves the five-slot group avatar presentation and sanitizes fallback metadata', () => {
+    const storage = new MemoryStorage()
+    const source = {
+      sourceRef: 'source-group', kind: 'group_chat' as const, displayName: '群聊',
+      activeAtMillis: 1, unreadCount: 0,
+      avatarRefs: ['one', 'two', 'three', 'four', 'five', 'ignored'],
+      groupAvatar: {
+        memberCount: 12, strategy: 'owner_recent_speakers', computedAtMillis: 1787036400000,
+        slots: [
+          { avatarRef: 'one' },
+          { fallback: { kind: 'phone_default' as const, colorIndex: 17, label: '536789' } },
+          { fallback: { kind: 'default' as const } },
+          { fallback: { kind: 'default' as const } },
+          { fallback: { kind: 'default' as const } },
+        ],
+      },
+    }
+    writeNavigationCache({
+      version: 1, userId: 10001, directory: 'root', sources: { root: [source] }, updatedAtMillis: 2,
+    }, storage)
+
+    const restored = readNavigationCache(10001, storage)?.sources.root?.[0]
+    expect(restored?.avatarRefs).toEqual(['one', 'two', 'three', 'four', 'five'])
+    expect(restored?.groupAvatar?.memberCount).toBe(12)
+    expect(restored?.groupAvatar?.slots[0]).toEqual({ avatarRef: 'one' })
+    expect(restored?.groupAvatar?.slots[1]).toEqual({
+      fallback: { kind: 'phone_default', colorIndex: 5, label: '5367' },
+    })
+    expect(restored?.groupAvatar?.slots).toHaveLength(5)
+  })
+
   it('ignores malformed persisted source data', () => {
     const storage = new MemoryStorage()
     storage.setItem('dsh-arkme:navigation:v1:last-user', '10001')

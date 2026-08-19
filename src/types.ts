@@ -102,6 +102,38 @@ export interface ArkmeWorldRecordList {
   nextOffset?: number
 }
 
+/** Browser-safe public World card. Stable IDs and signed media URLs stay inside the Provider. */
+export interface ArkmeWorldAvatarFallback {
+  kind: 'phone_default'
+  colorIndex: number
+  label: string
+}
+
+export interface ArkmeWorldFeedItem {
+  recordRef: string
+  authorName: string
+  avatarRef?: string
+  avatarFallback?: ArkmeWorldAvatarFallback
+  headline: string
+  textContent: string
+  tags: string[]
+  templateKind: number
+  createdAtMillis: number
+  publishedAtMillis: number
+  imageRefs: string[]
+  imageCount: number
+  videoCount: number
+  voiceCount: number
+  extendCount: number
+}
+
+export interface ArkmeWorldFeedPage {
+  items: ArkmeWorldFeedItem[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
 export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
 export interface ArkmeWorldPublishResult {
@@ -128,6 +160,94 @@ export interface ArkmeCachedQueryResult {
   cacheComplete: boolean
   cachedAtMillis: number
   revision: number
+}
+
+export type ArkmeSearchSceneKind = 'audio' | 'link' | 'image_video' | 'file' | 'long_article'
+
+export interface ArkmeSearchQueryGuard {
+  state: string
+  reason?: string
+}
+
+export interface ArkmeSearchHistoryItem {
+  searchHistoryUid: string
+  keyword: string
+  searchedAtMillis: number
+}
+
+export interface ArkmeSearchHistoryResult {
+  items: ArkmeSearchHistoryItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeSearchAssetItem {
+  fileAssetUid: string
+  fileUid?: string
+  fileName?: string
+  mimeType?: string
+  fileKind?: number
+  size?: number
+  durationMillis?: number
+}
+
+export interface ArkmeSearchRecordItem {
+  recordUid: string
+  sourceKind: number
+  sourceUid?: string
+  routeTargetKind: string
+  routeTargetUid?: string
+  sendAtMillis: number
+  title: string
+  textContent: string
+  snippet: string
+  nickname?: string
+  templateKind?: number
+  displayKind?: number
+  sourceTitle?: string
+  media: ArkmeSearchAssetItem[]
+  files: ArkmeSearchAssetItem[]
+  voice?: ArkmeSearchAssetItem
+  linkUrl?: string
+  recordDurationMillis?: number
+  sceneItemCount?: number
+  sceneItemSize?: number
+}
+
+export interface ArkmeSearchSourceAggregate {
+  sourceKind: number
+  sourceUid: string
+  routeTargetKind: string
+  routeTargetUid?: string
+  title: string
+  matchedRecordCount: number
+  matchedRecordCountExact: boolean
+}
+
+export interface ArkmeRecordSearchResult {
+  items: ArkmeSearchRecordItem[]
+  sourceAggregates: ArkmeSearchSourceAggregate[]
+  hasMore: boolean
+  nextCursor?: string
+  queryGuard: ArkmeSearchQueryGuard
+  itemCount?: number
+  itemSize?: number
+}
+
+export interface ArkmeRecordingSearchItem {
+  sessionId: string
+  recordUid?: string
+  dateStamp: number
+  startAtMillis: number
+  snippet: string
+  score: number
+}
+
+export interface ArkmeRecordingSearchResult {
+  items: ArkmeRecordingSearchItem[]
+  hasMore: boolean
+  nextCursor?: string
+  queryGuard: ArkmeSearchQueryGuard
 }
 
 export interface ArkmeProviderCapabilities {
@@ -157,6 +277,8 @@ export interface ArkmeProviderCapabilities {
     openPrivateChat: true
     groupSettings: true
     relatedRecordings?: true
+    /** Optional additive capability so older Providers remain detectable by consumer plugins. */
+    worldFeed?: true
   }
   limits: {
     maxTextLength: number
@@ -230,6 +352,25 @@ export interface ArkmeIdMutationResult {
 export type ArkmeSourceKind = 'default_category' | 'topic' | 'private_chat' | 'group_chat'
 export type ArkmeSourceDirectory = 'root' | 'send_to_self'
 
+export type ArkmeGroupAvatarFallback =
+  | { kind: 'phone_default'; colorIndex: number; label: string }
+  | { kind: 'default' }
+
+export interface ArkmeGroupAvatarSlot {
+  /** Opaque Provider image reference. Missing images keep their slot and use fallback instead. */
+  avatarRef?: string
+  fallback?: ArkmeGroupAvatarFallback
+}
+
+/** Additive presentation data for the desktop-compatible, ordered group avatar. */
+export interface ArkmeGroupAvatarPresentation {
+  memberCount: number
+  strategy: string
+  computedAtMillis: number
+  /** Server-selected member order, capped at five slots. */
+  slots: ArkmeGroupAvatarSlot[]
+}
+
 export interface ArkmeSourceItem {
   sourceRef: string
   /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
@@ -240,6 +381,8 @@ export interface ArkmeSourceItem {
   avatarRef?: string
   /** Ordered group-avatar tiles, also resolved only through image.read. */
   avatarRefs?: string[]
+  /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
+  groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
@@ -616,6 +759,8 @@ export interface ArkmeRecordingTranscriptItem {
   itemId: string
   sessionId: string
   childId: string
+  asrItemIndex: number
+  transcriptSource: ArkmeAiVideoTranscriptSource
   startAtMillis: number
   endAtMillis: number
   speakerNumber: number
@@ -857,6 +1002,7 @@ export interface ArkmeAiVideoPreflightResult {
   selectedDurationMillis: number
   minimumDurationMillis: number
   selectedSegmentCount: number
+  selectedTextCount?: number
   retryable: boolean
   reasonCode?: string
   proof?: string
@@ -870,6 +1016,7 @@ export interface ArkmeAiVideoJob {
   stage: string
   progress: number
   selectedSegmentCount: number
+  selectedTextCount?: number
   retryable: boolean
   videoAssetUid?: string
   coverAssetUid?: string
@@ -877,6 +1024,41 @@ export interface ArkmeAiVideoJob {
   errorCode?: string
   errorMessage?: string
   failureStage?: string
+}
+
+export interface ArkmeAiVideoListItem {
+  jobId: string
+  sessionId: string
+  status: ArkmeAiVideoJobStatus
+  stage: string
+  progress: number
+  title: string
+  sourceStartedAtMillis: number
+  selectedDurationMillis: number
+  selectedSegmentCount: number
+  retryable: boolean
+  createdAtMillis: number
+  updatedAtMillis: number
+  coverAssetUid?: string
+  videoAssetUid?: string
+  videoDurationMillis?: number
+  errorCode?: string
+  errorMessage?: string
+}
+
+export interface ArkmeAiVideoListResult {
+  items: ArkmeAiVideoListItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeFileAssetDisplayItem {
+  fileAssetUid: string
+  fileName?: string
+  mimeType?: string
+  previewUrl?: string
+  downloadUrl?: string
+  status: string
 }
 
 export interface ArkmeArkoProfile {
@@ -1081,6 +1263,8 @@ export type ArkmePluginOperation =
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
+  | 'world.feed'
+  | 'world.image.read'
   | 'sources.list'
   | 'source.timeline'
   | 'source.mark-read'
@@ -1121,6 +1305,13 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'search.records'
+  | 'search.scene'
+  | 'search.recordings'
+  | 'search.history'
+  | 'search.history.create'
+  | 'ai-video.list'
+  | 'files.assets'
   | 'topic.create'
   | 'arko.profile'
   | 'arko.session'

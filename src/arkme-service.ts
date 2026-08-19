@@ -27,6 +27,8 @@ import type {
 } from './dsh-beta-community.js'
 import type {
   ArkmeAiVideoJob,
+  ArkmeAiVideoListItem,
+  ArkmeAiVideoListResult,
   ArkmeAiVideoJobStatus,
   ArkmeAiVideoPreflightResult,
   ArkmeAiVideoSegmentSelector,
@@ -53,6 +55,8 @@ import type {
   ArkmeDirectTextSendResult,
   ArkmeEnvironment,
   ArkmeGroupActionResult,
+  ArkmeGroupAvatarFallback,
+  ArkmeGroupAvatarPresentation,
   ArkmeGroupMemberItem,
   ArkmeGroupMemberList,
   ArkmeGroupMemberRole,
@@ -68,6 +72,7 @@ import type {
   ArkmeGroupAiPolishSnapshot,
   ArkmeImageBytes,
   ArkmeImageMediaType,
+  ArkmeFileAssetDisplayItem,
   ArkmeOpenPrivateChatResult,
   ArkmeInterwovenBootstrap,
   ArkmeInterwovenDetail,
@@ -82,7 +87,14 @@ import type {
   ArkmeRelatedRecordingPageOptions,
   ArkmeRelatedRecordingPageState,
   ArkmeRecordCursor,
+  ArkmeRecordSearchResult,
+  ArkmeRecordingSearchResult,
   ArkmeRichSendInput,
+  ArkmeSearchRecordItem,
+  ArkmeSearchAssetItem,
+  ArkmeSearchHistoryResult,
+  ArkmeSearchSceneKind,
+  ArkmeSearchSourceAggregate,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -111,6 +123,9 @@ import type {
   ArkmeUserProfileSnapshot,
   ArkmeUserCardSnapshot,
   ArkmeWorldPublishResult,
+  ArkmeWorldAvatarFallback,
+  ArkmeWorldFeedItem,
+  ArkmeWorldFeedPage,
   ArkmeWorldRecordItem,
   ArkmeWorldRecordList,
   ArkmeWorldVisibility,
@@ -287,6 +302,12 @@ interface ArkmeProfileImageRefPayload {
   targetUserId: number
 }
 
+interface ArkmeWorldImageRefEntry {
+  viewerUserId: number
+  sourceUrl: string
+  expiresAtMillis: number
+}
+
 interface ArkmeWechatConversationRefPayload {
   version: 1
   userId: number
@@ -304,6 +325,7 @@ interface ArkmePublicProfile {
   userId: number
   displayName: string
   avatarUrl?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
   arkmeId?: string
 }
 
@@ -325,6 +347,13 @@ interface ArkmeInterwovenMomentReference {
   fallbackTitle: string
   fallbackTextContent: string
   expiresAtMillis: number
+}
+
+interface ArkmeGroupAvatarSnapshotProjection {
+  memberCount: number
+  strategy: string
+  computedAtMillis: number
+  memberIds: number[]
 }
 
 interface ScanResponse {
@@ -363,6 +392,10 @@ const ARKME_PHONE_BIND_REPEAT = 2
 const ARKME_PHONE_BIND_CODE_ERR = 3
 
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
+const MAX_ARKME_PROFILE_IMAGE_BYTES = 8 * 1024 * 1024
+const PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
+const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
+const MAX_ARKME_WORLD_IMAGE_REFS = 2048
 export const MAX_ARKME_RELATED_RECORDING_PAGE_SIZE = 20
 export const MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH = 1024
 const MAX_ARKME_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
@@ -456,6 +489,18 @@ function optionalPositiveNumber(value: unknown): number | undefined {
 function optionalString(value: unknown): string | undefined {
   const text = stringValue(value).trim()
   return text === '' ? undefined : text
+}
+
+function safeHttpsUrl(value: unknown): string | undefined {
+  const raw = stringValue(value).trim()
+  if (raw === '') return undefined
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return undefined
+    return url.toString()
+  } catch {
+    return undefined
+  }
 }
 
 function clippedText(value: unknown, limit = 4_000): string {
@@ -756,6 +801,20 @@ function chunksOf<T>(values: readonly T[], size: number): T[][] {
   return chunks
 }
 
+function phoneDefaultAvatarFallback(raw: string): ArkmeGroupAvatarFallback | undefined {
+  const prefix = 'phone_avatar://v1/'
+  const normalized = raw.trim()
+  if (!normalized.startsWith(prefix)) return undefined
+  const parts = normalized.slice(prefix.length).split('/')
+  const parsedColorIndex = Number(parts[0] ?? '')
+  const label = [...(parts[1]?.trim() || '--')].slice(0, 4).join('')
+  return {
+    kind: 'phone_default',
+    colorIndex: Number.isFinite(parsedColorIndex) ? Math.abs(Math.trunc(parsedColorIndex)) % 12 : 0,
+    label,
+  }
+}
+
 function worldVisibility(checkStatus: number): ArkmeWorldVisibility {
   if (checkStatus === 1) return 'pending_review'
   if (checkStatus === 4) return 'rejected'
@@ -795,6 +854,38 @@ function trustedSignedImageUrl(environment: ArkmeEnvironment, raw: string): URL 
     throw new ArkmePluginError('image-sign-target-rejected', 'Arkme头像授权目标不受信任', false, 502)
   }
   return parsed
+}
+
+/** Public World media may be a stable public URL or a short-lived signed URL. */
+function trustedWorldImageUrl(environment: ArkmeEnvironment, raw: string): URL {
+  let parsed: URL
+  try {
+    parsed = new URL(raw.trim())
+  } catch (error) {
+    throw new ArkmePluginError('world-image-ref-invalid', '世界图片地址无效', false, 400, { cause: error })
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.hash !== ''
+    || !allowedSignedImageHost(environment, parsed.hostname) || parsed.pathname.replace(/^\/+/, '') === '') {
+    throw new ArkmePluginError('world-image-target-rejected', '世界图片目标不受信任', false, 502)
+  }
+  return parsed
+}
+
+function worldPhoneDefaultAvatar(raw: string): ArkmeWorldAvatarFallback | undefined {
+  const prefix = 'phone_avatar://v1/'
+  const normalized = raw.trim()
+  if (!normalized.startsWith(prefix)) return undefined
+  const [rawColorIndex = '', rawLabel = ''] = normalized.slice(prefix.length).split('/')
+  const colorIndex = Number(rawColorIndex)
+  const label = rawLabel.trim().slice(0, 8)
+  if (!Number.isSafeInteger(colorIndex) || label === '') return undefined
+  return { kind: 'phone_default', colorIndex, label }
+}
+
+function worldAvatarResolutionKey(ownerUserId: number, avatarRef: string): string {
+  const normalized = avatarRef.trim()
+  if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0 || !normalized.startsWith('file_asset://')) return ''
+  return `${String(ownerUserId)}|${normalized}`
 }
 
 function imageFileIdFromRef(imageRef: string, userId: number): string {
@@ -881,12 +972,14 @@ export class ArkmeService {
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
   private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
-  private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<number[] | null>>()
+  private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<ArkmeGroupAvatarSnapshotProjection | null>>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
   private readonly imageInFlight = new Map<string, Promise<ArkmeImageBytes>>()
+  private readonly worldImageRefs = new Map<string, ArkmeWorldImageRefEntry>()
   private imageCacheBytes = 0
   private activeImageDownloads = 0
   private readonly imageDownloadWaiters: Array<() => void> = []
+  private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
   private readonly pendingProjectionSequences = new Map<string, number>()
   private readonly projectionRetryCounts = new Map<string, number>()
   private projectionTimer: ReturnType<typeof setTimeout> | undefined
@@ -1190,6 +1283,7 @@ export class ArkmeService {
         userCard: true,
         openPrivateChat: true,
         groupSettings: true,
+        worldFeed: true,
         ...(this.relatedRecordingsEnabled() ? { relatedRecordings: true as const } : {}),
       },
       limits: {
@@ -2034,6 +2128,106 @@ export class ArkmeService {
     return this.aiVideoJob(data)
   }
 
+  async aiVideoList(options: {
+    limit: number
+    cursor?: string
+    statuses?: readonly ArkmeAiVideoJobStatus[]
+    signal?: AbortSignal
+  }): Promise<ArkmeAiVideoListResult> {
+    const allowedStatuses = new Set<ArkmeAiVideoJobStatus>(['queued', 'running', 'succeeded', 'failed', 'canceled'])
+    if (options.statuses?.some(status => !allowedStatuses.has(status)) === true) {
+      throw new ArkmePluginError('ai-video-status-filter-invalid', 'AI 视频状态筛选无效', false)
+    }
+    const session = await this.requireSession()
+    const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/ai-comic-video/jobs/list',
+      {
+        limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
+        ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
+        ...(options.statuses === undefined || options.statuses.length === 0 ? {} : { statuses: options.statuses }),
+      },
+      session,
+      options.signal,
+    )
+    return {
+      items: listValue(data.items).map(raw => this.aiVideoListItem(raw)).filter((item): item is ArkmeAiVideoListItem => item !== undefined),
+      hasMore: booleanValue(data.has_more),
+      ...(stringValue(data.next_cursor).trim() === '' ? {} : { nextCursor: stringValue(data.next_cursor).trim() }),
+    }
+  }
+
+  async queryFileAssets(fileAssetUids: readonly string[], signal?: AbortSignal): Promise<ArkmeFileAssetDisplayItem[]> {
+    const unique = [...new Set(fileAssetUids.map(uid => uid.trim()).filter(uid => uid !== ''))].slice(0, 50)
+    if (unique.length === 0) return []
+    const session = await this.requireSession()
+    const data = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/files/assets/query',
+      { file_asset_uids: unique },
+      session,
+      signal,
+    )
+    return listValue(data.items).map(raw => {
+      const item = objectValue(raw)
+      const previewUrl = safeHttpsUrl(item.preview_url)
+      const downloadUrl = safeHttpsUrl(item.download_url)
+      return {
+        fileAssetUid: stringValue(item.file_asset_uid).trim(),
+        status: stringValue(item.status).trim(),
+        ...(stringValue(item.file_name).trim() === '' ? {} : { fileName: stringValue(item.file_name).trim() }),
+        ...(stringValue(item.mime_type).trim() === '' ? {} : { mimeType: stringValue(item.mime_type).trim() }),
+        ...(previewUrl === undefined ? {} : { previewUrl }),
+        ...(downloadUrl === undefined ? {} : { downloadUrl }),
+      }
+    }).filter(item => item.fileAssetUid !== '')
+  }
+
+  async textAiVideoPreflight(
+    title: string,
+    texts: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeAiVideoPreflightResult> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/ai-video/text/preflight',
+      { ...(title.trim() === '' ? {} : { title: title.trim() }), texts },
+      session,
+      signal,
+    )
+    return {
+      allowed: booleanValue(data.allowed),
+      message: stringValue(data.message).trim() || 'AI 视频内容检查已完成',
+      selectedDurationMillis: Math.max(0, numberValue(data.selected_duration_millis)),
+      minimumDurationMillis: Math.max(0, numberValue(data.minimum_duration_millis)),
+      selectedSegmentCount: Math.max(0, numberValue(data.selected_segment_count)),
+      selectedTextCount: Math.max(0, numberValue(data.selected_text_count)),
+      retryable: booleanValue(data.retryable),
+      ...(stringValue(data.reason_code).trim() === '' ? {} : { reasonCode: stringValue(data.reason_code).trim() }),
+      ...(stringValue(data.proof).trim() === '' ? {} : { proof: stringValue(data.proof).trim() }),
+    }
+  }
+
+  async textAiVideoCreate(
+    clientRequestId: string,
+    title: string,
+    texts: readonly string[],
+    preflightProof: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeAiVideoJob> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/ai-video/text/jobs/create',
+      {
+        client_request_id: clientRequestId,
+        ...(title.trim() === '' ? {} : { title: title.trim() }),
+        texts,
+        ...(preflightProof.trim() === '' ? {} : { preflight_proof: preflightProof.trim() }),
+      },
+      session,
+      signal,
+    )
+    return this.aiVideoJob(data)
+  }
+
   async checkArkmeIdAvailability(name: string): Promise<ArkmeIdAvailabilitySnapshot> {
     const snapshot = await this.refreshProfile()
     if (snapshot.profile === null) {
@@ -2438,8 +2632,9 @@ export class ArkmeService {
       await this.hydrateSourceAvatars(
         items, privateUserIdByIndex, groupSessionUidByIndex, session, options.signal,
       )
-    } catch {
+    } catch (error) {
       // Avatar decoration is best-effort; chat source identity and navigation remain usable.
+      console.warn('dsh-arkme: Chat avatar hydration failed:', safeFailureMessage(error))
     }
     const hasMore = data.has_more === true
     const nextPageCursor = objectValue(data.next_page_cursor)
@@ -2469,21 +2664,24 @@ export class ArkmeService {
     const memberIds = listValue(snapshot.members)
       .map(member => numberValue(objectValue(member).user_id))
       .filter(userId => Number.isSafeInteger(userId) && userId > 0)
-      .slice(0, 4)
+      .slice(0, 5)
     let avatarRefs: string[] = []
+    let groupAvatar: ArkmeGroupAvatarPresentation | undefined
     if (visible && status === 'ready' && memberIds.length > 0) {
       try {
-        const profiles = await this.publicProfilesByUserIds(memberIds, session, signal)
-        avatarRefs = await Promise.all(
-          memberIds
-            .filter(userId => profiles.has(userId))
-            .map(userId => this.sealProfileImageRef(session.userId, userId)),
-        )
+        const profiles = await this.publicProfileSummariesByUserIds(memberIds, session, signal).catch(() => new Map())
+        groupAvatar = await this.groupAvatarPresentation({
+          memberCount,
+          strategy: stringValue(snapshot.strategy).trim(),
+          computedAtMillis: numberValue(snapshot.computed_at),
+          memberIds,
+        }, profiles, session.userId)
+        avatarRefs = groupAvatar.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])
       } catch {
         // The optional entry must never degrade the normal conversation directory.
       }
     }
-    return { status, visible, groupTitle, memberCount, avatarRefs }
+    return { status, visible, groupTitle, memberCount, avatarRefs, ...(groupAvatar === undefined ? {} : { groupAvatar }) }
   }
 
   /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
@@ -4300,6 +4498,7 @@ export class ArkmeService {
       displayName,
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
+      ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
       ...(latestPreview === undefined || latestPreview === '' ? {} : { latestPreview }),
       activeAtMillis: Math.max(
         numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
@@ -4921,7 +5120,7 @@ export class ArkmeService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<void> {
-    const groupMemberIdsByIndex = new Map<number, number[]>()
+    const groupSnapshotsByIndex = new Map<number, ArkmeGroupAvatarSnapshotProjection>()
     const indexByGroupUid = new Map([...groupSessionUidByIndex].map(([index, uid]) => [uid, index]))
     const missingGroupUids: string[] = []
     const now = Date.now()
@@ -4933,7 +5132,12 @@ export class ArkmeService {
         missingGroupUids.push(uid)
         continue
       }
-      if (cached.value !== null && cached.value.length > 0) groupMemberIdsByIndex.set(index, [...cached.value])
+      if (cached.value !== null && cached.value.memberIds.length > 0) {
+        groupSnapshotsByIndex.set(index, {
+          ...cached.value,
+          memberIds: [...cached.value.memberIds],
+        })
+      }
     }
     for (const groupUids of chunksOf(missingGroupUids, 10)) {
       let data: Record<string, unknown>
@@ -4949,10 +5153,14 @@ export class ArkmeService {
             failureCooldownMs: 5_000,
           },
         )
-      } catch {
+      } catch (error) {
+        console.warn(
+          `dsh-arkme: Group avatar snapshot batch failed (${String(groupUids.length)} sessions):`,
+          safeFailureMessage(error),
+        )
         continue
       }
-      const membersByUid = new Map<string, number[]>()
+      const snapshotsByUid = new Map<string, ArkmeGroupAvatarSnapshotProjection>()
       for (const raw of listValue(data.items)) {
         const snapshot = objectValue(raw)
         const uid = stringValue(snapshot.chat_session_uid).trim()
@@ -4961,15 +5169,21 @@ export class ArkmeService {
         const memberIds = listValue(snapshot.members)
           .map(member => numberValue(objectValue(member).user_id))
           .filter(userId => Number.isSafeInteger(userId) && userId > 0)
-          .slice(0, 4)
-        membersByUid.set(uid, memberIds)
-        if (memberIds.length > 0) groupMemberIdsByIndex.set(index, memberIds)
+          .slice(0, 5)
+        const projection = {
+          memberCount: Math.max(0, Math.trunc(numberValue(snapshot.member_count))),
+          strategy: stringValue(snapshot.strategy).trim(),
+          computedAtMillis: numberValue(snapshot.computed_at),
+          memberIds,
+        }
+        snapshotsByUid.set(uid, projection)
+        if (memberIds.length > 0) groupSnapshotsByIndex.set(index, projection)
       }
       for (const uid of groupUids) {
-        const memberIds = membersByUid.get(uid) ?? null
+        const snapshot = snapshotsByUid.get(uid) ?? null
         this.groupAvatarSnapshotCache.set(`${String(session.userId)}:${uid}`, {
-          value: memberIds,
-          expiresAtMillis: Date.now() + (memberIds === null
+          value: snapshot,
+          expiresAtMillis: Date.now() + (snapshot === null
             ? GROUP_AVATAR_NEGATIVE_CACHE_TTL_MS
             : GROUP_AVATAR_CACHE_TTL_MS),
         })
@@ -4977,20 +5191,38 @@ export class ArkmeService {
     }
 
     const targetUserIds = new Set<number>(privateUserIdByIndex.values())
-    for (const memberIds of groupMemberIdsByIndex.values()) {
-      for (const userId of memberIds) targetUserIds.add(userId)
+    for (const snapshot of groupSnapshotsByIndex.values()) {
+      for (const userId of snapshot.memberIds) targetUserIds.add(userId)
     }
-    const profiles = await this.publicProfilesByUserIds([...targetUserIds], session, signal)
+    const profiles = await this.publicProfileSummariesByUserIds([...targetUserIds], session, signal).catch(() => new Map())
     for (const [index, targetUserId] of privateUserIdByIndex) {
-      if (!profiles.has(targetUserId) || items[index] === undefined) continue
+      if (profiles.get(targetUserId)?.avatarUrl === undefined || items[index] === undefined) continue
       items[index].avatarRef = await this.sealProfileImageRef(session.userId, targetUserId)
     }
-    for (const [index, memberIds] of groupMemberIdsByIndex) {
-      const visibleIds = memberIds.filter(userId => profiles.has(userId))
-      if (visibleIds.length === 0 || items[index] === undefined) continue
-      items[index].avatarRefs = await Promise.all(
-        visibleIds.map(userId => this.sealProfileImageRef(session.userId, userId)),
-      )
+    for (const [index, snapshot] of groupSnapshotsByIndex) {
+      if (items[index] === undefined) continue
+      const presentation = await this.groupAvatarPresentation(snapshot, profiles, session.userId)
+      items[index].groupAvatar = presentation
+      items[index].avatarRefs = presentation.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])
+    }
+  }
+
+  private async groupAvatarPresentation(
+    snapshot: ArkmeGroupAvatarSnapshotProjection,
+    profiles: ReadonlyMap<number, ArkmePublicProfile>,
+    viewerUserId: number,
+  ): Promise<ArkmeGroupAvatarPresentation> {
+    return {
+      memberCount: snapshot.memberCount,
+      strategy: snapshot.strategy,
+      computedAtMillis: snapshot.computedAtMillis,
+      slots: await Promise.all(snapshot.memberIds.slice(0, 5).map(async userId => {
+        const profile = profiles.get(userId)
+        if (profile?.avatarUrl !== undefined) {
+          return { avatarRef: await this.sealProfileImageRef(viewerUserId, userId) }
+        }
+        return { fallback: profile?.avatarFallback ?? { kind: 'default' } }
+      })),
     }
   }
 
@@ -5046,6 +5278,7 @@ export class ArkmeService {
         const arkmeId = stringValue(item.name_slug ?? item.arkme_id).trim()
         const avatarUrl = stringValue(item.head_img).trim()
         let trustedAvatarUrl: string | undefined
+        const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
         if (avatarUrl !== '') {
           try {
             trustedSignedImageUrl(this.config.environment, avatarUrl)
@@ -5054,10 +5287,17 @@ export class ArkmeService {
             trustedAvatarUrl = undefined
           }
         }
+        const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
+        if (trustedAvatarUrl === undefined) this.publicProfileAvatarCache.delete(avatarCacheKey)
+        else this.publicProfileAvatarCache.set(avatarCacheKey, {
+          avatarUrl: trustedAvatarUrl,
+          expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
+        })
         profiles.set(userId, {
           userId,
           displayName: displayName || `用户 ${String(userId)}`,
           ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
+          ...(avatarFallback === undefined ? {} : { avatarFallback }),
           ...(arkmeId === '' ? {} : { arkmeId }),
         })
       }
@@ -5312,7 +5552,9 @@ export class ArkmeService {
     options: { maxBytes?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeImageBytes> {
     const session = await this.requireSession()
-    const byteLimit = Math.min(MAX_ARKME_IMAGE_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_ARKME_IMAGE_BYTES)))
+    const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
+    const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES : MAX_ARKME_IMAGE_BYTES
+    const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     const cached = this.cachedImage(cacheKey)
     if (cached !== undefined) return cached
@@ -5356,18 +5598,30 @@ export class ArkmeService {
           })
         }
       }
-      const profile = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
-        .get(reference.targetUserId)
-      if (profile === undefined) {
-        throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
-      }
-      const avatarUrl = profile.avatarUrl
+      const avatarCacheKey = `${String(session.userId)}:${String(reference.targetUserId)}`
+      const cached = this.publicProfileAvatarCache.get(avatarCacheKey)
+      let avatarUrl = cached !== undefined && cached.expiresAtMillis > Date.now() ? cached.avatarUrl : undefined
       if (avatarUrl === undefined) {
-        throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+        this.publicProfileAvatarCache.delete(avatarCacheKey)
+        avatarUrl = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
+          .get(reference.targetUserId)?.avatarUrl
       }
-      return await this.downloadSignedImage(
-        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal, this.requestScope(session.userId),
-      )
+      if (avatarUrl === undefined) throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+      try {
+        return await this.downloadSignedImage(
+          trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal, this.requestScope(session.userId),
+        )
+      } catch (error) {
+        if (cached === undefined || cached.avatarUrl !== avatarUrl) throw error
+        this.publicProfileAvatarCache.delete(avatarCacheKey)
+        this.publicProfileCache.delete(avatarCacheKey)
+        const refreshedUrl = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
+          .get(reference.targetUserId)?.avatarUrl
+        if (refreshedUrl === undefined) throw error
+        return await this.downloadSignedImage(
+          trustedSignedImageUrl(this.config.environment, refreshedUrl), byteLimit, signal, this.requestScope(session.userId),
+        )
+      }
     }
     const fileId = imageFileIdFromRef(imageRef, session.userId)
     const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/${fileId}`
@@ -5641,6 +5895,7 @@ export class ArkmeService {
     this.imageCacheBytes = 0
     this.chatRealtime.reconnect()
     this.attempts.clear()
+    this.publicProfileAvatarCache.clear()
     this.aiPolishConfirmations.clear()
     this.aiPolishRetries.clear()
     this.interwovenMomentReferences.clear()
@@ -5686,6 +5941,143 @@ export class ArkmeService {
       limit: options.limit,
       ...(options.beforeMillis === undefined ? {} : { beforeMillis: options.beforeMillis }),
     })
+  }
+
+  async searchRemote(options: {
+    query: string
+    limit: number
+    cursor?: string
+    searchScope?: 'global' | 'topic' | 'chat_session'
+    sourceUid?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordSearchResult> {
+    const query = options.query.trim()
+    if (query === '') throw new ArkmePluginError('record-query-empty', '搜索关键词不能为空', false)
+    const session = await this.requireSession()
+    const data = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/search/records/query',
+      {
+        keyword: query,
+        limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
+        search_scope: options.searchScope ?? 'global',
+        source_kinds: [1, 2, 3],
+        ...(options.sourceUid?.trim() ? { source_uid: options.sourceUid.trim() } : {}),
+        ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
+      },
+      session,
+      options.signal,
+    )
+    return this.recordSearchResult(data)
+  }
+
+  async searchHistory(limit = 10): Promise<ArkmeSearchHistoryResult> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/search/history/list',
+      { limit: Math.min(20, Math.max(1, Math.trunc(limit))) },
+      session,
+    )
+    return {
+      items: listValue(data.items).map(raw => {
+        const item = objectValue(raw)
+        return {
+          searchHistoryUid: stringValue(item.search_history_uid).trim(),
+          keyword: stringValue(item.keyword).trim(),
+          searchedAtMillis: numberValue(item.searched_at ?? item.created_at),
+        }
+      }).filter(item => item.keyword !== ''),
+      hasMore: booleanValue(data.has_more),
+      ...(stringValue(data.next_cursor).trim() === '' ? {} : { nextCursor: stringValue(data.next_cursor).trim() }),
+    }
+  }
+
+  async createSearchHistory(keyword: string): Promise<void> {
+    const normalized = keyword.trim()
+    if (normalized === '') return
+    const session = await this.requireSession()
+    await this.authenticatedPost(
+      '/api/v1/search/history/create',
+      {
+        client_event_uid: `dsh-${randomUUID()}`,
+        keyword: normalized,
+        searched_at: Date.now(),
+        stay_sec: 0,
+        client_name: 'DSH',
+      },
+      session,
+    )
+  }
+
+  async searchScene(options: {
+    scene: ArkmeSearchSceneKind
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordSearchResult> {
+    const sceneKinds: Record<ArkmeSearchSceneKind, number> = {
+      audio: 1,
+      link: 2,
+      image_video: 3,
+      file: 4,
+      long_article: 5,
+    }
+    if (sceneKinds[options.scene] === undefined) {
+      throw new ArkmePluginError('search-scene-invalid', '快速查找类型无效', false)
+    }
+    const session = await this.requireSession()
+    const data = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/search/records/scene/query',
+      {
+        scene_kind: sceneKinds[options.scene],
+        limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
+        search_scope: 'global',
+        ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
+      },
+      session,
+      options.signal,
+    )
+    return this.recordSearchResult(data)
+  }
+
+  async searchRecordings(options: {
+    query: string
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeRecordingSearchResult> {
+    const query = options.query.trim()
+    if (query === '') throw new ArkmePluginError('recording-query-empty', '搜索关键词不能为空', false)
+    const session = await this.requireSession()
+    const data = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/search/recordings/query',
+      {
+        keyword: query,
+        limit: Math.min(50, Math.max(1, Math.trunc(options.limit))),
+        ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
+      },
+      session,
+      options.signal,
+    )
+    const guard = objectValue(data.query_guard)
+    return {
+      items: listValue(data.items).map(raw => {
+        const item = objectValue(raw)
+        return {
+          sessionId: stringValue(item.session_id).trim(),
+          ...(stringValue(item.record_uid).trim() === '' ? {} : { recordUid: stringValue(item.record_uid).trim() }),
+          dateStamp: numberValue(item.date_stamp),
+          startAtMillis: numberValue(item.start_at),
+          snippet: clippedText(item.snippet, 1_000),
+          score: numberValue(item.score),
+        }
+      }).filter(item => item.sessionId !== '' && item.snippet !== ''),
+      hasMore: booleanValue(data.has_more),
+      ...(stringValue(data.next_cursor).trim() === '' ? {} : { nextCursor: stringValue(data.next_cursor).trim() }),
+      queryGuard: {
+        state: stringValue(guard.state).trim() || 'complete',
+        ...(stringValue(guard.reason).trim() === '' ? {} : { reason: stringValue(guard.reason).trim() }),
+      },
+    }
   }
 
   async syncHistory(maxPages = 20, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }> {
@@ -5774,6 +6166,45 @@ export class ArkmeService {
     const nextOffset = offset + rawItems.length
     const hasMore = rawItems.length > 0 && nextOffset < total
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  /** Build the authenticated browser projection without exposing World IDs or signed media URLs. */
+  async listWorldFeed(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    const session = await this.requireSession()
+    const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const data = await this.post<Record<string, unknown>>(
+      this.config.worldBaseUrl, '/api/public/v1/public-record/world-list',
+      { limit, offset }, undefined, [200], options.signal,
+    )
+    const rawItems = listValue(data.list)
+    const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)
+    const projected = await Promise.all(rawItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+    const items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
+    const total = Math.max(0, Math.trunc(numberValue(data.total)))
+    const nextOffset = offset + rawItems.length
+    const hasMore = rawItems.length > 0 && nextOffset < total
+    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  /** Download one short-lived Provider-authorized World image for the current account. */
+  async readWorldImage(
+    imageRef: string,
+    options: { maxBytes?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeImageBytes> {
+    const session = await this.requireSession()
+    const entry = await this.openWorldImageRef(imageRef, session.userId)
+    const byteLimit = Math.min(
+      MAX_ARKME_IMAGE_BYTES,
+      Math.max(1, Math.trunc(options.maxBytes ?? MAX_ARKME_IMAGE_BYTES)),
+    )
+    return await this.downloadSignedImage(
+      trustedWorldImageUrl(this.config.environment, entry.sourceUrl),
+      byteLimit,
+      options.signal,
+    )
   }
 
   async publishWorldTextForConversation(
@@ -6324,6 +6755,155 @@ export class ArkmeService {
       imageCount, videoCount, voiceCount,
       extendCount: Math.max(0, Math.trunc(numberValue(item.extend_count))),
     }
+  }
+
+  private async worldFeedItem(
+    raw: unknown,
+    viewerUserId: number,
+    resolvedAvatars: ReadonlyMap<string, string>,
+  ): Promise<ArkmeWorldFeedItem | undefined> {
+    const item = objectValue(raw)
+    const recordUid = stringValue(item.record_uid).trim()
+    const textContent = stringValue(item.text_content ?? item.content).trim()
+    const headline = stringValue(item.headline).trim()
+    const rawImages = listValue(item.images).map(stringValue).map(value => value.trim()).filter(value => value !== '')
+    const videoCount = listValue(item.videos).length
+    const voiceCount = listValue(item.voices).length
+    if (recordUid === '' || (textContent === '' && headline === '' && rawImages.length + videoCount + voiceCount === 0)) {
+      return undefined
+    }
+    const ownerUserId = Math.trunc(numberValue(item.user_id))
+    const rawAvatar = stringValue(item.avatar ?? item.head_img).trim()
+    const avatarUrl = rawAvatar.startsWith('file_asset://')
+      ? resolvedAvatars.get(worldAvatarResolutionKey(ownerUserId, rawAvatar)) ?? ''
+      : rawAvatar
+    const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
+    const imageRefs: string[] = []
+    for (const signedUrl of rawImages.slice(0, 9)) {
+      if (!this.isTrustedWorldImageUrl(signedUrl)) continue
+      imageRefs.push(await this.sealWorldImageRef(viewerUserId, signedUrl))
+    }
+    const avatarRef = this.isTrustedWorldImageUrl(avatarUrl)
+      ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
+      : undefined
+    return {
+      recordRef: await this.worldRecordRef(viewerUserId, recordUid),
+      authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+      ...(avatarRef === undefined ? {} : { avatarRef }),
+      ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
+      headline,
+      textContent,
+      tags: listValue(item.tags).map(stringValue).map(tag => tag.trim()).filter(tag => tag !== ''),
+      templateKind: Math.trunc(numberValue(item.template_kind)),
+      createdAtMillis: Math.trunc(numberValue(item.created_at)),
+      publishedAtMillis: Math.trunc(numberValue(item.published_at)),
+      imageRefs,
+      imageCount: rawImages.length,
+      videoCount,
+      voiceCount,
+      extendCount: Math.max(0, Math.trunc(numberValue(item.extend_count))),
+    }
+  }
+
+  private isTrustedWorldImageUrl(raw: string): boolean {
+    if (raw.length > 4096) return false
+    try {
+      trustedWorldImageUrl(this.config.environment, raw)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async resolveWorldAvatarUrls(
+    rawItems: readonly unknown[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const requested = new Map<string, { owner_user_id: number; avatar_ref: string }>()
+    for (const raw of rawItems) {
+      const item = objectValue(raw)
+      const ownerUserId = Math.trunc(numberValue(item.user_id))
+      const avatarRef = stringValue(item.avatar ?? item.head_img).trim()
+      const key = worldAvatarResolutionKey(ownerUserId, avatarRef)
+      if (key !== '') requested.set(key, { owner_user_id: ownerUserId, avatar_ref: avatarRef })
+    }
+    if (requested.size === 0) return new Map()
+    let data: Record<string, unknown>
+    try {
+      data = await this.authenticatedAuthPost<Record<string, unknown>>(
+        '/api/v1/auth/resolve-avatar-refs',
+        { items: [...requested.values()] },
+        session,
+        signal,
+      )
+    } catch {
+      // Avatar decoration is best-effort; the World feed remains usable with its fallback avatar.
+      return new Map()
+    }
+    const resolved = new Map<string, string>()
+    for (const raw of listValue(data.items)) {
+      const item = objectValue(raw)
+      const ownerUserId = Math.trunc(numberValue(item.owner_user_id))
+      const avatarRef = stringValue(item.avatar_ref).trim()
+      const key = worldAvatarResolutionKey(ownerUserId, avatarRef)
+      const url = stringValue(item.url).trim()
+      if (!requested.has(key) || !this.isTrustedWorldImageUrl(url)) continue
+      resolved.set(key, url)
+    }
+    return resolved
+  }
+
+  private async worldRecordRef(viewerUserId: number, recordUid: string): Promise<string> {
+    const digest = createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`world-record-v1:${String(viewerUserId)}:${recordUid}`)
+      .digest('base64url')
+    return `arkme-world-record-v1.${digest}`
+  }
+
+  private pruneWorldImageRefs(now: number): void {
+    for (const [token, entry] of this.worldImageRefs) {
+      if (entry.expiresAtMillis <= now) this.worldImageRefs.delete(token)
+    }
+    while (this.worldImageRefs.size >= MAX_ARKME_WORLD_IMAGE_REFS) {
+      const oldest = this.worldImageRefs.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.worldImageRefs.delete(oldest)
+    }
+  }
+
+  private async sealWorldImageRef(viewerUserId: number, sourceUrl: string): Promise<string> {
+    const now = Date.now()
+    this.pruneWorldImageRefs(now)
+    const token = randomUUID()
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`world-image-v1:${String(viewerUserId)}:${token}`)
+      .digest('base64url')
+    this.worldImageRefs.set(token, {
+      viewerUserId,
+      sourceUrl,
+      expiresAtMillis: now + ARKME_WORLD_IMAGE_REF_TTL_MILLIS,
+    })
+    return `arkme-world-image-v1.${token}.${signature}`
+  }
+
+  private async openWorldImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageRefEntry> {
+    const parts = imageRef.trim().split('.')
+    const token = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`world-image-v1:${String(viewerUserId)}:${token}`)
+      .digest()
+    if (parts.length !== 3 || parts[0] !== 'arkme-world-image-v1' || token === ''
+      || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new ArkmePluginError('world-image-ref-invalid', '世界图片引用无效或已过期', false, 403)
+    }
+    const entry = this.worldImageRefs.get(token)
+    if (entry === undefined || entry.viewerUserId !== viewerUserId || entry.expiresAtMillis <= Date.now()) {
+      this.worldImageRefs.delete(token)
+      throw new ArkmePluginError('world-image-ref-invalid', '世界图片引用无效或已过期', false, 403)
+    }
+    return entry
   }
 
   private worldPublishFailure(
@@ -6924,12 +7504,14 @@ export class ArkmeService {
     }
     const selection = objectValue(data.selection)
     const segmentCount = listValue(objectValue(selection).segments).length
+    const textCount = listValue(objectValue(selection).texts).length
     return {
       jobId,
       status: status as ArkmeAiVideoJobStatus,
       stage: stringValue(data.stage).trim() || status,
       progress: Math.min(100, Math.max(0, Math.trunc(numberValue(data.progress)))),
       selectedSegmentCount: segmentCount,
+      ...(textCount === 0 ? {} : { selectedTextCount: textCount }),
       retryable: booleanValue(data.retryable),
       ...(stringValue(data.video_asset_uid).trim() === '' ? {} : { videoAssetUid: stringValue(data.video_asset_uid).trim() }),
       ...(stringValue(data.cover_asset_uid).trim() === '' ? {} : { coverAssetUid: stringValue(data.cover_asset_uid).trim() }),
@@ -6937,6 +7519,121 @@ export class ArkmeService {
       ...(stringValue(data.error_code).trim() === '' ? {} : { errorCode: stringValue(data.error_code).trim() }),
       ...(stringValue(data.error_message).trim() === '' ? {} : { errorMessage: stringValue(data.error_message).trim() }),
       ...(stringValue(data.failure_stage).trim() === '' ? {} : { failureStage: stringValue(data.failure_stage).trim() }),
+    }
+  }
+
+  private aiVideoListItem(raw: unknown): ArkmeAiVideoListItem | undefined {
+    const item = objectValue(raw)
+    const jobId = stringValue(item.job_id).trim()
+    const status = stringValue(item.status).trim() as ArkmeAiVideoJobStatus
+    if (jobId === '' || !['queued', 'running', 'succeeded', 'failed', 'canceled'].includes(status)) return undefined
+    const source = objectValue(item.source_recording)
+    return {
+      jobId,
+      sessionId: stringValue(item.session_id).trim(),
+      status,
+      stage: stringValue(item.stage).trim() || status,
+      progress: Math.min(100, Math.max(0, Math.trunc(numberValue(item.progress)))),
+      title: stringValue(source.title).trim() || '长录音 AI 视频',
+      sourceStartedAtMillis: numberValue(source.started_at),
+      selectedDurationMillis: Math.max(0, numberValue(source.selected_duration_millis)),
+      selectedSegmentCount: Math.max(0, Math.trunc(numberValue(item.selected_segment_count))),
+      retryable: booleanValue(item.retryable),
+      createdAtMillis: numberValue(item.created_at),
+      updatedAtMillis: numberValue(item.updated_at),
+      ...(stringValue(item.cover_asset_uid).trim() === '' ? {} : { coverAssetUid: stringValue(item.cover_asset_uid).trim() }),
+      ...(stringValue(item.video_asset_uid).trim() === '' ? {} : { videoAssetUid: stringValue(item.video_asset_uid).trim() }),
+      ...(numberValue(item.video_duration_millis) <= 0 ? {} : { videoDurationMillis: numberValue(item.video_duration_millis) }),
+      ...(stringValue(item.error_code).trim() === '' ? {} : { errorCode: stringValue(item.error_code).trim() }),
+      ...(stringValue(item.error_message).trim() === '' ? {} : { errorMessage: clippedText(item.error_message, 500) }),
+    }
+  }
+
+  private recordSearchResult(data: Record<string, unknown>): ArkmeRecordSearchResult {
+    const guard = objectValue(data.query_guard)
+    const summary = objectValue(data.page_summary)
+    return {
+      items: listValue(data.items).map(raw => this.searchRecordItem(raw)).filter((item): item is ArkmeSearchRecordItem => item !== undefined),
+      sourceAggregates: listValue(data.source_aggregates)
+        .map(raw => this.searchSourceAggregate(raw))
+        .filter((item): item is ArkmeSearchSourceAggregate => item !== undefined),
+      hasMore: booleanValue(data.has_more),
+      ...(stringValue(data.next_cursor).trim() === '' ? {} : { nextCursor: stringValue(data.next_cursor).trim() }),
+      queryGuard: {
+        state: stringValue(guard.state).trim() || 'complete',
+        ...(stringValue(guard.reason).trim() === '' ? {} : { reason: stringValue(guard.reason).trim() }),
+      },
+      ...(numberValue(summary.item_count) <= 0 ? {} : { itemCount: numberValue(summary.item_count) }),
+      ...(numberValue(summary.item_size) <= 0 ? {} : { itemSize: numberValue(summary.item_size) }),
+    }
+  }
+
+  private searchRecordItem(raw: unknown): ArkmeSearchRecordItem | undefined {
+    const item = objectValue(raw)
+    const core = objectValue(item.record_core)
+    const match = objectValue(item.match_summary)
+    const payload = objectValue(core.content_payload)
+    const topic = objectValue(item.topic_core)
+    const chat = objectValue(item.chat_core)
+    const recordUid = stringValue(item.record_uid ?? core.record_uid).trim()
+    if (recordUid === '') return undefined
+    const assetItem = (value: unknown): ArkmeSearchAssetItem | undefined => {
+      const source = objectValue(value)
+      const fileAssetUid = stringValue(source.file_asset_uid ?? source.source_file_asset_uid).trim()
+      if (fileAssetUid === '') return undefined
+      return {
+        fileAssetUid,
+        ...(stringValue(source.file_uid).trim() === '' ? {} : { fileUid: stringValue(source.file_uid).trim() }),
+        ...(stringValue(source.file_name).trim() === '' ? {} : { fileName: stringValue(source.file_name).trim() }),
+        ...(stringValue(source.mime_type).trim() === '' ? {} : { mimeType: stringValue(source.mime_type).trim() }),
+        ...(numberValue(source.file_kind) <= 0 ? {} : { fileKind: Math.trunc(numberValue(source.file_kind)) }),
+        ...(numberValue(source.size) <= 0 ? {} : { size: numberValue(source.size) }),
+        ...(numberValue(source.duration_millis) <= 0 ? {} : { durationMillis: numberValue(source.duration_millis) }),
+      }
+    }
+    const media = listValue(payload.media_refs).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
+    const files = listValue(item.file_ls).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
+    const voice = assetItem(payload.voice)
+    const textContent = clippedText(core.text_content, 2_000)
+    const linkMatch = textContent.match(/https:\/\/[^\s<>()]+/u)
+    return {
+      recordUid,
+      sourceKind: Math.trunc(numberValue(item.source_kind)),
+      ...(stringValue(item.source_uid).trim() === '' ? {} : { sourceUid: stringValue(item.source_uid).trim() }),
+      routeTargetKind: stringValue(item.route_target_kind).trim(),
+      ...(stringValue(item.route_target_uid).trim() === '' ? {} : { routeTargetUid: stringValue(item.route_target_uid).trim() }),
+      sendAtMillis: numberValue(item.send_at ?? core.send_at),
+      title: clippedText(core.title, 500),
+      textContent,
+      snippet: clippedText(match.snippet, 1_000),
+      ...(stringValue(core.nickname).trim() === '' ? {} : { nickname: stringValue(core.nickname).trim() }),
+      ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
+      ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
+      ...(stringValue(topic.title ?? chat.title).trim() === '' ? {} : { sourceTitle: stringValue(topic.title ?? chat.title).trim() }),
+      media,
+      files,
+      ...(voice === undefined ? {} : { voice }),
+      ...(linkMatch === null ? {} : { linkUrl: linkMatch[0] }),
+      ...(numberValue(core.duration_millis ?? core.record_duration_millis) <= 0 ? {} : { recordDurationMillis: numberValue(core.duration_millis ?? core.record_duration_millis) }),
+      ...(numberValue(item.scene_item_count) <= 0 ? {} : { sceneItemCount: numberValue(item.scene_item_count) }),
+      ...(numberValue(item.scene_item_size) <= 0 ? {} : { sceneItemSize: numberValue(item.scene_item_size) }),
+    }
+  }
+
+  private searchSourceAggregate(raw: unknown): ArkmeSearchSourceAggregate | undefined {
+    const item = objectValue(raw)
+    const topic = objectValue(item.topic_core)
+    const chat = objectValue(item.chat_core)
+    const sourceUid = stringValue(item.source_uid).trim()
+    if (sourceUid === '') return undefined
+    return {
+      sourceKind: Math.trunc(numberValue(item.source_kind)),
+      sourceUid,
+      routeTargetKind: stringValue(item.route_target_kind).trim(),
+      ...(stringValue(item.route_target_uid).trim() === '' ? {} : { routeTargetUid: stringValue(item.route_target_uid).trim() }),
+      title: stringValue(topic.title ?? chat.title).trim() || '未命名来源',
+      matchedRecordCount: Math.max(0, Math.trunc(numberValue(item.matched_record_count))),
+      matchedRecordCountExact: booleanValue(item.matched_record_count_exact),
     }
   }
 
@@ -7007,11 +7704,6 @@ export class ArkmeService {
       const mediaType = imageMediaType(data)
       if (mediaType === undefined) {
         throw new ArkmePluginError('image-type-unsupported', 'Arkme 图片不是受支持的 PNG、JPEG、WebP 或 GIF', false, 415)
-      }
-      const declaredType = (response.headers.get('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
-      if (declaredType !== '' && declaredType !== 'application/octet-stream'
-        && !(mediaType === 'image/jpeg' && declaredType === 'image/jpg') && declaredType !== mediaType) {
-        throw new ArkmePluginError('image-type-mismatch', 'Arkme 图片类型与响应声明不一致', false, 502)
       }
       return { mediaType, bytes, data }
     } catch (error) {

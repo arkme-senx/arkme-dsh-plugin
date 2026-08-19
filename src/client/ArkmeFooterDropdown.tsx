@@ -125,7 +125,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
     <ArkmeFooterAction
       {...props}
       expanded={ui.open}
-      loggedOut={authState.checked && auth !== undefined && !['authenticated', 'binding-required'].includes(auth.status)}
+      loggedOut={authState.checked && (auth === undefined || !['authenticated', 'binding-required'].includes(auth.status))}
       bindingRequired={auth?.status === 'binding-required'}
       authenticated={auth?.status === 'authenticated'}
       authPending={!authState.checked || authState.busy}

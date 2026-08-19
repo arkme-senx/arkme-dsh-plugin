@@ -8,7 +8,6 @@ import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageState, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
-  ArkmeUserProfileSnapshot,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeUploadedAsset,
 } from '../types.js'
@@ -24,8 +23,10 @@ import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
+import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
 import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, resolveInterwovenGroupTarget,
@@ -40,11 +41,9 @@ import {
 export interface ArkmeSurfaceProps {
   floating?: boolean
   initialAuth?: ArkmeAuthSnapshot | undefined
-  initialPhoneBindingGate?: ArkmePhoneBindingGate
 }
 
-export type ArkmeAuthView = 'checking' | 'login' | 'content'
-export type ArkmePhoneBindingGate = 'unknown' | 'checking' | 'ready' | 'required'
+export type ArkmeAuthView = 'login' | 'content'
 
 interface ArkmeComposerAttachment {
   asset: ArkmeUploadedAsset
@@ -106,14 +105,6 @@ const styles: Record<string, CSSProperties> = {
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
-  interwovenState: {
-    width: 'min(780px,100%)', margin: '0 auto 10px', color: colors.secondary,
-    textAlign: 'center', fontSize: 12, lineHeight: '18px',
-  },
-  inlineRetry: {
-    marginLeft: 8, border: 0, padding: 0, background: 'transparent',
-    color: 'var(--dsw-alias-state-business-primary, #3964fe)', cursor: 'pointer', fontSize: 12,
-  },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
   composerInner: {
     position: 'relative', width: 'min(780px,100%)', overflow: 'visible', boxSizing: 'border-box',
@@ -152,38 +143,27 @@ const styles: Record<string, CSSProperties> = {
   detailText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' },
   toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: '#f1efff', color: '#694fd0', cursor: 'pointer', fontSize: 12 },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
-  authChecking: {
-    flex: 1, minHeight: 0, display: 'grid', placeItems: 'center',
-    color: colors.secondary, fontSize: 13,
-  },
-  authCheckingContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 },
-  authRetry: {
-    height: 34, padding: '0 14px', border: `1px solid ${colors.border}`, borderRadius: 8,
-    background: colors.panel, color: colors.text, cursor: 'pointer', font: 'inherit',
-  },
 }
 
-export function arkmeAuthView(
-  auth: ArkmeAuthSnapshot | undefined,
-  phoneBindingGate: ArkmePhoneBindingGate = 'ready',
-): ArkmeAuthView {
-  if (auth === undefined) return 'checking'
-  if (auth.status === 'binding-required') return 'login'
-  if (auth.status !== 'authenticated') return 'login'
-  if (phoneBindingGate === 'ready') return 'content'
-  if (phoneBindingGate === 'required') return 'login'
-  return 'checking'
+export function arkmeAuthView(auth: ArkmeAuthSnapshot | undefined): ArkmeAuthView {
+  return auth?.status === 'authenticated' ? 'content' : 'login'
 }
 
-export function arkmeProfileHasBoundPhone(snapshot: ArkmeUserProfileSnapshot): boolean {
-  return (snapshot.profile?.contact.phoneMasked?.trim() ?? '') !== ''
+export function arkmeLoginNeedsPhoneBinding(auth: ArkmeAuthSnapshot | undefined): boolean {
+  return auth?.status === 'binding-required'
 }
 
-export function arkmeLoginNeedsPhoneBinding(
-  auth: ArkmeAuthSnapshot | undefined,
-  phoneBindingGate: ArkmePhoneBindingGate,
+export function arkmeAuthenticatedAccountChanged(
+  previous: ArkmeAuthSnapshot | undefined,
+  next: ArkmeAuthSnapshot,
 ): boolean {
-  return auth?.status === 'binding-required' || phoneBindingGate === 'required'
+  return next.status === 'authenticated'
+    && (previous?.status !== 'authenticated' || previous.userId !== next.userId)
+}
+
+export function arkmeArkoSurfaceKey(auth: ArkmeAuthSnapshot | undefined): number | 'authenticated' | 'logged-out' {
+  if (auth?.status !== 'authenticated') return 'logged-out'
+  return auth.userId ?? 'authenticated'
 }
 
 export function arkmeShouldBeginWechat(
@@ -203,28 +183,6 @@ export function arkmeShouldBeginWechat(
     && !qrRequestStarted
 }
 
-export function ArkmeAuthChecking({
-  error,
-  busy,
-  onRetry,
-}: {
-  error: string
-  busy: boolean
-  onRetry(): void
-}) {
-  return <div style={styles.authChecking}>
-    <div style={styles.authCheckingContent}>
-      <span role="status">{error === '' ? '正在确认 Arkme 登录状态…' : error}</span>
-      {error !== '' && <button
-        type="button"
-        style={styles.authRetry}
-        disabled={busy}
-        onClick={onRetry}
-      >{busy ? '正在重试...' : '重新检查'}</button>}
-    </div>
-  </div>
-}
-
 function errorMessage(error: unknown): string {
   if (error instanceof ArkmeClientError) return error.body.message
   return error instanceof Error ? error.message : String(error)
@@ -232,11 +190,6 @@ function errorMessage(error: unknown): string {
 
 function qrDataUrl(content: string): string {
   const qr = qrcode(0, 'M'); qr.addData(content); qr.make(); return qr.createDataURL(6, 12)
-}
-
-function initialPhoneBindingGate(auth: ArkmeAuthSnapshot | undefined): ArkmePhoneBindingGate {
-  if (auth?.status === 'binding-required') return 'required'
-  return auth?.status === 'authenticated' ? 'ready' : 'unknown'
 }
 
 export function arkmeClipboardImageFiles(clipboardData: Pick<DataTransfer, 'files' | 'items'>): File[] {
@@ -247,7 +200,6 @@ export function arkmeClipboardImageFiles(clipboardData: Pick<DataTransfer, 'file
   const files = itemFiles.length > 0 ? itemFiles : Array.from(clipboardData.files)
   return files.filter(file => file.type.toLowerCase().startsWith('image/'))
 }
-
 function dayKey(value: number): string {
   const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
 }
@@ -297,7 +249,7 @@ function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
   </span>
 }
 
-export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindingGate: phoneGate }: ArkmeSurfaceProps = {}) {
+export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authStoreSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -327,15 +279,13 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const fileInputRef = useRef<HTMLInputElement>(null)
   const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [timelineStateSourceRef, setTimelineStateSourceRef] = useState('')
   const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
   const [aiPolishSettings, setAiPolishSettings] = useState<ArkmeGroupAiPolishSnapshot>()
   const [drawer, setDrawer] = useState<'detail'>()
   const [detailItemUid, setDetailItemUid] = useState('')
   const [showOriginal, setShowOriginal] = useState(false)
   const [interwovenMoments, setInterwovenMoments] = useState<ArkmeInterwovenMention[]>([])
-  const [interwovenState, setInterwovenState] = useState<ArkmeInterwovenBootstrap['state']>('empty')
-  const [interwovenLoading, setInterwovenLoading] = useState(false)
-  const [interwovenError, setInterwovenError] = useState('')
   const [interwovenRefreshRevision, setInterwovenRefreshRevision] = useState(0)
   const [selectedMoment, setSelectedMoment] = useState<ArkmeInterwovenMention>()
   const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
@@ -359,8 +309,10 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
-  const [phoneBindingGate, setPhoneBindingGate] = useState<ArkmePhoneBindingGate>(phoneGate ?? initialPhoneBindingGate(initialAuth))
   const qrRequestStartedRef = useRef(false)
+  const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
+  const cacheAccountUserIdRef = useRef<number>()
+  const timelineGenerationRef = useRef(0)
   const interwovenRequestRef = useRef<AbortController>()
   const interwovenGenerationRef = useRef(0)
   const detailRequestRef = useRef<AbortController>()
@@ -369,9 +321,9 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
   const attachmentPreviewUrlsRef = useRef(new Set<string>())
   const ignoreStaleBindingAuthRef = useRef(false)
-  const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
-  const authView = arkmeAuthView(auth, phoneBindingGate)
-  const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth, phoneBindingGate)
+  const authenticated = auth?.status === 'authenticated'
+  const authView = arkmeAuthView(auth)
+  const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth)
   const [relatedEligibility, setRelatedEligibility] = useState<'idle' | 'loading' | 'allowed' | 'denied' | 'error'>('idle')
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
   const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
@@ -408,11 +360,9 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
     const previous = arkmeAuthStore.getSnapshot().auth
-    const accountChanged = snapshot.status === 'authenticated'
-      && (previous?.status !== 'authenticated' || previous.userId !== snapshot.userId)
+    const accountChanged = arkmeAuthenticatedAccountChanged(previous, snapshot)
     arkmeAuthStore.setAuth(snapshot)
     if (snapshot.status === 'binding-required') {
-      setPhoneBindingGate('required')
       setLoginMode('phone')
       setAgreed(true)
       setQr('')
@@ -425,12 +375,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       return
     }
     bindingNotifiedUserIdRef.current = undefined
-    if (snapshot.status === 'authenticated') {
-      setPhoneBindingGate('ready')
-      if (accountChanged) arkmeUi.authChanged(true)
-      return
-    }
-    setPhoneBindingGate('unknown')
+    if (accountChanged) arkmeUi.authChanged(true)
   }, [])
 
   useEffect(() => {
@@ -452,6 +397,9 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     setCaptchaId(authStoreSnapshot.config.captchaId)
     setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
   }, [authStoreSnapshot.config])
+  useEffect(() => {
+    if (authStoreSnapshot.error !== '' && authView === 'login') setError(authStoreSnapshot.error)
+  }, [authStoreSnapshot.error, authView])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -616,18 +564,31 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
 
   const loadTimeline = useCallback(async (cursor?: ArkmeTimelineCursor, preserve = false) => {
     if (source === undefined) return
+    const sourceRef = source.sourceRef
+    const generation = timelineGenerationRef.current
     const body = bodyRef.current
     const oldHeight = body?.scrollHeight ?? 0
     const oldTop = body?.scrollTop ?? 0
     const page = await callArkme<ArkmeTimelinePage>('source.timeline', {
-      sourceRef: source.sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
+      sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
     })
-    setItems(current => cursor === undefined ? mergeItems([], page.items) : mergeItems(current, page.items))
-    if (cursor === undefined) {
-      setAiPolishSettings(page.aiPolishSettings)
-      setAiPolishNotices(page.aiPolishNotices ?? [])
+    if (generation !== timelineGenerationRef.current) return
+    const cached = conversationCacheRef.current.getTimeline(sourceRef)
+    const nextAiPolishSettings = cursor === undefined ? page.aiPolishSettings : cached?.aiPolishSettings
+    const snapshot = {
+      items: cursor === undefined ? mergeItems([], page.items) : mergeItems(cached?.items ?? [], page.items),
+      aiPolishNotices: cursor === undefined ? page.aiPolishNotices ?? [] : cached?.aiPolishNotices ?? [],
+      hasMore: page.hasMore,
+      ...(nextAiPolishSettings === undefined ? {} : { aiPolishSettings: nextAiPolishSettings }),
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     }
-    setHasMore(page.hasMore); setNextCursor(page.nextCursor)
+    const releasedMoments = conversationCacheRef.current.storeTimeline(sourceRef, snapshot)
+    setTimelineStateSourceRef(sourceRef)
+    setItems(snapshot.items)
+    setAiPolishSettings(snapshot.aiPolishSettings)
+    setAiPolishNotices(snapshot.aiPolishNotices)
+    setHasMore(snapshot.hasMore); setNextCursor(snapshot.nextCursor)
+    if (releasedMoments !== undefined) setInterwovenMoments(releasedMoments)
     requestAnimationFrame(() => {
       const target = bodyRef.current
       if (target === null) return
@@ -636,31 +597,61 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     if (cursor === undefined) await acknowledgeRead(page.items)
   }, [acknowledgeRead, source])
 
-  useEffect(() => { void refreshAuth() }, [refreshAuth])
   useEffect(() => {
-    setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined)
-    setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
-    setNextCursor(undefined); setHasMore(false); setError('')
-    setAttachments(current => { releaseAttachmentPreviews(current); return [] }); setLongArticleCreating(false); setAddMenuOpen(false)
-    if (authenticated && source !== undefined) {
-      setBusy(true)
-      void loadTimeline().catch(caught => { setError(errorMessage(caught)) }).finally(() => { setBusy(false) })
+    if (!authStoreSnapshot.checked) void refreshAuth()
+  }, [authStoreSnapshot.checked, refreshAuth, ui.authRevision])
+  useLayoutEffect(() => {
+    timelineGenerationRef.current += 1
+    const accountUserId = auth?.status === 'authenticated' ? auth.userId : undefined
+    if (cacheAccountUserIdRef.current !== accountUserId) {
+      conversationCacheRef.current.clear()
+      cacheAccountUserIdRef.current = accountUserId
     }
-  }, [authenticated, releaseAttachmentPreviews, source?.sourceRef])
-  useEffect(() => {
+    const sourceRef = authenticated ? source?.sourceRef : undefined
+    const cachedTimeline = sourceRef === undefined
+      ? undefined
+      : conversationCacheRef.current.getTimeline(sourceRef)
+    setTimelineStateSourceRef(sourceRef ?? '')
+    setItems(cachedTimeline?.items ?? [])
+    setAiPolishNotices(cachedTimeline?.aiPolishNotices ?? [])
+    setAiPolishSettings(cachedTimeline?.aiPolishSettings)
+    setNextCursor(cachedTimeline?.nextCursor)
+    setHasMore(cachedTimeline?.hasMore ?? false)
+    setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
+    if (authenticated) setError('')
+    setAttachments(current => { releaseAttachmentPreviews(current); return [] }); setLongArticleCreating(false); setAddMenuOpen(false)
     interwovenRequestRef.current?.abort()
     interwovenGenerationRef.current += 1
     detailRequestRef.current?.abort()
     detailRequestMomentRef.current = ''
-    setInterwovenMoments([])
-    setInterwovenState('empty')
-    setInterwovenLoading(false)
-    setInterwovenError('')
+    setInterwovenMoments(sourceRef === undefined
+      ? []
+      : conversationCacheRef.current.getInterwovenMoments(sourceRef) ?? [])
     setSelectedMoment(undefined)
     setDetailState(undefined)
-  }, [authenticated, auth?.userId, source?.sourceRef])
+  }, [authenticated, auth?.userId, releaseAttachmentPreviews, source?.sourceRef])
+  useEffect(() => {
+    if (!authenticated || source === undefined) return
+    const generation = timelineGenerationRef.current
+    const hasCachedTimeline = conversationCacheRef.current.getTimeline(source.sourceRef) !== undefined
+    void loadTimeline().catch(caught => {
+      if (generation === timelineGenerationRef.current && !hasCachedTimeline) setError(errorMessage(caught))
+    })
+  }, [authenticated, source?.sourceRef])
+  useEffect(() => {
+    if (!authenticated || source === undefined || timelineStateSourceRef !== source.sourceRef) return
+    if (conversationCacheRef.current.getTimeline(source.sourceRef) === undefined) return
+    conversationCacheRef.current.storeTimeline(source.sourceRef, {
+      items,
+      aiPolishNotices,
+      hasMore,
+      ...(aiPolishSettings === undefined ? {} : { aiPolishSettings }),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    })
+  }, [aiPolishNotices, aiPolishSettings, authenticated, hasMore, items, nextCursor, source?.sourceRef, timelineStateSourceRef])
   useEffect(() => {
     if (!authenticated || source?.kind !== 'private_chat') return
+    const sourceRef = source.sourceRef
     const generation = ++interwovenGenerationRef.current
     const controller = new AbortController()
     const body = bodyRef.current
@@ -668,25 +659,20 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     interwovenRequestRef.current?.abort()
     interwovenRequestRef.current = controller
     let active = true
-    setInterwovenLoading(true)
-    setInterwovenError('')
     void callArkme<ArkmeInterwovenBootstrap>('source.interwoven-moments', {
-      sourceRef: source.sourceRef,
+      sourceRef,
     }, controller.signal).then(result => {
       if (!active || generation !== interwovenGenerationRef.current) return
-      setInterwovenState(result.state)
-      setInterwovenMoments(result.state === 'disabled' || result.state === 'empty' ? [] : result.moments)
-      if (result.state === 'partial') setInterwovenError(result.message ?? '部分交织瞬间暂时不可用')
+      const moments = result.state === 'disabled' || result.state === 'empty' ? [] : result.moments
+      const ready = conversationCacheRef.current.storeInterwovenMoments(sourceRef, moments)
+      if (!ready) return
+      setInterwovenMoments(moments)
       if (stickToBottom) requestAnimationFrame(() => {
         if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
       })
-    }).catch(caught => {
-      if (!active || generation !== interwovenGenerationRef.current) return
-      setInterwovenError(errorMessage(caught))
-    }).finally(() => {
+    }).catch(() => undefined).finally(() => {
       if (!active || generation !== interwovenGenerationRef.current) return
       if (interwovenRequestRef.current === controller) interwovenRequestRef.current = undefined
-      setInterwovenLoading(false)
     })
     return () => {
       active = false
@@ -808,7 +794,6 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.logout')
       ignoreStaleBindingAuthRef.current = true
       arkmeAuthStore.setAuth(snapshot)
-      setPhoneBindingGate('unknown')
       setPhone('')
       setSmsCode('')
       setQr('')
@@ -1043,7 +1028,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     [chatDirectory, detailState],
   )
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
-  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : ui.mode === 'arko' ? 'Arko' : source?.displayName ?? 'Arkme'
+  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : ui.mode === 'search' ? '搜索' : ui.mode === 'arko' ? 'Arko' : source?.displayName ?? 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
 
   return (
@@ -1080,11 +1065,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
             </div>}
           </div>}
         </header>}
-        {authView === 'checking' ? <ArkmeAuthChecking
-          error={error}
-          busy={busy}
-          onRetry={() => { void refreshAuth() }}
-        /> : authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
+        {authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
           mode={loginMode}
           phoneBindingRequired={phoneBindingRequired}
           agreed={agreed}
@@ -1105,23 +1086,16 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
           onSendCode={() => { void sendCode() }}
           onVerifyCode={() => { void verifyCode() }}
           onTestLogin={() => { void testLogin() }}
+          onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
-          : ui.mode === 'arko' ? <ArkmeArkoSurface />
+          : ui.mode === 'search' ? <div style={styles.body}><ArkmeSearchSurface /></div>
+          : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {source.kind === 'private_chat' && interwovenLoading && interwovenMoments.length === 0
-              && <div style={styles.interwovenState} role="status">正在加载交织瞬间…</div>}
-            {source.kind === 'private_chat' && interwovenError !== '' && <div style={styles.interwovenState}>
-              {interwovenError}
-              <button
-                type="button" style={styles.inlineRetry}
-                onClick={() => { setInterwovenRefreshRevision(value => value + 1) }}
-              >重试</button>
-            </div>}
             {displayRows.length > 0 && <ul style={styles.records}>
               {displayRows.map((row, index) => {
                 const previous = index === 0 ? undefined : displayRows[index - 1]

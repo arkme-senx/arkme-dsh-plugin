@@ -15,6 +15,40 @@ export interface ArkmeChatDirectorySnapshot {
   sources: ArkmeSourceItem[]
 }
 
+type ArkmeChatDirectoryMutation =
+  | { type: 'upsert'; source: ArkmeSourceItem }
+  | { type: 'unread'; sourceRef: string; unreadCount: number }
+
+function applyDirectoryMutations(
+  initialSources: readonly ArkmeSourceItem[],
+  mutations: readonly ArkmeChatDirectoryMutation[],
+): ArkmeSourceItem[] {
+  let sources = [...initialSources]
+  for (const mutation of mutations) {
+    if (mutation.type === 'unread') {
+      const index = sources.findIndex(item => item.sourceRef === mutation.sourceRef)
+      if (index >= 0) {
+        sources[index] = { ...sources[index]!, unreadCount: Math.max(0, Math.trunc(mutation.unreadCount)) }
+      }
+      continue
+    }
+    const source = mutation.source
+    const existingIndex = sources.findIndex(item => item.sourceRef === source.sourceRef)
+    const existing = existingIndex < 0 ? undefined : sources[existingIndex]
+    const normalized = existing === undefined
+      ? source
+      : { ...source, activeAtMillis: Math.max(existing.activeAtMillis, source.activeAtMillis) }
+    if (existing !== undefined && normalized.activeAtMillis <= existing.activeAtMillis) {
+      sources[existingIndex] = normalized
+      continue
+    }
+    sources = sources.filter(item => item.sourceRef !== source.sourceRef)
+    const insertionIndex = sources.findIndex(item => item.activeAtMillis < normalized.activeAtMillis)
+    sources.splice(insertionIndex < 0 ? sources.length : insertionIndex, 0, normalized)
+  }
+  return sources
+}
+
 export class ArkmeChatDirectoryStore {
   private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [] }
   private readonly listeners = new Set<() => void>()
@@ -25,6 +59,8 @@ export class ArkmeChatDirectoryStore {
   private refreshedAtMillis = 0
   private accountUserId: number | undefined
   private generation = 0
+  private baselineReady = false
+  private pendingMutations: ArkmeChatDirectoryMutation[] = []
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
     this.loadPage = options.loadPage ?? (async (cursor, force) => await callArkme<ArkmeSourceList>('sources.list', {
@@ -48,7 +84,9 @@ export class ArkmeChatDirectoryStore {
     this.generation += 1
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
-    if (this.snapshot.sources.length > 0) this.publish([])
+    this.baselineReady = false
+    this.pendingMutations = []
+    if (this.snapshot.sources.length > 0) this.commit([])
   }
 
   async refreshRoot(options: { force?: boolean } = {}): Promise<ArkmeSourceItem[]> {
@@ -73,7 +111,7 @@ export class ArkmeChatDirectoryStore {
       if (generation !== this.generation) return [...this.snapshot.sources]
       this.refreshedAtMillis = this.now()
       this.publish(loaded)
-      return [...loaded]
+      return [...this.snapshot.sources]
     })()
     this.refreshInFlight = pending
     try {
@@ -84,6 +122,13 @@ export class ArkmeChatDirectoryStore {
   }
 
   publish(sources: ArkmeSourceItem[]): void {
+    const merged = applyDirectoryMutations(sources, this.pendingMutations)
+    this.pendingMutations = []
+    this.baselineReady = true
+    this.commit(merged)
+  }
+
+  private commit(sources: ArkmeSourceItem[]): void {
     this.snapshot = { revision: this.snapshot.revision + 1, sources: [...sources] }
     for (const listener of this.listeners) listener()
   }
@@ -93,41 +138,44 @@ export class ArkmeChatDirectoryStore {
   }
 
   upsertMany(updates: ArkmeSourceItem[]): void {
-    let sources = [...this.snapshot.sources]
-    for (const source of updates) {
-      const existingIndex = sources.findIndex(item => item.sourceRef === source.sourceRef)
-      const existing = existingIndex < 0 ? undefined : sources[existingIndex]
-      const normalized = existing === undefined
-        ? source
-        : { ...source, activeAtMillis: Math.max(existing.activeAtMillis, source.activeAtMillis) }
-      if (existing !== undefined && normalized.activeAtMillis <= existing.activeAtMillis) {
-        sources[existingIndex] = normalized
-        continue
-      }
-      sources = sources.filter(item => item.sourceRef !== source.sourceRef)
-      const insertionIndex = sources.findIndex(item => item.activeAtMillis < normalized.activeAtMillis)
-      sources.splice(insertionIndex < 0 ? sources.length : insertionIndex, 0, normalized)
+    const mutations = updates.map(source => ({ type: 'upsert' as const, source }))
+    if (!this.baselineReady) {
+      this.pendingMutations.push(...mutations)
+      return
     }
-    this.publish(sources)
+    this.commit(applyDirectoryMutations(this.snapshot.sources, mutations))
   }
 
   unreadCount(sourceRef: string): number {
-    return this.snapshot.sources.find(item => item.sourceRef === sourceRef)?.unreadCount ?? 0
+    let unreadCount = this.snapshot.sources.find(item => item.sourceRef === sourceRef)?.unreadCount ?? 0
+    for (const mutation of this.pendingMutations) {
+      if (mutation.type === 'upsert' && mutation.source.sourceRef === sourceRef) {
+        unreadCount = mutation.source.unreadCount
+      } else if (mutation.type === 'unread' && mutation.sourceRef === sourceRef) {
+        unreadCount = Math.max(0, Math.trunc(mutation.unreadCount))
+      }
+    }
+    return unreadCount
   }
 
   updateUnread(sourceRef: string, unreadCount: number): void {
-    const index = this.snapshot.sources.findIndex(item => item.sourceRef === sourceRef)
-    if (index < 0) return
-    const sources = [...this.snapshot.sources]
-    sources[index] = { ...sources[index]!, unreadCount: Math.max(0, Math.trunc(unreadCount)) }
-    this.publish(sources)
+    const mutation = { type: 'unread' as const, sourceRef, unreadCount }
+    if (!this.baselineReady) {
+      this.pendingMutations.push(mutation)
+      return
+    }
+    const sources = applyDirectoryMutations(this.snapshot.sources, [mutation])
+    if (sources.find(item => item.sourceRef === sourceRef) === undefined) return
+    this.commit(sources)
   }
 
   clear(): void {
     this.generation += 1
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
-    if (this.snapshot.sources.length > 0) this.publish([])
+    this.baselineReady = false
+    this.pendingMutations = []
+    if (this.snapshot.sources.length > 0) this.commit([])
   }
 }
 
