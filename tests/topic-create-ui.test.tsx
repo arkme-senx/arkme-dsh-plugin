@@ -6,7 +6,7 @@ import {
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
-  expandTopicFromRowClick, isTopicRowFullyVisible, toggleTopicCollapsedState,
+  expandTopicFromRowClick, isTopicRowFullyVisible, mergeCreatedTopicSource, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
 import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
@@ -110,6 +110,21 @@ describe('topic create UI', () => {
     expect(isTopicRowFullyVisible({ top: 180, bottom: 220 }, listRect)).toBe(true)
     expect(isTopicRowFullyVisible({ top: 80, bottom: 120 }, listRect)).toBe(false)
     expect(isTopicRowFullyVisible({ top: 480, bottom: 520 }, listRect)).toBe(false)
+  })
+
+  it('adds a created child without replacing the currently selected source object', () => {
+    const selectedSource = topicRow.source
+    const createdSource: ArkmeSourceItem = {
+      ...topicRow.source,
+      sourceRef: 'topic-child',
+      parentSourceRef: selectedSource.sourceRef,
+      displayName: '新子主题',
+    }
+
+    const nextSources = mergeCreatedTopicSource([selectedSource], createdSource)
+
+    expect(nextSources[0]).toBe(selectedSource)
+    expect(nextSources[1]).toBe(createdSource)
   })
 
   it('expands a collapsed topic from its row without collapsing an expanded topic', () => {

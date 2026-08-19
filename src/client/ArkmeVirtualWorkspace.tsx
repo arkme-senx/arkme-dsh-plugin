@@ -285,6 +285,13 @@ export function isTopicRowFullyVisible(
   return rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom
 }
 
+export function mergeCreatedTopicSource(
+  sources: readonly ArkmeSourceItem[],
+  createdSource: ArkmeSourceItem,
+): ArkmeSourceItem[] {
+  return [...sources.filter(source => source.sourceRef !== createdSource.sourceRef), createdSource]
+}
+
 export function expandTopicFromRowClick(
   row: ArkmeSourceTreeRow,
   collapsedSourceRefs: Set<string>,
@@ -586,13 +593,12 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         title,
         ...(parent === null ? {} : { parentSourceRef: parent.sourceRef }),
       })
-      const nextSources = [...sources.filter(item => item.sourceRef !== result.source.sourceRef), result.source]
+      const nextSources = mergeCreatedTopicSource(sources, result.source)
       setSources(nextSources)
       persistCache({ directory: 'send_to_self', sources: { send_to_self: nextSources } })
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current))
       setHoveredSourceRef(undefined)
       setTopicCreateParent(undefined)
-      await loadDirectory('send_to_self', result.source)
       setPendingRevealSourceRef(result.source.sourceRef)
       if (result.warning !== undefined) setError(result.warning)
     } catch (caught) {
