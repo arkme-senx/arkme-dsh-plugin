@@ -29,10 +29,22 @@ function fixture(overrides: Partial<OpenClawCliPort> = {}) {
   return { cli, calls, setResources(value: OpenClawLocalResources) { resources = value } }
 }
 
+function secretStoreFixture(): OpenClawSecretStore {
+  let restartRequired = false
+  return {
+    async ensureOwnership() {},
+    async persist() { return { provider: 'arkme', source: 'file', id: 'value', providerPath: '/secret' } },
+    async isRestartRequired() { return restartRequired },
+    async markRestartRequired() { restartRequired = true },
+    async clearRestartRequired() { restartRequired = false },
+  }
+}
+
 describe('OpenClawProvisioner', () => {
   it('stops at preflight without reading or persisting a Bot secret', async () => {
     const writes: string[] = []
-    const secretStore: OpenClawSecretStore = { async ensureOwnership() {}, async persist() { writes.push('secret'); return { provider: 'x', source: 'file', id: 'value', providerPath: '/secret' } } }
+    const secretStore = secretStoreFixture()
+    secretStore.persist = async () => { writes.push('secret'); return { provider: 'x', source: 'file', id: 'value', providerPath: '/secret' } }
     const { cli } = fixture({ async preflight() { return { status: 'profile_not_found' } } })
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
@@ -45,6 +57,7 @@ describe('OpenClawProvisioner', () => {
     const { cli, calls } = fixture()
     const captured: SecretValue[] = []
     const secretStore: OpenClawSecretStore = {
+      ...secretStoreFixture(),
       async ensureOwnership() {},
       async persist(input) {
         captured.push(input.secret)
@@ -65,7 +78,8 @@ describe('OpenClawProvisioner', () => {
     const { cli, calls, setResources } = fixture()
     setResources({ channel: true, agent: true, account: true, binding: true })
     let reveals = 0
-    const secretStore: OpenClawSecretStore = { async ensureOwnership() {}, async persist() { throw new Error('must not persist') } }
+    const secretStore = secretStoreFixture()
+    secretStore.persist = async () => { throw new Error('must not persist') }
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => true })
 
     await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', revealSecret: async () => { reveals++; return new SecretValue('unused') } }))
@@ -77,7 +91,7 @@ describe('OpenClawProvisioner', () => {
   it('resumes partial state and does not delete resources when a later stage fails', async () => {
     const { cli, calls, setResources } = fixture({ async ensureBinding() { calls.push('binding-failed'); throw new Error('bind failed') } })
     setResources({ channel: true, agent: true, account: false, binding: false })
-    const secretStore: OpenClawSecretStore = { async ensureOwnership() {}, async persist() { return { provider: 'arkme', source: 'file', id: 'value', providerPath: '/secret' } } }
+    const secretStore = secretStoreFixture()
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
     await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', revealSecret: async () => new SecretValue('secret') }))
@@ -90,7 +104,7 @@ describe('OpenClawProvisioner', () => {
     const ids: string[] = []
     const run = async (botRef: string) => {
       const { cli } = fixture({ async ensureAgent(input) { ids.push(input.agentId); return { changed: true } } })
-      const secretStore: OpenClawSecretStore = { async ensureOwnership() {}, async persist() { return { provider: 'arkme', source: 'file', id: 'value', providerPath: '/secret' } } }
+      const secretStore = secretStoreFixture()
       return createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
         .reconcile({ botRef, revealSecret: async () => new SecretValue('secret') })
     }
@@ -102,10 +116,25 @@ describe('OpenClawProvisioner', () => {
   it('does not confuse a reachable Gateway with the Bot runtime being online', async () => {
     const { cli, setResources } = fixture()
     setResources({ channel: true, agent: true, account: true, binding: true })
-    const secretStore: OpenClawSecretStore = { async ensureOwnership() {}, async persist() { throw new Error('must not persist') } }
+    const secretStore = secretStoreFixture()
+    secretStore.persist = async () => { throw new Error('must not persist') }
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => false })
 
     await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', revealSecret: async () => new SecretValue('unused') }))
       .resolves.toMatchObject({ status: 'connected_unverified' })
+  })
+
+  it('restarts only on a later explicitly approved reconciliation', async () => {
+    const { cli, calls } = fixture()
+    const secretStore = secretStoreFixture()
+    const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => true })
+
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, revealSecret: async () => new SecretValue('secret') }))
+      .resolves.toMatchObject({ status: 'gateway_restart_confirmation_required' })
+    expect(calls).not.toContain('restart')
+
+    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, revealSecret: async () => new SecretValue('unused') }))
+      .resolves.toMatchObject({ status: 'runtime_online' })
+    expect(calls).toContain('restart')
   })
 })

@@ -181,6 +181,32 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(JSON.stringify(secret)).toBe('{}')
   })
 
+  it('validates Bot ownership before delegating the local OpenClaw connection', async () => {
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async input => {
+      if (String(input).endsWith('/list')) return json({ code: 200, data: { bots: [{
+        bot_id: 'bot-owner-id-connect', name: '总结', provider: 'openclaw', description: '', status: 'offline',
+        subject_uid: 'subject-connect', chat_session_uid: '',
+      }] } })
+      return json({ code: 200, data: { token: 'jbot_connect_secret' } })
+    })
+    const botRef = (await service.listBots()).items[0]!.botRef
+    let revealed = ''
+    service.attachOpenClawProvisioner({
+      async reconcile(input: { botRef: string; allowGatewayRestart?: boolean; revealSecret: () => Promise<{ reveal(): string }> }) {
+        revealed = (await input.revealSecret()).reveal()
+        expect(input).toMatchObject({ botRef, allowGatewayRestart: true })
+        return { status: 'connected_unverified', resource_ref: 'openclaw.bot.v1.test' } as const
+      },
+    } as never)
+
+    await expect(service.connectOpenClawBot(botRef)).resolves.toEqual({
+      status: 'connected_unverified', resource_ref: 'openclaw.bot.v1.test',
+    })
+    expect(revealed).toBe('jbot_connect_secret')
+    await expect(service.connectOpenClawBot('arkme-bot-v1.not-owned')).rejects.toMatchObject({ code: 'bot-ref-not-owned' })
+  })
+
   it('lists, installs, and removes a Bot using only opaque Bot and group references', async () => {
     const calls: Array<{ url: string; body: unknown }> = []
     let installed = false

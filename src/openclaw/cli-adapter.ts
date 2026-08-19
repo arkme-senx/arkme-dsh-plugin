@@ -5,23 +5,23 @@ export interface OpenClawCommandResult {
 }
 
 export interface OpenClawCommandRunner {
-  (args: readonly string[], options?: { stdin?: string }): Promise<OpenClawCommandResult>
+  (args: readonly string[], options?: { stdin?: string; signal?: AbortSignal }): Promise<OpenClawCommandResult>
 }
 
 export type OpenClawPreflightResult =
   | { status: 'profile_not_found' }
-  | { status: 'prerequisite_failed'; reason: 'version' | 'config' | 'model_auth' }
+  | { status: 'prerequisite_failed'; reason: 'binary' | 'version' | 'config' | 'model_auth' }
   | { status: 'ready'; version: string; gateway: 'reachable' | 'unreachable' | 'unknown' }
 
 export interface OpenClawCliAdapter {
-  preflight(): Promise<OpenClawPreflightResult>
-  inspect(input: { agentId: string; accountId: string }): Promise<import('./types.js').OpenClawLocalResources>
-  ensureChannel(): Promise<{ changed: boolean }>
-  ensureAgent(input: { agentId: string; workspaceRef: string }): Promise<{ changed: boolean }>
-  ensureAccountSecretRef(input: { accountId: string; secretRef: import('./types.js').OpenClawSecretRef }): Promise<{ changed: boolean }>
-  ensureBinding(input: { agentId: string; accountId: string }): Promise<{ changed: boolean }>
-  gatewayStatus(): Promise<'reachable' | 'unreachable' | 'unknown'>
-  restartGateway(): Promise<void>
+  preflight(options?: { signal?: AbortSignal }): Promise<OpenClawPreflightResult>
+  inspect(input: { agentId: string; accountId: string }, options?: { signal?: AbortSignal }): Promise<import('./types.js').OpenClawLocalResources>
+  ensureChannel(options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
+  ensureAgent(input: { agentId: string; workspaceRef: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
+  ensureAccountSecretRef(input: { accountId: string; secretRef: import('./types.js').OpenClawSecretRef }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
+  ensureBinding(input: { agentId: string; accountId: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
+  gatewayStatus(options?: { signal?: AbortSignal }): Promise<'reachable' | 'unreachable' | 'unknown'>
+  restartGateway(options?: { signal?: AbortSignal }): Promise<void>
 }
 
 const JOTMO_CHANNEL_PACKAGE = '@jotmo/openclaw-channel@0.1.12'
@@ -63,15 +63,16 @@ export function createOpenClawCliAdapter(options: {
 }): OpenClawCliAdapter {
   const profile = options.profile.trim()
   return {
-    async preflight() {
+    async preflight(runOptions) {
       if (profile === '') return { status: 'profile_not_found' }
 
-      const profileFile = await options.run(profileArgs(profile, 'config', 'file'))
+      const profileFile = await options.run(profileArgs(profile, 'config', 'file'), runOptions)
       if (profileFile.exitCode !== 0 || profileFile.stdout.trim() === '') {
+        if (/ENOENT|command not found/i.test(profileFile.stderr)) return { status: 'prerequisite_failed', reason: 'binary' }
         return { status: 'profile_not_found' }
       }
 
-      const configResult = await options.run(profileArgs(profile, 'config', 'validate'))
+      const configResult = await options.run(profileArgs(profile, 'config', 'validate'), runOptions)
       if (configResult.exitCode !== 0) {
         const configOutput = `${configResult.stdout}\n${configResult.stderr}`
         if (/config file not found/i.test(configOutput)) {
@@ -80,28 +81,28 @@ export function createOpenClawCliAdapter(options: {
         return { status: 'prerequisite_failed', reason: 'config' }
       }
 
-      const versionResult = await options.run(profileArgs(profile, '--version'))
+      const versionResult = await options.run(profileArgs(profile, '--version'), runOptions)
       const version = versionResult.exitCode === 0 ? parseVersion(versionResult.stdout) : undefined
       if (version === undefined || !/^2026\.7\./.test(version)) {
         return { status: 'prerequisite_failed', reason: 'version' }
       }
 
-      const modelResult = await options.run(profileArgs(profile, 'models', 'status'))
+      const modelResult = await options.run(profileArgs(profile, 'models', 'status'), runOptions)
       const modelOutput = `${modelResult.stdout}\n${modelResult.stderr}`
       const modelAuthMissing = /\bMissing auth\b/i.test(modelOutput) || /effective=missing(?::missing)?/i.test(modelOutput)
       if (modelResult.exitCode !== 0 || !/Default\s*:/i.test(modelResult.stdout) || modelAuthMissing) {
         return { status: 'prerequisite_failed', reason: 'model_auth' }
       }
 
-      const gatewayResult = await options.run(profileArgs(profile, 'gateway', 'status'))
+      const gatewayResult = await options.run(profileArgs(profile, 'gateway', 'status'), runOptions)
       return { status: 'ready', version, gateway: parseGatewayReachability(gatewayResult) }
     },
-    async inspect(input) {
+    async inspect(input, runOptions) {
       const [channel, agents, account, bindings] = await Promise.all([
-        options.run(profileArgs(profile, 'plugins', 'inspect', 'jotmo-openclaw-channel', '--json')),
-        options.run(profileArgs(profile, 'agents', 'list', '--json')),
-        options.run(profileArgs(profile, 'config', 'get', `channels.jotmo.accounts.${input.accountId}`)),
-        options.run(profileArgs(profile, 'agents', 'bindings', '--json')),
+        options.run(profileArgs(profile, 'plugins', 'inspect', 'jotmo-openclaw-channel', '--json'), runOptions),
+        options.run(profileArgs(profile, 'agents', 'list', '--json'), runOptions),
+        options.run(profileArgs(profile, 'config', 'get', `channels.jotmo.accounts.${input.accountId}`), runOptions),
+        options.run(profileArgs(profile, 'agents', 'bindings', '--json'), runOptions),
       ])
       return {
         channel: channel.exitCode === 0,
@@ -110,33 +111,33 @@ export function createOpenClawCliAdapter(options: {
         binding: bindings.exitCode === 0 && jsonContainsExactString(bindings.stdout, input.agentId) && jsonContainsExactString(bindings.stdout, `jotmo:${input.accountId}`),
       }
     },
-    async ensureChannel() {
-      const result = await options.run(profileArgs(profile, 'plugins', 'install', JOTMO_CHANNEL_PACKAGE, '--pin'))
+    async ensureChannel(runOptions) {
+      const result = await options.run(profileArgs(profile, 'plugins', 'install', JOTMO_CHANNEL_PACKAGE, '--pin'), runOptions)
       assertSucceeded(result, 'channel install')
       return { changed: true }
     },
-    async ensureAgent(input) {
-      const result = await options.run(profileArgs(profile, 'agents', 'add', input.agentId, '--non-interactive', '--workspace', input.workspaceRef, '--json'))
+    async ensureAgent(input, runOptions) {
+      const result = await options.run(profileArgs(profile, 'agents', 'add', input.agentId, '--non-interactive', '--workspace', input.workspaceRef, '--json'), runOptions)
       assertSucceeded(result, 'agent creation')
       return { changed: true }
     },
-    async ensureAccountSecretRef(input) {
-      const provider = await options.run(profileArgs(profile, 'config', 'set', `secrets.providers.${input.secretRef.provider}`, '--provider-source', 'file', '--provider-path', input.secretRef.providerPath, '--provider-mode', 'singleValue'))
+    async ensureAccountSecretRef(input, runOptions) {
+      const provider = await options.run(profileArgs(profile, 'config', 'set', `secrets.providers.${input.secretRef.provider}`, '--provider-source', 'file', '--provider-path', input.secretRef.providerPath, '--provider-mode', 'singleValue'), runOptions)
       assertSucceeded(provider, 'secret provider configuration')
-      const account = await options.run(profileArgs(profile, 'config', 'set', `channels.jotmo.accounts.${input.accountId}.token`, '--ref-provider', input.secretRef.provider, '--ref-source', input.secretRef.source, '--ref-id', input.secretRef.id))
+      const account = await options.run(profileArgs(profile, 'config', 'set', `channels.jotmo.accounts.${input.accountId}.token`, '--ref-provider', input.secretRef.provider, '--ref-source', input.secretRef.source, '--ref-id', input.secretRef.id), runOptions)
       assertSucceeded(account, 'channel account configuration')
       return { changed: true }
     },
-    async ensureBinding(input) {
-      const result = await options.run(profileArgs(profile, 'agents', 'bind', '--agent', input.agentId, '--bind', `jotmo:${input.accountId}`, '--json'))
+    async ensureBinding(input, runOptions) {
+      const result = await options.run(profileArgs(profile, 'agents', 'bind', '--agent', input.agentId, '--bind', `jotmo:${input.accountId}`, '--json'), runOptions)
       assertSucceeded(result, 'agent binding')
       return { changed: true }
     },
-    async gatewayStatus() {
-      return parseGatewayReachability(await options.run(profileArgs(profile, 'gateway', 'status')))
+    async gatewayStatus(runOptions) {
+      return parseGatewayReachability(await options.run(profileArgs(profile, 'gateway', 'status'), runOptions))
     },
-    async restartGateway() {
-      const result = await options.run(profileArgs(profile, 'gateway', 'restart'))
+    async restartGateway(runOptions) {
+      const result = await options.run(profileArgs(profile, 'gateway', 'restart'), runOptions)
       assertSucceeded(result, 'gateway restart')
     },
   }

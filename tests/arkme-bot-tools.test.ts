@@ -30,6 +30,10 @@ function fakePorts() {
     removeGroupBot: vi.fn(async (groupSourceRef: string, botRef: string) => ({
       groupSourceRef, botRef, installed: false,
     })),
+    connectOpenClawBot: vi.fn(async () => ({
+      status: 'gateway_restart_confirmation_required' as const,
+      resource_ref: 'openclaw.bot.v1.opaque', impact: 'profile_all_agents' as const,
+    })),
   } as unknown as ArkmeCoreToolPorts
 }
 
@@ -40,6 +44,23 @@ describe('Arkme Bot tools', () => {
     expect(['arkme_bot_create', 'arkme_group_bot_add', 'arkme_group_bot_remove'].map(moduleFor))
       .toSatisfy(modules => modules.every(module => module?.meta.effect === 'write'
         && module.meta.grant === 'explicit-user-write'))
+  })
+
+  it('connects using only an opaque Bot reference and returns no local path or secret', async () => {
+    const ports = fakePorts()
+    const module = moduleFor('arkme_bot_openclaw_connect')
+    expect(module?.meta).toMatchObject({ effect: 'write', grant: 'explicit-user-write' })
+    expect(module!.create(ports).parameters).toMatchObject({
+      properties: { bot_ref: expect.any(Object) }, required: ['bot_ref'],
+    })
+    const output = await module!.create(ports).execute(
+      { bot_ref: 'arkme-bot-v1.opaque' },
+      { callId: 'bot-connect-1', signal: new AbortController().signal } as never,
+    ) as string
+    expect(ports.connectOpenClawBot).toHaveBeenCalledWith('arkme-bot-v1.opaque', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(output).toContain('gateway_restart_confirmation_required')
+    expect(output).not.toContain('/Users/')
+    expect(output).not.toContain('jbot_')
   })
 
   it('creates an OpenClaw Bot without serializing its token or raw owner ID', async () => {

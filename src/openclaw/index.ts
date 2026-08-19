@@ -5,6 +5,7 @@ export {
   type OpenClawCommandRunner,
   type OpenClawPreflightResult,
 } from './cli-adapter.js'
+export { createOpenClawCommandRunner } from './command-runner.js'
 export { createOpenClawProvisioner } from './provisioner.js'
 export { createOpenClawFileSecretStore } from './secret-provider.js'
 export type {

@@ -478,6 +478,14 @@ describe('Arkme conversation tools', () => {
       reason: 'Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“Chosen_01”吗？',
     })
 
+    const connectAsk = await preExecute!(
+      { name: 'arkme_bot_openclaw_connect', arguments: { bot_ref: 'arkme-bot-v1.opaque' } },
+      async () => ({ kind: 'allow' }),
+    )
+    expect(connectAsk).toMatchObject({ kind: 'ask' })
+    expect(connectAsk.reason).toContain('全部 Agent')
+    expect(connectAsk.reason).toContain('接管')
+
     const denied = { kind: 'deny', reason: 'blocked by policy' }
     await expect(preExecute!(
       { name: 'arkme_id_set', arguments: { arkme_id: 'Chosen_01' } },

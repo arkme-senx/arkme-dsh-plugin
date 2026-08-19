@@ -15,6 +15,13 @@ function adapterFactory(): AdapterFactory {
 }
 
 describe('OpenClawCliAdapter', () => {
+  it('reports a missing OpenClaw binary as an actionable prerequisite failure', async () => {
+    const adapter = adapterFactory()({
+      profile: 'dev',
+      async run() { return { exitCode: 1, stdout: '', stderr: 'spawn openclaw ENOENT' } },
+    })
+    await expect(adapter.preflight()).resolves.toEqual({ status: 'prerequisite_failed', reason: 'binary' })
+  })
   it('uses only fixed commands and SecretRef metadata while provisioning', async () => {
     const calls: RunCall[] = []
     const adapter = adapterFactory()({

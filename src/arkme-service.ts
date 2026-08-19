@@ -21,6 +21,7 @@ import type {
 import { projectRecordingTranscripts, projectRecordingVersions } from './recording-presentation.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import { SecretValue } from './secret-value.js'
+import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import type {
   ArkmeBotCreateInput, ArkmeBotCreateResult, ArkmeGroupBotList, ArkmeGroupBotMutationResult,
 } from './tools/ports/bots.js'
@@ -1032,6 +1033,7 @@ export class ArkmeService {
   private readonly aiPolishRetries = new Map<string, ArkmePendingAiPolishRetry>()
   private readonly interwovenMomentReferences = new Map<string, ArkmeInterwovenMomentReference>()
   private readonly mediaRefs = new Map<string, ArkmeMediaDescriptor>()
+  private openClawProvisioner: ReturnType<typeof createOpenClawProvisioner> | undefined
 
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -1080,6 +1082,25 @@ export class ArkmeService {
   chatRealtimeInitialEvent(): ArkmeChatClientEvent {
     const state = this.chatRealtime.state()
     return { type: 'reconcile', revision: this.chatClientRevision, connected: state.connected, refresh: 'if-stale' }
+  }
+
+  attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {
+    if (this.openClawProvisioner !== undefined) throw new Error('OpenClaw provisioner is already attached')
+    this.openClawProvisioner = provisioner
+  }
+
+  async connectOpenClawBot(botRef: string, options: { signal?: AbortSignal } = {}): Promise<OpenClawProvisionResult> {
+    const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 OpenClaw Bot', false, 404)
+    if (this.openClawProvisioner === undefined) {
+      throw new ArkmePluginError('openclaw-not-configured', '请先安装并配置本地 OpenClaw', false, 503)
+    }
+    return await this.openClawProvisioner.reconcile({
+      botRef,
+      allowGatewayRestart: true,
+      revealSecret: async () => await this.revealBotSecret(botRef, options),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
   }
 
   async listBots(options: { signal?: AbortSignal } = {}): Promise<ArkmeBotList> {

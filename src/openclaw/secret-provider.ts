@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { OpenClawSecretStore } from './types.js'
 
 export function createOpenClawFileSecretStore(options: { rootDir: string }): OpenClawSecretStore {
+  const restartMarker = (resourceHash: string) => join(options.rootDir, `${resourceHash}.restart-required`)
   return {
     async ensureOwnership({ resourceHash, localResourceExists }) {
       await mkdir(options.rootDir, { recursive: true, mode: 0o700 })
@@ -40,6 +41,21 @@ export function createOpenClawFileSecretStore(options: { rootDir: string }): Ope
         throw error
       }
       return { provider: `arkme-bot-${resourceHash}`, source: 'file', id: 'value', providerPath: finalPath }
+    },
+    async isRestartRequired(resourceHash) {
+      try { await readFile(restartMarker(resourceHash)); return true } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+      }
+    },
+    async markRestartRequired(resourceHash) {
+      const file = await open(restartMarker(resourceHash), 'w', 0o600)
+      try { await file.writeFile('1', 'utf8'); await file.sync() } finally { await file.close() }
+    },
+    async clearRestartRequired(resourceHash) {
+      await unlink(restartMarker(resourceHash)).catch(error => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      })
     },
   }
 }

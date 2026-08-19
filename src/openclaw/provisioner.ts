@@ -14,25 +14,36 @@ export function createOpenClawProvisioner(options: {
   isRuntimeOnline: (botRef: string) => Promise<boolean>
 }) {
   return {
-    async reconcile(input: { botRef: string; revealSecret: () => Promise<SecretValue> }): Promise<OpenClawProvisionResult> {
-      const preflight = await options.cli.preflight()
+    async reconcile(input: { botRef: string; allowGatewayRestart?: boolean; revealSecret: () => Promise<SecretValue>; signal?: AbortSignal }): Promise<OpenClawProvisionResult> {
+      const runOptions = input.signal === undefined ? {} : { signal: input.signal }
+      const preflight = await options.cli.preflight(runOptions)
       if (preflight.status !== 'ready') return preflight
       const hash = resourceHash(input.botRef)
       const resourceRef = `openclaw.bot.v1.${hash}`
       const agentId = `arkme-bot-${hash}`
       const accountId = agentId
-      const current = await options.cli.inspect({ agentId, accountId })
+      const current = await options.cli.inspect({ agentId, accountId }, runOptions)
       await options.secretStore.ensureOwnership({ resourceHash: hash, localResourceExists: current.agent })
       let changed = false
-      if (!current.channel) changed = (await options.cli.ensureChannel()).changed || changed
-      if (!current.agent) changed = (await options.cli.ensureAgent({ agentId, workspaceRef: join(options.workspaceRoot, agentId) })).changed || changed
+      if (!current.channel) changed = (await options.cli.ensureChannel(runOptions)).changed || changed
+      if (!current.agent) changed = (await options.cli.ensureAgent({ agentId, workspaceRef: join(options.workspaceRoot, agentId) }, runOptions)).changed || changed
       if (!current.account) {
         const secretRef = await options.secretStore.persist({ resourceHash: hash, secret: await input.revealSecret() })
-        changed = (await options.cli.ensureAccountSecretRef({ accountId, secretRef })).changed || changed
+        changed = (await options.cli.ensureAccountSecretRef({ accountId, secretRef }, runOptions)).changed || changed
       }
-      if (!current.binding) changed = (await options.cli.ensureBinding({ agentId, accountId })).changed || changed
-      const gateway = await options.cli.gatewayStatus()
-      if (changed) return { status: 'gateway_restart_confirmation_required', resource_ref: resourceRef, impact: 'profile_all_agents' }
+      if (!current.binding) changed = (await options.cli.ensureBinding({ agentId, accountId }, runOptions)).changed || changed
+      if (changed) {
+        await options.secretStore.markRestartRequired(hash)
+        return { status: 'gateway_restart_confirmation_required', resource_ref: resourceRef, impact: 'profile_all_agents' }
+      }
+      if (await options.secretStore.isRestartRequired(hash)) {
+        if (input.allowGatewayRestart !== true) {
+          return { status: 'gateway_restart_confirmation_required', resource_ref: resourceRef, impact: 'profile_all_agents' }
+        }
+        await options.cli.restartGateway(runOptions)
+        await options.secretStore.clearRestartRequired(hash)
+      }
+      const gateway = await options.cli.gatewayStatus(runOptions)
       if (gateway === 'reachable') {
         const runtimeOnline = await options.isRuntimeOnline(input.botRef)
         return { status: runtimeOnline ? 'runtime_online' : 'connected_unverified', resource_ref: resourceRef }
