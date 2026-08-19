@@ -10,6 +10,7 @@ import { ArkmeMark } from './ArkmeFooterAction.js'
 
 const AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
 const AVATAR_CACHE_JITTER_MS = 2 * 60 * 1000
+const AVATAR_DOWNLOAD_CONCURRENCY = 6
 
 interface AvatarCacheEntry {
   expiresAtMillis: number
@@ -17,6 +18,29 @@ interface AvatarCacheEntry {
 }
 
 const avatarDataUrlCache = new Map<string, AvatarCacheEntry>()
+const avatarDownloadQueue: Array<() => void> = []
+let activeAvatarDownloads = 0
+
+function drainAvatarDownloadQueue(): void {
+  while (activeAvatarDownloads < AVATAR_DOWNLOAD_CONCURRENCY) {
+    const start = avatarDownloadQueue.shift()
+    if (start === undefined) return
+    activeAvatarDownloads += 1
+    start()
+  }
+}
+
+function scheduleAvatarDownload<T>(load: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    avatarDownloadQueue.push(() => {
+      void load().then(resolve, reject).finally(() => {
+        activeAvatarDownloads -= 1
+        drainAvatarDownloadQueue()
+      })
+    })
+    drainAvatarDownloadQueue()
+  })
+}
 
 export function clearArkmeAvatarCache(): void {
   avatarDataUrlCache.clear()
@@ -30,7 +54,7 @@ export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
     expiresAtMillis: Date.now() + AVATAR_CACHE_TTL_MS + Math.floor(Math.random() * AVATAR_CACHE_JITTER_MS),
     pending: Promise.resolve(''),
   }
-  entry.pending = callArkme<ArkmeImagePayload>('image.read', { imageRef })
+  entry.pending = scheduleAvatarDownload(async () => await callArkme<ArkmeImagePayload>('image.read', { imageRef }))
     .then(image => `data:${image.mediaType};base64,${image.dataBase64}`)
     .catch(error => {
       if (avatarDataUrlCache.get(imageRef) === entry) avatarDataUrlCache.delete(imageRef)
@@ -208,11 +232,18 @@ export function ArkmeSourceAvatar({
     let active = true
     setSlots(sourceSlots)
     if (!visible || sourceSlots.length === 0) return () => { active = false }
-    void Promise.all(sourceSlots.map(async slot => {
-      if (slot.avatarRef === undefined) return slot
-      try { return { ...slot, imageUrl: await loadArkmeImageDataUrl(slot.avatarRef) } }
-      catch { return { fallback: slot.fallback ?? { kind: 'default' as const } } }
-    })).then(values => { if (active) setSlots(values) })
+    sourceSlots.forEach((slot, index) => {
+      if (slot.avatarRef === undefined) return
+      void loadArkmeImageDataUrl(slot.avatarRef).then(imageUrl => {
+        if (!active) return
+        setSlots(current => current.map((value, slotIndex) => slotIndex === index ? { ...slot, imageUrl } : value))
+      }).catch(() => {
+        if (!active) return
+        setSlots(current => current.map((value, slotIndex) => slotIndex === index
+          ? { fallback: slot.fallback ?? { kind: 'default' as const } }
+          : value))
+      })
+    })
     return () => { active = false }
   }, [slotsKey, visible])
 

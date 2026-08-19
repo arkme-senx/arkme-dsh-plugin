@@ -372,6 +372,8 @@ const ARKME_PHONE_BIND_REPEAT = 2
 const ARKME_PHONE_BIND_CODE_ERR = 3
 
 export const MAX_ARKME_IMAGE_BYTES = 2 * 1024 * 1024
+const MAX_ARKME_PROFILE_IMAGE_BYTES = 8 * 1024 * 1024
+const PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
 export const MAX_ARKME_RELATED_RECORDING_PAGE_SIZE = 20
 export const MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH = 1024
 const MAX_ARKME_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
@@ -910,6 +912,7 @@ export class ArkmeService {
   private imageCacheBytes = 0
   private activeImageDownloads = 0
   private readonly imageDownloadWaiters: Array<() => void> = []
+  private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
   private readonly pendingProjectionSequences = new Map<string, number>()
   private readonly projectionRetryCounts = new Map<string, number>()
   private projectionTimer: ReturnType<typeof setTimeout> | undefined
@@ -2449,8 +2452,9 @@ export class ArkmeService {
       await this.hydrateSourceAvatars(
         items, privateUserIdByIndex, groupSessionUidByIndex, session, options.signal,
       )
-    } catch {
+    } catch (error) {
       // Avatar decoration is best-effort; chat source identity and navigation remain usable.
+      console.warn('dsh-arkme: Chat avatar hydration failed:', safeFailureMessage(error))
     }
     const hasMore = data.has_more === true
     const nextPageCursor = objectValue(data.next_page_cursor)
@@ -4969,7 +4973,11 @@ export class ArkmeService {
             failureCooldownMs: 5_000,
           },
         )
-      } catch {
+      } catch (error) {
+        console.warn(
+          `dsh-arkme: Group avatar snapshot batch failed (${String(groupUids.length)} sessions):`,
+          safeFailureMessage(error),
+        )
         continue
       }
       const snapshotsByUid = new Map<string, ArkmeGroupAvatarSnapshotProjection>()
@@ -5099,6 +5107,12 @@ export class ArkmeService {
             trustedAvatarUrl = undefined
           }
         }
+        const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
+        if (trustedAvatarUrl === undefined) this.publicProfileAvatarCache.delete(avatarCacheKey)
+        else this.publicProfileAvatarCache.set(avatarCacheKey, {
+          avatarUrl: trustedAvatarUrl,
+          expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
+        })
         profiles.set(userId, {
           userId,
           displayName: displayName || `用户 ${String(userId)}`,
@@ -5358,7 +5372,9 @@ export class ArkmeService {
     options: { maxBytes?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeImageBytes> {
     const session = await this.requireSession()
-    const byteLimit = Math.min(MAX_ARKME_IMAGE_BYTES, Math.max(1, Math.trunc(options.maxBytes ?? MAX_ARKME_IMAGE_BYTES)))
+    const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
+    const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES : MAX_ARKME_IMAGE_BYTES
+    const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     const cached = this.cachedImage(cacheKey)
     if (cached !== undefined) return cached
@@ -5402,18 +5418,30 @@ export class ArkmeService {
           })
         }
       }
-      const profile = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
-        .get(reference.targetUserId)
-      if (profile === undefined) {
-        throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
-      }
-      const avatarUrl = profile.avatarUrl
+      const avatarCacheKey = `${String(session.userId)}:${String(reference.targetUserId)}`
+      const cached = this.publicProfileAvatarCache.get(avatarCacheKey)
+      let avatarUrl = cached !== undefined && cached.expiresAtMillis > Date.now() ? cached.avatarUrl : undefined
       if (avatarUrl === undefined) {
-        throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+        this.publicProfileAvatarCache.delete(avatarCacheKey)
+        avatarUrl = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
+          .get(reference.targetUserId)?.avatarUrl
       }
-      return await this.downloadSignedImage(
-        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal, this.requestScope(session.userId),
-      )
+      if (avatarUrl === undefined) throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+      try {
+        return await this.downloadSignedImage(
+          trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, signal, this.requestScope(session.userId),
+        )
+      } catch (error) {
+        if (cached === undefined || cached.avatarUrl !== avatarUrl) throw error
+        this.publicProfileAvatarCache.delete(avatarCacheKey)
+        this.publicProfileCache.delete(avatarCacheKey)
+        const refreshedUrl = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
+          .get(reference.targetUserId)?.avatarUrl
+        if (refreshedUrl === undefined) throw error
+        return await this.downloadSignedImage(
+          trustedSignedImageUrl(this.config.environment, refreshedUrl), byteLimit, signal, this.requestScope(session.userId),
+        )
+      }
     }
     const fileId = imageFileIdFromRef(imageRef, session.userId)
     const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/${fileId}`
@@ -5687,6 +5715,7 @@ export class ArkmeService {
     this.imageCacheBytes = 0
     this.chatRealtime.reconnect()
     this.attempts.clear()
+    this.publicProfileAvatarCache.clear()
     this.aiPolishConfirmations.clear()
     this.aiPolishRetries.clear()
     this.interwovenMomentReferences.clear()
@@ -7028,11 +7057,6 @@ export class ArkmeService {
       const mediaType = imageMediaType(data)
       if (mediaType === undefined) {
         throw new ArkmePluginError('image-type-unsupported', 'Arkme 图片不是受支持的 PNG、JPEG、WebP 或 GIF', false, 415)
-      }
-      const declaredType = (response.headers.get('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
-      if (declaredType !== '' && declaredType !== 'application/octet-stream'
-        && !(mediaType === 'image/jpeg' && declaredType === 'image/jpg') && declaredType !== mediaType) {
-        throw new ArkmePluginError('image-type-mismatch', 'Arkme 图片类型与响应声明不一致', false, 502)
       }
       return { mediaType, bytes, data }
     } catch (error) {
