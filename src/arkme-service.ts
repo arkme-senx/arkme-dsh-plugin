@@ -13,10 +13,10 @@ import type {
 import { projectRecordingTranscripts, projectRecordingVersions } from './recording-presentation.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 import type {
-  ArkmeOfficialCommunityEntryState,
-  ArkmeOfficialCommunityJoinResult,
-  ArkmeOfficialCommunityStatus,
-} from './official-community.js'
+  ArkmeDSHBetaCommunityEntryState,
+  ArkmeDSHBetaCommunityJoinResult,
+  ArkmeDSHBetaCommunityStatus,
+} from './dsh-beta-community.js'
 import type {
   ArkmeAiVideoJob,
   ArkmeAiVideoJobStatus,
@@ -2133,15 +2133,15 @@ export class ArkmeService {
     }
   }
 
-  async officialCommunityEntryState(signal?: AbortSignal): Promise<ArkmeOfficialCommunityEntryState> {
+  async dshBetaCommunityEntryState(signal?: AbortSignal): Promise<ArkmeDSHBetaCommunityEntryState> {
     const session = await this.requireSession()
     const data = await this.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/community/entry-state',
+      '/api/v1/chats/community/dsh-beta/entry-state',
       {},
       session,
       signal,
     )
-    const status = this.officialCommunityStatus(data.status)
+    const status = this.dshBetaCommunityStatus(data.status)
     const visible = booleanValue(data.visible)
     const groupTitle = stringValue(data.group_title).trim()
     const snapshot = objectValue(data.group_avatar_snapshot)
@@ -2166,20 +2166,20 @@ export class ArkmeService {
     return { status, visible, groupTitle, memberCount, avatarRefs }
   }
 
-  async joinOfficialCommunity(signal?: AbortSignal): Promise<ArkmeOfficialCommunityJoinResult> {
+  async joinDSHBetaCommunity(signal?: AbortSignal): Promise<ArkmeDSHBetaCommunityJoinResult> {
     const session = await this.requireSession()
     const data = await this.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/community/join',
+      '/api/v1/chats/community/dsh-beta/join',
       {},
       session,
       signal,
     )
-    const status = this.officialCommunityStatus(data.status)
+    const status = this.dshBetaCommunityStatus(data.status)
     const chatSessionUid = stringValue(data.chat_session_uid).trim()
     if ((status !== 'joined' && status !== 'already_member') || chatSessionUid === '') {
       throw new ArkmePluginError(
-        'official-community-contract-invalid',
-        '即我官方群入群响应不完整',
+        'dsh-beta-community-contract-invalid',
+        'DSH 内测群入群响应不完整',
         true,
         502,
       )
@@ -2202,7 +2202,7 @@ export class ArkmeService {
         // Membership is already committed; detail hydration must not make the join look failed.
       }
     }
-    if (groupTitle === '') groupTitle = '即我官方群'
+    if (groupTitle === '') groupTitle = 'DSH 内测群'
     const source: ArkmeSourceItem = {
       sourceRef: await this.sealSourceRef(session.userId, 'group_chat', chatSessionUid, groupTitle),
       kind: 'group_chat',
@@ -4058,11 +4058,11 @@ export class ArkmeService {
     }
   }
 
-  private officialCommunityStatus(value: unknown): ArkmeOfficialCommunityStatus {
+  private dshBetaCommunityStatus(value: unknown): ArkmeDSHBetaCommunityStatus {
     if (value === 'ready' || value === 'already_member' || value === 'joined') return value
     throw new ArkmePluginError(
-      'official-community-contract-invalid',
-      '即我官方群状态响应无效',
+      'dsh-beta-community-contract-invalid',
+      'DSH 内测群状态响应无效',
       true,
       502,
     )

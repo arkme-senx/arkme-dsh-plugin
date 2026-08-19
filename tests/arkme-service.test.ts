@@ -1820,7 +1820,7 @@ describe('ArkmeService', () => {
     await expect(service.readImage(sources.items[0]!.avatarRef!)).rejects.toMatchObject({ code: 'image-ref-invalid' })
   })
 
-  it('projects the existing official-community entry with only opaque real-avatar refs', async () => {
+  it('projects the DSH beta community entry with only opaque real-avatar refs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -1829,11 +1829,11 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, body })
-      if (url.endsWith('/api/v1/chats/community/entry-state')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/chats/community/dsh-beta/entry-state')) return json({ code: 200, data: {
         status: 'ready',
         visible: true,
         chat_session_uid: 'official-group-1',
-        group_title: '即我群聊1号群',
+        group_title: 'DSH 内测群1号群',
         group_avatar_snapshot: {
           member_count: 2,
           members: [{ user_id: 11 }, { user_id: 20002 }],
@@ -1848,37 +1848,37 @@ describe('ArkmeService', () => {
       throw new Error(`unexpected ${url}`)
     })
 
-    const entry = await service.officialCommunityEntryState()
+    const entry = await service.dshBetaCommunityEntryState()
     expect(entry).toMatchObject({
-      status: 'ready', visible: true, groupTitle: '即我群聊1号群', memberCount: 2,
+      status: 'ready', visible: true, groupTitle: 'DSH 内测群1号群', memberCount: 2,
     })
     expect(entry.avatarRefs).toHaveLength(2)
     expect(entry.avatarRefs.every(ref => ref.startsWith('arkme-profile-image-v1.'))).toBe(true)
     expect(JSON.stringify(entry)).not.toContain('official-group-1')
     expect(JSON.stringify(entry)).not.toContain('x-oss-signature')
     expect(requests[0]).toEqual({
-      url: 'https://chat.test/api/v1/chats/community/entry-state',
+      url: 'https://chat.test/api/v1/chats/community/dsh-beta/entry-state',
       body: {},
     })
     expect(requests[1]?.body).toEqual({ user_ids: [11, 20002] })
   })
 
-  it('does not invent an official-community avatar when real avatars cannot be resolved', async () => {
+  it('does not invent a DSH beta community avatar when real avatars cannot be resolved', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const service = new ArkmeService(config, sessions, state, async (input) => {
       const url = String(input)
-      if (url.endsWith('/api/v1/chats/community/entry-state')) return json({ code: 200, data: {
-        status: 'ready', visible: true, group_title: '即我群聊1号群',
+      if (url.endsWith('/api/v1/chats/community/dsh-beta/entry-state')) return json({ code: 200, data: {
+        status: 'ready', visible: true, group_title: 'DSH 内测群1号群',
         group_avatar_snapshot: { member_count: 1, members: [{ user_id: 11 }] },
       } })
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) throw new TypeError('profile service unavailable')
       throw new Error(`unexpected ${url}`)
     })
 
-    await expect(service.officialCommunityEntryState()).resolves.toEqual({
-      status: 'ready', visible: true, groupTitle: '即我群聊1号群', memberCount: 1, avatarRefs: [],
+    await expect(service.dshBetaCommunityEntryState()).resolves.toEqual({
+      status: 'ready', visible: true, groupTitle: 'DSH 内测群1号群', memberCount: 1, avatarRefs: [],
     })
   })
 
@@ -1891,8 +1891,8 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ url, body })
-      if (url.endsWith('/api/v1/chats/community/join')) return json({ code: 200, data: {
-        status: 'joined', chat_session_uid: 'official-group-2', group_title: '即我群聊2号群',
+      if (url.endsWith('/api/v1/chats/community/dsh-beta/join')) return json({ code: 200, data: {
+        status: 'joined', chat_session_uid: 'official-group-2', group_title: 'DSH 内测群2号群',
       } })
       if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: {
         items: [{ chat_session_uid: 'official-group-2', members: [{ user_id: 11 }, { user_id: 10001 }] }],
@@ -1907,15 +1907,15 @@ describe('ArkmeService', () => {
       throw new Error(`unexpected ${url}`)
     })
 
-    const joined = await service.joinOfficialCommunity()
+    const joined = await service.joinDSHBetaCommunity()
     expect(joined).toMatchObject({
       status: 'joined',
-      source: { kind: 'group_chat', displayName: '即我群聊2号群', avatarRefs: expect.any(Array) },
+      source: { kind: 'group_chat', displayName: 'DSH 内测群2号群', avatarRefs: expect.any(Array) },
     })
     expect(joined.source.avatarRefs).toHaveLength(2)
     expect(joined.source.sourceRef).toMatch(/^arkme-source-v1\./)
     expect(JSON.stringify(joined)).not.toContain('official-group-2')
-    expect(calls[0]).toEqual({ url: 'https://chat.test/api/v1/chats/community/join', body: {} })
+    expect(calls[0]).toEqual({ url: 'https://chat.test/api/v1/chats/community/dsh-beta/join', body: {} })
     expect(calls[1]?.body).toEqual({ chat_session_uids: ['official-group-2'] })
 
     await service.readSource(joined.source.sourceRef)
@@ -1930,21 +1930,21 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ url, body })
-      if (url.endsWith('/api/v1/chats/community/join')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/chats/community/dsh-beta/join')) return json({ code: 200, data: {
         status: 'already_member', chat_session_uid: 'official-group-1',
       } })
       if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
-        session: { chat_session_uid: 'official-group-1', session_kind: 2, title: '即我群聊1号群' },
+        session: { chat_session_uid: 'official-group-1', session_kind: 2, title: 'DSH 内测群1号群' },
       } })
       if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: { items: [] } })
       throw new Error(`unexpected ${url}`)
     })
 
-    const joined = await service.joinOfficialCommunity()
+    const joined = await service.joinDSHBetaCommunity()
 
     expect(joined).toMatchObject({
       status: 'already_member',
-      source: { kind: 'group_chat', displayName: '即我群聊1号群' },
+      source: { kind: 'group_chat', displayName: 'DSH 内测群1号群' },
     })
     expect(calls[1]).toEqual({
       url: 'https://chat.test/api/v1/chats/detail',
@@ -1957,7 +1957,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input) => {
       const url = String(input)
-      if (url.endsWith('/api/v1/chats/community/join')) return json({ code: 200, data: {
+      if (url.endsWith('/api/v1/chats/community/dsh-beta/join')) return json({ code: 200, data: {
         status: 'already_member', chat_session_uid: 'official-group-1',
       } })
       if (url.endsWith('/api/v1/chats/detail')) throw new TypeError('session service unavailable')
@@ -1965,13 +1965,13 @@ describe('ArkmeService', () => {
       throw new Error(`unexpected ${url}`)
     })
 
-    await expect(service.joinOfficialCommunity()).resolves.toMatchObject({
+    await expect(service.joinDSHBetaCommunity()).resolves.toMatchObject({
       status: 'already_member',
-      source: { kind: 'group_chat', displayName: '即我官方群' },
+      source: { kind: 'group_chat', displayName: 'DSH 内测群' },
     })
   })
 
-  it('rejects incomplete official-community join responses without inventing a group', async () => {
+  it('rejects incomplete DSH beta community join responses without inventing a group', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async () => json({
@@ -1979,8 +1979,8 @@ describe('ArkmeService', () => {
       data: { status: 'joined', chat_session_uid: '', group_title: '' },
     }))
 
-    await expect(service.joinOfficialCommunity()).rejects.toMatchObject({
-      code: 'official-community-contract-invalid',
+    await expect(service.joinDSHBetaCommunity()).rejects.toMatchObject({
+      code: 'dsh-beta-community-contract-invalid',
     })
   })
 

@@ -307,8 +307,8 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
-    case 'official-community.entry-state': return await service.officialCommunityEntryState()
-    case 'official-community.join': return await service.joinOfficialCommunity()
+    case 'dsh-beta-community.entry-state': return await service.dshBetaCommunityEntryState()
+    case 'dsh-beta-community.join': return await service.joinDSHBetaCommunity()
     case 'topic.create': return await service.createTopic(
       stringParam(params, 'title'),
       stringParam(params, 'parentSourceRef') || undefined,
