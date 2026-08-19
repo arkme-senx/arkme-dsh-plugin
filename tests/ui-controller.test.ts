@@ -23,6 +23,18 @@ describe('ArkmeUiController', () => {
     })
 
     controller.selectSource(source)
+    controller.showArko()
+    expect(controller.getSnapshot()).toEqual({
+      open: true,
+      surfaceOpen: true,
+      authRevision: 0,
+      chatRevision: 0,
+      mode: 'arko',
+    })
+    controller.authChanged(true)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'arko', open: true, surfaceOpen: true, authRevision: 1 })
+
+    controller.selectSource(source)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.showRecordings()
     controller.authChanged(false)

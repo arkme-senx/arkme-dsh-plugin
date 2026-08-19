@@ -123,6 +123,22 @@ function validateConfig(ctx: Context, config: Config): void {
   if (config.environment === 'prod' && !config.allowProduction) {
     throw new Error('dsh-arkme: production environment requires allowProduction: true')
   }
+  if (config.environment === 'prod') {
+    const testDefaults = [
+      config.authBaseUrl,
+      config.recordBaseUrl,
+      config.chatBaseUrl,
+      config.imBaseUrl,
+      config.webrtcBaseUrl,
+      config.worldBaseUrl,
+      config.relationBaseUrl,
+      config.intelligentBaseUrl,
+      config.audioBaseUrl,
+    ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
+    if (testDefaults.length > 0) {
+      throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
+    }
+  }
   if (!config.allowNonLoopback && ctx.webServer.host !== '127.0.0.1') {
     throw new Error('dsh-arkme: Web UI must bind 127.0.0.1 unless allowNonLoopback is true')
   }

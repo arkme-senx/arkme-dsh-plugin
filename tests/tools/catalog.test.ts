@@ -29,6 +29,11 @@ describe('Arkme tool catalog', () => {
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_id_set',
+      'arkme_arko_profile',
+      'arkme_arko_session',
+      'arkme_arko_ask',
+      'arkme_arko_run_status',
+      'arkme_arko_cancel',
       'arkme_records_search',
       'arkme_record_create',
       'arkme_world_recent',
@@ -64,7 +69,8 @@ describe('Arkme tool catalog', () => {
 
     expect(image?.meta).toMatchObject({ kind: 'business', phase: 'attachments', effect: 'read' })
     expect(writes.map(module => module.meta.toolName)).toEqual([
-      'arkme_id_set', 'arkme_record_create', 'arkme_world_publish_text', 'arkme_group_ai_polish_manage',
+      'arkme_id_set', 'arkme_arko_session', 'arkme_arko_ask', 'arkme_arko_cancel',
+      'arkme_record_create', 'arkme_world_publish_text', 'arkme_group_ai_polish_manage',
       'arkme_text_send', 'arkme_direct_text_send',
       'arkme_call_start',
       'arkme_ai_video',

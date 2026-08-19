@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type {
-  ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList, ArkmeTopicCreateResult,
+  ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
+  ArkmeTopicCreateResult,
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
+import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeOfficialCommunityEntry } from './ArkmeOfficialCommunityEntry.js'
@@ -16,6 +18,7 @@ import {
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
+import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
 import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
@@ -105,6 +108,7 @@ const styles: Record<string, CSSProperties> = {
     color: '#fff', fontSize: 10, lineHeight: '17px',
   },
   privateBadge: { flex: 'none', padding: '1px 6px', borderRadius: 999, background: '#f0f1f2', color: '#777d85', fontSize: 10 },
+  aiBadge: { flex: 'none', color: '#16834b', fontSize: 10, lineHeight: '16px', fontWeight: 700 },
   avatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
@@ -230,6 +234,33 @@ export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; o
     <span style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.chatName}>全天候录音</span></span>
       <span style={styles.chatBottom}><span style={styles.preview}>转写、日总结与时间轴</span></span>
+    </span>
+  </button>
+}
+
+export function ArkmeArkoRow({
+  selected,
+  displayName = 'Arko',
+  onClick,
+}: {
+  selected: boolean
+  displayName?: string
+  onClick(): void
+}) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><ArkmeArkoAvatar /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}>
+        <span style={styles.chatName}>{displayName}</span>
+        <span style={styles.aiBadge}>AI</span>
+      </span>
+      <span style={styles.chatBottom}><span style={styles.preview}>对话并处理 Arkme 业务</span></span>
     </span>
   </button>
 }
@@ -512,8 +543,16 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [topicCreateSubmitting, setTopicCreateSubmitting] = useState(false)
   const [pendingRevealSourceRef, setPendingRevealSourceRef] = useState<string>()
   const [createdHighlight, setCreatedHighlight] = useState<{ sourceRef: string, visible: boolean }>()
+  const arkoProfileSnapshot = useSyncExternalStore(
+    arkmeArkoProfileStore.subscribe,
+    arkmeArkoProfileStore.getSnapshot,
+    arkmeArkoProfileStore.getSnapshot,
+  )
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
+  const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
+    ? arkoProfileSnapshot.profile
+    : undefined
   const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
   const visibleSourceRows = useMemo(
     () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
@@ -610,9 +649,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       }
       setSources(loaded)
       const uiSnapshot = arkmeUi.getSnapshot()
-      const selected = uiSnapshot.mode === 'recordings' ? undefined : uiSnapshot.selectedSource
+      const selected = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
+        ? undefined
+        : uiSnapshot.selectedSource
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'recordings'
+      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'default_category') : undefined)
@@ -639,12 +680,26 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory, ui.chatRevision])
   useEffect(() => {
+    const userId = authenticated ? auth?.userId : undefined
+    arkmeArkoProfileStore.activateUser(userId)
+    if (userId === undefined) {
+      return
+    }
+    const controller = new AbortController()
+    void callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal)
+      .then(profile => { arkmeArkoProfileStore.setProfile(userId, profile) })
+      .catch(() => undefined)
+    return () => { controller.abort() }
+  }, [authenticated, auth?.userId])
+  useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources
     setSources(loaded)
-    const selected = ui.mode === 'recordings' ? undefined : arkmeUi.getSnapshot().selectedSource
+    const selected = ui.mode === 'recordings' || ui.mode === 'arko'
+      ? undefined
+      : arkmeUi.getSnapshot().selectedSource
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'recordings'
+    const restored = ui.mode === 'recordings' || ui.mode === 'arko'
       ? undefined
       : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)
@@ -723,6 +778,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
 
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
+  const showArko = () => { arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
     directoryRequestAbortRef.current?.abort()
     stopCreatedHighlightAnimation()
@@ -834,6 +890,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     >
       {directory === 'root' && <>
         {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
+        <ArkmeArkoRow
+          selected={ui.mode === 'arko'}
+          displayName={arkoPresentationName(arkoProfile)}
+          onClick={showArko}
+        />
         <button
           type="button" role="treeitem" aria-selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}

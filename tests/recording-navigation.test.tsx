@@ -15,3 +15,20 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('转写、日总结与时间轴')
   })
 })
+
+describe('Arko navigation entry', () => {
+  it('renders the client Agent avatar, customizable name, and separate AI marker', () => {
+    const ArkmeArkoRow = navigation.ArkmeArkoRow
+    expect(ArkmeArkoRow).toBeDefined()
+    if (ArkmeArkoRow === undefined) return
+
+    const markup = renderToStaticMarkup(<ArkmeArkoRow selected displayName="小可" onClick={vi.fn()} />)
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('小可')
+    expect(markup).toContain('viewBox="2 1.4 12 12"')
+    expect(markup).toContain('fill="#EFA7A2"')
+    expect(markup).toContain('>AI<')
+    expect(markup).toContain('对话并处理 Arkme 业务')
+  })
+})

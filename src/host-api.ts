@@ -68,6 +68,11 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean {
   return params[key] === true
 }
 
+function optionalPositiveIntegerParam(params: Record<string, unknown>, key: string): number | undefined {
+  const value = params[key]
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
 function requiredCallParam(
   params: Record<string, unknown>,
   key: string,
@@ -87,6 +92,12 @@ function outgoingMediaTypeParam(params: Record<string, unknown>): 'audio' | 'vid
     throw new ArkmePluginError('call-media-type-invalid', '呼叫媒体类型无效', false)
   }
   return value
+}
+
+function arkoWaitMillisParam(params: Record<string, unknown>): number {
+  const raw = numberParam(params, 'waitSeconds', 25)
+  const seconds = Math.min(55, Math.max(1, Math.trunc(raw)))
+  return seconds * 1000
 }
 
 const OUTGOING_FAILURE_CODES = new Set<ArkmeOutgoingCallFailureCode>([
@@ -212,6 +223,39 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'arko.profile': return await service.arkoProfile()
+    case 'arko.session': return await service.arkoEnsureSession()
+    case 'arko.new-session': return await service.arkoCreateSession()
+    case 'arko.models': return await service.arkoModelCatalog()
+    case 'arko.model.activate': return await service.arkoActivateModel(stringParam(params, 'routeKey'))
+    case 'arko.history': return await service.arkoHistoryPage(
+      numberParam(params, 'limit', 50),
+      numberParam(params, 'offset', 0),
+    )
+    case 'arko.ask': {
+      const sessionId = optionalPositiveIntegerParam(params, 'sessionId')
+      const clientTurnUid = stringParam(params, 'clientTurnUid')
+      const replyToAssistantMsgId = optionalPositiveIntegerParam(params, 'replyToAssistantMsgId')
+      const replyToRunUid = stringParam(params, 'replyToRunUid')
+      const modelRouteKey = stringParam(params, 'modelRouteKey')
+      return await service.arkoAsk(stringParam(params, 'text'), {
+        waitMillis: arkoWaitMillisParam(params),
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(clientTurnUid === '' ? {} : { clientTurnUid }),
+        ...(modelRouteKey === '' ? {} : { modelRouteKey }),
+        ...(replyToRunUid === '' ? {} : { replyToRunUid }),
+        ...(replyToAssistantMsgId === undefined ? {} : { replyToAssistantMsgId }),
+      })
+    }
+    case 'arko.run.status': return await service.arkoRunStatus(
+      numberParam(params, 'sessionId', 0),
+      stringParam(params, 'runUid'),
+    )
+    case 'arko.cancel': return await service.arkoCancel(
+      numberParam(params, 'sessionId', 0),
+      numberParam(params, 'assistantMsgId', 0),
+      stringParam(params, 'runUid'),
+    )
     case 'records.cache': return await service.cachedSnapshot()
     case 'records.refresh': return await service.refreshSnapshot()
     case 'records.search': {

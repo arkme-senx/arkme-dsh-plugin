@@ -14,7 +14,7 @@ export interface ArkmeUiState {
   surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings'
+  mode: 'login' | 'source' | 'recordings' | 'arko'
   selectedSource?: ArkmeSourceItem
 }
 
@@ -51,11 +51,20 @@ export class ArkmeUiController {
   }
 
   authChanged(authenticated = false): void {
+    if (authenticated) {
+      this.publish({
+        ...this.state,
+        open: true,
+        surfaceOpen: true,
+        authRevision: this.state.authRevision + 1,
+      })
+      return
+    }
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({
       ...rest,
-      open: authenticated,
-      surfaceOpen: authenticated ? true : this.state.surfaceOpen,
+      open: false,
+      surfaceOpen: this.state.surfaceOpen,
       mode: 'login',
       authRevision: this.state.authRevision + 1,
     })
@@ -78,6 +87,11 @@ export class ArkmeUiController {
   showRecordings(): void {
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'recordings' })
+  }
+
+  showArko(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'arko' })
   }
 
   selectSource(source: ArkmeSourceItem): void {

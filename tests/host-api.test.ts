@@ -8,6 +8,8 @@ function fakeService() {
     resolveOutgoingCallIntent: vi.fn(async () => undefined),
     heartbeatOutgoingCall: vi.fn(async () => ({ expiresAtMillis: 1 })),
     releaseOutgoingCall: vi.fn(async () => undefined),
+    arkoRunStatus: vi.fn(async () => ({ status: 'running' })),
+    arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
   }
 }
 
@@ -84,5 +86,27 @@ describe('outgoing call Host API dispatch', () => {
       callRequestId: 'request-1', userId: 999,
     })
     expect(service.releaseOutgoingCall).toHaveBeenCalledWith('request-1')
+  })
+})
+
+describe('Arko Host API dispatch', () => {
+  it('passes only the authoritative run identity to status polling', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'arko.run.status', {
+      sessionId: 1024, runUid: 'run-1', assistantMsgId: 999,
+    })
+
+    expect(service.arkoRunStatus).toHaveBeenCalledWith(1024, 'run-1')
+  })
+
+  it('passes the complete authoritative run identity to cancellation', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'arko.cancel', {
+      sessionId: 1024, assistantMsgId: 2048, runUid: 'run-1', userId: 999,
+    })
+
+    expect(service.arkoCancel).toHaveBeenCalledWith(1024, 2048, 'run-1')
   })
 })

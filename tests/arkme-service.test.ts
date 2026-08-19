@@ -508,11 +508,13 @@ describe('ArkmeService', () => {
       keep_cancel: true,
     })
     expect(sessions.session).toBeUndefined()
+    const profileRequestCount = requests.filter(request => request.url.endsWith('/get-user-info')).length
     await expect(service.authStatus()).resolves.toEqual({
       status: 'binding-required',
       environment: 'test',
       userId: 10009,
     })
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
     await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
 
     const prodService = new ArkmeService({ ...config, environment: 'prod' }, sessions, state, async () => {
@@ -598,14 +600,14 @@ describe('ArkmeService', () => {
     })
 
     const recreated = new ArkmeService(config, sessions, state, fetchImpl, pendingSessions)
+    const profileRequestCount = requests.filter(request => request.url.endsWith('/get-user-info')).length
     await expect(recreated.authStatus()).resolves.toEqual({
       status: 'binding-required',
       environment: 'test',
       userId: 10012,
     })
     await expect(recreated.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
-    expect(requests.findLast(request => request.url.endsWith('/get-user-info'))?.authorization)
-      .toBe('Bearer pending-access')
+    expect(requests.filter(request => request.url.endsWith('/get-user-info'))).toHaveLength(profileRequestCount)
   })
 
   it('demotes a legacy active session when the profile still requires phone binding', async () => {
@@ -624,6 +626,26 @@ describe('ArkmeService', () => {
     })
     expect(sessions.session).toBeUndefined()
     await expect(service.cachedSnapshot()).rejects.toMatchObject({ code: 'login-required' })
+  })
+
+  it('reads an authenticated active session from the cached profile without another remote request', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10013, accessToken: 'active-access', refreshToken: 'active-refresh' }
+    const state = new MemoryStateStore()
+    let profileRequests = 0
+    const service = new ArkmeService(config, sessions, state, async input => {
+      expect(String(input)).toBe('https://auth.test/api/v1/auth/get-user-info')
+      profileRequests += 1
+      return json({ code: 200, data: userInfo(10013) })
+    })
+
+    await expect(service.refreshProfile()).resolves.toMatchObject({ profile: { userId: 10013 } })
+    await expect(service.authStatus()).resolves.toEqual({
+      status: 'authenticated',
+      environment: 'test',
+      userId: 10013,
+    })
+    expect(profileRequests).toBe(1)
   })
 
   it('reads and caches only a safe masked user profile projection', async () => {
@@ -2258,6 +2280,236 @@ describe('ArkmeService', () => {
       message: '当前已有3个视频正在生成，请完成或取消后再试',
       retryable: false,
     })
+  })
+
+  it('asks Arko through the AgentDirect Intelligent session and projects the SSE tail', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; method: string; authorization: string; body?: Record<string, unknown> }> = []
+    const runUid = '11111111-1111-4111-8111-111111111111'
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      const authorization = new Headers(init?.headers).get('Authorization') ?? ''
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body)) as Record<string, unknown>
+      requests.push({ url, method, authorization, ...(body === undefined ? {} : { body }) })
+      if (url === 'https://intelligent.test/api/v1/qa/latest-session') {
+        return json({ code: 200, data: { id: 0 } })
+      }
+      if (url === 'https://intelligent.test/api/v1/qa/new-session') {
+        return json({ code: 200, data: { session_id: 88 } })
+      }
+      if (url === 'https://intelligent.test/api/v1/agent/model/list') {
+        return json({ code: 200, data: {
+          default_route_key: 'dashscope/deepseek-v4-pro',
+          effective_route_key: 'dashscope/qwen3.8-max',
+          selection_source: 'personal',
+          items: [
+            {
+              route_key: 'dashscope/deepseek-v4-pro', display_name: 'DeepSeek V4 Pro', provider: 'dashscope',
+              description: '综合能力强，适合复杂任务', recommended: true, selected: false,
+            },
+            {
+              route_key: 'dashscope/qwen3.8-max', display_name: 'Qwen 3.8 Max', provider: 'dashscope',
+              description: '长上下文与中文理解能力突出', recommended: false, selected: true,
+            },
+          ],
+        } })
+      }
+      if (url === 'https://intelligent.test/api/v1/qa/new-msg-v2') {
+        return json({ code: 200, data: {
+          session_id: 88,
+          user_msg_id: 1001,
+          assistant_msg_id: 1002,
+          run_uid: runUid,
+        } })
+      }
+      if (url.startsWith('https://intelligent.test/api/v1/qa/stream-v2?')) {
+        expect(method).toBe('GET')
+        const mid = JSON.stringify({ mid: { content: '已经总结好了', reason_content: '正在读取资料', total_sec: 1 } })
+        const tail = JSON.stringify({ tail: {
+          total_sec: 2,
+          agent_run_uid: runUid,
+          agent_run_status: 'completed',
+          created_record_uids: ['record-by-arko'],
+          agent_profile: { display_name: 'Arko', version: 2 },
+        } })
+        return new Response(`data: ${mid}\n\ndata: ${tail}\n\n`, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+
+    await expect(service.arkoAsk('帮我总结今天的快记', { clientTurnUid: 'turn-1', waitMillis: 1000 }))
+      .resolves.toEqual({
+        sessionId: 88,
+        userMsgId: 1001,
+        assistantMsgId: 1002,
+        runUid,
+        text: '已经总结好了',
+        reasoning: '正在读取资料',
+        status: 'completed',
+        terminal: true,
+        timedOut: false,
+        createdRecordUids: ['record-by-arko'],
+        profile: { displayName: 'Arko', version: 2 },
+        run: { runUid, status: 'completed', retryable: false },
+      })
+    expect(requests.map(request => [request.method, request.url.split('?')[0]])).toEqual([
+      ['POST', 'https://intelligent.test/api/v1/qa/latest-session'],
+      ['POST', 'https://intelligent.test/api/v1/qa/new-session'],
+      ['POST', 'https://intelligent.test/api/v1/agent/model/list'],
+      ['POST', 'https://intelligent.test/api/v1/qa/new-msg-v2'],
+      ['GET', 'https://intelligent.test/api/v1/qa/stream-v2'],
+    ])
+    expect(requests[3]?.body).toMatchObject({
+      model: 2,
+      session_id: 88,
+      content: '帮我总结今天的快记',
+      extra: '{}',
+      client_turn_uid: 'turn-1',
+      client_capabilities: ['dsh.arko.v1'],
+      model_route_key: 'dashscope/qwen3.8-max',
+    })
+    expect(requests.every(request => request.authorization === 'Bearer access')).toBe(true)
+  })
+
+  it('preserves an accepted Arko run for polling when its SSE connection fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const runUid = '11111111-1111-4111-8111-111111111111'
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/qa/new-msg-v2')) {
+        return json({ code: 200, data: {
+          session_id: 88, user_msg_id: 1001, assistant_msg_id: 1002, run_uid: runUid,
+        } })
+      }
+      if (url.startsWith('https://intelligent.test/api/v1/qa/stream-v2?')) {
+        throw new TypeError('connection reset')
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.arkoAsk('创建一条快记', {
+      sessionId: 88,
+      clientTurnUid: 'turn-network-failure',
+      modelRouteKey: 'dashscope/deepseek-v4-pro',
+      waitMillis: 1000,
+    })).resolves.toMatchObject({
+      sessionId: 88,
+      userMsgId: 1001,
+      assistantMsgId: 1002,
+      runUid,
+      status: 'stream_timeout',
+      terminal: false,
+      timedOut: true,
+    })
+  })
+
+  it('loads AgentDirect history and activates a server-provided model route', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const bodies: Record<string, unknown>[] = []
+    const catalog = {
+      default_route_key: 'dashscope/deepseek-v4-pro',
+      effective_route_key: 'dashscope/qwen3.8-max',
+      selection_source: 'personal',
+      items: [
+        {
+          route_key: 'dashscope/deepseek-v4-pro', display_name: 'DeepSeek V4 Pro', provider: 'dashscope',
+          description: '综合能力强，适合复杂任务', recommended: true, selected: false,
+        },
+        {
+          route_key: 'dashscope/qwen3.8-max', display_name: 'Qwen 3.8 Max', provider: 'dashscope',
+          description: '长上下文与中文理解能力突出', recommended: false, selected: true,
+        },
+      ],
+    }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      if (url.endsWith('/api/v1/agent/model/list') || url.endsWith('/api/v1/agent/model/activate')) {
+        return json({ code: 200, data: catalog })
+      }
+      if (url.endsWith('/api/v1/qa/message-list')) {
+        return json({ code: 200, data: { message_ls: [
+          { id: 202, session_id: 88, role: 3, content: '已完成', created_at: 1002, status: 1,
+            extra: JSON.stringify({ agent_run_uid: '11111111-1111-4111-8111-111111111111', agent_run_status: 'completed' }) },
+          { id: 201, session_id: 88, role: 2, content: '帮我处理', created_at: 1001, status: 1 },
+        ] } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.arkoModelCatalog()).resolves.toMatchObject({
+      effectiveRouteKey: 'dashscope/qwen3.8-max',
+      selectionSource: 'personal',
+    })
+    await expect(service.arkoActivateModel('dashscope/qwen3.8-max')).resolves.toMatchObject({
+      effectiveRouteKey: 'dashscope/qwen3.8-max',
+    })
+    await expect(service.arkoHistoryPage(50, 0)).resolves.toMatchObject({
+      hasMore: false,
+      items: [
+        { messageId: 202, role: 'assistant', runStatus: 'completed' },
+        { messageId: 201, role: 'user', text: '帮我处理' },
+      ],
+    })
+    expect(bodies).toContainEqual({ route_key: 'dashscope/qwen3.8-max' })
+    expect(bodies).toContainEqual({ limit: 50, offset: 0, session_type: 2 })
+  })
+
+  it('continues a waiting Arko run without switching its model', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const bodies: Record<string, unknown>[] = []
+    const runUid = '11111111-1111-4111-8111-111111111111'
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/qa/new-msg-v2')) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return json({ code: 200, data: { session_id: 88, user_msg_id: 203, assistant_msg_id: 204, run_uid: runUid } })
+      }
+      if (url.startsWith('https://intelligent.test/api/v1/qa/stream-v2?')) {
+        return new Response(`data: ${JSON.stringify({ tail: { agent_run_uid: runUid, agent_run_status: 'completed' } })}\n\n`, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await service.arkoAsk('确认', {
+      sessionId: 88,
+      clientTurnUid: '22222222-2222-4222-8222-222222222222',
+      replyToRunUid: runUid,
+      replyToAssistantMsgId: 202,
+      waitMillis: 1000,
+    })
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).toMatchObject({
+      reply_to_run_uid: runUid,
+      reply_to_assistant_msg_id: 202,
+    })
+    expect(bodies[0]).not.toHaveProperty('model_route_key')
+  })
+
+  it('does not use a pending phone-binding session for Arko tools', async () => {
+    const sessions = new MemorySessionStore()
+    const pendingSessions = new MemorySessionStore()
+    pendingSessions.session = { userId: 10001, accessToken: 'pending-access', refreshToken: 'pending-refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      throw new Error('Arko must not call remote APIs before phone binding completes')
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl, pendingSessions)
+
+    await expect(service.arkoProfile()).rejects.toMatchObject({ code: 'login-required' })
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('refreshes the short token once after an authenticated 403', async () => {
