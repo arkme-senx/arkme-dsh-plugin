@@ -5,7 +5,8 @@ import {
 } from '../src/client/ArkmeTopicCreateDialog.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
-  ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
+  ArkmeSourceSortControl, ArkmeSourceSortMenu, ArkmeTopicCard, ArkmeTopicCreateFooter,
+  ArkmeTopicTreeRow, expandAncestorsForReveal,
   canCreateChildTopicAtParentLevel, expandTopicFromRowClick, isTopicRowFullyVisible,
   mergeCreatedTopicSource, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
@@ -29,14 +30,22 @@ const topicRow: ArkmeSourceTreeRow = {
 }
 
 describe('topic create UI', () => {
-  it('offers default, latest and most sorting without a name mode', () => {
+  it('uses a compact trigger and a rounded floating sort menu', () => {
     const control = renderToStaticMarkup(<ArkmeSourceSortControl value="default" onChange={() => {}} />)
+    const menu = renderToStaticMarkup(<ArkmeSourceSortMenu value="default" onSelect={() => {}} />)
 
-    expect(control).toContain('value="default" selected="">默认')
-    expect(control).toContain('value="latest">最新')
-    expect(control).toContain('value="most">最多')
-    expect(control).not.toContain('value="name"')
-    expect(control).not.toContain('名称')
+    expect(control).toContain('aria-haspopup="menu"')
+    expect(control).toContain('aria-expanded="false"')
+    expect(control).toContain('gap:4px')
+    expect(control).toContain('默认')
+    expect(menu).toContain('role="menu"')
+    expect(menu).toContain('width:120px')
+    expect(menu).toContain('border-radius:12px')
+    expect(menu).toContain('box-shadow:0 6px 18px')
+    expect(menu).toContain('最新')
+    expect(menu).toContain('最多')
+    expect(menu).toContain('默认')
+    expect(`${control}${menu}`).not.toContain('名称')
   })
 
   it('renders latest and most entries as flat compact cards', () => {

@@ -43,7 +43,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', color: colors.text,
   },
   header: {
-    flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
+    position: 'relative', zIndex: 5, flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
     padding: '0 12px 0 14px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
   },
   headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 500 },
@@ -55,13 +55,21 @@ const styles: Record<string, CSSProperties> = {
   sortControl: {
     position: 'relative', flex: 'none', display: 'inline-flex', alignItems: 'center', color: colors.secondary,
   },
-  sortSelect: {
-    minWidth: 54, height: 30, padding: '0 18px 0 4px', border: 0, outline: 0,
-    appearance: 'none', WebkitAppearance: 'none', background: 'transparent', color: 'inherit',
-    font: 'inherit', fontSize: 12, cursor: 'pointer',
+  sortTrigger: {
+    height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+    padding: '0 2px', border: 0, borderRadius: 6, outline: 0,
+    background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer',
   },
-  sortArrow: {
-    position: 'absolute', right: 4, width: 10, height: 10, pointerEvents: 'none',
+  sortArrow: { width: 10, height: 10, flex: 'none', pointerEvents: 'none' },
+  sortMenu: {
+    position: 'absolute', zIndex: 30, top: 36, right: -8, width: 120, padding: '6px 0',
+    boxSizing: 'border-box', borderRadius: 12, background: 'var(--dsw-specific-dialog-fill, #fff)',
+    boxShadow: '0 6px 18px rgba(22, 26, 31, 0.18)', color: colors.text,
+  },
+  sortMenuItem: {
+    width: '100%', height: 54, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0, border: 0, background: 'transparent', color: 'inherit',
+    cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px',
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
   topicList: { paddingBottom: 74 },
@@ -407,23 +415,62 @@ export function ArkmeTopicCreateFooter({ onCreate }: { onCreate: () => void }) {
   </div>
 }
 
+const arkmeSourceSortOptions: ReadonlyArray<{ value: ArkmeSourceSort, label: string }> = [
+  { value: 'latest', label: '最新' },
+  { value: 'most', label: '最多' },
+  { value: 'default', label: '默认' },
+]
+
+export function ArkmeSourceSortMenu({
+  value, onSelect,
+}: { value: ArkmeSourceSort, onSelect: (value: ArkmeSourceSort) => void }) {
+  return <div role="menu" aria-label="排序方式" style={styles.sortMenu}>
+    {arkmeSourceSortOptions.map(option => <button
+      key={option.value} type="button" role="menuitemradio" aria-checked={option.value === value}
+      style={{ ...styles.sortMenuItem, fontWeight: option.value === value ? 500 : 400 }}
+      onClick={() => { onSelect(option.value) }}
+    >{option.label}</button>)}
+  </div>
+}
+
 export function ArkmeSourceSortControl({
   value, onChange,
 }: { value: ArkmeSourceSort, onChange: (value: ArkmeSourceSort) => void }) {
-  return <label style={styles.sortControl}>
-    <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}>排序</span>
-    <select
-      style={styles.sortSelect} aria-label="发给自己排序" value={value}
-      onChange={event => { onChange(event.currentTarget.value as ArkmeSourceSort) }}
+  const [open, setOpen] = useState(false)
+  const controlRef = useRef<HTMLDivElement>(null)
+  const label = arkmeSourceSortOptions.find(option => option.value === value)?.label ?? '默认'
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    const closeFromOutside = (event: PointerEvent) => {
+      if (controlRef.current !== null && !controlRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [open])
+
+  return <div ref={controlRef} style={styles.sortControl}>
+    <button
+      type="button" style={styles.sortTrigger} aria-label={`发给自己排序：${label}`}
+      aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(current => !current) }}
     >
-      <option value="default">默认</option>
-      <option value="latest">最新</option>
-      <option value="most">最多</option>
-    </select>
-    <svg aria-hidden viewBox="0 0 10 10" style={styles.sortArrow}>
-      <path d="m2 3.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  </label>
+      <span>{label}</span>
+      <svg aria-hidden viewBox="0 0 10 10" style={styles.sortArrow}>
+        <path d="m2 3.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+    {open && <ArkmeSourceSortMenu value={value} onSelect={next => {
+      onChange(next)
+      setOpen(false)
+    }} />}
+  </div>
 }
 
 export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: ArkmeNavigationProps) {
