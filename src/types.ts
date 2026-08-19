@@ -145,6 +145,10 @@ export interface ArkmeProviderCapabilities {
     sourceTimeline: true
     sourceTextSend: true
     outgoingCall: true
+    groupMembers: true
+    userCard: true
+    openPrivateChat: true
+    groupSettings: true
   }
   limits: {
     maxTextLength: number
@@ -228,6 +232,8 @@ export interface ArkmeSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  /** Effective chat notification state. True when mute is on or push notifications are disabled. */
+  isMuted?: boolean
   latestSequence?: number
   recordCount?: number
 }
@@ -349,6 +355,59 @@ export interface ArkmeSourceReadResult {
   sourceRef: string
   effectiveReadSequence: number
   unreadCount: number
+}
+
+export type ArkmeGroupMemberRole = 'owner' | 'admin' | 'member' | 'unknown'
+export type ArkmeGroupMemberStatus = 'active' | 'left' | 'removed' | 'unknown'
+
+export interface ArkmeGroupMemberItem {
+  userId: number
+  displayName: string
+  memberName?: string
+  secondaryName?: string
+  avatarRef?: string
+  role: ArkmeGroupMemberRole
+  status: ArkmeGroupMemberStatus
+  isSelf: boolean
+  isOwner: boolean
+  joinedAtMillis: number
+}
+
+export interface ArkmeGroupMemberList {
+  source: ArkmeSourceItem
+  items: ArkmeGroupMemberItem[]
+  total: number
+  activeCount: number
+  selfRole: ArkmeGroupMemberRole
+  selfStatus: ArkmeGroupMemberStatus
+}
+
+export interface ArkmeUserCardSnapshot {
+  displayName: string
+  avatarRef?: string
+}
+
+export interface ArkmeOpenPrivateChatResult {
+  source: ArkmeSourceItem
+}
+
+export interface ArkmeGroupSettingsSnapshot {
+  source: ArkmeSourceItem
+  selfRole: ArkmeGroupMemberRole
+  selfStatus: ArkmeGroupMemberStatus
+  canRename: boolean
+  canDissolve: boolean
+  canLeave: boolean
+  messageDnd: boolean
+}
+
+export interface ArkmeGroupNotificationResult {
+  messageDnd: boolean
+}
+
+export interface ArkmeGroupActionResult {
+  source: ArkmeSourceItem
+  status: 'ok'
 }
 
 export interface ArkmeRecordingCalendarDay {
@@ -707,6 +766,15 @@ export type ArkmePluginOperation =
   | 'source.ai-polish.prepare-disable'
   | 'source.ai-polish.confirm-disable'
   | 'source.ai-polish.retry'
+  | 'group.members'
+  | 'group.settings'
+  | 'group.notification.set'
+  | 'group.rename'
+  | 'group.leave'
+  | 'group.dissolve'
+  | 'group.report'
+  | 'user.card'
+  | 'chat.private.open'
   | 'calls.outgoing.intent.claim'
   | 'calls.outgoing.intent.resolve'
   | 'calls.outgoing.prepare'

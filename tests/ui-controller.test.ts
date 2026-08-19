@@ -62,4 +62,24 @@ describe('ArkmeUiController', () => {
     expect(listener).toHaveBeenCalledTimes(8)
     unsubscribe()
   })
+
+  it('publishes an updated selected source when its mute state changes', () => {
+    const controller = new ArkmeUiController()
+    const listener = vi.fn()
+    controller.subscribe(listener)
+    const source = {
+      sourceRef: 'source-1',
+      kind: 'group_chat' as const,
+      displayName: '项目群',
+      activeAtMillis: 1,
+      unreadCount: 0,
+      isMuted: false,
+    }
+
+    controller.selectSource(source)
+    controller.selectSource({ ...source, isMuted: true })
+
+    expect(controller.getSnapshot().selectedSource?.isMuted).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
 })

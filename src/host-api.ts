@@ -295,6 +295,30 @@ export async function dispatchArkmeHostOperation(
     case 'source.ai-polish.retry': return await service.retryGroupAiPolish(
       stringParam(params, 'retryRef'),
     )
+    case 'group.members': return await service.listGroupMembers(
+      stringParam(params, 'sourceRef'),
+      { activeOnly: params.activeOnly !== false },
+    )
+    case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'))
+    case 'group.notification.set': return await service.setGroupMessageDnd(
+      stringParam(params, 'sourceRef'),
+      params.enabled === true,
+    )
+    case 'group.rename': return await service.renameGroup(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'title'),
+    )
+    case 'group.leave': return await service.leaveGroup(stringParam(params, 'sourceRef'))
+    case 'group.dissolve': return await service.dissolveGroup(stringParam(params, 'sourceRef'))
+    case 'group.report': return await service.reportGroup(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'reason'),
+    )
+    case 'user.card': return await service.userCard(numberParam(params, 'userId', 0))
+    case 'chat.private.open': return await service.openPrivateChatFromUser(
+      numberParam(params, 'peerUserId', 0),
+      { displayName: stringParam(params, 'displayName') },
+    )
     case 'calls.outgoing.intent.claim': return await service.claimOutgoingCallIntent()
     case 'calls.outgoing.intent.resolve': {
       const intentId = requiredCallParam(params, 'intentId', 'call-intent-invalid')

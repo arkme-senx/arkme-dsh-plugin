@@ -1337,12 +1337,14 @@ describe('ArkmeService', () => {
           {
             session: { chat_session_uid: 'chat-private', session_kind: 1, title: '', last_seq: 8, last_active_at: 200 },
             private_counterpart: { user_id: 20002, display_name_snapshot: '小林' },
+            current_policy: { mute_state: 1, notify_state: 1 },
             sort_active_at: 210,
             latest_preview: { record: { payload: { text_content: '你好' } } },
             unread_snapshot: { unread_count: 2, session_last_seq: 8 },
           },
           {
             session: { chat_session_uid: 'chat-group', session_kind: 2, title: '项目群', last_active_at: 190 },
+            current_policy: { mute_state: 2, notify_state: 2 },
             sort_active_at: 195, unread_snapshot: { unread_count: 0 },
           },
         ],
@@ -1387,8 +1389,8 @@ describe('ArkmeService', () => {
 
     const sources = await service.listSources('root')
     expect(sources.items).toMatchObject([
-      { kind: 'private_chat', displayName: '小林', latestPreview: '你好', unreadCount: 2, latestSequence: 8 },
-      { kind: 'group_chat', displayName: '项目群' },
+      { kind: 'private_chat', displayName: '小林', latestPreview: '你好', unreadCount: 2, latestSequence: 8, isMuted: false },
+      { kind: 'group_chat', displayName: '项目群', isMuted: true },
     ])
     const privateRef = sources.items[0]!.sourceRef
     await expect(service.readSource(privateRef)).resolves.toMatchObject({
@@ -2280,5 +2282,230 @@ describe('ArkmeService', () => {
     await expect(service.summary()).resolves.toMatchObject({ recordCount: 7 })
     expect(authorizations).toEqual(['Bearer old-access', 'Bearer refresh', 'Bearer new-access'])
     expect(sessions.session?.accessToken).toBe('new-access')
+  })
+
+  it('lists active group members and hydrates public profile presentation', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://chat.test/api/v1/chats/members/list') {
+        return json({ code: 200, data: {
+          chat_session_uid: 'group-1',
+          items: [
+            {
+              chat_session_uid: 'group-1', user_id: 2001, role: 3, status: 1, join_at: 20,
+              display_name_snapshot: '群内 Member', remark: '联系人备注',
+            },
+            { chat_session_uid: 'group-1', user_id: 10001, role: 1, status: 1, join_at: 10, display_name_snapshot: '我' },
+          ],
+        } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        return json({ code: 200, data: {
+          items: [
+            { user_id: 10001, nick_name: 'Owner', name_slug: 'owner-id', head_img: '' },
+            {
+              user_id: 2001,
+              nick_name: 'Member',
+              name_slug: 'member-id',
+              head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/member.png?x-oss-signature=ok',
+            },
+          ],
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const result = await service.listGroupMembers(sourceRefFor('group_chat', 'group-1', '设计群'))
+    expect(result.activeCount).toBe(2)
+    expect(result.selfRole).toBe('owner')
+    expect(result.items.map(item => ({
+      userId: item.userId,
+      displayName: item.displayName,
+      memberName: item.memberName,
+      secondaryName: item.secondaryName,
+      role: item.role,
+      isSelf: item.isSelf,
+    })))
+      .toEqual([
+        {
+          userId: 10001,
+          displayName: '我',
+          memberName: '我',
+          secondaryName: 'Owner',
+          role: 'owner',
+          isSelf: true,
+        },
+        {
+          userId: 2001,
+          displayName: '联系人备注',
+          memberName: '群内 Member',
+          secondaryName: '群内 Member',
+          role: 'member',
+          isSelf: false,
+        },
+      ])
+    expect(result.items[1]?.avatarRef).toMatch(/^arkme-profile-image-v1\./)
+    expect(requests).toEqual([
+      { url: 'https://chat.test/api/v1/chats/members/list', body: { chat_session_uid: 'group-1', active_only: true } },
+      { url: 'https://auth.test/api/v1/auth/get-public-users-by-ids', body: { user_ids: [2001, 10001] } },
+    ])
+  })
+
+  it('hydrates large group member lists within the public profile batch limit', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const memberUserIds = Array.from({ length: 128 }, (_, index) => 2001 + index)
+    const profileBatches: number[][] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url === 'https://chat.test/api/v1/chats/members/list') {
+        return json({ code: 200, data: {
+          chat_session_uid: 'group-large',
+          items: memberUserIds.map(userId => ({
+            chat_session_uid: 'group-large',
+            user_id: userId,
+            role: 3,
+            status: 1,
+            join_at: userId,
+            display_name_snapshot: '',
+          })),
+        } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        const userIds = body.user_ids as number[]
+        if (userIds.length > 50) return json({ code: 400, message: 'too many user ids' }, 400)
+        profileBatches.push(userIds)
+        return json({ code: 200, data: {
+          items: userIds.map(userId => ({
+            user_id: userId,
+            nick_name: `用户昵称 ${String(userId)}`,
+            name_slug: `user-${String(userId)}`,
+            head_img: '',
+          })),
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const result = await service.listGroupMembers(sourceRefFor('group_chat', 'group-large', '大群'))
+
+    expect(profileBatches.map(batch => batch.length)).toEqual([50, 50, 28])
+    expect(result.items).toHaveLength(128)
+    expect(result.items.at(-1)).toMatchObject({
+      userId: 2128,
+      displayName: '用户昵称 2128',
+    })
+  })
+
+  it('updates group message do-not-disturb without overwriting the other chat policies', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://chat.test/api/v1/chats/policy/get') {
+        return json({ code: 200, data: {
+          chat_session_uid: 'group-1',
+          show_in_home_state: 2,
+          privacy_state: 1,
+          mute_state: 1,
+          pin_state: 2,
+          notify_state: 1,
+          status: 1,
+          update_at: 1700000000000,
+        } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/policy/update') {
+        return json({ code: 200, data: {} })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.setGroupMessageDnd(sourceRefFor('group_chat', 'group-1', '设计群'), true))
+      .resolves.toEqual({ messageDnd: true })
+    expect(requests[0]).toEqual({
+      url: 'https://chat.test/api/v1/chats/policy/get',
+      body: { chat_session_uid: 'group-1' },
+    })
+    expect(requests[1]).toMatchObject({
+      url: 'https://chat.test/api/v1/chats/policy/update',
+      body: {
+        chat_session_uid: 'group-1',
+        show_in_home_state: 2,
+        privacy_state: 1,
+        mute_state: 2,
+        pin_state: 2,
+        notify_state: 2,
+        status: 1,
+      },
+    })
+    expect(requests[1]?.body.update_at).toEqual(expect.any(Number))
+  })
+
+  it('opens a private chat from a user card through the create-private contract', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    state.profile = {
+      userId: 10001,
+      displayName: 'Owner',
+      nickname: 'Owner',
+      avatarRef: '',
+      arkmeId: 'owner-id',
+      accountType: 1,
+      createdAt: 1,
+      bindings: { apple: false, wechat: false, google: false },
+      contact: {},
+    }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        return json({ code: 200, data: {
+          items: [{ user_id: 2001, nick_name: 'Member', name_slug: 'member-id', head_img: '' }],
+        } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/create-private') {
+        expect(String(body.chat_session_uid)).toMatch(/^chat_session_[0-9a-f-]+$/)
+        return json({ code: 200, data: {
+          session: {
+            chat_session_uid: 'private-1',
+            session_kind: 1,
+            title: 'Member',
+            last_active_at: 1700000000000,
+            last_seq: 3,
+          },
+          unread_snapshot: { unread_count: 0, session_last_seq: 3 },
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const result = await service.openPrivateChatFromUser(2001, { displayName: 'Member' })
+    expect(result.source).toMatchObject({
+      kind: 'private_chat',
+      displayName: 'Member',
+      activeAtMillis: 1700000000000,
+      unreadCount: 0,
+      latestSequence: 3,
+    })
+    expect(result.source.sourceRef).toMatch(/^arkme-source-v1\./)
+    expect(requests[1]?.body).toMatchObject({
+      peer_user_id: 2001,
+      title: 'Member',
+      owner_display_name_snapshot: 'Owner',
+      peer_display_name_snapshot: 'Member',
+      extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
+    })
   })
 })

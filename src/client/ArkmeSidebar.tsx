@@ -12,7 +12,9 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
+import { ArkmeGroupChatControls } from './ArkmeGroupChatControls.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
+import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -44,9 +46,11 @@ const styles: Record<string, CSSProperties> = {
     flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
-  titleBlock: { minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  titleGroup: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 },
+  titleBlock: { flex: 1, minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  titleMuteIcon: { flex: 'none', display: 'inline-flex', color: colors.secondary },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
   error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
@@ -239,6 +243,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     arkmeChatTimelineDelta.getSnapshot,
   )
   const source = ui.mode === 'source' ? ui.selectedSource : undefined
+  const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -648,23 +653,36 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     ...aiPolishNotices.map(notice => ({ kind: 'notice' as const, at: notice.createdAtMillis, key: `notice:${notice.noticeUid}`, notice })),
   ].sort((left, right) => left.at - right.at || left.key.localeCompare(right.key)), [aiPolishNotices, items])
   const detailItem = items.find(item => item.itemUid === detailItemUid)
+  const activateSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
+    arkmeUi.selectSource(nextSource)
+    arkmeUi.chatChanged()
+  }, [])
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : source?.displayName ?? 'Arkme'
 
   return (
     <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
-      <section style={styles.panel} role="region" aria-label={surfaceTitle}>
+      <section ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
         <header style={styles.header}>
-          <div style={styles.titleBlock}>
-            <h2 style={styles.title}>{surfaceTitle}</h2>
-            {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
-              && aiPolishSettings?.enabled === true
-              && <span style={styles.headerSubtitle}>AI润色已开启</span>}
+          <div style={styles.titleGroup}>
+            <div style={styles.titleBlock}>
+              <h2 style={styles.title}>{surfaceTitle}</h2>
+              {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
+                && aiPolishSettings?.enabled === true
+                && <span style={styles.headerSubtitle}>AI润色已开启</span>}
+            </div>
+            {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon /></span>}
           </div>
           {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}
             assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
+          />}
+          {authenticated && ui.mode === 'source' && source?.kind === 'group_chat' && <ArkmeGroupChatControls
+            source={source}
+            overlayHostRef={panelRef}
+            onSourceActivated={activateSource}
+            onError={setError}
           />}
         </header>
         {authView === 'checking' ? <div style={styles.authChecking} role="status">
