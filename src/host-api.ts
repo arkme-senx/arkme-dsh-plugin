@@ -687,7 +687,7 @@ function requireExtensionInstallTasks(tasks: ArkmeExtensionInstallTasks | undefi
 
 function requireExtensionManager(manager: ArkmeExtensionManager | undefined): ArkmeExtensionManager {
   if (manager === undefined) {
-    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展中心不可用', false, 503)
+    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展市场不可用', false, 503)
   }
   return manager
 }

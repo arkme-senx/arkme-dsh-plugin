@@ -75,20 +75,6 @@ const styles: Record<string, CSSProperties> = {
     padding: '0 4px', boxSizing: 'border-box', borderRadius: 999, background: colors.accentSoft,
     color: colors.accent, fontSize: 9, fontWeight: 650,
   },
-  search: { height: 40, flex: 'none', position: 'relative', margin: '0 22px', boxSizing: 'border-box' },
-  searchIcon: {
-    position: 'absolute', left: 11, top: '50%', width: 15, height: 15,
-    color: colors.caption, transform: 'translateY(-50%)', pointerEvents: 'none',
-  },
-  input: {
-    width: '100%', height: 34, boxSizing: 'border-box', padding: '0 36px 0 34px',
-    border: 0, borderRadius: 8, outline: 0, background: colors.subtle,
-    color: colors.text, font: 'inherit', fontSize: 13,
-  },
-  clear: {
-    position: 'absolute', right: 5, top: 4, width: 30, height: 30, display: 'grid', placeItems: 'center',
-    padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.caption, cursor: 'pointer',
-  },
   list: { minHeight: 0, flex: 1, overflowY: 'auto', padding: '8px 22px 22px', boxSizing: 'border-box' },
   card: {
     width: '100%', minWidth: 0, display: 'flex', gap: 10, boxSizing: 'border-box',
@@ -166,16 +152,12 @@ const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安
 const EMPTY_COPY: Record<Tab, { title: string; description: string }> = {
   discover: { title: '还没有可发现的扩展', description: '和 DSH 对话生成并发布扩展后，它会出现在这里。' },
   installed: { title: '还没有安装扩展', description: '从发现页选择扩展，或在 DSH 对话中指定 extension_id。' },
-  mine: { title: '还没有发布扩展', description: '先和 DSH 生成动态 Cordis 插件，再让它发布到扩展中心。' },
+  mine: { title: '还没有发布扩展', description: '先和 DSH 生成动态 Cordis 插件，再让它发布到扩展市场。' },
   updates: { title: '所有扩展均为最新版本', description: '有新版本或安全撤销时，会在这里提醒你。' },
 }
 
 function BackIcon({ size = 18 }: { size?: number }) {
   return <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="m15 18-6-6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-}
-
-function SearchIcon() {
-  return <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.8" /><path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
 }
 
 function CloseIcon() {
@@ -354,8 +336,6 @@ function extensionUpdateLabel(item: ArkmeExtensionUpdateResolution): string {
 
 export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSessionId?: string | undefined; onClose(): void }) {
   const [tab, setTab] = useState<Tab>('discover')
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [query, setQuery] = useState('')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
   const [publishedItems, setPublishedItems] = useState<ArkmeExtensionCatalogItem[]>([])
   const [installed, setInstalled] = useState<ArkmeInstalledExtension[]>([])
@@ -395,7 +375,6 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   }
   const load = async (
     target: Tab,
-    searchQuery = query,
     mode: 'initial' | 'refresh' = extensionTabLoadMode(loadedTabs, target),
   ) => {
     const sequence = ++requestSequence.current
@@ -407,7 +386,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
     try {
       if (target === 'discover') {
         const [page, local] = await Promise.all([
-          callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { query: searchQuery, limit: 50 }, controller.signal),
+          callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: 50 }, controller.signal),
           callArkme<ArkmeInstalledExtension[]>('extensions.installed-list', undefined, controller.signal),
         ])
         if (sequence === requestSequence.current) { setDiscoverItems(page.items); setInstalled(local) }
@@ -437,7 +416,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   }
 
   useEffect(() => {
-    void load('discover', '', 'initial')
+    void load('discover', 'initial')
     return () => { requestController.current?.abort() }
   }, [])
 
@@ -445,7 +424,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
     if (target === tab) return
     const mode = extensionTabLoadMode(loadedTabs, target)
     setTab(target); setError(''); setDetail(undefined); setInstallError(''); setInstallTask(undefined)
-    void load(target, target === 'discover' ? query : '', mode)
+    void load(target, mode)
   }
 
   const inspect = async (extensionId: string) => {
@@ -638,32 +617,17 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
 
   const dialog = <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
   <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-center-title">
-  <div style={styles.shell} aria-label="Arkme 扩展中心">
+  <div style={styles.shell} aria-label="Arkme 扩展市场">
     <header style={styles.header}>
-      <h2 id="arkme-extension-center-title" style={styles.title}>扩展中心</h2>
+      <h2 id="arkme-extension-center-title" style={styles.title}>扩展市场</h2>
       <button
-        type="button" style={styles.iconButton} aria-label="搜索扩展" title="搜索扩展"
-        onClick={() => { if (tab !== 'discover') switchTab('discover'); setSearchOpen(value => !value) }}
-        onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
-        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-      ><SearchIcon /></button>
-      <button
-        type="button" style={styles.iconButton} aria-label="关闭扩展中心" title="关闭"
+        type="button" style={styles.iconButton} aria-label="关闭扩展市场" title="关闭"
         onClick={onClose}
         onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       ><CloseIcon /></button>
     </header>
-    {searchOpen && tab === 'discover' ? <form style={styles.search} onSubmit={event => { event.preventDefault(); void load('discover', query, 'initial') }}>
-      <span style={styles.searchIcon}><SearchIcon /></span>
-      <input
-        autoFocus style={styles.input} value={query} onChange={event => { setQuery(event.target.value) }}
-        placeholder="搜索扩展" aria-label="搜索扩展关键词"
-        onFocus={event => { event.currentTarget.style.background = colors.hover }}
-        onBlur={event => { event.currentTarget.style.background = colors.subtle }}
-      />
-      <button type="button" style={styles.clear} aria-label="关闭搜索" onClick={() => { setQuery(''); setSearchOpen(false); void load('discover', '', 'initial') }}>×</button>
-    </form> : <nav style={styles.tabs} role="tablist" aria-label="扩展中心分类">
+    <nav style={styles.tabs} role="tablist" aria-label="扩展市场分类">
       {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
         key={value} type="button" role="tab" aria-selected={tab === value}
         style={{ ...styles.tab, ...(tab === value ? styles.activeTab : {}) }}
@@ -674,7 +638,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
           {value === 'updates' && updateCount > 0 && <span style={styles.count}>{updateCount}</span>}
         </span>
       </button>)}
-    </nav>}
+    </nav>
     <main style={styles.list}>
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}

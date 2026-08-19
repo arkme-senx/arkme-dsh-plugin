@@ -973,7 +973,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
         >
           <span style={styles.extensionAvatar} aria-hidden><ArkmeExtensionIcon size={22} /></span>
           <span style={styles.chatContent}>
-            <span style={styles.chatTop}><span style={styles.chatName}>扩展中心</span></span>
+            <span style={styles.chatTop}><span style={styles.chatName}>扩展市场</span></span>
             <span style={styles.chatBottom}><span style={styles.preview}>发现、安装和更新 Arkme 扩展</span></span>
           </span>
         </button>}

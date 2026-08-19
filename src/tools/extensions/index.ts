@@ -137,14 +137,14 @@ export function registerArkmeExtensionTools(
       const packageId = clean(typeof args.package_id === 'string' ? args.package_id : '').slice(0, 80)
       return {
         kind: 'ask',
-        reason: `确认将 Dynamic Cordis ${pluginId}/${packageId} 作为“${name}” ${version} 发布到扩展中心吗？可见范围：${visibility}。`,
+        reason: `确认将 Dynamic Cordis ${pluginId}/${packageId} 作为“${name}” ${version} 发布到扩展市场吗？可见范围：${visibility}。`,
       }
     }
     const extensionId = clean(typeof args.extension_id === 'string' ? args.extension_id : '').slice(0, 100)
     if (exec.name === 'arkme_extension_delete') {
       return {
         kind: 'ask',
-        reason: `确认软删除扩展 ${extensionId} 吗？删除后将从扩展中心隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。`,
+        reason: `确认软删除扩展 ${extensionId} 吗？删除后将从扩展市场隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。`,
       }
     }
     const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40) || '最新兼容版本'

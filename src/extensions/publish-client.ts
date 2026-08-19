@@ -50,7 +50,7 @@ export class ExtensionPublishClient {
     assertExtensionArtifactSize(artifact.bytes.byteLength)
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-upload-url-invalid', '扩展中心返回了无效上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-upload-url-invalid', '扩展市场返回了无效上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -186,7 +186,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(artifactUrl) } catch (error) {
-      throw new ArkmePluginError('extension-download-url-invalid', '扩展中心返回了无效下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-download-url-invalid', '扩展市场返回了无效下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -245,7 +245,7 @@ function safeSignedHeaders(headers: Readonly<Record<string, string>>): Record<st
     if (!/^[a-z0-9-]{1,64}$/.test(normalized)
       || ['authorization', 'cookie', 'host', 'proxy-authorization'].includes(normalized)
       || /[\r\n]/.test(value)) {
-      throw new ArkmePluginError('extension-signed-header-invalid', '扩展中心返回了不安全的制品请求头', false, 502)
+      throw new ArkmePluginError('extension-signed-header-invalid', '扩展市场返回了不安全的制品请求头', false, 502)
     }
     result[normalized] = value
   }

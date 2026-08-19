@@ -216,7 +216,7 @@ export class ArkmeExtensionManager {
     const requestedId = requiredId(extensionId, 'extension_id')
     const resolution = await this.client.resolveInstall(requestedId, version, signal)
     if (resolution.extension_id !== requestedId) {
-      throw new ArkmePluginError('extension-install-contract-invalid', '扩展中心返回了错误的扩展身份', false, 502)
+      throw new ArkmePluginError('extension-install-contract-invalid', '扩展市场返回了错误的扩展身份', false, 502)
     }
     return {
       extension_id: resolution.extension_id,
@@ -275,7 +275,7 @@ export class ArkmeExtensionManager {
       )
     }
     if (resolution.extension_id !== extensionId) {
-      throw new ArkmePluginError('extension-install-contract-invalid', '扩展中心返回了错误的扩展身份', false, 502)
+      throw new ArkmePluginError('extension-install-contract-invalid', '扩展市场返回了错误的扩展身份', false, 502)
     }
     const declaredArtifactSize = typeof resolution.artifact_size === 'number' && resolution.artifact_size > 0
       ? resolution.artifact_size

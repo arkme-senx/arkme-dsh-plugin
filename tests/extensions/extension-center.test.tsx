@@ -7,18 +7,18 @@ import {
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
 
-describe('Arkme extension center UI', () => {
-  it('uses a large modal with text-only navigation, on-demand search, and a guided empty state', () => {
+describe('Arkme extension market UI', () => {
+  it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
 
-    expect(html).toContain('aria-label="Arkme 扩展中心"')
+    expect(html).toContain('aria-label="Arkme 扩展市场"')
     expect(html).toContain('role="dialog"')
     expect(html).toContain('aria-modal="true"')
     expect(html).toContain('width:min(860px, calc(100vw - 64px))')
     expect(html).toContain('height:min(680px, calc(100vh - 64px))')
     expect(html).toContain('height:58px')
     expect(html).toContain('padding:0 20px')
-    expect(html).toContain('aria-label="关闭扩展中心"')
+    expect(html).toContain('aria-label="关闭扩展市场"')
     expect(html).toContain('role="tablist"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain(ARKME_EXTENSION_BRAND_GREEN)
@@ -31,7 +31,7 @@ describe('Arkme extension center UI', () => {
     expect(html).not.toContain('width:28%')
     expect(html).not.toContain('height:2px;flex:none;margin:0 22px')
     expect(html).not.toContain('background:var(--dsw-alias-interactive-bg-hover')
-    expect(html).toContain('aria-label="搜索扩展"')
+    expect(html).not.toContain('aria-label="搜索扩展"')
     expect(html).not.toContain('placeholder="搜索扩展"')
     expect(html).toContain('<svg')
     expect(html).not.toContain('>搜索</button>')

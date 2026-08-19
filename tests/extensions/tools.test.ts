@@ -34,14 +34,14 @@ describe('Arkme extension tools', () => {
       async () => ({ kind: 'allow' }),
     )).resolves.toEqual({
       kind: 'ask',
-      reason: '确认将 Dynamic Cordis plug-1/pkg-1 作为“天气” 1.0.0 发布到扩展中心吗？可见范围：public。',
+      reason: '确认将 Dynamic Cordis plug-1/pkg-1 作为“天气” 1.0.0 发布到扩展市场吗？可见范围：public。',
     })
     await expect(guard!(
       { name: 'arkme_extension_delete', arguments: { extension_id: 'ext-1' } },
       async () => ({ kind: 'allow' }),
     )).resolves.toEqual({
       kind: 'ask',
-      reason: '确认软删除扩展 ext-1 吗？删除后将从扩展中心隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。',
+      reason: '确认软删除扩展 ext-1 吗？删除后将从扩展市场隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。',
     })
     await expect(guard!(
       { name: 'arkme_extension_search', arguments: {} },
