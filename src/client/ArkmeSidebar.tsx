@@ -5,7 +5,8 @@ import {
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
-  ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
+  ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
+  ArkmeRelatedRecordingPageState, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
@@ -20,6 +21,10 @@ import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatTimelineDelta } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
+import {
+  isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
+  RelatedRecordingsPanel, shouldShowRelatedRecordingsEntry,
+} from './related-recordings.js'
 
 export interface ArkmeSurfaceProps {
   floating?: boolean
@@ -39,7 +44,7 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  surface: { width: '100%', height: '100%', minWidth: 0, display: 'flex', background: colors.panel, color: colors.text },
+  surface: { position: 'relative', width: '100%', height: '100%', minWidth: 0, overflow: 'hidden', display: 'flex', background: colors.panel, color: colors.text },
   floatingSurface: { background: 'transparent' },
   panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
   header: {
@@ -51,6 +56,10 @@ const styles: Record<string, CSSProperties> = {
   title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   titleMuteIcon: { flex: 'none', display: 'inline-flex', color: colors.secondary },
+  headerActions: { position: 'relative', marginLeft: 'auto', flex: 'none' },
+  moreButton: { width: 36, height: 32, border: 0, borderRadius: 9, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 17, letterSpacing: 2 },
+  popover: { position: 'absolute', zIndex: 40, top: 38, right: 0, width: 150, padding: 6, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.12)' },
+  menuItem: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, border: 0, borderRadius: 8, padding: '9px 10px', background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
   error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
@@ -281,6 +290,24 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
   const authView = arkmeAuthView(auth, phoneBindingGate)
   const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth, phoneBindingGate)
+  const [relatedEligibility, setRelatedEligibility] = useState<'idle' | 'loading' | 'allowed' | 'denied' | 'error'>('idle')
+  const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
+  const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
+  const [relatedState, setRelatedState] = useState<'loading' | ArkmeRelatedRecordingPageState>('loading')
+  const [relatedStateMessage, setRelatedStateMessage] = useState('')
+  const [relatedError, setRelatedError] = useState('')
+  const [relatedItems, setRelatedItems] = useState<ArkmeRelatedRecordingItem[]>([])
+  const [relatedMonths, setRelatedMonths] = useState<ArkmeRelatedRecordingMonthBucket[]>([])
+  const [relatedMonth, setRelatedMonth] = useState('')
+  const [relatedHasMore, setRelatedHasMore] = useState(false)
+  const [relatedNextCursor, setRelatedNextCursor] = useState<string>()
+  const [relatedLoadingMore, setRelatedLoadingMore] = useState(false)
+  const [relatedDetail, setRelatedDetail] = useState<ArkmeRelatedRecordingItem>()
+  const relatedEligibilityAbortRef = useRef<AbortController>()
+  const relatedPageAbortRef = useRef<AbortController>()
+  const relatedGenerationRef = useRef(0)
+  const relatedLoadingMoreRef = useRef(false)
+  const activeRelatedSourceRef = useRef('')
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot, options: { forcePhoneCheck?: boolean } = {}) => {
     arkmeAuthStore.setAuth(snapshot)
@@ -393,6 +420,127 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       .finally(() => { if (active) setBusy(false) })
     return () => { active = false }
   }, [auth?.status, auth?.userId, phoneCheckRevision])
+
+  const loadRelatedPage = useCallback(async (
+    month: string,
+    cursor: string | undefined,
+    append: boolean,
+    generation: number,
+  ) => {
+    if (source === undefined || source.kind !== 'private_chat') return
+    const sourceRef = source.sourceRef
+    if (append && relatedLoadingMoreRef.current) return
+    const controller = new AbortController()
+    relatedPageAbortRef.current?.abort()
+    relatedPageAbortRef.current = controller
+    if (append) {
+      relatedLoadingMoreRef.current = true
+      setRelatedLoadingMore(true)
+    } else {
+      setRelatedState('loading')
+      setRelatedStateMessage('')
+      setRelatedError('')
+      setRelatedItems([])
+      setRelatedHasMore(false)
+      setRelatedNextCursor(undefined)
+    }
+    try {
+      const page = await callArkme<ArkmeRelatedRecordingPage>('related-recordings.page', {
+        sourceRef,
+        limit: 10,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(month === '' ? {} : { monthKey: month }),
+        timezoneOffsetMillis: -new Date().getTimezoneOffset() * 60_000,
+        includeTimeIndex: !append && month === '',
+      }, controller.signal)
+      if (!isCurrentRelatedRecordingRequest(
+        generation, relatedGenerationRef.current, sourceRef, activeRelatedSourceRef.current,
+      )) return
+      setRelatedItems(current => append ? mergeRelatedRecordingItems(current, page.items) : page.items)
+      setRelatedState(page.state)
+      setRelatedStateMessage(page.stateMessage)
+      setRelatedError(page.state === 'error' ? page.stateMessage || '相关录音暂时无法读取' : '')
+      setRelatedHasMore(page.hasMore)
+      setRelatedNextCursor(page.nextCursor)
+      if (!append && month === '') setRelatedMonths(page.timeIndexComplete ? page.monthBuckets ?? [] : [])
+    } catch (caught) {
+      if (controller.signal.aborted || !isCurrentRelatedRecordingRequest(
+        generation, relatedGenerationRef.current, sourceRef, activeRelatedSourceRef.current,
+      )) return
+      setRelatedState('error')
+      setRelatedError(errorMessage(caught))
+    } finally {
+      if (append) {
+        relatedLoadingMoreRef.current = false
+        if (generation === relatedGenerationRef.current) setRelatedLoadingMore(false)
+      }
+      if (relatedPageAbortRef.current === controller) relatedPageAbortRef.current = undefined
+    }
+  }, [source])
+
+  const reloadRelated = useCallback((month: string) => {
+    relatedGenerationRef.current += 1
+    const generation = relatedGenerationRef.current
+    setRelatedMonth(month)
+    setRelatedDetail(undefined)
+    void loadRelatedPage(month, undefined, false, generation)
+  }, [loadRelatedPage])
+
+  const openRelatedPanel = useCallback(() => {
+    if (relatedEligibility !== 'allowed') return
+    setRelatedMenuOpen(false)
+    setRelatedPanelOpen(true)
+    reloadRelated('')
+  }, [relatedEligibility, reloadRelated])
+
+  const closeRelatedPanel = useCallback(() => {
+    relatedGenerationRef.current += 1
+    relatedPageAbortRef.current?.abort()
+    relatedPageAbortRef.current = undefined
+    relatedLoadingMoreRef.current = false
+    setRelatedPanelOpen(false)
+    setRelatedDetail(undefined)
+    setRelatedLoadingMore(false)
+  }, [])
+
+  const loadMoreRelated = useCallback(() => {
+    if (relatedLoadingMoreRef.current || !relatedHasMore || relatedNextCursor === undefined) return
+    void loadRelatedPage(relatedMonth, relatedNextCursor, true, relatedGenerationRef.current)
+  }, [loadRelatedPage, relatedHasMore, relatedMonth, relatedNextCursor])
+
+  useEffect(() => {
+    relatedEligibilityAbortRef.current?.abort()
+    relatedPageAbortRef.current?.abort()
+    relatedGenerationRef.current += 1
+    activeRelatedSourceRef.current = source?.sourceRef ?? ''
+    relatedLoadingMoreRef.current = false
+    setRelatedEligibility('idle')
+    setRelatedMenuOpen(false)
+    setRelatedPanelOpen(false)
+    setRelatedDetail(undefined)
+    setRelatedItems([])
+    setRelatedMonths([])
+    setRelatedMonth('')
+    setRelatedHasMore(false)
+    setRelatedNextCursor(undefined)
+    setRelatedLoadingMore(false)
+    setRelatedError('')
+    if (!authenticated || source?.kind !== 'private_chat') return
+    const controller = new AbortController()
+    relatedEligibilityAbortRef.current = controller
+    const sourceRef = source.sourceRef
+    setRelatedEligibility('loading')
+    void callArkme<{ allowed: boolean }>(
+      'related-recordings.eligibility', { sourceRef }, controller.signal,
+    ).then(result => {
+      if (!controller.signal.aborted && activeRelatedSourceRef.current === sourceRef) {
+        setRelatedEligibility(result.allowed ? 'allowed' : 'denied')
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted && activeRelatedSourceRef.current === sourceRef) setRelatedEligibility('error')
+    })
+    return () => { controller.abort() }
+  }, [authenticated, source?.kind, source?.sourceRef, ui.authRevision])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
     if (source === undefined || source.unreadCount <= 0 || nextItems.length === 0
@@ -684,6 +832,15 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
             onSourceActivated={activateSource}
             onError={setError}
           />}
+          {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div style={styles.headerActions}>
+            <button type="button" style={styles.moreButton} aria-label="更多私聊操作" aria-expanded={relatedMenuOpen}
+              onClick={() => { setRelatedMenuOpen(value => !value) }}>•••</button>
+            {relatedMenuOpen && <div style={styles.popover} role="menu">
+              <button type="button" role="menuitem" style={styles.menuItem} onClick={openRelatedPanel}>
+                <span aria-hidden>◉</span><span>相关录音</span>
+              </button>
+            </div>}
+          </div>}
         </header>
         {authView === 'checking' ? <div style={styles.authChecking} role="status">
           {error === '' ? '正在确认 Arkme 登录状态…' : error}
@@ -805,6 +962,26 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
           </div>
         </aside>}
       </section>
+      {relatedPanelOpen && source?.kind === 'private_chat' && <RelatedRecordingsPanel
+        contactName={source.displayName}
+        state={relatedState}
+        stateMessage={relatedStateMessage}
+        error={relatedError}
+        items={relatedItems}
+        hasMore={relatedHasMore}
+        loadingMore={relatedLoadingMore}
+        monthBuckets={relatedMonths}
+        selectedMonth={relatedMonth}
+        onClose={closeRelatedPanel}
+        onRetry={() => { reloadRelated(relatedMonth) }}
+        onLoadMore={loadMoreRelated}
+        onMonthChange={reloadRelated}
+        onSelect={setRelatedDetail}
+      />}
+      {relatedDetail !== undefined && <RelatedRecordingDetail
+        item={relatedDetail}
+        onClose={() => { setRelatedDetail(undefined) }}
+      />}
     </div>
   )
 }

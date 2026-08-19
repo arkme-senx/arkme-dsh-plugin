@@ -2508,4 +2508,68 @@ describe('ArkmeService', () => {
       extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
     })
   })
+
+  it('reads owner and incoming shared recordings without exposing a write surface', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/auth/able-func')) {
+        expect(body).toEqual({ func_type: 17 })
+        return json({ code: 200, data: { able: true } })
+      }
+      if (url.endsWith('/api/v1/chats/records/related-recordings/page')) {
+        if (body.include_time_index === true) return json({ code: 1001, message: 'unknown field' })
+        expect(body).toMatchObject({ chat_session_uid: 'chat-private-1', page_size: 10 })
+        return json({ code: 200, data: {
+          state: 3,
+          has_entry: true,
+          moment_ls: [
+            {
+              moment_id: 'moment-owner-secret', start_at: 1_786_000_000_000, end_at: 1_786_000_060_000,
+              time_range_text: '10:00 - 10:01', title: '自己的录音', summary: '自己的摘要',
+              summary_status: 2, transcript: '自己的原文', transcript_available: true,
+              is_shared_by_other: false,
+            },
+            {
+              moment_id: 'moment-incoming-secret', start_at: 1_785_999_000_000, end_at: 1_785_999_060_000,
+              time_range_text: '09:40 - 09:41', title: '对方共享的录音', summary: '对方共享的摘要',
+              summary_status: 2, transcript: '对方共享的原文', transcript_available: true,
+              is_shared_by_other: true,
+            },
+          ],
+          has_more: false,
+          partial: false,
+        } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const sourceRef = sourceRefFor('private_chat', 'chat-private-1', '小林')
+
+    await expect(service.relatedRecordingEligibility(sourceRef)).resolves.toEqual({ allowed: true })
+    expect(service.providerCapabilities().features).toMatchObject({ relatedRecordings: true })
+    expect(service.providerCapabilities().features).not.toHaveProperty('relatedRecordingSharing')
+    const firstPage = await service.relatedRecordings(sourceRef, { limit: 10, includeTimeIndex: true })
+    expect(firstPage).toMatchObject({
+      state: 'success', legacyTimeIndexFallback: true, timeIndexComplete: false,
+      items: [
+        { title: '自己的录音', isSharedByOther: false, transcript: '自己的原文' },
+        { title: '对方共享的录音', isSharedByOther: true, transcript: '对方共享的原文' },
+      ],
+    })
+    const ownerRef = firstPage.items[0]!.recordingRef
+    const incomingRef = firstPage.items[1]!.recordingRef
+    expect(ownerRef).toMatch(/^arkme-related-recording-v1\.[A-Za-z0-9_-]+$/)
+    expect(incomingRef).toMatch(/^arkme-related-recording-v1\.[A-Za-z0-9_-]+$/)
+    expect(ownerRef).not.toContain('moment-owner-secret')
+    expect(incomingRef).not.toContain('moment-incoming-secret')
+
+    const repeatedPage = await service.relatedRecordings(sourceRef)
+    expect(repeatedPage.items.map(item => item.recordingRef)).toEqual([ownerRef, incomingRef])
+    expect(requests.some(request => request.url.endsWith('/shared-recording'))).toBe(false)
+    expect(requests.some(request => request.url.endsWith('/shared-recording/revoke'))).toBe(false)
+  })
 })
