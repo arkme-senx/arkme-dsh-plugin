@@ -126,6 +126,9 @@ import type {
   ArkmeWorldAvatarFallback,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
+  ArkmeWorldInteractionCreateResult,
+  ArkmeWorldInteractionItem,
+  ArkmeWorldInteractionPage,
   ArkmeWorldRecordItem,
   ArkmeWorldRecordList,
   ArkmeWorldVisibility,
@@ -308,6 +311,12 @@ interface ArkmeWorldImageRefEntry {
   expiresAtMillis: number
 }
 
+interface ArkmeWorldRecordRefEntry {
+  viewerUserId: number
+  recordUid: string
+  expiresAtMillis: number
+}
+
 interface ArkmeWechatConversationRefPayload {
   version: 1
   userId: number
@@ -396,6 +405,8 @@ const MAX_ARKME_PROFILE_IMAGE_BYTES = 8 * 1024 * 1024
 const PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
 const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_IMAGE_REFS = 2048
+const ARKME_WORLD_RECORD_REF_TTL_MILLIS = 15 * 60 * 1000
+const MAX_ARKME_WORLD_RECORD_REFS = 4096
 export const MAX_ARKME_RELATED_RECORDING_PAGE_SIZE = 20
 export const MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH = 1024
 const MAX_ARKME_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
@@ -840,6 +851,13 @@ function worldTags(text: string): string[] {
   return [...text.matchAll(/#(\S+)/gu)].map(match => match[1] ?? '').filter(tag => tag !== '')
 }
 
+function stableWorldInteractionRecordUid(userId: number, targetRecordUid: string, clientMutationId: string): string {
+  const hex = createHash('sha256')
+    .update(`dsh-arkme:world-interaction:${String(userId)}:${targetRecordUid}:${clientMutationId}`)
+    .digest('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
+
 function trustedSignedImageUrl(environment: ArkmeEnvironment, raw: string): URL {
   let parsed: URL
   try {
@@ -976,6 +994,7 @@ export class ArkmeService {
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
   private readonly imageInFlight = new Map<string, Promise<ArkmeImageBytes>>()
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageRefEntry>()
+  private readonly worldRecordRefs = new Map<string, ArkmeWorldRecordRefEntry>()
   private imageCacheBytes = 0
   private activeImageDownloads = 0
   private readonly imageDownloadWaiters: Array<() => void> = []
@@ -1284,6 +1303,7 @@ export class ArkmeService {
         openPrivateChat: true,
         groupSettings: true,
         worldFeed: true,
+        worldInteractions: true,
         ...(this.relatedRecordingsEnabled() ? { relatedRecordings: true as const } : {}),
       },
       limits: {
@@ -1488,6 +1508,8 @@ export class ArkmeService {
     this.outgoingCallBroker.dispose()
     this.interwovenMomentReferences.clear()
     this.mediaRefs.clear()
+    this.worldImageRefs.clear()
+    this.worldRecordRefs.clear()
   }
 
   requestStats(): Record<string, ArkmeRequestStats> {
@@ -5907,6 +5929,8 @@ export class ArkmeService {
     this.aiPolishRetries.clear()
     this.interwovenMomentReferences.clear()
     this.mediaRefs.clear()
+    this.worldImageRefs.clear()
+    this.worldRecordRefs.clear()
     return { status: 'logged-out', environment: this.config.environment }
   }
 
@@ -6194,6 +6218,117 @@ export class ArkmeService {
     const nextOffset = offset + rawItems.length
     const hasMore = rawItems.length > 0 && nextOffset < total
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  /** Read the authenticated comment/reply tree behind one account-bound World reference. */
+  async listWorldInteractions(
+    recordRef: string,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldInteractionPage> {
+    const session = await this.requireSession()
+    const root = this.openWorldRecordRef(recordRef, session.userId)
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 50)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const data = await this.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/public-record/extend-list',
+      { record_uid: root.recordUid, limit, offset },
+      session,
+      options.signal,
+    )
+    const rawItems = listValue(data.list)
+    const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)
+    const projected = await Promise.all(rawItems.map(raw => this.worldInteractionItem(raw, session.userId, resolvedAvatars)))
+    const items = projected.filter((item): item is ArkmeWorldInteractionItem => item !== undefined)
+    const total = Math.max(0, Math.trunc(numberValue(data.total)))
+    const directCount = rawItems.filter(
+      raw => stringValue(objectValue(raw).parent_record_uid).trim() === root.recordUid,
+    ).length
+    const nextOffset = offset + directCount
+    const hasMore = data.has_more === true || (directCount > 0 && nextOffset < total)
+    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  /** Publish a text-only comment or reply while keeping its stable record UID inside the Provider. */
+  async createWorldTextInteraction(input: {
+    targetRef: string
+    textContent: string
+    clientMutationId: string
+    signal?: AbortSignal
+  }): Promise<ArkmeWorldInteractionCreateResult> {
+    const session = await this.requireSession()
+    const target = this.openWorldRecordRef(input.targetRef, session.userId)
+    const textContent = input.textContent.trim()
+    const clientMutationId = input.clientMutationId.trim()
+    if (textContent === '') throw new ArkmePluginError('world-interaction-text-empty', '请输入评论内容', false)
+    if (textContent.length > this.config.maxTextLength) {
+      throw new ArkmePluginError('world-interaction-text-too-long', `评论不能超过 ${this.config.maxTextLength} 个字符`, false)
+    }
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(clientMutationId)) {
+      throw new ArkmePluginError('world-interaction-mutation-invalid', '评论请求标识无效，请重试', false)
+    }
+    const snapshot = await this.refreshProfile()
+    if (snapshot.profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
+    const profile = snapshot.profile
+    if (profile.contact.phoneMasked === undefined) {
+      throw new ArkmePluginError('world-phone-binding-required', '请先在 Arkme 客户端绑定手机号，再参与互动', false)
+    }
+    const recordUid = stableWorldInteractionRecordUid(session.userId, target.recordUid, clientMutationId)
+    const recordResult = await this.createTextForConversation(recordUid, textContent)
+    if (recordResult.localState !== 'synced') {
+      throw new ArkmePluginError(
+        'world-interaction-record-pending',
+        recordResult.error ?? '评论已保存到待重试队列，请稍后重试',
+        true,
+      )
+    }
+    const createdAtMillis = Date.now()
+    let published: Record<string, unknown> = {}
+    try {
+      published = await this.authenticatedWorldPost<Record<string, unknown>>(
+        '/api/v1/public-record/publish',
+        {
+          record_uid: recordUid,
+          parent_record_uid: target.recordUid,
+          content: textContent,
+          text_content: textContent,
+          tags: worldTags(textContent),
+          original_topic_id: 0,
+          created_at: createdAtMillis,
+          nick_name: profile.nickname || profile.displayName,
+          avatar: profile.avatarRef,
+          template_kind: 1,
+        },
+        session,
+        input.signal,
+      )
+    } catch (error) {
+      if (input.signal?.aborted === true) throw error
+      let alreadyPublished = false
+      try { alreadyPublished = await this.worldRecordIsPublic(recordUid, input.signal) }
+      catch { /* Preserve the original publication failure. */ }
+      if (!alreadyPublished) throw error
+    }
+    const publishedItem = objectValue(published)
+    const interaction = await this.worldInteractionItem({
+      ...publishedItem,
+      record_uid: stringValue(publishedItem.record_uid).trim() || recordUid,
+      parent_record_uid: stringValue(publishedItem.parent_record_uid).trim() || target.recordUid,
+      user_id: Math.trunc(numberValue(publishedItem.user_id)) || session.userId,
+      nick_name: stringValue(publishedItem.nick_name ?? publishedItem.nickname).trim()
+        || profile.nickname || profile.displayName,
+      avatar: stringValue(publishedItem.avatar).trim() || profile.avatarRef,
+      content: stringValue(publishedItem.content).trim() || textContent,
+      text_content: stringValue(publishedItem.text_content).trim() || textContent,
+      created_at: Math.trunc(numberValue(publishedItem.created_at)) || createdAtMillis,
+      published_at: Math.trunc(numberValue(publishedItem.published_at)) || createdAtMillis,
+      images: listValue(publishedItem.images),
+      videos: listValue(publishedItem.videos),
+      voices: listValue(publishedItem.voices),
+    }, session.userId, new Map())
+    if (interaction === undefined) {
+      throw new ArkmePluginError('world-interaction-contract-invalid', '世界互动响应不完整，请刷新后确认', true, 502)
+    }
+    return { interaction }
   }
 
   /** Download one short-lived Provider-authorized World image for the current account. */
@@ -6872,11 +7007,81 @@ export class ArkmeService {
     return resolved
   }
 
+  private async worldInteractionItem(
+    raw: unknown,
+    viewerUserId: number,
+    resolvedAvatars: ReadonlyMap<string, string>,
+  ): Promise<ArkmeWorldInteractionItem | undefined> {
+    const item = objectValue(raw)
+    const recordUid = stringValue(item.record_uid).trim()
+    const parentRecordUid = stringValue(item.parent_record_uid).trim()
+    const textContent = stringValue(item.text_content ?? item.content).trim()
+    const imageCount = listValue(item.images).length
+    const videoCount = listValue(item.videos).length
+    const voiceCount = listValue(item.voices).length
+    if (recordUid === '' || parentRecordUid === '' || (textContent === '' && imageCount + videoCount + voiceCount === 0)) {
+      return undefined
+    }
+    const ownerUserId = Math.trunc(numberValue(item.user_id))
+    const rawAvatar = stringValue(item.avatar ?? item.head_img).trim()
+    const avatarUrl = rawAvatar.startsWith('file_asset://')
+      ? resolvedAvatars.get(worldAvatarResolutionKey(ownerUserId, rawAvatar)) ?? ''
+      : rawAvatar
+    const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
+    const avatarRef = this.isTrustedWorldImageUrl(avatarUrl)
+      ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
+      : undefined
+    return {
+      interactionRef: await this.worldRecordRef(viewerUserId, recordUid),
+      parentRef: await this.worldRecordRef(viewerUserId, parentRecordUid),
+      authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+      ...(avatarRef === undefined ? {} : { avatarRef }),
+      ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
+      textContent,
+      createdAtMillis: Math.trunc(numberValue(item.created_at)),
+      publishedAtMillis: Math.trunc(numberValue(item.published_at)),
+      imageCount,
+      videoCount,
+      voiceCount,
+    }
+  }
+
   private async worldRecordRef(viewerUserId: number, recordUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.stateStore.uniqueCode())
       .update(`world-record-v1:${String(viewerUserId)}:${recordUid}`)
       .digest('base64url')
-    return `arkme-world-record-v1.${digest}`
+    const recordRef = `arkme-world-record-v1.${digest}`
+    const now = Date.now()
+    this.pruneWorldRecordRefs(now)
+    this.worldRecordRefs.set(recordRef, {
+      viewerUserId,
+      recordUid,
+      expiresAtMillis: now + ARKME_WORLD_RECORD_REF_TTL_MILLIS,
+    })
+    return recordRef
+  }
+
+  private pruneWorldRecordRefs(now: number): void {
+    for (const [recordRef, entry] of this.worldRecordRefs) {
+      if (entry.expiresAtMillis <= now) this.worldRecordRefs.delete(recordRef)
+    }
+    while (this.worldRecordRefs.size >= MAX_ARKME_WORLD_RECORD_REFS) {
+      const oldest = this.worldRecordRefs.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.worldRecordRefs.delete(oldest)
+    }
+  }
+
+  private openWorldRecordRef(recordRef: string, viewerUserId: number): ArkmeWorldRecordRefEntry {
+    const normalized = recordRef.trim()
+    const entry = normalized.startsWith('arkme-world-record-v1.')
+      ? this.worldRecordRefs.get(normalized)
+      : undefined
+    if (entry === undefined || entry.viewerUserId !== viewerUserId || entry.expiresAtMillis <= Date.now()) {
+      this.worldRecordRefs.delete(normalized)
+      throw new ArkmePluginError('world-record-ref-invalid', '世界内容引用无效或已过期，请刷新世界', false, 403)
+    }
+    return entry
   }
 
   private pruneWorldImageRefs(now: number): void {
