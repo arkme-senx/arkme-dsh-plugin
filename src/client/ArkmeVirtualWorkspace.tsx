@@ -278,6 +278,13 @@ export function expandAncestorsForReveal(
   return next
 }
 
+export function isTopicRowFullyVisible(
+  rowRect: Pick<DOMRect, 'top' | 'bottom'>,
+  listRect: Pick<DOMRect, 'top' | 'bottom'>,
+): boolean {
+  return rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom
+}
+
 export function expandTopicFromRowClick(
   row: ArkmeSourceTreeRow,
   collapsedSourceRefs: Set<string>,
@@ -502,7 +509,14 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     setPendingRevealSourceRef(undefined)
     stopCreatedHighlightAnimation()
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-    element.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' })
+    const listElement = element.parentElement
+    const alreadyVisible = listElement !== null && isTopicRowFullyVisible(
+      element.getBoundingClientRect(),
+      listElement.getBoundingClientRect(),
+    )
+    if (!alreadyVisible) {
+      element.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' })
+    }
     setCreatedHighlight({ sourceRef, visible: reducedMotion })
 
     const beginHold = () => {

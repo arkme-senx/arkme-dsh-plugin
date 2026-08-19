@@ -6,7 +6,7 @@ import {
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
-  expandTopicFromRowClick, toggleTopicCollapsedState,
+  expandTopicFromRowClick, isTopicRowFullyVisible, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
 import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
@@ -102,6 +102,14 @@ describe('topic create UI', () => {
     ], 'created', collapsed)
 
     expect([...expanded]).toEqual(['unrelated'])
+  })
+
+  it('scrolls a created topic only when it is outside the visible list area', () => {
+    const listRect = { top: 100, bottom: 500 }
+
+    expect(isTopicRowFullyVisible({ top: 180, bottom: 220 }, listRect)).toBe(true)
+    expect(isTopicRowFullyVisible({ top: 80, bottom: 120 }, listRect)).toBe(false)
+    expect(isTopicRowFullyVisible({ top: 480, bottom: 520 }, listRect)).toBe(false)
   })
 
   it('expands a collapsed topic from its row without collapsing an expanded topic', () => {
