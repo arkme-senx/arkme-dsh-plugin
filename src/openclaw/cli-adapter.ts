@@ -15,6 +15,31 @@ export type OpenClawPreflightResult =
 
 export interface OpenClawCliAdapter {
   preflight(): Promise<OpenClawPreflightResult>
+  inspect(input: { agentId: string; accountId: string }): Promise<import('./types.js').OpenClawLocalResources>
+  ensureChannel(): Promise<{ changed: boolean }>
+  ensureAgent(input: { agentId: string; workspaceRef: string }): Promise<{ changed: boolean }>
+  ensureAccountSecretRef(input: { accountId: string; secretRef: import('./types.js').OpenClawSecretRef }): Promise<{ changed: boolean }>
+  ensureBinding(input: { agentId: string; accountId: string }): Promise<{ changed: boolean }>
+  gatewayStatus(): Promise<'reachable' | 'unreachable' | 'unknown'>
+  restartGateway(): Promise<void>
+}
+
+const JOTMO_CHANNEL_PACKAGE = '@jotmo/openclaw-channel@0.1.12'
+
+function assertSucceeded(result: OpenClawCommandResult, operation: string): void {
+  if (result.exitCode !== 0) throw new Error(`OpenClaw ${operation} failed`)
+}
+
+function jsonContainsExactString(stdout: string, expected: string): boolean {
+  let value: unknown
+  try { value = JSON.parse(stdout) } catch { return false }
+  const visit = (candidate: unknown): boolean => {
+    if (candidate === expected) return true
+    if (Array.isArray(candidate)) return candidate.some(visit)
+    if (candidate !== null && typeof candidate === 'object') return Object.values(candidate).some(visit)
+    return false
+  }
+  return visit(value)
 }
 
 function profileArgs(profile: string, ...command: string[]): readonly string[] {
@@ -70,6 +95,49 @@ export function createOpenClawCliAdapter(options: {
 
       const gatewayResult = await options.run(profileArgs(profile, 'gateway', 'status'))
       return { status: 'ready', version, gateway: parseGatewayReachability(gatewayResult) }
+    },
+    async inspect(input) {
+      const [channel, agents, account, bindings] = await Promise.all([
+        options.run(profileArgs(profile, 'plugins', 'inspect', 'jotmo-openclaw-channel', '--json')),
+        options.run(profileArgs(profile, 'agents', 'list', '--json')),
+        options.run(profileArgs(profile, 'config', 'get', `channels.jotmo.accounts.${input.accountId}`)),
+        options.run(profileArgs(profile, 'agents', 'bindings', '--json')),
+      ])
+      return {
+        channel: channel.exitCode === 0,
+        agent: agents.exitCode === 0 && jsonContainsExactString(agents.stdout, input.agentId),
+        account: account.exitCode === 0,
+        binding: bindings.exitCode === 0 && jsonContainsExactString(bindings.stdout, input.agentId) && jsonContainsExactString(bindings.stdout, `jotmo:${input.accountId}`),
+      }
+    },
+    async ensureChannel() {
+      const result = await options.run(profileArgs(profile, 'plugins', 'install', JOTMO_CHANNEL_PACKAGE, '--pin'))
+      assertSucceeded(result, 'channel install')
+      return { changed: true }
+    },
+    async ensureAgent(input) {
+      const result = await options.run(profileArgs(profile, 'agents', 'add', input.agentId, '--non-interactive', '--workspace', input.workspaceRef, '--json'))
+      assertSucceeded(result, 'agent creation')
+      return { changed: true }
+    },
+    async ensureAccountSecretRef(input) {
+      const provider = await options.run(profileArgs(profile, 'config', 'set', `secrets.providers.${input.secretRef.provider}`, '--provider-source', 'file', '--provider-path', input.secretRef.providerPath, '--provider-mode', 'singleValue'))
+      assertSucceeded(provider, 'secret provider configuration')
+      const account = await options.run(profileArgs(profile, 'config', 'set', `channels.jotmo.accounts.${input.accountId}.token`, '--ref-provider', input.secretRef.provider, '--ref-source', input.secretRef.source, '--ref-id', input.secretRef.id))
+      assertSucceeded(account, 'channel account configuration')
+      return { changed: true }
+    },
+    async ensureBinding(input) {
+      const result = await options.run(profileArgs(profile, 'agents', 'bind', '--agent', input.agentId, '--bind', `jotmo:${input.accountId}`, '--json'))
+      assertSucceeded(result, 'agent binding')
+      return { changed: true }
+    },
+    async gatewayStatus() {
+      return parseGatewayReachability(await options.run(profileArgs(profile, 'gateway', 'status')))
+    },
+    async restartGateway() {
+      const result = await options.run(profileArgs(profile, 'gateway', 'restart'))
+      assertSucceeded(result, 'gateway restart')
     },
   }
 }

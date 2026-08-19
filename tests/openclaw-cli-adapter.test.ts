@@ -15,6 +15,33 @@ function adapterFactory(): AdapterFactory {
 }
 
 describe('OpenClawCliAdapter', () => {
+  it('uses only fixed commands and SecretRef metadata while provisioning', async () => {
+    const calls: RunCall[] = []
+    const adapter = adapterFactory()({
+      profile: 'dev',
+      async run(args, options) {
+        calls.push({ args: [...args], ...options })
+        const command = args.slice(2).join(' ')
+        if (command === 'plugins inspect jotmo-openclaw-channel --json') return { exitCode: 1, stdout: '', stderr: 'not found' }
+        if (command === 'agents list --json') return { exitCode: 0, stdout: '[{"id":"arkme-bot-abc-extra"}]', stderr: '' }
+        if (command.startsWith('config get channels.jotmo.accounts.')) return { exitCode: 1, stdout: '', stderr: 'not found' }
+        if (command === 'agents bindings --json') return { exitCode: 0, stdout: '[]', stderr: '' }
+        return { exitCode: 0, stdout: '{}', stderr: '' }
+      },
+    }) as unknown as import('../src/openclaw/index.js').OpenClawCliPort
+
+    await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc' })).resolves.toEqual({ channel: false, agent: false, account: false, binding: false })
+    await adapter.ensureChannel()
+    await adapter.ensureAgent({ agentId: 'arkme-bot-abc', workspaceRef: '/owned/arkme-bot-abc' })
+    await adapter.ensureAccountSecretRef({ accountId: 'arkme-bot-abc', secretRef: { provider: 'arkme-bot-abc', source: 'file', id: 'value', providerPath: '/owned/secrets/abc.secret' } })
+    await adapter.ensureBinding({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc' })
+
+    expect(calls.map(call => call.args.slice(2))).toContainEqual(['plugins', 'install', '@jotmo/openclaw-channel@0.1.12', '--pin'])
+    expect(calls.map(call => call.args.slice(2))).toContainEqual(['agents', 'add', 'arkme-bot-abc', '--non-interactive', '--workspace', '/owned/arkme-bot-abc', '--json'])
+    expect(calls.map(call => call.args.slice(2))).toContainEqual(['config', 'set', 'secrets.providers.arkme-bot-abc', '--provider-source', 'file', '--provider-path', '/owned/secrets/abc.secret', '--provider-mode', 'singleValue'])
+    expect(calls.map(call => call.args.slice(2))).toContainEqual(['agents', 'bind', '--agent', 'arkme-bot-abc', '--bind', 'jotmo:arkme-bot-abc', '--json'])
+    expect(calls.every(call => call.stdin === undefined)).toBe(true)
+  })
   it('rejects an empty host-configured profile without invoking OpenClaw', async () => {
     const calls: RunCall[] = []
     const createAdapter = adapterFactory()
