@@ -33,6 +33,13 @@ import type {
   ArkmeCreateTextResult,
   ArkmeDirectTextSendResult,
   ArkmeEnvironment,
+  ArkmeGroupActionResult,
+  ArkmeGroupMemberItem,
+  ArkmeGroupMemberList,
+  ArkmeGroupMemberRole,
+  ArkmeGroupMemberStatus,
+  ArkmeGroupNotificationResult,
+  ArkmeGroupSettingsSnapshot,
   ArkmeIdAvailabilityReason,
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
@@ -42,6 +49,7 @@ import type {
   ArkmeGroupAiPolishSnapshot,
   ArkmeImageBytes,
   ArkmeImageMediaType,
+  ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
@@ -69,6 +77,7 @@ import type {
   ArkmeTopicCreateResult,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
+  ArkmeUserCardSnapshot,
   ArkmeWorldPublishResult,
   ArkmeWorldRecordItem,
   ArkmeWorldRecordList,
@@ -234,7 +243,8 @@ interface ArkmeWechatCursorPayload {
 interface ArkmePublicProfile {
   userId: number
   displayName: string
-  avatarUrl: string
+  avatarUrl?: string
+  arkmeId?: string
 }
 
 interface ScanResponse {
@@ -414,6 +424,12 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function chatMessageDnd(value: unknown): boolean | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const policy = value as Record<string, unknown>
+  return numberValue(policy.mute_state) === 2 || numberValue(policy.notify_state) === 2
+}
+
 function listValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
@@ -466,6 +482,20 @@ function worldVisibility(checkStatus: number): ArkmeWorldVisibility {
   if (checkStatus === 1) return 'pending_review'
   if (checkStatus === 4) return 'rejected'
   if (checkStatus === 0 || checkStatus === 2 || checkStatus === 3) return 'visible'
+  return 'unknown'
+}
+
+function chatMemberRole(value: unknown): ArkmeGroupMemberRole {
+  if (value === 'owner' || value === 1) return 'owner'
+  if (value === 'admin' || value === 2) return 'admin'
+  if (value === 'member' || value === 'participant' || value === 3) return 'member'
+  return 'unknown'
+}
+
+function chatMemberStatus(value: unknown): ArkmeGroupMemberStatus {
+  if (value === 'active' || value === 1) return 'active'
+  if (value === 'left' || value === 2) return 'left'
+  if (value === 'removed' || value === 3) return 'removed'
   return 'unknown'
 }
 
@@ -750,6 +780,10 @@ export class ArkmeService {
         sourceTimeline: true,
         sourceTextSend: true,
         outgoingCall: true,
+        groupMembers: true,
+        userCard: true,
+        openPrivateChat: true,
+        groupSettings: true,
       },
       limits: {
         maxTextLength: this.config.maxTextLength,
@@ -1613,6 +1647,7 @@ export class ArkmeService {
       const latestRecord = objectValue(latestPreview.record)
       const latestPayload = objectValue(latestRecord.payload)
       const unread = objectValue(bundle.unread_snapshot)
+      const isMuted = chatMessageDnd(bundle.current_policy) ?? false
       const uid = stringValue(chatSession.chat_session_uid).trim()
       const sessionKind = numberValue(chatSession.session_kind)
       const kind: ArkmeSourceKind | undefined = sessionKind === 2
@@ -1633,6 +1668,7 @@ export class ArkmeService {
         ...(preview === '' ? {} : { latestPreview: preview }),
         activeAtMillis: numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
         unreadCount: numberValue(unread.unread_count),
+        isMuted,
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
           ? { latestSequence: numberValue(unread.session_last_seq ?? chatSession.last_seq) }
           : {}),
@@ -1948,6 +1984,300 @@ export class ArkmeService {
     }
     this.aiPolishConfirmations.delete(confirmationRef.trim())
     return { groupName: pending.groupName, enabled: false, ruleName: pending.ruleName ?? '', changed: current.enabled }
+  }
+
+  async listGroupMembers(
+    sourceRef: string,
+    options: { activeOnly?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberList> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持查看群聊成员', false)
+    }
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/members/list',
+      { chat_session_uid: source.ownerRef, active_only: options.activeOnly !== false },
+      session,
+      options.signal,
+    )
+    const rawItems = listValue(data.items).map(objectValue)
+    const userIds = rawItems
+      .map(item => numberValue(item.user_id))
+      .filter(userId => Number.isSafeInteger(userId) && userId > 0)
+    const profiles = await this.publicProfileSummariesByUserIds(userIds, session, options.signal).catch(() => new Map())
+    const members: ArkmeGroupMemberItem[] = []
+    for (const item of rawItems) {
+      const userId = numberValue(item.user_id)
+      if (!Number.isSafeInteger(userId) || userId <= 0) continue
+      const profile = profiles.get(userId)
+      const remarkName = stringValue(item.remark).trim()
+      const memberName = stringValue(item.display_name_snapshot).trim()
+      const profileDisplayName = profile?.displayName.trim() ?? ''
+      const publicDisplayName = profileDisplayName === `用户 ${String(userId)}` ? '' : profileDisplayName
+      const displayName = [remarkName, memberName, publicDisplayName]
+        .find(value => value !== '' && value !== '成员' && value !== '群成员')
+        ?? '群成员'
+      const secondaryName = [memberName, publicDisplayName, remarkName]
+        .find(value => value !== '' && value !== '成员' && value !== '群成员' && value !== displayName)
+        ?? ''
+      const role = chatMemberRole(item.role)
+      const status = chatMemberStatus(item.status)
+      members.push({
+        userId,
+        displayName,
+        ...(memberName === '' ? {} : { memberName }),
+        ...(secondaryName === '' ? {} : { secondaryName }),
+        ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, userId) }),
+        role,
+        status,
+        isSelf: userId === session.userId,
+        isOwner: role === 'owner',
+        joinedAtMillis: numberValue(item.join_at),
+      })
+    }
+    const roleRank = (role: ArkmeGroupMemberRole) => role === 'owner' ? 0 : role === 'admin' ? 1 : role === 'member' ? 2 : 3
+    members.sort((left, right) => roleRank(left.role) - roleRank(right.role)
+      || (right.status === 'active' ? 1 : 0) - (left.status === 'active' ? 1 : 0)
+      || left.joinedAtMillis - right.joinedAtMillis
+      || left.userId - right.userId)
+    const self = members.find(item => item.isSelf)
+    const resultSource = await this.sourceItem(source)
+    this.chatSourceCache.set(`${String(session.userId)}:${source.ownerRef}`, resultSource)
+    return {
+      source: resultSource,
+      items: members,
+      total: members.length,
+      activeCount: members.filter(item => item.status === 'active').length,
+      selfRole: self?.role ?? 'unknown',
+      selfStatus: self?.status ?? 'unknown',
+    }
+  }
+
+  async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持查看群聊设置', false)
+    }
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/detail',
+      { chat_session_uid: source.ownerRef },
+      session,
+      signal,
+    )
+    const chatSession = objectValue(data.session)
+    const currentMember = objectValue(data.current_member)
+    const title = stringValue(chatSession.title).trim() || source.displayName
+    const messageDnd = chatMessageDnd(data.current_policy) ?? false
+    const nextSource: ArkmeSourceItem = {
+      sourceRef: await this.sealSourceRef(session.userId, 'group_chat', source.ownerRef, title),
+      kind: 'group_chat',
+      displayName: title,
+      activeAtMillis: numberValue(chatSession.last_active_at),
+      unreadCount: numberValue(objectValue(data.unread_snapshot).unread_count),
+      isMuted: messageDnd,
+      ...((numberValue(chatSession.last_seq)) > 0 ? { latestSequence: numberValue(chatSession.last_seq) } : {}),
+    }
+    try {
+      await this.hydrateSourceAvatars([nextSource], new Map(), new Map([[0, source.ownerRef]]), session, signal)
+    } catch {
+      // Settings must remain readable if group-avatar decoration is temporarily unavailable.
+    }
+    this.chatSourceCache.set(`${String(session.userId)}:${source.ownerRef}`, nextSource)
+    const selfRole = chatMemberRole(currentMember.role)
+    const selfStatus = chatMemberStatus(currentMember.status)
+    const active = selfStatus === 'active'
+    return {
+      source: nextSource,
+      selfRole,
+      selfStatus,
+      canRename: active && selfRole === 'owner',
+      canDissolve: active && selfRole === 'owner',
+      canLeave: active && selfRole !== 'owner',
+      messageDnd,
+    }
+  }
+
+  async setGroupMessageDnd(
+    sourceRef: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupNotificationResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持设置群聊消息免打扰', false)
+    }
+    const current = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/policy/get',
+      { chat_session_uid: source.ownerRef },
+      session,
+      signal,
+    )
+    await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/policy/update',
+      {
+        chat_session_uid: source.ownerRef,
+        show_in_home_state: numberValue(current.show_in_home_state) || 1,
+        privacy_state: numberValue(current.privacy_state) || 1,
+        mute_state: enabled ? 2 : 1,
+        pin_state: numberValue(current.pin_state) || 1,
+        notify_state: enabled ? 2 : 1,
+        status: numberValue(current.status) || 1,
+        update_at: Date.now(),
+      },
+      session,
+      signal,
+    )
+    const cacheKey = `${String(session.userId)}:${source.ownerRef}`
+    const cached = this.chatSourceCache.get(cacheKey)
+    if (cached !== undefined) this.chatSourceCache.set(cacheKey, { ...cached, isMuted: enabled })
+    return {
+      messageDnd: enabled,
+    }
+  }
+
+  async renameGroup(sourceRef: string, title: string, signal?: AbortSignal): Promise<ArkmeGroupActionResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    const normalizedTitle = title.trim()
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持重命名群聊', false)
+    }
+    if (normalizedTitle === '' || normalizedTitle.length > 80) {
+      throw new ArkmePluginError('group-title-invalid', '群聊名称需为 1-80 个字符', false)
+    }
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/rename',
+      { chat_session_uid: source.ownerRef, title: normalizedTitle, update_at: Date.now() },
+      session,
+      signal,
+    )
+    const nextSource = await this.chatSourceFromBundle(data, session, this.chatSourceCache.get(`${String(session.userId)}:${source.ownerRef}`), [])
+    try {
+      await this.hydrateSourceAvatars([nextSource], new Map(), new Map([[0, source.ownerRef]]), session, signal)
+    } catch {
+      // Rename success is authoritative; avatar refresh is optional.
+    }
+    this.chatSourceCache.set(`${String(session.userId)}:${source.ownerRef}`, nextSource)
+    return { source: nextSource, status: 'ok' }
+  }
+
+  async leaveGroup(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupActionResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持退出群聊', false)
+    }
+    await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/members/update',
+      { chat_session_uid: source.ownerRef, target_user_id: session.userId, action: 1 },
+      session,
+      signal,
+    )
+    const nextSource = await this.sourceItem(source)
+    this.chatSourceCache.set(`${String(session.userId)}:${source.ownerRef}`, nextSource)
+    return { source: nextSource, status: 'ok' }
+  }
+
+  async dissolveGroup(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupActionResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持解散群聊', false)
+    }
+    await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/dissolve',
+      { chat_session_uid: source.ownerRef, update_at: Date.now() },
+      session,
+      signal,
+    )
+    const nextSource = await this.sourceItem(source)
+    this.chatSourceCache.set(`${String(session.userId)}:${source.ownerRef}`, nextSource)
+    return { source: nextSource, status: 'ok' }
+  }
+
+  async reportGroup(sourceRef: string, reason: string, signal?: AbortSignal): Promise<ArkmeGroupActionResult> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('group-source-invalid', '仅支持举报群聊', false)
+    }
+    await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/report',
+      {
+        chat_session_uid: source.ownerRef,
+        report_type: 2,
+        reason: reason.trim().slice(0, 200),
+        created_at: Date.now(),
+      },
+      session,
+      signal,
+    )
+    return { source: await this.sourceItem(source), status: 'ok' }
+  }
+
+  async userCard(userId: number, signal?: AbortSignal): Promise<ArkmeUserCardSnapshot> {
+    const session = await this.requireSession()
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new ArkmePluginError('user-card-target-invalid', '用户信息参数无效', false)
+    }
+    const profile = (await this.publicProfileSummariesByUserIds([userId], session, signal)).get(userId)
+    const displayName = profile?.displayName ?? '群成员'
+    return {
+      displayName,
+      ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, userId) }),
+    }
+  }
+
+  async openPrivateChatFromUser(
+    peerUserId: number,
+    options: { displayName?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeOpenPrivateChatResult> {
+    const session = await this.requireSession()
+    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+      throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
+    }
+    if (peerUserId === session.userId) {
+      throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
+    }
+    const profile = (await this.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
+    const displayName = options.displayName?.trim() || profile?.displayName || '群成员'
+    const ownerSnapshot = (await this.stateStore.cachedProfile(session.userId).catch(() => undefined))?.profile?.displayName
+      ?? ''
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/create-private',
+      {
+        chat_session_uid: `chat_session_${crypto.randomUUID()}`,
+        peer_user_id: peerUserId,
+        title: displayName,
+        create_at: Date.now(),
+        owner_display_name_snapshot: ownerSnapshot,
+        peer_display_name_snapshot: displayName,
+        extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
+      },
+      session,
+      options.signal,
+    )
+    const chatSession = objectValue(data.session)
+    const uid = stringValue(chatSession.chat_session_uid).trim()
+    if (uid === '') {
+      throw new ArkmePluginError('private-chat-contract-invalid', '私聊会话响应不完整', true, 502)
+    }
+    const unread = objectValue(data.unread_snapshot)
+    const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+    const source: ArkmeSourceItem = {
+      sourceRef: await this.sealSourceRef(session.userId, 'private_chat', uid, displayName),
+      kind: 'private_chat',
+      displayName,
+      ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, peerUserId) }),
+      activeAtMillis: numberValue(chatSession.last_active_at) || Date.now(),
+      unreadCount: numberValue(unread.unread_count),
+      ...(latestSequence > 0 ? { latestSequence } : {}),
+    }
+    this.chatSourceCache.set(`${String(session.userId)}:${uid}`, source)
+    return { source }
   }
 
   async readSource(
@@ -2402,6 +2732,7 @@ export class ArkmeService {
     const counterpart = objectValue(bundle.private_counterpart)
     const supplement = objectValue(bundle.private_supplement)
     const unread = objectValue(bundle.unread_snapshot)
+    const isMuted = chatMessageDnd(bundle.current_policy) ?? cached?.isMuted ?? false
     const uid = stringValue(chatSession.chat_session_uid).trim()
     const sessionKind = numberValue(chatSession.session_kind)
     const kind: ArkmeSourceKind | undefined = sessionKind === 2
@@ -2435,6 +2766,7 @@ export class ArkmeService {
         latestItem?.sendAtMillis ?? 0,
       ),
       unreadCount: Math.max(0, Math.trunc(numberValue(unread.unread_count))),
+      isMuted,
       ...(latestSequence > 0 ? { latestSequence } : {}),
     }
   }
@@ -3089,14 +3421,14 @@ export class ArkmeService {
     )
   }
 
-  private async publicProfilesByUserIds(
+  private async publicProfileSummariesByUserIds(
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
     const profiles = new Map<number, ArkmePublicProfile>()
-    for (const batch of chunksOf(normalized, 100)) {
+    for (const batch of chunksOf(normalized, 50)) {
       if (batch.length === 0) continue
       const data = await this.authenticatedAuthPost<Record<string, unknown>>(
         '/api/v1/auth/get-public-users-by-ids',
@@ -3107,16 +3439,40 @@ export class ArkmeService {
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
         const userId = numberValue(item.user_id)
+        if (!batch.includes(userId)) continue
+        const displayName = stringValue(item.nick_name ?? item.display_name ?? item.name_slug).trim()
+        const arkmeId = stringValue(item.name_slug ?? item.arkme_id).trim()
         const avatarUrl = stringValue(item.head_img).trim()
-        if (!batch.includes(userId) || avatarUrl === '') continue
-        try { trustedSignedImageUrl(this.config.environment, avatarUrl) }
-        catch { continue }
+        let trustedAvatarUrl: string | undefined
+        if (avatarUrl !== '') {
+          try {
+            trustedSignedImageUrl(this.config.environment, avatarUrl)
+            trustedAvatarUrl = avatarUrl
+          } catch {
+            trustedAvatarUrl = undefined
+          }
+        }
         profiles.set(userId, {
           userId,
-          displayName: stringValue(item.nick_name).trim(),
-          avatarUrl,
+          displayName: displayName || `用户 ${String(userId)}`,
+          ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
+          ...(arkmeId === '' ? {} : { arkmeId }),
         })
       }
+    }
+    return profiles
+  }
+
+  private async publicProfilesByUserIds(
+    userIds: readonly number[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<number, ArkmePublicProfile>> {
+    const profiles = new Map<number, ArkmePublicProfile>()
+    const summaries = await this.publicProfileSummariesByUserIds(userIds, session, signal)
+    for (const [userId, profile] of summaries) {
+      if (profile.avatarUrl === undefined) continue
+      profiles.set(userId, profile)
     }
     return profiles
   }
@@ -3172,8 +3528,12 @@ export class ArkmeService {
       if (profile === undefined) {
         throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
       }
+      const avatarUrl = profile.avatarUrl
+      if (avatarUrl === undefined) {
+        throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+      }
       return await this.downloadSignedImage(
-        trustedSignedImageUrl(this.config.environment, profile.avatarUrl), byteLimit, options.signal,
+        trustedSignedImageUrl(this.config.environment, avatarUrl), byteLimit, options.signal,
       )
     }
     const fileId = imageFileIdFromRef(imageRef, session.userId)

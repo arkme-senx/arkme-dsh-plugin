@@ -5,6 +5,7 @@ import type {
 import { callArkme } from './api.js'
 import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
+import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeOfficialCommunityEntry } from './ArkmeOfficialCommunityEntry.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
@@ -92,6 +93,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 15, lineHeight: '20px', fontWeight: 500,
   },
   chatTime: { flex: 'none', color: colors.caption, fontSize: 11, lineHeight: '16px' },
+  muteIcon: { flex: 'none', display: 'inline-flex', color: colors.secondary },
   chatBottom: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   preview: {
     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -635,7 +637,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     if (authenticated) void loadDirectory(directory)
     else { directoryRequestAbortRef.current?.abort(); setSources([]) }
     return () => { directoryRequestAbortRef.current?.abort() }
-  }, [authenticated, directory, loadDirectory])
+  }, [authenticated, directory, loadDirectory, ui.chatRevision])
   useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources
@@ -860,6 +862,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
                 <span style={styles.chatName}>{source.displayName}</span>
+                {source.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={16} /></span>}
                 <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
