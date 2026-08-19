@@ -1,5 +1,4 @@
 import type { ArkmeSourceItem } from '../types.js'
-import { sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 
 export interface ArkmeSourceTreeNode {
   source: ArkmeSourceItem
@@ -45,18 +44,6 @@ export function buildArkmeSourceTree(sources: ArkmeSourceItem[]): ArkmeSourceTre
     else parentNode.children.push(node)
   }
   return roots
-}
-
-/** Sort roots and every sibling group while preserving parent-child adjacency. */
-export function sortArkmeSourceTree(
-  nodes: readonly ArkmeSourceTreeNode[],
-  sort: ArkmeSourceSort,
-): ArkmeSourceTreeNode[] {
-  const nodeByRef = new Map(nodes.map(node => [node.source.sourceRef, node]))
-  return sortArkmeSources(nodes.map(node => node.source), sort).map(source => {
-    const node = nodeByRef.get(source.sourceRef)!
-    return { source: node.source, children: sortArkmeSourceTree(node.children, sort) }
-  })
 }
 
 export function flattenVisibleArkmeSourceTree(

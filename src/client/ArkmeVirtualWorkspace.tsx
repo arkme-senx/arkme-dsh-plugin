@@ -14,10 +14,9 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
-import { type ArkmeSourceSort } from './source-list.js'
+import { arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import {
-  buildArkmeSourceTree, flattenVisibleArkmeSourceTree, sortArkmeSourceTree,
-  type ArkmeSourceTreeRow,
+  buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
 
 export interface ArkmeNavigationProps {
@@ -66,6 +65,7 @@ const styles: Record<string, CSSProperties> = {
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
   topicList: { paddingBottom: 74 },
+  topicCardList: { paddingTop: 0 },
   chatRow: {
     position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
     padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
@@ -148,6 +148,36 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer', font: 'inherit', lineHeight: 1, pointerEvents: 'auto',
   },
   topicCreatePlus: { width: 16, height: 16 },
+  topicCard: {
+    position: 'relative', width: 'calc(100% - 24px)', minHeight: 56, margin: '0 12px 8px',
+    boxSizing: 'border-box', overflow: 'hidden', borderRadius: 9,
+    background: 'var(--dsw-alias-fill-secondary, #f6f6f6)', color: 'inherit',
+  },
+  topicCardButton: {
+    width: '100%', minHeight: 56, display: 'flex', flexDirection: 'column', alignItems: 'stretch',
+    justifyContent: 'center', gap: 2, padding: '8px 40px 8px 10px', boxSizing: 'border-box',
+    border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  },
+  topicCardName: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 14, lineHeight: '20px', fontWeight: 400,
+  },
+  topicCardMeta: {
+    minWidth: 0, display: 'flex', alignItems: 'center', gap: 5,
+    color: colors.secondary, fontSize: 12, lineHeight: '17px',
+  },
+  topicCardCount: {
+    minWidth: 18, height: 17, padding: '0 4px', boxSizing: 'border-box', borderRadius: 4,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: 'var(--dsw-specific-sidebar-fill, #fff)', color: colors.caption,
+  },
+  topicCardMetaText: { flex: 'none', whiteSpace: 'nowrap' },
+  topicCardPreview: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  topicCardHover: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
+  topicCardCreateMask: {
+    position: 'absolute', zIndex: 3, top: 7, right: 8, width: 24, height: 24,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
+  },
   topicCreateFooter: {
     position: 'absolute', zIndex: 4, left: 0, right: 0, bottom: 0,
     display: 'flex', justifyContent: 'center', padding: '10px 12px 22px',
@@ -276,6 +306,57 @@ export function ArkmeTopicTreeRow({
   </div>
 }
 
+export interface ArkmeTopicCardProps {
+  source: ArkmeSourceItem
+  selected: boolean
+  hovered: boolean
+  createdHighlightActive?: boolean
+  createdHighlightVisible?: boolean
+  rowRef?: (node: HTMLDivElement | null) => void
+  onHoverChange: (hovered: boolean) => void
+  onSelect: () => void
+  onCreateChild: () => void
+}
+
+export function ArkmeTopicCard({
+  source, selected, hovered, createdHighlightActive = false, createdHighlightVisible = false, rowRef,
+  onHoverChange, onSelect, onCreateChild,
+}: ArkmeTopicCardProps) {
+  const time = arkmeSourceTimeLabel(source.activeAtMillis)
+  const preview = source.latestPreview?.trim() ?? ''
+  return <div
+    ref={rowRef} role="listitem"
+    style={{
+      ...styles.topicCard,
+      ...(createdHighlightActive ? {
+        transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease, box-shadow ${createdHighlightVisible ? 140 : 800}ms ease`,
+      } : {}),
+      ...(selected ? styles.topicActive : {}),
+      ...(hovered && !selected ? styles.topicCardHover : {}),
+      ...(createdHighlightVisible ? styles.topicCreated : {}),
+    }}
+    onMouseEnter={() => { onHoverChange(true) }} onMouseLeave={() => { onHoverChange(false) }}
+  >
+    <button type="button" aria-pressed={selected} style={styles.topicCardButton} onClick={onSelect}>
+      <span style={styles.topicCardName}>{source.displayName}</span>
+      <span style={styles.topicCardMeta}>
+        <span style={styles.topicCardCount}>{source.recordCount ?? 0}</span>
+        {time !== '' && <span style={styles.topicCardMetaText}>{time}{preview === '' ? '' : '：'}</span>}
+        {preview !== '' && <span style={styles.topicCardPreview}>{preview}</span>}
+      </span>
+    </button>
+    {source.kind === 'topic' && hovered && <span style={styles.topicCardCreateMask}>
+      <button
+        type="button" style={styles.topicCreateIcon}
+        aria-label={`在${source.displayName}下创建子主题`} title="创建子主题"
+        onClick={event => { event.stopPropagation(); onCreateChild() }}
+      ><svg aria-hidden viewBox="0 0 16 16" style={styles.topicCreatePlus}>
+        <path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      </svg></button>
+    </span>}
+  </div>
+}
+
 export function expandAncestorsForReveal(
   sources: readonly ArkmeSourceItem[],
   sourceRef: string,
@@ -340,6 +421,25 @@ export function ArkmeTopicCreateFooter({ onCreate }: { onCreate: () => void }) {
   </div>
 }
 
+export function ArkmeSourceSortControl({
+  value, onChange,
+}: { value: ArkmeSourceSort, onChange: (value: ArkmeSourceSort) => void }) {
+  return <label style={styles.sortControl}>
+    <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}>排序</span>
+    <select
+      style={styles.sortSelect} aria-label="发给自己排序" value={value}
+      onChange={event => { onChange(event.currentTarget.value as ArkmeSourceSort) }}
+    >
+      <option value="default">默认</option>
+      <option value="latest">最新</option>
+      <option value="most">最多</option>
+    </select>
+    <svg aria-hidden viewBox="0 0 10 10" style={styles.sortArrow}>
+      <path d="m2 3.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </label>
+}
+
 export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
@@ -359,7 +459,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     initialCache?.sources[initialCache.directory] ?? [],
   )
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
-  const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('latest')
+  const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('default')
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicCreateParent, setTopicCreateParent] = useState<ArkmeSourceItem | null>()
   const [topicCreateParentLevel, setTopicCreateParentLevel] = useState<number>()
@@ -369,14 +469,19 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [createdHighlight, setCreatedHighlight] = useState<{ sourceRef: string, visible: boolean }>()
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
-  const sourceTree = useMemo(
-    () => sortArkmeSourceTree(buildArkmeSourceTree(sources), sourceSort),
-    [sourceSort, sources],
-  )
+  const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
   const visibleSourceRows = useMemo(
     () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
     [collapsedSourceRefs, sourceTree],
   )
+  const cardSources = useMemo(
+    () => sourceSort === 'default' ? [] : sortArkmeSources(sources, sourceSort),
+    [sourceSort, sources],
+  )
+  const sourceLevelByRef = useMemo(() => new Map(
+    flattenVisibleArkmeSourceTree(sourceTree, new Set()).map(row => [row.source.sourceRef, row.depth + 1]),
+  ), [sourceTree])
+  const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
 
   const stopCreatedHighlightAnimation = useCallback(() => {
@@ -666,20 +771,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         onClick={() => { changeDirectory('root') }}
       >‹</button>
       <h2 style={styles.headerTitle}>发给自己</h2>
-      <label style={styles.sortControl}>
-        <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}>排序</span>
-        <select
-          style={styles.sortSelect} aria-label="发给自己排序" value={sourceSort}
-          onChange={event => { setSourceSort(event.currentTarget.value as ArkmeSourceSort) }}
-        >
-          <option value="latest">最新</option>
-          <option value="most">最多</option>
-          <option value="name">名称</option>
-        </select>
-        <svg aria-hidden viewBox="0 0 10 10" style={styles.sortArrow}>
-          <path d="m2 3.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </label>
+      <ArkmeSourceSortControl value={sourceSort} onChange={value => {
+        setSourceSort(value)
+        setHoveredSourceRef(undefined)
+      }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
 
@@ -687,8 +782,13 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
     <div
-      style={{ ...styles.list, ...(directory === 'send_to_self' ? styles.topicList : {}) }}
-      role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
+      style={{
+        ...styles.list,
+        ...(directory === 'send_to_self' ? styles.topicList : {}),
+        ...(directory === 'send_to_self' && cardMode ? styles.topicCardList : {}),
+      }}
+      role={directory === 'send_to_self' && cardMode ? 'list' : 'tree'}
+      aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
         {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
@@ -731,7 +831,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         })}
       </>}
 
-      {directory === 'send_to_self' && visibleSourceRows.map(row => {
+      {directory === 'send_to_self' && !cardMode && visibleSourceRows.map(row => {
         const source = row.source
         const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
         return <ArkmeTopicTreeRow
@@ -747,6 +847,23 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           onToggle={() => { toggleSource(source.sourceRef) }}
           onSelect={() => { selectTopicSource(row) }}
           onCreateChild={() => { openTopicCreate(source, row.depth + 1) }}
+        />
+      })}
+
+      {directory === 'send_to_self' && cardMode && cardSources.map(source => {
+        const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
+        return <ArkmeTopicCard
+          key={source.sourceRef} source={source} selected={selected}
+          hovered={hoveredSourceRef === source.sourceRef}
+          createdHighlightActive={createdHighlight?.sourceRef === source.sourceRef}
+          createdHighlightVisible={createdHighlight?.sourceRef === source.sourceRef && createdHighlight.visible}
+          rowRef={node => {
+            if (node === null) topicRowElementsRef.current.delete(source.sourceRef)
+            else topicRowElementsRef.current.set(source.sourceRef, node)
+          }}
+          onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
+          onSelect={() => { selectSource(source) }}
+          onCreateChild={() => { openTopicCreate(source, sourceLevelByRef.get(source.sourceRef)) }}
         />
       })}
 

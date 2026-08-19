@@ -1,6 +1,6 @@
 import type { ArkmeSourceItem } from '../types.js'
 
-export type ArkmeSourceSort = 'latest' | 'most' | 'name'
+export type ArkmeSourceSort = 'default' | 'latest' | 'most'
 
 const nameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 
@@ -17,6 +17,7 @@ export function sortArkmeSources(
   sources: readonly ArkmeSourceItem[],
   sort: ArkmeSourceSort,
 ): ArkmeSourceItem[] {
+  if (sort === 'default') return [...sources]
   return sources.map((source, index) => ({ source, index })).sort((left, right) => {
     let compared = 0
     if (sort === 'latest') {
@@ -26,8 +27,6 @@ export function sortArkmeSources(
       if (compared === 0) {
         compared = finiteValue(right.source.activeAtMillis) - finiteValue(left.source.activeAtMillis)
       }
-    } else {
-      compared = compareNames(left.source, right.source)
     }
     if (compared !== 0) return compared
     compared = compareNames(left.source, right.source)
@@ -48,7 +47,12 @@ export function arkmeSourceTimeLabel(value: number, nowMillis = Date.now()): str
     }).format(date)
   }
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime()
-  if (day === yesterday) return '昨天'
+  if (day === yesterday) {
+    const time = new Intl.DateTimeFormat('zh-CN', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(date)
+    return `昨天 ${time}`
+  }
   const sixDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime()
   if (day >= sixDaysAgo && day < today) {
     return new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(date)

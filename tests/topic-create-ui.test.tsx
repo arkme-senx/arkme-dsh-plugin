@@ -1,11 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
-  ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
+  ArkmeSourceSortControl, ArkmeTopicCard, ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
   canCreateChildTopicAtParentLevel, expandTopicFromRowClick, isTopicRowFullyVisible,
   mergeCreatedTopicSource, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
@@ -29,6 +29,43 @@ const topicRow: ArkmeSourceTreeRow = {
 }
 
 describe('topic create UI', () => {
+  it('offers default, latest and most sorting without a name mode', () => {
+    const control = renderToStaticMarkup(<ArkmeSourceSortControl value="default" onChange={() => {}} />)
+
+    expect(control).toContain('value="default" selected="">默认')
+    expect(control).toContain('value="latest">最新')
+    expect(control).toContain('value="most">最多')
+    expect(control).not.toContain('value="name"')
+    expect(control).not.toContain('名称')
+  })
+
+  it('renders latest and most entries as flat compact cards', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 19, 11, 45))
+    try {
+      const card = renderToStaticMarkup(<ArkmeTopicCard
+        source={{
+          sourceRef: 'default', kind: 'default_category', displayName: '默认分类',
+          activeAtMillis: new Date(2026, 7, 18, 16, 13).getTime(), unreadCount: 0,
+          recordCount: 433, latestPreview: '是第三十四',
+        }}
+        selected={false} hovered={false} onHoverChange={() => {}}
+        onSelect={() => {}} onCreateChild={() => {}}
+      />)
+
+      expect(card).toContain('role="listitem"')
+      expect(card).toContain('border-radius:9px')
+      expect(card).toContain('min-height:56px')
+      expect(card).toContain('默认分类')
+      expect(card).toContain('>433</span>')
+      expect(card).toContain('昨天 16:13：')
+      expect(card).toContain('是第三十四')
+      expect(card).not.toContain('创建子主题')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the create dialog focused on the topic name without magnet settings', () => {
     const child = renderDialog('child')
     const root = renderDialog('topic')
