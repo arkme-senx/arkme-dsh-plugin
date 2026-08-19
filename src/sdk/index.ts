@@ -26,6 +26,7 @@ import type {
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
+  ArkmeWorldFeedPage,
 } from '../types.js'
 
 export type {
@@ -66,6 +67,8 @@ export type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
+  ArkmeWorldFeedItem,
+  ArkmeWorldFeedPage,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -152,6 +155,22 @@ export class ArkmeSdk {
   /** Convert a Provider image payload into a browser-renderable data URL. */
   imageDataUrl(image: ArkmeImagePayload): string {
     return `data:${image.mediaType};base64,${image.dataBase64}`
+  }
+
+  /** Read the public World feed through the authenticated Provider boundary. */
+  async worldFeed(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    return await this.call<ArkmeWorldFeedPage>('world.feed', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
+  /** Resolve one Provider-issued World image ref without exposing its signed source URL. */
+  async readWorldImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {
+    if (imageRef.trim() === '') throw new TypeError('Arkme World image reference must not be empty')
+    return await this.call<ArkmeImagePayload>('world.image.read', { imageRef }, signal)
   }
 
   async listSources(

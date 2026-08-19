@@ -102,6 +102,38 @@ export interface ArkmeWorldRecordList {
   nextOffset?: number
 }
 
+/** Browser-safe public World card. Stable IDs and signed media URLs stay inside the Provider. */
+export interface ArkmeWorldAvatarFallback {
+  kind: 'phone_default'
+  colorIndex: number
+  label: string
+}
+
+export interface ArkmeWorldFeedItem {
+  recordRef: string
+  authorName: string
+  avatarRef?: string
+  avatarFallback?: ArkmeWorldAvatarFallback
+  headline: string
+  textContent: string
+  tags: string[]
+  templateKind: number
+  createdAtMillis: number
+  publishedAtMillis: number
+  imageRefs: string[]
+  imageCount: number
+  videoCount: number
+  voiceCount: number
+  extendCount: number
+}
+
+export interface ArkmeWorldFeedPage {
+  items: ArkmeWorldFeedItem[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
 export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
 export interface ArkmeWorldPublishResult {
@@ -245,6 +277,8 @@ export interface ArkmeProviderCapabilities {
     openPrivateChat: true
     groupSettings: true
     relatedRecordings?: true
+    /** Optional additive capability so older Providers remain detectable by consumer plugins. */
+    worldFeed?: true
   }
   limits: {
     maxTextLength: number
@@ -1229,6 +1263,8 @@ export type ArkmePluginOperation =
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
+  | 'world.feed'
+  | 'world.image.read'
   | 'sources.list'
   | 'source.timeline'
   | 'source.mark-read'
