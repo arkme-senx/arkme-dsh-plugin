@@ -117,7 +117,10 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
       hidden={!props.wide || !ui.open}
       style={{ ...styles.panel, display: props.wide && ui.open ? 'block' : 'none' }}
     >
-      <ArkmeNavigation onActivateSurface={() => { props.activate(currentSession) }} />
+      <ArkmeNavigation
+        currentSessionId={currentSession}
+        onActivateSurface={() => { props.activate(currentSession) }}
+      />
     </div>}
     <ArkmeFooterAction
       {...props}

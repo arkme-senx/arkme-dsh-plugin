@@ -22,6 +22,10 @@
       "types": "./lib/types/sdk/index.d.ts",
       "default": "./lib/sdk.js"
     },
+    "./persistent-extension": {
+      "types": "./lib/types/extensions/persistent-runtime.d.ts",
+      "default": "./lib/persistent-extension.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
