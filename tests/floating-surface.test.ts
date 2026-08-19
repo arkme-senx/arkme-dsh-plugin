@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
 import {
-  arkmeAuthView, arkmeLoginNeedsPhoneBinding, arkmeProfileHasBoundPhone, arkmeShouldBeginWechat,
+  aiPolishStatus, arkmeAuthView, arkmeLoginNeedsPhoneBinding, arkmeProfileHasBoundPhone,
+  arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme floating conversation frame', () => {
@@ -69,5 +70,17 @@ describe('Arkme floating conversation frame', () => {
       expiresAtMillis: 1,
     }, 'login', 'wechat', true, '', false)).toBe(false)
     expect(arkmeShouldBeginWechat({ status: 'logged-out', environment: 'prod' }, 'login', 'phone', true, '', false)).toBe(false)
+  })
+
+  it('uses the client-compatible group polish status labels without changing ordinary messages', () => {
+    const item = {
+      itemUid: 'record-1', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent: '正文', status: 1,
+    }
+    expect(aiPolishStatus(item)).toBe('')
+    expect(aiPolishStatus({ ...item, aiPolish: { state: 'polishing' } })).toBe('AI润色中...')
+    expect(aiPolishStatus({ ...item, aiPolish: { state: 'polished' } })).toBe('✨已润色')
+    expect(aiPolishStatus({ ...item, aiPolish: { state: 'kept_original' } })).toBe('保持原文')
+    expect(aiPolishStatus({ ...item, aiPolish: { state: 'failed' } })).toBe('润色失败 · 重试')
   })
 })

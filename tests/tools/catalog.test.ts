@@ -45,6 +45,7 @@ describe('Arkme tool catalog', () => {
       'arkme_wechat_locations',
       'arkme_sources_list',
       'arkme_source_read',
+      'arkme_group_ai_polish_manage',
       'arkme_text_send',
       'arkme_direct_text_send',
       'arkme_call_start',
@@ -62,7 +63,8 @@ describe('Arkme tool catalog', () => {
 
     expect(image?.meta).toMatchObject({ kind: 'business', phase: 'attachments', effect: 'read' })
     expect(writes.map(module => module.meta.toolName)).toEqual([
-      'arkme_id_set', 'arkme_record_create', 'arkme_world_publish_text', 'arkme_text_send', 'arkme_direct_text_send',
+      'arkme_id_set', 'arkme_record_create', 'arkme_world_publish_text', 'arkme_group_ai_polish_manage',
+      'arkme_text_send', 'arkme_direct_text_send',
       'arkme_call_start',
       'arkme_ai_video',
     ])

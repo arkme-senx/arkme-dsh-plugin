@@ -1,5 +1,6 @@
 import type {
-  ArkmeDirectTextSendResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
+  ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
+  ArkmeGroupAiPolishSnapshot, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
   ArkmeTimelineCursor, ArkmeTimelinePage,
 } from '../../types.js'
 
@@ -27,4 +28,25 @@ export interface ArkmeConversationToolPort {
       signal?: AbortSignal
     },
   ): Promise<ArkmeDirectTextSendResult>
+  inspectGroupAiPolishByName(
+    groupName: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupAiPolishSnapshot>
+  generateGroupAiPolishRule(
+    groupName: string,
+    requirement: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupAiPolishRuleCandidate>
+  confirmEnableGroupAiPolish(
+    confirmationRef: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupAiPolishMutationResult>
+  prepareDisableGroupAiPolish(
+    groupName: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupAiPolishRuleCandidate>
+  confirmDisableGroupAiPolish(
+    confirmationRef: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupAiPolishMutationResult>
 }

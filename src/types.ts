@@ -263,11 +263,65 @@ export interface ArkmeTimelineItem {
   textContent: string
   status: number
   sequence?: number
+  recordVersion?: number
+  aiPolish?: ArkmeTimelineAiPolish
+}
+
+export type ArkmeAiPolishSendState = 'none' | 'polishing' | 'polished' | 'kept_original' | 'failed'
+
+export interface ArkmeTimelineAiPolish {
+  state: ArkmeAiPolishSendState
+  originalText?: string
+  polishedText?: string
+  failureMessage?: string
+  /** Host-bound retry reference. Present only for the current sender's transient failed attempt. */
+  retryRef?: string
+}
+
+export interface ArkmeGroupAiPolishRule {
+  ruleRef: string
+  name: string
+  ruleText: string
+  isActive: boolean
+}
+
+export interface ArkmeGroupAiPolishSnapshot {
+  sourceRef: string
+  groupName: string
+  enabled: boolean
+  canManage: boolean
+  viewerRole: number
+  activeRuleName: string
+  rules: ArkmeGroupAiPolishRule[]
+  updatedAtMillis: number
+}
+
+export interface ArkmeGroupAiPolishRuleCandidate {
+  groupName: string
+  ruleName: string
+  ruleText: string
+  confirmationRef: string
+}
+
+export interface ArkmeGroupAiPolishMutationResult {
+  groupName: string
+  enabled: boolean
+  ruleName: string
+  changed: boolean
+}
+
+export interface ArkmeGroupAiPolishNotice {
+  noticeUid: string
+  sourceKey: string
+  message: string
+  createdAtMillis: number
 }
 
 export interface ArkmeTimelinePage {
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
+  aiPolishNotices?: ArkmeGroupAiPolishNotice[]
+  aiPolishSettings?: ArkmeGroupAiPolishSnapshot
   hasMore: boolean
   nextCursor?: ArkmeTimelineCursor
 }
@@ -279,6 +333,7 @@ export interface ArkmeSourceSendResult {
   sequence?: number
   localState: 'synced' | 'failed'
   error?: string
+  aiPolish?: ArkmeTimelineAiPolish
 }
 
 export interface ArkmeDirectTextSendResult {
@@ -645,6 +700,13 @@ export type ArkmePluginOperation =
   | 'source.timeline'
   | 'source.mark-read'
   | 'source.send-text'
+  | 'source.ai-polish.settings'
+  | 'source.ai-polish.notices'
+  | 'source.ai-polish.generate-rule'
+  | 'source.ai-polish.confirm-enable'
+  | 'source.ai-polish.prepare-disable'
+  | 'source.ai-polish.confirm-disable'
+  | 'source.ai-polish.retry'
   | 'calls.outgoing.intent.claim'
   | 'calls.outgoing.intent.resolve'
   | 'calls.outgoing.prepare'

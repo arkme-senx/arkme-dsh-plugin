@@ -4,8 +4,9 @@ import {
 } from 'react'
 import qrcode from 'qrcode-generator'
 import type {
-  ArkmeAuthSnapshot, ArkmeSourceReadResult, ArkmeSourceSendResult, ArkmeTimelineCursor,
-  ArkmeTimelineItem, ArkmeTimelinePage, ArkmeUserProfileSnapshot,
+  ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
+  ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
+  ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
@@ -38,12 +39,14 @@ const colors = {
 const styles: Record<string, CSSProperties> = {
   surface: { width: '100%', height: '100%', minWidth: 0, display: 'flex', background: colors.panel, color: colors.text },
   floatingSurface: { background: 'transparent' },
-  panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
   header: {
     flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
-  title: { margin: 0, padding: '4px 8px', fontSize: 14, lineHeight: '20px', fontWeight: 500 },
+  titleBlock: { minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
   error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
@@ -61,11 +64,14 @@ const styles: Record<string, CSSProperties> = {
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },
-  bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box' },
+  bubble: { maxWidth: 560, padding: '8px 16px 10px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
   bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)' },
   bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
   meta: { color: '#adb2b8', fontSize: 11 },
+  polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
+  retry: { border: 0, padding: 0, background: 'transparent', color: '#c2413b', cursor: 'pointer', fontSize: 11 },
+  notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
@@ -92,6 +98,13 @@ const styles: Record<string, CSSProperties> = {
     border: 0, borderRadius: 999, background: 'var(--dsw-alias-button-info-fill, #3964fe)',
     color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
   },
+  drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 10, width: 'min(420px, 92%)', display: 'flex', flexDirection: 'column', background: colors.panel, borderLeft: `1px solid ${colors.border}`, boxShadow: '-12px 0 30px rgba(0,0,0,.12)' },
+  drawerHeader: { height: 56, flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', borderBottom: `1px solid ${colors.border}`, boxSizing: 'border-box' },
+  drawerTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
+  close: { marginLeft: 'auto', width: 32, height: 32, border: 0, borderRadius: 999, background: '#f1f3f6', cursor: 'pointer', color: colors.text },
+  drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 },
+  detailText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' },
+  toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: '#f1efff', color: '#694fd0', cursor: 'pointer', fontSize: 12 },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
   authChecking: {
     flex: 1, minHeight: 0, display: 'grid', placeItems: 'center',
@@ -166,8 +179,35 @@ function timeLabel(value: number): string {
 
 function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[]): ArkmeTimelineItem[] {
   const map = new Map(current.map(item => [item.itemUid, item]))
-  for (const item of incoming) map.set(item.itemUid, item)
+  for (const item of incoming) {
+    const previous = map.get(item.itemUid)
+    map.set(item.itemUid, previous?.aiPolish !== undefined && item.aiPolish === undefined
+      ? { ...item, aiPolish: previous.aiPolish }
+      : item)
+  }
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
+}
+
+type TimelineDisplayEvent = {
+  kind: 'message'
+  at: number
+  key: string
+  item: ArkmeTimelineItem
+} | {
+  kind: 'notice'
+  at: number
+  key: string
+  notice: ArkmeGroupAiPolishNotice
+}
+
+export function aiPolishStatus(item: ArkmeTimelineItem): string {
+  switch (item.aiPolish?.state) {
+    case 'polishing': return 'AI润色中...'
+    case 'polished': return '✨已润色'
+    case 'kept_original': return '保持原文'
+    case 'failed': return '润色失败 · 重试'
+    default: return ''
+  }
 }
 
 function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
@@ -204,6 +244,11 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
+  const [aiPolishSettings, setAiPolishSettings] = useState<ArkmeGroupAiPolishSnapshot>()
+  const [drawer, setDrawer] = useState<'detail'>()
+  const [detailItemUid, setDetailItemUid] = useState('')
+  const [showOriginal, setShowOriginal] = useState(false)
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState('')
@@ -372,6 +417,10 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       sourceRef: source.sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
     })
     setItems(current => cursor === undefined ? mergeItems([], page.items) : mergeItems(current, page.items))
+    if (cursor === undefined) {
+      setAiPolishSettings(page.aiPolishSettings)
+      setAiPolishNotices(page.aiPolishNotices ?? [])
+    }
     setHasMore(page.hasMore); setNextCursor(page.nextCursor)
     requestAnimationFrame(() => {
       const target = bodyRef.current
@@ -386,7 +435,8 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     if (ui.surfaceOpen) void refreshAuth()
   }, [refreshAuth, ui.surfaceOpen])
   useEffect(() => {
-    setItems([]); setNextCursor(undefined); setHasMore(false); setError('')
+    setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined)
+    setDrawer(undefined); setDetailItemUid(''); setNextCursor(undefined); setHasMore(false); setError('')
     if (authenticated && source !== undefined) {
       setBusy(true)
       void loadTimeline().catch(caught => { setError(errorMessage(caught)) }).finally(() => { setBusy(false) })
@@ -402,6 +452,21 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     })
   }, [acknowledgeRead, authenticated, chatDelta, source?.sourceRef])
+
+  useEffect(() => {
+    if (!authenticated || !ui.surfaceOpen || source?.kind !== 'group_chat') return
+    let cancelled = false
+    const refreshPresentation = () => {
+      void callArkme<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', {
+        sourceRef: source.sourceRef,
+      }).then(snapshot => { if (!cancelled) setAiPolishSettings(snapshot) }).catch(() => undefined)
+      void callArkme<ArkmeGroupAiPolishNotice[]>('source.ai-polish.notices', {
+        sourceRef: source.sourceRef,
+      }).then(notices => { if (!cancelled) setAiPolishNotices(notices) }).catch(() => undefined)
+    }
+    const timer = setInterval(refreshPresentation, 3_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [authenticated, source?.sourceRef, ui.surfaceOpen])
 
   useEffect(() => {
     const root = bodyRef.current; const sentinel = sentinelRef.current
@@ -511,6 +576,9 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     const optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: '我', isMe: true, sendAtMillis: now,
       title: '', textContent, status: 0,
+      ...(source.kind === 'group_chat' && aiPolishSettings?.enabled === true
+        ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
+        : {}),
     }
     setItems(current => mergeItems(current, [optimistic])); setDraft(''); setBusy(true); setError('')
     requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
@@ -518,16 +586,68 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       const result = await callArkme<ArkmeSourceSendResult>('source.send-text', {
         sourceRef: source.sourceRef, textContent, recordUid, relationUid,
       })
-      setItems(current => current.map(item => item.itemUid === recordUid
-        ? { ...item, itemUid: result.itemUid, status: result.status, ...(result.sequence === undefined ? {} : { sequence: result.sequence }) }
-        : item))
+      setItems(current => current.map(item => {
+        if (item.itemUid !== recordUid) return item
+        const { aiPolish: _optimisticAiPolish, ...base } = item
+        return {
+          ...base,
+          itemUid: result.itemUid,
+          status: result.status,
+          ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
+          ...(result.aiPolish === undefined ? {} : {
+            aiPolish: result.aiPolish,
+            ...(result.aiPolish.state === 'polished' && result.aiPolish.polishedText !== undefined
+              ? { textContent: result.aiPolish.polishedText }
+              : {}),
+          }),
+        }
+      }))
       if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
+      if (result.aiPolish?.state === 'kept_original') {
+        setTimeout(() => {
+          setItems(current => current.map(item => {
+            if (item.itemUid !== result.itemUid || item.aiPolish?.state !== 'kept_original') return item
+            const { aiPolish: _keptOriginal, ...plainItem } = item
+            return plainItem
+          }))
+        }, 1_500)
+      }
     } catch (caught) {
       setItems(current => current.filter(item => item.itemUid !== recordUid)); setDraft(textContent); setError(errorMessage(caught))
     } finally { setBusy(false) }
   }
 
-  const displayItems = useMemo(() => [...items].sort((a, b) => a.sendAtMillis - b.sendAtMillis), [items])
+  const retryAiPolish = async (item: ArkmeTimelineItem) => {
+    const retryRef = item.aiPolish?.retryRef
+    if (retryRef === undefined) return
+    setItems(current => current.map(value => value.itemUid === item.itemUid
+      ? { ...value, aiPolish: { ...value.aiPolish, state: 'polishing' } }
+      : value))
+    try {
+      const result = await callArkme<ArkmeSourceSendResult>('source.ai-polish.retry', { retryRef })
+      setItems(current => current.map(value => {
+        if (value.itemUid !== item.itemUid || result.aiPolish === undefined) return value
+        return {
+          ...value,
+          ...(result.aiPolish.state === 'polished' && result.aiPolish.polishedText !== undefined
+            ? { textContent: result.aiPolish.polishedText }
+            : {}),
+          aiPolish: result.aiPolish,
+        }
+      }))
+    } catch (caught) {
+      setItems(current => current.map(value => value.itemUid === item.itemUid && item.aiPolish !== undefined
+        ? { ...value, aiPolish: item.aiPolish }
+        : value))
+      setError(errorMessage(caught))
+    }
+  }
+
+  const displayEvents = useMemo<TimelineDisplayEvent[]>(() => [
+    ...items.map(item => ({ kind: 'message' as const, at: item.sendAtMillis, key: `message:${item.itemUid}`, item })),
+    ...aiPolishNotices.map(notice => ({ kind: 'notice' as const, at: notice.createdAtMillis, key: `notice:${notice.noticeUid}`, notice })),
+  ].sort((left, right) => left.at - right.at || left.key.localeCompare(right.key)), [aiPolishNotices, items])
+  const detailItem = items.find(item => item.itemUid === detailItemUid)
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : source?.displayName ?? 'Arkme'
 
@@ -535,7 +655,12 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
       <section style={styles.panel} role="region" aria-label={surfaceTitle}>
         <header style={styles.header}>
-          <h2 style={styles.title}>{surfaceTitle}</h2>
+          <div style={styles.titleBlock}>
+            <h2 style={styles.title}>{surfaceTitle}</h2>
+            {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
+              && aiPolishSettings?.enabled === true
+              && <span style={styles.headerSubtitle}>AI润色已开启</span>}
+          </div>
           {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}
@@ -572,18 +697,40 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {displayItems.length > 0 && <ul style={styles.records}>
-              {displayItems.map((item, index) => {
-                const previous = index === 0 ? undefined : displayItems[index - 1]
-                const startsDay = previous === undefined || dayKey(previous.sendAtMillis) !== dayKey(item.sendAtMillis)
-                return <Fragment key={item.itemUid}>
-                  {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
+            {displayEvents.length > 0 && <ul style={styles.records}>
+              {displayEvents.map((event, index) => {
+                const previous = index === 0 ? undefined : displayEvents[index - 1]
+                const startsDay = previous === undefined || dayKey(previous.at) !== dayKey(event.at)
+                if (event.kind === 'notice') return <Fragment key={event.key}>
+                  {startsDay && <li style={styles.date}>{dayLabel(event.at)}</li>}
+                  <li style={styles.notice}>{event.notice.message}</li>
+                </Fragment>
+                const item = event.item
+                const polishStatus = aiPolishStatus(item)
+                return <Fragment key={event.key}>
+                  {startsDay && <li style={styles.date}>{dayLabel(event.at)}</li>}
                   <li style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
                     <div style={{ ...styles.messageLine, ...(item.isMe ? styles.messageLineMe : {}) }}>
                       {showMessageAvatars && <MessageAvatar item={item} />}
                       <div style={{ ...styles.messageBody, ...(item.isMe ? styles.messageBodyMe : {}) }}>
                         {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
-                        <div style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}><p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p></div>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}
+                          onClick={() => { setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail') }}
+                          onKeyDown={event => {
+                            if (event.key !== 'Enter' && event.key !== ' ') return
+                            event.preventDefault(); setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
+                          }}
+                          aria-label="打开快记详情"
+                        >{polishStatus !== '' && <span style={styles.polishMeta}>
+                          {item.aiPolish?.state === 'failed' ? <button
+                            type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
+                          >{polishStatus}</button> : polishStatus}
+                        </span>}
+                          <p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p>
+                        </div>
                         <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
                       </div>
                     </div>
@@ -617,6 +764,28 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
             </button></div>
           </div></footer>
         </>}
+        {drawer === 'detail' && detailItem !== undefined && <aside style={styles.drawer} aria-label="快记详情">
+          <header style={styles.drawerHeader}>
+            <h3 style={styles.drawerTitle}>快记详情</h3>
+            <button type="button" style={styles.close} aria-label="关闭详情" onClick={() => { setDrawer(undefined) }}>×</button>
+          </header>
+          <div style={styles.drawerBody}>
+            <div style={{ color: colors.secondary, fontSize: 12, marginBottom: 16 }}>
+              {detailItem.senderName} · {new Date(detailItem.sendAtMillis).toLocaleString('zh-CN')}
+            </div>
+            {detailItem.aiPolish?.state === 'polished'
+              && detailItem.aiPolish.originalText !== undefined
+              && detailItem.aiPolish.polishedText !== undefined
+              && <button type="button" style={styles.toggle} onClick={() => { setShowOriginal(value => !value) }}>
+                {showOriginal ? '👁️显示润色' : '👁️显示原文'}
+              </button>}
+            <p style={styles.detailText}>{showOriginal && detailItem.aiPolish?.originalText !== undefined
+              ? detailItem.aiPolish.originalText
+              : detailItem.aiPolish?.state === 'polished' && detailItem.aiPolish.polishedText !== undefined
+                ? detailItem.aiPolish.polishedText
+                : detailItem.textContent || detailItem.title || '非文本内容'}</p>
+          </div>
+        </aside>}
       </section>
     </div>
   )
