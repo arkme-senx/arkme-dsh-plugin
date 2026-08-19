@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
@@ -39,8 +39,9 @@ const styles: Record<string, CSSProperties> = {
   articleWordIcon: { width: 14, height: 14, flex: 'none' },
   previewOverlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 48, boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
   previewBody: { position: 'relative', width: 'min(960px, 90vw)', height: 'min(720px, 82vh)' },
-  previewViewport: { width: '100%', height: '100%', overflow: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
-  previewCanvas: { width: '100%', height: '100%', display: 'grid', placeItems: 'center' },
+  previewViewport: { width: '100%', height: '100%', overflow: 'auto', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
+  previewCanvas: { width: '100%', minHeight: '100%', display: 'grid', placeItems: 'center' },
+  previewImage: { display: 'block', width: '100%', height: 'auto', userSelect: 'none' },
   previewMedia: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none' },
   previewClose: { position: 'absolute', top: -36, right: 0, width: 32, height: 32, border: 0, borderRadius: 999, background: 'rgba(255,255,255,.16)', color: '#fff', cursor: 'pointer', fontSize: 20 },
   previewNav: { position: 'absolute', top: '50%', width: 38, height: 48, marginTop: -24, border: 0, borderRadius: 10, background: 'rgba(255,255,255,.16)', color: '#fff', cursor: 'pointer', fontSize: 24 },
@@ -186,6 +187,20 @@ export function arkmeNextImagePreviewScale(scale: ImagePreviewScale): ImagePrevi
   return scale === 1 ? 2 : 1
 }
 
+interface ImagePreviewDragOrigin {
+  clientX: number
+  clientY: number
+  scrollLeft: number
+  scrollTop: number
+}
+
+export function arkmeImagePreviewDragPosition(origin: ImagePreviewDragOrigin, clientX: number, clientY: number): { left: number; top: number } {
+  return {
+    left: origin.scrollLeft + origin.clientX - clientX,
+    top: origin.scrollTop + origin.clientY - clientY,
+  }
+}
+
 export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
   blocks: ArkmeContentBlock[]
   selected: ArkmeContentBlock
@@ -194,10 +209,14 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
 }) {
   const index = Math.max(0, blocks.findIndex(block => block.mediaRef === selected.mediaRef))
   const viewportRef = useRef<HTMLDivElement>(null)
+  const dragOriginRef = useRef<(ImagePreviewDragOrigin & { pointerId: number }) | undefined>(undefined)
   const [imageScale, setImageScale] = useState<ImagePreviewScale>(1)
+  const [imageDragging, setImageDragging] = useState(false)
 
   useEffect(() => {
     setImageScale(1)
+    setImageDragging(false)
+    dragOriginRef.current = undefined
     const viewport = viewportRef.current
     if (viewport !== null) {
       viewport.scrollLeft = 0
@@ -225,6 +244,8 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
     const pointerY = event.clientY - bounds.top
     const contentXRatio = (viewport.scrollLeft + pointerX) / Math.max(1, viewport.scrollWidth)
     const contentYRatio = (viewport.scrollTop + pointerY) / Math.max(1, viewport.scrollHeight)
+    dragOriginRef.current = undefined
+    setImageDragging(false)
     setImageScale(nextScale)
     window.requestAnimationFrame(() => {
       if (nextScale === 1) {
@@ -238,8 +259,43 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
     })
   }
 
+  const beginImageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !event.isPrimary) return
+    const viewport = viewportRef.current
+    if (viewport === null || (viewport.scrollWidth <= viewport.clientWidth && viewport.scrollHeight <= viewport.clientHeight)) return
+    dragOriginRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+    }
+    viewport.setPointerCapture(event.pointerId)
+    setImageDragging(true)
+  }
+
+  const moveImageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    const viewport = viewportRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId || viewport === null) return
+    const next = arkmeImagePreviewDragPosition(origin, event.clientX, event.clientY)
+    viewport.scrollLeft = next.left
+    viewport.scrollTop = next.top
+    event.preventDefault()
+  }
+
+  const endImageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId) return
+    dragOriginRef.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setImageDragging(false)
+  }
+
   const selectMedia = (block: ArkmeContentBlock) => {
     setImageScale(1)
+    setImageDragging(false)
+    dragOriginRef.current = undefined
     onSelect(block)
   }
 
@@ -249,18 +305,22 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
       {selected.kind === 'image'
         ? <div
           ref={viewportRef}
-          style={{ ...styles.previewViewport, overflow: imageScale === 1 ? 'hidden' : 'auto' }}
+          style={{ ...styles.previewViewport, cursor: imageDragging ? 'grabbing' : 'grab' }}
           data-arkme-image-preview-viewport="true"
           data-arkme-image-preview-scale={imageScale}
           onWheel={event => { event.stopPropagation() }}
+          onPointerDown={beginImageDrag}
+          onPointerMove={moveImageDrag}
+          onPointerUp={endImageDrag}
+          onPointerCancel={endImageDrag}
         >
-          <div style={{ ...styles.previewCanvas, width: `${String(imageScale * 100)}%`, height: `${String(imageScale * 100)}%` }}>
+          <div style={{ ...styles.previewCanvas, width: `${String(imageScale * 100)}%` }}>
             <img
               src={mediaUrl(selected)}
               alt={selected.fileName}
               draggable={false}
               title={imageScale === 1 ? '双击放大图片' : '双击恢复整图'}
-              style={{ ...styles.previewMedia, cursor: imageScale === 1 ? 'zoom-in' : 'zoom-out' }}
+              style={{ ...styles.previewImage, cursor: 'inherit' }}
               onDoubleClick={toggleImageScale}
             />
           </div>

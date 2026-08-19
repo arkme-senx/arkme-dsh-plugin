@@ -1,21 +1,27 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeNextImagePreviewScale } from '../src/client/ArkmeRichContent.js'
+import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeImagePreviewDragPosition, arkmeNextImagePreviewScale } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
 import { arkmeClipboardImageFiles } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
-  it('keeps image preview contained initially and exposes the double-click zoom viewport', () => {
+  it('keeps the preview scrollable at 1x so portrait images preserve their natural height', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
     expect(html).toContain('data-arkme-image-preview-viewport="true"')
     expect(html).toContain('data-arkme-image-preview-scale="1"')
-    expect(html).toContain('overflow:hidden')
+    expect(html).toContain('overflow:auto')
     expect(html).toContain('overscroll-behavior:contain')
-    expect(html).toContain('width:100%;height:100%;object-fit:contain')
+    expect(html).toContain('width:100%;min-height:100%')
+    expect(html).toContain('width:100%;height:auto')
     expect(html).toContain('title="双击放大图片"')
     expect(arkmeNextImagePreviewScale(1)).toBe(2)
     expect(arkmeNextImagePreviewScale(2)).toBe(1)
+  })
+
+  it('moves a scrollable image viewport opposite to the pointer drag at any scale', () => {
+    expect(arkmeImagePreviewDragPosition({ clientX: 400, clientY: 500, scrollLeft: 80, scrollTop: 120 }, 340, 300))
+      .toEqual({ left: 140, top: 320 })
   })
 
   it('renders image, video, audio, file, and long-article content through local media refs', () => {
