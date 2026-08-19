@@ -52,7 +52,9 @@ describe('topic create UI', () => {
     const resting = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} hovered={false} />)
     const hovered = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} hovered />)
     const selected = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} selected hovered={false} />)
-    const created = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} createdHighlightVisible hovered={false} />)
+    const created = renderToStaticMarkup(<ArkmeTopicTreeRow
+      {...baseProps} createdHighlightActive createdHighlightVisible hovered={false}
+    />)
 
     expect(resting).toContain('>36</span>')
     expect(resting).not.toContain('创建子主题')
@@ -63,10 +65,13 @@ describe('topic create UI', () => {
     expect(hovered).toContain('padding-right:12px')
     expect(hovered).toContain('#b0b5bc')
     expect(hovered).not.toContain('＋')
+    expect(resting).not.toContain('transition:')
+    expect(hovered).not.toContain('transition:')
     expect(selected).toContain('background:#def3e8')
     expect(selected).toContain('inset 2px 0 #20c66a')
     expect(created).toContain('background:#def3e8')
     expect(created).toContain('box-shadow:none')
+    expect(created).toContain('transition:background-color 140ms ease')
     expect(created).not.toContain('inset 2px 0 #20c66a')
   })
 

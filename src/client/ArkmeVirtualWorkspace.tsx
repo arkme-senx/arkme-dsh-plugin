@@ -200,6 +200,7 @@ export interface ArkmeTopicTreeRowProps {
   row: ArkmeSourceTreeRow
   selected: boolean
   hovered: boolean
+  createdHighlightActive?: boolean
   createdHighlightVisible?: boolean
   rowRef?: (node: HTMLDivElement | null) => void
   onHoverChange: (hovered: boolean) => void
@@ -209,7 +210,7 @@ export interface ArkmeTopicTreeRowProps {
 }
 
 export function ArkmeTopicTreeRow({
-  row, selected, hovered, createdHighlightVisible = false, rowRef,
+  row, selected, hovered, createdHighlightActive = false, createdHighlightVisible = false, rowRef,
   onHoverChange, onToggle, onSelect, onCreateChild,
 }: ArkmeTopicTreeRowProps) {
   const source = row.source
@@ -219,7 +220,9 @@ export function ArkmeTopicTreeRow({
     aria-expanded={row.hasChildren ? row.expanded : undefined}
     style={{
       ...styles.topicRow,
-      transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease, box-shadow ${createdHighlightVisible ? 140 : 800}ms ease`,
+      ...(createdHighlightActive ? {
+        transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease, box-shadow ${createdHighlightVisible ? 140 : 800}ms ease`,
+      } : {}),
       ...(selected ? styles.topicActive : {}),
       ...(hovered && !selected ? styles.topicHover : {}),
       ...(createdHighlightVisible ? styles.topicCreated : {}),
@@ -647,6 +650,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         return <ArkmeTopicTreeRow
           key={source.sourceRef} row={row} selected={selected}
           hovered={hoveredSourceRef === source.sourceRef}
+          createdHighlightActive={createdHighlight?.sourceRef === source.sourceRef}
           createdHighlightVisible={createdHighlight?.sourceRef === source.sourceRef && createdHighlight.visible}
           rowRef={node => {
             if (node === null) topicRowElementsRef.current.delete(source.sourceRef)
