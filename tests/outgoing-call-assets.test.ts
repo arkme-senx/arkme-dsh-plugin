@@ -41,6 +41,7 @@ describe('outgoing call assets', () => {
     expect(response.headers['Content-Security-Policy']).toContain("script-src 'self' 'unsafe-inline'")
     expect(response.headers['Content-Security-Policy']).toContain("'unsafe-eval'")
     expect(response.headers['Content-Security-Policy']).toContain("connect-src 'self' https: wss: data:")
+    expect(response.headers['Content-Security-Policy']).toContain("media-src 'self' blob: https:")
     expect(response.headers['Content-Security-Policy']).toContain("frame-ancestors 'self'")
     const document = response.body.toString('utf8')
     expect(document).toContain('<div id="app"></div>')
@@ -67,6 +68,10 @@ describe('outgoing call assets', () => {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
     }) })
+    const searchClose = await request('/arkme-self/api/call/close.svg')
+    const searchBack = await request('/arkme-self/api/call/arrow_left.svg')
+    expect(searchClose.status).toBe(200)
+    expect(searchBack.status).toBe(200)
   })
 
   it('supports HEAD and rejects methods, unknown files, and traversal', async () => {

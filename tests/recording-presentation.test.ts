@@ -31,18 +31,21 @@ describe('recording presentation', () => {
     expect(items).toEqual([
       {
         itemId: 'child-1:0', sessionId: 'session-1', childId: 'child-1',
+        asrItemIndex: 0, transcriptSource: 'system',
         startAtMillis: 1_700_000_001_500, endAtMillis: 1_700_000_002_500,
         speakerNumber: 4, speakerColorIndex: 0, speakerLabel: '说话人 4',
         isSelf: true, isBackground: false, text: '我来同步',
       },
       {
         itemId: 'child-1:1', sessionId: 'session-1', childId: 'child-1',
+        asrItemIndex: 1, transcriptSource: 'system',
         startAtMillis: 1_700_000_003_500, endAtMillis: 1_700_000_004_500,
         speakerNumber: 5, speakerColorIndex: 1, speakerLabel: '说话人 5',
         isSelf: false, isBackground: true, text: '背景讨论',
       },
       {
         itemId: 'child-1:2', sessionId: 'session-1', childId: 'child-1',
+        asrItemIndex: 2, transcriptSource: 'system',
         startAtMillis: 1_700_000_005_500, endAtMillis: 1_700_000_006_500,
         speakerNumber: 3, speakerColorIndex: 2, speakerLabel: '说话人 3',
         isSelf: false, isBackground: false, text: '数字回退',

@@ -3,7 +3,8 @@ import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
-  ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor, ArkmeRichSendInput, ArkmeSourceDirectory, ArkmeTimelineCursor,
+  ArkmeAiVideoJobStatus, ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
+  ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
 
@@ -67,6 +68,11 @@ function numberParam(params: Record<string, unknown>, key: string, fallback: num
 
 function booleanParam(params: Record<string, unknown>, key: string): boolean {
   return params[key] === true
+}
+
+function stringListParam(params: Record<string, unknown>, key: string): string[] {
+  const value = params[key]
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
 function optionalPositiveIntegerParam(params: Record<string, unknown>, key: string): number | undefined {
@@ -277,6 +283,35 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'search.records': return await service.searchRemote({
+      query: stringParam(params, 'query'),
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+      ...(['topic', 'chat_session'].includes(stringParam(params, 'searchScope'))
+        ? { searchScope: stringParam(params, 'searchScope') as 'topic' | 'chat_session' }
+        : {}),
+      ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
+    })
+    case 'search.scene': return await service.searchScene({
+      scene: stringParam(params, 'scene') as ArkmeSearchSceneKind,
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+    })
+    case 'search.recordings': return await service.searchRecordings({
+      query: stringParam(params, 'query'),
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+    })
+    case 'search.history': return await service.searchHistory(numberParam(params, 'limit', 10))
+    case 'search.history.create': return await service.createSearchHistory(stringParam(params, 'query'))
+    case 'ai-video.list': return await service.aiVideoList({
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+      ...(stringListParam(params, 'statuses').length === 0
+        ? {}
+        : { statuses: stringListParam(params, 'statuses') as ArkmeAiVideoJobStatus[] }),
+    })
+    case 'files.assets': return await service.queryFileAssets(stringListParam(params, 'fileAssetUids'))
     case 'arko.profile': return await service.arkoProfile()
     case 'arko.session': return await service.arkoEnsureSession()
     case 'arko.new-session': return await service.arkoCreateSession()

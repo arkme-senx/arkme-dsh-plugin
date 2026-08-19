@@ -130,6 +130,94 @@ export interface ArkmeCachedQueryResult {
   revision: number
 }
 
+export type ArkmeSearchSceneKind = 'audio' | 'link' | 'image_video' | 'file' | 'long_article'
+
+export interface ArkmeSearchQueryGuard {
+  state: string
+  reason?: string
+}
+
+export interface ArkmeSearchHistoryItem {
+  searchHistoryUid: string
+  keyword: string
+  searchedAtMillis: number
+}
+
+export interface ArkmeSearchHistoryResult {
+  items: ArkmeSearchHistoryItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeSearchAssetItem {
+  fileAssetUid: string
+  fileUid?: string
+  fileName?: string
+  mimeType?: string
+  fileKind?: number
+  size?: number
+  durationMillis?: number
+}
+
+export interface ArkmeSearchRecordItem {
+  recordUid: string
+  sourceKind: number
+  sourceUid?: string
+  routeTargetKind: string
+  routeTargetUid?: string
+  sendAtMillis: number
+  title: string
+  textContent: string
+  snippet: string
+  nickname?: string
+  templateKind?: number
+  displayKind?: number
+  sourceTitle?: string
+  media: ArkmeSearchAssetItem[]
+  files: ArkmeSearchAssetItem[]
+  voice?: ArkmeSearchAssetItem
+  linkUrl?: string
+  recordDurationMillis?: number
+  sceneItemCount?: number
+  sceneItemSize?: number
+}
+
+export interface ArkmeSearchSourceAggregate {
+  sourceKind: number
+  sourceUid: string
+  routeTargetKind: string
+  routeTargetUid?: string
+  title: string
+  matchedRecordCount: number
+  matchedRecordCountExact: boolean
+}
+
+export interface ArkmeRecordSearchResult {
+  items: ArkmeSearchRecordItem[]
+  sourceAggregates: ArkmeSearchSourceAggregate[]
+  hasMore: boolean
+  nextCursor?: string
+  queryGuard: ArkmeSearchQueryGuard
+  itemCount?: number
+  itemSize?: number
+}
+
+export interface ArkmeRecordingSearchItem {
+  sessionId: string
+  recordUid?: string
+  dateStamp: number
+  startAtMillis: number
+  snippet: string
+  score: number
+}
+
+export interface ArkmeRecordingSearchResult {
+  items: ArkmeRecordingSearchItem[]
+  hasMore: boolean
+  nextCursor?: string
+  queryGuard: ArkmeSearchQueryGuard
+}
+
 export interface ArkmeProviderCapabilities {
   contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
   provider: '@senguoyun/dsh-arkme'
@@ -616,6 +704,8 @@ export interface ArkmeRecordingTranscriptItem {
   itemId: string
   sessionId: string
   childId: string
+  asrItemIndex: number
+  transcriptSource: ArkmeAiVideoTranscriptSource
   startAtMillis: number
   endAtMillis: number
   speakerNumber: number
@@ -857,6 +947,7 @@ export interface ArkmeAiVideoPreflightResult {
   selectedDurationMillis: number
   minimumDurationMillis: number
   selectedSegmentCount: number
+  selectedTextCount?: number
   retryable: boolean
   reasonCode?: string
   proof?: string
@@ -870,6 +961,7 @@ export interface ArkmeAiVideoJob {
   stage: string
   progress: number
   selectedSegmentCount: number
+  selectedTextCount?: number
   retryable: boolean
   videoAssetUid?: string
   coverAssetUid?: string
@@ -877,6 +969,41 @@ export interface ArkmeAiVideoJob {
   errorCode?: string
   errorMessage?: string
   failureStage?: string
+}
+
+export interface ArkmeAiVideoListItem {
+  jobId: string
+  sessionId: string
+  status: ArkmeAiVideoJobStatus
+  stage: string
+  progress: number
+  title: string
+  sourceStartedAtMillis: number
+  selectedDurationMillis: number
+  selectedSegmentCount: number
+  retryable: boolean
+  createdAtMillis: number
+  updatedAtMillis: number
+  coverAssetUid?: string
+  videoAssetUid?: string
+  videoDurationMillis?: number
+  errorCode?: string
+  errorMessage?: string
+}
+
+export interface ArkmeAiVideoListResult {
+  items: ArkmeAiVideoListItem[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeFileAssetDisplayItem {
+  fileAssetUid: string
+  fileName?: string
+  mimeType?: string
+  previewUrl?: string
+  downloadUrl?: string
+  status: string
 }
 
 export interface ArkmeArkoProfile {
@@ -1120,6 +1247,13 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'search.records'
+  | 'search.scene'
+  | 'search.recordings'
+  | 'search.history'
+  | 'search.history.create'
+  | 'ai-video.list'
+  | 'files.assets'
   | 'topic.create'
   | 'arko.profile'
   | 'arko.session'

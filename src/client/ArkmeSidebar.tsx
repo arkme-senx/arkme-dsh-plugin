@@ -23,6 +23,7 @@ import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import {
@@ -998,7 +999,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     [chatDirectory, detailState],
   )
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
-  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : ui.mode === 'arko' ? 'Arko' : source?.displayName ?? 'Arkme'
+  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : ui.mode === 'search' ? '搜索' : ui.mode === 'arko' ? 'Arko' : source?.displayName ?? 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
 
   return (
@@ -1059,6 +1060,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
+          : ui.mode === 'search' ? <div style={styles.body}><ArkmeSearchSurface /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body} /> : <>
           <div ref={bodyRef} style={styles.body}>

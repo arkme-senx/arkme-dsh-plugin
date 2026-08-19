@@ -80,6 +80,10 @@ function recordingFingerprint(value: unknown): string {
 
 function transcriptModelItem(item: ArkmeRecordingTranscriptItem) {
   return {
+    session_id: item.sessionId,
+    child_id: item.childId,
+    asr_item_index: item.asrItemIndex,
+    transcript_source: item.transcriptSource,
     start_at_millis: item.startAtMillis,
     end_at_millis: item.endAtMillis,
     speaker: item.isSelf ? '我' : item.speakerLabel,

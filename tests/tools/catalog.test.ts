@@ -56,6 +56,7 @@ describe('Arkme tool catalog', () => {
       'arkme_direct_text_send',
       'arkme_call_start',
       'arkme_ai_video',
+      'arkme_text_ai_video',
       'arkme_image_read',
     ])
     expect(arkmeToolCatalog.toolNamesFor('atomic')).toEqual(['arkme_plugin_contract'])
@@ -74,6 +75,7 @@ describe('Arkme tool catalog', () => {
       'arkme_text_send', 'arkme_direct_text_send',
       'arkme_call_start',
       'arkme_ai_video',
+      'arkme_text_ai_video',
     ])
     expect(writes.every(module => module.meta.grant === 'explicit-user-write')).toBe(true)
   })

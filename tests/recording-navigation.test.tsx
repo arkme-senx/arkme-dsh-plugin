@@ -14,6 +14,15 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('全天候录音')
     expect(markup).toContain('转写、日总结与时间轴')
   })
+
+  it('renders a search row that advertises AI video together with existing search scopes', () => {
+    const markup = renderToStaticMarkup(<navigation.ArkmeSearchRow selected={false} onClick={vi.fn()} />)
+
+    expect(markup).toContain('>搜索<')
+    expect(markup).toContain('快记、主题、录音与 AI 视频')
+    expect(markup).toContain('/arkme-self/api/call/image_search.svg')
+    expect(markup).not.toContain('⌕')
+  })
 })
 
 describe('Arko navigation entry', () => {

@@ -25,6 +25,13 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'plugin.update.install-status'
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
+  | 'search.history'
+  | 'search.history.create'
+  | 'search.records'
+  | 'search.scene'
+  | 'search.recordings'
+  | 'ai-video.list'
+  | 'files.assets'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(

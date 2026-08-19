@@ -8,6 +8,11 @@ function fakeService() {
     resolveOutgoingCallIntent: vi.fn(async () => undefined),
     heartbeatOutgoingCall: vi.fn(async () => ({ expiresAtMillis: 1 })),
     releaseOutgoingCall: vi.fn(async () => undefined),
+    searchRemote: vi.fn(async (input: unknown) => input),
+    searchScene: vi.fn(async (input: unknown) => input),
+    searchRecordings: vi.fn(async (input: unknown) => input),
+    aiVideoList: vi.fn(async (input: unknown) => input),
+    queryFileAssets: vi.fn(async (input: unknown) => input),
     arkoRunStatus: vi.fn(async () => ({ status: 'running' })),
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
@@ -156,6 +161,38 @@ describe('outgoing call Host API dispatch', () => {
       sourceRef: 'source-1', itemUid: 'record-1', title: '草稿', textContent: '正文',
       durationMillis: 500, updatedAtMillis: expect.any(Number),
     })
+  })
+
+  it('dispatches built-in search lanes without forwarding caller account fields', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'search.records', {
+      query: '复盘', limit: 12, cursor: 'next-records', searchScope: 'topic', sourceUid: 'topic-1', userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'search.scene', {
+      scene: 'image_video', limit: 8, userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'search.recordings', {
+      query: '北京', limit: 9, userId: 999,
+    })
+
+    expect(service.searchRemote).toHaveBeenCalledWith({ query: '复盘', limit: 12, cursor: 'next-records', searchScope: 'topic', sourceUid: 'topic-1' })
+    expect(service.searchScene).toHaveBeenCalledWith({ scene: 'image_video', limit: 8 })
+    expect(service.searchRecordings).toHaveBeenCalledWith({ query: '北京', limit: 9 })
+  })
+
+  it('keeps AI video list and signed asset resolution in built-in Host operations', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'ai-video.list', {
+      limit: 20, statuses: ['succeeded'], cursor: 'next-videos', userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'files.assets', {
+      fileAssetUids: ['video-1', 999, 'cover-1'], userId: 999,
+    })
+
+    expect(service.aiVideoList).toHaveBeenCalledWith({ limit: 20, statuses: ['succeeded'], cursor: 'next-videos' })
+    expect(service.queryFileAssets).toHaveBeenCalledWith(['video-1', 'cover-1'])
   })
 })
 
