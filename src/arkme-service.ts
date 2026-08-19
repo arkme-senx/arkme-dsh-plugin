@@ -1098,6 +1098,7 @@ export class ArkmeService {
     return await this.openClawProvisioner.reconcile({
       botRef,
       allowGatewayRestart: true,
+      resolveConnectionMetadata: async () => await this.resolveBotConnectionMetadata(botRef, options),
       revealSecret: async () => await this.revealBotSecret(botRef, options),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
@@ -1172,6 +1173,55 @@ export class ArkmeService {
       throw new ArkmePluginError('bot-token-contract-invalid', 'Bot 凭据响应无效', false, 502)
     }
     return new SecretValue(token)
+  }
+
+  async openBotChat(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceItem> {
+    const session = await this.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 OpenClaw Bot', false, 404)
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/private-chat/open', { bot_id: reference.botId }, session, options.signal,
+    )
+    const chatSessionUid = stringValue(data.chat_session_uid).trim()
+    if (chatSessionUid === '') {
+      throw new ArkmePluginError(
+        'bot-chat-source-unavailable',
+        '当前 Bot 私聊仍使用旧会话协议，暂时不能复用统一 source 读写链路',
+        false,
+        409,
+      )
+    }
+    const source: ArkmeSourceItem = {
+      sourceRef: await this.sealSourceRef(session.userId, 'private_chat', chatSessionUid, bot.name),
+      kind: 'private_chat',
+      displayName: bot.name,
+      activeAtMillis: 0,
+      unreadCount: 0,
+    }
+    this.chatSourceCache.set(`${String(session.userId)}:${chatSessionUid}`, source)
+    return source
+  }
+
+  private async resolveBotConnectionMetadata(botRef: string, options: { signal?: AbortSignal } = {}): Promise<{ gatewayUrl: string; tokenPreview: string }> {
+    const session = await this.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    const gatewayUrl = stringValue(data.gateway_url).trim()
+    let parsed: URL
+    try { parsed = new URL(gatewayUrl) } catch {
+      throw new ArkmePluginError('bot-gateway-contract-invalid', 'Bot Gateway 地址无效', false, 502)
+    }
+    if (parsed.protocol !== 'wss:' || parsed.username !== '' || parsed.password !== '') {
+      throw new ArkmePluginError('bot-gateway-contract-invalid', 'Bot Gateway 地址必须使用安全 WebSocket', false, 502)
+    }
+    const tokenPreview = stringValue(objectValue(data.bot).token_preview).trim()
+    if (tokenPreview === '') {
+      throw new ArkmePluginError('bot-token-contract-invalid', 'Bot 凭据版本信息无效', false, 502)
+    }
+    return { gatewayUrl: parsed.toString(), tokenPreview }
   }
 
   async listGroupBots(

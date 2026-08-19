@@ -37,15 +37,17 @@ describe('OpenClawCliAdapter', () => {
       },
     }) as unknown as import('../src/openclaw/index.js').OpenClawCliPort
 
-    await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc' })).resolves.toEqual({ channel: false, agent: false, account: false, binding: false })
+    await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc', gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway' })).resolves.toEqual({ channel: false, agent: false, account: false, accountGateway: false, binding: false })
     await adapter.ensureChannel()
     await adapter.ensureAgent({ agentId: 'arkme-bot-abc', workspaceRef: '/owned/arkme-bot-abc' })
     await adapter.ensureAccountSecretRef({ accountId: 'arkme-bot-abc', secretRef: { provider: 'arkme-bot-abc', source: 'file', id: 'value', providerPath: '/owned/secrets/abc.secret' } })
+    await adapter.ensureAccountGatewayUrl({ accountId: 'arkme-bot-abc', gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway' })
     await adapter.ensureBinding({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc' })
 
     expect(calls.map(call => call.args.slice(2))).toContainEqual(['plugins', 'install', '@jotmo/openclaw-channel@0.1.12', '--pin'])
     expect(calls.map(call => call.args.slice(2))).toContainEqual(['agents', 'add', 'arkme-bot-abc', '--non-interactive', '--workspace', '/owned/arkme-bot-abc', '--json'])
     expect(calls.map(call => call.args.slice(2))).toContainEqual(['config', 'set', 'secrets.providers.arkme-bot-abc', '--provider-source', 'file', '--provider-path', '/owned/secrets/abc.secret', '--provider-mode', 'singleValue'])
+    expect(calls.map(call => call.args.slice(2))).toContainEqual(['config', 'set', 'channels.jotmo.accounts.arkme-bot-abc.gatewayUrl', 'wss://bot.test/ws/v1/bot/gateway'])
     expect(calls.map(call => call.args.slice(2))).toContainEqual(['agents', 'bind', '--agent', 'arkme-bot-abc', '--bind', 'jotmo:arkme-bot-abc', '--json'])
     expect(calls.every(call => call.stdin === undefined)).toBe(true)
   })
@@ -56,13 +58,13 @@ describe('OpenClawCliAdapter', () => {
         const command = args.slice(2).join(' ')
         if (command === 'plugins inspect jotmo-openclaw-channel --json') return { exitCode: 0, stdout: '{}', stderr: '' }
         if (command === 'agents list --json') return { exitCode: 0, stdout: '[{"id":"arkme-bot-abc"}]', stderr: '' }
-        if (command.startsWith('config get ')) return { exitCode: 0, stdout: '{}', stderr: '' }
+        if (command.startsWith('config get ')) return { exitCode: 0, stdout: '{"gatewayUrl":"wss://bot.test/ws/v1/bot/gateway"}', stderr: '' }
         if (command === 'agents bindings --json') return { exitCode: 0, stdout: '[{"agentId":"arkme-bot-abc","match":{"channel":"jotmo","accountId":"arkme-bot-abc"}}]', stderr: '' }
         return { exitCode: 1, stdout: '', stderr: 'unexpected' }
       },
     }) as unknown as import('../src/openclaw/index.js').OpenClawCliPort
-    await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc' })).resolves.toEqual({
-      channel: true, agent: true, account: true, binding: true,
+    await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc', gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway' })).resolves.toEqual({
+      channel: true, agent: true, account: true, accountGateway: true, binding: true,
     })
   })
   it('rejects an empty host-configured profile without invoking OpenClaw', async () => {

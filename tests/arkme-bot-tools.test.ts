@@ -34,6 +34,10 @@ function fakePorts() {
       status: 'gateway_restart_confirmation_required' as const,
       resource_ref: 'openclaw.bot.v1.opaque', impact: 'profile_all_agents' as const,
     })),
+    openBotChat: vi.fn(async () => ({
+      sourceRef: 'arkme-source-v1.bot-chat', kind: 'private_chat' as const,
+      displayName: '总结', activeAtMillis: 0, unreadCount: 0,
+    })),
   } as unknown as ArkmeCoreToolPorts
 }
 
@@ -41,9 +45,23 @@ describe('Arkme Bot tools', () => {
   it('declares the minimal Bot catalog with explicit grants on every write', () => {
     expect(['arkme_bots_list', 'arkme_group_bots_list'].map(moduleFor))
       .toSatisfy(modules => modules.every(module => module?.meta.effect === 'read'))
-    expect(['arkme_bot_create', 'arkme_group_bot_add', 'arkme_group_bot_remove'].map(moduleFor))
+    expect(['arkme_bot_create', 'arkme_bot_chat_open', 'arkme_group_bot_add', 'arkme_group_bot_remove'].map(moduleFor))
       .toSatisfy(modules => modules.every(module => module?.meta.effect === 'write'
         && module.meta.grant === 'explicit-user-write'))
+  })
+
+  it('opens Bot private chat using only an opaque bot_ref and returns a reusable source_ref', async () => {
+    const ports = fakePorts()
+    const module = moduleFor('arkme_bot_chat_open')
+    expect(module?.meta).toMatchObject({ effect: 'write', grant: 'explicit-user-write' })
+    const output = await module!.create(ports).execute(
+      { bot_ref: 'arkme-bot-v1.opaque' },
+      { callId: 'bot-chat-open-1', signal: new AbortController().signal } as never,
+    ) as string
+    expect(ports.openBotChat).toHaveBeenCalledWith('arkme-bot-v1.opaque', expect.any(Object))
+    expect(output).toContain('arkme-source-v1.bot-chat')
+    expect(output).not.toContain('bot_id')
+    expect(output).not.toContain('chat_session_uid')
   })
 
   it('connects using only an opaque Bot reference and returns no local path or secret', async () => {

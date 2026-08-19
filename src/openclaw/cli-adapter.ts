@@ -15,10 +15,11 @@ export type OpenClawPreflightResult =
 
 export interface OpenClawCliAdapter {
   preflight(options?: { signal?: AbortSignal }): Promise<OpenClawPreflightResult>
-  inspect(input: { agentId: string; accountId: string }, options?: { signal?: AbortSignal }): Promise<import('./types.js').OpenClawLocalResources>
+  inspect(input: { agentId: string; accountId: string; gatewayUrl: string }, options?: { signal?: AbortSignal }): Promise<import('./types.js').OpenClawLocalResources>
   ensureChannel(options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureAgent(input: { agentId: string; workspaceRef: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureAccountSecretRef(input: { accountId: string; secretRef: import('./types.js').OpenClawSecretRef }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
+  ensureAccountGatewayUrl(input: { accountId: string; gatewayUrl: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   ensureBinding(input: { agentId: string; accountId: string }, options?: { signal?: AbortSignal }): Promise<{ changed: boolean }>
   gatewayStatus(options?: { signal?: AbortSignal }): Promise<'reachable' | 'unreachable' | 'unknown'>
   restartGateway(options?: { signal?: AbortSignal }): Promise<'restarted' | 'service_not_installed'>
@@ -54,6 +55,16 @@ function jsonHasBinding(stdout: string, agentId: string, accountId: string): boo
     const route = match as Record<string, unknown>
     return binding.agentId === agentId && route.channel === 'jotmo' && route.accountId === accountId
   })
+}
+
+function jsonHasGatewayUrl(stdout: string, expected: string): boolean {
+  try {
+    const value = JSON.parse(stdout) as unknown
+    return value !== null && typeof value === 'object'
+      && (value as Record<string, unknown>).gatewayUrl === expected
+  } catch {
+    return false
+  }
 }
 
 function profileArgs(profile: string, ...command: string[]): readonly string[] {
@@ -122,6 +133,7 @@ export function createOpenClawCliAdapter(options: {
         channel: channel.exitCode === 0,
         agent: agents.exitCode === 0 && jsonContainsExactString(agents.stdout, input.agentId),
         account: account.exitCode === 0,
+        accountGateway: account.exitCode === 0 && jsonHasGatewayUrl(account.stdout, input.gatewayUrl),
         binding: bindings.exitCode === 0 && jsonHasBinding(bindings.stdout, input.agentId, input.accountId),
       }
     },
@@ -140,6 +152,11 @@ export function createOpenClawCliAdapter(options: {
       assertSucceeded(provider, 'secret provider configuration')
       const account = await options.run(profileArgs(profile, 'config', 'set', `channels.jotmo.accounts.${input.accountId}.token`, '--ref-provider', input.secretRef.provider, '--ref-source', input.secretRef.source, '--ref-id', input.secretRef.id), runOptions)
       assertSucceeded(account, 'channel account configuration')
+      return { changed: true }
+    },
+    async ensureAccountGatewayUrl(input, runOptions) {
+      const result = await options.run(profileArgs(profile, 'config', 'set', `channels.jotmo.accounts.${input.accountId}.gatewayUrl`, input.gatewayUrl), runOptions)
+      assertSucceeded(result, 'channel Gateway URL configuration')
       return { changed: true }
     },
     async ensureBinding(input, runOptions) {

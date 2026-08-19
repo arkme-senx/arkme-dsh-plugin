@@ -46,6 +46,7 @@ const BUSINESS_PROMPT_SUFFIX =
   + 'refresh arkme_bots_list and ask the human to reconcile instead. Use arkme_group_bots_list with an unchanged group source_ref '
   + 'before changing installation state. Call arkme_group_bot_add or arkme_group_bot_remove only after an explicit human request. '
   + 'Use arkme_bot_openclaw_connect only after the human explicitly requests connecting a selected bot_ref to local OpenClaw. '
+  + 'Use arkme_bot_chat_open only after the human explicitly asks to open or message a selected Bot; then reuse its unchanged source_ref with arkme_source_read and arkme_text_send. '
   + 'Never supply or guess a profile, package, workspace, command, or credential. If the first call reports that a Gateway restart '
   + 'confirmation is required, explain that it can briefly affect every Agent in the configured profile and wait for a new explicit '
   + 'human confirmation before calling the same tool again. Do not claim runtime online until the tool reports runtime_online, '

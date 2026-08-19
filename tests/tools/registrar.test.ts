@@ -89,6 +89,7 @@ describe('registerArkmeTools', () => {
       'arkme_bots_list',
       'arkme_bot_create',
       'arkme_bot_openclaw_connect',
+      'arkme_bot_chat_open',
       'arkme_group_bots_list',
       'arkme_group_bot_add',
       'arkme_group_bot_remove',

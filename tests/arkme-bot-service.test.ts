@@ -188,13 +188,15 @@ describe('ArkmeService Bot owner adapter', () => {
         bot_id: 'bot-owner-id-connect', name: '总结', provider: 'openclaw', description: '', status: 'offline',
         subject_uid: 'subject-connect', chat_session_uid: '',
       }] } })
+      if (String(input).endsWith('/profile')) return json({ code: 200, data: { gateway_url: 'wss://bot.test/ws/v1/bot/gateway', bot: { token_preview: 'jbot_co...cret' } } })
       return json({ code: 200, data: { token: 'jbot_connect_secret' } })
     })
     const botRef = (await service.listBots()).items[0]!.botRef
     let revealed = ''
     service.attachOpenClawProvisioner({
-      async reconcile(input: { botRef: string; allowGatewayRestart?: boolean; revealSecret: () => Promise<{ reveal(): string }> }) {
+      async reconcile(input: { botRef: string; allowGatewayRestart?: boolean; resolveConnectionMetadata: () => Promise<{ gatewayUrl: string; tokenPreview: string }>; revealSecret: () => Promise<{ reveal(): string }> }) {
         revealed = (await input.revealSecret()).reveal()
+        expect(await input.resolveConnectionMetadata()).toEqual({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'jbot_co...cret' })
         expect(input).toMatchObject({ botRef, allowGatewayRestart: true })
         return { status: 'connected_unverified', resource_ref: 'openclaw.bot.v1.test' } as const
       },
@@ -205,6 +207,51 @@ describe('ArkmeService Bot owner adapter', () => {
     })
     expect(revealed).toBe('jbot_connect_secret')
     await expect(service.connectOpenClawBot('arkme-bot-v1.not-owned')).rejects.toMatchObject({ code: 'bot-ref-not-owned' })
+  })
+
+  it('opens a Chat-owned Bot private session as a reusable opaque source', async () => {
+    const calls: Array<{ url: string; body: unknown }> = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as unknown
+      calls.push({ url, body })
+      if (url.endsWith('/bot/list')) return json({ code: 200, data: { bots: [{
+        bot_id: 'bot-owner-id-chat', name: '总结 Bot', provider: 'openclaw', description: '', status: 'offline',
+        subject_uid: '', chat_session_uid: '',
+      }] } })
+      return json({ code: 200, data: { session_id: 'chat-session-owner-id', chat_session_uid: 'chat-session-owner-id', messages: [] } })
+    })
+    const botRef = (await service.listBots()).items[0]!.botRef
+
+    const source = await service.openBotChat(botRef)
+
+    expect(calls.at(-1)).toEqual({
+      url: 'https://bot.test/api/v1/bot/private-chat/open',
+      body: { bot_id: 'bot-owner-id-chat' },
+    })
+    expect(source).toMatchObject({
+      sourceRef: expect.stringMatching(/^arkme-source-v1\./),
+      kind: 'private_chat',
+      displayName: '总结 Bot',
+      activeAtMillis: 0,
+      unreadCount: 0,
+    })
+    expect(JSON.stringify(source)).not.toContain('chat-session-owner-id')
+    expect(JSON.stringify(source)).not.toContain('bot-owner-id-chat')
+  })
+
+  it('fails closed when legacy Bot private chat cannot use generic source read/send', async () => {
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async input => {
+      if (String(input).endsWith('/list')) return json({ code: 200, data: { bots: [{
+        bot_id: 'bot-owner-id-legacy', name: 'Legacy Bot', provider: 'openclaw', description: '', status: 'offline',
+      }] } })
+      return json({ code: 200, data: { session_id: 'bot-owner-id-legacy', messages: [] } })
+    })
+    const botRef = (await service.listBots()).items[0]!.botRef
+
+    await expect(service.openBotChat(botRef)).rejects.toMatchObject({ code: 'bot-chat-source-unavailable' })
   })
 
   it('lists, installs, and removes a Bot using only opaque Bot and group references', async () => {

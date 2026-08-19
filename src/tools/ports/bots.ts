@@ -1,5 +1,6 @@
 import type { SecretValue } from '../../secret-value.js'
 import type { ArkmeBotList, ArkmeBotSummary } from '../../types.js'
+import type { ArkmeSourceItem } from '../../types.js'
 
 export interface ArkmeBotCreateInput {
   name: string
@@ -33,6 +34,7 @@ export interface ArkmeBotToolPort {
   listBots(options?: { signal?: AbortSignal }): Promise<ArkmeBotList>
   createBot(input: ArkmeBotCreateInput, options?: { signal?: AbortSignal }): Promise<ArkmeBotCreateResult>
   revealBotSecret(botRef: string, options?: { signal?: AbortSignal }): Promise<SecretValue>
+  openBotChat(botRef: string, options?: { signal?: AbortSignal }): Promise<ArkmeSourceItem>
   listGroupBots(groupSourceRef: string, options?: { signal?: AbortSignal }): Promise<ArkmeGroupBotList>
   addGroupBot(groupSourceRef: string, botRef: string, options?: { signal?: AbortSignal }): Promise<ArkmeGroupBotMutationResult>
   removeGroupBot(groupSourceRef: string, botRef: string, options?: { signal?: AbortSignal }): Promise<ArkmeGroupBotMutationResult>
