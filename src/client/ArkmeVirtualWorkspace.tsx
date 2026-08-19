@@ -9,6 +9,7 @@ import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
+import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
@@ -95,6 +96,10 @@ const styles: Record<string, CSSProperties> = {
     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     fontSize: 15, lineHeight: '20px', fontWeight: 500,
   },
+  entryName: {
+    flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 15, lineHeight: '20px', fontWeight: 500,
+  },
   chatTime: { flex: 'none', color: colors.caption, fontSize: 11, lineHeight: '16px' },
   muteIcon: { flex: 'none', display: 'inline-flex', color: colors.secondary },
   chatBottom: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
@@ -107,8 +112,6 @@ const styles: Record<string, CSSProperties> = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ff5f57',
     color: '#fff', fontSize: 10, lineHeight: '17px',
   },
-  privateBadge: { flex: 'none', padding: '1px 6px', borderRadius: 999, background: '#f0f1f2', color: '#777d85', fontSize: 10 },
-  aiBadge: { flex: 'none', color: '#16834b', fontSize: 10, lineHeight: '16px', fontWeight: 700 },
   avatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
@@ -257,8 +260,8 @@ export function ArkmeArkoRow({
     <span style={styles.avatar} aria-hidden><ArkmeArkoAvatar /></span>
     <span style={styles.chatContent}>
       <span style={styles.chatTop}>
-        <span style={styles.chatName}>{displayName}</span>
-        <span style={styles.aiBadge}>AI</span>
+        <span style={styles.entryName}>{displayName}</span>
+        <ArkmeTopicTagBadge label="Agent" selected={selected} />
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}>对话并处理 Arkme 业务</span></span>
     </span>
@@ -909,7 +912,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         >
           <SelfAvatar />
           <span style={styles.chatContent}>
-            <span style={styles.chatTop}><span style={styles.chatName}>发给自己</span><span style={styles.privateBadge}>私密</span></span>
+            <span style={styles.chatTop}>
+              <span style={styles.entryName}>发给自己</span>
+              <ArkmeTopicTagBadge label="私密" selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)} />
+            </span>
             <span style={styles.chatBottom}><span style={styles.preview}>默认分类与主题</span></span>
           </span>
         </button>

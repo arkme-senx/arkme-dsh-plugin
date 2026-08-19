@@ -11,24 +11,42 @@
 ```mermaid
 flowchart LR
   Sidebar[Arkme 左侧列表] --> Community[即我社区入口]
-  Sidebar --> Arko[Arko 入口：客户端同源头像 + AI 标识]
+  Sidebar --> Arko[Arko 入口：客户端同源头像 + 动态名称后的 Agent 标签]
   Sidebar --> Self[发给自己]
   Sidebar --> Recording[全天候录音]
+  Sidebar --> Directory[会话目录：全量基线就绪后合并实时增量]
   Arko --> Surface[Arko 主面板：展示云端当前名称]
+  Surface --> Disclaimer[当前名称右侧：内容由 AI 生成，仅供参考；不重复展示 Agent 标签]
   Surface --> Actions[当前名称右侧：模型选择 / 清除上下文]
   Actions --> Models[服务端模型目录与当前选择]
   Surface --> Messages[AgentDirect 历史与本地消息流]
+  Messages --> Earlier[触顶自动加载更早消息并保持阅读位置]
   Messages --> UserAvatar[用户消息：当前账号头像]
   Messages --> ArkoIdentity[AI 消息：客户端同源头像 + 云端当前名称]
   Messages --> Thinking[思考过程：展开 / 收起 / 计时]
   Messages --> Running[运行状态：思考 / 处理 / 等待操作 / 等待补充]
-  Messages --> Earlier[加载更早消息]
   Surface --> Composer[输入框与发送按钮]
   Composer --> Stop[运行中：停止当前任务]
   Profile[Arko Profile Store] --> Arko
   Profile --> Surface
   CloudDefault[云端 Agent / version 0] -->|仅展示映射| Profile
   Profile -->|Arko| Arko
+```
+
+### 会话目录初始化交互
+
+```mermaid
+sequenceDiagram
+  participant SSE as 实时事件
+  participant Store as Chat Directory Store
+  participant API as sources.list
+  participant UI as 左侧会话列表
+
+  SSE->>Store: 基线前消息/已读增量
+  Store->>Store: 按到达顺序缓存，不发布稀疏列表
+  API-->>Store: 完整会话基线
+  Store->>Store: 基线 + 待处理增量
+  Store-->>UI: 一次发布完整目录
 ```
 
 ## 交互图
@@ -54,6 +72,12 @@ sequenceDiagram
     Panel->>Host: user.profile
   end
   Host-->>Panel: 会话 / 名称 / 用户头像 / 模型 / 历史
+  opt 用户滚动到消息区顶部附近
+    Panel->>Panel: 记录 scrollTop / scrollHeight
+    Panel->>Host: arko.history(next_offset)
+    Host-->>Panel: 更早历史页
+    Panel->>Panel: 前插消息并补偿新增高度
+  end
   alt 新任务
     U->>Panel: 输入并发送
     Panel->>Host: arko.ask(model_route_key, wait=1s)
@@ -122,10 +146,12 @@ stateDiagram-v2
 - `waiting_user` 后的下一条输入必须携带原 `run_uid + assistant_msg_id`，且不得发送新模型路由。
 - 清除上下文通过新建 `type=2` 会话实现，保留历史消息并切断旧 Run 的续接关系。
 - 模型选择、发送、清除上下文和历史翻页分别防重入，并为失败保留可重试入口。
+- 历史翻页与私聊/群聊一致：顶部哨兵进入 120px 预加载区后自动请求更早消息，前插完成后按新增高度补偿 `scrollTop`；加载失败停止自动重试并提供原页重试。
 - Arko 主面板不重复展示 Agent 资料头；模型选择和清除上下文位于当前 Arko 名称右侧。
 - 用户消息头像读取当前账号的安全头像引用；AI 消息头像复用客户端 AgentDirect 头像，发送者名称只展示云端当前名称，不追加 `AI` 文案。
 - Arko profile 是侧边栏入口与主面板共享的前端状态；改名回执会同时刷新两处。仅云端 `Agent/version=0` 默认投影映射为 `Arko`，用户主动保存的 `Agent/version>0` 保持原样。
 - 新发送和重进页面发现的 active Run 都由同一轮询链恢复；只恢复当前会话最新 Run。首次查询前保留 1.2 秒状态投影窗口，前两次失败保持“正在处理”，连续三次失败后才展示同步异常，并以最高 10 秒退避继续重连。
+- 只有首次历史恢复、新发送、任务终态刷新和清除上下文会滚动到底部；加载更早消息不得触发全局滚底副作用。
 - `new-msg-v2` 成功后即视为任务已受理；后续 SSE 断线不得回报“发送失败”，必须保留 Run 身份并转状态轮询，避免用户重试造成重复业务操作。
 - `new-msg-v2` 响应不确定时在当前标签页保存 pending turn；重试确认必须复用原 `client_turn_uid`，未完成对账前禁止新发送和清除上下文。
 - Tool 状态查询进入终态后使用 `surface_assistant_msg_id` 从现有历史分页回收最终正文，不修改系统提示词或服务端契约。
@@ -139,26 +165,29 @@ sequenceDiagram
   participant UI as Arkme Surface
   participant Host as Arkme Host API
   participant Store as 本地凭据/资料缓存
-  participant Auth as Arkme 用户接口
 
   UI->>Host: auth.status
   Host->>Store: 读取 active / pending session
   Store-->>Host: 已登录 / 待绑定 / 未登录
-  Host-->>UI: 立即返回本地三态
-  alt active session 且页面首次挂载
-    UI->>Host: user.profile.refresh
-    Host->>Auth: 校验凭据并读取手机号
-    Auth-->>UI: 已绑定手机号
-    UI->>UI: 保持当前 Arko / 录音 / 会话模式
-  else 凭据过期
-    Auth-->>UI: login-expired
-    UI->>UI: 回到登录页并允许重新登录
-  else 用户资料查询临时失败
-    Auth-->>UI: 网络错误 / 服务繁忙
-    UI-->>UI: 保持 checking 并显示重新检查按钮
-    UI->>Host: 用户点击后重新执行 user.profile.refresh
+  Host-->>UI: 返回已完成手机号门禁的三态
+  alt authenticated
+    UI->>UI: 直接保持当前 Arko / 录音 / 会话模式
+  else binding-required
+    UI->>UI: 展示绑定手机号页
+  else logged-out / expired
+    UI->>UI: 展示登录页
+  else auth.status / auth.begin 失败
+    Host--xUI: 返回具体失败原因
+    UI->>UI: 保持登录页并展示原因
+    UI->>Host: 用户重新扫码或切换方式登录
+  else authenticated userId 变化
+    UI->>UI: 清空旧目录 mutation 并重挂载 Arko
+    UI->>UI: 仅加载新账号目录与历史
   end
 ```
 
 - `auth.status` 不在每次组件挂载时重复访问远端；active session 有资料缓存时直接返回，旧凭据首次无缓存时仍执行一次迁移校验。
-- 手机号远端校验只更新绑定门禁，不再触发全局登录事件或把当前 Arko 页面重置成登录模式。
+- Host 返回的 `authenticated` 已完成手机号绑定校验；前端不得在重挂载时再用 `user.profile.refresh` 创建第二套门禁。
+- 用户界面只展示登录、绑定手机号和已登录内容，不展示“正在确认登录状态”或认证重试页。
+- 登录请求失败仍属于登录页：直接显示 Host 原因，二维码区域可重新发起扫码，手机号和测试账号入口保持可切换。
+- 已认证 `userId` 变化时，目录 Store 切换 generation 并清空旧 mutation，Arko Surface 使用账号 key 重挂载，防止旧账号历史短暂残留。

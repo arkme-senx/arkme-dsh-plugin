@@ -23,6 +23,7 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     onSendCode={() => undefined}
     onVerifyCode={() => undefined}
     onTestLogin={() => undefined}
+    onWechatLogin={() => undefined}
     onCancelBinding={() => undefined}
     {...patch}
   />)
@@ -53,6 +54,15 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('138 0013 8000')
     expect(html).toContain('请输入 6 位验证码')
     expect(html).toContain('获取验证码')
+  })
+
+  it('keeps an authentication failure on the login page and offers a fresh login attempt', () => {
+    const html = renderLogin({ error: '登录凭据已失效' })
+
+    expect(html).toContain('登录 Arkme')
+    expect(html).toContain('登录凭据已失效')
+    expect(html).toContain('重新登录')
+    expect(html).not.toContain('二维码加载中')
   })
 
   it('renders the bound-phone gate as a focused phone verification flow', () => {
