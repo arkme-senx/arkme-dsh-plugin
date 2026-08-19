@@ -54,7 +54,7 @@ const styles: Record<string, CSSProperties> = {
   },
   sortControl: {
     position: 'relative', height: 22, flex: 'none', display: 'inline-flex', alignItems: 'center',
-    color: 'var(--dsw-alias-label-secondary, #6f747b)',
+    color: 'var(--dsw-alias-label-secondary, #6f747b)', transform: 'translateY(2px)',
   },
   sortTrigger: {
     height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
