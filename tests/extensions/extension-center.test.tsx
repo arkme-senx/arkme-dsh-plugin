@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter, extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
-  extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
+  extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
   formatExtensionBytes,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
@@ -75,6 +75,13 @@ describe('Arkme extension market UI', () => {
   it('starts list installation from the exact item without requiring detail navigation', () => {
     expect(extensionDirectInstallTarget({ extension_id: 'ext-1', latest_stable_version: '1.2.3' }))
       .toEqual({ extensionId: 'ext-1', version: '1.2.3' })
+  })
+
+  it('uses the DSH instance as the install owner when no conversation exists', () => {
+    expect(extensionInstallOwnerId(undefined, 'instance-1')).toBe('profile:instance-1')
+    expect(extensionInstallOwnerId('', 'instance-1')).toBe('profile:instance-1')
+    expect(extensionInstallOwnerId('session-1', 'instance-1')).toBe('session-1')
+    expect(extensionInstallOwnerId(undefined, undefined)).toBeUndefined()
   })
 
   it('renders the resolved author without exposing a version in its label', () => {

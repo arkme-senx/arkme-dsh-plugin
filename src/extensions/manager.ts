@@ -149,6 +149,17 @@ export class ArkmeExtensionManager {
     chmodSync(options.artifactDirectory, 0o700)
   }
 
+  /** Profile installation is Host-owned and does not need a live conversation Agent. */
+  canInstallWithoutAgent(): boolean {
+    return this.options.profileDirectory !== undefined && this.options.profileInstaller !== undefined
+  }
+
+  /** Profile-only extensions can be removed without touching a legacy dynamic Agent. */
+  canUninstallWithoutAgent(extensionIdValue: string): boolean {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    return this.store.get(extensionId)?.dynamicPluginId === undefined
+  }
+
   inspectPackage(agent: unknown, pluginId: string, packageId: string): DynamicCordisPackageInspectionLike {
     return this.runner.inspectPackage(agent, requiredId(pluginId, 'plugin_id'), requiredId(packageId, 'package_id'))
   }

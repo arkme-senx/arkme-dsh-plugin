@@ -32,8 +32,31 @@ describe('extension install task coordinator', () => {
   })
 
   it('rejects an install when the selected DSH Agent is not live', () => {
-    const tasks = new ArkmeExtensionInstallTasks({} as never, { get: () => undefined })
+    const tasks = new ArkmeExtensionInstallTasks(
+      { canInstallWithoutAgent: () => false } as never,
+      { get: () => undefined },
+    )
     expect(() => tasks.start({ extensionId: 'ext-1', sessionId: 'missing' })).toThrow('当前 DSH 会话不可用')
+    tasks.dispose()
+  })
+
+  it('installs a Profile extension without a conversation Agent', async () => {
+    const apply = vi.fn(async () => ({
+      extension_id: 'ext-1', version: '1.0.0', state: 'installed', installed: true as const,
+      active: false, approval_required: false, restart_required: true, message: '等待重启',
+    }))
+    const tasks = new ArkmeExtensionInstallTasks(
+      { apply, canInstallWithoutAgent: () => true } as never,
+      { get: () => undefined },
+    )
+
+    const started = tasks.start({ extensionId: 'ext-1', sessionId: 'profile:instance-1' })
+    await vi.waitFor(() => { expect(tasks.status(started.taskId, 'profile:instance-1').done).toBe(true) })
+
+    expect(apply).toHaveBeenCalledWith(expect.objectContaining({ agent: undefined, extensionId: 'ext-1' }))
+    expect(tasks.status(started.taskId, 'profile:instance-1')).toMatchObject({
+      phase: 'installed', done: true, result: { installed: true, restartRequired: true },
+    })
     tasks.dispose()
   })
 
@@ -77,6 +100,19 @@ describe('extension install task coordinator', () => {
     expect(uninstall).toHaveBeenCalledWith({ agent, extensionId: 'ext-1' })
     await expect(tasks.restart('ext-1')).resolves.toEqual({ restarting: true })
     expect(restartProfileChange).toHaveBeenCalledWith('ext-1')
+    tasks.dispose()
+  })
+
+  it('uninstalls a Profile-only extension without a conversation Agent', async () => {
+    const uninstall = vi.fn(async () => ({ extension_id: 'ext-1', installed: false, active: false }))
+    const tasks = new ArkmeExtensionInstallTasks(
+      { uninstall, canUninstallWithoutAgent: () => true } as never,
+      { get: () => undefined },
+    )
+
+    await expect(tasks.uninstall({ extensionId: 'ext-1', sessionId: 'profile:instance-1' }))
+      .resolves.toMatchObject({ installed: false })
+    expect(uninstall).toHaveBeenCalledWith({ agent: undefined, extensionId: 'ext-1' })
     tasks.dispose()
   })
 })
