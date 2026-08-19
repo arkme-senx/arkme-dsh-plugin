@@ -53,14 +53,14 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 20, cursor: 'pointer',
   },
   sortControl: {
-    position: 'relative', height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center',
+    position: 'relative', height: 22, flex: 'none', display: 'inline-flex', alignItems: 'center',
     color: 'var(--dsw-alias-label-secondary, #6f747b)',
   },
   sortTrigger: {
-    height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+    height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
     padding: 0, border: 0, borderRadius: 6, outline: 0,
     background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, fontWeight: 400,
-    lineHeight: '20px', cursor: 'pointer',
+    lineHeight: '22px', cursor: 'pointer',
   },
   sortArrow: { width: 10, height: 10, flex: 'none', marginTop: 1, pointerEvents: 'none' },
   sortMenu: {
