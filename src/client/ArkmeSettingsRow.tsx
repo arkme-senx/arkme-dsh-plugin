@@ -6,6 +6,7 @@ import { arkmeAuthStore } from './auth-store.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import type { ArkmeAuthSnapshot } from '../types.js'
+import { arkmePluginUpdateStore } from './plugin-update-store.js'
 
 export type ArkmeSettingsRowProps = PropsRuntime<'settings.general.item'>
 
@@ -24,9 +25,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
 }
 
+export function arkmeSettingsTitle(installedVersion: string | undefined): string {
+  return `Arkme v${installedVersion?.trim() || '…'}`
+}
+
 export function ArkmeSettingsRow(_props: ArkmeSettingsRowProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
+  const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const auth = authState.auth
@@ -48,6 +54,7 @@ export function ArkmeSettingsRow(_props: ArkmeSettingsRowProps) {
         : bindingRequired
           ? '当前 Arkme 账号待绑定手机号，完成绑定后才会登录成功。'
           : '当前未登录 Arkme；首次打开“默认分类”时会进入登录引导。'
+  const update = updateState.status
 
   const logout = async () => {
     setBusy(true)
@@ -67,7 +74,7 @@ export function ArkmeSettingsRow(_props: ArkmeSettingsRowProps) {
   return (
     <div style={styles.row}>
       <div style={styles.text}>
-        <div style={styles.title}>Arkme 账号</div>
+        <div style={styles.title}>{arkmeSettingsTitle(update?.installedVersion)}</div>
         <div style={styles.desc} role={error === '' ? undefined : 'alert'}>{description}</div>
       </div>
       {authenticated && (

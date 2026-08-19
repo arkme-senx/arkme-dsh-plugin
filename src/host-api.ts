@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor, ArkmeSourceDirectory, ArkmeTimelineCursor,
@@ -153,6 +154,10 @@ function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
 export interface ArkmeHostApiOptions {
   expectedPort: number
   allowNonLoopback: boolean
+  updateManager?: Pick<
+    ArkmePluginUpdateManager,
+    'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
+  >
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -179,11 +184,13 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      const value = await dispatchArkmeHostOperation(service, request.operation, params)
+      const value = await dispatchArkmeHostOperation(service, request.operation, params, options.updateManager)
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
       const known = error instanceof ArkmePluginError
         ? error
+        : error instanceof ArkmePluginUpdateError
+          ? new ArkmePluginError(error.code, error.message, error.retryable, error.retryable ? 503 : 409)
         : error instanceof ArkmeOutgoingCallError
           ? new ArkmePluginError(error.code, error.message, error.retryable, error.code === 'call-active' ? 409 : 400)
           : new ArkmePluginError('internal-error', 'Arkme 插件处理失败', true, 500, { cause: error })
@@ -199,11 +206,26 @@ export async function dispatchArkmeHostOperation(
   service: ArkmeService,
   operation: ArkmePluginRequest['operation'],
   params: Record<string, unknown>,
+  updateManager?: Pick<
+    ArkmePluginUpdateManager,
+    'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
+  >,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
+    case 'plugin.update.status': return await requireUpdateManager(updateManager).status()
+    case 'plugin.update.check': return await requireUpdateManager(updateManager).check({ manual: true })
+    case 'plugin.update.install': return await requireUpdateManager(updateManager).install()
+    case 'plugin.update.install-status': return await requireUpdateManager(updateManager).installStatus()
+    case 'plugin.update.acknowledge': {
+      const snoozeHours = numberParam(params, 'snoozeHours', 24)
+      if (snoozeHours < 0 || snoozeHours > 24) {
+        throw new ArkmePluginError('plugin-update-snooze-invalid', '稍后提醒时间无效', false)
+      }
+      return await requireUpdateManager(updateManager).acknowledge(snoozeHours)
+    }
     case 'auth.status': return await service.authStatus()
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
@@ -414,4 +436,19 @@ export async function dispatchArkmeHostOperation(
     )
     default: throw new ArkmePluginError('operation-unknown', '不支持的Arkme 插件操作', false, 404)
   }
+}
+
+function requireUpdateManager(
+  updateManager: Pick<
+    ArkmePluginUpdateManager,
+    'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
+  > | undefined,
+): Pick<
+  ArkmePluginUpdateManager,
+  'status' | 'check' | 'acknowledge' | 'install' | 'installStatus'
+> {
+  if (updateManager === undefined) {
+    throw new ArkmePluginError('plugin-update-unavailable', '插件更新检查暂不可用', true, 503)
+  }
+  return updateManager
 }

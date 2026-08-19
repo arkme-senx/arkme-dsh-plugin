@@ -12,7 +12,10 @@ const CLIENT_EXTERNALS = [
 export default defineConfig([
   {
     name: '@senguoyun/dsh-arkme',
-    entry: { index: 'src/index.ts' },
+    entry: {
+      index: 'src/index.ts',
+      'plugin-updater-helper': 'src/plugin-updater-helper.ts',
+    },
     outDir: 'lib',
     format: 'esm',
     platform: 'node',

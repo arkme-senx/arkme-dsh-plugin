@@ -877,6 +877,60 @@ export interface ArkmeProviderState {
   revision: number
 }
 
+export type ArkmePluginUpdateAvailability = 'unknown' | 'current' | 'available' | 'ahead'
+export type ArkmePluginUpdateLevel = 'normal' | 'important' | 'critical'
+
+export interface ArkmePluginUpdateNotice {
+  schemaVersion: 1
+  level: ArkmePluginUpdateLevel
+  title?: string
+  summary?: string
+  publishedAt?: string
+  releaseNotesUrl?: string
+}
+
+/** Browser-safe projection of the Host-owned plugin update state. */
+export interface ArkmePluginUpdateStatus {
+  enabled: boolean
+  installedVersion: string
+  latestVersion?: string
+  availability: ArkmePluginUpdateAvailability
+  level: ArkmePluginUpdateLevel
+  title?: string
+  summary?: string
+  releaseNotesUrl?: string
+  checkedAtMillis?: number
+  lastSuccessfulCheckAtMillis?: number
+  stale: boolean
+  checkFailed: boolean
+  checking: boolean
+  acknowledged: boolean
+  snoozedUntilMillis?: number
+  updateCommand: string
+  canInstallInApp: boolean
+  installBlockedReason?: 'update-disabled' | 'local-install' | 'profile-unavailable' | 'runtime-unavailable'
+  restartRequired: true
+}
+
+export type ArkmePluginUpdateInstallPhase =
+  | 'idle'
+  | 'preparing'
+  | 'installing'
+  | 'restarting'
+  | 'succeeded'
+  | 'failed'
+  | 'rolled-back'
+
+export interface ArkmePluginUpdateInstallSnapshot {
+  schemaVersion: 1
+  jobId: string
+  phase: ArkmePluginUpdateInstallPhase
+  previousVersion: string
+  targetVersion: string
+  message: string
+  updatedAtMillis: number
+}
+
 export interface ArkmeChatRealtimeState {
   revision: number
   connected: boolean
@@ -964,6 +1018,11 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'arko.ask'
   | 'arko.run.status'
   | 'arko.cancel'
+  | 'plugin.update.status'
+  | 'plugin.update.check'
+  | 'plugin.update.acknowledge'
+  | 'plugin.update.install'
+  | 'plugin.update.install-status'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

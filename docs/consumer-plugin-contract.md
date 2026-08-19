@@ -31,6 +31,8 @@ const dispose = arkme.subscribe(state => refreshWhen(state.revision))
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
 
+Plugin update discovery and acknowledgement are lifecycle concerns owned by the bundled Arkme UI. They are intentionally absent from the public Browser SDK, Host `arkmeData` service and model tool catalog. Consumers must not invoke raw `plugin.update.*` operations or attempt to mutate a DSH profile.
+
 `capabilities().features.outgoingCall` reports whether the Provider's bundled private-chat outgoing-call flow is installed. Contract v1 does not expose a Browser SDK method for starting or preparing calls: short-lived UserSig, room bootstrap data, raw user IDs, and WebRTC account values stay inside the built-in Host/runtime path. Consumers must not invoke raw `calls.outgoing.*` operations or recreate a credential-bearing call API.
 
 `profile()` exposes only UI-safe fields: display name, nickname, avatar reference, Arkme ID, optional one-time Arkme ID change availability, account type, creation time, binding flags, and masked phone/email. Raw phone, raw email, real name, and credentials are intentionally excluded from contract v1. The model-facing `arkme_id_set` tool owns the one-time write workflow; the Browser SDK does not expose a profile mutation method.

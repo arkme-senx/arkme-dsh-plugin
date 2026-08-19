@@ -6,6 +6,7 @@ import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
+import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 
 export const inject = ['slots']
@@ -58,6 +59,7 @@ export function apply(ctx: ClientContext): void {
   }
 
   ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
+  ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
@@ -76,7 +78,7 @@ export function apply(ctx: ClientContext): void {
     name: 'settings.general.item',
     id: 'arkme-account',
     order: 80,
-    label: 'Arkme 账号',
+    label: 'Arkme',
   }, ArkmeSettingsRow))
 }
 
@@ -91,6 +93,7 @@ export { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'
+export { ArkmePluginUpdateStore, arkmePluginUpdateStore } from './plugin-update-store.js'
 export {
   isOfficialConversationTarget, isOfficialNewSessionTarget,
   watchOfficialConversationSelection, watchOfficialNewSession,
