@@ -300,6 +300,16 @@ export function extensionDirectInstallTarget(
   }
 }
 
+export function extensionInstallOwnerId(
+  currentSessionId: string | undefined,
+  instanceId: string | undefined,
+): string | undefined {
+  const session = currentSessionId?.trim() ?? ''
+  if (session !== '') return session
+  const instance = instanceId?.trim() ?? ''
+  return instance === '' ? undefined : `profile:${instance}`
+}
+
 export function extensionAuthorLabel(
   item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name' | 'owner_arkme_id'>,
 ): string {
@@ -476,13 +486,14 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   }
 
   const startInstall = async (target: { extensionId: string; version?: string }) => {
-    if (currentSessionId === undefined || currentSessionId === '') return
     setActionBusyExtensionId(target.extensionId); setInstallError(''); setRestartNotice('')
     try {
+      const ownerId = extensionInstallOwnerId(currentSessionId, await hostInstance())
+      if (ownerId === undefined) throw new Error('无法确认当前 DSH 实例，请刷新后重试。')
       const task = await callArkme<ArkmeExtensionInstallTaskSnapshot>('extensions.install.start', {
         extensionId: target.extensionId,
         ...(target.version === undefined ? {} : { version: target.version }),
-        sessionId: currentSessionId,
+        sessionId: ownerId,
       })
       setInstallTask(task)
     } catch (caught) {
@@ -493,12 +504,12 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   }
 
   const controlInstall = async (operation: 'extensions.install.pause' | 'extensions.install.resume') => {
-    if (installTask === undefined || currentSessionId === undefined) return
+    if (installTask === undefined) return
     try {
       setInstallError('')
       setInstallTask(await callArkme<ArkmeExtensionInstallTaskSnapshot>(operation, {
         taskId: installTask.taskId,
-        sessionId: currentSessionId,
+        sessionId: installTask.sessionId,
       }))
     } catch (caught) {
       setInstallError(caught instanceof Error ? caught.message : String(caught))
@@ -506,10 +517,14 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   }
 
   const uninstall = async (extensionId: string) => {
-    if (currentSessionId === undefined || currentSessionId === '') return
     setActionBusyExtensionId(extensionId); setInstallError(''); setRestartNotice('')
     try {
-      const result = await callArkme<{ restart_required?: boolean }>('extensions.uninstall', { extensionId, sessionId: currentSessionId })
+      const ownerId = extensionInstallOwnerId(currentSessionId, await hostInstance())
+      if (ownerId === undefined) throw new Error('无法确认当前 DSH 实例，请刷新后重试。')
+      const result = await callArkme<{ restart_required?: boolean }>('extensions.uninstall', {
+        extensionId,
+        sessionId: ownerId,
+      })
       setInstalled(current => current.filter(item => item.extensionId !== extensionId))
       setUpdates(current => current.filter(item => item.extension_id !== extensionId))
       setInstallTask(current => current?.extensionId === extensionId ? undefined : current)
@@ -530,14 +545,14 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   }
 
   useEffect(() => {
-    if (installTask === undefined || installTask.done || currentSessionId === undefined) return
+    if (installTask === undefined || installTask.done) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async () => {
       try {
         const next = await callArkme<ArkmeExtensionInstallTaskSnapshot>('extensions.install.status', {
           taskId: installTask.taskId,
-          sessionId: currentSessionId,
+          sessionId: installTask.sessionId,
         }, controller.signal)
         setInstallTask(next)
         if (next.done) {
@@ -565,7 +580,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
     }
     timer = setTimeout(() => { void poll() }, 200)
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
-  }, [currentSessionId, installTask?.taskId])
+  }, [installTask?.taskId])
 
   const restartNow = async () => {
     if (restartPrompt === undefined || restarting) return
@@ -663,8 +678,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
               />
             : <button
             type="button"
-            style={{ ...styles.primaryButton, ...(currentSessionId === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
-            disabled={currentSessionId === undefined}
+            style={styles.primaryButton}
             onClick={() => {
               if (detailAction === '卸载') void uninstall(detail.extension_id)
               else if (tab === 'updates' && detailUpdate?.latest_version !== undefined) {
@@ -684,7 +698,6 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
             {detail.manifest.permissions.map(permission => <Chip key={permission}>{permission}</Chip>)}
           </Chips>
         </section>}
-        {currentSessionId === undefined && <div style={styles.detailHint}>请先选择一个 DSH 会话，再安装这个扩展。</div>}
         {detailInstallAction.disabled && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。请在 DSH 对话中重新发布成功后再安装。</div>}
       </div>}
       {!busy && error === '' && detail === undefined && (tab === 'discover' || tab === 'mine') && <>
@@ -699,7 +712,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
             actionBusy={actionBusyExtensionId === item.extension_id}
             onClick={() => { void inspect(item.extension_id) }}
-            {...(action.disabled || currentSessionId === undefined || (installTask !== undefined && !installTask.done)
+            {...(action.disabled || (installTask !== undefined && !installTask.done)
               ? {}
               : { onAction: () => {
                   if (action.label === '卸载') void uninstall(item.extension_id)
@@ -720,7 +733,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
           statusColor={item.active ? colors.accent : colors.warning}
           actionBusy={actionBusyExtensionId === item.extensionId}
           onClick={() => { void inspect(item.extensionId) }}
-          {...(currentSessionId === undefined ? {} : { onAction: () => { void uninstall(item.extensionId) } })}
+          onAction={() => { void uninstall(item.extensionId) }}
         />)}
         {installed.length === 0 && <EmptyState tab="installed" />}
       </>}
@@ -730,7 +743,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
           const catalogItem = local === undefined
             ? { extension_id: item.extension_id, name: item.extension_id, description: '', visibility: 'private' as const }
             : installedExtensionCatalogItem(local)
-          const canAct = currentSessionId !== undefined && (installTask === undefined || installTask.done)
+          const canAct = installTask === undefined || installTask.done
           return <ExtensionCard
             key={item.extension_id}
             item={catalogItem}

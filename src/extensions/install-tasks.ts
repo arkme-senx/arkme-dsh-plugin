@@ -32,7 +32,7 @@ export class ArkmeExtensionInstallTasks {
     const extensionId = requiredToken(input.extensionId, 'extension_id')
     const sessionId = requiredToken(input.sessionId, 'session_id')
     const agent = this.agents.get(sessionId)
-    if (agent === undefined) {
+    if (agent === undefined && !this.manager.canInstallWithoutAgent()) {
       throw new ArkmePluginError('extension-agent-unavailable', '当前 DSH 会话不可用，请先打开或选择一个会话', false, 409)
     }
     for (const entry of this.tasks.values()) {
@@ -104,7 +104,7 @@ export class ArkmeExtensionInstallTasks {
     const extensionId = requiredToken(input.extensionId, 'extension_id')
     const sessionId = requiredToken(input.sessionId, 'session_id')
     const agent = this.agents.get(sessionId)
-    if (agent === undefined) {
+    if (agent === undefined && !this.manager.canUninstallWithoutAgent(extensionId)) {
       throw new ArkmePluginError('extension-agent-unavailable', '当前 DSH 会话不可用，请先打开或选择一个会话', false, 409)
     }
     for (const entry of this.tasks.values()) {
