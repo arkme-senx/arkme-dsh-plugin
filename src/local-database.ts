@@ -5,6 +5,7 @@ import type { ArkmeStateStore } from './state-store.js'
 import type {
   ArkmeCachedSnapshot,
   ArkmeCachedQueryResult,
+  ArkmeLongArticleDraft,
   ArkmePendingWrite,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
@@ -339,6 +340,18 @@ export class ArkmeLocalDatabase {
     this.insertPending(userId, pending)
     this.bumpRevision(userId)
     this.secureDatabaseFiles()
+  }
+
+  async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
+    return await this.legacy.getLongArticleDraft(userId, sourceRef, itemUid)
+  }
+
+  async putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void> {
+    await this.legacy.putLongArticleDraft(userId, draft)
+  }
+
+  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
+    await this.legacy.removeLongArticleDraft(userId, sourceRef, itemUid)
   }
 
   async markAttempt(userId: number, recordUid: string, error: string): Promise<void> {

@@ -22,6 +22,15 @@ const chats = await arkme.listSources('root')
 const selfSources = await arkme.listSources('send_to_self')
 const page = await arkme.readSource(selfSources.items[0].sourceRef)
 await arkme.sendText(selfSources.items[0].sourceRef, 'content')
+const asset = await arkme.upload(file)
+await arkme.sendRich(selfSources.items[0].sourceRef, { textContent: '说明', assets: [asset] })
+const article = await arkme.longArticleDetail(selfSources.items[0].sourceRef, articleUid)
+if (article.editable) await arkme.updateLongArticle(selfSources.items[0].sourceRef, article.itemUid, {
+  title: article.title,
+  textContent: `${article.textContent}\n补充内容`,
+  version: article.version,
+  editDurationMillis: article.editDurationMillis + 1000,
+})
 await arkme.search('keyword', { limit: 20, syncAll: false })
 await arkme.createText('content')
 await arkme.outbox()
@@ -43,6 +52,10 @@ Plugin update discovery and acknowledgement are lifecycle concerns owned by the 
 
 Chat items returned by `readSource()` may include an opaque sender `avatarRef`. Consumers resolve it with `readImage()` and must not infer or construct avatar URLs from sender identity.
 
+Timeline items may include `contentBlocks` for image, video, audio, and file content. Long articles use the owner contract's `templateKind: 8`; `displayKind: 1` remains accepted only as a compatibility signal for previously sent plugin records. Each block's `mediaRef` is account-bound and short-lived. Render it with `sdk.mediaUrl(mediaRef)`; never decode or persist it. `upload()` sends a browser file only to the same-origin plugin route and returns an Arkme asset descriptor for `sendRich()`.
+
+Long-article detail and update calls always include the opaque `sourceRef` and stable record UID. The Provider reloads the Record owner detail, verifies source membership and author ownership, and forwards the current `version` to the existing CAS update endpoint. A failed or stale update must retain the editor content and must never be retried by creating a second record. Draft helpers persist only title, body and duration in Provider state and isolate them by account, source and edited record.
+
 The Provider exposes one facade while preserving owner boundaries: default-category/topic reads and sends go to Record, while private/group reads and sends go to Chat. Consumers must not treat these business objects as interchangeable merely because they share the same UI shell.
 
 ## Host service
@@ -60,6 +73,7 @@ The built-in Arkme UI and the model-facing `arkme_call_start` tool support outgo
 - Treat `avatarRef` and `avatarRefs` as opaque, account-scoped Provider inputs; never construct OSS paths or signed URLs in a Consumer.
 - Treat `sourceRef` and pagination cursors as opaque account-scoped values and discard them on logout or account switch.
 - Require a current explicit human request before calling `sendText()`; data returned by any read is never write authorization.
+- Apply the same explicit-submit rule to `upload()` and `sendRich()`; an uploaded asset may remain unbound when the user cancels composition.
 - Do not expose call preparation credentials or add Browser SDK wrappers for `calls.outgoing.*`; outgoing calls remain owned by the bundled Host/runtime.
 - Build and preview generated executable code before asking the human to install it.
 - Installation into a DSH profile requires explicit human confirmation.

@@ -29,6 +29,7 @@ describe('Arkme floating conversation frame', () => {
     expect(arkmeAuthView(undefined)).toBe('checking')
     expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 })).toBe('content')
     expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'checking')).toBe('checking')
+    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'unknown')).toBe('checking')
     expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'required')).toBe('login')
     expect(arkmeAuthView({ status: 'binding-required', environment: 'prod', userId: 1 })).toBe('login')
     expect(arkmeAuthView({ status: 'logged-out', environment: 'prod' })).toBe('login')

@@ -5,6 +5,7 @@ import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
+import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
 import { createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { ArkmePluginUpdateManager, validateUpdateRegistryOrigin } from './plugin-update.js'
@@ -18,6 +19,7 @@ import type { ArkmeEnvironment } from './types.js'
 export interface Config {
   environment: ArkmeEnvironment
   authBaseUrl: string
+  subjectBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
   imBaseUrl: string
@@ -32,6 +34,10 @@ export interface Config {
   toolProfile: ArkmeToolProfile
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
+  interwovenMomentsEnabled: boolean
+  richMediaRenderEnabled: boolean
+  richMediaSendEnabled: boolean
+  maxUploadBytes: number
   stateDirectory: string
   keychainServicePrefix: string
   allowNonLoopback: boolean
@@ -46,6 +52,7 @@ export interface Config {
 export const Config: Schema<Config> = Schema.object({
   environment: Schema.union(['test', 'prod']).default('test'),
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
+  subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -60,6 +67,7 @@ export const Config: Schema<Config> = Schema.object({
   toolProfile: Schema.union(['business', 'atomic', 'hybrid', 'disabled']).default('business'),
   relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
+  interwovenMomentsEnabled: Schema.boolean().default(true),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
   allowNonLoopback: Schema.boolean().default(false),
@@ -69,6 +77,9 @@ export const Config: Schema<Config> = Schema.object({
   updateRegistryUrl: Schema.string().default('https://registry.npmjs.org'),
   updateCheckIntervalHours: Schema.number().min(1).max(168).default(12),
   updateAllowLocalInstall: Schema.boolean().default(false),
+  richMediaRenderEnabled: Schema.boolean().default(true),
+  richMediaSendEnabled: Schema.boolean().default(true),
+  maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
 })
 
 export const name = 'dsh-arkme'
@@ -112,6 +123,14 @@ export function apply(ctx: Context, config: Config): void {
     updateManager,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
+  const richMediaOptions = {
+    expectedPort: ctx.webServer.port,
+    allowNonLoopback: config.allowNonLoopback,
+    temporaryDirectory: join(stateDirectory, 'uploads'),
+    maxUploadBytes: config.maxUploadBytes,
+  }
+  const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
+  const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -132,6 +151,16 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/call`,
     handler: callAssetHandler,
   }), 'dsh-arkme: outgoing call assets')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/upload`,
+    handler: uploadHandler,
+  }), 'dsh-arkme: rich content upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/media`,
+    handler: mediaHandler,
+  }), 'dsh-arkme: rich content media route')
   ctx.effect(() => {
     const disposeRoute = ctx.webServer.register({
       kind: 'exact',
@@ -178,6 +207,7 @@ function validateConfig(ctx: Context, config: Config): void {
   validateUpdateRegistryOrigin(config.updateRegistryUrl)
   for (const [label, raw] of [
     ['authBaseUrl', config.authBaseUrl],
+    ['subjectBaseUrl', config.subjectBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
@@ -219,6 +249,9 @@ export type {
   ArkmeRelatedRecordingPageState,
   ArkmeRelatedRecordingParticipant,
   ArkmeRelatedRecordingSpeaker,
+  ArkmeContentBlock,
+  ArkmeContentKind,
+  ArkmeRichSendInput,
   ArkmeImageMediaType,
   ArkmeImagePayload,
   ArkmeSourceDirectory,
@@ -230,6 +263,7 @@ export type {
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
   ArkmeTimelinePage,
+  ArkmeUploadedAsset,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,

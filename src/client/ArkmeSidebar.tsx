@@ -2,12 +2,15 @@ import {
   Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties,
 } from 'react'
+import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageState, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
+  ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
+  ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
@@ -18,9 +21,16 @@ import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
+import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
+import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeChatTimelineDelta } from './chat-directory-store.js'
+import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
+import {
+  ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
+  mergeConversationRows, resolveInterwovenGroupTarget,
+  type ArkmeConversationRow, type ArkmeInterwovenDetailViewState,
+} from './interwoven-moments.js'
 import { arkmeUi } from './ui-controller.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
@@ -36,6 +46,11 @@ export interface ArkmeSurfaceProps {
 export type ArkmeAuthView = 'checking' | 'login' | 'content'
 export type ArkmePhoneBindingGate = 'unknown' | 'checking' | 'ready' | 'required'
 
+interface ArkmeComposerAttachment {
+  asset: ArkmeUploadedAsset
+  previewUrl?: string
+}
+
 const colors = {
   panel: 'var(--dsw-alias-bg-base, #ffffff)',
   text: 'var(--dsw-alias-label-primary, #17191c)',
@@ -45,11 +60,14 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  surface: { position: 'relative', width: '100%', height: '100%', minWidth: 0, overflow: 'hidden', display: 'flex', background: colors.panel, color: colors.text },
+  surface: {
+    position: 'relative', overflow: 'hidden', width: '100%', height: '100%', minWidth: 0,
+    display: 'flex', background: colors.panel, color: colors.text,
+  },
   floatingSurface: { background: 'transparent' },
   panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
   header: {
-    flex: 'none', height: 56, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
+    flex: 'none', height: ARKME_CONVERSATION_HEADER_HEIGHT, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
   titleGroup: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 },
@@ -78,9 +96,9 @@ const styles: Record<string, CSSProperties> = {
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },
-  bubble: { maxWidth: 560, padding: '8px 16px 10px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
-  bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)' },
-  bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' },
+  bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
+  bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)', '--arkme-bubble-fade': 'var(--dsw-specific-bubble, #eef3ff)' } as CSSProperties,
+  bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)', '--arkme-bubble-fade': 'var(--dsw-alias-bg-subtle, #f0f2f5)' } as CSSProperties,
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
   meta: { color: '#adb2b8', fontSize: 11 },
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
@@ -88,9 +106,17 @@ const styles: Record<string, CSSProperties> = {
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
+  interwovenState: {
+    width: 'min(780px,100%)', margin: '0 auto 10px', color: colors.secondary,
+    textAlign: 'center', fontSize: 12, lineHeight: '18px',
+  },
+  inlineRetry: {
+    marginLeft: 8, border: 0, padding: 0, background: 'transparent',
+    color: 'var(--dsw-alias-state-business-primary, #3964fe)', cursor: 'pointer', fontSize: 12,
+  },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
   composerInner: {
-    position: 'relative', width: 'min(780px,100%)', overflow: 'hidden', boxSizing: 'border-box',
+    position: 'relative', width: 'min(780px,100%)', overflow: 'visible', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
     border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 22,
     background: 'var(--dsw-specific-input-major, #fff)', boxShadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.08))',
@@ -104,9 +130,15 @@ const styles: Record<string, CSSProperties> = {
     caretColor: 'var(--dsw-alias-state-business-primary, #3964fe)',
   },
   tools: {
-    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', minWidth: 0,
     padding: '2px 8px 6px',
   },
+  plus: { width: 32, height: 32, border: 0, borderRadius: 999, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 24, lineHeight: '30px' },
+  addMenu: { position: 'absolute', left: 0, bottom: 54, zIndex: 20, width: 210, padding: '6px 0', borderRadius: 12, border: `1px solid ${colors.border}`, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.15)' },
+  addMenuItem: { width: '100%', border: 0, padding: '11px 14px', display: 'flex', alignItems: 'center', gap: 10, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 14, textAlign: 'left' },
+  menuDivider: { height: 1, margin: '4px 0', background: colors.border },
+  attachments: { display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 12px' },
+  uploadStatus: { padding: '0 14px', color: colors.secondary, fontSize: 12 },
   send: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
     border: 0, borderRadius: 999, background: 'var(--dsw-alias-button-info-fill, #3964fe)',
@@ -207,6 +239,15 @@ function initialPhoneBindingGate(auth: ArkmeAuthSnapshot | undefined): ArkmePhon
   return auth?.status === 'authenticated' ? 'ready' : 'unknown'
 }
 
+export function arkmeClipboardImageFiles(clipboardData: Pick<DataTransfer, 'files' | 'items'>): File[] {
+  const itemFiles = Array.from(clipboardData.items)
+    .filter(item => item.kind === 'file')
+    .map(item => item.getAsFile())
+    .filter((file): file is File => file !== null)
+  const files = itemFiles.length > 0 ? itemFiles : Array.from(clipboardData.files)
+  return files.filter(file => file.type.toLowerCase().startsWith('image/'))
+}
+
 function dayKey(value: number): string {
   const date = new Date(value); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
 }
@@ -228,18 +269,6 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
       : item)
   }
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
-}
-
-type TimelineDisplayEvent = {
-  kind: 'message'
-  at: number
-  key: string
-  item: ArkmeTimelineItem
-} | {
-  kind: 'notice'
-  at: number
-  key: string
-  notice: ArkmeGroupAiPolishNotice
 }
 
 export function aiPolishStatus(item: ArkmeTimelineItem): string {
@@ -280,11 +309,22 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     arkmeChatTimelineDelta.getSnapshot,
     arkmeChatTimelineDelta.getSnapshot,
   )
+  const chatDirectory = useSyncExternalStore(
+    arkmeChatDirectory.subscribe,
+    arkmeChatDirectory.getSnapshot,
+    arkmeChatDirectory.getSnapshot,
+  )
+  const interwovenInvalidation = useSyncExternalStore(
+    arkmeInterwovenInvalidation.subscribe,
+    arkmeInterwovenInvalidation.getSnapshot,
+    arkmeInterwovenInvalidation.getSnapshot,
+  )
   const source = ui.mode === 'source' ? ui.selectedSource : undefined
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
@@ -292,9 +332,20 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const [drawer, setDrawer] = useState<'detail'>()
   const [detailItemUid, setDetailItemUid] = useState('')
   const [showOriginal, setShowOriginal] = useState(false)
+  const [interwovenMoments, setInterwovenMoments] = useState<ArkmeInterwovenMention[]>([])
+  const [interwovenState, setInterwovenState] = useState<ArkmeInterwovenBootstrap['state']>('empty')
+  const [interwovenLoading, setInterwovenLoading] = useState(false)
+  const [interwovenError, setInterwovenError] = useState('')
+  const [interwovenRefreshRevision, setInterwovenRefreshRevision] = useState(0)
+  const [selectedMoment, setSelectedMoment] = useState<ArkmeInterwovenMention>()
+  const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState('')
+  const [longArticleCreating, setLongArticleCreating] = useState(false)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const [attachments, setAttachments] = useState<ArkmeComposerAttachment[]>([])
+  const [uploadStatus, setUploadStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -310,8 +361,13 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const [qr, setQr] = useState('')
   const [phoneBindingGate, setPhoneBindingGate] = useState<ArkmePhoneBindingGate>(phoneGate ?? initialPhoneBindingGate(initialAuth))
   const qrRequestStartedRef = useRef(false)
+  const interwovenRequestRef = useRef<AbortController>()
+  const interwovenGenerationRef = useRef(0)
+  const detailRequestRef = useRef<AbortController>()
+  const detailRequestMomentRef = useRef('')
   const lastReadAckRef = useRef('')
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
+  const attachmentPreviewUrlsRef = useRef(new Set<string>())
   const ignoreStaleBindingAuthRef = useRef(false)
   const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
   const authView = arkmeAuthView(auth, phoneBindingGate)
@@ -334,6 +390,21 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   const relatedGenerationRef = useRef(0)
   const relatedLoadingMoreRef = useRef(false)
   const activeRelatedSourceRef = useRef('')
+
+  const releaseAttachmentPreview = useCallback((attachment: ArkmeComposerAttachment) => {
+    if (attachment.previewUrl === undefined) return
+    URL.revokeObjectURL(attachment.previewUrl)
+    attachmentPreviewUrlsRef.current.delete(attachment.previewUrl)
+  }, [])
+
+  const releaseAttachmentPreviews = useCallback((values: ArkmeComposerAttachment[]) => {
+    for (const attachment of values) releaseAttachmentPreview(attachment)
+  }, [releaseAttachmentPreview])
+
+  useEffect(() => () => {
+    for (const previewUrl of attachmentPreviewUrlsRef.current) URL.revokeObjectURL(previewUrl)
+    attachmentPreviewUrlsRef.current.clear()
+  }, [])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
     const previous = arkmeAuthStore.getSnapshot().auth
@@ -568,12 +639,74 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
   useEffect(() => { void refreshAuth() }, [refreshAuth])
   useEffect(() => {
     setItems([]); setAiPolishNotices([]); setAiPolishSettings(undefined)
-    setDrawer(undefined); setDetailItemUid(''); setNextCursor(undefined); setHasMore(false); setError('')
+    setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
+    setNextCursor(undefined); setHasMore(false); setError('')
+    setAttachments(current => { releaseAttachmentPreviews(current); return [] }); setLongArticleCreating(false); setAddMenuOpen(false)
     if (authenticated && source !== undefined) {
       setBusy(true)
       void loadTimeline().catch(caught => { setError(errorMessage(caught)) }).finally(() => { setBusy(false) })
     }
-  }, [authenticated, source?.sourceRef])
+  }, [authenticated, releaseAttachmentPreviews, source?.sourceRef])
+  useEffect(() => {
+    interwovenRequestRef.current?.abort()
+    interwovenGenerationRef.current += 1
+    detailRequestRef.current?.abort()
+    detailRequestMomentRef.current = ''
+    setInterwovenMoments([])
+    setInterwovenState('empty')
+    setInterwovenLoading(false)
+    setInterwovenError('')
+    setSelectedMoment(undefined)
+    setDetailState(undefined)
+  }, [authenticated, auth?.userId, source?.sourceRef])
+  useEffect(() => {
+    if (!authenticated || source?.kind !== 'private_chat') return
+    const generation = ++interwovenGenerationRef.current
+    const controller = new AbortController()
+    const body = bodyRef.current
+    const stickToBottom = body === null || body.scrollHeight - body.scrollTop - body.clientHeight <= 80
+    interwovenRequestRef.current?.abort()
+    interwovenRequestRef.current = controller
+    let active = true
+    setInterwovenLoading(true)
+    setInterwovenError('')
+    void callArkme<ArkmeInterwovenBootstrap>('source.interwoven-moments', {
+      sourceRef: source.sourceRef,
+    }, controller.signal).then(result => {
+      if (!active || generation !== interwovenGenerationRef.current) return
+      setInterwovenState(result.state)
+      setInterwovenMoments(result.state === 'disabled' || result.state === 'empty' ? [] : result.moments)
+      if (result.state === 'partial') setInterwovenError(result.message ?? '部分交织瞬间暂时不可用')
+      if (stickToBottom) requestAnimationFrame(() => {
+        if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+      })
+    }).catch(caught => {
+      if (!active || generation !== interwovenGenerationRef.current) return
+      setInterwovenError(errorMessage(caught))
+    }).finally(() => {
+      if (!active || generation !== interwovenGenerationRef.current) return
+      if (interwovenRequestRef.current === controller) interwovenRequestRef.current = undefined
+      setInterwovenLoading(false)
+    })
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [authenticated, interwovenRefreshRevision, source?.kind, source?.sourceRef])
+  const observedInterwovenInvalidationRef = useRef(interwovenInvalidation.revision)
+  useEffect(() => {
+    if (interwovenInvalidation.revision <= observedInterwovenInvalidationRef.current) return
+    observedInterwovenInvalidationRef.current = interwovenInvalidation.revision
+    if (!authenticated || source?.kind !== 'private_chat') return
+    const timer = setTimeout(() => { setInterwovenRefreshRevision(value => value + 1) }, 250)
+    return () => { clearTimeout(timer) }
+  }, [authenticated, interwovenInvalidation.revision, source?.kind, source?.sourceRef])
+  useEffect(() => {
+    if (!authenticated || source?.kind !== 'private_chat') return
+    const refreshOnFocus = () => { setInterwovenRefreshRevision(value => value + 1) }
+    window.addEventListener('focus', refreshOnFocus)
+    return () => { window.removeEventListener('focus', refreshOnFocus) }
+  }, [authenticated, source?.kind, source?.sourceRef])
   useEffect(() => {
     if (!authenticated || source === undefined) return
     const deltaItems = chatDelta.itemsBySourceRef[source.sourceRef] ?? []
@@ -698,9 +831,67 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     if (mode !== 'wechat') qrRequestStartedRef.current = false
   }
 
+  const uploadFile = async (file: File): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('POST', '/arkme-self/api/upload')
+    request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    request.setRequestHeader('X-Arkme-File-Name', encodeURIComponent(file.name))
+    request.upload.onprogress = event => {
+      if (event.lengthComputable) setUploadStatus(`正在上传 ${file.name} ${String(Math.round(event.loaded / event.total * 100))}%`)
+    }
+    request.upload.onload = () => { setUploadStatus(`正在保存 ${file.name}…`) }
+    request.onerror = () => { reject(new Error('文件上传网络错误')) }
+    request.onload = () => {
+      try {
+        const payload = JSON.parse(request.responseText) as ArkmePluginResponse<ArkmeUploadedAsset>
+        if (!payload.ok) { reject(new ArkmeClientError(payload.error)); return }
+        resolve(payload.value)
+      } catch (caught) { reject(caught) }
+    }
+    request.send(file)
+  })
+
+  const selectFiles = async (files: FileList | readonly File[] | null) => {
+    if (files === null || files.length === 0) return
+    setAddMenuOpen(false); setBusy(true); setError('')
+    const uploaded: ArkmeComposerAttachment[] = []
+    try {
+      for (const file of Array.from(files)) {
+        const previewUrl = file.type.toLowerCase().startsWith('image/') && typeof URL.createObjectURL === 'function'
+          ? URL.createObjectURL(file)
+          : undefined
+        if (previewUrl !== undefined) attachmentPreviewUrlsRef.current.add(previewUrl)
+        try {
+          const asset = await uploadFile(file)
+          uploaded.push({ asset, ...(previewUrl === undefined ? {} : { previewUrl }) })
+        } catch (caught) {
+          if (previewUrl !== undefined) {
+            URL.revokeObjectURL(previewUrl)
+            attachmentPreviewUrlsRef.current.delete(previewUrl)
+          }
+          throw caught
+        }
+      }
+      setAttachments(current => {
+        const retained = [...current, ...uploaded].slice(0, 20)
+        const retainedIds = new Set(retained.map(item => item.asset.fileAssetUid))
+        releaseAttachmentPreviews(uploaded.filter(item => !retainedIds.has(item.asset.fileAssetUid)))
+        return retained
+      })
+    } catch (caught) {
+      releaseAttachmentPreviews(uploaded)
+      setError(errorMessage(caught))
+    }
+    finally {
+      setUploadStatus(''); setBusy(false)
+      if (fileInputRef.current !== null) fileInputRef.current.value = ''
+    }
+  }
+
   const send = async () => {
     if (source === undefined) return
-    const textContent = draft.trim(); if (textContent === '') return
+    const textContent = draft.trim()
+    if (textContent === '' && attachments.length === 0) return
     const recordUid = crypto.randomUUID(); const relationUid = crypto.randomUUID(); const now = Date.now()
     const optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: '我', isMe: true, sendAtMillis: now,
@@ -708,13 +899,21 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
       ...(source.kind === 'group_chat' && aiPolishSettings?.enabled === true
         ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
         : {}),
+      displayKind: 0,
     }
-    setItems(current => mergeItems(current, [optimistic])); setDraft(''); setBusy(true); setError('')
+    const pendingAttachments = attachments
+    const pendingAssets = pendingAttachments.map(attachment => attachment.asset)
+    setItems(current => mergeItems(current, [optimistic])); setDraft(''); setAttachments([]); setBusy(true); setError('')
     requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
     try {
-      const result = await callArkme<ArkmeSourceSendResult>('source.send-text', {
-        sourceRef: source.sourceRef, textContent, recordUid, relationUid,
-      })
+      const result = pendingAssets.length > 0
+        ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
+          sourceRef: source.sourceRef, title: '', textContent, displayKind: 0,
+          assets: pendingAssets, recordUid, relationUid,
+        })
+        : await callArkme<ArkmeSourceSendResult>('source.send-text', {
+          sourceRef: source.sourceRef, textContent, recordUid, relationUid,
+        })
       setItems(current => current.map(item => {
         if (item.itemUid !== recordUid) return item
         const { aiPolish: _optimisticAiPolish, ...base } = item
@@ -731,6 +930,7 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
           }),
         }
       }))
+      releaseAttachmentPreviews(pendingAttachments)
       if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
       if (result.aiPolish?.state === 'kept_original') {
         setTimeout(() => {
@@ -741,8 +941,10 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
           }))
         }, 1_500)
       }
+      if (pendingAssets.length > 0) await loadTimeline()
     } catch (caught) {
-      setItems(current => current.filter(item => item.itemUid !== recordUid)); setDraft(textContent); setError(errorMessage(caught))
+      setItems(current => current.filter(item => item.itemUid !== recordUid)); setDraft(textContent)
+      setAttachments(pendingAttachments); setError(errorMessage(caught))
     } finally { setBusy(false) }
   }
 
@@ -772,15 +974,74 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
     }
   }
 
-  const displayEvents = useMemo<TimelineDisplayEvent[]>(() => [
-    ...items.map(item => ({ kind: 'message' as const, at: item.sendAtMillis, key: `message:${item.itemUid}`, item })),
-    ...aiPolishNotices.map(notice => ({ kind: 'notice' as const, at: notice.createdAtMillis, key: `notice:${notice.noticeUid}`, notice })),
-  ].sort((left, right) => left.at - right.at || left.key.localeCompare(right.key)), [aiPolishNotices, items])
   const detailItem = items.find(item => item.itemUid === detailItemUid)
   const activateSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
+
+  const loadMomentDetail = async (moment: ArkmeInterwovenMention, force = false) => {
+    if (source === undefined || source.kind !== 'private_chat') return
+    if (!force && detailRequestMomentRef.current === moment.momentId) return
+    detailRequestRef.current?.abort()
+    const controller = new AbortController()
+    detailRequestRef.current = controller
+    detailRequestMomentRef.current = moment.momentId
+    setSelectedMoment(moment)
+    setDetailState({ kind: 'loading' })
+    try {
+      const detail = await callArkme<ArkmeInterwovenDetail>('source.interwoven-detail', {
+        sourceRef: source.sourceRef,
+        momentRef: moment.momentRef,
+      }, controller.signal)
+      if (detailRequestRef.current !== controller) return
+      setDetailState({ kind: 'success', detail })
+    } catch (caught) {
+      if (detailRequestRef.current !== controller) return
+      setDetailState({ kind: 'error', message: errorMessage(caught) })
+    } finally {
+      if (detailRequestRef.current === controller) {
+        detailRequestRef.current = undefined
+        detailRequestMomentRef.current = ''
+      }
+    }
+  }
+
+  const openMomentDetail = (moment: ArkmeInterwovenMention) => {
+    if (selectedMoment?.momentId === moment.momentId
+      && detailState !== undefined && detailState.kind !== 'error') return
+    void loadMomentDetail(moment)
+  }
+
+  const closeMomentDetail = () => {
+    detailRequestRef.current?.abort()
+    detailRequestRef.current = undefined
+    detailRequestMomentRef.current = ''
+    setSelectedMoment(undefined)
+    setDetailState(undefined)
+  }
+
+  const displayItems = useMemo(() => [...items].sort((a, b) => a.sendAtMillis - b.sendAtMillis), [items])
+  const displayRows = useMemo<Array<ArkmeConversationRow | {
+    kind: 'notice'; id: string; occurredAtMillis: number; item: ArkmeGroupAiPolishNotice
+  }>>(
+    () => [
+      ...mergeConversationRows(displayItems, interwovenMoments),
+      ...aiPolishNotices.map(notice => ({
+        kind: 'notice' as const,
+        id: `notice:${notice.noticeUid}`,
+        occurredAtMillis: notice.createdAtMillis,
+        item: notice,
+      })),
+    ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
+    [aiPolishNotices, displayItems, interwovenMoments],
+  )
+  const detailGroupTarget = useMemo(
+    () => detailState?.kind === 'success'
+      ? resolveInterwovenGroupTarget(chatDirectory.sources, detailState.detail.groupName)
+      : undefined,
+    [chatDirectory, detailState],
+  )
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : ui.mode === 'arko' ? 'Arko' : source?.displayName ?? 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
@@ -852,18 +1113,34 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {displayEvents.length > 0 && <ul style={styles.records}>
-              {displayEvents.map((event, index) => {
-                const previous = index === 0 ? undefined : displayEvents[index - 1]
-                const startsDay = previous === undefined || dayKey(previous.at) !== dayKey(event.at)
-                if (event.kind === 'notice') return <Fragment key={event.key}>
-                  {startsDay && <li style={styles.date}>{dayLabel(event.at)}</li>}
-                  <li style={styles.notice}>{event.notice.message}</li>
+            {source.kind === 'private_chat' && interwovenLoading && interwovenMoments.length === 0
+              && <div style={styles.interwovenState} role="status">正在加载交织瞬间…</div>}
+            {source.kind === 'private_chat' && interwovenError !== '' && <div style={styles.interwovenState}>
+              {interwovenError}
+              <button
+                type="button" style={styles.inlineRetry}
+                onClick={() => { setInterwovenRefreshRevision(value => value + 1) }}
+              >重试</button>
+            </div>}
+            {displayRows.length > 0 && <ul style={styles.records}>
+              {displayRows.map((row, index) => {
+                const previous = index === 0 ? undefined : displayRows[index - 1]
+                const startsDay = previous === undefined
+                  || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
+                if (row.kind === 'notice') return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                  <li style={styles.notice}>{row.item.message}</li>
                 </Fragment>
-                const item = event.item
+                if (row.kind === 'moment') {
+                  return <Fragment key={row.id}>
+                    {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
+                    <ArkmeInterwovenMentionCard moment={row.item} onOpen={openMomentDetail} />
+                  </Fragment>
+                }
+                const item = row.item
                 const polishStatus = aiPolishStatus(item)
-                return <Fragment key={event.key}>
-                  {startsDay && <li style={styles.date}>{dayLabel(event.at)}</li>}
+                return <Fragment key={row.id}>
+                  {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
                   <li style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
                     <div style={{ ...styles.messageLine, ...(item.isMe ? styles.messageLineMe : {}) }}>
                       {showMessageAvatars && <MessageAvatar item={item} />}
@@ -873,7 +1150,10 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
                           role="button"
                           tabIndex={0}
                           style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}
-                          onClick={() => { setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail') }}
+                          onClick={event => {
+                            if (event.target instanceof Element && event.target.closest('button,a,audio,video')) return
+                            setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
+                          }}
                           onKeyDown={event => {
                             if (event.key !== 'Enter' && event.key !== ' ') return
                             event.preventDefault(); setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
@@ -884,8 +1164,26 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
                             type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
                           >{polishStatus}</button> : polishStatus}
                         </span>}
-                          <p style={styles.text}>{item.textContent || item.title || '非文本内容'}</p>
-                        </div>
+                          <ArkmeMessageContent
+                          item={item}
+                          sourceRef={source.sourceRef}
+                          onLongArticleUpdated={detail => {
+                            setItems(current => current.map(candidate => candidate.itemUid === detail.itemUid
+                              ? {
+                                ...candidate,
+                                title: detail.title,
+                                textContent: detail.textContent,
+                                sendAtMillis: detail.sendAtMillis,
+                                updateAtMillis: detail.updateAtMillis,
+                                templateKind: 1,
+                                displayKind: 1,
+                                version: detail.version,
+                                recordDurationMillis: detail.recordDurationMillis,
+                                editDurationMillis: detail.editDurationMillis,
+                              }
+                              : candidate))
+                          }}
+                        /></div>
                         <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
                       </div>
                     </div>
@@ -895,12 +1193,35 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
             </ul>}
           </div>
           <footer style={styles.composer}><div style={styles.composerInner}>
+            {addMenuOpen && <div style={styles.addMenu} role="menu">
+              <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
+              <div style={styles.menuDivider} />
+              <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setLongArticleCreating(true); setAddMenuOpen(false) }}><span aria-hidden>✎</span>写长文</button>
+            </div>}
+            <input ref={fileInputRef} type="file" multiple hidden accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" onChange={event => { void selectFiles(event.currentTarget.files) }} />
+            {attachments.length > 0 && <div style={styles.attachments}>{attachments.map(attachment => <ArkmeAttachmentDraftTile
+              key={attachment.asset.fileAssetUid}
+              asset={attachment.asset}
+              {...(attachment.previewUrl === undefined ? {} : { previewUrl: attachment.previewUrl })}
+              onRemove={() => {
+                releaseAttachmentPreview(attachment)
+                setAttachments(current => current.filter(item => item.asset.fileAssetUid !== attachment.asset.fileAssetUid))
+              }}
+            />)}</div>}
+            {uploadStatus !== '' && <div style={styles.uploadStatus} role="status">{uploadStatus}</div>}
             <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={`发送到${source.displayName}…`} aria-label={`发送到${source.displayName}`} disabled={busy}
-              onChange={event => { setDraft(event.target.value) }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draft.trim() !== '') void send() } }} />
-            <div style={styles.tools}><button
+              onChange={event => { setDraft(event.target.value) }}
+              onPaste={event => {
+                const imageFiles = arkmeClipboardImageFiles(event.clipboardData)
+                if (imageFiles.length === 0) return
+                event.preventDefault()
+                void selectFiles(imageFiles)
+              }}
+              onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draft.trim() !== '') void send() } }} />
+            <div style={styles.tools}><button type="button" style={styles.plus} aria-label="添加内容" aria-expanded={addMenuOpen} onClick={() => { setAddMenuOpen(value => !value) }}>+</button><button
               type="button"
-              style={{ ...styles.send, opacity: busy || draft.trim() === '' ? .4 : 1 }}
-              disabled={busy || draft.trim() === ''}
+              style={{ ...styles.send, opacity: busy || (draft.trim() === '' && attachments.length === 0) ? .4 : 1 }}
+              disabled={busy || (draft.trim() === '' && attachments.length === 0)}
               aria-label="发送消息"
               onMouseDown={event => { event.preventDefault() }}
               onMouseEnter={event => {
@@ -962,6 +1283,26 @@ export function ArkmeSurface({ floating = false, initialAuth, initialPhoneBindin
         item={relatedDetail}
         onClose={() => { setRelatedDetail(undefined) }}
       />}
+      {selectedMoment !== undefined && detailState !== undefined && <ArkmeInterwovenDetailAside
+        state={detailState}
+        onClose={closeMomentDetail}
+        onRetry={() => { void loadMomentDetail(selectedMoment, true) }}
+        {...(detailGroupTarget === undefined ? {} : { onOpenGroup: () => {
+          closeMomentDetail()
+          arkmeUi.selectSource(detailGroupTarget)
+        } })}
+      />}
+      {longArticleCreating && source !== undefined && typeof document !== 'undefined' && createPortal(
+        <ArkmeLongArticleDialog
+          sourceRef={source.sourceRef}
+          onClose={() => { setLongArticleCreating(false) }}
+          onCreated={item => {
+            setItems(current => mergeItems(current, [item]))
+            requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
+          }}
+        />,
+        document.body,
+      )}
     </div>
   )
 }

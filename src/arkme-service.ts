@@ -1,4 +1,6 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { open as openFile } from 'node:fs/promises'
 import OSS from 'ali-oss'
 import { ArkmeChatRealtimeRuntime, type ArkmeChatRealtimeNotice } from './chat-realtime.js'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from './keychain-store.js'
@@ -46,6 +48,7 @@ import type {
   ArkmeCaptchaResult,
   ArkmeClientConfig,
   ArkmeConversationWriteResult,
+  ArkmeContentBlock,
   ArkmeCreateTextResult,
   ArkmeDirectTextSendResult,
   ArkmeEnvironment,
@@ -66,6 +69,11 @@ import type {
   ArkmeImageBytes,
   ArkmeImageMediaType,
   ArkmeOpenPrivateChatResult,
+  ArkmeInterwovenBootstrap,
+  ArkmeInterwovenDetail,
+  ArkmeInterwovenMention,
+  ArkmeLongArticleDetail,
+  ArkmeLongArticleDraft,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
@@ -74,6 +82,7 @@ import type {
   ArkmeRelatedRecordingPageOptions,
   ArkmeRelatedRecordingPageState,
   ArkmeRecordCursor,
+  ArkmeRichSendInput,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -97,6 +106,7 @@ import type {
   ArkmeTimelineItem,
   ArkmeTimelinePage,
   ArkmeTopicCreateResult,
+  ArkmeUploadedAsset,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
   ArkmeUserCardSnapshot,
@@ -136,11 +146,15 @@ interface StateStore {
   putPending(userId: number, pending: ArkmePendingWrite): Promise<void>
   markAttempt(userId: number, recordUid: string, error: string): Promise<void>
   markSynced(userId: number, recordUid: string, status: number): Promise<void>
+  getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined>
+  putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
+  removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void>
 }
 
 export interface ArkmeServiceConfig {
   environment: ArkmeEnvironment
   authBaseUrl: string
+  subjectBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
   imBaseUrl: string
@@ -154,6 +168,28 @@ export interface ArkmeServiceConfig {
   maxTextLength: number
   geetestCaptchaId: string
   relatedRecordingsEnabled?: boolean
+  interwovenMomentsEnabled: boolean
+  richMediaRenderEnabled?: boolean
+  richMediaSendEnabled?: boolean
+  maxUploadBytes?: number
+}
+
+interface ArkmeMediaDescriptor {
+  viewerUserId: number
+  remoteUrl: string
+  mimeType: string
+  fileName: string
+  size: number
+  expiresAtMillis: number
+}
+
+interface ArkmePreparedUpload {
+  upload_session_uid?: unknown
+  upload_url?: unknown
+  upload_headers?: unknown
+  upload_mode?: unknown
+  multipart_part_size?: unknown
+  multipart_parts?: unknown
 }
 
 interface LoginAttempt {
@@ -270,6 +306,26 @@ interface ArkmePublicProfile {
   arkmeId?: string
 }
 
+interface ArkmeInterwovenMomentReference {
+  userId: number
+  sourceOwnerRef: string
+  sourceChatSessionUid: string
+  recordOwnerUserId: number
+  recordUid: string
+  relationUid: string
+  sequence: number
+  momentId: string
+  groupName: string
+  senderUserId: number
+  senderName: string
+  senderAvatarRef?: string
+  occurredAtMillis: number
+  detailMode: 'chat' | 'owner_payload'
+  fallbackTitle: string
+  fallbackTextContent: string
+  expiresAtMillis: number
+}
+
 interface ScanResponse {
   access_token?: unknown
   refresh_token?: unknown
@@ -342,6 +398,7 @@ const ARKO_RUN_STATUSES = new Set([
   'queued', 'running', 'waiting_user', 'waiting_tool', 'completed', 'partial',
   'failed', 'cancelled', 'expired',
 ])
+const RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND = 4
 
 export class ArkmePluginError extends Error {
   readonly upstreamStatus?: number
@@ -507,6 +564,11 @@ function chatMessageDnd(value: unknown): boolean | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const policy = value as Record<string, unknown>
   return numberValue(policy.mute_state) === 2 || numberValue(policy.notify_state) === 2
+}
+
+function jsonObjectValue(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string') return objectValue(value)
+  try { return objectValue(JSON.parse(value)) } catch { return {} }
 }
 
 function listValue(value: unknown): unknown[] {
@@ -833,6 +895,8 @@ export class ArkmeService {
   private pendingBindingSession: ArkmeSessionCredentials | undefined
   private readonly aiPolishConfirmations = new Map<string, ArkmePendingAiPolishConfirmation>()
   private readonly aiPolishRetries = new Map<string, ArkmePendingAiPolishRetry>()
+  private readonly interwovenMomentReferences = new Map<string, ArkmeInterwovenMomentReference>()
+  private readonly mediaRefs = new Map<string, ArkmeMediaDescriptor>()
 
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -1117,6 +1181,9 @@ export class ArkmeService {
         sourceDirectory: true,
         sourceTimeline: true,
         sourceTextSend: true,
+        richContentRead: this.config.richMediaRenderEnabled !== false,
+        richContentSend: this.config.richMediaSendEnabled !== false,
+        fileUpload: this.config.richMediaSendEnabled !== false,
         outgoingCall: true,
         groupMembers: true,
         userCard: true,
@@ -1133,6 +1200,7 @@ export class ArkmeService {
           maxRelatedRecordingPageSize: MAX_ARKME_RELATED_RECORDING_PAGE_SIZE,
           maxRelatedRecordingCursorLength: MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH,
         } : {}),
+        maxUploadBytes: this.config.maxUploadBytes ?? 100 * 1024 * 1024,
       },
     }
   }
@@ -1323,6 +1391,8 @@ export class ArkmeService {
     this.aiPolishRetries.clear()
     this.requestCoordinator.dispose()
     this.outgoingCallBroker.dispose()
+    this.interwovenMomentReferences.clear()
+    this.mediaRefs.clear()
   }
 
   requestStats(): Record<string, ArkmeRequestStats> {
@@ -2403,6 +2473,262 @@ export class ArkmeService {
     return { status, visible, groupTitle, memberCount, avatarRefs }
   }
 
+  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
+  async interwovenMoments(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeInterwovenBootstrap> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
+    }
+    if (!this.config.interwovenMomentsEnabled) {
+      return { state: 'disabled', moments: [], preparedAtMillis: Date.now() }
+    }
+    const gate = await this.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/able-func',
+      { func_type: 12 },
+      session,
+      signal,
+    )
+    if (!booleanValue(gate.able)) {
+      return { state: 'disabled', moments: [], preparedAtMillis: Date.now() }
+    }
+    const counterpartUserId = await this.assertHumanPrivateSource(source, session, signal)
+    const legacyRmSubjectId = await this.resolveLegacyPrivateSubjectId(counterpartUserId, session, signal)
+    let data: Record<string, unknown> | undefined
+    if (legacyRmSubjectId > 0) {
+      try {
+        data = await this.authenticatedWorldPost<Record<string, unknown>>(
+          '/api/v1/interwoven-moments/inline-bootstrap',
+          { rm_subject_id: legacyRmSubjectId, force_refresh: true },
+          session,
+          signal,
+        )
+      } catch (error) {
+        if (!this.isUnsupportedInterwovenWorldRoute(error)) throw error
+      }
+    }
+    data ??= await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/interwoven/inline-bootstrap',
+      { chat_session_uid: source.ownerRef, rm_subject_id: legacyRmSubjectId, limit: 100 },
+      session,
+      signal,
+    )
+    const preparedAtMillis = Math.max(0, Math.trunc(numberValue(data.prepared_at))) || Date.now()
+    const descriptors: Array<{
+      rawMomentId: string
+      occurredAtMillis: number
+      groupName: string
+      senderUserId: number
+      summary: string
+      degraded: boolean
+      sourceChatSessionUid: string
+      recordOwnerUserId: number
+      recordUid: string
+      relationUid: string
+      sequence: number
+      detailMode: 'chat' | 'owner_payload'
+      fallbackTitle: string
+      fallbackTextContent: string
+    }> = []
+    let invalidItemCount = 0
+    for (const rawGroup of listValue(data.groups)) {
+      const group = objectValue(rawGroup)
+      if (numberValue(group.moment_type) !== 1) continue
+      const groupTitle = stringValue(group.group_title).trim() || '群聊'
+      for (const rawItem of listValue(group.group_preview_items)) {
+        const item = objectValue(rawItem)
+        if (numberValue(item.moment_type) !== 1) continue
+        const jumpTarget = objectValue(item.jump_target)
+        const renderPayload = objectValue(item.render_payload)
+        const groupName = stringValue(renderPayload.group_name ?? item.title).trim() || groupTitle
+        const rawMomentId = stringValue(item.moment_id).trim()
+        const occurredAtMillis = Math.trunc(numberValue(item.occurred_at))
+        const sourceChatSessionUid = stringValue(jumpTarget.chat_session_uid).trim()
+        const recordOwnerUserId = Math.trunc(numberValue(
+          jumpTarget.record_owner_user_id ?? renderPayload.record_owner_user_id ?? renderPayload.sender_user_id,
+        ))
+        const recordUid = stringValue(jumpTarget.record_uid ?? renderPayload.record_uid).trim()
+        const relationUid = stringValue(jumpTarget.rel_uid).trim()
+        const sequence = Math.trunc(numberValue(jumpTarget.seq))
+        const senderUserId = Math.trunc(numberValue(renderPayload.sender_user_id))
+        const hasChatDetailLocator = sourceChatSessionUid !== '' && recordOwnerUserId > 0
+          && recordUid !== '' && relationUid !== '' && sequence > 0
+        const fallbackTextContent = stringValue(
+          renderPayload.content ?? renderPayload.mention_text ?? item.summary,
+        ).trim().slice(0, 20_000)
+        const fallbackTitle = stringValue(item.title ?? renderPayload.group_name).trim().slice(0, 500)
+        if (rawMomentId === '' || !Number.isSafeInteger(occurredAtMillis) || occurredAtMillis <= 0
+          || occurredAtMillis > 8_640_000_000_000_000
+          || !Number.isSafeInteger(recordOwnerUserId) || recordOwnerUserId <= 0
+          || recordUid === ''
+          || !Number.isSafeInteger(senderUserId) || senderUserId <= 0) {
+          invalidItemCount += 1
+          continue
+        }
+        descriptors.push({
+          rawMomentId,
+          occurredAtMillis,
+          groupName,
+          senderUserId,
+          summary: stringValue(renderPayload.content ?? item.summary).trim().slice(0, 1000),
+          degraded: booleanValue(item.is_degraded),
+          sourceChatSessionUid,
+          recordOwnerUserId,
+          recordUid,
+          relationUid,
+          sequence,
+          detailMode: hasChatDetailLocator ? 'chat' : 'owner_payload',
+          fallbackTitle,
+          fallbackTextContent,
+        })
+      }
+    }
+    const profiles = await this.interwovenProfilesByUserIds(
+      descriptors.map(item => item.senderUserId), session, signal,
+    ).catch(() => new Map<number, { displayName: string; hasAvatar: boolean }>())
+    const moments: ArkmeInterwovenMention[] = []
+    const seenMomentIds = new Set<string>()
+    for (const descriptor of descriptors) {
+      const momentId = await this.interwovenStableMomentId(descriptor.rawMomentId)
+      if (seenMomentIds.has(momentId)) continue
+      seenMomentIds.add(momentId)
+      const profile = profiles.get(descriptor.senderUserId)
+      const senderName = profile?.displayName
+        || (descriptor.senderUserId === session.userId ? '我' : descriptor.senderUserId === counterpartUserId
+          ? source.displayName : 'Arkme 用户')
+      const senderAvatarRef = profile?.hasAvatar === true
+        ? await this.sealProfileImageRef(session.userId, descriptor.senderUserId)
+        : undefined
+      const reference: Omit<ArkmeInterwovenMomentReference, 'expiresAtMillis'> = {
+        userId: session.userId,
+        sourceOwnerRef: source.ownerRef,
+        sourceChatSessionUid: descriptor.sourceChatSessionUid,
+        recordOwnerUserId: descriptor.recordOwnerUserId,
+        recordUid: descriptor.recordUid,
+        relationUid: descriptor.relationUid,
+        sequence: descriptor.sequence,
+        momentId,
+        groupName: descriptor.groupName,
+        senderUserId: descriptor.senderUserId,
+        senderName,
+        ...(senderAvatarRef === undefined ? {} : { senderAvatarRef }),
+        occurredAtMillis: descriptor.occurredAtMillis,
+        detailMode: descriptor.detailMode,
+        fallbackTitle: descriptor.fallbackTitle,
+        fallbackTextContent: descriptor.fallbackTextContent,
+      }
+      moments.push({
+        momentId,
+        momentRef: await this.sealInterwovenMomentRef(reference),
+        occurredAtMillis: descriptor.occurredAtMillis,
+        groupName: descriptor.groupName,
+        senderName,
+        senderIsMe: descriptor.senderUserId === session.userId,
+        ...(senderAvatarRef === undefined ? {} : { senderAvatarRef }),
+        summary: descriptor.summary,
+        degraded: descriptor.degraded,
+      })
+    }
+    moments.sort((left, right) => left.occurredAtMillis - right.occurredAtMillis
+      || left.momentId.localeCompare(right.momentId))
+    const sourceStatusPartial = listValue(data.source_status).some(raw => {
+      const status = objectValue(raw)
+      return numberValue(status.moment_type) === 1 && numberValue(status.status) !== 1
+    })
+    if (moments.length === 0 && invalidItemCount === 0 && !sourceStatusPartial) {
+      return { state: 'empty', moments, preparedAtMillis }
+    }
+    const partial = invalidItemCount > 0 || sourceStatusPartial || moments.some(moment => moment.degraded)
+    return {
+      state: partial ? 'partial' : 'success',
+      moments,
+      preparedAtMillis,
+      ...(partial ? { message: '部分交织瞬间暂时不可用，可稍后重试' } : {}),
+    }
+  }
+
+  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
+  async interwovenMomentDetail(
+    sourceRef: string,
+    momentRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeInterwovenDetail> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
+    }
+    const reference = await this.openInterwovenMomentRef(momentRef, session.userId, source.ownerRef)
+    if (!this.config.interwovenMomentsEnabled) {
+      throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开启', false, 403)
+    }
+    const gate = await this.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/able-func', { func_type: 12 }, session, signal,
+    )
+    if (!booleanValue(gate.able)) {
+      throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开放', false, 403)
+    }
+    await this.assertHumanPrivateSource(source, session, signal)
+    if (reference.detailMode === 'owner_payload') {
+      return {
+        momentId: reference.momentId,
+        groupName: reference.groupName,
+        senderName: reference.senderName,
+        senderIsMe: reference.senderUserId === session.userId,
+        ...(reference.senderAvatarRef === undefined ? {} : { senderAvatarRef: reference.senderAvatarRef }),
+        occurredAtMillis: reference.occurredAtMillis,
+        title: reference.fallbackTitle || reference.groupName,
+        textContent: reference.fallbackTextContent,
+        status: 1,
+        degraded: true,
+      }
+    }
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/records/detail',
+      {
+        chat_session_uid: reference.sourceChatSessionUid,
+        record_owner_user_id: reference.recordOwnerUserId,
+        record_uid: reference.recordUid,
+        rel_uid: reference.relationUid,
+        seq: reference.sequence,
+      },
+      session,
+      signal,
+    )
+    const item = objectValue(data.item)
+    const relation = objectValue(item.relation)
+    const record = objectValue(item.record)
+    const payload = objectValue(record.payload)
+    if (stringValue(data.chat_session_uid).trim() !== reference.sourceChatSessionUid
+      || stringValue(relation.chat_session_uid).trim() !== reference.sourceChatSessionUid
+      || numberValue(relation.record_owner_user_id) !== reference.recordOwnerUserId
+      || stringValue(relation.record_uid).trim() !== reference.recordUid
+      || stringValue(relation.rel_uid).trim() !== reference.relationUid
+      || numberValue(relation.seq) !== reference.sequence) {
+      throw new ArkmePluginError(
+        'interwoven-detail-contract-invalid', '快记详情响应与所选交织瞬间不一致', true, 502,
+      )
+    }
+    const status = Math.trunc(numberValue(record.status))
+    const title = stringValue(payload.title).trim() || reference.groupName
+    const textContent = stringValue(payload.text_content).trim()
+    return {
+      momentId: reference.momentId,
+      groupName: reference.groupName,
+      senderName: reference.senderName,
+      senderIsMe: reference.senderUserId === session.userId,
+      ...(reference.senderAvatarRef === undefined ? {} : { senderAvatarRef: reference.senderAvatarRef }),
+      occurredAtMillis: reference.occurredAtMillis,
+      title,
+      textContent,
+      status,
+      degraded: status !== 1 || textContent === '',
+    }
+  }
+
   async joinDSHBetaCommunity(signal?: AbortSignal): Promise<ArkmeDSHBetaCommunityJoinResult> {
     const session = await this.requireSession()
     const data = await this.authenticatedChatPost<Record<string, unknown>>(
@@ -2981,8 +3307,18 @@ export class ArkmeService {
           ...(options.cursor?.itemUid === undefined ? {} : { cursor_record_uid: options.cursor.itemUid }),
         },
         session,
+        options.signal,
       )
-      const records = listValue(data.records).map(raw => this.recordTimelineItemFromRaw(raw, session.userId))
+      const rawRecords = listValue(data.records)
+      const media = await this.hydrateRecordMediaPage(rawRecords, session, options.signal)
+      const records = rawRecords.map(raw => {
+        const recordUid = this.recordUid(raw)
+        const displayItems = media.displayItemsByRecordUid.get(recordUid)
+        return this.recordTimelineItemFromRaw(raw, session.userId, {
+          ...(displayItems === undefined ? {} : { displayItems }),
+          mediaUnavailable: media.unavailableRecordUids.has(recordUid),
+        })
+      })
       const nextSendAt = numberValue(data.next_cursor_send_at)
       const nextUid = stringValue(data.next_cursor_record_uid).trim()
       return {
@@ -3035,6 +3371,13 @@ export class ArkmeService {
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
         ...(aiPolish === undefined ? {} : { aiPolish }),
+        templateKind: numberValue(payload.template_kind),
+        displayKind: numberValue(payload.display_kind),
+        version: numberValue(payload.version ?? record.version),
+        updateAtMillis: numberValue(payload.update_at ?? record.update_at),
+        recordDurationMillis: numberValue(payload.record_duration_millis),
+        editDurationMillis: numberValue(payload.edit_duration_millis),
+        contentBlocks: this.richContentBlocks(item, session.userId),
       }) - 1
       if (Number.isSafeInteger(senderUserId) && senderUserId > 0) senderUserIdByIndex.set(itemIndex, senderUserId)
     }
@@ -3519,6 +3862,297 @@ export class ArkmeService {
     }
   }
 
+  async sendSourceRich(
+    sourceRef: string,
+    input: ArkmeRichSendInput,
+    options: { recordUid?: string; relationUid?: string } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    if (this.config.richMediaSendEnabled === false) {
+      throw new ArkmePluginError('rich-content-disabled', '富内容发送已被插件配置关闭', false, 403)
+    }
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    const title = input.title?.trim() ?? ''
+    const textContent = input.textContent?.trim() ?? ''
+    const assets = input.assets ?? []
+    const displayKind = input.displayKind === 1 ? 1 : 0
+    const longArticle = displayKind === 1
+    const maxContentLength = longArticle ? 40000 : this.config.maxTextLength
+    const thinkingDurationMillis = Math.max(0, Math.trunc(input.thinkingDurationMillis ?? 0))
+    if (title.length > (longArticle ? 100 : 500) || textContent.length > maxContentLength || assets.length > 20
+      || (textContent === '' && title === '' && assets.length === 0)) {
+      throw new ArkmePluginError('rich-content-invalid', '富内容为空、过长或附件数量超限', false)
+    }
+    if (longArticle && (title === '' || textContent === '')) {
+      throw new ArkmePluginError('long-article-invalid', '长文标题和正文不能为空', false)
+    }
+    for (const asset of assets) {
+      if (!/^[A-Za-z0-9._:-]{8,256}$/.test(asset.fileAssetUid) || asset.size < 0
+        || ![1, 2, 3, 4].includes(asset.fileKind)) {
+        throw new ArkmePluginError('rich-asset-invalid', '附件资产参数无效', false)
+      }
+    }
+    const recordUid = options.recordUid?.trim() || randomUUID()
+    const relationUid = options.relationUid?.trim() || randomUUID()
+    const templateKind = longArticle ? 1 : assets.length === 0 ? 1 : 2
+    const contentPayload = assets.length === 0 ? undefined : {
+      payload_kind: 2,
+      schema_version: 1,
+      text_state: textContent === '' ? 3 : 1,
+      media_refs: assets.map((asset, index) => ({
+        file_asset_uid: asset.fileAssetUid,
+        content_file_role: 1,
+        render_role: 1,
+        sort_order: index,
+        file_name: asset.fileName,
+      })),
+    }
+    const commonBody = {
+      record_uid: recordUid,
+      template_kind: templateKind,
+      display_kind: displayKind,
+      title,
+      text_content: textContent,
+      ...(longArticle ? { record_duration_millis: thinkingDurationMillis } : {}),
+      ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
+      send_at: Date.now(),
+    }
+    if (source.kind === 'default_category') {
+      const result = await this.authenticatedPost<Record<string, unknown>>('/api/v1/records/create', commonBody, session)
+      return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
+    }
+    if (source.kind === 'topic') {
+      const result = await this.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/records/create', { topic_uid: source.ownerRef, ...commonBody }, session,
+      )
+      return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
+    }
+    const result = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/records/send',
+      { chat_session_uid: source.ownerRef, rel_uid: relationUid, ...commonBody },
+      session,
+    )
+    return {
+      sourceRef,
+      itemUid: stringValue(result.record_uid).trim() || recordUid,
+      status: numberValue(result.audit_status ?? result.status),
+      sequence: numberValue(result.seq),
+      localState: 'synced',
+    }
+  }
+
+  async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
+    const session = await this.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    const uid = itemUid.trim()
+    if (uid === '') throw new ArkmePluginError('long-article-item-invalid', '长文记录标识无效', false)
+    const data = await this.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/detail', { record_uid: uid }, session, signal,
+    )
+    const core = objectValue(data.record_core)
+    const recordUid = stringValue(core.record_uid).trim()
+    const templateKind = numberValue(core.template_kind)
+    const displayKind = numberValue(core.display_kind)
+    if (recordUid !== uid || (templateKind !== 8 && displayKind !== 1)) {
+      throw new ArkmePluginError('long-article-not-found', '未找到可用的长文详情', false, 404)
+    }
+    const originContainerRef = stringValue(core.origin_container_ref).trim()
+    if (source.kind === 'topic') {
+      const topicUid = stringValue(objectValue(data.topic_core).topic_uid).trim()
+      if (topicUid !== source.ownerRef) throw new ArkmePluginError('long-article-source-mismatch', '长文不属于当前会话', false, 403)
+    } else if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      if (originContainerRef !== source.ownerRef) throw new ArkmePluginError('long-article-source-mismatch', '长文不属于当前会话', false, 403)
+    } else if (numberValue(core.owner_user_id) !== session.userId) {
+      throw new ArkmePluginError('long-article-source-mismatch', '长文不属于当前会话', false, 403)
+    }
+    const recordDurationMillis = Math.max(0, Math.trunc(numberValue(core.record_duration_millis)))
+    const editDurationMillis = Math.max(0, Math.trunc(numberValue(core.edit_duration_millis)))
+    return {
+      sourceRef,
+      itemUid: recordUid,
+      title: stringValue(core.title),
+      textContent: stringValue(core.text_content),
+      sendAtMillis: Math.trunc(numberValue(core.send_at)),
+      updateAtMillis: Math.trunc(numberValue(core.update_at)),
+      recordDurationMillis,
+      editDurationMillis,
+      thinkingDurationMillis: recordDurationMillis + editDurationMillis,
+      version: Math.trunc(numberValue(core.version)),
+      editable: numberValue(core.owner_user_id) === session.userId && numberValue(core.creator_user_id) === session.userId,
+    }
+  }
+
+  async updateLongArticle(
+    sourceRef: string,
+    itemUid: string,
+    input: { title: string; textContent: string; version: number; editDurationMillis: number },
+  ): Promise<ArkmeLongArticleDetail> {
+    if (this.config.richMediaSendEnabled === false) {
+      throw new ArkmePluginError('rich-content-disabled', '长文编辑已被插件配置关闭', false, 403)
+    }
+    const session = await this.requireSession()
+    const detail = await this.longArticleDetail(sourceRef, itemUid)
+    const title = input.title.trim()
+    const textContent = input.textContent.trim()
+    const editDurationMillis = Math.max(0, Math.trunc(input.editDurationMillis))
+    if (!detail.editable) throw new ArkmePluginError('long-article-not-editable', '只能编辑自己发布的长文', false, 403)
+    if (title === '' || title.length > 100 || textContent === '' || textContent.length > 40000
+      || !Number.isSafeInteger(input.version) || input.version <= 0 || input.version !== detail.version) {
+      throw new ArkmePluginError('long-article-update-invalid', '长文内容或版本无效，请刷新后重试', false, 409)
+    }
+    await this.authenticatedPost<Record<string, unknown>>('/api/v1/records/update', {
+      record_uid: detail.itemUid,
+      template_kind: 1,
+      display_kind: 1,
+      title,
+      text_content: textContent,
+      record_duration_millis: detail.recordDurationMillis,
+      edit_duration_millis: editDurationMillis,
+      version: detail.version,
+    }, session)
+    return await this.longArticleDetail(sourceRef, itemUid)
+  }
+
+  async getLongArticleDraft(sourceRef: string, itemUid?: string): Promise<ArkmeLongArticleDraft | undefined> {
+    const session = await this.requireSession()
+    await this.openSourceRef(sourceRef, session.userId)
+    return await this.stateStore.getLongArticleDraft(session.userId, sourceRef, itemUid?.trim() || undefined)
+  }
+
+  async putLongArticleDraft(draft: ArkmeLongArticleDraft): Promise<void> {
+    const session = await this.requireSession()
+    await this.openSourceRef(draft.sourceRef, session.userId)
+    const itemUid = draft.itemUid?.trim() || undefined
+    if (draft.title.length > 100 || draft.textContent.length > 40000 || draft.durationMillis < 0) {
+      throw new ArkmePluginError('long-article-draft-invalid', '长文草稿内容无效', false)
+    }
+    await this.stateStore.putLongArticleDraft(session.userId, {
+      sourceRef: draft.sourceRef,
+      ...(itemUid === undefined ? {} : { itemUid }),
+      title: draft.title,
+      textContent: draft.textContent,
+      durationMillis: Math.max(0, Math.trunc(draft.durationMillis)),
+      updatedAtMillis: Date.now(),
+    })
+  }
+
+  async removeLongArticleDraft(sourceRef: string, itemUid?: string): Promise<void> {
+    const session = await this.requireSession()
+    await this.openSourceRef(sourceRef, session.userId)
+    await this.stateStore.removeLongArticleDraft(session.userId, sourceRef, itemUid?.trim() || undefined)
+  }
+
+  async uploadLocalFile(
+    filePath: string,
+    metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
+  ): Promise<ArkmeUploadedAsset> {
+    if (this.config.richMediaSendEnabled === false) {
+      throw new ArkmePluginError('rich-content-disabled', '文件上传已被插件配置关闭', false, 403)
+    }
+    const maxBytes = this.config.maxUploadBytes ?? 100 * 1024 * 1024
+    if (!Number.isSafeInteger(metadata.size) || metadata.size <= 0 || metadata.size > maxBytes
+      || !/^[a-f0-9]{64}$/.test(metadata.sha256) || metadata.fileName.trim() === '') {
+      throw new ArkmePluginError('upload-metadata-invalid', '文件为空、过大或元数据无效', false, 400)
+    }
+    const session = await this.requireSession()
+    const uploadMode = metadata.size > 16 * 1024 * 1024 ? 2 : 1
+    const prepared = await this.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
+      planned_size: metadata.size,
+      file_hash: metadata.sha256,
+      mime_type: metadata.mimeType || 'application/octet-stream',
+      file_kind: metadata.fileKind,
+      upload_mode: uploadMode,
+      display_name: metadata.fileName,
+    }, session)
+    const uploadSessionUid = stringValue(prepared.upload_session_uid).trim()
+    if (uploadSessionUid === '') throw new ArkmePluginError('upload-prepare-invalid', '上传准备响应无效', true, 502)
+    try {
+      let storageETag = ''
+      const completedParts: Array<{ part_number: number; etag: string }> = []
+      if (uploadMode === 1) {
+        const uploadUrl = stringValue(prepared.upload_url).trim()
+        if (uploadUrl === '') throw new ArkmePluginError('upload-url-missing', '对象存储上传地址缺失', true, 502)
+        const response = await this.fetchImpl(uploadUrl, {
+          method: 'PUT',
+          headers: Object.fromEntries(Object.entries(objectValue(prepared.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
+          body: createReadStream(filePath) as never,
+          duplex: 'half',
+          redirect: 'error',
+        } as RequestInit)
+        if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储上传失败（${String(response.status)}）`, true, 502)
+        storageETag = response.headers.get('etag') ?? ''
+      } else {
+        const partSize = Math.trunc(numberValue(prepared.multipart_part_size))
+        const parts = listValue(prepared.multipart_parts).map(objectValue)
+        if (partSize <= 0 || parts.length === 0) throw new ArkmePluginError('upload-parts-missing', '分片上传参数缺失', true, 502)
+        const handle = await openFile(filePath, 'r')
+        try {
+          for (const part of parts) {
+            const partNumber = Math.trunc(numberValue(part.part_number))
+            const uploadUrl = stringValue(part.upload_url).trim()
+            const offset = (partNumber - 1) * partSize
+            const length = Math.min(partSize, metadata.size - offset)
+            if (partNumber <= 0 || uploadUrl === '' || length <= 0) throw new ArkmePluginError('upload-part-invalid', '分片上传参数无效', true, 502)
+            const buffer = Buffer.allocUnsafe(length)
+            const read = await handle.read(buffer, 0, length, offset)
+            if (read.bytesRead !== length) throw new ArkmePluginError('upload-part-read-failed', '读取上传分片失败', true, 500)
+            const response = await this.fetchImpl(uploadUrl, {
+              method: 'PUT',
+              headers: Object.fromEntries(Object.entries(objectValue(part.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
+              body: buffer,
+              redirect: 'error',
+            })
+            if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储分片上传失败（${String(response.status)}）`, true, 502)
+            completedParts.push({ part_number: partNumber, etag: response.headers.get('etag') ?? '' })
+          }
+        } finally { await handle.close() }
+      }
+      const completed = await this.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', {
+        upload_session_uid: uploadSessionUid,
+        uploaded_size: metadata.size,
+        storage_etag: storageETag,
+        multipart_parts: completedParts,
+      }, session)
+      const fileAssetUid = stringValue(completed.file_asset_uid).trim()
+      if (fileAssetUid === '') throw new ArkmePluginError('upload-complete-invalid', '上传完成响应无效', true, 502)
+      return {
+        fileAssetUid,
+        fileName: metadata.fileName,
+        mimeType: stringValue(completed.mime_type).trim() || metadata.mimeType,
+        size: numberValue(completed.size) || metadata.size,
+        fileKind: metadata.fileKind,
+      }
+    } catch (error) {
+      await this.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
+      throw error
+    }
+  }
+
+  async fetchMedia(
+    mediaRef: string,
+    range?: string,
+  ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
+    const session = await this.requireSession()
+    const descriptor = this.mediaRefs.get(mediaRef)
+    if (descriptor === undefined || descriptor.viewerUserId !== session.userId || descriptor.expiresAtMillis <= Date.now()) {
+      this.mediaRefs.delete(mediaRef)
+      throw new ArkmePluginError('media-ref-invalid', '媒体引用已失效，请刷新对话后重试', false, 404)
+    }
+    const url = new URL(descriptor.remoteUrl)
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
+      || !allowedSignedImageHost(this.config.environment, url.hostname)) {
+      throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
+    }
+    const response = await this.fetchImpl(url, {
+      headers: range === undefined ? {} : { Range: range },
+      redirect: 'error',
+    })
+    if (!response.ok && response.status !== 206) {
+      throw new ArkmePluginError('media-fetch-failed', `媒体读取失败（${String(response.status)}）`, true, 502)
+    }
+    return { response, descriptor }
+  }
+
   async sendDirectText(
     recipientArkmeId: string,
     textContent: string,
@@ -3690,6 +4324,8 @@ export class ArkmeService {
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
         ...(aiPolish === undefined ? {} : { aiPolish }),
+        displayKind: numberValue(payload.display_kind),
+        contentBlocks: this.richContentBlocks(item, session.userId),
       })
     }
     return items
@@ -4444,6 +5080,140 @@ export class ArkmeService {
     return profiles
   }
 
+  private async interwovenProfilesByUserIds(
+    userIds: readonly number[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<number, { displayName: string; hasAvatar: boolean }>> {
+    const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
+    const profiles = new Map<number, { displayName: string; hasAvatar: boolean }>()
+    for (const batch of chunksOf(normalized, 100)) {
+      if (batch.length === 0) continue
+      const data = await this.authenticatedAuthPost<Record<string, unknown>>(
+        '/api/v1/auth/get-public-users-by-ids', { user_ids: batch }, session, signal,
+      )
+      for (const raw of listValue(data.items)) {
+        const item = objectValue(raw)
+        const userId = Math.trunc(numberValue(item.user_id))
+        if (!batch.includes(userId)) continue
+        let hasAvatar = false
+        const avatarUrl = stringValue(item.head_img).trim()
+        if (avatarUrl !== '') {
+          try {
+            trustedSignedImageUrl(this.config.environment, avatarUrl)
+            hasAvatar = true
+          } catch {
+            // An invalid optional avatar must not hide the sender name or the moment itself.
+          }
+        }
+        profiles.set(userId, {
+          displayName: stringValue(item.nick_name).trim(),
+          hasAvatar,
+        })
+      }
+    }
+    return profiles
+  }
+
+  private async assertHumanPrivateSource(
+    source: ArkmeSourceRefPayload,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const detail = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/detail', { chat_session_uid: source.ownerRef }, session, signal,
+    )
+    const chatSession = objectValue(detail.session)
+    const counterpart = objectValue(detail.private_counterpart)
+    const counterpartUserId = Math.trunc(numberValue(counterpart.user_id))
+    if (stringValue(chatSession.chat_session_uid).trim() !== source.ownerRef
+      || numberValue(chatSession.session_kind) !== 1
+      || !Number.isSafeInteger(counterpartUserId) || counterpartUserId <= 0
+      || counterpartUserId === session.userId) {
+      throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持有效的双人私聊', false, 409)
+    }
+    return counterpartUserId
+  }
+
+  private async resolveLegacyPrivateSubjectId(
+    counterpartUserId: number,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const data = await this.authenticatedSubjectPost<Record<string, unknown>>(
+      '/api/v1/private/check-contact-chat',
+      { target_user_id: counterpartUserId },
+      session,
+      signal,
+    )
+    if (!booleanValue(data.exist)) return 0
+    const rmSubjectId = Math.trunc(numberValue(data.rm_subject_id))
+    if (!Number.isSafeInteger(rmSubjectId) || rmSubjectId <= 0) {
+      throw new ArkmePluginError(
+        'interwoven-subject-contract-invalid',
+        '私聊交织主题定位响应不完整',
+        true,
+        502,
+      )
+    }
+    return rmSubjectId
+  }
+
+  private isUnsupportedInterwovenWorldRoute(error: unknown): boolean {
+    return error instanceof ArkmePluginError
+      && ((error.code === 'arkme-http-error' && error.upstreamStatus === 404)
+        || error.code === 'arkme-code-404')
+  }
+
+  private async interwovenStableMomentId(rawMomentId: string): Promise<string> {
+    return `arkme-moment-${createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`interwoven:${rawMomentId}`).digest('base64url').slice(0, 32)}`
+  }
+
+  private async sealInterwovenMomentRef(
+    reference: Omit<ArkmeInterwovenMomentReference, 'expiresAtMillis'>,
+  ): Promise<string> {
+    const now = Date.now()
+    for (const [key, value] of this.interwovenMomentReferences) {
+      if (value.expiresAtMillis <= now) this.interwovenMomentReferences.delete(key)
+    }
+    while (this.interwovenMomentReferences.size >= 1000) {
+      const oldest = this.interwovenMomentReferences.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.interwovenMomentReferences.delete(oldest)
+    }
+    const nonce = crypto.randomUUID()
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(nonce).digest('base64url')
+    this.interwovenMomentReferences.set(nonce, { ...reference, expiresAtMillis: now + 12 * 60 * 60 * 1000 })
+    return `arkme-moment-v1.${nonce}.${signature}`
+  }
+
+  private async openInterwovenMomentRef(
+    momentRef: string,
+    expectedUserId: number,
+    expectedSourceOwnerRef: string,
+  ): Promise<ArkmeInterwovenMomentReference> {
+    const parts = momentRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'arkme-moment-v1') {
+      throw new ArkmePluginError('interwoven-ref-invalid', '交织瞬间引用无效，请刷新会话后重试', false, 400)
+    }
+    const nonce = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(nonce).digest()
+    if (nonce === '' || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new ArkmePluginError('interwoven-ref-invalid', '交织瞬间引用无效，请刷新会话后重试', false, 400)
+    }
+    const reference = this.interwovenMomentReferences.get(nonce)
+    if (reference === undefined || reference.expiresAtMillis <= Date.now()) {
+      this.interwovenMomentReferences.delete(nonce)
+      throw new ArkmePluginError('interwoven-ref-expired', '交织瞬间引用已过期，请刷新会话后重试', true, 410)
+    }
+    if (reference.userId !== expectedUserId || reference.sourceOwnerRef !== expectedSourceOwnerRef) {
+      throw new ArkmePluginError('interwoven-ref-invalid', '交织瞬间引用与当前会话不匹配', false, 403)
+    }
+    return reference
+  }
+
   private async sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string> {
     const payload = encodeOpaqueJson({ version: 1, viewerUserId, targetUserId } satisfies ArkmeProfileImageRefPayload)
     const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
@@ -4556,6 +5326,23 @@ export class ArkmeService {
   ): Promise<ArkmeImageBytes> {
     if (imageRef.trim().startsWith('arkme-profile-image-v1.')) {
       const reference = await this.openProfileImageRef(imageRef, session.userId)
+      if (reference.targetUserId === session.userId) {
+        let snapshot = await this.stateStore.cachedProfile(session.userId)
+        if ((snapshot.profile?.avatarRef.trim() ?? '') === '') {
+          try {
+            snapshot = await this.refreshProfileForSession(session)
+          } catch {
+            // A missing current-user profile may still fall back to the public profile below.
+          }
+        }
+        const ownAvatarRef = snapshot.profile?.avatarRef.trim() ?? ''
+        if (ownAvatarRef !== '' && !ownAvatarRef.startsWith('arkme-profile-image-v1.')) {
+          return await this.readImage(ownAvatarRef, {
+            maxBytes: byteLimit,
+            ...(signal === undefined ? {} : { signal }),
+          })
+        }
+      }
       const profile = (await this.publicProfilesByUserIds([reference.targetUserId], session, signal))
         .get(reference.targetUserId)
       if (profile === undefined) {
@@ -4843,6 +5630,8 @@ export class ArkmeService {
     this.attempts.clear()
     this.aiPolishConfirmations.clear()
     this.aiPolishRetries.clear()
+    this.interwovenMomentReferences.clear()
+    this.mediaRefs.clear()
     return { status: 'logged-out', environment: this.config.environment }
   }
 
@@ -4930,7 +5719,16 @@ export class ArkmeService {
       },
       session,
     )
-    const items = listValue(data.items).map(raw => this.recordItem(raw)).filter(
+    const rawItems = listValue(data.items)
+    const media = await this.hydrateRecordMediaPage(rawItems, session)
+    const items = rawItems.map(raw => {
+      const recordUid = this.recordUid(raw)
+      const displayItems = media.displayItemsByRecordUid.get(recordUid)
+      return this.recordItem(raw, session.userId, {
+        ...(displayItems === undefined ? {} : { displayItems }),
+        mediaUnavailable: media.unavailableRecordUids.has(recordUid),
+      })
+    }).filter(
       (item): item is ArkmeSelfRecordItem => item !== undefined,
     )
     const nextSendAt = numberValue(data.next_cursor_send_at)
@@ -5279,6 +6077,157 @@ export class ArkmeService {
     }
   }
 
+  private mediaKind(fileKind: number, mimeType: string): ArkmeContentBlock['kind'] {
+    if (fileKind === 1 || mimeType.startsWith('image/')) return 'image'
+    if (fileKind === 2 || mimeType.startsWith('audio/')) return 'audio'
+    if (fileKind === 3 || mimeType.startsWith('video/')) return 'video'
+    return 'file'
+  }
+
+  private recordUid(raw: unknown): string {
+    const item = objectValue(raw)
+    return stringValue(item.record_uid ?? objectValue(item.record_core).record_uid).trim()
+  }
+
+  private recordContentPayload(raw: unknown): Record<string, unknown> {
+    const root = objectValue(raw)
+    const record = objectValue(root.record)
+    const payload = jsonObjectValue(record.payload)
+    const core = objectValue(root.record_core)
+    return jsonObjectValue(
+      root.content_payload ?? payload.content_payload ?? record.content_payload ?? core.content_payload,
+    )
+  }
+
+  private recordMediaRefs(raw: unknown): Record<string, unknown>[] {
+    return listValue(this.recordContentPayload(raw).media_refs).map(objectValue).filter(item => {
+      return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
+        && stringValue(item.file_asset_uid).trim() !== ''
+    })
+  }
+
+  private async hydrateRecordMediaPage(
+    rawItems: unknown[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<{
+      displayItemsByRecordUid: Map<string, unknown[]>
+      unavailableRecordUids: Set<string>
+    }> {
+    const displayItemsByRecordUid = new Map<string, unknown[]>()
+    const expectedRecordUids = [...new Set(rawItems.flatMap(raw => {
+      const recordUid = this.recordUid(raw)
+      return recordUid !== '' && this.recordMediaRefs(raw).length > 0 ? [recordUid] : []
+    }))]
+    const unavailableRecordUids = new Set<string>()
+    if (this.config.richMediaRenderEnabled === false || expectedRecordUids.length === 0) {
+      return { displayItemsByRecordUid, unavailableRecordUids }
+    }
+    try {
+      const data = await this.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/records/media/batch-list',
+        { record_uids: expectedRecordUids },
+        session,
+        signal,
+        {
+          lane: 'interactive-read',
+          scope: 'record-media-page',
+          key: expectedRecordUids.join(','),
+          cacheMs: 1_000,
+        },
+      )
+      // The deployed Record owner names the per-record projection array `items`.
+      // Accept the older `results` draft as a read-only compatibility fallback.
+      for (const rawResult of listValue(data.items ?? data.results)) {
+        const result = objectValue(rawResult)
+        const recordUid = stringValue(result.record_uid).trim()
+        if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
+        const items = listValue(result.items)
+        displayItemsByRecordUid.set(recordUid, items)
+        const hasDeliverableItem = items.some(rawItem => {
+          const item = objectValue(rawItem)
+          return stringValue(item.preview_url ?? item.download_url).trim() !== ''
+        })
+        if (!hasDeliverableItem) unavailableRecordUids.add(recordUid)
+      }
+      for (const recordUid of expectedRecordUids) {
+        if (!displayItemsByRecordUid.has(recordUid)) unavailableRecordUids.add(recordUid)
+      }
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      for (const recordUid of expectedRecordUids) unavailableRecordUids.add(recordUid)
+    }
+    return { displayItemsByRecordUid, unavailableRecordUids }
+  }
+
+  private issueMediaRef(
+    viewerUserId: number,
+    descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis'>,
+  ): string {
+    const now = Date.now()
+    for (const [key, value] of this.mediaRefs) {
+      if (value.expiresAtMillis <= now) this.mediaRefs.delete(key)
+    }
+    while (this.mediaRefs.size >= 2_000) {
+      const oldest = this.mediaRefs.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.mediaRefs.delete(oldest)
+    }
+    const ref = `arkme-media-v1.${randomUUID()}`
+    this.mediaRefs.set(ref, { ...descriptor, viewerUserId, expiresAtMillis: now + 30 * 60_000 })
+    return ref
+  }
+
+  private richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = []): ArkmeContentBlock[] {
+    if (this.config.richMediaRenderEnabled === false) return []
+    const root = objectValue(raw)
+    const record = objectValue(root.record)
+    const payload = jsonObjectValue(record.payload)
+    const core = objectValue(root.record_core)
+    const contentPayload = this.recordContentPayload(raw)
+    const displayItems = [
+      ...listValue(root.media_display_items),
+      ...listValue(record.media_display_items),
+      ...listValue(payload.media_display_items),
+      ...listValue(core.media_display_items),
+      ...hydratedDisplayItems,
+    ].map(objectValue)
+    const displayByAsset = new Map<string, Record<string, unknown>>()
+    for (const item of displayItems) {
+      const uid = stringValue(item.file_asset_uid).trim()
+      if (uid !== '') displayByAsset.set(uid, item)
+    }
+    const mediaRefs = listValue(contentPayload.media_refs).map(objectValue)
+    const candidates = mediaRefs.length > 0
+      ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
+      : displayItems
+    return candidates.filter(item => {
+      // content_file_role=4 is ambient background sound captured while writing a record.
+      // It is author-only record metadata, not an attachment that belongs in a chat bubble.
+      return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
+    }).flatMap((item, index): ArkmeContentBlock[] => {
+      const fileAssetUid = stringValue(item.file_asset_uid).trim()
+      const mimeType = stringValue(item.mime_type).trim() || 'application/octet-stream'
+      const fileName = stringValue(item.file_name).trim() || `附件-${String(index + 1)}`
+      const fileKind = Math.trunc(numberValue(item.file_kind))
+      const kind = this.mediaKind(fileKind, mimeType)
+      const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
+      if (remoteUrl === '') return []
+      return [{
+        kind,
+        mediaRef: this.issueMediaRef(viewerUserId, {
+          remoteUrl, mimeType, fileName, size: Math.max(0, Math.trunc(numberValue(item.size))),
+        }),
+        ...(fileAssetUid === '' ? {} : { fileAssetUid }),
+        fileName,
+        mimeType,
+        size: Math.max(0, Math.trunc(numberValue(item.size))),
+        ...(numberValue(item.duration_sec) > 0 ? { durationSec: numberValue(item.duration_sec) } : {}),
+        sortOrder: Math.trunc(numberValue(item.sort_order ?? index)),
+      }]
+    }).sort((left, right) => left.sortOrder - right.sortOrder)
+  }
+
   private recordTimelineItem(item: ArkmeSelfRecordItem): ArkmeTimelineItem {
     return {
       itemUid: item.recordUid,
@@ -5288,23 +6237,45 @@ export class ArkmeService {
       title: item.title,
       textContent: item.textContent,
       status: item.status,
+      templateKind: item.templateKind,
+      version: item.version,
+      ...(item.displayKind === undefined ? {} : { displayKind: item.displayKind }),
+      ...(item.contentBlocks === undefined ? {} : { contentBlocks: item.contentBlocks }),
+      ...(item.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }
 
-  private recordTimelineItemFromRaw(raw: unknown, userId: number): ArkmeTimelineItem {
+  private recordTimelineItemFromRaw(
+    raw: unknown,
+    userId: number,
+    options: { displayItems?: unknown[]; mediaUnavailable?: boolean } = {},
+  ): ArkmeTimelineItem {
     const item = objectValue(raw)
+    const core = objectValue(item.record_core)
     return {
-      itemUid: stringValue(item.record_uid).trim(),
+      itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       senderName: stringValue(item.nickname).trim() || '我',
-      isMe: numberValue(item.creator_user_id ?? item.owner_user_id) === userId,
-      sendAtMillis: numberValue(item.send_at),
-      title: stringValue(item.title),
-      textContent: stringValue(item.text_content),
-      status: numberValue(item.status),
+      isMe: numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
+      sendAtMillis: numberValue(item.send_at ?? core.send_at),
+      title: stringValue(item.title ?? core.title),
+      textContent: stringValue(item.text_content ?? core.text_content),
+      status: numberValue(item.status ?? core.status),
+      templateKind: numberValue(item.template_kind ?? core.template_kind),
+      displayKind: numberValue(item.display_kind ?? core.display_kind),
+      version: numberValue(item.version ?? core.version),
+      updateAtMillis: numberValue(item.update_at ?? core.update_at),
+      recordDurationMillis: numberValue(item.record_duration_millis ?? core.record_duration_millis),
+      editDurationMillis: numberValue(item.edit_duration_millis ?? core.edit_duration_millis),
+      contentBlocks: this.richContentBlocks(raw, userId, options.displayItems),
+      ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }
 
-  private recordItem(raw: unknown): ArkmeSelfRecordItem | undefined {
+  private recordItem(
+    raw: unknown,
+    userId?: number,
+    options: { displayItems?: unknown[]; mediaUnavailable?: boolean } = {},
+  ): ArkmeSelfRecordItem | undefined {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     const recordUid = stringValue(item.record_uid ?? core.record_uid).trim()
@@ -5317,6 +6288,9 @@ export class ArkmeService {
       templateKind: numberValue(core.template_kind),
       status: numberValue(core.status),
       version: numberValue(core.version),
+      displayKind: numberValue(item.display_kind ?? core.display_kind),
+      ...(userId === undefined ? {} : { contentBlocks: this.richContentBlocks(raw, userId, options.displayItems) }),
+      ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }
 
@@ -5486,18 +6460,19 @@ export class ArkmeService {
     path: string,
     body: Record<string, unknown>,
     initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
     options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
     const requestOptions = () => this.authenticatedRequestOptions(session, 'record', 'write', options)
     try {
-      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], undefined, false, requestOptions())
+      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], signal, false, requestOptions())
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], undefined, false, requestOptions())
+      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0], signal, false, requestOptions())
     }
   }
 
@@ -5518,6 +6493,24 @@ export class ArkmeService {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  private async authenticatedSubjectPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.subjectBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.subjectBaseUrl, path, body, session.accessToken, [200], signal)
     }
   }
 

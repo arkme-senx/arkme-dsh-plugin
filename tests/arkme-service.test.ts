@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmePluginError, ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
-import type { ArkmePendingWrite } from '../src/types.js'
+import type { ArkmeLongArticleDraft, ArkmePendingWrite } from '../src/types.js'
 import type {
   ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -19,6 +19,7 @@ class MemoryStateStore {
   readonly pending = new Map<number, ArkmePendingWrite[]>()
   readonly cached = new Map<number, ArkmeSelfRecordItem[]>()
   readonly events: string[] = []
+  readonly longArticleDrafts = new Map<string, ArkmeLongArticleDraft>()
   summary: ArkmeSelfSummary | undefined
   page: ArkmeSelfRecordList | undefined
   revisionValue = 0
@@ -81,11 +82,21 @@ class MemoryStateStore {
     this.events.push('local-synced')
     this.revisionValue += 1
   }
+  async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string) {
+    return this.longArticleDrafts.get(`${String(userId)}:${sourceRef}:${itemUid ?? ''}`)
+  }
+  async putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft) {
+    this.longArticleDrafts.set(`${String(userId)}:${draft.sourceRef}:${draft.itemUid ?? ''}`, draft)
+  }
+  async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string) {
+    this.longArticleDrafts.delete(`${String(userId)}:${sourceRef}:${itemUid ?? ''}`)
+  }
 }
 
 const config: ArkmeServiceConfig = {
   environment: 'test',
   authBaseUrl: 'https://auth.test',
+  subjectBaseUrl: 'https://subject.test',
   recordBaseUrl: 'https://record.test',
   chatBaseUrl: 'https://chat.test',
   imBaseUrl: 'https://im.test',
@@ -98,6 +109,7 @@ const config: ArkmeServiceConfig = {
   requestTimeoutMs: 5000,
   maxTextLength: 20000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
+  interwovenMomentsEnabled: true,
 }
 
 function json(data: unknown, status = 200): Response {
@@ -123,10 +135,12 @@ function userInfo(userId: number, phone = '13800138000'): Record<string, unknown
   }
 }
 
-function sourceRefFor(kind: 'private_chat' | 'group_chat', ownerRef: string, displayName: string): string {
+function sourceRefFor(
+  kind: 'private_chat' | 'group_chat', ownerRef: string, displayName: string, userId = 10001,
+): string {
   const payload = Buffer.from(JSON.stringify({
     version: 1,
-    userId: 10001,
+    userId,
     kind,
     ownerRef,
     displayName,
@@ -3026,5 +3040,639 @@ describe('ArkmeService', () => {
     expect(repeatedPage.items.map(item => item.recordingRef)).toEqual([ownerRef, incomingRef])
     expect(requests.some(request => request.url.endsWith('/shared-recording'))).toBe(false)
     expect(requests.some(request => request.url.endsWith('/shared-recording/revoke'))).toBe(false)
+  })
+  it('creates plain-text long articles and edits the same owner record with CAS duration facts', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    let version = 1
+    let title = '初始标题'
+    let textContent = '初始正文'
+    let editDurationMillis = 0
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
+      if (url.endsWith('/api/v1/records/create')) return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      if (url.endsWith('/api/v1/records/detail')) return json({ code: 0, data: { record_core: {
+        record_uid: 'article-1', owner_user_id: 10001, creator_user_id: 10001,
+        template_kind: 1, display_kind: 1, title, text_content: textContent,
+        record_duration_millis: 3200, edit_duration_millis: editDurationMillis,
+        send_at: 100, update_at: 200, status: 1, version,
+      } } })
+      if (url.endsWith('/api/v1/records/update')) {
+        title = String(body.title)
+        textContent = String(body.text_content)
+        editDurationMillis = Number(body.edit_duration_millis)
+        version += 1
+        return json({ code: 0, data: { record_core: { record_uid: 'article-1', version }, revision_uid: 'revision-1' } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const source = (await service.listSources('send_to_self')).items[0]!
+    await expect(service.sendSourceRich(source.sourceRef, {
+      title: '初始标题', textContent: '初始正文', displayKind: 1, thinkingDurationMillis: 3200,
+    }, { recordUid: 'article-1' })).resolves.toMatchObject({ itemUid: 'article-1' })
+    expect(calls.find(call => call.url.endsWith('/api/v1/records/create'))?.body).toMatchObject({
+      record_uid: 'article-1', template_kind: 1, display_kind: 1,
+      title: '初始标题', text_content: '初始正文', record_duration_millis: 3200,
+    })
+
+    await expect(service.longArticleDetail(source.sourceRef, 'article-1')).resolves.toMatchObject({
+      itemUid: 'article-1', editable: true, version: 1, thinkingDurationMillis: 3200,
+    })
+    await expect(service.updateLongArticle(source.sourceRef, 'article-1', {
+      title: '更新标题', textContent: '更新正文', version: 1, editDurationMillis: 1400,
+    })).resolves.toMatchObject({
+      itemUid: 'article-1', title: '更新标题', textContent: '更新正文', version: 2,
+      thinkingDurationMillis: 4600,
+    })
+    expect(calls.find(call => call.url.endsWith('/api/v1/records/update'))?.body).toMatchObject({
+      record_uid: 'article-1', template_kind: 1, version: 1,
+      record_duration_millis: 3200, edit_duration_millis: 1400,
+    })
+  })
+
+  it('projects both mention directions with opaque refs and reads the selected quick-note detail', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    await state.cacheProfile(10001, {
+      userId: 10001,
+      displayName: '我的昵称',
+      nickname: '我的昵称',
+      avatarRef: '10001_1700000000_1_0.png',
+      arkmeId: 'me',
+      accountType: 1,
+      createdAt: 1,
+      bindings: { apple: false, wechat: true, google: false },
+      contact: {},
+    })
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const ownAvatar = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+    const ownObjectPath = 'd89f3a35931c386956c1a402a8e09941/10001/10001_1700000000_1_0.png'
+    const publicDefaultAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/default/arkme.png?x-oss-signature=default-signature'
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/auth/able-func')) {
+        return json({ code: 200, data: { able: true } })
+      }
+      if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+        session: { chat_session_uid: 'private-1', session_kind: 1 },
+        private_counterpart: { user_id: 20002 },
+      } })
+      if (url.endsWith('/api/v1/private/check-contact-chat')) return json({ code: 200, data: {
+        exist: true, rm_subject_id: 70001, to_user_id: 20002,
+      } })
+      if (url.endsWith('/api/v1/interwoven-moments/inline-bootstrap')) return json({ code: 200, data: {
+        prepared_at: 1_700_000_000_500,
+        source_status: [{ moment_type: 1, status: 1, item_count: 2 }],
+        groups: [{
+          moment_type: 1,
+          group_title: '即我大群',
+          group_preview_items: [
+            {
+              moment_id: 'chat_group_mention:group-secret:10001:record-secret-1:rel-secret-1',
+              moment_type: 1,
+              occurred_at: 1_700_000_000_000,
+              summary: '我提到了小林',
+              is_degraded: false,
+              jump_target: {
+                chat_session_uid: 'group-secret', record_owner_user_id: 10001,
+                record_uid: 'record-secret-1', rel_uid: 'rel-secret-1', seq: 9,
+              },
+              render_payload: { sender_user_id: 10001, content: '我提到了小林' },
+            },
+            {
+              moment_id: 'chat_group_mention:group-secret:20002:record-secret-2:rel-secret-2',
+              moment_type: 1,
+              occurred_at: 1_700_000_001_000,
+              is_degraded: false,
+              jump_target: {
+                chat_session_uid: 'group-secret', record_owner_user_id: 20002,
+                record_uid: 'record-secret-2', rel_uid: 'rel-secret-2', seq: 10,
+              },
+              render_payload: { sender_user_id: 20002, content: '小林提到了我' },
+            },
+          ],
+        }],
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [
+          { user_id: 10001, nick_name: '我的昵称', head_img: publicDefaultAvatar },
+          {
+            user_id: 20002,
+            nick_name: '小林',
+            head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+          },
+        ],
+      } })
+      if (url.endsWith('/api/v1/chats/records/detail')) return json({ code: 200, data: {
+        chat_session_uid: 'group-secret',
+        item: {
+          relation: {
+            chat_session_uid: 'group-secret', record_owner_user_id: 20002,
+            record_uid: 'record-secret-2', rel_uid: 'rel-secret-2', seq: 10,
+          },
+          record: { status: 1, payload: { title: '群聊快记', text_content: '小林提到了我' } },
+        },
+      } })
+      if (url === 'https://auth.test/api/v1/synch/get/sts-credentials?md_5_user_id=d89f3a35931c386956c1a402a8e09941') {
+        return json({ code: 200, data: {
+          access_key_id: 'test-access-key-id',
+          access_key_secret: 'test-access-key-secret',
+          security_token: 'test-security-token',
+          expiration: new Date(Date.now() + 60_000).toISOString(),
+        } })
+      }
+      if (url.startsWith(`https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/${ownObjectPath}?`)) {
+        return new Response(ownAvatar, {
+          status: 200,
+          headers: { 'Content-Type': 'image/png', 'Content-Length': String(ownAvatar.byteLength) },
+        })
+      }
+      if (url === publicDefaultAvatar) throw new Error('self avatar must not use the public default image')
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const sourceRef = sourceRefFor('private_chat', 'private-1', '小林')
+
+    const bootstrap = await service.interwovenMoments(sourceRef)
+
+    expect(bootstrap).toMatchObject({ state: 'success', preparedAtMillis: 1_700_000_000_500 })
+    expect(bootstrap.moments).toHaveLength(2)
+    expect(bootstrap.moments.map(item => [item.senderName, item.senderIsMe, item.summary])).toEqual([
+      ['我的昵称', true, '我提到了小林'],
+      ['小林', false, '小林提到了我'],
+    ])
+    expect(bootstrap.moments[0]?.senderAvatarRef).toMatch(/^arkme-profile-image-v1\./)
+    expect(bootstrap.moments[1]?.senderAvatarRef).toMatch(/^arkme-profile-image-v1\./)
+    const publicProfileReadsBeforeOwnImage = requests.filter(item => item.url.endsWith('/api/v1/auth/get-public-users-by-ids')).length
+    await expect(service.readImage(bootstrap.moments[0]!.senderAvatarRef!)).resolves.toMatchObject({
+      mediaType: 'image/png', bytes: ownAvatar.byteLength,
+    })
+    expect(requests.filter(item => item.url.endsWith('/api/v1/auth/get-public-users-by-ids')))
+      .toHaveLength(publicProfileReadsBeforeOwnImage)
+    for (const moment of bootstrap.moments) {
+      expect(moment.momentRef).toMatch(/^arkme-moment-v1\./)
+      expect(moment.momentRef).not.toContain('group-secret')
+      expect(moment.momentRef).not.toContain('record-secret')
+      expect(moment.momentId).not.toContain('group-secret')
+    }
+
+    await expect(service.interwovenMomentDetail(sourceRef, bootstrap.moments[1]!.momentRef)).resolves.toMatchObject({
+      momentId: bootstrap.moments[1]!.momentId,
+      groupName: '即我大群',
+      senderName: '小林',
+      senderIsMe: false,
+      title: '群聊快记',
+      textContent: '小林提到了我',
+      degraded: false,
+    })
+    expect(requests.filter(item => item.url.endsWith('/api/v1/auth/able-func'))).toHaveLength(2)
+    expect(requests.find(item => item.url.endsWith('/api/v1/private/check-contact-chat'))?.body).toEqual({
+      target_user_id: 20002,
+    })
+    expect(requests.find(item => item.url.endsWith('/api/v1/interwoven-moments/inline-bootstrap'))?.body).toEqual({
+      rm_subject_id: 70001, force_refresh: true,
+    })
+    expect(requests.some(item => item.url.endsWith('/api/v1/chats/interwoven/inline-bootstrap'))).toBe(false)
+    expect(requests.find(item => item.url.endsWith('/api/v1/chats/records/detail'))?.body).toEqual({
+      chat_session_uid: 'group-secret', record_owner_user_id: 20002,
+      record_uid: 'record-secret-2', rel_uid: 'rel-secret-2', seq: 10,
+    })
+  })
+
+  it('restores native World interwoven moments through the legacy private subject locator', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/auth/able-func')) return json({ code: 200, data: { able: true } })
+      if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+        session: { chat_session_uid: 'private-old-huang', session_kind: 1 },
+        private_counterpart: { user_id: 20002 },
+      } })
+      if (url.endsWith('/api/v1/private/check-contact-chat')) return json({ code: 200, data: {
+        exist: true, rm_subject_id: 88001, to_user_id: 20002,
+      } })
+      if (url.endsWith('/api/v1/interwoven-moments/inline-bootstrap')) return json({ code: 200, data: {
+        prepared_at: 1_755_555_000_000,
+        source_status: [{ moment_type: 1, status: 1, item_count: 1 }],
+        groups: [{
+          moment_type: 1,
+          group_title: 'TA 在「即我大群」里@了你',
+          group_preview_items: [{
+            moment_id: 'native-old-huang-2000',
+            moment_type: 1,
+            occurred_at: 1_755_547_200_000,
+            title: '即我大群',
+            summary: '@何宏顺 @Lucis',
+            jump_target: { rm_subject_id: 99001, record_uid: 'legacy-record-1' },
+            render_payload: {
+              record_uid: 'legacy-record-1', sender_user_id: 10001,
+              sender_display_name: 'Tison', group_name: '即我大群',
+              content: '@何宏顺 @Lucis 你们手头有',
+            },
+          }],
+        }],
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [{ user_id: 10001, nick_name: 'Tison', head_img: '' }],
+      } })
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const sourceRef = sourceRefFor('private_chat', 'private-old-huang', '老黄')
+
+    const bootstrap = await service.interwovenMoments(sourceRef)
+
+    expect(bootstrap).toMatchObject({
+      state: 'success',
+      moments: [{
+        groupName: '即我大群', senderName: 'Tison', senderIsMe: true,
+        summary: '@何宏顺 @Lucis 你们手头有', occurredAtMillis: 1_755_547_200_000,
+      }],
+    })
+    await expect(service.interwovenMomentDetail(sourceRef, bootstrap.moments[0]!.momentRef))
+      .resolves.toMatchObject({
+        groupName: '即我大群', senderName: 'Tison', title: '即我大群',
+        textContent: '@何宏顺 @Lucis 你们手头有', degraded: true,
+      })
+    expect(requests.some(item => item.url.endsWith('/api/v1/chats/interwoven/inline-bootstrap'))).toBe(false)
+    expect(requests.some(item => item.url.endsWith('/api/v1/chats/records/detail'))).toBe(false)
+  })
+
+  it('falls back to Chat only when the legacy mapping is absent or World is explicitly unsupported', async () => {
+    for (const mode of ['missing', 'unsupported'] as const) {
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+      const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+        const url = String(input)
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        requests.push({ url, body })
+        if (url.endsWith('/api/v1/auth/able-func')) return json({ code: 200, data: { able: true } })
+        if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+          session: { chat_session_uid: 'private-1', session_kind: 1 },
+          private_counterpart: { user_id: 20002 },
+        } })
+        if (url.endsWith('/api/v1/private/check-contact-chat')) return json({ code: 200, data: mode === 'missing'
+          ? { exist: false, to_user_id: 20002 }
+          : { exist: true, rm_subject_id: 70001, to_user_id: 20002 } })
+        if (url.endsWith('/api/v1/interwoven-moments/inline-bootstrap')) return json({}, 404)
+        if (url.endsWith('/api/v1/chats/interwoven/inline-bootstrap')) return json({ code: 200, data: {
+          prepared_at: 100, source_status: [{ moment_type: 1, status: 1, item_count: 0 }], groups: [],
+        } })
+        throw new Error(`unexpected URL ${url}`)
+      })
+
+      await expect(service.interwovenMoments(sourceRefFor('private_chat', 'private-1', '小林')))
+        .resolves.toMatchObject({ state: 'empty', moments: [] })
+      expect(requests.filter(item => item.url.endsWith('/api/v1/chats/interwoven/inline-bootstrap'))).toHaveLength(1)
+      expect(requests.find(item => item.url.endsWith('/api/v1/chats/interwoven/inline-bootstrap'))?.body)
+        .toEqual({ chat_session_uid: 'private-1', rm_subject_id: mode === 'missing' ? 0 : 70001, limit: 100 })
+      expect(requests.filter(item => item.url.endsWith('/api/v1/interwoven-moments/inline-bootstrap')))
+        .toHaveLength(mode === 'missing' ? 0 : 1)
+    }
+  })
+
+  it('does not turn Subject or World service failures into false empty Chat results', async () => {
+    for (const failingOwner of ['subject', 'world'] as const) {
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const urls: string[] = []
+      const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+        const url = String(input); urls.push(url)
+        if (url.endsWith('/api/v1/auth/able-func')) return json({ code: 200, data: { able: true } })
+        if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+          session: { chat_session_uid: 'private-1', session_kind: 1 },
+          private_counterpart: { user_id: 20002 },
+        } })
+        if (url.endsWith('/api/v1/private/check-contact-chat')) return failingOwner === 'subject'
+          ? json({ code: 500, message: 'subject unavailable' })
+          : json({ code: 200, data: { exist: true, rm_subject_id: 70001 } })
+        if (url.endsWith('/api/v1/interwoven-moments/inline-bootstrap')) {
+          return json({ code: 500, message: 'world unavailable' })
+        }
+        if (url.endsWith('/api/v1/chats/interwoven/inline-bootstrap')) {
+          throw new Error('Chat fallback must not run for ordinary service failures')
+        }
+        throw new Error(`unexpected URL ${url}`)
+      })
+
+      await expect(service.interwovenMoments(sourceRefFor('private_chat', 'private-1', '小林')))
+        .rejects.toMatchObject({ code: 'arkme-code-500' })
+      expect(urls.some(url => url.endsWith('/api/v1/chats/interwoven/inline-bootstrap'))).toBe(false)
+    }
+  })
+
+  it('preserves installed rich-content projection and send contracts alongside interwoven moments', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const sentBodies: Record<string, unknown>[] = []
+    const signedUrl = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a.png?x-oss-signature=secret'
+    const service = new ArkmeService(
+      { ...config, richMediaRenderEnabled: true, richMediaSendEnabled: true },
+      sessions,
+      new MemoryStateStore(),
+      async (input, init) => {
+        const url = String(input)
+        if (url === signedUrl) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } })
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+          items: [{
+            relation: { record_uid: 'record-media', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 100, seq: 3 },
+            record: { status: 1, payload: {
+              title: '', text_content: '图片说明', display_kind: 0,
+              content_payload: { payload_kind: 2, media_refs: [
+                { file_asset_uid: 'asset-12345678', content_file_role: 1, sort_order: 0 },
+                { file_asset_uid: 'asset-background', content_file_role: 4, sort_order: 1 },
+                { file_asset_uid: 'asset-audio', content_file_role: 1, sort_order: 2, duration_sec: 65 },
+              ] },
+              media_display_items: [{
+                file_asset_uid: 'asset-12345678', file_kind: 1, file_name: '示例.png', mime_type: 'image/png',
+                size: 3, sort_order: 0, preview_url: signedUrl, download_url: signedUrl,
+              }, {
+                file_asset_uid: 'asset-background', file_kind: 2,
+                file_name: 'jotmo_mobile_background_sound_100.m4a', mime_type: 'audio/mp4',
+                size: 7, sort_order: 1, download_url: signedUrl,
+              }, {
+                file_asset_uid: 'asset-audio', file_kind: 2, file_name: '普通语音.m4a', mime_type: 'audio/mp4',
+                size: 5, sort_order: 2, download_url: signedUrl,
+              }],
+            } },
+          }],
+          has_more: false,
+        } })
+        if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: { items: [] } })
+        if (url.endsWith('/api/v1/chats/records/send')) {
+          sentBodies.push(body)
+          return json({ code: 200, data: { record_uid: body.record_uid, seq: 4, status: 1 } })
+        }
+        throw new Error(`unexpected ${url}`)
+      },
+    )
+    const sourceRef = sourceRefFor('private_chat', 'chat-media', '媒体会话')
+    const page = await service.readSource(sourceRef)
+    expect(page.items[0]).toMatchObject({
+      textContent: '图片说明',
+      contentBlocks: [
+        { kind: 'image', fileName: '示例.png', mimeType: 'image/png', size: 3 },
+        { kind: 'audio', fileName: '普通语音.m4a', mimeType: 'audio/mp4', size: 5, durationSec: 65 },
+      ],
+    })
+    expect(page.items[0]?.contentBlocks).toHaveLength(2)
+    const mediaRef = page.items[0]?.contentBlocks?.[0]?.mediaRef ?? ''
+    expect(mediaRef).toMatch(/^arkme-media-v1\./)
+    expect(JSON.stringify(page)).not.toContain('x-oss-signature=secret')
+    expect(JSON.stringify(page)).not.toContain('jotmo_mobile_background_sound')
+    expect(JSON.stringify(page)).not.toContain('asset-background')
+    await expect(service.fetchMedia(mediaRef)).resolves.toMatchObject({ descriptor: { fileName: '示例.png' } })
+    await expect(service.sendSourceRich(sourceRef, {
+      textContent: '发送图片',
+      assets: [{ fileAssetUid: 'asset-12345678', fileName: '示例.png', mimeType: 'image/png', size: 3, fileKind: 1 }],
+    }, { recordUid: 'record-rich', relationUid: 'relation-rich' })).resolves.toMatchObject({ itemUid: 'record-rich', sequence: 4 })
+    expect(sentBodies[0]).toMatchObject({
+      chat_session_uid: 'chat-media', record_uid: 'record-rich', rel_uid: 'relation-rich', template_kind: 2,
+      content_payload: { media_refs: [{ file_asset_uid: 'asset-12345678', render_role: 1 }] },
+    })
+    await expect(service.sendSourceRich(sourceRef, {
+      title: '长文标题', textContent: '长文正文', displayKind: 1, thinkingDurationMillis: 4200,
+    }, { recordUid: 'record-long-article', relationUid: 'relation-long-article' }))
+      .resolves.toMatchObject({ itemUid: 'record-long-article', sequence: 4 })
+    expect(sentBodies[1]).toMatchObject({
+      chat_session_uid: 'chat-media', record_uid: 'record-long-article', rel_uid: 'relation-long-article',
+      template_kind: 1, display_kind: 1, title: '长文标题', text_content: '长文正文',
+      record_duration_millis: 4200,
+    })
+  })
+
+  it('batch-hydrates default-category record media before mapping two incoming images', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(
+      { ...config, richMediaRenderEnabled: true },
+      sessions,
+      new MemoryStateStore(),
+      async (input, init) => {
+        const url = String(input)
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        calls.push({ url, body })
+        if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: {
+          items: [{
+            record_uid: 'record-two-images', send_at: 100,
+            record_core: {
+              title: '', text_content: '', template_kind: 2, status: 1, version: 1,
+              content_payload: { media_refs: [
+                { file_asset_uid: 'asset-image-a', content_file_role: 1, sort_order: 0 },
+                { file_asset_uid: 'asset-image-b', content_file_role: 1, sort_order: 1 },
+              ] },
+            },
+          }],
+          has_more: false,
+        } })
+        if (url.endsWith('/api/v1/records/media/batch-list')) return json({ code: 0, data: { items: [{
+          record_uid: 'record-two-images',
+          items: [{
+            file_asset_uid: 'asset-image-a', file_kind: 1, file_name: 'a.png', mime_type: 'image/png',
+            size: 10, sort_order: 0, preview_url: 'https://media.test/a.png', download_url: 'https://media.test/a.png',
+          }, {
+            file_asset_uid: 'asset-image-b', file_kind: 1, file_name: 'b.jpg', mime_type: 'image/jpeg',
+            size: 20, sort_order: 1, preview_url: 'https://media.test/b.jpg', download_url: 'https://media.test/b.jpg',
+          }],
+        }] } })
+        throw new Error(`unexpected ${url}`)
+      },
+    )
+
+    const page = await service.readSource(sourceRefFor('default_category', 'uncategorized', '默认分类'))
+    expect(page.items[0]).toMatchObject({
+      itemUid: 'record-two-images',
+      contentBlocks: [
+        { kind: 'image', fileAssetUid: 'asset-image-a', fileName: 'a.png', sortOrder: 0 },
+        { kind: 'image', fileAssetUid: 'asset-image-b', fileName: 'b.jpg', sortOrder: 1 },
+      ],
+    })
+    expect(page.items[0]?.mediaUnavailable).not.toBe(true)
+    const mediaCalls = calls.filter(call => call.url.endsWith('/api/v1/records/media/batch-list'))
+    expect(mediaCalls).toHaveLength(1)
+    expect(mediaCalls[0]?.body).toEqual({ record_uids: ['record-two-images'] })
+  })
+
+  it('keeps record text and marks only unresolved media when batch hydration fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let mediaCalls = 0
+    const service = new ArkmeService(
+      { ...config, richMediaRenderEnabled: true },
+      sessions,
+      new MemoryStateStore(),
+      async input => {
+        const url = String(input)
+        if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+          records: [{
+            record_uid: 'record-media-only', creator_user_id: 10001, send_at: 100, status: 1,
+            record_core: { content_payload: { media_refs: [{ file_asset_uid: 'asset-missing', content_file_role: 1 }] } },
+          }, {
+            record_uid: 'record-text', creator_user_id: 10001, send_at: 99, status: 1,
+            text_content: '同页文字仍然可读',
+          }],
+          has_more: false,
+        } })
+        if (url.endsWith('/api/v1/records/media/batch-list')) {
+          mediaCalls += 1
+          return json({ code: 500, message: 'media unavailable' })
+        }
+        throw new Error(`unexpected ${url}`)
+      },
+    )
+
+    const page = await service.readSource(sourceRefFor('topic', 'topic-media', '媒体主题'))
+    expect(page.items).toMatchObject([
+      { itemUid: 'record-media-only', contentBlocks: [], mediaUnavailable: true },
+      { itemUid: 'record-text', textContent: '同页文字仍然可读' },
+    ])
+    expect(mediaCalls).toBe(1)
+  })
+
+  it('hides interwoven moments behind the local kill switch without calling remote services', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>()
+    const service = new ArkmeService(
+      { ...config, interwovenMomentsEnabled: false }, sessions, new MemoryStateStore(), fetchImpl,
+    )
+
+    await expect(service.interwovenMoments(sourceRefFor('private_chat', 'private-1', '小林')))
+      .resolves.toMatchObject({ state: 'disabled', moments: [] })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('rejects Bot private chats before loading interwoven data', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const urls: string[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input); urls.push(url)
+      if (url.endsWith('/api/v1/auth/able-func')) return json({ code: 200, data: { able: true } })
+      if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+        session: { chat_session_uid: 'bot-1', session_kind: 3 }, private_counterpart: { user_id: 20002 },
+      } })
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.interwovenMoments(sourceRefFor('private_chat', 'bot-1', '机器人')))
+      .rejects.toMatchObject({ code: 'interwoven-source-invalid' })
+    expect(urls.some(url => url.endsWith('/api/v1/chats/interwoven/inline-bootstrap'))).toBe(false)
+  })
+
+  it('fails closed when interwoven eligibility is denied', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const urls: string[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      urls.push(String(input))
+      return json({ code: 200, data: { able: false } })
+    })
+
+    await expect(service.interwovenMoments(sourceRefFor('private_chat', 'private-1', '小林')))
+      .resolves.toMatchObject({ state: 'disabled', moments: [] })
+    expect(urls).toEqual(['https://auth.test/api/v1/auth/able-func'])
+  })
+
+  it('keeps valid moments when unknown and malformed items or optional profiles are unavailable', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/auth/able-func')) return json({ code: 200, data: { able: true } })
+      if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+        session: { chat_session_uid: 'private-1', session_kind: 1 }, private_counterpart: { user_id: 20002 },
+      } })
+      if (url.endsWith('/api/v1/private/check-contact-chat')) return json({ code: 200, data: { exist: false } })
+      if (url.endsWith('/api/v1/chats/interwoven/inline-bootstrap')) return json({ code: 200, data: {
+        future_field: { ignored: true }, prepared_at: 100,
+        source_status: [{ moment_type: 1, status: 1 }],
+        groups: [{ moment_type: 1, group_title: '项目群', future: true, group_preview_items: [
+          {
+            moment_id: 'valid', moment_type: 1, occurred_at: 10, is_degraded: false,
+            jump_target: {
+              chat_session_uid: 'group-1', record_owner_user_id: 20002,
+              record_uid: 'record-1', rel_uid: 'rel-1', seq: 1,
+            },
+            render_payload: { sender_user_id: 20002, content: '@我' },
+          },
+          { moment_id: 'malformed', moment_type: 1, occurred_at: 11, jump_target: {}, render_payload: {} },
+          { moment_id: 'future-type', moment_type: 99, occurred_at: 12 },
+        ] }],
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) throw new TypeError('profile unavailable')
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    await expect(service.interwovenMoments(sourceRefFor('private_chat', 'private-1', '小林')))
+      .resolves.toMatchObject({
+        state: 'partial',
+        moments: [{ groupName: '项目群', senderName: '小林', summary: '@我' }],
+      })
+  })
+
+  it('rejects forged, expired and cross-account moment refs before record detail access', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-19T00:00:00Z'))
+    try {
+      const sessions = new MemorySessionStore()
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      const urls: string[] = []
+      const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+        const url = String(input); urls.push(url)
+        if (url.endsWith('/api/v1/auth/able-func')) return json({ code: 200, data: { able: true } })
+        if (url.endsWith('/api/v1/chats/detail')) return json({ code: 200, data: {
+          session: { chat_session_uid: 'private-1', session_kind: 1 }, private_counterpart: { user_id: 20002 },
+        } })
+        if (url.endsWith('/api/v1/private/check-contact-chat')) return json({ code: 200, data: { exist: false } })
+        if (url.endsWith('/api/v1/chats/interwoven/inline-bootstrap')) return json({ code: 200, data: {
+          prepared_at: Date.now(), source_status: [{ moment_type: 1, status: 1 }],
+          groups: [{ moment_type: 1, group_title: '群聊', group_preview_items: [{
+            moment_id: 'one', moment_type: 1, occurred_at: Date.now(), is_degraded: false,
+            jump_target: {
+              chat_session_uid: 'group-1', record_owner_user_id: 20002,
+              record_uid: 'record-1', rel_uid: 'rel-1', seq: 1,
+            },
+            render_payload: { sender_user_id: 20002, content: '@我' },
+          }] }],
+        } })
+        if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: { items: [] } })
+        if (url.endsWith('/api/v1/chats/records/detail')) throw new Error('record detail must not be called')
+        throw new Error(`unexpected URL ${url}`)
+      })
+      const sourceRef = sourceRefFor('private_chat', 'private-1', '小林')
+      const bootstrap = await service.interwovenMoments(sourceRef)
+      const momentRef = bootstrap.moments[0]!.momentRef
+
+      await expect(service.interwovenMomentDetail(sourceRef, 'arkme-moment-v1.forged.signature'))
+        .rejects.toMatchObject({ code: 'interwoven-ref-invalid' })
+      sessions.session = { userId: 30003, accessToken: 'other', refreshToken: 'other-refresh' }
+      await expect(service.interwovenMomentDetail(
+        sourceRefFor('private_chat', 'private-1', '小林', 30003), momentRef,
+      )).rejects.toMatchObject({ code: 'interwoven-ref-invalid' })
+      sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+      vi.advanceTimersByTime(13 * 60 * 60 * 1000)
+      await expect(service.interwovenMomentDetail(sourceRef, momentRef))
+        .rejects.toMatchObject({ code: 'interwoven-ref-expired' })
+      expect(urls.some(url => url.endsWith('/api/v1/chats/records/detail'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
