@@ -56,21 +56,24 @@ const styles: Record<string, CSSProperties> = {
     position: 'relative', flex: 'none', display: 'inline-flex', alignItems: 'center', color: colors.secondary,
   },
   sortTrigger: {
-    height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-    padding: '0 2px', border: 0, borderRadius: 6, outline: 0,
-    background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer',
+    height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+    padding: '0 4px 0 8px', border: 0, borderRadius: 24, outline: 0,
+    background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 13, fontWeight: 500, cursor: 'pointer',
   },
   sortArrow: { width: 10, height: 10, flex: 'none', pointerEvents: 'none' },
   sortMenu: {
-    position: 'absolute', zIndex: 30, top: 36, right: -8, width: 120, padding: '6px 0',
-    boxSizing: 'border-box', borderRadius: 12, background: 'var(--dsw-specific-dialog-fill, #fff)',
-    boxShadow: '0 6px 18px rgba(22, 26, 31, 0.18)', color: colors.text,
+    position: 'absolute', zIndex: 30, top: 32, right: 0, width: 96, padding: 4,
+    boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-inverted, #e2e4e7)',
+    borderRadius: 10, background: 'var(--dsw-specific-menu, #fff)',
+    boxShadow: 'var(--dsw-shadow-lv3, 0 4px 12px rgba(22, 26, 31, 0.12))', color: colors.text,
   },
   sortMenuItem: {
-    width: '100%', height: 54, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: 0, border: 0, background: 'transparent', color: 'inherit',
-    cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px',
+    width: '100%', height: 32, display: 'flex', alignItems: 'center', gap: 6,
+    padding: '0 8px', border: 0, borderRadius: 7, background: 'transparent', color: 'inherit',
+    textAlign: 'left', cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '20px',
   },
+  sortMenuItemLabel: { flex: 1, minWidth: 0 },
+  sortMenuCheck: { width: 14, height: 14, flex: 'none', color: colors.secondary },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
   topicList: { paddingBottom: 74 },
   topicCardList: { paddingTop: 0 },
@@ -429,7 +432,12 @@ export function ArkmeSourceSortMenu({
       key={option.value} type="button" role="menuitemradio" aria-checked={option.value === value}
       style={{ ...styles.sortMenuItem, fontWeight: option.value === value ? 500 : 400 }}
       onClick={() => { onSelect(option.value) }}
-    >{option.label}</button>)}
+    >
+      <span style={styles.sortMenuItemLabel}>{option.label}</span>
+      {option.value === value && <svg aria-hidden viewBox="0 0 14 14" style={styles.sortMenuCheck}>
+        <path d="m2.5 7.2 2.8 2.8 6.2-6.2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>}
+    </button>)}
   </div>
 }
 
