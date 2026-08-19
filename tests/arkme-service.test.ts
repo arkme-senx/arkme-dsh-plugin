@@ -1217,11 +1217,13 @@ describe('ArkmeService', () => {
     expect(result.source).not.toHaveProperty('parentSourceRef')
   })
 
-  it('rejects a sixth hierarchy level before creating a topic', async () => {
+  it('defers hierarchy depth authority to bind when the relation snapshot contains hidden ancestors', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     let createCalls = 0
+    let bindCalls = 0
+    let relationListCalls = 0
     const relations = [
       ['level-1', 'level-2'], ['level-2', 'level-3'], ['level-3', 'level-4'], ['level-4', 'topic-parent'],
     ].map(([parent, child]) => ({
@@ -1232,18 +1234,29 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '第五级', update_at: 100 },
       }] } })
-      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) {
+        relationListCalls += 1
+        return json({ code: 0, data: { relations } })
+      }
       if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
       if (url.endsWith('/api/v1/topics/create')) {
         createCalls += 1
-        return json({ code: 0, data: { topic_uid: 'should-not-create', status: 1 } })
+        return json({ code: 0, data: { topic_uid: 'topic-created', status: 1 } })
+      }
+      if (url.endsWith('/api/v1/topics/hierarchy/bind')) {
+        bindCalls += 1
+        return json({ code: 0, data: { relation: { status: 1 } } })
       }
       throw new Error(`unexpected ${url}`)
     })
 
     const parent = (await service.listSources('send_to_self')).items.find(item => item.kind === 'topic')!
-    await expect(service.createTopic('第六级', parent.sourceRef)).rejects.toMatchObject({ code: 'topic-depth-limit' })
-    expect(createCalls).toBe(0)
+    await expect(service.createTopic('可创建子主题', parent.sourceRef)).resolves.toMatchObject({
+      source: { displayName: '可创建子主题', parentSourceRef: parent.sourceRef },
+    })
+    expect(createCalls).toBe(1)
+    expect(bindCalls).toBe(1)
+    expect(relationListCalls).toBe(1)
   })
 
   it('keeps send-to-self sources available when the default summary is unavailable', async () => {

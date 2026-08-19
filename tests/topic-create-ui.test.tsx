@@ -6,7 +6,8 @@ import {
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
-  expandTopicFromRowClick, isTopicRowFullyVisible, mergeCreatedTopicSource, toggleTopicCollapsedState,
+  canCreateChildTopicAtParentLevel, expandTopicFromRowClick, isTopicRowFullyVisible,
+  mergeCreatedTopicSource, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
 import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
@@ -125,6 +126,13 @@ describe('topic create UI', () => {
 
     expect(nextSources[0]).toBe(selectedSource)
     expect(nextSources[1]).toBe(createdSource)
+  })
+
+  it('preflights child creation from the rendered tree level', () => {
+    expect(canCreateChildTopicAtParentLevel(1)).toBe(true)
+    expect(canCreateChildTopicAtParentLevel(4)).toBe(true)
+    expect(canCreateChildTopicAtParentLevel(5)).toBe(false)
+    expect(canCreateChildTopicAtParentLevel(undefined)).toBe(false)
   })
 
   it('expands a collapsed topic from its row without collapsing an expanded topic', () => {

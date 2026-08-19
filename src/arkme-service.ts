@@ -1317,39 +1317,6 @@ export class ArkmeService {
         throw new ArkmePluginError('topic-parent-invalid', '只能在主题下创建子主题', false)
       }
       parentTopicUid = parent.ownerRef
-      try {
-        const hierarchy = await this.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/topics/hierarchy/relations/list',
-          {},
-          session,
-        )
-        const parentByChild = new Map<string, string>()
-        for (const raw of listValue(hierarchy.relations)) {
-          const relation = objectValue(raw)
-          if (numberValue(relation.rel_kind) !== 1 || numberValue(relation.status) !== 1) continue
-          const parentUid = stringValue(relation.parent_topic_uid).trim()
-          const childUid = stringValue(relation.child_topic_uid).trim()
-          if (parentUid !== '' && childUid !== '' && parentUid !== childUid) parentByChild.set(childUid, parentUid)
-        }
-        let depth = 1
-        let current = parentTopicUid
-        const visited = new Set([current])
-        while (parentByChild.has(current)) {
-          current = parentByChild.get(current)!
-          if (visited.has(current)) {
-            throw new ArkmePluginError('topic-hierarchy-invalid', '主题层级数据存在循环，请刷新后重试', false, 409)
-          }
-          visited.add(current)
-          depth += 1
-        }
-        if (depth >= 5) {
-          throw new ArkmePluginError('topic-depth-limit', '主题最多支持五级层级，无法继续创建子主题', false, 409)
-        }
-      } catch (error) {
-        if (error instanceof ArkmePluginError
-          && ['topic-hierarchy-invalid', 'topic-depth-limit'].includes(error.code)) throw error
-        // This is a UX preflight only. The bind endpoint remains authoritative when the hierarchy snapshot is unavailable.
-      }
     }
 
     const createdAtMillis = Date.now()

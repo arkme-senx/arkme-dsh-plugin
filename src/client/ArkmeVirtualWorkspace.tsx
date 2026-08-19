@@ -24,6 +24,8 @@ export interface ArkmeNavigationProps {
   onActivateSurface?: () => void
 }
 
+export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
+
 const colors = {
   panel: 'var(--dsw-specific-sidebar-fill, #f8f9fa)',
   text: 'var(--dsw-alias-label-primary, #242629)',
@@ -292,6 +294,11 @@ export function mergeCreatedTopicSource(
   return [...sources.filter(source => source.sourceRef !== createdSource.sourceRef), createdSource]
 }
 
+export function canCreateChildTopicAtParentLevel(parentLevel: number | undefined): boolean {
+  return parentLevel !== undefined && Number.isInteger(parentLevel)
+    && parentLevel >= 1 && parentLevel < ARKME_TOPIC_HIERARCHY_MAX_LEVEL
+}
+
 export function expandTopicFromRowClick(
   row: ArkmeSourceTreeRow,
   collapsedSourceRefs: Set<string>,
@@ -341,6 +348,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicCreateParent, setTopicCreateParent] = useState<ArkmeSourceItem | null>()
+  const [topicCreateParentLevel, setTopicCreateParentLevel] = useState<number>()
   const [topicCreateError, setTopicCreateError] = useState('')
   const [topicCreateSubmitting, setTopicCreateSubmitting] = useState(false)
   const [pendingRevealSourceRef, setPendingRevealSourceRef] = useState<string>()
@@ -572,19 +580,25 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const toggleSource = (sourceRef: string) => {
     setCollapsedSourceRefs(current => toggleTopicCollapsedState(sourceRef, current))
   }
-  const openTopicCreate = (parent: ArkmeSourceItem | null) => {
+  const openTopicCreate = (parent: ArkmeSourceItem | null, parentLevel?: number) => {
     setTopicCreateParent(parent)
+    setTopicCreateParentLevel(parentLevel)
     setTopicCreateError('')
     setTopicCreateSubmitting(false)
   }
   const cancelTopicCreate = () => {
     if (topicCreateRequestRef.current) return
     setTopicCreateParent(undefined)
+    setTopicCreateParentLevel(undefined)
     setTopicCreateError('')
   }
   const submitTopicCreate = async (title: string) => {
     if (topicCreateParent === undefined || topicCreateRequestRef.current) return
     const parent = topicCreateParent
+    if (parent !== null && !canCreateChildTopicAtParentLevel(topicCreateParentLevel)) {
+      setTopicCreateError('主题最多支持五级层级，无法继续创建子主题')
+      return
+    }
     topicCreateRequestRef.current = true
     setTopicCreateSubmitting(true)
     setTopicCreateError('')
@@ -599,6 +613,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current))
       setHoveredSourceRef(undefined)
       setTopicCreateParent(undefined)
+      setTopicCreateParentLevel(undefined)
       setPendingRevealSourceRef(result.source.sourceRef)
       if (result.warning !== undefined) setError(result.warning)
     } catch (caught) {
@@ -700,7 +715,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onToggle={() => { toggleSource(source.sourceRef) }}
           onSelect={() => { selectTopicSource(row) }}
-          onCreateChild={() => { openTopicCreate(source) }}
+          onCreateChild={() => { openTopicCreate(source, row.depth + 1) }}
         />
       })}
 
