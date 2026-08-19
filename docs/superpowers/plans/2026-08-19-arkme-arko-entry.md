@@ -91,7 +91,17 @@ sequenceDiagram
     Host-->>Panel: run_uid + queued/running
     loop 直到终态
       Panel->>Host: arko.run.status
-      Host-->>Panel: queued/running/waiting_tool/terminal
+      alt 状态投影可用
+        Host-->>Panel: queued/running/waiting_tool/terminal
+      else 状态查询暂时失败
+        Host--xPanel: 网络或投影错误
+        Panel->>Host: arko.history(同一 assistant message)
+        alt 历史已终态
+          Host-->>Panel: 最终回复
+        else 历史仍活跃或暂不可用
+          Panel->>Panel: 保持原思考/处理状态并静默退避
+        end
+      end
     end
     Panel->>Host: arko.history
   else new-msg-v2 已受理但 SSE 断线
@@ -150,7 +160,7 @@ stateDiagram-v2
 - Arko 主面板不重复展示 Agent 资料头；模型选择和清除上下文位于当前 Arko 名称右侧。
 - 用户消息头像读取当前账号的安全头像引用；AI 消息头像复用客户端 AgentDirect 头像，发送者名称只展示云端当前名称，不追加 `AI` 文案。
 - Arko profile 是侧边栏入口与主面板共享的前端状态；改名回执会同时刷新两处。仅云端 `Agent/version=0` 默认投影映射为 `Arko`，用户主动保存的 `Agent/version>0` 保持原样。
-- 新发送和重进页面发现的 active Run 都由同一轮询链恢复；只恢复当前会话最新 Run。首次查询前保留 1.2 秒状态投影窗口，前两次失败保持“正在处理”，连续三次失败后才展示同步异常，并以最高 10 秒退避继续重连。
+- 新发送和重进页面发现的 active Run 都由同一轮询链恢复；只恢复当前会话最新 Run。首次查询前保留 1.2 秒状态投影窗口；状态查询失败时按同一 assistant message 查询历史，历史终态则刷新最终结果，否则保持原“正在思考/正在处理”、输入锁和停止入口，并以最高 10 秒静默退避。页面不展示状态同步失败、连接中断或正在重试。
 - 只有首次历史恢复、新发送、任务终态刷新和清除上下文会滚动到底部；加载更早消息不得触发全局滚底副作用。
 - `new-msg-v2` 成功后即视为任务已受理；后续 SSE 断线不得回报“发送失败”，必须保留 Run 身份并转状态轮询，避免用户重试造成重复业务操作。
 - `new-msg-v2` 响应不确定时在当前标签页保存 pending turn；重试确认必须复用原 `client_turn_uid`，未完成对账前禁止新发送和清除上下文。

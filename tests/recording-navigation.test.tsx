@@ -31,7 +31,12 @@ describe('Arko navigation entry', () => {
     expect(ArkmeArkoRow).toBeDefined()
     if (ArkmeArkoRow === undefined) return
 
-    const markup = renderToStaticMarkup(<ArkmeArkoRow selected displayName="小可" onClick={vi.fn()} />)
+    const markup = renderToStaticMarkup(<ArkmeArkoRow
+      selected
+      displayName="小可"
+      latestPreview="刚刚完成了资料整理"
+      onClick={vi.fn()}
+    />)
     expect(markup).toContain('role="treeitem"')
     expect(markup).toContain('aria-selected="true"')
     expect(markup).toContain('小可')
@@ -40,6 +45,11 @@ describe('Arko navigation entry', () => {
     expect(markup).toContain('data-arkme-topic-tag="Agent"')
     expect(markup).toContain('>Agent</span>')
     expect(markup).not.toContain('>AI</span>')
+    expect(markup).toContain('刚刚完成了资料整理')
+  })
+
+  it('keeps the product description only when no conversation exists yet', () => {
+    const markup = renderToStaticMarkup(<navigation.ArkmeArkoRow selected={false} onClick={vi.fn()} />)
     expect(markup).toContain('对话并处理 Arkme 业务')
   })
 })
