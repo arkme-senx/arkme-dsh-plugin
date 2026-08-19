@@ -14,6 +14,7 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
@@ -42,7 +43,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', color: colors.text,
   },
   header: {
-    flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
+    position: 'relative', zIndex: 5, flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
     padding: '0 12px 0 14px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
   },
   headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 500 },
@@ -51,8 +52,33 @@ const styles: Record<string, CSSProperties> = {
     padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.text,
     fontSize: 20, cursor: 'pointer',
   },
+  sortControl: {
+    position: 'relative', height: 22, flex: 'none', display: 'inline-flex', alignItems: 'center',
+    color: 'var(--dsw-alias-label-secondary, #6f747b)', transform: 'translateY(2px)',
+  },
+  sortTrigger: {
+    height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+    padding: 0, border: 0, borderRadius: 6, outline: 0,
+    background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, fontWeight: 400,
+    lineHeight: '22px', cursor: 'pointer',
+  },
+  sortArrow: { width: 10, height: 10, flex: 'none', marginTop: 1, pointerEvents: 'none' },
+  sortMenu: {
+    position: 'absolute', zIndex: 30, top: 30, right: -8, width: 80, padding: 3,
+    boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-inverted, #e2e4e7)',
+    borderRadius: 10, background: 'var(--dsw-specific-menu, #fff)',
+    boxShadow: 'var(--dsw-shadow-lv3, 0 4px 12px rgba(22, 26, 31, 0.12))', color: colors.text,
+  },
+  sortMenuItem: {
+    position: 'relative', width: '100%', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '0 20px', border: 0, borderRadius: 6, background: 'transparent', color: 'inherit',
+    textAlign: 'center', cursor: 'pointer', font: 'inherit', fontSize: 12, lineHeight: '18px',
+  },
+  sortMenuItemLabel: { minWidth: 0 },
+  sortMenuCheck: { position: 'absolute', right: 6, width: 12, height: 12, color: colors.secondary },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
   topicList: { paddingBottom: 74 },
+  topicCardList: { paddingTop: 0 },
   chatRow: {
     position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
     padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
@@ -135,6 +161,32 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer', font: 'inherit', lineHeight: 1, pointerEvents: 'auto',
   },
   topicCreatePlus: { width: 16, height: 16 },
+  topicCard: {
+    position: 'relative', width: 'calc(100% - 24px)', minHeight: 56, margin: '0 12px 8px',
+    boxSizing: 'border-box', overflow: 'hidden', borderRadius: 9,
+    background: 'var(--dsw-alias-fill-secondary, #f6f6f6)', color: 'inherit',
+  },
+  topicCardButton: {
+    width: '100%', minHeight: 56, display: 'flex', flexDirection: 'column', alignItems: 'stretch',
+    justifyContent: 'center', gap: 2, padding: '8px 40px 8px 10px', boxSizing: 'border-box',
+    border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  },
+  topicCardName: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 14, lineHeight: '20px', fontWeight: 400,
+  },
+  topicCardMeta: {
+    minWidth: 0, display: 'flex', alignItems: 'center', gap: 5,
+    color: colors.secondary, fontSize: 12, lineHeight: '17px',
+  },
+  topicCardCount: {
+    minWidth: 18, height: 17, padding: '0 4px', boxSizing: 'border-box', borderRadius: 4,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: 'var(--dsw-specific-sidebar-fill, #fff)', color: colors.caption,
+  },
+  topicCardMetaText: { flex: 'none', whiteSpace: 'nowrap' },
+  topicCardPreview: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  topicCardHover: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
   topicCreateFooter: {
     position: 'absolute', zIndex: 4, left: 0, right: 0, bottom: 0,
     display: 'flex', justifyContent: 'center', padding: '10px 12px 22px',
@@ -263,6 +315,47 @@ export function ArkmeTopicTreeRow({
   </div>
 }
 
+export interface ArkmeTopicCardProps {
+  source: ArkmeSourceItem
+  selected: boolean
+  hovered: boolean
+  createdHighlightActive?: boolean
+  createdHighlightVisible?: boolean
+  rowRef?: (node: HTMLDivElement | null) => void
+  onHoverChange: (hovered: boolean) => void
+  onSelect: () => void
+}
+
+export function ArkmeTopicCard({
+  source, selected, hovered, createdHighlightActive = false, createdHighlightVisible = false, rowRef,
+  onHoverChange, onSelect,
+}: ArkmeTopicCardProps) {
+  const time = arkmeSourceTimeLabel(source.activeAtMillis)
+  const preview = source.latestPreview?.trim() ?? ''
+  return <div
+    ref={rowRef} role="listitem"
+    style={{
+      ...styles.topicCard,
+      ...(createdHighlightActive ? {
+        transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease, box-shadow ${createdHighlightVisible ? 140 : 800}ms ease`,
+      } : {}),
+      ...(selected ? styles.topicActive : {}),
+      ...(hovered && !selected ? styles.topicCardHover : {}),
+      ...(createdHighlightVisible ? styles.topicCreated : {}),
+    }}
+    onMouseEnter={() => { onHoverChange(true) }} onMouseLeave={() => { onHoverChange(false) }}
+  >
+    <button type="button" aria-pressed={selected} style={styles.topicCardButton} onClick={onSelect}>
+      <span style={styles.topicCardName}>{source.displayName}</span>
+      <span style={styles.topicCardMeta}>
+        <span style={styles.topicCardCount}>{source.recordCount ?? 0}</span>
+        {time !== '' && <span style={styles.topicCardMetaText}>{time}{preview === '' ? '' : '：'}</span>}
+        {preview !== '' && <span style={styles.topicCardPreview}>{preview}</span>}
+      </span>
+    </button>
+  </div>
+}
+
 export function expandAncestorsForReveal(
   sources: readonly ArkmeSourceItem[],
   sourceRef: string,
@@ -327,6 +420,69 @@ export function ArkmeTopicCreateFooter({ onCreate }: { onCreate: () => void }) {
   </div>
 }
 
+const arkmeSourceSortOptions: ReadonlyArray<{ value: ArkmeSourceSort, label: string }> = [
+  { value: 'latest', label: '最新' },
+  { value: 'most', label: '最多' },
+  { value: 'default', label: '默认' },
+]
+
+export function ArkmeSourceSortMenu({
+  value, onSelect,
+}: { value: ArkmeSourceSort, onSelect: (value: ArkmeSourceSort) => void }) {
+  return <div role="menu" aria-label="排序方式" style={styles.sortMenu}>
+    {arkmeSourceSortOptions.map(option => <button
+      key={option.value} type="button" role="menuitemradio" aria-checked={option.value === value}
+      style={{ ...styles.sortMenuItem, fontWeight: option.value === value ? 500 : 400 }}
+      onClick={() => { onSelect(option.value) }}
+    >
+      <span style={styles.sortMenuItemLabel}>{option.label}</span>
+      {option.value === value && <svg aria-hidden viewBox="0 0 14 14" style={styles.sortMenuCheck}>
+        <path d="m2.5 7.2 2.8 2.8 6.2-6.2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>}
+    </button>)}
+  </div>
+}
+
+export function ArkmeSourceSortControl({
+  value, onChange,
+}: { value: ArkmeSourceSort, onChange: (value: ArkmeSourceSort) => void }) {
+  const [open, setOpen] = useState(false)
+  const controlRef = useRef<HTMLDivElement>(null)
+  const label = arkmeSourceSortOptions.find(option => option.value === value)?.label ?? '默认'
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    const closeFromOutside = (event: PointerEvent) => {
+      if (controlRef.current !== null && !controlRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [open])
+
+  return <div ref={controlRef} style={styles.sortControl}>
+    <button
+      type="button" style={styles.sortTrigger} aria-label={`发给自己排序：${label}`}
+      aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(current => !current) }}
+    >
+      <span>{label}</span>
+      <svg aria-hidden viewBox="0 0 10 10" style={styles.sortArrow}>
+        <path d="m2 3.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+    {open && <ArkmeSourceSortMenu value={value} onSelect={next => {
+      onChange(next)
+      setOpen(false)
+    }} />}
+  </div>
+}
+
 export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
@@ -346,6 +502,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     initialCache?.sources[initialCache.directory] ?? [],
   )
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
+  const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('default')
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
   const [topicCreateParent, setTopicCreateParent] = useState<ArkmeSourceItem | null>()
   const [topicCreateParentLevel, setTopicCreateParentLevel] = useState<number>()
@@ -360,6 +517,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
     [collapsedSourceRefs, sourceTree],
   )
+  const cardSources = useMemo(
+    () => sourceSort === 'default' ? [] : sortArkmeSources(sources, sourceSort),
+    [sourceSort, sources],
+  )
+  const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
 
   const stopCreatedHighlightAnimation = useCallback(() => {
@@ -649,6 +811,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         onClick={() => { changeDirectory('root') }}
       >‹</button>
       <h2 style={styles.headerTitle}>发给自己</h2>
+      <ArkmeSourceSortControl value={sourceSort} onChange={value => {
+        setSourceSort(value)
+        setHoveredSourceRef(undefined)
+      }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
 
@@ -656,8 +822,13 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
     <div
-      style={{ ...styles.list, ...(directory === 'send_to_self' ? styles.topicList : {}) }}
-      role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
+      style={{
+        ...styles.list,
+        ...(directory === 'send_to_self' ? styles.topicList : {}),
+        ...(directory === 'send_to_self' && cardMode ? styles.topicCardList : {}),
+      }}
+      role={directory === 'send_to_self' && cardMode ? 'list' : 'tree'}
+      aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
         {authenticated && <ArkmeOfficialCommunityEntry onJoined={joinedOfficialCommunity} />}
@@ -700,7 +871,7 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         })}
       </>}
 
-      {directory === 'send_to_self' && visibleSourceRows.map(row => {
+      {directory === 'send_to_self' && !cardMode && visibleSourceRows.map(row => {
         const source = row.source
         const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
         return <ArkmeTopicTreeRow
@@ -716,6 +887,22 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
           onToggle={() => { toggleSource(source.sourceRef) }}
           onSelect={() => { selectTopicSource(row) }}
           onCreateChild={() => { openTopicCreate(source, row.depth + 1) }}
+        />
+      })}
+
+      {directory === 'send_to_self' && cardMode && cardSources.map(source => {
+        const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
+        return <ArkmeTopicCard
+          key={source.sourceRef} source={source} selected={selected}
+          hovered={hoveredSourceRef === source.sourceRef}
+          createdHighlightActive={createdHighlight?.sourceRef === source.sourceRef}
+          createdHighlightVisible={createdHighlight?.sourceRef === source.sourceRef && createdHighlight.visible}
+          rowRef={node => {
+            if (node === null) topicRowElementsRef.current.delete(source.sourceRef)
+            else topicRowElementsRef.current.set(source.sourceRef, node)
+          }}
+          onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
+          onSelect={() => { selectSource(source) }}
         />
       })}
 

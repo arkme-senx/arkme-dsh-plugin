@@ -44,7 +44,6 @@ describe('Arkme source tree', () => {
       source('cycle-a', '循环 A', 'cycle-b'),
       source('cycle-b', '循环 B', 'cycle-a'),
     ])
-
     expect(roots.map(node => node.source.sourceRef)).toEqual(['orphan', 'cycle-a', 'cycle-b'])
     expect(roots.every(node => node.children.length === 0)).toBe(true)
   })

@@ -1083,6 +1083,13 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/records/uncategorized/summary')) {
         return json({ code: 0, data: { record_count: 7, words_count: 20, total_sec: 0 } })
       }
+      if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: {
+        items: [{
+          record_uid: 'default-latest', send_at: 101,
+          record_core: { title: '', text_content: '默认分类最近内容', template_kind: 1, status: 1, version: 1 },
+        }],
+        has_more: true,
+      } })
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
@@ -1095,6 +1102,10 @@ describe('ArkmeService', () => {
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
       ['default_category', '默认分类', 7], ['topic', '工作', 2], ['topic', '周报', 1],
     ])
+    expect(sources.items[0]).toMatchObject({
+      activeAtMillis: 101,
+      latestPreview: '默认分类最近内容',
+    })
     expect(sources.items[1]?.sourceRef).not.toContain('topic-1')
     expect(sources.items[2]?.parentSourceRef).toBe(sources.items[1]?.sourceRef)
     expect(sources.items[2]?.parentSourceRef).not.toContain('topic-1')

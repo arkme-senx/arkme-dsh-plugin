@@ -1,11 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
-  ArkmeTopicCreateFooter, ArkmeTopicTreeRow, expandAncestorsForReveal,
+  ArkmeSourceSortControl, ArkmeSourceSortMenu, ArkmeTopicCard, ArkmeTopicCreateFooter,
+  ArkmeTopicTreeRow, expandAncestorsForReveal,
   canCreateChildTopicAtParentLevel, expandTopicFromRowClick, isTopicRowFullyVisible,
   mergeCreatedTopicSource, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
@@ -29,6 +30,67 @@ const topicRow: ArkmeSourceTreeRow = {
 }
 
 describe('topic create UI', () => {
+  it('uses a compact trigger and a rounded floating sort menu', () => {
+    const control = renderToStaticMarkup(<ArkmeSourceSortControl value="default" onChange={() => {}} />)
+    const menu = renderToStaticMarkup(<ArkmeSourceSortMenu value="default" onSelect={() => {}} />)
+
+    expect(control).toContain('aria-haspopup="menu"')
+    expect(control).toContain('aria-expanded="false"')
+    expect(control).toContain('height:22px')
+    expect(control).toContain('gap:5px')
+    expect(control).toContain('font-size:12px')
+    expect(control).toContain('font-weight:400')
+    expect(control).toContain('line-height:22px')
+    expect(control).toContain('transform:translateY(2px)')
+    expect(control).toContain('默认')
+    expect(menu).toContain('role="menu"')
+    expect(menu).toContain('width:80px')
+    expect(menu).toContain('height:28px')
+    expect(menu).toContain('right:-8px')
+    expect(menu).toContain('justify-content:center')
+    expect(menu).toContain('text-align:center')
+    expect(menu).toContain('border-radius:10px')
+    expect(menu).toContain('--dsw-specific-menu')
+    expect(menu).toContain('--dsw-shadow-lv3')
+    expect(menu).toContain('aria-checked="true"')
+    expect(menu).toContain('最新')
+    expect(menu).toContain('最多')
+    expect(menu).toContain('默认')
+    expect(`${control}${menu}`).not.toContain('名称')
+  })
+
+  it('renders latest and most entries as flat compact cards', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 19, 11, 45))
+    try {
+      const card = renderToStaticMarkup(<ArkmeTopicCard
+        source={{
+          sourceRef: 'default', kind: 'default_category', displayName: '默认分类',
+          activeAtMillis: new Date(2026, 7, 18, 16, 13).getTime(), unreadCount: 0,
+          recordCount: 433, latestPreview: '是第三十四',
+        }}
+        selected={false} hovered={false} onHoverChange={() => {}}
+        onSelect={() => {}}
+      />)
+      const hoveredTopicCard = renderToStaticMarkup(<ArkmeTopicCard
+        source={{ ...topicRow.source, latestPreview: '卡片预览' }}
+        selected={false} hovered onHoverChange={() => {}} onSelect={() => {}}
+      />)
+
+      expect(card).toContain('role="listitem"')
+      expect(card).toContain('border-radius:9px')
+      expect(card).toContain('min-height:56px')
+      expect(card).toContain('默认分类')
+      expect(card).toContain('>433</span>')
+      expect(card).toContain('昨天 16:13：')
+      expect(card).toContain('是第三十四')
+      expect(card).not.toContain('创建子主题')
+      expect(hoveredTopicCard).not.toContain('创建子主题')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the create dialog focused on the topic name without magnet settings', () => {
     const child = renderDialog('child')
     const root = renderDialog('topic')

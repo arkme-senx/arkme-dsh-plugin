@@ -1491,20 +1491,36 @@ export class ArkmeService {
           session,
         ).catch(() => undefined),
       ])
-      let defaultRecordCount: number | undefined
-      try {
-        defaultRecordCount = (await this.summary()).recordCount
-      } catch {
-        // Count decoration is best-effort and must not make the source directory unavailable.
-        const cached = await this.stateStore.cachedSnapshot(session.userId).catch(() => undefined)
-        defaultRecordCount = cached?.summary?.recordCount
-      }
+      const [summaryResult, latestRecordsResult] = await Promise.allSettled([
+        this.summary(),
+        this.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/records/uncategorized/query',
+          { limit: 1 },
+          session,
+        ),
+      ])
+      const cached = summaryResult.status === 'rejected' || latestRecordsResult.status === 'rejected'
+        ? await this.stateStore.cachedSnapshot(session.userId).catch(() => undefined)
+        : undefined
+      // Source-card decoration is best-effort and must not make the directory unavailable.
+      const defaultRecordCount = summaryResult.status === 'fulfilled'
+        ? summaryResult.value.recordCount
+        : cached?.summary?.recordCount
+      const defaultLatestRecord = latestRecordsResult.status === 'fulfilled'
+        ? listValue(latestRecordsResult.value.items).map(raw => this.recordItem(raw)).find(item => item !== undefined)
+        : cached?.items.reduce<ArkmeSelfRecordItem | undefined>((latest, item) => (
+          latest === undefined || item.sendAtMillis > latest.sendAtMillis ? item : latest
+        ), undefined)
+      const defaultLatestPreview = defaultLatestRecord === undefined
+        ? ''
+        : (defaultLatestRecord.textContent.trim() || defaultLatestRecord.title.trim())
       const defaultCategory: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '默认分类'),
         kind: 'default_category',
         displayName: '默认分类',
-        activeAtMillis: 0,
+        activeAtMillis: defaultLatestRecord?.sendAtMillis ?? 0,
         unreadCount: 0,
+        ...(defaultLatestPreview === '' ? {} : { latestPreview: defaultLatestPreview }),
         ...(defaultRecordCount === undefined ? {} : { recordCount: defaultRecordCount }),
       }
       const topicDescriptors: Array<{
