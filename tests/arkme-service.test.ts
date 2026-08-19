@@ -1981,7 +1981,11 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) {
         expect(body).toEqual({ chat_session_uids: ['group-1'] })
         return json({ code: 200, data: {
-          items: [{ chat_session_uid: 'group-1', members: [{ user_id: 20003 }, { user_id: 20002 }] }],
+          items: [{
+            chat_session_uid: 'group-1', member_count: 2,
+            strategy: 'owner_recent_speakers', computed_at: 1787036400000,
+            members: [{ user_id: 20003 }, { user_id: 20002 }],
+          }],
         } })
       }
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
@@ -2004,6 +2008,12 @@ describe('ArkmeService', () => {
     expect(sources.items[0]).toMatchObject({ displayName: '联系人备注' })
     expect(sources.items[0]?.avatarRef).toMatch(/^arkme-profile-image-v1\./)
     expect(sources.items[1]?.avatarRefs).toHaveLength(2)
+    expect(sources.items[1]?.groupAvatar).toMatchObject({
+      memberCount: 2,
+      strategy: 'owner_recent_speakers',
+      computedAtMillis: 1787036400000,
+      slots: [{ avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) }, { avatarRef: expect.any(String) }],
+    })
     expect(JSON.stringify(sources)).not.toContain('x-oss-signature')
 
     await expect(service.readImage(sources.items[0]!.avatarRef!)).resolves.toMatchObject({
@@ -2035,6 +2045,53 @@ describe('ArkmeService', () => {
 
     expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
     expect(peak).toBe(4)
+  })
+
+  it('keeps all five server-selected group avatar slots when profiles are missing or use phone defaults', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const signedAvatar = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/21/avatar.png?x-oss-signature=member'
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: { items: [{
+        session: { chat_session_uid: 'group-five', session_kind: 2, title: '五人群', last_active_at: 1 },
+        unread_snapshot: { unread_count: 0 },
+      }] } })
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) return json({ code: 200, data: { items: [{
+        chat_session_uid: 'group-five', member_count: 12, strategy: 'owner_recent_speakers', computed_at: 1787036400000,
+        members: [21, 22, 23, 24, 25, 26].map(user_id => ({ user_id })),
+      }] } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        expect(body.user_ids).toEqual([21, 22, 23, 24, 25])
+        return json({ code: 200, data: { items: [
+          { user_id: 21, nick_name: '真实头像', head_img: signedAvatar },
+          { user_id: 22, nick_name: '手机号头像', head_img: 'phone_avatar://v1/17/53' },
+          { user_id: 24, nick_name: '空头像', head_img: '' },
+          { user_id: 25, nick_name: '不可信头像', head_img: 'https://example.com/avatar.png' },
+        ] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const source = (await service.listSources('root')).items[0]!
+    expect(source.avatarRefs).toHaveLength(1)
+    expect(source.groupAvatar).toEqual({
+      memberCount: 12,
+      strategy: 'owner_recent_speakers',
+      computedAtMillis: 1787036400000,
+      slots: [
+        { avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
+        { fallback: { kind: 'phone_default', colorIndex: 5, label: '53' } },
+        { fallback: { kind: 'default' } },
+        { fallback: { kind: 'default' } },
+        { fallback: { kind: 'default' } },
+      ],
+    })
+    expect(JSON.stringify(source)).not.toContain('group-five')
+    expect(JSON.stringify(source)).not.toContain('x-oss-signature')
+    expect(JSON.stringify(source)).not.toContain('example.com')
   })
 
   it('projects the DSH beta community entry with only opaque real-avatar refs', async () => {
@@ -2070,6 +2127,7 @@ describe('ArkmeService', () => {
       status: 'ready', visible: true, groupTitle: 'DSH 内测群1号群', memberCount: 2,
     })
     expect(entry.avatarRefs).toHaveLength(2)
+    expect(entry.groupAvatar?.slots).toHaveLength(2)
     expect(entry.avatarRefs.every(ref => ref.startsWith('arkme-profile-image-v1.'))).toBe(true)
     expect(JSON.stringify(entry)).not.toContain('official-group-1')
     expect(JSON.stringify(entry)).not.toContain('x-oss-signature')
@@ -2096,6 +2154,10 @@ describe('ArkmeService', () => {
 
     await expect(service.dshBetaCommunityEntryState()).resolves.toEqual({
       status: 'ready', visible: true, groupTitle: 'DSH 内测群1号群', memberCount: 1, avatarRefs: [],
+      groupAvatar: {
+        memberCount: 1, strategy: '', computedAtMillis: 0,
+        slots: [{ fallback: { kind: 'default' } }],
+      },
     })
   })
 

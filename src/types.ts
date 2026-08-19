@@ -230,6 +230,25 @@ export interface ArkmeIdMutationResult {
 export type ArkmeSourceKind = 'default_category' | 'topic' | 'private_chat' | 'group_chat'
 export type ArkmeSourceDirectory = 'root' | 'send_to_self'
 
+export type ArkmeGroupAvatarFallback =
+  | { kind: 'phone_default'; colorIndex: number; label: string }
+  | { kind: 'default' }
+
+export interface ArkmeGroupAvatarSlot {
+  /** Opaque Provider image reference. Missing images keep their slot and use fallback instead. */
+  avatarRef?: string
+  fallback?: ArkmeGroupAvatarFallback
+}
+
+/** Additive presentation data for the desktop-compatible, ordered group avatar. */
+export interface ArkmeGroupAvatarPresentation {
+  memberCount: number
+  strategy: string
+  computedAtMillis: number
+  /** Server-selected member order, capped at five slots. */
+  slots: ArkmeGroupAvatarSlot[]
+}
+
 export interface ArkmeSourceItem {
   sourceRef: string
   /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
@@ -240,6 +259,8 @@ export interface ArkmeSourceItem {
   avatarRef?: string
   /** Ordered group-avatar tiles, also resolved only through image.read. */
   avatarRefs?: string[]
+  /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
+  groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number

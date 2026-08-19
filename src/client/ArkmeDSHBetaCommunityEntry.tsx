@@ -4,14 +4,14 @@ import type {
   ArkmeDSHBetaCommunityEntryState,
   ArkmeDSHBetaCommunityJoinResult,
 } from '../dsh-beta-community.js'
-import type { ArkmeSourceItem } from '../types.js'
+import type { ArkmeGroupAvatarPresentation, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
-import { ArkmeAvatarMosaic, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
+import { ArkmeAvatarMosaic, ArkmeSourceAvatar } from './ArkmeAvatar.js'
 
 type EntryPhase = 'loading' | 'hidden' | 'ready' | 'joining'
 
 interface ReadyEntry {
-  avatarUrls: string[]
+  groupAvatar: ArkmeGroupAvatarPresentation
 }
 
 export interface ArkmeDSHBetaCommunityEntryProps {
@@ -89,10 +89,12 @@ const styles: Record<string, CSSProperties> = {
 
 export function ArkmeDSHBetaCommunityEntryContent({
   avatarUrls,
+  groupAvatar,
   joining,
   onActivate,
 }: {
   avatarUrls: readonly string[]
+  groupAvatar?: ArkmeGroupAvatarPresentation
   joining: boolean
   onActivate(): void
 }) {
@@ -110,7 +112,9 @@ export function ArkmeDSHBetaCommunityEntryContent({
       disabled={joining}
       onClick={onActivate}
     >
-      <ArkmeAvatarMosaic urls={avatarUrls} size={40} fallback={false} />
+      {groupAvatar === undefined
+        ? <ArkmeAvatarMosaic urls={avatarUrls} size={40} fallback={false} />
+        : <ArkmeSourceAvatar groupAvatar={groupAvatar} size={40} />}
       <span style={styles.content}>
         <span style={styles.title}>还没加入 DSH 内测群？</span>
         <span style={styles.subtitle}>和内测用户一起聊聊</span>
@@ -124,10 +128,12 @@ export function ArkmeDSHBetaCommunityEntryContent({
 
 export function ArkmeDSHBetaCommunityJoinConfirmation({
   avatarUrls,
+  groupAvatar,
   onCancel,
   onConfirm,
 }: {
   avatarUrls: readonly string[]
+  groupAvatar?: ArkmeGroupAvatarPresentation
   onCancel(): void
   onConfirm(): void
 }) {
@@ -148,7 +154,9 @@ export function ArkmeDSHBetaCommunityJoinConfirmation({
       <div style={styles.handle} aria-hidden />
       <button type="button" style={styles.cancel} aria-label="取消加入群聊" onClick={onCancel}>‹</button>
       <div style={styles.sheetContent}>
-        <ArkmeAvatarMosaic urls={avatarUrls} size={86} fallback={false} />
+        {groupAvatar === undefined
+          ? <ArkmeAvatarMosaic urls={avatarUrls} size={86} fallback={false} />
+          : <ArkmeSourceAvatar groupAvatar={groupAvatar} size={86} />}
         <h2 id="arkme-community-join-title" style={styles.sheetTitle}>DSH 内测群</h2>
         <p style={styles.sheetSubtitle}>和内测用户一起聊聊</p>
         <button ref={confirmRef} type="button" style={styles.confirm} onClick={onConfirm}>
@@ -171,12 +179,14 @@ export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEn
     const epoch = ++epochRef.current
     void callArkme<ArkmeDSHBetaCommunityEntryState>('dsh-beta-community.entry-state')
       .then(async entry => {
-        if (!entry.visible || entry.status !== 'ready' || entry.memberCount <= 0 || entry.avatarRefs.length === 0) return undefined
-        const avatarUrls = (await Promise.all(entry.avatarRefs.map(async ref => {
-          try { return await loadArkmeImageDataUrl(ref) }
-          catch { return '' }
-        }))).filter(url => url !== '')
-        return avatarUrls.length === 0 ? undefined : { avatarUrls }
+        if (!entry.visible || entry.status !== 'ready' || entry.memberCount <= 0) return undefined
+        const groupAvatar = entry.groupAvatar ?? {
+          memberCount: entry.memberCount,
+          strategy: 'legacy',
+          computedAtMillis: 0,
+          slots: entry.avatarRefs.slice(0, 5).map(avatarRef => ({ avatarRef })),
+        }
+        return { groupAvatar }
       })
       .then(result => {
         if (epochRef.current !== epoch) return
@@ -227,13 +237,15 @@ export function ArkmeDSHBetaCommunityEntry({ onJoined }: ArkmeDSHBetaCommunityEn
   if (phase === 'loading' || ready === undefined) return <div style={styles.loading} aria-hidden />
   return <>
     <ArkmeDSHBetaCommunityEntryContent
-      avatarUrls={ready.avatarUrls}
+      avatarUrls={[]}
+      groupAvatar={ready.groupAvatar}
       joining={phase === 'joining'}
       onActivate={() => { if (phase === 'ready') setConfirmationOpen(true) }}
     />
     {confirmationOpen && typeof document !== 'undefined' && createPortal(
       <ArkmeDSHBetaCommunityJoinConfirmation
-        avatarUrls={ready.avatarUrls}
+        avatarUrls={[]}
+        groupAvatar={ready.groupAvatar}
         onCancel={() => { setConfirmationOpen(false) }}
         onConfirm={confirmJoin}
       />,

@@ -53,6 +53,8 @@ import type {
   ArkmeDirectTextSendResult,
   ArkmeEnvironment,
   ArkmeGroupActionResult,
+  ArkmeGroupAvatarFallback,
+  ArkmeGroupAvatarPresentation,
   ArkmeGroupMemberItem,
   ArkmeGroupMemberList,
   ArkmeGroupMemberRole,
@@ -303,6 +305,7 @@ interface ArkmePublicProfile {
   userId: number
   displayName: string
   avatarUrl?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
   arkmeId?: string
 }
 
@@ -324,6 +327,13 @@ interface ArkmeInterwovenMomentReference {
   fallbackTitle: string
   fallbackTextContent: string
   expiresAtMillis: number
+}
+
+interface ArkmeGroupAvatarSnapshotProjection {
+  memberCount: number
+  strategy: string
+  computedAtMillis: number
+  memberIds: number[]
 }
 
 interface ScanResponse {
@@ -755,6 +765,20 @@ function chunksOf<T>(values: readonly T[], size: number): T[][] {
   return chunks
 }
 
+function phoneDefaultAvatarFallback(raw: string): ArkmeGroupAvatarFallback | undefined {
+  const prefix = 'phone_avatar://v1/'
+  const normalized = raw.trim()
+  if (!normalized.startsWith(prefix)) return undefined
+  const parts = normalized.slice(prefix.length).split('/')
+  const parsedColorIndex = Number(parts[0] ?? '')
+  const label = [...(parts[1]?.trim() || '--')].slice(0, 4).join('')
+  return {
+    kind: 'phone_default',
+    colorIndex: Number.isFinite(parsedColorIndex) ? Math.abs(Math.trunc(parsedColorIndex)) % 12 : 0,
+    label,
+  }
+}
+
 function worldVisibility(checkStatus: number): ArkmeWorldVisibility {
   if (checkStatus === 1) return 'pending_review'
   if (checkStatus === 4) return 'rejected'
@@ -880,7 +904,7 @@ export class ArkmeService {
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
   private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
-  private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<number[] | null>>()
+  private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<ArkmeGroupAvatarSnapshotProjection | null>>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
   private readonly imageInFlight = new Map<string, Promise<ArkmeImageBytes>>()
   private imageCacheBytes = 0
@@ -2456,21 +2480,24 @@ export class ArkmeService {
     const memberIds = listValue(snapshot.members)
       .map(member => numberValue(objectValue(member).user_id))
       .filter(userId => Number.isSafeInteger(userId) && userId > 0)
-      .slice(0, 4)
+      .slice(0, 5)
     let avatarRefs: string[] = []
+    let groupAvatar: ArkmeGroupAvatarPresentation | undefined
     if (visible && status === 'ready' && memberIds.length > 0) {
       try {
-        const profiles = await this.publicProfilesByUserIds(memberIds, session, signal)
-        avatarRefs = await Promise.all(
-          memberIds
-            .filter(userId => profiles.has(userId))
-            .map(userId => this.sealProfileImageRef(session.userId, userId)),
-        )
+        const profiles = await this.publicProfileSummariesByUserIds(memberIds, session, signal).catch(() => new Map())
+        groupAvatar = await this.groupAvatarPresentation({
+          memberCount,
+          strategy: stringValue(snapshot.strategy).trim(),
+          computedAtMillis: numberValue(snapshot.computed_at),
+          memberIds,
+        }, profiles, session.userId)
+        avatarRefs = groupAvatar.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])
       } catch {
         // The optional entry must never degrade the normal conversation directory.
       }
     }
-    return { status, visible, groupTitle, memberCount, avatarRefs }
+    return { status, visible, groupTitle, memberCount, avatarRefs, ...(groupAvatar === undefined ? {} : { groupAvatar }) }
   }
 
   /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
@@ -4287,6 +4314,7 @@ export class ArkmeService {
       displayName,
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
       ...(cached?.avatarRefs === undefined ? {} : { avatarRefs: cached.avatarRefs }),
+      ...(cached?.groupAvatar === undefined ? {} : { groupAvatar: cached.groupAvatar }),
       ...(latestPreview === undefined || latestPreview === '' ? {} : { latestPreview }),
       activeAtMillis: Math.max(
         numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
@@ -4908,7 +4936,7 @@ export class ArkmeService {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<void> {
-    const groupMemberIdsByIndex = new Map<number, number[]>()
+    const groupSnapshotsByIndex = new Map<number, ArkmeGroupAvatarSnapshotProjection>()
     const indexByGroupUid = new Map([...groupSessionUidByIndex].map(([index, uid]) => [uid, index]))
     const missingGroupUids: string[] = []
     const now = Date.now()
@@ -4920,7 +4948,12 @@ export class ArkmeService {
         missingGroupUids.push(uid)
         continue
       }
-      if (cached.value !== null && cached.value.length > 0) groupMemberIdsByIndex.set(index, [...cached.value])
+      if (cached.value !== null && cached.value.memberIds.length > 0) {
+        groupSnapshotsByIndex.set(index, {
+          ...cached.value,
+          memberIds: [...cached.value.memberIds],
+        })
+      }
     }
     for (const groupUids of chunksOf(missingGroupUids, 10)) {
       let data: Record<string, unknown>
@@ -4939,7 +4972,7 @@ export class ArkmeService {
       } catch {
         continue
       }
-      const membersByUid = new Map<string, number[]>()
+      const snapshotsByUid = new Map<string, ArkmeGroupAvatarSnapshotProjection>()
       for (const raw of listValue(data.items)) {
         const snapshot = objectValue(raw)
         const uid = stringValue(snapshot.chat_session_uid).trim()
@@ -4948,15 +4981,21 @@ export class ArkmeService {
         const memberIds = listValue(snapshot.members)
           .map(member => numberValue(objectValue(member).user_id))
           .filter(userId => Number.isSafeInteger(userId) && userId > 0)
-          .slice(0, 4)
-        membersByUid.set(uid, memberIds)
-        if (memberIds.length > 0) groupMemberIdsByIndex.set(index, memberIds)
+          .slice(0, 5)
+        const projection = {
+          memberCount: Math.max(0, Math.trunc(numberValue(snapshot.member_count))),
+          strategy: stringValue(snapshot.strategy).trim(),
+          computedAtMillis: numberValue(snapshot.computed_at),
+          memberIds,
+        }
+        snapshotsByUid.set(uid, projection)
+        if (memberIds.length > 0) groupSnapshotsByIndex.set(index, projection)
       }
       for (const uid of groupUids) {
-        const memberIds = membersByUid.get(uid) ?? null
+        const snapshot = snapshotsByUid.get(uid) ?? null
         this.groupAvatarSnapshotCache.set(`${String(session.userId)}:${uid}`, {
-          value: memberIds,
-          expiresAtMillis: Date.now() + (memberIds === null
+          value: snapshot,
+          expiresAtMillis: Date.now() + (snapshot === null
             ? GROUP_AVATAR_NEGATIVE_CACHE_TTL_MS
             : GROUP_AVATAR_CACHE_TTL_MS),
         })
@@ -4964,20 +5003,38 @@ export class ArkmeService {
     }
 
     const targetUserIds = new Set<number>(privateUserIdByIndex.values())
-    for (const memberIds of groupMemberIdsByIndex.values()) {
-      for (const userId of memberIds) targetUserIds.add(userId)
+    for (const snapshot of groupSnapshotsByIndex.values()) {
+      for (const userId of snapshot.memberIds) targetUserIds.add(userId)
     }
-    const profiles = await this.publicProfilesByUserIds([...targetUserIds], session, signal)
+    const profiles = await this.publicProfileSummariesByUserIds([...targetUserIds], session, signal).catch(() => new Map())
     for (const [index, targetUserId] of privateUserIdByIndex) {
-      if (!profiles.has(targetUserId) || items[index] === undefined) continue
+      if (profiles.get(targetUserId)?.avatarUrl === undefined || items[index] === undefined) continue
       items[index].avatarRef = await this.sealProfileImageRef(session.userId, targetUserId)
     }
-    for (const [index, memberIds] of groupMemberIdsByIndex) {
-      const visibleIds = memberIds.filter(userId => profiles.has(userId))
-      if (visibleIds.length === 0 || items[index] === undefined) continue
-      items[index].avatarRefs = await Promise.all(
-        visibleIds.map(userId => this.sealProfileImageRef(session.userId, userId)),
-      )
+    for (const [index, snapshot] of groupSnapshotsByIndex) {
+      if (items[index] === undefined) continue
+      const presentation = await this.groupAvatarPresentation(snapshot, profiles, session.userId)
+      items[index].groupAvatar = presentation
+      items[index].avatarRefs = presentation.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])
+    }
+  }
+
+  private async groupAvatarPresentation(
+    snapshot: ArkmeGroupAvatarSnapshotProjection,
+    profiles: ReadonlyMap<number, ArkmePublicProfile>,
+    viewerUserId: number,
+  ): Promise<ArkmeGroupAvatarPresentation> {
+    return {
+      memberCount: snapshot.memberCount,
+      strategy: snapshot.strategy,
+      computedAtMillis: snapshot.computedAtMillis,
+      slots: await Promise.all(snapshot.memberIds.slice(0, 5).map(async userId => {
+        const profile = profiles.get(userId)
+        if (profile?.avatarUrl !== undefined) {
+          return { avatarRef: await this.sealProfileImageRef(viewerUserId, userId) }
+        }
+        return { fallback: profile?.avatarFallback ?? { kind: 'default' } }
+      })),
     }
   }
 
@@ -5033,6 +5090,7 @@ export class ArkmeService {
         const arkmeId = stringValue(item.name_slug ?? item.arkme_id).trim()
         const avatarUrl = stringValue(item.head_img).trim()
         let trustedAvatarUrl: string | undefined
+        const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
         if (avatarUrl !== '') {
           try {
             trustedSignedImageUrl(this.config.environment, avatarUrl)
@@ -5045,6 +5103,7 @@ export class ArkmeService {
           userId,
           displayName: displayName || `用户 ${String(userId)}`,
           ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
+          ...(avatarFallback === undefined ? {} : { avatarFallback }),
           ...(arkmeId === '' ? {} : { arkmeId }),
         })
       }

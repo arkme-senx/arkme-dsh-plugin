@@ -29,7 +29,7 @@ const BUSINESS_PROMPT_PREFIX =
 
 export const ARKME_ATTACHMENT_TOOL_PROMPT =
   ' When the actual profile image is needed, pass the returned '
-  + 'avatarRef to arkme_image_read; source-list avatarRef/avatarRefs use the same path. Never construct an OSS URL or guess an image reference.'
+  + 'avatarRef to arkme_image_read; source-list avatarRef/avatarRefs and groupAvatar slot refs use the same path. Never construct an OSS URL or guess an image reference.'
 
 const BUSINESS_PROMPT_SUFFIX =
   ' When the user asks to generate a separate custom Arkme UI plugin, call arkme_plugin_contract before creating files; '

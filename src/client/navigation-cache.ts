@@ -1,4 +1,10 @@
-import type { ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceKind } from '../types.js'
+import type {
+  ArkmeGroupAvatarPresentation,
+  ArkmeGroupAvatarSlot,
+  ArkmeSourceDirectory,
+  ArkmeSourceItem,
+  ArkmeSourceKind,
+} from '../types.js'
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
@@ -27,6 +33,41 @@ function isKind(value: unknown): value is ArkmeSourceKind {
   return value === 'default_category' || value === 'topic' || value === 'private_chat' || value === 'group_chat'
 }
 
+function groupAvatarSlot(value: unknown): ArkmeGroupAvatarSlot | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const slot = value as Record<string, unknown>
+  if (typeof slot.avatarRef === 'string' && slot.avatarRef !== '') return { avatarRef: slot.avatarRef }
+  const fallback = slot.fallback
+  if (fallback === null || typeof fallback !== 'object' || Array.isArray(fallback)) return undefined
+  const item = fallback as Record<string, unknown>
+  if (item.kind === 'default') return { fallback: { kind: 'default' } }
+  if (item.kind !== 'phone_default' || typeof item.colorIndex !== 'number' || !Number.isFinite(item.colorIndex)
+    || typeof item.label !== 'string') return undefined
+  return {
+    fallback: {
+      kind: 'phone_default',
+      colorIndex: Math.abs(Math.trunc(item.colorIndex)) % 12,
+      label: [...item.label].slice(0, 4).join('') || '--',
+    },
+  }
+}
+
+function groupAvatarPresentation(value: unknown): ArkmeGroupAvatarPresentation | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const item = value as Record<string, unknown>
+  if (typeof item.memberCount !== 'number' || !Number.isFinite(item.memberCount)
+    || typeof item.strategy !== 'string'
+    || typeof item.computedAtMillis !== 'number' || !Number.isFinite(item.computedAtMillis)
+    || !Array.isArray(item.slots)) return undefined
+  const slots = item.slots.slice(0, 5).map(value => groupAvatarSlot(value) ?? { fallback: { kind: 'default' as const } })
+  return {
+    memberCount: Math.max(0, Math.trunc(item.memberCount)),
+    strategy: item.strategy,
+    computedAtMillis: Math.max(0, Math.trunc(item.computedAtMillis)),
+    slots,
+  }
+}
+
 function sourceItem(value: unknown): ArkmeSourceItem | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const item = value as Record<string, unknown>
@@ -34,6 +75,7 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     || typeof item.displayName !== 'string' || item.displayName === ''
     || typeof item.activeAtMillis !== 'number' || !Number.isFinite(item.activeAtMillis)
     || typeof item.unreadCount !== 'number' || !Number.isFinite(item.unreadCount)) return undefined
+  const groupAvatar = groupAvatarPresentation(item.groupAvatar)
   return {
     sourceRef: item.sourceRef,
     ...(typeof item.parentSourceRef === 'string' && item.parentSourceRef !== ''
@@ -43,8 +85,9 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     displayName: item.displayName,
     ...(typeof item.avatarRef === 'string' && item.avatarRef !== '' ? { avatarRef: item.avatarRef } : {}),
     ...(Array.isArray(item.avatarRefs)
-      ? { avatarRefs: item.avatarRefs.filter(value => typeof value === 'string' && value !== '').slice(0, 4) as string[] }
+      ? { avatarRefs: item.avatarRefs.filter(value => typeof value === 'string' && value !== '').slice(0, 5) as string[] }
       : {}),
+    ...(groupAvatar === undefined ? {} : { groupAvatar }),
     ...(typeof item.latestPreview === 'string' ? { latestPreview: item.latestPreview } : {}),
     activeAtMillis: item.activeAtMillis,
     unreadCount: Math.max(0, Math.trunc(item.unreadCount)),
