@@ -50,7 +50,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 20, cursor: 'pointer',
   },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
-  topicList: { paddingBottom: 82 },
+  topicList: { paddingBottom: 74 },
   chatRow: {
     position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
     padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
@@ -120,7 +120,7 @@ const styles: Record<string, CSSProperties> = {
     width: 20, flex: 'none', color: colors.caption, fontSize: 12, lineHeight: '22px', textAlign: 'center',
   },
   topicHover: { background: 'var(--dsw-alias-fill-secondary, #f3f4f5)' },
-  topicCreated: { background: colors.active, boxShadow: `inset 2px 0 ${colors.accent}` },
+  topicCreated: { background: colors.active, boxShadow: 'none' },
   topicCreateMask: {
     position: 'absolute', zIndex: 3, top: 8, right: 0, width: 58, height: 22,
     display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 12,
@@ -129,19 +129,18 @@ const styles: Record<string, CSSProperties> = {
   topicCreateIcon: {
     width: 20, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     padding: 0, border: 0, borderRadius: 5, background: 'transparent',
-    color: 'var(--dsw-alias-brand-secondary, #62c98d)', opacity: 0.82,
+    color: colors.caption, opacity: 0.9,
     cursor: 'pointer', font: 'inherit', lineHeight: 1, pointerEvents: 'auto',
   },
   topicCreatePlus: { width: 16, height: 16 },
   topicCreateFooter: {
     position: 'absolute', zIndex: 4, left: 0, right: 0, bottom: 0,
-    display: 'flex', justifyContent: 'center', padding: '10px 12px 30px',
+    display: 'flex', justifyContent: 'center', padding: '10px 12px 22px',
     boxSizing: 'border-box', background: 'transparent', pointerEvents: 'none',
   },
   topicCreateButton: {
     minWidth: 100, height: 36, padding: '0 16px', border: 0, borderRadius: 8,
     background: 'var(--dsw-alias-fill-tertiary, #eceeef)', color: colors.text,
-    boxShadow: '0 3px 12px rgba(25, 29, 33, 0.10)',
     cursor: 'pointer', font: 'inherit', fontSize: 14, pointerEvents: 'auto',
   },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
