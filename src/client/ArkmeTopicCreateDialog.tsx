@@ -13,7 +13,8 @@ const colors = {
   secondary: 'var(--dsw-alias-label-secondary, #6f747b)',
   caption: 'var(--dsw-alias-label-caption, #a3a8ae)',
   border: 'var(--dsw-alias-border-l1, #dfe2e5)',
-  accent: 'var(--dsw-alias-brand-primary, #20c66a)',
+  action: 'var(--dsw-alias-label-primary, #242629)',
+  surface: 'var(--dsw-specific-dialog-fill, #fff)',
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -23,7 +24,7 @@ const styles: Record<string, CSSProperties> = {
   },
   dialog: {
     width: 420, maxWidth: 'calc(100vw - 32px)', padding: 16, boxSizing: 'border-box', borderRadius: 12,
-    background: 'var(--dsw-specific-dialog-fill, #fff)', color: colors.text,
+    background: colors.surface, color: colors.text,
     boxShadow: '0 18px 50px rgba(18, 22, 27, 0.24)', font: 'inherit',
   },
   header: { display: 'flex', alignItems: 'center', gap: 12 },
@@ -46,9 +47,11 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 65, height: 36, padding: '0 14px', borderRadius: 8, cursor: 'pointer',
     font: 'inherit', fontSize: 14,
   },
-  cancel: { border: `1px solid ${colors.border}`, background: '#fff', color: colors.text },
-  confirm: { border: 0, background: colors.accent, color: '#fff' },
-  confirmDisabled: { background: '#a7dfbd', color: 'rgba(255, 255, 255, 0.72)', cursor: 'default' },
+  cancel: { border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text },
+  confirm: { border: 0, background: colors.action, color: colors.surface },
+  confirmDisabled: {
+    background: 'var(--dsw-alias-fill-tertiary, #d9dcdf)', color: colors.secondary, cursor: 'default',
+  },
 }
 
 export function ArkmeTopicCreateDialog({

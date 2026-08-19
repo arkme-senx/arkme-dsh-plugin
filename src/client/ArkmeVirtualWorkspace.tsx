@@ -104,23 +104,34 @@ const styles: Record<string, CSSProperties> = {
   topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
   topicSelect: {
     position: 'relative', zIndex: 1, minWidth: 0, minHeight: 38, flex: 1, display: 'flex',
-    alignItems: 'center', gap: 10, padding: '0 10px 0 0', border: 0, background: 'transparent',
+    alignItems: 'center', gap: 10, padding: 0, border: 0, background: 'transparent',
     color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
   },
   topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
-  topicCount: { flex: 'none', color: colors.caption, fontSize: 12 },
+  topicTrailing: {
+    width: 58, height: 22, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+    paddingRight: 10, boxSizing: 'border-box',
+  },
+  topicCount: {
+    width: 20, flex: 'none', color: colors.caption, fontSize: 12, lineHeight: '22px', textAlign: 'center',
+  },
   topicHover: { background: 'var(--dsw-alias-fill-secondary, #f3f4f5)' },
+  topicCreated: { background: 'var(--dsw-alias-fill-selected, #def3e8)' },
   topicCreateMask: {
-    position: 'absolute', zIndex: 3, top: 0, right: 0, width: 54, height: 38,
-    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 8,
+    position: 'absolute', zIndex: 3, top: 8, right: 0, width: 58, height: 22,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 10,
     boxSizing: 'border-box', pointerEvents: 'none',
   },
   topicCreateIcon: {
-    width: 28, height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: colors.secondary,
-    cursor: 'pointer', font: 'inherit', fontSize: 21, lineHeight: 1, pointerEvents: 'auto',
+    width: 20, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0, border: 0, borderRadius: 5, background: 'transparent', color: colors.text,
+    cursor: 'pointer', font: 'inherit', lineHeight: 1, pointerEvents: 'auto',
   },
-  topicCreateFooter: { display: 'flex', justifyContent: 'center', padding: '12px 12px 4px' },
+  topicCreatePlus: { width: 16, height: 16, transform: 'translateX(3px)' },
+  topicCreateFooter: {
+    flex: 'none', display: 'flex', justifyContent: 'center', padding: '10px 12px 30px',
+    boxSizing: 'border-box', background: colors.panel,
+  },
   topicCreateButton: {
     minWidth: 100, height: 36, padding: '0 16px', border: 0, borderRadius: 8,
     background: 'var(--dsw-alias-fill-tertiary, #eceeef)', color: colors.text,
@@ -183,6 +194,8 @@ export interface ArkmeTopicTreeRowProps {
   row: ArkmeSourceTreeRow
   selected: boolean
   hovered: boolean
+  createdHighlightVisible?: boolean
+  rowRef?: (node: HTMLDivElement | null) => void
   onHoverChange: (hovered: boolean) => void
   onToggle: () => void
   onSelect: () => void
@@ -190,16 +203,21 @@ export interface ArkmeTopicTreeRowProps {
 }
 
 export function ArkmeTopicTreeRow({
-  row, selected, hovered, onHoverChange, onToggle, onSelect, onCreateChild,
+  row, selected, hovered, createdHighlightVisible = false, rowRef,
+  onHoverChange, onToggle, onSelect, onCreateChild,
 }: ArkmeTopicTreeRowProps) {
   const source = row.source
-  const rowFill = selected
-    ? 'var(--dsw-alias-fill-tertiary, #f1f2f3)'
-    : hovered ? 'var(--dsw-alias-fill-secondary, #f3f4f5)' : colors.panel
   return <div
+    ref={rowRef}
     role="treeitem" aria-level={row.depth + 1} aria-selected={selected}
     aria-expanded={row.hasChildren ? row.expanded : undefined}
-    style={{ ...styles.topicRow, ...(selected ? styles.topicActive : {}), ...(hovered && !selected ? styles.topicHover : {}) }}
+    style={{
+      ...styles.topicRow,
+      transition: `background-color ${createdHighlightVisible ? 140 : 800}ms ease`,
+      ...(selected ? styles.topicActive : {}),
+      ...(hovered && !selected ? styles.topicHover : {}),
+      ...(createdHighlightVisible ? styles.topicCreated : {}),
+    }}
     onMouseEnter={() => { onHoverChange(true) }} onMouseLeave={() => { onHoverChange(false) }}
   >
     {Array.from({ length: row.depth }, (_, index) => <span
@@ -216,17 +234,44 @@ export function ArkmeTopicTreeRow({
     ><span style={styles.topicDot} /></span>}
     <button type="button" style={styles.topicSelect} onClick={onSelect}>
       <span style={styles.topicName}>{source.displayName}</span>
-      {source.recordCount !== undefined && <span style={styles.topicCount}>{source.recordCount}</span>}
+      <span style={styles.topicTrailing}>
+        {source.recordCount !== undefined && !(source.kind === 'topic' && hovered) && <span style={styles.topicCount}>{source.recordCount}</span>}
+      </span>
     </button>
     {source.kind === 'topic' && hovered && <span
-      style={{ ...styles.topicCreateMask, background: `linear-gradient(90deg, transparent 0%, ${rowFill} 42%)` }}
+      style={styles.topicCreateMask}
     >
       <button
         type="button" style={styles.topicCreateIcon}
         aria-label={`在${source.displayName}下创建子主题`} title="创建子主题"
         onClick={event => { event.stopPropagation(); onCreateChild() }}
-      >＋</button>
+      ><svg aria-hidden viewBox="0 0 16 16" style={styles.topicCreatePlus}>
+        <path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      </svg></button>
     </span>}
+  </div>
+}
+
+export function expandAncestorsForReveal(
+  sources: readonly ArkmeSourceItem[],
+  sourceRef: string,
+  collapsedSourceRefs: ReadonlySet<string>,
+): Set<string> {
+  const next = new Set(collapsedSourceRefs)
+  const sourcesByRef = new Map(sources.map(source => [source.sourceRef, source]))
+  const visited = new Set<string>()
+  let parentRef = sourcesByRef.get(sourceRef)?.parentSourceRef
+  while (parentRef !== undefined && !visited.has(parentRef)) {
+    visited.add(parentRef)
+    next.delete(parentRef)
+    parentRef = sourcesByRef.get(parentRef)?.parentSourceRef
+  }
+  return next
+}
+
+export function ArkmeTopicCreateFooter({ onCreate }: { onCreate: () => void }) {
+  return <div style={styles.topicCreateFooter}>
+    <button type="button" style={styles.topicCreateButton} onClick={onCreate}>新建主题</button>
   </div>
 }
 
@@ -240,6 +285,9 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
+  const topicRowElementsRef = useRef(new Map<string, HTMLDivElement>())
+  const createdHighlightTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
+  const createdHighlightFramesRef = useRef<number[]>([])
   const auth = authState.auth
   const [directory, setDirectory] = useState<ArkmeSourceDirectory>(initialCache?.directory ?? 'send_to_self')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
@@ -250,6 +298,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
   const [topicCreateParent, setTopicCreateParent] = useState<ArkmeSourceItem | null>()
   const [topicCreateError, setTopicCreateError] = useState('')
   const [topicCreateSubmitting, setTopicCreateSubmitting] = useState(false)
+  const [pendingRevealSourceRef, setPendingRevealSourceRef] = useState<string>()
+  const [createdHighlight, setCreatedHighlight] = useState<{ sourceRef: string, visible: boolean }>()
   const [error, setError] = useState('')
   const authenticated = auth?.status === 'authenticated'
   const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
@@ -258,6 +308,15 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
     [collapsedSourceRefs, sourceTree],
   )
   const bindingRequired = auth?.status === 'binding-required'
+
+  const stopCreatedHighlightAnimation = useCallback(() => {
+    createdHighlightTimeoutsRef.current.forEach(timer => { clearTimeout(timer) })
+    createdHighlightTimeoutsRef.current = []
+    if (typeof window !== 'undefined') {
+      createdHighlightFramesRef.current.forEach(frame => { window.cancelAnimationFrame(frame) })
+    }
+    createdHighlightFramesRef.current = []
+  }, [])
 
   const persistCache = useCallback((patch: {
     directory?: ArkmeSourceDirectory
@@ -404,11 +463,47 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       return next
     })
   }, [sources, ui.selectedSource])
+  useEffect(() => {
+    if (directory !== 'send_to_self' || pendingRevealSourceRef === undefined || typeof window === 'undefined') return
+    const element = topicRowElementsRef.current.get(pendingRevealSourceRef)
+    if (element === undefined) return
+    const sourceRef = pendingRevealSourceRef
+    setPendingRevealSourceRef(undefined)
+    stopCreatedHighlightAnimation()
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    element.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' })
+    setCreatedHighlight({ sourceRef, visible: reducedMotion })
+
+    const beginHold = () => {
+      setCreatedHighlight({ sourceRef, visible: true })
+      const holdTimer = setTimeout(() => {
+        setCreatedHighlight(current => current?.sourceRef === sourceRef ? { sourceRef, visible: false } : current)
+        const clearTimer = setTimeout(() => {
+          setCreatedHighlight(current => current?.sourceRef === sourceRef ? undefined : current)
+        }, reducedMotion ? 0 : 800)
+        createdHighlightTimeoutsRef.current.push(clearTimer)
+      }, reducedMotion ? 500 : 1100)
+      createdHighlightTimeoutsRef.current.push(holdTimer)
+    }
+
+    if (reducedMotion) beginHold()
+    else {
+      const firstFrame = window.requestAnimationFrame(() => {
+        const secondFrame = window.requestAnimationFrame(beginHold)
+        createdHighlightFramesRef.current.push(secondFrame)
+      })
+      createdHighlightFramesRef.current.push(firstFrame)
+    }
+  }, [directory, pendingRevealSourceRef, stopCreatedHighlightAnimation, visibleSourceRows])
+  useEffect(() => () => { stopCreatedHighlightAnimation() }, [stopCreatedHighlightAnimation])
 
   const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
   const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
     directoryRequestAbortRef.current?.abort()
+    stopCreatedHighlightAnimation()
+    setPendingRevealSourceRef(undefined)
+    setCreatedHighlight(undefined)
     setDirectory(next)
     setSources(cacheRef.current?.sources[next] ?? [])
     persistCache({ directory: next })
@@ -450,17 +545,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
       const nextSources = [...sources.filter(item => item.sourceRef !== result.source.sourceRef), result.source]
       setSources(nextSources)
       persistCache({ directory: 'send_to_self', sources: { send_to_self: nextSources } })
-      if (result.source.parentSourceRef !== undefined) {
-        setCollapsedSourceRefs(current => {
-          if (!current.has(result.source.parentSourceRef!)) return current
-          const next = new Set(current)
-          next.delete(result.source.parentSourceRef!)
-          return next
-        })
-      }
+      setCollapsedSourceRefs(current => expandAncestorsForReveal(nextSources, result.source.sourceRef, current))
       setHoveredSourceRef(undefined)
       setTopicCreateParent(undefined)
       await loadDirectory('send_to_self', result.source)
+      setPendingRevealSourceRef(result.source.sourceRef)
       if (result.warning !== undefined) setError(result.warning)
     } catch (caught) {
       setTopicCreateError(caught instanceof Error ? caught.message : String(caught))
@@ -500,7 +589,8 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
 
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
-    </button> : <div
+    </button> : <>
+    <div
       style={styles.list} role="tree" aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
@@ -550,6 +640,11 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         return <ArkmeTopicTreeRow
           key={source.sourceRef} row={row} selected={selected}
           hovered={hoveredSourceRef === source.sourceRef}
+          createdHighlightVisible={createdHighlight?.sourceRef === source.sourceRef && createdHighlight.visible}
+          rowRef={node => {
+            if (node === null) topicRowElementsRef.current.delete(source.sourceRef)
+            else topicRowElementsRef.current.set(source.sourceRef, node)
+          }}
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onToggle={() => { toggleSource(source.sourceRef) }}
           onSelect={() => { selectSource(source) }}
@@ -557,12 +652,10 @@ export function ArkmeNavigation({ wide = true, onClose, onActivateSurface }: Ark
         />
       })}
 
-      {directory === 'send_to_self' && authenticated && <div style={styles.topicCreateFooter}>
-        <button type="button" style={styles.topicCreateButton} onClick={() => { openTopicCreate(null) }}>新建主题</button>
-      </div>}
-
       {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
-    </div>}
+    </div>
+    {directory === 'send_to_self' && authenticated && <ArkmeTopicCreateFooter onCreate={() => { openTopicCreate(null) }} />}
+    </>}
     {topicCreateParent !== undefined && <ArkmeTopicCreateDialog
       key={topicCreateParent?.sourceRef ?? 'root'}
       mode={topicCreateParent === null ? 'topic' : 'child'}

@@ -242,7 +242,7 @@ export interface ArkmeSourceList {
 /** Built-in UI result for creating a personal topic without exposing its server UID. */
 export interface ArkmeTopicCreateResult {
   source: ArkmeSourceItem
-  /** Present when the topic was created but its requested parent relation could not be committed. */
+  /** Present only when the requested parent relation and the automatic orphan cleanup both failed. */
   warning?: string
 }
 

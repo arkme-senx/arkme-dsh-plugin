@@ -1157,7 +1157,42 @@ describe('ArkmeService', () => {
     })
   })
 
-  it('returns an explicit partial result when child hierarchy binding fails after creation', async () => {
+  it('rolls back a newly created topic when child hierarchy binding fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string, body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
+        topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
+      if (url.endsWith('/api/v1/topics/create')) return json({ code: 0, data: { topic_uid: 'topic-created', status: 1 } })
+      if (url.endsWith('/api/v1/topics/hierarchy/bind')) throw new Error('bind unavailable')
+      if (url.endsWith('/api/v1/topics/update')) return json({ code: 0, data: { topic_uid: 'topic-created', updated: true } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const parent = (await service.listSources('send_to_self')).items.find(item => item.kind === 'topic')!
+    await expect(service.createTopic('未绑定子主题', parent.sourceRef)).rejects.toMatchObject({
+      code: 'topic-hierarchy-bind-failed',
+      retryable: true,
+    })
+    expect(calls.find(call => call.url.endsWith('/api/v1/topics/update'))?.body).toEqual({
+      topic_uid: 'topic-created',
+      title: '未绑定子主题',
+      show_in_home: true,
+      privacy_state: 1,
+      status: 2,
+      extra: { source: 'dsh-arkme' },
+    })
+  })
+
+  it('returns an explicit partial result only when hierarchy binding and rollback both fail', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -1170,15 +1205,45 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
       if (url.endsWith('/api/v1/topics/create')) return json({ code: 0, data: { topic_uid: 'topic-created', status: 1 } })
       if (url.endsWith('/api/v1/topics/hierarchy/bind')) throw new Error('bind unavailable')
+      if (url.endsWith('/api/v1/topics/update')) throw new Error('rollback unavailable')
       throw new Error(`unexpected ${url}`)
     })
 
     const parent = (await service.listSources('send_to_self')).items.find(item => item.kind === 'topic')!
     const result = await service.createTopic('未绑定子主题', parent.sourceRef)
 
-    expect(result.warning).toContain('主题已创建')
+    expect(result.warning).toContain('自动清理均未完成')
     expect(result.source).toMatchObject({ kind: 'topic', displayName: '未绑定子主题' })
     expect(result.source).not.toHaveProperty('parentSourceRef')
+  })
+
+  it('rejects a sixth hierarchy level before creating a topic', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    let createCalls = 0
+    const relations = [
+      ['level-1', 'level-2'], ['level-2', 'level-3'], ['level-3', 'level-4'], ['level-4', 'topic-parent'],
+    ].map(([parent, child]) => ({
+      parent_topic_uid: parent, child_topic_uid: child, rel_kind: 1, status: 1,
+    }))
+    const service = new ArkmeService(config, sessions, state, async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
+        topic_core: { topic_uid: 'topic-parent', title: '第五级', update_at: 100 },
+      }] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
+      if (url.endsWith('/api/v1/topics/create')) {
+        createCalls += 1
+        return json({ code: 0, data: { topic_uid: 'should-not-create', status: 1 } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const parent = (await service.listSources('send_to_self')).items.find(item => item.kind === 'topic')!
+    await expect(service.createTopic('第六级', parent.sourceRef)).rejects.toMatchObject({ code: 'topic-depth-limit' })
+    expect(createCalls).toBe(0)
   })
 
   it('keeps send-to-self sources available when the default summary is unavailable', async () => {

@@ -1317,6 +1317,39 @@ export class ArkmeService {
         throw new ArkmePluginError('topic-parent-invalid', '只能在主题下创建子主题', false)
       }
       parentTopicUid = parent.ownerRef
+      try {
+        const hierarchy = await this.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/topics/hierarchy/relations/list',
+          {},
+          session,
+        )
+        const parentByChild = new Map<string, string>()
+        for (const raw of listValue(hierarchy.relations)) {
+          const relation = objectValue(raw)
+          if (numberValue(relation.rel_kind) !== 1 || numberValue(relation.status) !== 1) continue
+          const parentUid = stringValue(relation.parent_topic_uid).trim()
+          const childUid = stringValue(relation.child_topic_uid).trim()
+          if (parentUid !== '' && childUid !== '' && parentUid !== childUid) parentByChild.set(childUid, parentUid)
+        }
+        let depth = 1
+        let current = parentTopicUid
+        const visited = new Set([current])
+        while (parentByChild.has(current)) {
+          current = parentByChild.get(current)!
+          if (visited.has(current)) {
+            throw new ArkmePluginError('topic-hierarchy-invalid', '主题层级数据存在循环，请刷新后重试', false, 409)
+          }
+          visited.add(current)
+          depth += 1
+        }
+        if (depth >= 5) {
+          throw new ArkmePluginError('topic-depth-limit', '主题最多支持五级层级，无法继续创建子主题', false, 409)
+        }
+      } catch (error) {
+        if (error instanceof ArkmePluginError
+          && ['topic-hierarchy-invalid', 'topic-depth-limit'].includes(error.code)) throw error
+        // This is a UX preflight only. The bind endpoint remains authoritative when the hierarchy snapshot is unavailable.
+      }
     }
 
     const createdAtMillis = Date.now()
@@ -1336,32 +1369,66 @@ export class ArkmeService {
     }
 
     const sourceRef = await this.sealSourceRef(session.userId, 'topic', topicUid, title)
-    let hierarchyBound = parentTopicUid === undefined
     if (parentTopicUid !== undefined) {
       try {
-        await this.authenticatedPost<Record<string, unknown>>(
+        const bound = await this.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/hierarchy/bind',
           { parent_topic_uid: parentTopicUid, child_topic_uid: topicUid },
           session,
         )
-        hierarchyBound = true
-      } catch {
-        // Topic creation is already committed and has no safe idempotent rollback here.
-        // Return the root topic and make the partial result explicit so the UI never retries into a duplicate.
+        if (numberValue(objectValue(bound.relation).status) !== 1) {
+          throw new ArkmePluginError('topic-hierarchy-bind-contract-invalid', '子主题层级响应不完整', true, 502)
+        }
+      } catch (bindError) {
+        try {
+          const rolledBack = await this.authenticatedPost<Record<string, unknown>>(
+            '/api/v1/topics/update',
+            {
+              topic_uid: topicUid,
+              title,
+              show_in_home: true,
+              privacy_state: 1,
+              status: 2,
+              extra: { source: 'dsh-arkme' },
+            },
+            session,
+          )
+          if (stringValue(rolledBack.topic_uid).trim() !== topicUid || !booleanValue(rolledBack.updated)) {
+            throw new ArkmePluginError('topic-rollback-contract-invalid', '子主题清理响应不完整', true, 502)
+          }
+        } catch {
+          return {
+            source: {
+              sourceRef,
+              kind: 'topic',
+              displayName: title,
+              activeAtMillis: createdAtMillis,
+              unreadCount: 0,
+              recordCount: 0,
+            },
+            warning: '主题已创建，但父子关系添加及自动清理均未完成，请在根主题列表中检查后重试',
+          }
+        }
+        throw new ArkmePluginError(
+          'topic-hierarchy-bind-failed',
+          '未能创建子主题，已自动清理，请重试',
+          true,
+          409,
+          { cause: bindError },
+        )
       }
     }
 
     return {
       source: {
         sourceRef,
-        ...(hierarchyBound && parentSourceRef !== undefined ? { parentSourceRef } : {}),
+        ...(parentSourceRef !== undefined ? { parentSourceRef } : {}),
         kind: 'topic',
         displayName: title,
         activeAtMillis: createdAtMillis,
         unreadCount: 0,
         recordCount: 0,
       },
-      ...(!hierarchyBound ? { warning: '主题已创建，但未能添加到父主题下，请稍后调整层级' } : {}),
     }
   }
 
