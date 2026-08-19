@@ -68,6 +68,67 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(loadPage).toHaveBeenCalledTimes(4)
   })
 
+  it('holds realtime mutations until the authoritative directory baseline is available', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const listener = vi.fn()
+    store.subscribe(listener)
+    const baseline = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '原会话',
+      activeAtMillis: 10, unreadCount: 2,
+    }
+    const realtime = {
+      sourceRef: 'source-2', kind: 'private_chat' as const, displayName: '新消息会话',
+      activeAtMillis: 20, unreadCount: 1,
+    }
+    const latestRealtime = { ...realtime, activeAtMillis: 21, unreadCount: 2 }
+
+    store.upsert(realtime)
+    expect(store.unreadCount('source-2')).toBe(1)
+    store.upsert(latestRealtime)
+    expect(store.unreadCount('source-2')).toBe(2)
+    store.updateUnread('source-1', 0)
+    expect(store.getSnapshot()).toEqual({ revision: 0, sources: [] })
+    expect(listener).not.toHaveBeenCalled()
+
+    store.publish([baseline])
+    expect(store.getSnapshot()).toEqual({
+      revision: 1,
+      sources: [latestRealtime, { ...baseline, unreadCount: 0 }],
+    })
+    expect(listener).toHaveBeenCalledOnce()
+  })
+
+  it('drops pending realtime mutations and stale refresh results when the account changes', async () => {
+    let resolveFirst: ((value: {
+      directory: 'root'; items: Array<{
+        sourceRef: string; kind: 'private_chat'; displayName: string; activeAtMillis: number; unreadCount: number
+      }>; hasMore: false
+    }) => void) | undefined
+    const firstPage = new Promise<{
+      directory: 'root'; items: Array<{
+        sourceRef: string; kind: 'private_chat'; displayName: string; activeAtMillis: number; unreadCount: number
+      }>; hasMore: false
+    }>(resolve => { resolveFirst = resolve })
+    const loadPage = vi.fn(async () => await firstPage)
+    const store = new ArkmeChatDirectoryStore({ loadPage })
+    store.activateAccount(1001)
+    store.upsert({
+      sourceRef: 'account-a-realtime', kind: 'private_chat', displayName: '账号 A', activeAtMillis: 2, unreadCount: 1,
+    })
+    const staleRefresh = store.refreshRoot()
+
+    store.activateAccount(2002)
+    resolveFirst?.({
+      directory: 'root',
+      items: [{ sourceRef: 'account-a-baseline', kind: 'private_chat', displayName: '账号 A', activeAtMillis: 1, unreadCount: 0 }],
+      hasMore: false,
+    })
+    await staleRefresh
+
+    expect(store.getSnapshot().sources).toEqual([])
+    expect(store.unreadCount('account-a-realtime')).toBe(0)
+  })
+
   it('publishes timeline deltas independently from directory snapshots', () => {
     const store = new ArkmeChatTimelineDeltaStore()
     store.publish([{ sourceRef: 'source-1', items: [{

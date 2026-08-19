@@ -72,7 +72,15 @@ const styles: Record<string, CSSProperties> = {
     padding: '8px 64px 8px 20px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
     background: 'var(--dsw-alias-bg-base, #fff)',
   },
-  headerTitle: { flex: 'none', margin: 0, padding: '4px 8px', color: colors.text, fontSize: 14, lineHeight: '20px', fontWeight: 500 },
+  headerTitle: {
+    flex: 'none', minWidth: 0, maxWidth: '40%', margin: 0, padding: '4px 8px',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.text, fontSize: 14, lineHeight: '20px', fontWeight: 500,
+  },
+  aiDisclaimer: {
+    flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.secondary, fontSize: 11, lineHeight: '18px',
+  },
   actions: { minWidth: 0, marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
   actionButton: {
     minWidth: 0, height: 34, display: 'flex', alignItems: 'center', gap: 7,
@@ -125,10 +133,8 @@ const styles: Record<string, CSSProperties> = {
   },
   meta: { color: '#9298a0', fontSize: 11 },
   empty: { width: 'min(720px,100%)', margin: '28px auto', color: colors.secondary, textAlign: 'center', fontSize: 13 },
-  loadEarlier: {
-    display: 'block', margin: '0 auto 18px', border: 0, background: 'transparent', color: '#16834b',
-    cursor: 'pointer', font: 'inherit', fontSize: 12,
-  },
+  historySentinel: { width: '100%', height: 1 },
+  historyLoading: { width: 'min(780px,100%)', margin: '0 auto 12px', color: colors.secondary, textAlign: 'center', fontSize: 12 },
   error: { width: 'min(780px,100%)', margin: '0 auto 12px', padding: '10px 12px', borderRadius: 8, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
   notice: { width: 'min(780px,100%)', margin: '0 auto 12px', padding: '10px 12px', borderRadius: 8, background: colors.active, color: '#176d3d', fontSize: 13 },
   feedbackRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
@@ -221,6 +227,14 @@ export function arkoMessageActivityLabel(
 
 export function arkoRunSyncFailureLabel(consecutiveFailures: number): string | undefined {
   return consecutiveFailures >= 3 ? '状态同步失败，仍在重试' : undefined
+}
+
+export function arkoPreservedScrollTop(
+  previousScrollTop: number,
+  previousScrollHeight: number,
+  nextScrollHeight: number,
+): number {
+  return Math.max(0, previousScrollTop + (nextScrollHeight - previousScrollHeight))
 }
 
 function isActiveRunStatus(status: string | undefined): boolean {
@@ -356,6 +370,8 @@ function selectedModelName(catalog: ArkmeArkoModelCatalog | undefined): string {
 
 export function ArkmeArkoSurface() {
   const bodyRef = useRef<HTMLDivElement>(null)
+  const historySentinelRef = useRef<HTMLDivElement>(null)
+  const historyLoadInFlightRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const authSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -390,6 +406,12 @@ export function ArkmeArkoSurface() {
   const [activeRun, setActiveRun] = useState<ActiveArkoRun>()
   const [pendingTurn, setPendingTurn] = useState<ArkmeArkoPendingTurn>()
 
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    })
+  }, [])
+
   useEffect(() => {
     arkmeArkoProfileStore.activateUser(profileUserId)
   }, [profileUserId])
@@ -421,7 +443,8 @@ export function ArkmeArkoSurface() {
         createdAtMillis: restored.createdAtMillis + 1,
       }]
     })
-  }, [profileUserId])
+    scrollToBottom()
+  }, [profileUserId, scrollToBottom])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -453,6 +476,7 @@ export function ArkmeArkoSurface() {
       if (historyResult.status === 'fulfilled') {
         setMessages(current => mergeHistory(current, historyResult.value.items))
         setHistoryOffset(historyResult.value.nextOffset)
+        scrollToBottom()
         const restoredRun = latestActiveRun(historyResult.value.items, sessionResult.value.sessionId)
         if (restoredRun !== undefined) {
           setActiveRun(restoredRun)
@@ -465,7 +489,7 @@ export function ArkmeArkoSurface() {
       if (!controller.signal.aborted) setLoading(false)
     })
     return () => { controller.abort() }
-  }, [profileUserId])
+  }, [profileUserId, scrollToBottom])
 
   useEffect(() => {
     if (activeRun === undefined) return
@@ -481,6 +505,7 @@ export function ArkmeArkoSurface() {
         setMessages(current => mergeHistory(current, historyResult.value.items))
         setHistoryOffset(historyResult.value.nextOffset)
         setHistoryError('')
+        scrollToBottom()
       } else {
         setHistoryError(`刷新 Arko 对话记录失败：${errorMessage(historyResult.reason)}`)
       }
@@ -536,7 +561,7 @@ export function ArkmeArkoSurface() {
     }
     void poll()
     return () => { controller.abort() }
-  }, [activeRun, profileUserId])
+  }, [activeRun, profileUserId, scrollToBottom])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -545,27 +570,46 @@ export function ArkmeArkoSurface() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
   }, [draft])
 
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-    })
-  }, [messages.length])
-
   const loadEarlier = useCallback(async () => {
-    if (historyOffset === undefined || historyLoading) return
+    if (historyOffset === undefined || historyLoadInFlightRef.current) return
+    const body = bodyRef.current
+    const previousScrollHeight = body?.scrollHeight ?? 0
+    const previousScrollTop = body?.scrollTop ?? 0
+    historyLoadInFlightRef.current = true
     setHistoryLoading(true)
-    setError('')
     try {
       const page = await callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: historyOffset })
       setMessages(current => mergeHistory(current, page.items))
       setHistoryOffset(page.nextOffset)
       setHistoryError('')
+      requestAnimationFrame(() => {
+        const target = bodyRef.current
+        if (target === null) return
+        target.scrollTop = arkoPreservedScrollTop(
+          previousScrollTop,
+          previousScrollHeight,
+          target.scrollHeight,
+        )
+      })
     } catch (caught) {
       setHistoryError(`加载更早的 Arko 对话记录失败：${errorMessage(caught)}`)
     } finally {
+      historyLoadInFlightRef.current = false
       setHistoryLoading(false)
     }
-  }, [historyLoading, historyOffset])
+  }, [historyOffset])
+
+  useEffect(() => {
+    const root = bodyRef.current
+    const sentinel = historySentinelRef.current
+    if (loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyOffset === undefined) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting !== true || historyLoadInFlightRef.current) return
+      void loadEarlier()
+    }, { root, rootMargin: '120px 0px 0px' })
+    observer.observe(sentinel)
+    return () => { observer.disconnect() }
+  }, [historyError, historyLoading, historyOffset, loadEarlier, loading])
 
   const retryHistory = useCallback(async () => {
     if (historyLoading) return
@@ -575,6 +619,7 @@ export function ArkmeArkoSurface() {
       const page = await callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 50, offset: 0 })
       setMessages(current => mergeHistory(current, page.items))
       setHistoryOffset(page.nextOffset)
+      scrollToBottom()
       if (session !== undefined) {
         const restoredRun = latestActiveRun(page.items, session.sessionId)
         if (restoredRun !== undefined) {
@@ -587,7 +632,7 @@ export function ArkmeArkoSurface() {
     } finally {
       setHistoryLoading(false)
     }
-  }, [historyLoading, session])
+  }, [historyLoading, scrollToBottom, session])
 
   const submitTurn = useCallback(async (turn: ArkmeArkoPendingTurn) => {
     if (sending || activeRun !== undefined) return
@@ -709,8 +754,9 @@ export function ArkmeArkoSurface() {
       runStatus: 'accepted',
       createdAtMillis: createdAtMillis + 1,
     }])
+    scrollToBottom()
     await submitTurn(turn)
-  }, [activeRun, catalog, draft, messages, pendingTurn, profileUserId, sending, session, submitTurn])
+  }, [activeRun, catalog, draft, messages, pendingTurn, profileUserId, scrollToBottom, sending, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel) return
@@ -761,13 +807,14 @@ export function ArkmeArkoSurface() {
       setMessages(current => [...current, {
         id: crypto.randomUUID(), role: 'divider', text: '新的对话', status: 'done', createdAtMillis: Date.now(),
       }])
+      scrollToBottom()
       setNotice('上下文已清除，历史记录仍然保留')
     } catch (caught) {
       setError(errorMessage(caught))
     } finally {
       setClearing(false)
     }
-  }, [clearing, pendingTurn, sending])
+  }, [clearing, pendingTurn, scrollToBottom, sending])
 
   const displayName = arkoPresentationName(profile)
   const selectedModel = selectedModelName(catalog)
@@ -785,6 +832,7 @@ export function ArkmeArkoSurface() {
   return <div style={styles.shell}>
     <header style={styles.header}>
       <h2 style={styles.headerTitle}>{displayName}</h2>
+      <span style={styles.aiDisclaimer}>内容由 AI 生成，仅供参考</span>
       <div style={styles.actions} role="toolbar" aria-label="Arko 操作">
         <button
           type="button"
@@ -819,7 +867,10 @@ export function ArkmeArkoSurface() {
       {runSyncError !== '' && <div style={styles.error}>{runSyncError}</div>}
       {historyError !== '' && <div style={{ ...styles.error, ...styles.feedbackRow }}>
         <span>{historyError}</span>
-        <button type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => { void retryHistory() }}>
+        <button type="button" style={styles.retryButton} disabled={historyLoading} onClick={() => {
+          if (historyOffset === undefined) void retryHistory()
+          else void loadEarlier()
+        }}>
           {historyLoading ? '加载中...' : '重新加载'}
         </button>
       </div>}
@@ -827,9 +878,8 @@ export function ArkmeArkoSurface() {
         <span>上一次发送结果尚未确认，请先用原请求标识完成对账。</span>
         <button type="button" style={styles.retryButton} onClick={() => { void submitTurn(pendingTurn) }}>重试确认</button>
       </div>}
-      {historyOffset !== undefined && <button type="button" style={styles.loadEarlier} onClick={() => { void loadEarlier() }} disabled={historyLoading}>
-        {historyLoading ? '加载中...' : '加载更早消息'}
-      </button>}
+      <div ref={historySentinelRef} style={styles.historySentinel} />
+      {historyLoading && <div style={styles.historyLoading} role="status">正在加载更早内容…</div>}
       {!loading && historyError === '' && messages.length === 0 && <div style={styles.empty}>暂无对话记录</div>}
       {messages.length > 0 && <ul style={styles.records}>
         {messages.map(item => {

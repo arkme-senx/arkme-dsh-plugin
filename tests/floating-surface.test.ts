@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { renderToStaticMarkup } from 'react-dom/server'
 import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
 import {
-  aiPolishStatus, ArkmeAuthChecking, arkmeAuthView, arkmeLoginNeedsPhoneBinding, arkmeProfileHasBoundPhone,
-  arkmeShouldBeginWechat,
+  aiPolishStatus, arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
+  arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme floating conversation frame', () => {
@@ -25,50 +24,28 @@ describe('Arkme floating conversation frame', () => {
     })
   })
 
-  it('does not treat an unresolved auth check as logged out', () => {
-    expect(arkmeAuthView(undefined)).toBe('checking')
+  it('maps the host auth snapshot directly to login or content', () => {
+    expect(arkmeAuthView(undefined)).toBe('login')
     expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 })).toBe('content')
-    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'checking')).toBe('checking')
-    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'unknown')).toBe('checking')
-    expect(arkmeAuthView({ status: 'authenticated', environment: 'prod', userId: 1 }, 'required')).toBe('login')
     expect(arkmeAuthView({ status: 'binding-required', environment: 'prod', userId: 1 })).toBe('login')
     expect(arkmeAuthView({ status: 'logged-out', environment: 'prod' })).toBe('login')
     expect(arkmeAuthView({ status: 'expired', environment: 'prod' })).toBe('login')
   })
 
-  it('offers an explicit retry after phone binding status validation fails', () => {
-    const markup = renderToStaticMarkup(ArkmeAuthChecking({
-      error: '网络连接失败', busy: false, onRetry: () => undefined,
-    }))
-
-    expect(markup).toContain('网络连接失败')
-    expect(markup).toContain('重新检查')
-    expect(markup).toContain('type="button"')
-  })
-
-  it('treats the remote profile phone projection as the bound-phone signal', () => {
-    expect(arkmeProfileHasBoundPhone({
-      profile: {
-        userId: 1,
-        displayName: 'Arkme',
-        nickname: 'Arkme',
-        avatarRef: '',
-        arkmeId: 'arkme',
-        accountType: 1,
-        createdAt: 1,
-        bindings: { apple: false, wechat: true, google: false },
-        contact: { phoneMasked: '138****8000' },
-      },
-      cachedAtMillis: 1,
-      revision: 1,
-    })).toBe(true)
-    expect(arkmeProfileHasBoundPhone({ profile: null, cachedAtMillis: 1, revision: 1 })).toBe(false)
-  })
-
   it('keeps the floating login surface in the binding view when auth is binding-required', () => {
-    expect(arkmeLoginNeedsPhoneBinding({ status: 'binding-required', environment: 'prod', userId: 1 }, 'unknown')).toBe(true)
-    expect(arkmeLoginNeedsPhoneBinding({ status: 'logged-out', environment: 'prod' }, 'required')).toBe(true)
-    expect(arkmeLoginNeedsPhoneBinding({ status: 'logged-out', environment: 'prod' }, 'unknown')).toBe(false)
+    expect(arkmeLoginNeedsPhoneBinding({ status: 'binding-required', environment: 'prod', userId: 1 })).toBe(true)
+    expect(arkmeLoginNeedsPhoneBinding({ status: 'logged-out', environment: 'prod' })).toBe(false)
+  })
+
+  it('treats authenticated user changes as account switches and remounts Arko per account', () => {
+    const first = { status: 'authenticated' as const, environment: 'prod' as const, userId: 1001 }
+    const second = { status: 'authenticated' as const, environment: 'prod' as const, userId: 2002 }
+
+    expect(arkmeAuthenticatedAccountChanged(first, first)).toBe(false)
+    expect(arkmeAuthenticatedAccountChanged(first, second)).toBe(true)
+    expect(arkmeArkoSurfaceKey(first)).toBe(1001)
+    expect(arkmeArkoSurfaceKey(second)).toBe(2002)
+    expect(arkmeArkoSurfaceKey({ status: 'logged-out', environment: 'prod' })).toBe('logged-out')
   })
 
   it('does not restart WeChat login while a QR login attempt is pending', () => {

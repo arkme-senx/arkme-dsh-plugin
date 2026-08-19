@@ -10,7 +10,7 @@ describe('recording surface integration', () => {
       status: 'authenticated',
       environment: 'test',
       userId: 10001,
-    }} initialPhoneBindingGate="ready" />)
+    }} />)
 
     expect(markup).toContain('>全天候录音<')
     expect(markup).toContain('aria-label="录音日历"')
