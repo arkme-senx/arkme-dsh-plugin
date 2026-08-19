@@ -49,6 +49,22 @@ describe('OpenClawCliAdapter', () => {
     expect(calls.map(call => call.args.slice(2))).toContainEqual(['agents', 'bind', '--agent', 'arkme-bot-abc', '--bind', 'jotmo:arkme-bot-abc', '--json'])
     expect(calls.every(call => call.stdin === undefined)).toBe(true)
   })
+  it('recognizes the real nested Agent binding JSON shape exactly', async () => {
+    const adapter = adapterFactory()({
+      profile: 'dev',
+      async run(args) {
+        const command = args.slice(2).join(' ')
+        if (command === 'plugins inspect jotmo-openclaw-channel --json') return { exitCode: 0, stdout: '{}', stderr: '' }
+        if (command === 'agents list --json') return { exitCode: 0, stdout: '[{"id":"arkme-bot-abc"}]', stderr: '' }
+        if (command.startsWith('config get ')) return { exitCode: 0, stdout: '{}', stderr: '' }
+        if (command === 'agents bindings --json') return { exitCode: 0, stdout: '[{"agentId":"arkme-bot-abc","match":{"channel":"jotmo","accountId":"arkme-bot-abc"}}]', stderr: '' }
+        return { exitCode: 1, stdout: '', stderr: 'unexpected' }
+      },
+    }) as unknown as import('../src/openclaw/index.js').OpenClawCliPort
+    await expect(adapter.inspect({ agentId: 'arkme-bot-abc', accountId: 'arkme-bot-abc' })).resolves.toEqual({
+      channel: true, agent: true, account: true, binding: true,
+    })
+  })
   it('rejects an empty host-configured profile without invoking OpenClaw', async () => {
     const calls: RunCall[] = []
     const createAdapter = adapterFactory()

@@ -42,6 +42,20 @@ function jsonContainsExactString(stdout: string, expected: string): boolean {
   return visit(value)
 }
 
+function jsonHasBinding(stdout: string, agentId: string, accountId: string): boolean {
+  let value: unknown
+  try { value = JSON.parse(stdout) } catch { return false }
+  if (!Array.isArray(value)) return false
+  return value.some(candidate => {
+    if (candidate === null || typeof candidate !== 'object') return false
+    const binding = candidate as Record<string, unknown>
+    const match = binding.match
+    if (match === null || typeof match !== 'object') return false
+    const route = match as Record<string, unknown>
+    return binding.agentId === agentId && route.channel === 'jotmo' && route.accountId === accountId
+  })
+}
+
 function profileArgs(profile: string, ...command: string[]): readonly string[] {
   return ['--profile', profile, ...command]
 }
@@ -108,7 +122,7 @@ export function createOpenClawCliAdapter(options: {
         channel: channel.exitCode === 0,
         agent: agents.exitCode === 0 && jsonContainsExactString(agents.stdout, input.agentId),
         account: account.exitCode === 0,
-        binding: bindings.exitCode === 0 && jsonContainsExactString(bindings.stdout, input.agentId) && jsonContainsExactString(bindings.stdout, `jotmo:${input.accountId}`),
+        binding: bindings.exitCode === 0 && jsonHasBinding(bindings.stdout, input.agentId, input.accountId),
       }
     },
     async ensureChannel(runOptions) {
