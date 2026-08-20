@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT,
   registerArkmeExtensionTools,
@@ -70,6 +73,8 @@ describe('Arkme extension tools', () => {
     expect(sections[0]?.text()).toBe(ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT)
     expect(sections[0]?.text()).toContain('before planning, coding, searching, or calling tools')
     expect(sections[0]?.text()).toContain('validated Profile-local Bundle')
+    expect(sections[0]?.text()).toContain('workspace_path')
+    expect(sections[0]?.text()).toContain('Do not search for image upload routes')
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',
@@ -98,6 +103,8 @@ describe('Arkme extension tools', () => {
       clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }))
     const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
+    expect(iconTool?.parameters).toHaveProperty('properties.workspace_path')
+    expect(iconTool?.parameters).toHaveProperty('required', ['extension_id'])
     await expect(iconTool?.execute?.(
       { extension_id: 'ext-1', image_ref: 'arkme-image-ref' },
       { agent: { id: 'session-1' }, callId: 'call-1' },
@@ -202,6 +209,142 @@ describe('Arkme extension tools', () => {
       registerArkmeExtensionTools({ tools: { register }, systemPrompt: { section }, on: vi.fn() } as never, {} as never, {} as never, {} as never, profile)
       expect(register).not.toHaveBeenCalled()
       expect(section).not.toHaveBeenCalled()
+    }
+  })
+
+  it('uploads a generated workspace SVG through the existing icon owner', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'arkme extension icon '))
+    try {
+      await mkdir(join(workspace, 'assets'))
+      await writeFile(join(workspace, 'assets', 'icon.svg'), [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">',
+        '<rect width="64" height="64" rx="12" fill="#15b84e"/>',
+        '</svg>',
+      ].join(''))
+      const definitions: Array<{
+        name: string
+        execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
+      }> = []
+      const setIcon = vi.fn(async () => ({
+        extension_id: 'ext-1', status: 'applied', icon_ref: `icon_v1_${'a'.repeat(64)}`,
+      }))
+      registerArkmeExtensionTools({
+        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        systemPrompt: { section: vi.fn() },
+        on: vi.fn(),
+      } as never, { setIcon } as never, {} as never, { readImage: vi.fn() }, 'business')
+
+      const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: 'assets/icon.svg' },
+        {
+          agent: { id: 'session-1', session: { header: { cwd: workspace } } },
+          callId: 'call-workspace-icon',
+        },
+      )).resolves.toContain('"status": "applied"')
+      expect(setIcon).toHaveBeenCalledWith(expect.objectContaining({
+        extensionId: 'ext-1',
+        mediaType: 'image/png',
+        data: expect.any(Uint8Array),
+      }))
+      const uploaded = setIcon.mock.calls[0]?.[0]?.data as Uint8Array
+      expect(Array.from(uploaded.slice(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps workspace icon reads inside the current session workspace', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'arkme icon owned '))
+    const outside = await mkdtemp(join(tmpdir(), 'arkme icon outside '))
+    try {
+      await writeFile(join(outside, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>')
+      await symlink(outside, join(workspace, 'escaped'), process.platform === 'win32' ? 'junction' : 'dir')
+      const definitions: Array<{
+        name: string
+        execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
+      }> = []
+      const setIcon = vi.fn()
+      registerArkmeExtensionTools({
+        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        systemPrompt: { section: vi.fn() },
+        on: vi.fn(),
+      } as never, { setIcon } as never, {} as never, { readImage: vi.fn() }, 'business')
+      const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
+      const exec = {
+        agent: { id: 'session-1', session: { header: { cwd: workspace } } },
+        callId: 'call-workspace-icon',
+      }
+
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: join(outside, 'icon.svg') }, exec,
+      )).rejects.toThrow('absolute paths are not allowed')
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: '../icon.svg' }, exec,
+      )).rejects.toThrow('path traversal is not allowed')
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: 'escaped/icon.svg' }, exec,
+      )).rejects.toThrow('outside the current Agent workspace')
+      expect(setIcon).not.toHaveBeenCalled()
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects ambiguous icon sources and unsafe SVG content before cloud upload', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'arkme unsafe icon '))
+    try {
+      await writeFile(join(workspace, 'unsafe.svg'), [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">',
+        '<script>alert(1)</script>',
+        '</svg>',
+      ].join(''))
+      await writeFile(join(workspace, 'styled.svg'), [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">',
+        '<rect width="64" height="64" style="fill:red"/>',
+        '</svg>',
+      ].join(''))
+      await writeFile(join(workspace, 'safe.svg'), [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">',
+        '<rect width="64" height="64" fill="red"/>',
+        '</svg>',
+      ].join(''))
+      const definitions: Array<{
+        name: string
+        execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
+      }> = []
+      const setIcon = vi.fn()
+      registerArkmeExtensionTools({
+        tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+        systemPrompt: { section: vi.fn() },
+        on: vi.fn(),
+      } as never, { setIcon } as never, {} as never, { readImage: vi.fn() }, 'business')
+      const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
+      const exec = {
+        agent: { id: 'session-1', session: { header: { cwd: workspace } } },
+        callId: 'call-workspace-icon',
+      }
+
+      await expect(iconTool?.execute?.({ extension_id: 'ext-1' }, exec))
+        .rejects.toThrow('provide exactly one of image_ref or workspace_path')
+      await expect(iconTool?.execute?.({
+        extension_id: 'ext-1', image_ref: 'arkme-ref', workspace_path: 'unsafe.svg',
+      }, exec)).rejects.toThrow('provide exactly one of image_ref or workspace_path')
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: 'unsafe.svg' }, exec,
+      )).rejects.toThrow('SVG executable, embedded, linked, or external-resource elements are not allowed')
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: 'styled.svg' }, exec,
+      )).rejects.toThrow('SVG links, styles, event handlers, and processing instructions are not allowed')
+      const controller = new AbortController()
+      controller.abort(new Error('cancelled by test'))
+      await expect(iconTool?.execute?.(
+        { extension_id: 'ext-1', workspace_path: 'safe.svg' }, { ...exec, signal: controller.signal },
+      )).rejects.toThrow('cancelled by test')
+      expect(setIcon).not.toHaveBeenCalled()
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 })

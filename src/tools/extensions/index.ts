@@ -8,6 +8,7 @@ import type { ArkmeExtensionManager } from '../../extensions/manager.js'
 import type { ArkmeOwnedExtensionInventory } from '../../extensions/owned-inventory.js'
 import type { ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeImageBytes } from '../../types.js'
+import { readWorkspaceExtensionIcon } from '../../extensions/workspace-icon.js'
 import { ArkmeExtensionPublishConversation } from './publish-conversation.js'
 
 const EXTENSION_TOOL_NAMES = [
@@ -32,7 +33,11 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   + 'extensions, call arkme_extension_publish with action=prepare once with the complete batch. It only validates and returns a question. '
   + 'Show that question in ordinary conversation, tell the human to reply with expectedReply exactly, and wait for a later direct '
   + 'human message. Never call action=confirm in the prepare turn. After the exact later reply, call the same tool with action=confirm '
-  + 'and no items; do not claim publication for the prepare result.'
+  + 'and no items; do not claim publication for the prepare result. When the user asks to create or replace an extension icon and an '
+  + 'image already exists inside this current Agent workspace, call arkme_extension_icon_set with its relative workspace_path; safe SVG '
+  + 'is accepted and normalized by the Host. Do not search for image upload routes, signed storage URLs, conversion CLIs, or old plugin '
+  + 'worktrees. If neither a workspace image nor an authorized image_ref exists and no current tool can create one, state the missing '
+  + 'image input immediately instead of searching unrelated repositories.'
 
 function clean(value: string | undefined): string {
   return value?.replace(/[\u0000-\u001F\u007F]/g, ' ').trim() ?? ''
@@ -212,25 +217,31 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_icon_set',
-    description: 'Set or replace the icon of one extension owned by the current Arkme user. The image_ref must come from an Arkme profile or source result; the Host reads and uploads the bytes without exposing signed storage URLs. Use only after an explicit current human request.',
+    description: 'Set or replace the icon of one extension owned by the current Arkme user. Provide exactly one source: image_ref from an Arkme profile/source result, or workspace_path for a PNG, JPEG, WebP, or safe SVG generated inside this current Agent workspace. The Host validates, normalizes, and uploads the bytes without exposing signed storage URLs. Use only after an explicit current human request.',
     parameters: {
       extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
-      image_ref: { type: 'string', required: true, description: 'Opaque Arkme image_ref returned by profile or source tools.' },
+      image_ref: { type: 'string', description: 'Opaque Arkme image_ref returned by profile or source tools. Mutually exclusive with workspace_path.' },
+      workspace_path: { type: 'string', description: 'Relative path to a PNG, JPEG, WebP, or safe SVG inside the current Agent session workspace. Mutually exclusive with image_ref.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
+      const agent = requireAgent(exec) as Agent
       const imageRef = clean(args.image_ref)
-      if (imageRef === '') throw new Error('image_ref must not be empty')
-      const image = await imageSource.readImage(imageRef, { maxBytes: 2 * 1024 * 1024, signal: exec.signal })
-      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
-        throw new Error('extension icons accept PNG, JPEG, or WebP only')
+      const workspacePath = typeof args.workspace_path === 'string' ? args.workspace_path : ''
+      if ((imageRef === '') === (workspacePath === '')) {
+        throw new Error('provide exactly one of image_ref or workspace_path')
       }
+      const image = imageRef === ''
+        ? await readWorkspaceExtensionIcon(agent, workspacePath, exec.signal)
+        : await imageSource.readImage(imageRef, { maxBytes: 2 * 1024 * 1024, signal: exec.signal })
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) throw new Error('extension icons accept PNG, JPEG, or WebP only')
+      const sourceIdentity = imageRef === '' ? workspacePath : imageRef
       const result = await manager.setIcon({
         extensionId: args.extension_id,
         mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
         data: image.data,
         idempotencyKey: createHash('sha256')
-          .update(`arkme-extension-icon\0${String(exec.callId)}\0${args.extension_id}\0${imageRef}`)
+          .update(`arkme-extension-icon\0${String(exec.callId)}\0${args.extension_id}\0${sourceIdentity}`)
           .digest('hex'),
         signal: exec.signal,
       })
