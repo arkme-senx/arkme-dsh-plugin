@@ -41,6 +41,19 @@ const loginStyles = `
   .dsh-arkme-login-page,
   .dsh-arkme-login-page * { box-sizing: border-box; }
   .dsh-arkme-login-page {
+    --arkme-login-base: var(--dsw-alias-bg-base, #ffffff);
+    --arkme-login-surface: var(--dsw-alias-bg-layer-2, #ffffff);
+    --arkme-login-subtle: var(--dsw-alias-bg-module-platform, #f2fbf5);
+    --arkme-login-hover: var(--dsw-alias-interactive-bg-hover, rgba(38,49,72,.06));
+    --arkme-login-text: var(--dsw-alias-label-primary, #17221b);
+    --arkme-login-secondary: var(--dsw-alias-label-secondary, #68766d);
+    --arkme-login-caption: var(--dsw-alias-label-caption, #9aae9f);
+    --arkme-login-border: var(--dsw-alias-border-l2, #dde5de);
+    --arkme-login-accent: var(--dsw-alias-state-success-primary, #09b83e);
+    --arkme-login-accent-soft: var(--dsw-alias-state-success-tertiary, #e8faee);
+    --arkme-login-danger: var(--dsw-alias-state-error-primary, #b0442e);
+    --arkme-login-danger-soft: var(--dsw-alias-interactive-bg-hover-danger, #fff3f0);
+    --arkme-login-foreground: var(--dsw-static-neutral-bluish-00, #ffffff);
     position: relative;
     isolation: isolate;
     min-height: 100%;
@@ -50,8 +63,8 @@ const loginStyles = `
     align-items: center;
     justify-content: center;
     padding: 40px 20px;
-    color: #17221b;
-    background: radial-gradient(ellipse at center, rgba(255,255,252,.99) 0%, rgba(253,255,253,.98) 40%, rgba(248,253,250,.98) 76%, rgba(240,251,244,1) 100%);
+    color: var(--arkme-login-text);
+    background: radial-gradient(ellipse at center, var(--arkme-login-base) 0%, var(--arkme-login-base) 58%, var(--arkme-login-accent-soft) 145%);
   }
   .dsh-arkme-login-glow-top {
     position: absolute;
@@ -61,7 +74,7 @@ const loginStyles = `
     width: 560px;
     height: 560px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--arkme-login-surface);
     opacity: .75;
     filter: blur(96px);
     pointer-events: none;
@@ -74,7 +87,7 @@ const loginStyles = `
     width: 620px;
     height: 620px;
     border-radius: 50%;
-    background: #e8faee;
+    background: var(--arkme-login-accent-soft);
     opacity: .32;
     filter: blur(116px);
     pointer-events: none;
@@ -84,11 +97,11 @@ const loginStyles = `
     z-index: 1;
     width: min(430px, 100%);
     overflow: hidden;
-    border: 1px solid #dde6de;
+    border: 1px solid var(--arkme-login-border);
     border-radius: 32px;
     padding: 32px 24px;
-    background: rgba(255,255,255,.95);
-    box-shadow: 0 28px 80px rgba(9,184,62,.08);
+    background: color-mix(in srgb, var(--arkme-login-surface) 95%, transparent);
+    box-shadow: var(--dsw-shadow-lv3, 0 28px 80px rgba(9,184,62,.08));
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
@@ -96,7 +109,7 @@ const loginStyles = `
   .dsh-arkme-login-brand { display: flex; align-items: center; gap: 12px; }
   .dsh-arkme-login-title {
     margin: 0;
-    color: #17221b;
+    color: var(--arkme-login-text);
     font-size: 30px;
     font-weight: 600;
     line-height: 36px;
@@ -104,11 +117,11 @@ const loginStyles = `
   }
   .dsh-arkme-login-notice {
     margin-top: 20px;
-    border: 1px solid #d7eadc;
+    border: 1px solid var(--arkme-login-border);
     border-radius: 14px;
     padding: 10px 12px;
-    background: #f2fbf5;
-    color: #2f5f3d;
+    background: var(--arkme-login-accent-soft);
+    color: var(--arkme-login-text);
     font-size: 14px;
     line-height: 21px;
   }
@@ -117,7 +130,7 @@ const loginStyles = `
     display: inline-flex;
     padding: 4px;
     border-radius: 999px;
-    background: #eff8f2;
+    background: var(--arkme-login-subtle);
   }
   .dsh-arkme-login-tab {
     height: 40px;
@@ -126,23 +139,23 @@ const loginStyles = `
     border-radius: 999px;
     padding: 0 20px;
     background: transparent;
-    color: #69756d;
+    color: var(--arkme-login-secondary);
     cursor: pointer;
     font: inherit;
     font-size: 14px;
     font-weight: 500;
     transition: color .15s ease, background .15s ease, box-shadow .15s ease;
   }
-  .dsh-arkme-login-tab:hover { color: #09b83e; }
+  .dsh-arkme-login-tab:hover { color: var(--arkme-login-accent); }
   .dsh-arkme-login-tab[aria-selected='true'] {
-    background: #fff;
-    color: #17221b;
+    background: var(--arkme-login-surface);
+    color: var(--arkme-login-text);
     font-weight: 600;
     box-shadow: 0 8px 20px rgba(9,184,62,.14);
   }
   .dsh-arkme-login-method { margin-top: 28px; }
   .dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: center; text-align: center; }
-  .dsh-arkme-login-qr-title { color: #17221b; font-size: 18px; font-weight: 600; line-height: 26px; }
+  .dsh-arkme-login-qr-title { color: var(--arkme-login-text); font-size: 18px; font-weight: 600; line-height: 26px; }
   .dsh-arkme-login-qr-frame {
     width: 224px;
     height: 224px;
@@ -151,25 +164,25 @@ const loginStyles = `
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    border: 1px solid #dde5de;
+    border: 1px solid var(--arkme-login-border);
     border-radius: 18px;
-    background: #fafbf9;
+    background: var(--arkme-login-subtle);
   }
   .dsh-arkme-login-qr-image { width: 200px; height: 200px; display: block; object-fit: contain; }
-  .dsh-arkme-login-qr-loading { color: #6f7d73; font-size: 14px; line-height: 20px; }
+  .dsh-arkme-login-qr-loading { color: var(--arkme-login-secondary); font-size: 14px; line-height: 20px; }
   .dsh-arkme-login-qr-relogin {
     border: 0;
     border-radius: 8px;
     padding: 8px 14px;
-    background: #17221b;
-    color: #fff;
+    background: var(--arkme-login-accent);
+    color: var(--arkme-login-foreground);
     cursor: pointer;
     font: inherit;
     font-size: 14px;
     font-weight: 600;
   }
   .dsh-arkme-login-field + .dsh-arkme-login-field { margin-top: 20px; }
-  .dsh-arkme-login-label { display: block; color: #2f3d34; font-size: 14px; font-weight: 600; line-height: 20px; }
+  .dsh-arkme-login-label { display: block; color: var(--arkme-login-text); font-size: 14px; font-weight: 600; line-height: 20px; }
   .dsh-arkme-login-input-shell {
     position: relative;
     width: 100%;
@@ -178,22 +191,22 @@ const loginStyles = `
     margin-top: 8px;
     display: flex;
     align-items: center;
-    border: 1px solid #dde5de;
+    border: 1px solid var(--arkme-login-border);
     border-radius: 14px;
     padding: 0 12px;
-    background: #fafbf9;
+    background: var(--arkme-login-subtle);
     transition: border-color .15s ease, box-shadow .15s ease;
   }
   .dsh-arkme-login-input-shell:focus-within {
-    border-color: #09b83e;
-    box-shadow: 0 0 0 2px #dff7e7;
+    border-color: var(--arkme-login-accent);
+    box-shadow: 0 0 0 2px var(--arkme-login-accent-soft);
   }
   .dsh-arkme-login-prefix {
     flex: none;
     margin-right: 12px;
-    border-right: 1px solid #dde5de;
+    border-right: 1px solid var(--arkme-login-border);
     padding-right: 12px;
-    color: #69756d;
+    color: var(--arkme-login-secondary);
     font-size: 14px;
     font-weight: 600;
     line-height: 20px;
@@ -205,16 +218,16 @@ const loginStyles = `
     padding: 0;
     outline: 0;
     background: transparent;
-    color: #17221b;
+    color: var(--arkme-login-text);
     font: inherit;
     font-size: 16px;
     line-height: 24px;
   }
-  .dsh-arkme-login-input::placeholder { color: #9aae9f; opacity: 1; }
+  .dsh-arkme-login-input::placeholder { color: var(--arkme-login-caption); opacity: 1; }
   .dsh-arkme-login-code-input { padding-right: 100px; }
   .dsh-arkme-login-test-note {
     margin: 0 0 14px;
-    color: #617068;
+    color: var(--arkme-login-secondary);
     font-size: 13px;
     line-height: 20px;
   }
@@ -228,7 +241,7 @@ const loginStyles = `
     align-items: center;
     transform: translateY(-50%);
   }
-  .dsh-arkme-login-code-divider { width: 1px; height: 24px; flex: none; background: #dde5de; }
+  .dsh-arkme-login-code-divider { width: 1px; height: 24px; flex: none; background: var(--arkme-login-border); }
   .dsh-arkme-login-code-button {
     height: 32px;
     min-width: 0;
@@ -237,31 +250,31 @@ const loginStyles = `
     border-radius: 10px;
     padding: 0;
     background: transparent;
-    color: #68766d;
+    color: var(--arkme-login-secondary);
     cursor: pointer;
     font: inherit;
     font-size: 15px;
     font-weight: 600;
     line-height: 1;
   }
-  .dsh-arkme-login-code-button:hover:not(:disabled) { color: #4f5a50; }
-  .dsh-arkme-login-code-button:disabled { color: #a7b3aa; cursor: default; }
+  .dsh-arkme-login-code-button:hover:not(:disabled) { color: var(--arkme-login-text); }
+  .dsh-arkme-login-code-button:disabled { color: var(--arkme-login-caption); cursor: default; }
   .dsh-arkme-login-submit {
     width: 100%;
     height: 48px;
     margin-top: 24px;
     border: 0;
     border-radius: 14px;
-    background: #17221b;
-    color: #fff;
+    background: var(--arkme-login-accent);
+    color: var(--arkme-login-foreground);
     cursor: pointer;
     font: inherit;
     font-size: 18px;
     font-weight: 600;
     line-height: 1;
-    box-shadow: 0 12px 24px rgba(23,34,27,.18);
+    box-shadow: var(--dsw-shadow-lv2, 0 12px 24px rgba(23,34,27,.18));
   }
-  .dsh-arkme-login-submit:hover:not(:disabled) { background: #253129; }
+  .dsh-arkme-login-submit:hover:not(:disabled) { filter: brightness(.94); }
   .dsh-arkme-login-submit:disabled { cursor: default; box-shadow: none; opacity: .72; }
   .dsh-arkme-login-actions {
     margin-top: 24px;
@@ -273,24 +286,24 @@ const loginStyles = `
   .dsh-arkme-login-cancel {
     width: 100%;
     height: 48px;
-    border: 1px solid #d3ded6;
+    border: 1px solid var(--arkme-login-border);
     border-radius: 14px;
-    background: #fff;
-    color: #334239;
+    background: var(--arkme-login-surface);
+    color: var(--arkme-login-text);
     cursor: pointer;
     font: inherit;
     font-size: 18px;
     font-weight: 600;
     line-height: 1;
   }
-  .dsh-arkme-login-cancel:hover:not(:disabled) { background: #f6faf7; border-color: #bacbc0; }
+  .dsh-arkme-login-cancel:hover:not(:disabled) { background: var(--arkme-login-hover); border-color: var(--arkme-login-border); }
   .dsh-arkme-login-cancel:disabled { cursor: default; opacity: .62; }
   .dsh-arkme-login-error {
     margin-top: 16px;
     border-radius: 12px;
     padding: 8px 12px;
-    background: #fff3f0;
-    color: #b0442e;
+    background: var(--arkme-login-danger-soft);
+    color: var(--arkme-login-danger);
     font-size: 13px;
     line-height: 20px;
   }
@@ -302,7 +315,7 @@ const loginStyles = `
     align-items: center;
     justify-content: center;
     row-gap: 4px;
-    color: #68766d;
+    color: var(--arkme-login-secondary);
     font-size: 12px;
     line-height: 20px;
   }
@@ -315,19 +328,19 @@ const loginStyles = `
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #c8d5cb;
+    border: 1px solid var(--arkme-login-border);
     border-radius: 4px;
-    background: #fff;
+    background: var(--arkme-login-surface);
     color: transparent;
     font-size: 12px;
     font-weight: 700;
     line-height: 1;
     transition: border-color .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
   }
-  .dsh-arkme-login-check-input:checked + .dsh-arkme-login-check { border-color: #09b83e; background: #09b83e; color: #fff; }
-  .dsh-arkme-login-check-input:focus-visible + .dsh-arkme-login-check { box-shadow: 0 0 0 2px #dff7e7; }
-  .dsh-arkme-login-link { color: #09b83e; font-weight: 600; text-decoration: none; }
-  .dsh-arkme-login-link:hover { color: #079b35; }
+  .dsh-arkme-login-check-input:checked + .dsh-arkme-login-check { border-color: var(--arkme-login-accent); background: var(--arkme-login-accent); color: var(--arkme-login-foreground); }
+  .dsh-arkme-login-check-input:focus-visible + .dsh-arkme-login-check { box-shadow: 0 0 0 2px var(--arkme-login-accent-soft); }
+  .dsh-arkme-login-link { color: var(--arkme-login-accent); font-weight: 600; text-decoration: none; }
+  .dsh-arkme-login-link:hover { filter: brightness(.9); }
   @media (min-width: 640px) {
     .dsh-arkme-login-card { padding: 36px 32px; }
   }

@@ -7,6 +7,7 @@ import type {
 } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 const AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
 const AVATAR_CACHE_JITTER_MS = 2 * 60 * 1000
@@ -91,7 +92,7 @@ function avatarStyles(size: number): Record<string, CSSProperties> {
   return {
     avatar: {
       width: size, height: size, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
-      display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
+      display: 'grid', placeItems: 'center', background: 'transparent', color: arkmeTheme.secondary, fontSize: 15, fontWeight: 600,
     },
     image: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   }
@@ -100,7 +101,7 @@ function avatarStyles(size: number): Record<string, CSSProperties> {
 function DefaultUserAvatar({ size }: { size: number }) {
   return <span style={{
     width: '100%', height: '100%', display: 'grid', placeItems: 'center', borderRadius: '50%',
-    background: '#e8eaed', color: '#aeb3ba',
+    background: arkmeTheme.subtle, color: arkmeTheme.caption,
   }}>
     <svg width={size * .68} height={size * .68} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <circle cx="12" cy="8" r="4" />
@@ -129,7 +130,7 @@ function GroupAvatarMember({ slot, size }: { slot: ResolvedGroupAvatarSlot; size
 function GroupAvatarAddSlot({ size }: { size: number }) {
   return <span style={{
     width: '100%', height: '100%', display: 'grid', placeItems: 'center', borderRadius: '50%',
-    background: 'rgba(255,255,255,.94)', color: 'rgba(36,38,41,.30)', fontSize: Math.max(7, size * .42),
+    background: arkmeTheme.elevated, color: arkmeTheme.caption, fontSize: Math.max(7, size * .42),
     lineHeight: 1, fontWeight: 400,
   }}>+</span>
 }
@@ -159,7 +160,7 @@ export function ArkmeGroupAvatarVisual({
     data-arkme-group-avatar-count={layoutCount}
     style={{
       width: size, height: size, flex: 'none', position: 'relative', display: 'block', overflow: 'hidden',
-      borderRadius: '50%', background: 'rgba(36,38,41,.018)',
+      borderRadius: '50%', background: arkmeTheme.active,
     }}
   >
     {layout.map((position, index) => {
@@ -170,7 +171,7 @@ export function ArkmeGroupAvatarVisual({
         style={{
           position: 'absolute', left: size * position.left, top: size * position.top,
           width: slotSize, height: slotSize, boxSizing: 'border-box', overflow: 'hidden', borderRadius: '50%',
-          border: `${Math.max(1.2, slotSize * .09)}px solid rgba(255,255,255,.98)`,
+          border: `${Math.max(1.2, slotSize * .09)}px solid ${arkmeTheme.base}`,
         }}
       >
         {showAddSlot && index === 1

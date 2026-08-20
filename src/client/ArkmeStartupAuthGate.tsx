@@ -3,6 +3,7 @@ import type { ArkmeAuthSnapshot } from '../types.js'
 import { ArkmeAuthChecking, useArkmeAuthFlow, type ArkmeAuthFlowController, type ArkmePhoneBindingGate } from './arkme-auth-flow.js'
 import { ArkmeLogin } from './ArkmeLogin.js'
 import { arkmeUi } from './ui-controller.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 declare global {
   interface Window {
@@ -29,18 +30,18 @@ interface InertableElement {
 const styles: Record<string, CSSProperties> = {
   gate: {
     position: 'absolute', inset: 0, zIndex: 1000, width: '100%', height: '100%', minWidth: 0,
-    overflow: 'auto', display: 'flex', background: '#f7fbf8', pointerEvents: 'auto',
+    overflow: 'auto', display: 'flex', background: arkmeTheme.base, color: arkmeTheme.text, pointerEvents: 'auto',
   },
   center: { width: '100%', minHeight: '100%', display: 'grid', placeItems: 'center', padding: 24 },
   errorCard: {
-    width: 'min(420px, 100%)', boxSizing: 'border-box', border: '1px solid #dde6de', borderRadius: 24,
-    padding: '32px 28px', background: '#fff', boxShadow: '0 24px 70px rgba(23,34,27,.09)', textAlign: 'center',
+    width: 'min(420px, 100%)', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 24,
+    padding: '32px 28px', background: arkmeTheme.layer2, boxShadow: arkmeTheme.shadow, textAlign: 'center',
   },
-  errorTitle: { margin: 0, color: '#17221b', fontSize: 22, lineHeight: '30px', fontWeight: 600 },
-  errorText: { margin: '14px 0 0', color: '#69756d', fontSize: 14, lineHeight: '22px', wordBreak: 'break-word' },
+  errorTitle: { margin: 0, color: arkmeTheme.text, fontSize: 22, lineHeight: '30px', fontWeight: 600 },
+  errorText: { margin: '14px 0 0', color: arkmeTheme.secondary, fontSize: 14, lineHeight: '22px', wordBreak: 'break-word' },
   retry: {
-    height: 42, marginTop: 24, border: 0, borderRadius: 12, padding: '0 22px', background: '#09b83e',
-    color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 600,
+    height: 42, marginTop: 24, border: 0, borderRadius: 12, padding: '0 22px', background: arkmeTheme.accent,
+    color: arkmeTheme.foreground, cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 600,
   },
 }
 
