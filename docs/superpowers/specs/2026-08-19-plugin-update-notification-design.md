@@ -21,7 +21,7 @@ DSH 的 `plugin` 命令本质上是在目标 profile 目录中转发 `pnpm` 参�
 - 网络失败、Registry 不可用或响应异常时继续使用最后一次成功结果，不把“检查失败”误报为“已是最新版”。
 - 多个浏览器标签页只触发一份 Host 侧检查，避免重复请求和并发写状态。
 - Registry 安装支持应用内一键更新、自动重启、健康检查和失败回滚。
-- 本地 `link:`/`file:` 开发安装禁止自动覆盖，并保留可复制的官方升级命令作为兜底。
+- 本地 `link:`/`file:` 开发安装也显示应用内更新；更新只切换 Profile 依赖，不修改开发 checkout，并保留可复制的官方升级命令作为兜底。
 
 ## 非目标
 
@@ -238,7 +238,7 @@ available ── 用户完成升级并重启 ─► current（自动清理旧版
 Registry 安装中，用户点击“立即更新并重启”后：
 
 1. Host 只接受自己当前已知的目标版本，并拒绝 Browser 传入包名、命令或任意版本。
-2. Host 校验 profile 中的依赖是合法 semver 范围；`link:`、`file:`、Git 和 URL 安装全部阻断。
+2. Host 校验 profile 中的依赖是合法 semver 范围，或是明确的本地 `link:`/`file:` 开发安装；Git、URL 和其他非受控来源继续阻断。
 3. Host 写入权限为 `0600` 的计划文件，启动打包在插件内的独立 updater，然后向当前 DSH 发送 `SIGTERM`。
 4. Host 在停止 DSH 前由 Arkme 校验 Profile 的 `packageManager`；旧 Profile 缺失时只从 pnpm 的 `.modules.yaml` 安装元数据回填，并确认用户 PATH 中的 pnpm 能解析到该精确版本。updater 在旧进程退出后，通过同一个 DSH `bin.js` 和完整 Node `execArgv`，以 Host 已校验的精确目标版本执行插件 CLI `add`，不再次解析可能陈旧的 `latest`。随后按原 `execArgv`、应用 `argv`、`DSH_HOME`、profile、Host 和端口重启；源码启动依赖的 loader 参数不能丢失。
 5. updater 调用 loopback Host API 验证目标版本已加载；失败则重新安装旧版本并再次重启。
@@ -265,7 +265,7 @@ interface Config {
 }
 ```
 
-生产 `cordis.patch.yml` 使用默认稳定通道。使用本地路径开发插件时，文档要求配置 `updateCheckEnabled: false`，避免开发 checkout 被 Registry 版本提示干扰。
+生产 `cordis.patch.yml` 使用默认稳定通道，并允许本地路径开发安装显示更新入口；点击更新只替换 Profile 依赖，本地 checkout 保持不变。若不希望开发环境接收 Registry 提示，可显式配置 `updateAllowLocalInstall: false` 或 `updateCheckEnabled: false`。
 
 ## 发布流程
 
@@ -371,5 +371,5 @@ Host 使用结构化但不含个人信息的日志：
 - 更新状态不依赖 Arkme 登录，不泄露账号或设备信息。
 - 网络失败不会产生“已是最新版”的假结论，也不会清除已知更新提示。
 - 通知不覆盖 Chat 未读、不注入 DSH 私有 DOM、不接入 Chat SSE。
-- Registry 安装可在应用内完成升级和自动重启；本地开发安装不会被覆盖且仍有固定 CLI 兜底。
+- Registry 与本地 `link:`/`file:` 开发安装都可在应用内完成升级和自动重启；本地 checkout 不会被修改，且仍有固定 CLI 兜底。
 - 单元、Host API、客户端组件和 macOS/Windows profile 验收全部通过。

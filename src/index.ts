@@ -90,7 +90,7 @@ export const Config: Schema<Config> = Schema.object({
   updateChannel: Schema.union(['stable', 'next']).default('stable'),
   updateRegistryUrl: Schema.string().default('https://registry.npmjs.org'),
   updateCheckIntervalHours: Schema.number().min(1).max(168).default(12),
-  updateAllowLocalInstall: Schema.boolean().default(false),
+  updateAllowLocalInstall: Schema.boolean().default(true),
   richMediaRenderEnabled: Schema.boolean().default(true),
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
