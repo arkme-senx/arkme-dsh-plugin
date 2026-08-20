@@ -27,7 +27,7 @@
 - Modify: `internal/publication/bundle_validator_test.go`
 - Inspect only: `internal/publication/bundle_validator.go`
 
-- [ ] **Step 1: Verify the baseline**
+- [x] **Step 1: Verify the baseline**
 
 Run:
 
@@ -40,7 +40,7 @@ go test ./internal/publication -run 'TestValidateBundle|TestBundle' -count=1
 
 Expected: the existing publication validator tests pass. If the worktree contains unrelated changes, preserve them and stage only the test file from this task.
 
-- [ ] **Step 2: Add the two valid sandbox cases**
+- [x] **Step 2: Add the two valid sandbox cases**
 
 Add or extend table-driven tests that build complete tarballs with the existing test helper:
 
@@ -49,7 +49,7 @@ Add or extend table-driven tests that build complete tarballs with the existing 
 
 Keep the existing valid patch as one insert row whose id is derived by the same sandbox id helper and whose name is the package root.
 
-- [ ] **Step 3: Add every invalid matrix edge**
+- [x] **Step 3: Add every invalid matrix edge**
 
 Add named cases and assert a deterministic client-contract error code for:
 
@@ -64,7 +64,7 @@ Add named cases and assert a deterministic client-contract error code for:
 
 Also keep or add a regression proving `row.name = packageName + "/client"` is still rejected by patch validation even though the package may export `./client`.
 
-- [ ] **Step 4: Prove the new tests fail for the expected reason**
+- [x] **Step 4: Prove the new tests fail for the expected reason**
 
 Run:
 
@@ -74,7 +74,7 @@ go test ./internal/publication -run 'TestValidateBundle.*Sandbox|TestBundle.*San
 
 Expected: the Host+Client valid case fails because the current validator requires exactly two exports; the invalid consistency cases must not all pass accidentally.
 
-- [ ] **Step 5: Commit the red contract tests**
+- [x] **Step 5: Commit the red contract tests**
 
 ```bash
 git add internal/publication/bundle_validator_test.go
@@ -88,11 +88,11 @@ git commit -m "test(publication): 功能点: 固化沙箱 Client 导出合同"
 - Modify: `internal/publication/bundle_validator.go`
 - Modify if compilation requires helper reuse only: `internal/publication/bundle_validator_test.go`
 
-- [ ] **Step 1: Parse the declared Client contract**
+- [x] **Step 1: Parse the declared Client contract**
 
 Extend the internal package manifest model under `dsh` with a `client` object that exposes `platform` and `inject`. Preserve unknown-field tolerance used by the current manifest parser; validation, not decoding, owns the strict shape.
 
-- [ ] **Step 2: Separate fixed Host exports from conditional Client exports**
+- [x] **Step 2: Separate fixed Host exports from conditional Client exports**
 
 Keep these assertions unconditional for `arkme-sandboxed`:
 
@@ -116,11 +116,11 @@ Apply the closed matrix:
 
 Return one stable code such as `bundle_sandbox_client_invalid` with a message identifying the mismatched leg. Do not weaken path/link checks or accept conditional export objects and wildcard exports.
 
-- [ ] **Step 3: Keep patch validation root-only**
+- [x] **Step 3: Keep patch validation root-only**
 
 Do not change the patch parser or sandbox row-id calculation. Confirm there is still exactly one insert row, the row id matches the package-name-derived id, and `row.name` equals the package root exactly.
 
-- [ ] **Step 4: Make the focused test suite green**
+- [x] **Step 4: Make the focused test suite green**
 
 Run:
 
@@ -131,7 +131,7 @@ go test ./internal/publication -run 'TestValidateBundle.*Sandbox|TestBundle.*San
 
 Expected: all valid and invalid matrix cases pass, including patch-subpath rejection.
 
-- [ ] **Step 5: Commit the validator**
+- [x] **Step 5: Commit the validator**
 
 ```bash
 git add internal/publication/bundle_validator.go internal/publication/bundle_validator_test.go
@@ -145,7 +145,7 @@ git commit -m "fix(publication): 功能点: 支持沙箱 Client 标准导出"
 - Modify only if a missing regression is found: `internal/publication/bundle_validator_test.go`
 - Modify only if an existing end-to-end suite is the owner: matching files under `internal/publication/` or `tests/`
 
-- [ ] **Step 1: Run the publication regression suite**
+- [x] **Step 1: Run the publication regression suite**
 
 ```bash
 go test ./internal/publication/... -count=1
@@ -155,7 +155,7 @@ go vet ./...
 
 Expected: v1 artifact-only, v1 with source, strict v2 bundle/source byte equality, SHA/size, signature, identity, and both sandbox modes all pass.
 
-- [ ] **Step 2: Add only genuinely missing regressions**
+- [x] **Step 2: Add only genuinely missing regressions**
 
 If the named v1 and strict-v2 paths are not exercised, add focused tests proving:
 
@@ -165,7 +165,7 @@ If the named v1 and strict-v2 paths are not exercised, add focused tests proving
 
 Do not change runtime behavior while adding these tests.
 
-- [ ] **Step 3: Commit any added regression tests**
+- [x] **Step 3: Commit any added regression tests**
 
 Skip this commit if no file changed. Otherwise:
 
@@ -178,15 +178,15 @@ git commit -m "test(publication): 功能点: 回归 v1 与严格 v2 发布合同
 
 **Files:** None in the runtime service unless the repository already owns a test-only operations script. Do not add a public cleanup API.
 
-- [ ] **Step 1: Integrate through the repository's established develop workflow**
+- [x] **Step 1: Integrate through the repository's established develop workflow**
 
 Push the scoped backend commits, merge them into the current `develop`, and trigger the existing test Jenkins job. Record the final `develop` SHA and Jenkins build number. Do not merge or deploy to `master`.
 
-- [ ] **Step 2: Smoke the deployed validator with bytes generated by the unified plugin**
+- [x] **Step 2: Smoke the deployed validator with bytes generated by the unified plugin**
 
 After the plugin task supplies fresh bundles, publish one Host-only and one Host+Client v2 bundle against test. For both, assert successful creation, upload completion, publish completion, and resolve-install. For Host+Client, the backend must accept exactly three exports.
 
-- [ ] **Step 3: Clean the obsolete broken v2 test rows and objects**
+- [x] **Step 3: Clean the obsolete broken v2 test rows and objects**
 
 Use an existing test-environment operations path or a one-off DB/OSS administration command. Resolve exact ids first, then remove only records satisfying all of:
 
@@ -198,10 +198,10 @@ Use an existing test-environment operations path or a one-off DB/OSS administrat
 
 Also remove their unreferenced test artifact/source objects. Do not touch v1 rows, correctly shaped v2 rows, production data, or local DSH source. Capture the ids and before/after counts in the task report; do not commit credentials or raw tokens.
 
-- [ ] **Step 4: Re-publish the intended Cordis fixture as `1.0.0`**
+- [x] **Step 4: Re-publish the intended Cordis fixture as `1.0.0`**
 
 Rebuild from the source Cordis extension with the fixed plugin, publish version `1.0.0`, resolve it, and verify its stored package manifest has exactly the three expected exports. Reusing `1.0.0` is allowed only after the obsolete v2 test row and objects are confirmed removed.
 
-- [ ] **Step 5: Hand backend evidence to the plugin task**
+- [x] **Step 5: Hand backend evidence to the plugin task**
 
 Report: backend commit(s), final test `develop` SHA, Jenkins success URL/number, cleaned test ids/counts, Host-only publish id, Host+Client publish id, and resolve-install SHA values.

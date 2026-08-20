@@ -1,6 +1,6 @@
 # Arkme Sandboxed Client Export 合同修正设计
 
-**状态：** 已确认，实施中
+**状态：** 已完成，验收通过
 
 **插件实施基线：** `arkme-dsh-plugin@cdf1b3b`
 
