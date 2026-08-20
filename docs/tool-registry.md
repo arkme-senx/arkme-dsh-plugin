@@ -23,7 +23,7 @@ Per-tool instructions stay in `ToolDefinition.description`. Cross-tool guidance 
 
 ## Extension preview gallery Tools
 
-Business and hybrid profiles expose `arkme_extension_preview_add`, `arkme_extension_preview_delete`, and `arkme_extension_preview_reorder`. Add accepts only an Arkme-owned `image_ref` and lets the Host read at most 5 MiB; delete and reorder require exact `preview_ref` values plus the current `preview_revision`. Every mutation installs a DSH `tools/pre-execute` ask decision. Results contain only the safe ordered gallery and revision—never `image_ref`, base64, local paths, object keys, signed URLs, or signed headers. Atomic and disabled profiles expose none of these Tools.
+Business and hybrid profiles expose `arkme_extension_preview_add`, `arkme_extension_preview_delete`, and `arkme_extension_preview_reorder`. Add accepts either one Arkme-owned `image_ref` or the image attachments in the latest direct user message; optional 1-based `attachment_indices` selects a subset. The Host verifies every attachment before the first write and reads at most 5 MiB per image. Delete and reorder require exact `preview_ref` values plus the current `preview_revision`. Every mutation installs a DSH `tools/pre-execute` ask decision. Results contain only the safe ordered gallery and revision—never attachment ids, `image_ref`, base64, local paths, object keys, signed URLs, or signed headers. Atomic and disabled profiles expose none of these Tools.
 
 ## Adding a tool
 
