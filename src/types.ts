@@ -74,6 +74,22 @@ export interface ArkmeCreateTextResult {
   status: number
 }
 
+export type ArkmeBotProvider = 'openclaw' | 'webhook'
+export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
+
+export interface ArkmeBotSummary {
+  botRef: string
+  name: string
+  provider: ArkmeBotProvider
+  description: string
+  status: ArkmeBotStatus
+  directChatAvailable: boolean
+}
+
+export interface ArkmeBotList {
+  items: ArkmeBotSummary[]
+}
+
 export interface ArkmeConversationWriteResult {
   recordUid: string
   status: number

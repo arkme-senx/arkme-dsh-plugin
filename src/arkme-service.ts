@@ -20,6 +20,11 @@ import type {
 } from './outgoing-call-contract.js'
 import { projectRecordingTranscripts, projectRecordingVersions } from './recording-presentation.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+import { SecretValue } from './secret-value.js'
+import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
+import type {
+  ArkmeBotCreateInput, ArkmeBotCreateResult, ArkmeGroupBotList, ArkmeGroupBotMutationResult,
+} from './tools/ports/bots.js'
 import type {
   ArkmeDSHBetaCommunityEntryState,
   ArkmeDSHBetaCommunityJoinResult,
@@ -42,6 +47,9 @@ import type {
   ArkmeArkoRunProjection,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
+  ArkmeBotList,
+  ArkmeBotStatus,
+  ArkmeBotSummary,
   ArkmeAuthSnapshot,
   ArkmeCachedSnapshot,
   ArkmeCachedQueryResult,
@@ -177,6 +185,7 @@ export interface ArkmeServiceConfig {
   subjectBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
+  botBaseUrl: string
   imBaseUrl: string
   webrtcBaseUrl: string
   worldBaseUrl: string
@@ -245,6 +254,12 @@ interface ArkmeSourceRefPayload {
   kind: ArkmeSourceKind
   ownerRef: string
   displayName: string
+}
+
+interface ArkmeBotRefPayload {
+  version: 1
+  userId: number
+  botId: string
 }
 
 interface ArkmeAiPolishConfigSnapshot {
@@ -1019,6 +1034,7 @@ export class ArkmeService {
   private readonly aiPolishRetries = new Map<string, ArkmePendingAiPolishRetry>()
   private readonly interwovenMomentReferences = new Map<string, ArkmeInterwovenMomentReference>()
   private readonly mediaRefs = new Map<string, ArkmeMediaDescriptor>()
+  private openClawProvisioner: ReturnType<typeof createOpenClawProvisioner> | undefined
 
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -1067,6 +1083,288 @@ export class ArkmeService {
   chatRealtimeInitialEvent(): ArkmeChatClientEvent {
     const state = this.chatRealtime.state()
     return { type: 'reconcile', revision: this.chatClientRevision, connected: state.connected, refresh: 'if-stale' }
+  }
+
+  attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {
+    if (this.openClawProvisioner !== undefined) throw new Error('OpenClaw provisioner is already attached')
+    this.openClawProvisioner = provisioner
+  }
+
+  async connectOpenClawBot(botRef: string, options: { signal?: AbortSignal } = {}): Promise<OpenClawProvisionResult> {
+    const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 Bot', false, 404)
+    if (bot.provider !== 'openclaw') {
+      throw new ArkmePluginError('bot-provider-mismatch', '只有 OpenClaw Bot 可以连接本地 OpenClaw', false, 400)
+    }
+    if (this.openClawProvisioner === undefined) {
+      throw new ArkmePluginError('openclaw-not-configured', '请先安装并配置本地 OpenClaw', false, 503)
+    }
+    return await this.openClawProvisioner.reconcile({
+      botRef,
+      allowGatewayRestart: true,
+      resolveConnectionMetadata: async () => await this.resolveBotConnectionMetadata(botRef, options),
+      revealSecret: async () => await this.revealBotSecret(botRef, options),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+  }
+
+  async listBots(options: { signal?: AbortSignal } = {}): Promise<ArkmeBotList> {
+    const session = await this.requireSession()
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/list', {}, session, options.signal,
+    )
+    const items: ArkmeBotSummary[] = []
+    for (const value of listValue(data.bots)) {
+      const raw = objectValue(value)
+      const provider = stringValue(raw.provider).trim()
+      if (provider !== 'openclaw' && provider !== 'webhook') continue
+      items.push(await this.botSummaryFromData(raw, session.userId))
+    }
+    return { items }
+  }
+
+  async createBot(
+    input: ArkmeBotCreateInput,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotCreateResult> {
+    const name = input.name.trim()
+    const provider = input.provider
+    const description = input.description?.trim() ?? ''
+    const avatar = input.avatar?.trim() ?? ''
+    if (name === '') throw new ArkmePluginError('bot-name-invalid', 'Bot 名称不能为空', false)
+    if (provider !== 'openclaw' && provider !== 'webhook') {
+      throw new ArkmePluginError('bot-provider-unsupported', 'Bot Provider 不受支持', false, 400)
+    }
+    const session = await this.requireSession()
+    let data: Record<string, unknown>
+    try {
+      data = await this.authenticatedBotPost<Record<string, unknown>>(
+        '/api/v1/bot/create', { name, provider, description, avatar }, session, options.signal,
+      )
+    } catch (error) {
+      if (error instanceof ArkmePluginError && ['arkme-network-error', 'arkme-timeout'].includes(error.code)) {
+        throw new ArkmePluginError(
+          'bot-create-outcome-unknown',
+          'Bot 创建结果未知，请刷新 Bot 列表确认；不会自动重试',
+          false,
+          409,
+          { cause: error },
+        )
+      }
+      throw error
+    }
+    try {
+      const token = stringValue(objectValue(data.token_info).token).trim()
+      if (!token.startsWith('jbot_')) throw new Error('missing Bot token')
+      return {
+        bot: await this.botSummaryFromData(objectValue(data.bot), session.userId),
+        secret: new SecretValue(token),
+      }
+    } catch (error) {
+      throw new ArkmePluginError(
+        'bot-create-outcome-unknown',
+        'Bot 可能已创建，但响应不完整；请刷新 Bot 列表确认',
+        false,
+        409,
+        { cause: error },
+      )
+    }
+  }
+
+  async revealBotSecret(botRef: string, options: { signal?: AbortSignal } = {}): Promise<SecretValue> {
+    const session = await this.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/token/reveal', { bot_id: reference.botId }, session, options.signal,
+    )
+    const token = stringValue(data.token).trim()
+    if (!token.startsWith('jbot_')) {
+      throw new ArkmePluginError('bot-token-contract-invalid', 'Bot 凭据响应无效', false, 502)
+    }
+    return new SecretValue(token)
+  }
+
+  async openBotChat(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceItem> {
+    const session = await this.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 OpenClaw Bot', false, 404)
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/private-chat/open', { bot_id: reference.botId }, session, options.signal,
+    )
+    const chatSessionUid = stringValue(data.chat_session_uid).trim()
+    if (chatSessionUid === '') {
+      throw new ArkmePluginError(
+        'bot-chat-source-unavailable',
+        '当前 Bot 私聊仍使用旧会话协议，暂时不能复用统一 source 读写链路',
+        false,
+        409,
+      )
+    }
+    const source: ArkmeSourceItem = {
+      sourceRef: await this.sealSourceRef(session.userId, 'private_chat', chatSessionUid, bot.name),
+      kind: 'private_chat',
+      displayName: bot.name,
+      activeAtMillis: 0,
+      unreadCount: 0,
+    }
+    this.chatSourceCache.set(`${String(session.userId)}:${chatSessionUid}`, source)
+    return source
+  }
+
+  private async resolveBotConnectionMetadata(botRef: string, options: { signal?: AbortSignal } = {}): Promise<{ gatewayUrl: string; tokenPreview: string }> {
+    const session = await this.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    const gatewayUrl = stringValue(data.gateway_url).trim()
+    let parsed: URL
+    try { parsed = new URL(gatewayUrl) } catch {
+      throw new ArkmePluginError('bot-gateway-contract-invalid', 'Bot Gateway 地址无效', false, 502)
+    }
+    if (parsed.protocol !== 'wss:' || parsed.username !== '' || parsed.password !== '') {
+      throw new ArkmePluginError('bot-gateway-contract-invalid', 'Bot Gateway 地址必须使用安全 WebSocket', false, 502)
+    }
+    const tokenPreview = stringValue(objectValue(data.bot).token_preview).trim()
+    if (tokenPreview === '') {
+      throw new ArkmePluginError('bot-token-contract-invalid', 'Bot 凭据版本信息无效', false, 502)
+    }
+    return { gatewayUrl: parsed.toString(), tokenPreview }
+  }
+
+  async listGroupBots(
+    groupSourceRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupBotList> {
+    const session = await this.requireSession()
+    const group = await this.openGroupSourceRef(groupSourceRef, session.userId)
+    const data = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/group/list', { subject_uid: group.ownerRef }, session, options.signal,
+    )
+    const items: ArkmeGroupBotList['items'] = []
+    for (const value of listValue(data.bots)) {
+      const raw = objectValue(value)
+      if (stringValue(raw.provider).trim() !== 'openclaw') continue
+      const { directChatAvailable: _directChatAvailable, ...summary } = await this.botSummaryFromData(raw, session.userId)
+      items.push({ ...summary, installed: booleanValue(raw.installed) })
+    }
+    return {
+      groupSourceRef,
+      displayName: stringValue(data.subject_title).trim() || group.displayName,
+      canAddBots: booleanValue(data.can_current_user_add_bots),
+      items,
+    }
+  }
+
+  async addGroupBot(
+    groupSourceRef: string,
+    botRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupBotMutationResult> {
+    const session = await this.requireSession()
+    const [group, bot] = await Promise.all([
+      this.openGroupSourceRef(groupSourceRef, session.userId),
+      this.openBotRef(botRef, session.userId),
+    ])
+    await this.authenticatedBotPost(
+      '/api/v1/bot/group/add',
+      { bot_id: bot.botId, subject_uid: group.ownerRef, subject_title: group.displayName },
+      session,
+      options.signal,
+    )
+    return await this.confirmGroupBotState(groupSourceRef, botRef, true, options.signal)
+  }
+
+  async removeGroupBot(
+    groupSourceRef: string,
+    botRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupBotMutationResult> {
+    const session = await this.requireSession()
+    const [group, bot] = await Promise.all([
+      this.openGroupSourceRef(groupSourceRef, session.userId),
+      this.openBotRef(botRef, session.userId),
+    ])
+    await this.authenticatedBotPost(
+      '/api/v1/bot/group/remove', { bot_id: bot.botId, subject_uid: group.ownerRef }, session, options.signal,
+    )
+    return await this.confirmGroupBotState(groupSourceRef, botRef, false, options.signal)
+  }
+
+  private async confirmGroupBotState(
+    groupSourceRef: string,
+    botRef: string,
+    expectedInstalled: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupBotMutationResult> {
+    const list = await this.listGroupBots(groupSourceRef, signal === undefined ? {} : { signal })
+    const item = list.items.find(candidate => candidate.botRef === botRef)
+    if (item?.installed !== expectedInstalled) {
+      throw new ArkmePluginError('bot-group-state-unconfirmed', '无法确认 Bot 群聊安装状态', true, 503)
+    }
+    return { botRef, groupSourceRef, installed: expectedInstalled }
+  }
+
+  private async openGroupSourceRef(sourceRef: string, userId: number): Promise<ArkmeSourceRefPayload> {
+    const source = await this.openSourceRef(sourceRef, userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('bot-group-source-invalid', 'Bot 只能安装到群聊', false)
+    }
+    return source
+  }
+
+  private async botSummaryFromData(raw: Record<string, unknown>, userId: number): Promise<ArkmeBotSummary> {
+    const botId = stringValue(raw.bot_id).trim()
+    const name = stringValue(raw.name).trim()
+    const provider = stringValue(raw.provider).trim()
+    if (botId === '' || name === '' || (provider !== 'openclaw' && provider !== 'webhook')) {
+      throw new ArkmePluginError('bot-contract-invalid', 'Bot 响应不完整', true, 502)
+    }
+    const rawStatus = stringValue(raw.status).trim()
+    const status: ArkmeBotStatus = rawStatus === 'online' || rawStatus === 'offline' ? rawStatus : 'unknown'
+    return {
+      botRef: await this.sealBotRef(userId, botId),
+      name,
+      provider,
+      description: stringValue(raw.description).trim(),
+      status,
+      directChatAvailable: stringValue(raw.subject_uid).trim() !== ''
+        || stringValue(raw.chat_session_uid).trim() !== '',
+    }
+  }
+
+  private async sealBotRef(userId: number, botId: string): Promise<string> {
+    const payload = encodeOpaqueJson({ version: 1, userId, botId } satisfies ArkmeBotRefPayload)
+    const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
+    return `arkme-bot-v1.${payload}.${signature}`
+  }
+
+  private async openBotRef(botRef: string, expectedUserId: number): Promise<ArkmeBotRefPayload> {
+    const parts = botRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'arkme-bot-v1') {
+      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false)
+    }
+    const payload = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false)
+    }
+    let raw: Record<string, unknown>
+    try { raw = objectValue(decodeOpaqueJson(payload)) }
+    catch (error) {
+      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false, 400, { cause: error })
+    }
+    const reference: ArkmeBotRefPayload = {
+      version: 1,
+      userId: numberValue(raw.userId),
+      botId: stringValue(raw.botId).trim(),
+    }
+    if (raw.version !== 1 || reference.userId !== expectedUserId || reference.botId === '') {
+      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用与当前账号不匹配', false, 403)
+    }
+    return reference
   }
 
   private handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
@@ -3920,7 +4218,7 @@ export class ArkmeService {
   async sendSourceText(
     sourceRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string } = {},
+    options: { recordUid?: string; relationUid?: string; botRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     const session = await this.requireSession()
     const source = await this.openSourceRef(sourceRef, session.userId)
@@ -3949,12 +4247,98 @@ export class ArkmeService {
     }
     const relationUid = options.relationUid?.trim() || crypto.randomUUID()
     if (source.kind === 'group_chat') {
+      if (options.botRefs !== undefined && options.botRefs.length > 0) {
+        const mentionSend = await this.groupBotMentionSend(
+          sourceRef, source, text, options.botRefs, recordUid, relationUid, session, options.signal,
+        )
+        return mentionSend
+      }
       return await this.sendGroupSourceTextWithAiPolish(
         sourceRef, source.ownerRef, text, recordUid, relationUid, session,
       )
     }
+    if (options.botRefs !== undefined && options.botRefs.length > 0) {
+      throw new ArkmePluginError('bot-mention-group-required', 'Bot mention 只能发送到群聊', false)
+    }
     return await this.sendChatSourceTextRaw(
       sourceRef, source.ownerRef, text, recordUid, relationUid, session,
+    )
+  }
+
+  private async groupBotMentionSend(
+    sourceRef: string,
+    source: ArkmeSourceRefPayload,
+    text: string,
+    botRefs: readonly string[],
+    recordUid: string,
+    relationUid: string,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeSourceSendResult> {
+    const uniqueRefs = new Set(botRefs.map(ref => ref.trim()))
+    if (uniqueRefs.has('') || uniqueRefs.size !== botRefs.length) {
+      throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用为空或重复', false)
+    }
+    const references = await Promise.all([...uniqueRefs].map(async ref => ({
+      ref,
+      value: await this.openBotRef(ref, session.userId),
+    })))
+    const requestedById = new Map(references.map(item => [item.value.botId, item.ref]))
+    if (requestedById.size !== references.length) {
+      throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用重复', false)
+    }
+    const groupData = await this.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/group/list', { subject_uid: source.ownerRef }, session, signal,
+    )
+    const mentions: Array<{ bot_uid: string; display_name_snapshot: string; start_index: number; length: number }> = []
+    let visibleText = ''
+    for (const value of listValue(groupData.bots)) {
+      const raw = objectValue(value)
+      const botId = stringValue(raw.bot_id).trim()
+      if (!requestedById.has(botId)) continue
+      if (stringValue(raw.provider).trim() !== 'openclaw' || !booleanValue(raw.installed)) {
+        throw new ArkmePluginError('bot-mention-not-installed', '所选 Bot 未安装到该群聊', false, 409)
+      }
+      const name = stringValue(raw.name).trim()
+      if (name === '') throw new ArkmePluginError('bot-contract-invalid', 'Bot 响应不完整', true, 502)
+      const display = `@${name}`
+      const startIndex = visibleText.length
+      visibleText += `${display} `
+      mentions.push({
+        bot_uid: botId,
+        display_name_snapshot: name,
+        start_index: startIndex,
+        length: display.length,
+      })
+      requestedById.delete(botId)
+    }
+    if (requestedById.size > 0) {
+      throw new ArkmePluginError('bot-mention-not-installed', '所选 Bot 未安装到该群聊', false, 409)
+    }
+    visibleText += text
+    if (visibleText.length > this.config.maxTextLength) {
+      throw new ArkmePluginError('source-text-invalid', '发送内容超过长度限制', false)
+    }
+    const checksumInput = {
+      text_content: visibleText,
+      human_mentions: [],
+      bot_mentions: mentions.map(mention => ({
+        bot_uid: mention.bot_uid,
+        start_index: mention.start_index,
+        length: mention.length,
+      })),
+    }
+    const contentPayload = {
+      payload_kind: 2,
+      schema_version: 1,
+      mention_metadata: {
+        schema_version: 1,
+        source_checksum: createHash('sha256').update(JSON.stringify(checksumInput)).digest('hex'),
+        bot_mentions: mentions,
+      },
+    }
+    return await this.sendChatSourceTextRaw(
+      sourceRef, source.ownerRef, visibleText, recordUid, relationUid, session, undefined, contentPayload, signal,
     )
   }
 
@@ -4021,6 +4405,8 @@ export class ArkmeService {
     relationUid: string,
     session: ArkmeSessionCredentials,
     initialAiPolish?: Record<string, unknown>,
+    contentPayload?: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<ArkmeSourceSendResult> {
     const result = await this.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/records/send',
@@ -4031,9 +4417,11 @@ export class ArkmeService {
         template_kind: 1,
         text_content: text,
         ...(initialAiPolish === undefined ? {} : { initial_ai_polish: initialAiPolish }),
+        ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
         send_at: Date.now(),
       },
       session,
+      signal,
     )
     return {
       sourceRef,
@@ -7526,6 +7914,24 @@ export class ArkmeService {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  private async authenticatedBotPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    try {
+      return await this.post<T>(this.config.botBaseUrl, path, body, session.accessToken, [200], signal)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.botBaseUrl, path, body, session.accessToken, [200], signal)
     }
   }
 

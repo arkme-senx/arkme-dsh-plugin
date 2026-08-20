@@ -20,6 +20,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://jotmo-subject.senguo.me', '')
     .replaceAll('https://jotmo-record.senguo.me', '')
     .replaceAll('https://jotmo-chat.senguo.me', '')
+    .replaceAll('https://jotmo-bot.senguo.me', '')
     .replaceAll('https://jotmo-im.senguo.me', '')
     .replaceAll('https://jotmo-webrtc.senguo.me', '')
     .replaceAll('https://jotmo-world.senguo.me', '')
@@ -31,6 +32,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://subject.jotmo.cc', '')
     .replaceAll('https://record.jotmo.cc', '')
     .replaceAll('https://chat.jotmo.cc', '')
+    .replaceAll('https://bot.jotmo.cc', '')
     .replaceAll('https://im.jotmo.cc', '')
     .replaceAll('https://webrtc.jiwo.cc', '')
     .replaceAll('https://world.jotmo.cc', '')
@@ -52,6 +54,12 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('dsh-worktrees/jotmo-virtual-workspace', '')
 }
 
+function withoutOpenClawProtocolNames(file: string, content: string): string {
+  if (file !== join(root, 'src/openclaw/cli-adapter.ts')) return content
+  // The published package, plugin id and channel key are fixed external protocol identifiers.
+  return content.replace(/jotmo/gi, '')
+}
+
 function withoutArkmeIdCompatibilityAliases(file: string, content: string): string {
   const allowedFiles = new Set([
     join(root, 'src/tools/business/account/set-id.ts'),
@@ -62,6 +70,16 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
   return content
     .replaceAll('即我号', '')
     .replaceAll('即我id', '')
+}
+
+function withoutOfficialCommunityProductCopy(file: string, content: string): string {
+  if (file === join(root, 'src/client/ArkmeOfficialCommunityEntry.tsx')) {
+    return content.replaceAll('即我社区', '').replaceAll('即我官方群', '')
+  }
+  if (file === join(root, 'src/arkme-service.ts')) {
+    return content.replaceAll('即我官方群', '')
+  }
+  return content
 }
 
 describe('Arkme plugin identity', () => {
@@ -75,8 +93,11 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8'))
-      const content = withoutInfrastructureNames(source)
+      const source = withoutOfficialCommunityProductCopy(
+        file,
+        withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+      )
+      const content = withoutInfrastructureNames(withoutOpenClawProtocolNames(file, source))
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
     })
 
