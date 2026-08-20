@@ -37,6 +37,14 @@ const styles: Record<string, CSSProperties> = {
   articlePreview: { maxWidth: 'calc(100% - 22px)', margin: '4px 0 0 22px', display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 14, lineHeight: '20px' },
   articleMeta: { margin: '8px 0 0 22px', display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 12, lineHeight: '14px' },
   articleWordIcon: { width: 14, height: 14, flex: 'none' },
+  forwardCard: {
+    width: 'min(400px, 100%)', minWidth: 0, padding: '12px 16px', boxSizing: 'border-box', overflow: 'hidden',
+    border: '1px solid var(--dsw-alias-border-l2, #e2e5e9)', borderRadius: 18,
+    background: 'var(--dsw-specific-input-major, #fff)', color: 'var(--dsw-alias-label-primary, #17191c)',
+  },
+  forwardTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '22px', fontWeight: 600 },
+  forwardLines: { marginTop: 4, display: 'flex', flexDirection: 'column', gap: 1 },
+  forwardLine: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 14, lineHeight: '20px' },
   previewOverlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 48, boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
   previewBody: { position: 'relative', width: 'min(960px, 90vw)', height: 'min(720px, 82vh)' },
   previewViewport: { width: '100%', height: '100%', overflowX: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
@@ -406,6 +414,22 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated }: {
   const [preview, setPreview] = useState<ArkmeContentBlock>()
   const [articleOpen, setArticleOpen] = useState(false)
   const [failedRefs, setFailedRefs] = useState<Set<string>>(() => new Set())
+  if (item.forwardRecords !== undefined) {
+    const itemLines = item.forwardRecords.items.map(value => {
+      const summary = value.textContent || value.title || value.contentLabel || '非文本内容'
+      return `${value.senderName}：${summary}`
+    })
+    const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
+    return <div style={styles.forwardCard} data-arkme-forward-records-card="true">
+      <p style={styles.forwardTitle}>{item.forwardRecords.title}</p>
+      <div style={styles.forwardLines}>
+        {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
+          key={`${String(index)}:${line}`}
+          style={styles.forwardLine}
+        >{line}</p>)}
+      </div>
+    </div>
+  }
   const markFailed = (block: ArkmeContentBlock) => {
     setFailedRefs(current => new Set(current).add(block.mediaRef))
   }

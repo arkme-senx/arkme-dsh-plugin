@@ -9,7 +9,7 @@ import type {
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageState, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
-  ArkmeUploadedAsset,
+  ArkmeUploadedAsset, ArkmeForwardRecordPreviewItem,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
@@ -95,8 +95,10 @@ const styles: Record<string, CSSProperties> = {
   rowOther: { justifyContent: 'flex-start' },
   messageLine: { maxWidth: '88%', display: 'flex', alignItems: 'flex-start', gap: 9 },
   messageLineMe: { flexDirection: 'row-reverse' },
+  forwardMessageLine: { width: '88%' },
   messageBody: { minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 },
   messageBodyMe: { alignItems: 'flex-end' },
+  forwardMessageBody: { flex: 1 },
   messageAvatar: {
     width: 32, height: 32, flex: 'none', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#737982', fontSize: 11, fontWeight: 600,
@@ -106,6 +108,7 @@ const styles: Record<string, CSSProperties> = {
   bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
   bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)', '--arkme-bubble-fade': 'var(--dsw-specific-bubble, #eef3ff)' } as CSSProperties,
   bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)', '--arkme-bubble-fade': 'var(--dsw-alias-bg-subtle, #f0f2f5)' } as CSSProperties,
+  forwardBubble: { width: '100%', maxWidth: 400, minWidth: 0, padding: 0, borderRadius: 0, background: 'transparent' },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
   meta: { color: '#adb2b8', fontSize: 11 },
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
@@ -144,11 +147,31 @@ const styles: Record<string, CSSProperties> = {
     color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
   },
   drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 10, width: 'min(420px, 92%)', display: 'flex', flexDirection: 'column', background: colors.panel, borderLeft: `1px solid ${colors.border}`, boxShadow: '-12px 0 30px rgba(0,0,0,.12)' },
+  forwardDrawer: { top: ARKME_CONVERSATION_HEADER_HEIGHT, width: 'min(420px, 92%)' },
+  forwardDrawerDismiss: {
+    position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, left: 0,
+    zIndex: 9, background: 'transparent',
+  },
   drawerHeader: { height: 56, flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', borderBottom: `1px solid ${colors.border}`, boxSizing: 'border-box' },
   drawerTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
   close: { marginLeft: 'auto', width: 32, height: 32, border: 0, borderRadius: 999, background: '#f1f3f6', cursor: 'pointer', color: colors.text },
   drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 },
   detailText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' },
+  forwardDetailHeader: { minHeight: 76, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center', padding: '12px 60px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}` },
+  forwardDetailHeading: { minWidth: 0, textAlign: 'center' },
+  forwardDetailTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 18, lineHeight: '26px', fontWeight: 600 },
+  forwardDetailRange: { marginTop: 1, color: '#9aa0a8', fontSize: 13, lineHeight: '18px' },
+  forwardDetailClose: { position: 'absolute', right: 18, top: 20, width: 34, height: 34, border: 0, background: 'transparent', color: '#8d9299', cursor: 'pointer', fontSize: 30, lineHeight: '30px' },
+  forwardDetailBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '18px 28px 8px' },
+  forwardDetailRow: { display: 'flex', alignItems: 'flex-start', gap: 12, padding: '18px 0' },
+  forwardDetailAvatar: { width: 42, height: 42, flex: 'none', overflow: 'hidden', borderRadius: 999, display: 'grid', placeItems: 'center' },
+  forwardDetailContent: { minWidth: 0, flex: 1 },
+  forwardDetailMeta: { display: 'flex', alignItems: 'baseline', gap: 12 },
+  forwardDetailName: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 14, lineHeight: '20px', fontWeight: 600 },
+  forwardDetailTime: { flex: 'none', color: '#a2a7ae', fontSize: 13, lineHeight: '20px' },
+  forwardDetailRecordText: { margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: colors.text, fontSize: 16, lineHeight: '25px' },
+  forwardDetailDivider: { height: 1, background: colors.border },
+  forwardDetailFooter: { flex: 'none', padding: '12px 24px 18px', color: '#a2a7ae', textAlign: 'center', fontSize: 13, lineHeight: '18px' },
   toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: '#f1efff', color: '#694fd0', cursor: 'pointer', fontSize: 12 },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
 }
@@ -255,6 +278,94 @@ function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
   return <span style={styles.messageAvatar} aria-hidden>
     {src === '' ? <ArkmeMark size={32} /> : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
   </span>
+}
+
+function normalizedEpochMillis(value: number): number {
+  return value > 0 && value < 100_000_000_000 ? value * 1000 : value
+}
+
+function forwardDateLabel(value: number): string {
+  const millis = normalizedEpochMillis(value)
+  if (millis <= 0) return ''
+  const date = new Date(millis)
+  return `${String(date.getFullYear())}年${String(date.getMonth() + 1)}月${String(date.getDate())}日`
+}
+
+function forwardShortTimeLabel(value: number): string {
+  const millis = normalizedEpochMillis(value)
+  if (millis <= 0) return ''
+  const date = new Date(millis)
+  return `${String(date.getMonth() + 1)}月${String(date.getDate())}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function forwardFullTimeLabel(value: number): string {
+  const millis = normalizedEpochMillis(value)
+  if (millis <= 0) return ''
+  const date = new Date(millis)
+  return `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
+}
+
+function ForwardRecordAvatar({ avatarRef }: { avatarRef?: string }) {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    let active = true
+    if (avatarRef === undefined || avatarRef === '') {
+      setSrc('')
+      return () => { active = false }
+    }
+    void loadArkmeImageDataUrl(avatarRef).then(value => { if (active) setSrc(value) }).catch(() => undefined)
+    return () => { active = false }
+  }, [avatarRef])
+  return <span style={styles.forwardDetailAvatar} aria-hidden>
+    {src === '' ? <ArkmeMark size={42} /> : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
+  </span>
+}
+
+function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineItem; onClose: () => void }) {
+  const forward = item.forwardRecords
+  if (forward === undefined) return null
+  const datedItems = forward.items.map(value => normalizedEpochMillis(value.sendAtMillis)).filter(value => value > 0)
+  const earliest = datedItems.length > 0 ? Math.min(...datedItems) : forward.createdAtMillis
+  const latest = datedItems.length > 0 ? Math.max(...datedItems) : forward.createdAtMillis
+  const startDate = forwardDateLabel(earliest)
+  const endDate = forwardDateLabel(latest)
+  const range = startDate === endDate ? startDate : `${startDate} 至 ${endDate}`
+  const rows: ArkmeForwardRecordPreviewItem[] = forward.items.length > 0
+    ? forward.items
+    : forward.summaryLines.map(line => {
+      const separator = Math.max(line.indexOf('：'), line.indexOf(':'))
+      return {
+        senderName: separator > 0 ? line.slice(0, separator).trim() : item.senderName,
+        sendAtMillis: 0,
+        title: '',
+        textContent: separator > 0 ? line.slice(separator + 1).trim() : line,
+      }
+    })
+  return <aside style={{ ...styles.drawer, ...styles.forwardDrawer }} aria-label="转发快记详情">
+    <header style={styles.forwardDetailHeader}>
+      <div style={styles.forwardDetailHeading}>
+        <h3 style={styles.forwardDetailTitle}>{forward.title}</h3>
+        {range !== '' && <div style={styles.forwardDetailRange}>{range}</div>}
+      </div>
+      <button type="button" style={styles.forwardDetailClose} aria-label="关闭详情" onClick={onClose}>×</button>
+    </header>
+    <div style={styles.forwardDetailBody}>
+      {(rows.length > 0 ? rows : [{ senderName: item.senderName, sendAtMillis: 0, title: '', textContent: '原快记暂不可查看' }]).map((value, index) => <Fragment key={`${String(index)}:${value.senderName}:${String(value.sendAtMillis)}`}>
+        <div style={styles.forwardDetailRow}>
+          <ForwardRecordAvatar {...(value.avatarRef === undefined ? {} : { avatarRef: value.avatarRef })} />
+          <div style={styles.forwardDetailContent}>
+            <div style={styles.forwardDetailMeta}>
+              <span style={styles.forwardDetailName}>{value.senderName}</span>
+              {forwardShortTimeLabel(value.sendAtMillis) !== '' && <span style={styles.forwardDetailTime}>{forwardShortTimeLabel(value.sendAtMillis)}</span>}
+            </div>
+            <p style={styles.forwardDetailRecordText}>{value.textContent || value.title || value.contentLabel || '非文本内容'}</p>
+          </div>
+        </div>
+        {index < rows.length - 1 && <div style={styles.forwardDetailDivider} />}
+      </Fragment>)}
+    </div>
+    <footer style={styles.forwardDetailFooter}>此转发生成时间：{forwardFullTimeLabel(forward.createdAtMillis)}</footer>
+  </aside>
 }
 
 export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProps = {}) {
@@ -1169,14 +1280,26 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
                   <li style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
-                    <div style={{ ...styles.messageLine, ...(item.isMe ? styles.messageLineMe : {}) }}>
+                    <div style={{
+                      ...styles.messageLine,
+                      ...(item.isMe ? styles.messageLineMe : {}),
+                      ...(item.forwardRecords === undefined ? {} : styles.forwardMessageLine),
+                    }}>
                       {showMessageAvatars && <MessageAvatar item={item} />}
-                      <div style={{ ...styles.messageBody, ...(item.isMe ? styles.messageBodyMe : {}) }}>
+                      <div style={{
+                        ...styles.messageBody,
+                        ...(item.isMe ? styles.messageBodyMe : {}),
+                        ...(item.forwardRecords === undefined ? {} : styles.forwardMessageBody),
+                      }}>
                         {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
                         <div
                           role="button"
                           tabIndex={0}
-                          style={{ ...styles.bubble, ...(item.isMe ? styles.bubbleMe : styles.bubbleOther) }}
+                          style={{
+                            ...styles.bubble,
+                            ...(item.isMe ? styles.bubbleMe : styles.bubbleOther),
+                            ...(item.forwardRecords === undefined ? {} : styles.forwardBubble),
+                          }}
                           onClick={event => {
                             if (event.target instanceof Element && event.target.closest('button,a,audio,video')) return
                             setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
@@ -1267,7 +1390,18 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
             </button></div>
           </div></footer>
         </>}
-        {drawer === 'detail' && detailItem !== undefined && <aside style={styles.drawer} aria-label="快记详情">
+        {drawer === 'detail' && detailItem?.forwardRecords !== undefined && <>
+          <div
+            style={styles.forwardDrawerDismiss}
+            aria-hidden="true"
+            onClick={() => { setDrawer(undefined) }}
+          />
+          <ForwardRecordsDetail
+            item={detailItem}
+            onClose={() => { setDrawer(undefined) }}
+          />
+        </>}
+        {drawer === 'detail' && detailItem !== undefined && detailItem.forwardRecords === undefined && <aside style={styles.drawer} aria-label="快记详情">
           <header style={styles.drawerHeader}>
             <h3 style={styles.drawerTitle}>快记详情</h3>
             <button type="button" style={styles.close} aria-label="关闭详情" onClick={() => { setDrawer(undefined) }}>×</button>

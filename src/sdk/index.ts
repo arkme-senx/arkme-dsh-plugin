@@ -65,6 +65,8 @@ export type {
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
+  ArkmeForwardRecordsPreview,
+  ArkmeForwardRecordPreviewItem,
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,

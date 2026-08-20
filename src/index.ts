@@ -347,6 +347,8 @@ export type {
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
+  ArkmeForwardRecordsPreview,
+  ArkmeForwardRecordPreviewItem,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,
