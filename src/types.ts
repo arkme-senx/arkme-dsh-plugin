@@ -74,6 +74,22 @@ export interface ArkmeCreateTextResult {
   status: number
 }
 
+export type ArkmeBotProvider = 'openclaw' | 'webhook'
+export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
+
+export interface ArkmeBotSummary {
+  botRef: string
+  name: string
+  provider: ArkmeBotProvider
+  description: string
+  status: ArkmeBotStatus
+  directChatAvailable: boolean
+}
+
+export interface ArkmeBotList {
+  items: ArkmeBotSummary[]
+}
+
 export interface ArkmeConversationWriteResult {
   recordUid: string
   status: number
@@ -466,6 +482,25 @@ export interface ArkmeTimelineItem {
   contentBlocks?: ArkmeContentBlock[]
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
+  /** Browser-safe Chat forward snapshot. It is present only for explicit `render_kind=forward_records` payloads. */
+  forwardRecords?: ArkmeForwardRecordsPreview
+}
+
+export interface ArkmeForwardRecordsPreview {
+  title: string
+  createdAtMillis: number
+  summaryLines: string[]
+  items: ArkmeForwardRecordPreviewItem[]
+}
+
+export interface ArkmeForwardRecordPreviewItem {
+  senderName: string
+  /** Opaque Provider image reference for the snapshotted sender. */
+  avatarRef?: string
+  sendAtMillis: number
+  title: string
+  textContent: string
+  contentLabel?: string
 }
 
 export type ArkmeAiPolishSendState = 'none' | 'polishing' | 'polished' | 'kept_original' | 'failed'

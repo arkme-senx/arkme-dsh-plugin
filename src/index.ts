@@ -3,6 +3,9 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
+
+export { createOpenClawCliAdapter } from './openclaw/index.js'
+import { createOpenClawCliAdapter, createOpenClawCommandRunner, createOpenClawFileSecretStore, createOpenClawProvisioner } from './openclaw/index.js'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
@@ -30,6 +33,7 @@ export interface Config {
   subjectBaseUrl: string
   recordBaseUrl: string
   chatBaseUrl: string
+  botBaseUrl: string
   imBaseUrl: string
   webrtcBaseUrl: string
   worldBaseUrl: string
@@ -58,6 +62,7 @@ export interface Config {
   updateRegistryUrl: string
   updateCheckIntervalHours: number
   updateAllowLocalInstall: boolean
+  openclawProfile: string
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -66,6 +71,7 @@ export const Config: Schema<Config> = Schema.object({
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
+  botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
   webrtcBaseUrl: Schema.string().default('https://jotmo-webrtc.senguo.me'),
   worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
@@ -94,6 +100,7 @@ export const Config: Schema<Config> = Schema.object({
   richMediaRenderEnabled: Schema.boolean().default(true),
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
+  openclawProfile: Schema.string().default('dev'),
 })
 
 export const name = 'dsh-arkme'
@@ -115,6 +122,17 @@ export function apply(ctx: Context, config: Config): void {
   const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService(config, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const openClawStateDirectory = join(stateDirectory, 'openclaw')
+  const openClawCli = createOpenClawCliAdapter({
+    profile: config.openclawProfile,
+    run: createOpenClawCommandRunner({ timeoutMs: config.requestTimeoutMs }),
+  })
+  service.attachOpenClawProvisioner(createOpenClawProvisioner({
+    cli: openClawCli,
+    secretStore: createOpenClawFileSecretStore({ rootDir: join(openClawStateDirectory, 'secrets') }),
+    workspaceRoot: join(openClawStateDirectory, 'workspaces'),
+    isRuntimeOnline: async botRef => (await service.listBots()).items.some(bot => bot.botRef === botRef && bot.status === 'online'),
+  }))
   const updateManager = new ArkmePluginUpdateManager({
     enabled: config.updateCheckEnabled,
     channel: config.updateChannel,
@@ -249,6 +267,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.authBaseUrl,
       config.recordBaseUrl,
       config.chatBaseUrl,
+      config.botBaseUrl,
       config.imBaseUrl,
       config.webrtcBaseUrl,
       config.worldBaseUrl,
@@ -270,11 +289,15 @@ function validateConfig(ctx: Context, config: Config): void {
     throw new Error('dsh-arkme: geetestCaptchaId is invalid')
   }
   validateUpdateRegistryOrigin(config.updateRegistryUrl)
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(config.openclawProfile)) {
+    throw new Error('dsh-arkme: openclawProfile must be a fixed profile name')
+  }
   for (const [label, raw] of [
     ['authBaseUrl', config.authBaseUrl],
     ['subjectBaseUrl', config.subjectBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
+    ['botBaseUrl', config.botBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
     ['webrtcBaseUrl', config.webrtcBaseUrl],
     ['worldBaseUrl', config.worldBaseUrl],
@@ -347,6 +370,8 @@ export type {
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
+  ArkmeForwardRecordsPreview,
+  ArkmeForwardRecordPreviewItem,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,

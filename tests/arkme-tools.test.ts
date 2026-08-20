@@ -478,6 +478,14 @@ describe('Arkme conversation tools', () => {
       reason: 'Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“Chosen_01”吗？',
     })
 
+    const connectAsk = await preExecute!(
+      { name: 'arkme_bot_openclaw_connect', arguments: { bot_ref: 'arkme-bot-v1.opaque' } },
+      async () => ({ kind: 'allow' }),
+    )
+    expect(connectAsk).toMatchObject({ kind: 'ask' })
+    expect(connectAsk.reason).toContain('全部 Agent')
+    expect(connectAsk.reason).toContain('接管')
+
     const denied = { kind: 'deny', reason: 'blocked by policy' }
     await expect(preExecute!(
       { name: 'arkme_id_set', arguments: { arkme_id: 'Chosen_01' } },
@@ -557,7 +565,7 @@ describe('Arkme conversation tools', () => {
     await expect(list.execute({ directory: 'root' }, { signal } as never)).resolves.toContain('<data_from_arkme>')
     await expect(read.execute({ source_ref: 'source-1' }, { signal } as never)).resolves.toContain('小林')
     await expect(send.execute(
-      { source_ref: 'source-1', text: '你好' },
+      { source_ref: 'source-1', text: '你好', bot_refs: ['arkme-bot-v1.bot'] },
       { callId: 'source-send-call', signal } as never,
     )).resolves.toContain('localState')
     expect(service.listSources).toHaveBeenCalledWith('root', expect.objectContaining({ limit: 30 }))
@@ -565,6 +573,7 @@ describe('Arkme conversation tools', () => {
     expect(service.sendSourceText).toHaveBeenCalledWith('source-1', '你好', expect.objectContaining({
       recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      botRefs: ['arkme-bot-v1.bot'],
     }))
   })
 

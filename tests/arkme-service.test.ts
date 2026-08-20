@@ -99,6 +99,7 @@ const config: ArkmeServiceConfig = {
   subjectBaseUrl: 'https://subject.test',
   recordBaseUrl: 'https://record.test',
   chatBaseUrl: 'https://chat.test',
+  botBaseUrl: 'https://bot.test',
   imBaseUrl: 'https://im.test',
   webrtcBaseUrl: 'https://webrtc.test',
   worldBaseUrl: 'https://world.test',

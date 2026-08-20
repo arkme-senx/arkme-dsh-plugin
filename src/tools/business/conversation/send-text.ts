@@ -20,6 +20,7 @@ export const sendTextToolModule = defineArkmeCoreToolModule({
       parameters: {
         source_ref: { type: 'string', required: true, description: 'Account-bound source_ref returned by arkme_sources_list.' },
         text: { type: 'string', required: true, description: 'Final plain-text content explicitly authorized for this destination.' },
+        bot_refs: { type: 'array', items: { type: 'string' }, description: 'Optional account-bound bot_ref values to mention in a group chat.' },
       },
       output: TEXT_OUTPUT,
       async execute(args, exec) {
@@ -27,6 +28,8 @@ export const sendTextToolModule = defineArkmeCoreToolModule({
         const result = await ports.sendSourceText(args.source_ref, args.text, {
           recordUid: stableUidForToolCall('source-record', callId),
           relationUid: stableUidForToolCall('source-relation', callId),
+          ...(args.bot_refs === undefined ? {} : { botRefs: args.bot_refs }),
+          signal: exec.signal,
         })
         return taggedJSON('Arkme 发送结果', result)
       },

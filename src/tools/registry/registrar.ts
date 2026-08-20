@@ -44,11 +44,18 @@ export function registerArkmeTools(
     })
   }
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) ctx.tools.register(definition)
-  if (arkmeToolCatalog.toolNamesFor(profile).includes('arkme_id_set')) {
+  const toolNames = arkmeToolCatalog.toolNamesFor(profile)
+  if (toolNames.includes('arkme_id_set') || toolNames.includes('arkme_bot_openclaw_connect')) {
     ctx.on('tools/pre-execute', async (exec, next) => {
-      if (exec.name !== 'arkme_id_set') return await next()
+      if (exec.name !== 'arkme_id_set' && exec.name !== 'arkme_bot_openclaw_connect') return await next()
       const decision = await next()
       if (decision.kind !== 'allow') return decision
+      if (exec.name === 'arkme_bot_openclaw_connect') {
+        return {
+          kind: 'ask',
+          reason: '确认连接这个 Bot 到本机 OpenClaw 吗？这会读取该 Bot 凭据、安装固定版本 Channel、创建独立 Agent；若有待应用配置，重试本操作会重启指定 profile 的 Gateway 并短暂影响其中全部 Agent。同一 Bot 已在别处在线时可能发生接管。',
+        }
+      }
       const args = exec.arguments as Record<string, unknown>
       const raw = typeof args.arkme_id === 'string' ? args.arkme_id.trim() : ''
       const sanitized = raw.replace(/[\u0000-\u001F\u007F]/g, ' ')
