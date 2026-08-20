@@ -18,6 +18,8 @@ describe('Arkme extension tools', () => {
     expect(publish?.parameters).not.toHaveProperty('permissions')
     expect(publish?.description).toContain('exact returned validation message')
     expect(publish?.description).toContain('do not retry the unchanged package')
+    expect(publish?.description).toContain('DSH >= 0.1.0-rc.7')
+    expect(publish?.description).toContain('ask the user to upgrade DSH before generating or uploading')
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',
