@@ -373,6 +373,8 @@ export interface ArkmeGroupAvatarPresentation {
 
 export interface ArkmeSourceItem {
   sourceRef: string
+  /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
+  sourceKey?: string
   /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
   parentSourceRef?: string
   kind: ArkmeSourceKind
@@ -1232,11 +1234,13 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'sessions-delta'
   revision: number
-  updates: Array<{ source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
+  updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
 } | {
   type: 'read-ack'
   revision: number
   sourceRef: string
+  sourceKey?: string
+  effectiveReadSequence: number
   unreadCount: number
 }
 

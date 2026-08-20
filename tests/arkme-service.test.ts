@@ -1517,10 +1517,24 @@ describe('ArkmeService', () => {
 
     const sources = await service.listSources('root')
     expect(sources.items).toMatchObject([
-      { kind: 'private_chat', displayName: '小林', latestPreview: '你好', unreadCount: 2, latestSequence: 8, isMuted: false },
-      { kind: 'group_chat', displayName: '项目群', isMuted: true },
+      {
+        kind: 'private_chat',
+        sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
+        displayName: '小林',
+        latestPreview: '你好',
+        unreadCount: 2,
+        latestSequence: 8,
+        isMuted: false,
+      },
+      {
+        kind: 'group_chat',
+        sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
+        displayName: '项目群',
+        isMuted: true,
+      },
     ])
     const privateRef = sources.items[0]!.sourceRef
+    const privateSourceKey = sources.items[0]!.sourceKey
     await expect(service.readSource(privateRef)).resolves.toMatchObject({
       items: [
         { textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
@@ -1538,7 +1552,13 @@ describe('ArkmeService', () => {
       effectiveReadSequence: 8, unreadCount: 0,
     })
     expect(calls.at(-1)?.body).toMatchObject({ chat_session_uid: 'chat-private', read_seq: 8 })
-    expect(clientEvents[0]).toMatchObject({ type: 'read-ack', sourceRef: privateRef, unreadCount: 0 })
+    expect(clientEvents[0]).toMatchObject({
+      type: 'read-ack',
+      sourceRef: privateRef,
+      sourceKey: privateSourceKey,
+      effectiveReadSequence: 8,
+      unreadCount: 0,
+    })
   })
 
   it('single-flights and TTL-caches identical Chat directory pages', async () => {

@@ -1155,7 +1155,7 @@ export class ArkmeService {
         else failedUids.add(uid)
       })
     }
-    const updates: Array<{ source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
+    const updates: Array<{ sourceKey: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
     for (const [uid] of pending) {
       const bundle = bundles.get(uid)
       if (bundle === undefined || failedUids.has(uid)) {
@@ -1167,7 +1167,7 @@ export class ArkmeService {
       try {
         const source = await this.chatSourceFromBundle(bundle, session, this.chatSourceCache.get(cacheKey), timelineItems)
         this.chatSourceCache.set(cacheKey, source)
-        updates.push({ source, timelineItems })
+        updates.push({ sourceKey: source.sourceKey ?? await this.chatDirectorySourceKey(session.userId, uid), source, timelineItems })
       } catch {
         failedUids.add(uid)
       }
@@ -2607,6 +2607,7 @@ export class ArkmeService {
       const preview = textPreview(latestPayload)
       const item: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, kind, uid, displayName),
+        sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
         displayName,
         ...(preview === '' ? {} : { latestPreview: preview }),
@@ -2980,6 +2981,7 @@ export class ArkmeService {
     this.groupAvatarSnapshotCache.delete(`${String(session.userId)}:${chatSessionUid}`)
     const source: ArkmeSourceItem = {
       sourceRef: await this.sealSourceRef(session.userId, 'group_chat', chatSessionUid, groupTitle),
+      sourceKey: await this.chatDirectorySourceKey(session.userId, chatSessionUid),
       kind: 'group_chat',
       displayName: groupTitle,
       activeAtMillis: 0,
@@ -3280,6 +3282,7 @@ export class ArkmeService {
     const messageDnd = chatMessageDnd(data.current_policy) ?? false
     const nextSource: ArkmeSourceItem = {
       sourceRef: await this.sealSourceRef(session.userId, 'group_chat', source.ownerRef, title),
+      sourceKey: await this.chatDirectorySourceKey(session.userId, source.ownerRef),
       kind: 'group_chat',
       displayName: title,
       activeAtMillis: numberValue(chatSession.last_active_at),
@@ -3477,6 +3480,7 @@ export class ArkmeService {
     const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
     const source: ArkmeSourceItem = {
       sourceRef: await this.sealSourceRef(session.userId, 'private_chat', uid, displayName),
+      sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind: 'private_chat',
       displayName,
       ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, peerUserId) }),
@@ -4454,6 +4458,8 @@ export class ArkmeService {
       type: 'read-ack',
       revision: this.nextChatClientRevision(),
       sourceRef,
+      sourceKey: await this.chatDirectorySourceKey(session.userId, source.ownerRef),
+      effectiveReadSequence,
       unreadCount,
     })
     this.scheduleChatSessionProjection(source.ownerRef, sessionLastSequence)
@@ -4494,6 +4500,7 @@ export class ArkmeService {
     )
     return {
       sourceRef: await this.sealSourceRef(session.userId, kind, uid, displayName),
+      sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
       displayName,
       ...(cached?.avatarRef === undefined ? {} : { avatarRef: cached.avatarRef }),
@@ -6450,6 +6457,13 @@ export class ArkmeService {
     return result.offset
   }
 
+  private async chatDirectorySourceKey(userId: number, chatSessionUid: string): Promise<string> {
+    const digest = createHmac('sha256', await this.stateStore.uniqueCode())
+      .update(`chat-source-key-v1:${String(userId)}:${chatSessionUid.trim()}`)
+      .digest('base64url')
+    return `arkme-chat-source-v1.${digest}`
+  }
+
   private async sealSourceRef(
     userId: number,
     kind: ArkmeSourceKind,
@@ -6494,8 +6508,12 @@ export class ArkmeService {
   }
 
   private async sourceItem(source: ArkmeSourceRefPayload): Promise<ArkmeSourceItem> {
+    const sourceKey = source.kind === 'private_chat' || source.kind === 'group_chat'
+      ? await this.chatDirectorySourceKey(source.userId, source.ownerRef)
+      : undefined
     return {
       sourceRef: await this.sealSourceRef(source.userId, source.kind, source.ownerRef, source.displayName),
+      ...(sourceKey === undefined ? {} : { sourceKey }),
       kind: source.kind,
       displayName: source.displayName,
       activeAtMillis: 0,

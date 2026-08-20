@@ -86,16 +86,20 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
           return
         }
         if (update.type === 'read-ack') {
-          const previousUnread = arkmeChatDirectory.unreadCount(update.sourceRef)
-          arkmeChatDirectory.updateUnread(update.sourceRef, update.unreadCount)
-          setUnreadCount(current => Math.max(0, current - Math.max(0, previousUnread - update.unreadCount)))
+          arkmeChatDirectory.updateReadAck(
+            update.sourceRef,
+            update.sourceKey,
+            update.effectiveReadSequence,
+            update.unreadCount,
+          )
+          setUnreadCount(arkmeChatDirectory.totalUnreadCount())
           return
         }
-        const unreadDelta = update.updates.reduce((sum, item) => {
-          return sum + item.source.unreadCount - arkmeChatDirectory.unreadCount(item.source.sourceRef)
-        }, 0)
-        arkmeChatDirectory.upsertMany(update.updates.map(item => item.source))
-        setUnreadCount(current => Math.max(0, current + unreadDelta))
+        arkmeChatDirectory.upsertMany(update.updates.map(item => ({
+          source: item.source,
+          ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),
+        })))
+        setUnreadCount(arkmeChatDirectory.totalUnreadCount())
         const timelineUpdates = update.updates
           .filter(item => item.timelineItems.length > 0)
           .map(item => ({ sourceRef: item.source.sourceRef, items: item.timelineItems }))
