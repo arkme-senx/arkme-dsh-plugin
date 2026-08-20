@@ -10,6 +10,7 @@ import {
   extensionNativeInstallWarning, formatExtensionBytes, MyExtensionCard,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
+import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
 import type { ArkmeMyExtensionItem } from '../../src/extensions/owned-types.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
 import type { ArkmeExtensionPreviewItem } from '../../src/extensions/types.js'
@@ -325,5 +326,34 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('value="天气助手"')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
     expect(html).toContain('accept="image/*"')
+  })
+
+  it('lets a published extension stage multiple local preview images in the edit dialog', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionEditDialog
+      item={{
+        ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['published'],
+        halves: { host: true, client: true },
+        published: {
+          extensionId: 'ext-1', version: '1.0.0', visibility: 'private',
+          previewImages: [{
+            preview_ref: `preview_v1_${'a'.repeat(64)}`, content_type: 'image/png', preview_size: 4,
+            width: 640, height: 360, created_at: 1,
+          }],
+          previewRevision: 1,
+        },
+        publish: { allowed: false, reason: '已发布' },
+      }}
+      busy={false}
+      error=""
+      onCancel={() => {}}
+      onSubmit={() => {}}
+    />)
+
+    expect(html).toContain('扩展预览图')
+    expect(html).toContain('type="file"')
+    expect(html).toContain('multiple=""')
+    expect(html).toContain('accept="image/png,image/jpeg,image/webp"')
+    expect(html).toContain('封面')
+    expect(html).toContain('aria-label="删除第 1 张预览图"')
   })
 })

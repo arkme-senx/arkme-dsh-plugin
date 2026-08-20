@@ -2,12 +2,15 @@ import { useState, type CSSProperties, type FormEvent } from 'react'
 import type { ArkmeExtensionEditableVisibility } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem } from '../extensions/owned-types.js'
 import { ArkmeExtensionAvatarField } from './ArkmeExtensionAvatarField.js'
+import { ArkmeExtensionPreviewField } from './ArkmeExtensionPreviewField.js'
+import { createExtensionPreviewDraft, type ExtensionPreviewDraft } from './extension-preview-edit.js'
 
 export interface ArkmeExtensionEditFormValue {
   name: string
   description: string
   visibility: ArkmeExtensionEditableVisibility
   iconFile?: File
+  previewDraft?: ExtensionPreviewDraft
 }
 
 export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit }: {
@@ -24,6 +27,9 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
     initialVisibility === 'private' || initialVisibility === 'public' ? initialVisibility : '',
   )
   const [iconFile, setIconFile] = useState<File>()
+  const [previewDraft, setPreviewDraft] = useState(() => createExtensionPreviewDraft(
+    item.published?.previewImages ?? [], item.published?.previewRevision ?? 0,
+  ))
   const legacyVisibility = initialVisibility === 'unlisted'
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -31,6 +37,7 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
     onSubmit({
       name: name.trim(), description: description.trim(), visibility,
       ...(iconFile === undefined ? {} : { iconFile }),
+      ...(item.published === undefined ? {} : { previewDraft }),
     })
   }
   return <div style={styles.backdrop}>
@@ -43,6 +50,12 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
           {...(iconFile === undefined ? {} : { selectedFile: iconFile })}
           disabled={busy}
           onSelect={setIconFile}
+        />
+        <ArkmeExtensionPreviewField
+          {...(item.published?.extensionId === undefined ? {} : { extensionId: item.published.extensionId })}
+          draft={previewDraft}
+          disabled={busy}
+          onChange={setPreviewDraft}
         />
         <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
         <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>

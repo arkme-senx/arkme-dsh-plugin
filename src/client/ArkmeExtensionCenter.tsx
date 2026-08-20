@@ -868,10 +868,21 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         visibility: published.visibility,
         ...(published.version === undefined ? {} : { version: published.version }),
         ...(published.iconRef === undefined ? {} : { icon_ref: published.iconRef }),
+        ...(published.previewImages === undefined ? {} : { preview_images: published.previewImages }),
+        ...(published.previewRevision === undefined ? {} : { preview_revision: published.previewRevision }),
       }
       const result = await saveExtensionEdit({ extension: baseline, value, clientMutationId: mutation.id }, {
         updateMetadata: async (targetExtensionId, input) => await extensionSdk.updateExtensionMetadata(targetExtensionId, input),
         setIcon: async (targetExtensionId, file) => await extensionSdk.setExtensionIcon(targetExtensionId, file),
+        addPreview: async (targetExtensionId, file, mutationId) => await extensionSdk.addExtensionPreview(
+          targetExtensionId, file, { clientMutationId: mutationId },
+        ),
+        deletePreview: async (targetExtensionId, previewRef, revision) => await extensionSdk.deleteExtensionPreview(
+          targetExtensionId, previewRef, revision,
+        ),
+        reorderPreviews: async (targetExtensionId, refs, revision) => await extensionSdk.reorderExtensionPreviews(
+          targetExtensionId, refs, revision,
+        ),
       })
       const nextItem = applyEditedMyExtension(item, result.extension)
       setMyExtensions(current => current.map(candidate => candidate.ownedRef === item.ownedRef
@@ -888,6 +899,10 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       await load('mine', 'refresh')
       if (result.kind === 'metadata-saved-icon-failed') {
         setEditError(`资料已保存，但头像更新失败：${result.error}`)
+        return
+      }
+      if (result.kind === 'profile-saved-preview-failed') {
+        setEditError(`资料已保存，但预览图更新未完成：${result.error}`)
         return
       }
       editMutation.current = undefined

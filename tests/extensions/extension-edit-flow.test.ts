@@ -11,6 +11,7 @@ const extension = {
 }
 const value = { name: '新名称', description: '', visibility: 'public' as const }
 const iconFile = new File([new Uint8Array([1, 2, 3])], 'icon.png', { type: 'image/png' })
+const previewFile = new File([new Uint8Array([4, 5, 6])], 'preview.png', { type: 'image/png' })
 
 describe('extension edit save flow', () => {
   it('does not upload an icon when metadata saving fails', async () => {
@@ -59,6 +60,36 @@ describe('extension edit save flow', () => {
     expect(result).toMatchObject({
       kind: 'saved', extension: { name: '新名称', visibility: 'public', icon_ref: `icon_v1_${'a'.repeat(64)}` },
     })
+  })
+
+  it('uploads staged preview files with their stable mutation ids', async () => {
+    const previewRef = `preview_v1_${'b'.repeat(64)}`
+    const addPreview = vi.fn(async () => ({
+      extension_id: 'ext-1', applied_preview_ref: previewRef,
+      preview_images: [{ preview_ref: previewRef, content_type: 'image/png' as const, preview_size: 3, width: 1, height: 1, created_at: 2 }],
+      preview_revision: 1,
+    }))
+    const result = await saveExtensionEdit({
+      extension,
+      value: {
+        ...value,
+        previewDraft: {
+          revision: 0,
+          initialRemoteRefs: [],
+          items: [{ kind: 'local', id: 'local-1', file: previewFile, mutationId: '11111111-1111-4111-8111-111111111111' }],
+        },
+      },
+      clientMutationId: 'mutation-1',
+    }, {
+      updateMetadata: vi.fn(async () => ({ ...extension, ...value })),
+      setIcon: vi.fn(),
+      addPreview,
+      deletePreview: vi.fn(),
+      reorderPreviews: vi.fn(),
+    } as never)
+
+    expect(addPreview).toHaveBeenCalledWith('ext-1', previewFile, '11111111-1111-4111-8111-111111111111')
+    expect(result).toMatchObject({ kind: 'saved', previews: { preview_revision: 1 } })
   })
 
   it('reuses a mutation UUID for the same normalized edit and rotates it after a field changes', () => {
