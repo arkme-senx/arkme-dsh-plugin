@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
+import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -80,6 +81,15 @@ export function apply(ctx: ClientContext): void {
     order: 80,
     label: 'Arkme',
   }, ArkmeSettingsRow))
+
+  if (startupAuthGateEnabled()) {
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'arkme-startup-auth-gate',
+      order: 100,
+      label: 'Arkme 启动认证门禁',
+    }, ArkmeStartupAuthGate))
+  }
 }
 
 export { ArkmeFooterAction } from './ArkmeFooterAction.js'
@@ -87,6 +97,7 @@ export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
+export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
