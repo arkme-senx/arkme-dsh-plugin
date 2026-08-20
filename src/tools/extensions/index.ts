@@ -9,6 +9,8 @@ import type { ArkmeOwnedExtensionInventory } from '../../extensions/owned-invent
 import type { ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeImageBytes } from '../../types.js'
 import { readWorkspaceExtensionIcon } from '../../extensions/workspace-icon.js'
+import { selectLatestUserPreviewAttachments } from '../../extensions/session-preview-attachments.js'
+import { addPreviewAttachmentBatch } from './preview-attachment-batch.js'
 import { ArkmeExtensionPublishConversation } from './publish-conversation.js'
 
 const EXTENSION_TOOL_NAMES = [
@@ -282,16 +284,31 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_preview_add',
-    description: 'Add one image to the ordered preview gallery of an extension owned by the current Arkme user. The image_ref must come from an Arkme profile or source result. The Host reads and uploads bytes without exposing signed storage transport. Use only after an explicit current human request.',
+    description: 'Add images to the ordered preview gallery of an extension owned by the current Arkme user. Omit image_ref to use all image attachments in the latest direct user message, or pass 1-based attachment_indices to select some of them. image_ref remains available for one Arkme profile/source image. The Host reads and uploads bytes without exposing local paths or signed storage transport. Use only after an explicit current human request.',
     parameters: {
       extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
-      image_ref: { type: 'string', required: true, description: 'Opaque Arkme image_ref returned by profile or source tools.' },
+      image_ref: { type: 'string', description: 'Optional opaque Arkme image_ref returned by profile or source tools. Mutually exclusive with attachment_indices.' },
+      attachment_indices: {
+        type: 'array', items: { type: 'integer' },
+        description: 'Optional unique 1-based image positions from the latest direct user message. Omit image_ref and this field to add every image in that message.',
+      },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      requireAgent(exec)
+      const agent = requireAgent(exec) as Agent
       const imageRef = clean(args.image_ref)
-      if (imageRef === '') throw new Error('image_ref must not be empty')
+      const attachmentIndices = Array.isArray(args.attachment_indices) ? args.attachment_indices : undefined
+      if (imageRef !== '' && attachmentIndices !== undefined) throw new Error('image_ref and attachment_indices are mutually exclusive')
+      if (imageRef === '') {
+        const attachments = ctx.get('attachments')
+        if (attachments === undefined) throw new Error('cannot add preview attachments: no attachment service is mounted')
+        const selected = selectLatestUserPreviewAttachments(agent, attachmentIndices)
+        const result = await addPreviewAttachmentBatch({
+          extensionId: args.extension_id, attachments: selected, store: attachments, manager,
+          ...(exec.signal === undefined ? {} : { signal: exec.signal }),
+        })
+        return JSON.stringify(result, undefined, 2)
+      }
       const image = await imageSource.readImage(imageRef, { maxBytes: 5 * 1024 * 1024, signal: exec.signal })
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
         throw new Error('extension previews accept PNG, JPEG, or WebP only')
@@ -395,6 +412,17 @@ export function registerArkmeExtensionTools(
       }
     }
     if (exec.name === 'arkme_extension_preview_add') {
+      const imageRef = clean(typeof args.image_ref === 'string' ? args.image_ref : '')
+      if (imageRef === '') {
+        const agent = exec.agent as Agent | undefined
+        if (agent === undefined) throw new Error('该扩展操作必须在一个真实 DSH Agent 会话中执行')
+        const indices = Array.isArray(args.attachment_indices) ? args.attachment_indices as number[] : undefined
+        const selected = selectLatestUserPreviewAttachments(agent, indices)
+        return {
+          kind: 'ask',
+          reason: `确认把当前消息选择的 ${String(selected.length)} 张图片添加到扩展 ${extensionId} 的预览图集吗？`,
+        }
+      }
       return {
         kind: 'ask',
         reason: `确认把当前账号可读取的图片添加到扩展 ${extensionId} 的预览图集吗？`,

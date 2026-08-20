@@ -212,6 +212,78 @@ describe('Arkme extension tools', () => {
     }
   })
 
+  it('adds every image from the latest direct user message when image_ref is omitted', async () => {
+    const definitions: Array<{
+      name: string
+      parameters?: Record<string, unknown>
+      execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
+    }> = []
+    const first = {
+      attachmentId: `sha256:${'a'.repeat(64)}`,
+      mediaType: 'image/png', bytes: 4, width: 1, height: 1, name: 'first.png',
+    }
+    const second = {
+      attachmentId: `sha256:${'b'.repeat(64)}`,
+      mediaType: 'image/webp', bytes: 5, width: 1, height: 1, name: 'second.webp',
+    }
+    const stored = new Map([
+      [first.attachmentId, { ref: first, data: new Uint8Array([1, 2, 3, 4]) }],
+      [second.attachmentId, { ref: second, data: new Uint8Array([5, 6, 7, 8, 9]) }],
+    ])
+    const attachments = {
+      readImage: vi.fn(async (ref: { attachmentId: string }) => stored.get(ref.attachmentId)),
+    }
+    let revision = 0
+    const previewImages: Array<Record<string, unknown>> = []
+    const addPreview = vi.fn(async (input: { mediaType: string; data: Uint8Array }) => {
+      revision += 1
+      previewImages.push({
+        preview_ref: `preview_v1_${String(revision).repeat(64)}`, content_type: input.mediaType,
+        preview_size: input.data.byteLength, width: 1, height: 1, created_at: revision,
+      })
+      return { extension_id: 'ext-1', preview_images: [...previewImages], preview_revision: revision }
+    })
+    const manager = {
+      myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
+      addPreview,
+    }
+    registerArkmeExtensionTools({
+      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      systemPrompt: { section: vi.fn() },
+      on: vi.fn(),
+      get: vi.fn((name: string) => name === 'attachments' ? attachments : undefined),
+    } as never, manager as never, {} as never, { readImage: vi.fn() }, 'business')
+
+    const tool = definitions.find(item => item.name === 'arkme_extension_preview_add')
+    expect(tool?.parameters).toHaveProperty('required', ['extension_id'])
+    expect(tool?.parameters).toHaveProperty('properties.attachment_indices.items.type', 'integer')
+    const output = await tool?.execute?.({ extension_id: 'ext-1' }, {
+      agent: {
+        id: 'session-1',
+        session: {
+          events: [
+            { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'image', attachment: first }] } },
+            { seq: 2, type: 'assistant/message', data: { message: { content: [{ type: 'image', attachment: second }] } } },
+            { seq: 3, type: 'user/message', data: { source: { kind: 'user' }, content: [
+              { type: 'text', text: '上传这两张预览图' },
+              { type: 'image', attachment: first },
+              { type: 'image', attachment: second },
+            ] } },
+          ],
+        },
+      },
+      callId: 'call-preview-attachments',
+      signal: new AbortController().signal,
+    })
+
+    expect(output).toContain('"outcome": "complete"')
+    expect(output).toContain('"added_count": 2')
+    expect(output).not.toContain(first.attachmentId)
+    expect(output).not.toContain('first.png')
+    expect(attachments.readImage).toHaveBeenCalledTimes(2)
+    expect(addPreview).toHaveBeenCalledTimes(2)
+  })
+
   it('uploads a generated workspace SVG through the existing icon owner', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'arkme extension icon '))
     try {
