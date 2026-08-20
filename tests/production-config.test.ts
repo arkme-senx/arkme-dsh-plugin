@@ -30,7 +30,7 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('updateChannel: stable')
     expect(patch).toContain('updateRegistryUrl: https://registry.npmjs.org')
     expect(patch).toContain('updateCheckIntervalHours: 12')
-    expect(patch).toContain('updateAllowLocalInstall: false')
+    expect(patch).toContain('updateAllowLocalInstall: true')
     expect(patch).not.toContain('environment: test')
     expect(patch).not.toContain('.senguo.me')
   })

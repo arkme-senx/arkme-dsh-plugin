@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packArkmeExtension } from '../../src/extensions/artifact.js'
 import { materializePersistentExtensionBundle } from '../../src/extensions/persistent-bundle.js'
-import { ArkmeExtensionProfileInstaller } from '../../src/extensions/profile-installer.js'
+import {
+  ArkmeExtensionProfileInstaller,
+  profilePluginCommandErrorDetail,
+} from '../../src/extensions/profile-installer.js'
 
 const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -55,7 +58,23 @@ describe('persistent extension profile bundle', () => {
     })
     await installer.install(root)
     await installer.remove('@arkme-local/ext-0123456789abcdef')
-    expect(run).toHaveBeenNthCalledWith(1, ['plugin', '--profile', 'web', 'add', `link:${root}`])
-    expect(run).toHaveBeenNthCalledWith(2, ['plugin', '--profile', 'web', 'remove', '@arkme-local/ext-0123456789abcdef'])
+    expect(run).toHaveBeenNthCalledWith(1, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', `link:${root}`,
+    ])
+    expect(run).toHaveBeenNthCalledWith(2, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
+      'remove', '@arkme-local/ext-0123456789abcdef',
+    ])
+  })
+
+  it('preserves pnpm stdout together with the DSH fallback error', () => {
+    expect(profilePluginCommandErrorDetail({
+      stdout: 'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION\nreal policy reason',
+      stderr: 'dsh: pnpm failed in profile directory /tmp/profile',
+    })).toBe([
+      'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION',
+      'real policy reason',
+      'dsh: pnpm failed in profile directory /tmp/profile',
+    ].join('\n'))
   })
 })

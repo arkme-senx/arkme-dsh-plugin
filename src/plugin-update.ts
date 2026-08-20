@@ -31,6 +31,7 @@ const ALLOWED_RELEASE_NOTES_HOSTS = new Set([
   'arkme.ai',
   'www.arkme.ai',
 ])
+const LOCAL_DEVELOPMENT_SPEC = /^(?:link:|file:)/
 
 export type ArkmePluginUpdateChannel = 'stable' | 'next'
 
@@ -571,7 +572,8 @@ export class ArkmePluginUpdateManager {
       }
       const spec = manifest.dependencies?.[ARKME_PLUGIN_PACKAGE_NAME]
       if (spec === undefined) return { canInstall: false, reason: 'profile-unavailable' }
-      if (semver.validRange(spec) === null && runtime.allowLocalInstall !== true) {
+      if (semver.validRange(spec) === null
+        && (!LOCAL_DEVELOPMENT_SPEC.test(spec) || runtime.allowLocalInstall === false)) {
         return { canInstall: false, reason: 'local-install', previousSpec: spec }
       }
       return { canInstall: true, previousSpec: spec }
