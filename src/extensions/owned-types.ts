@@ -1,4 +1,4 @@
-import type { ArkmeExtensionVisibility } from './types.js'
+import type { ArkmeExtensionPreviewItem, ArkmeExtensionVisibility } from './types.js'
 
 export type ArkmeMyExtensionState = 'cordis' | 'persisted' | 'published'
 export type ArkmeMyExtensionWarning = 'cloud-unavailable' | 'cordis-unavailable' | 'profile-entry-invalid'
@@ -11,7 +11,14 @@ export interface ArkmeMyExtensionItem {
   halves: { host: boolean; client: boolean }
   cordis?: { packageCount: number; active: boolean }
   persisted?: { packageName: string; version?: string; active: boolean }
-  published?: { extensionId: string; version?: string; visibility: ArkmeExtensionVisibility; iconRef?: string }
+  published?: {
+    extensionId: string
+    version?: string
+    visibility: ArkmeExtensionVisibility
+    iconRef?: string
+    previewImages?: ArkmeExtensionPreviewItem[]
+    previewRevision?: number
+  }
   publish: { allowed: boolean; mode?: 'new' | 'version'; reason?: string }
 }
 

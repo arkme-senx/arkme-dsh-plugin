@@ -2,6 +2,8 @@ export const ARKME_EXTENSION_FORMAT = 'arkme-cordis-extension' as const
 export const ARKME_EXTENSION_FORMAT_VERSION = 1 as const
 export const ARKME_EXTENSION_MAX_BYTES = 100 * 1024 * 1024
 export const ARKME_EXTENSION_ICON_MAX_BYTES = 2 * 1024 * 1024
+export const ARKME_EXTENSION_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
+export const ARKME_EXTENSION_PREVIEW_MAX_ITEMS = 20
 
 export type ArkmeExtensionVisibility = 'private' | 'unlisted' | 'public'
 export type ArkmeExtensionChannel = 'stable' | 'beta'
@@ -45,6 +47,10 @@ export interface ArkmeExtensionCatalogItem {
   update_available?: boolean
   package_name?: string
   icon_ref?: string
+  preview_cover_ref?: string
+  preview_count?: number
+  preview_images?: ArkmeExtensionPreviewItem[]
+  preview_revision?: number
 }
 
 export interface ArkmeExtensionCatalogPage {
@@ -149,6 +155,56 @@ export interface ArkmeExtensionIconBytes {
   extensionId: string
   iconRef: string
   mediaType: ArkmeExtensionIconMediaType
+  data: Uint8Array
+}
+
+export type ArkmeExtensionPreviewMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
+
+export interface ArkmeExtensionPreviewItem {
+  preview_ref: string
+  content_type: ArkmeExtensionPreviewMediaType
+  preview_size: number
+  width: number
+  height: number
+  created_at: number
+}
+
+export interface ArkmeExtensionPreviewGallery {
+  extension_id: string
+  applied_preview_ref?: string
+  preview_images: ArkmeExtensionPreviewItem[]
+  preview_revision: number
+}
+
+export interface ArkmeExtensionPreviewUploadSession {
+  preview_upload_session_id: string
+  extension_id: string
+  status: 'uploading' | 'applied' | 'rejected' | 'expired'
+  preview_ref?: string
+  upload_url?: string
+  upload_method?: 'PUT'
+  upload_headers?: Record<string, string>
+  expires_at: string | number
+  idempotent_replay?: boolean
+}
+
+export interface ArkmeExtensionPreviewResolution {
+  extension_id: string
+  preview_ref: string
+  content_type: ArkmeExtensionPreviewMediaType
+  preview_size: number
+  preview_sha256: string
+  width: number
+  height: number
+  download_url: string
+  download_headers?: Record<string, string>
+  expires_at: string | number
+}
+
+export interface ArkmeExtensionPreviewBytes {
+  extensionId: string
+  previewRef: string
+  mediaType: ArkmeExtensionPreviewMediaType
   data: Uint8Array
 }
 

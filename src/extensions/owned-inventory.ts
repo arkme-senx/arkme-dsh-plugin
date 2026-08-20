@@ -312,6 +312,8 @@ export class ArkmeOwnedExtensionInventory {
             : { version: row.published.version ?? row.published.latest_stable_version }),
           visibility: row.published.visibility,
           ...(row.published.icon_ref === undefined ? {} : { iconRef: row.published.icon_ref }),
+          ...(row.published.preview_images === undefined ? {} : { previewImages: row.published.preview_images }),
+          ...(row.published.preview_revision === undefined ? {} : { previewRevision: row.published.preview_revision }),
         },
       }),
 	  publish: row.published !== undefined

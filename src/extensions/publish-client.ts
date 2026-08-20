@@ -1,7 +1,10 @@
 import { ArkmePluginError } from '../arkme-service.js'
-import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
+import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
+  type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
   type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResolution, type ArkmeExtensionIconResult, type ArkmeExtensionIconUploadSession,
+  type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
+  type ArkmeExtensionPreviewResolution, type ArkmeExtensionPreviewUploadSession,
   type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
   type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession,
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
@@ -348,6 +351,154 @@ export class ExtensionPublishClient {
         throw new ArkmePluginError('extension-icon-download-timeout', '扩展头像下载超时或已取消', true, 504, { cause: error })
       }
       throw new ArkmePluginError('extension-icon-download-failed', '无法下载扩展头像', true, 502, { cause: error })
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  async createPreviewUploadSession(input: {
+    extension_id: string
+    content_type: ArkmeExtensionPreviewMediaType
+    preview_size: number
+    preview_sha256: string
+    idempotency_key: string
+  }, signal?: AbortSignal): Promise<ArkmeExtensionPreviewUploadSession> {
+    if (input.preview_size <= 0 || input.preview_size > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+      throw new ArkmePluginError('extension-preview-size-invalid', '扩展预览图必须小于 5 MiB', false, 400)
+    }
+    return await this.post('/api/v1/extensions/preview-upload-session/create', input, signal)
+  }
+
+  async uploadPreview(
+    uploadUrl: string,
+    data: Uint8Array,
+    mediaType: ArkmeExtensionPreviewMediaType,
+    uploadHeaders: Readonly<Record<string, string>> = {},
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (data.byteLength <= 0 || data.byteLength > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+      throw new ArkmePluginError('extension-preview-size-invalid', '扩展预览图必须小于 5 MiB', false, 400)
+    }
+    let url: URL
+    try { url = new URL(uploadUrl) } catch (error) {
+      throw new ArkmePluginError('extension-preview-upload-url-invalid', '扩展市场返回了无效预览图上传地址', false, 502, { cause: error })
+    }
+    assertSafeArtifactUrl(url, 'upload')
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal?.reason)
+    if (signal?.aborted === true) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    try {
+      const headers = safeSignedHeaders(uploadHeaders)
+      const response = await this.fetchImpl(url, {
+        method: 'PUT',
+        headers: {
+          ...headers,
+          ...Object.keys(headers).some(key => key.toLowerCase() === 'content-type') ? {} : { 'Content-Type': mediaType },
+        },
+        body: data as BodyInit,
+        signal: controller.signal,
+        redirect: 'error',
+      })
+      if (!response.ok) {
+        throw new ArkmePluginError('extension-preview-upload-failed', `扩展预览图上传返回 HTTP ${String(response.status)}`, true, 502)
+      }
+    } catch (error) {
+      if (error instanceof ArkmePluginError) throw error
+      if ((error as Error).name === 'AbortError') {
+        throw new ArkmePluginError('extension-preview-upload-timeout', '扩展预览图上传超时或已取消', true, 504, { cause: error })
+      }
+      throw new ArkmePluginError('extension-preview-upload-failed', '无法上传扩展预览图', true, 502, { cause: error })
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  async completePreviewUploadSession(previewUploadSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPreviewGallery> {
+    return await this.post('/api/v1/extensions/preview-upload-session/complete', {
+      preview_upload_session_id: previewUploadSessionId,
+    }, signal)
+  }
+
+  async deletePreview(
+    extensionId: string,
+    previewRef: string,
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    return await this.post('/api/v1/extensions/previews/delete', {
+      extension_id: extensionId, preview_ref: previewRef, expected_revision: expectedRevision,
+    }, signal)
+  }
+
+  async reorderPreviews(
+    extensionId: string,
+    orderedPreviewRefs: string[],
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    return await this.post('/api/v1/extensions/previews/reorder', {
+      extension_id: extensionId, ordered_preview_refs: orderedPreviewRefs, expected_revision: expectedRevision,
+    }, signal)
+  }
+
+  async resolvePreview(extensionId: string, previewRef: string, signal?: AbortSignal): Promise<ArkmeExtensionPreviewResolution> {
+    return await this.post('/api/v1/extensions/preview-resolve', {
+      extension_id: extensionId, preview_ref: previewRef,
+    }, signal)
+  }
+
+  async downloadPreview(
+    resolution: ArkmeExtensionPreviewResolution,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array> {
+    let url: URL
+    try { url = new URL(resolution.download_url) } catch (error) {
+      throw new ArkmePluginError('extension-preview-download-url-invalid', '扩展市场返回了无效预览图下载地址', false, 502, { cause: error })
+    }
+    assertSafeArtifactUrl(url, 'download')
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal?.reason)
+    if (signal?.aborted === true) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    try {
+      const response = await this.fetchImpl(url, {
+        method: 'GET', headers: safeSignedHeaders(resolution.download_headers ?? {}), redirect: 'error', signal: controller.signal,
+      })
+      if (!response.ok || response.body === null) {
+        throw new ArkmePluginError('extension-preview-download-failed', `扩展预览图下载返回 HTTP ${String(response.status)}`, true, 502)
+      }
+      const declared = Number(response.headers.get('content-length') ?? 0)
+      if (Number.isFinite(declared) && declared > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+        throw new ArkmePluginError('extension-preview-size-invalid', '扩展预览图超过 5 MiB', false, 502)
+      }
+      const chunks: Uint8Array[] = []
+      let total = 0
+      const reader = response.body.getReader()
+      while (true) {
+        const next = await reader.read()
+        if (next.done) break
+        total += next.value.byteLength
+        if (total > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+          await reader.cancel().catch(() => undefined)
+          throw new ArkmePluginError('extension-preview-size-invalid', '扩展预览图超过 5 MiB', false, 502)
+        }
+        chunks.push(next.value)
+      }
+      const data = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength }
+      return data
+    } catch (error) {
+      if (error instanceof ArkmePluginError) throw error
+      if ((error as Error).name === 'AbortError') {
+        throw new ArkmePluginError('extension-preview-download-timeout', '扩展预览图下载超时或已取消', true, 504, { cause: error })
+      }
+      throw new ArkmePluginError('extension-preview-download-failed', '无法下载扩展预览图', true, 502, { cause: error })
     } finally {
       clearTimeout(timeout)
       signal?.removeEventListener('abort', abort)

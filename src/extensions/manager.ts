@@ -23,6 +23,8 @@ import {
   ARKME_EXTENSION_ICON_MAX_BYTES, type ArkmeExtensionIconBytes, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
   type ArkmeExtensionPublishResult,
+  ARKME_EXTENSION_PREVIEW_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_ITEMS,
+  type ArkmeExtensionPreviewBytes, type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type ArkmeInstalledExtensionView, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
@@ -153,6 +155,33 @@ function requiredId(value: string, label: string): string {
   return normalized
 }
 
+function requiredPreviewRef(value: string): string {
+  const normalized = value.trim()
+  if (!/^preview_v1_[a-f0-9]{64}$/.test(normalized)) {
+    throw new ArkmePluginError('extension-preview-ref-invalid', '扩展预览图引用无效', false, 400)
+  }
+  return normalized
+}
+
+function assertPreviewGallery(value: ArkmeExtensionPreviewGallery, extensionId: string): ArkmeExtensionPreviewGallery {
+  if (value.extension_id !== extensionId || !Number.isSafeInteger(value.preview_revision) || value.preview_revision < 0
+    || !Array.isArray(value.preview_images) || value.preview_images.length > ARKME_EXTENSION_PREVIEW_MAX_ITEMS) {
+    throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了不一致的预览图集', false, 502)
+  }
+  const refs = new Set<string>()
+  for (const item of value.preview_images) {
+    if (!/^preview_v1_[a-f0-9]{64}$/.test(item.preview_ref) || refs.has(item.preview_ref)
+      || !['image/png', 'image/jpeg', 'image/webp'].includes(item.content_type)
+      || !Number.isSafeInteger(item.preview_size) || item.preview_size <= 0 || item.preview_size > ARKME_EXTENSION_PREVIEW_MAX_BYTES
+      || !Number.isSafeInteger(item.width) || !Number.isSafeInteger(item.height)
+      || item.width < 320 || item.height < 320 || item.width > 4096 || item.height > 4096) {
+      throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了无效预览图元数据', false, 502)
+    }
+    refs.add(item.preview_ref)
+  }
+  return value
+}
+
 function parseTrustedKeys(raw: string): Map<string, string> {
   const text = raw.trim()
   if (text === '') return new Map()
@@ -213,6 +242,7 @@ export class ArkmeExtensionManager {
   private readonly pendingProfileChanges = new Map<string, PendingProfileChange>()
   private enabledMutationTail: Promise<void> = Promise.resolve()
   private readonly iconCache = new Map<string, ArkmeExtensionIconBytes>()
+  private readonly previewCache = new Map<string, ArkmeExtensionPreviewBytes>()
 
   constructor(
     readonly client: ExtensionPublishClient,
@@ -457,6 +487,113 @@ export class ArkmeExtensionManager {
       const oldest = this.iconCache.keys().next().value as string | undefined
       if (oldest === undefined) break
       this.iconCache.delete(oldest)
+    }
+    return { ...value, data: new Uint8Array(value.data) }
+  }
+
+  async addPreview(input: {
+    extensionId: string
+    mediaType: ArkmeExtensionPreviewMediaType
+    data: Uint8Array
+    idempotencyKey: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPreviewGallery> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(input.mediaType)) {
+      throw new ArkmePluginError('extension-preview-type-invalid', '扩展预览图仅支持 PNG、JPEG 或 WebP', false, 400)
+    }
+    if (input.data.byteLength <= 0 || input.data.byteLength > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+      throw new ArkmePluginError('extension-preview-size-invalid', '扩展预览图必须小于 5 MiB', false, 400)
+    }
+    const previewSha256 = createHash('sha256').update(input.data).digest('hex')
+    const session = await this.client.createPreviewUploadSession({
+      extension_id: extensionId,
+      content_type: input.mediaType,
+      preview_size: input.data.byteLength,
+      preview_sha256: previewSha256,
+      idempotency_key: input.idempotencyKey,
+    }, input.signal)
+    if (session.status === 'uploading') {
+      if (session.upload_url === undefined) {
+        throw new ArkmePluginError('extension-preview-upload-contract-invalid', '扩展市场未返回预览图上传地址', false, 502)
+      }
+      await this.client.uploadPreview(
+        session.upload_url, input.data, input.mediaType, session.upload_headers ?? {}, input.signal,
+      )
+    }
+    const result = assertPreviewGallery(
+      await this.client.completePreviewUploadSession(session.preview_upload_session_id, input.signal),
+      extensionId,
+    )
+    if (result.applied_preview_ref !== `preview_v1_${previewSha256}`) {
+      throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了不一致的预览图事实', false, 502)
+    }
+    return result
+  }
+
+  async deletePreview(input: {
+    extensionId: string
+    previewRef: string
+    expectedRevision: number
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPreviewGallery> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    const previewRef = requiredPreviewRef(input.previewRef)
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new ArkmePluginError('extension-preview-revision-invalid', '扩展预览图版本无效', false, 400)
+    }
+    const result = assertPreviewGallery(
+      await this.client.deletePreview(extensionId, previewRef, input.expectedRevision, input.signal), extensionId,
+    )
+    this.previewCache.delete(`${extensionId}\0${previewRef}`)
+    return result
+  }
+
+  async reorderPreviews(input: {
+    extensionId: string
+    orderedPreviewRefs: string[]
+    expectedRevision: number
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPreviewGallery> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || input.orderedPreviewRefs.length <= 0 || input.orderedPreviewRefs.length > ARKME_EXTENSION_PREVIEW_MAX_ITEMS) {
+      throw new ArkmePluginError('extension-preview-reorder-invalid', '扩展预览图排序参数无效', false, 400)
+    }
+    const refs = input.orderedPreviewRefs.map(requiredPreviewRef)
+    if (new Set(refs).size !== refs.length) {
+      throw new ArkmePluginError('extension-preview-reorder-invalid', '扩展预览图排序不能包含重复引用', false, 400)
+    }
+    return assertPreviewGallery(
+      await this.client.reorderPreviews(extensionId, refs, input.expectedRevision, input.signal), extensionId,
+    )
+  }
+
+  async readPreview(extensionIdValue: string, previewRefValue: string, signal?: AbortSignal): Promise<ArkmeExtensionPreviewBytes> {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    const previewRef = requiredPreviewRef(previewRefValue)
+    const cacheKey = `${extensionId}\0${previewRef}`
+    const cached = this.previewCache.get(cacheKey)
+    if (cached !== undefined) return { ...cached, data: new Uint8Array(cached.data) }
+    const resolution = await this.client.resolvePreview(extensionId, previewRef, signal)
+    if (resolution.extension_id !== extensionId || resolution.preview_ref !== previewRef
+      || !['image/png', 'image/jpeg', 'image/webp'].includes(resolution.content_type)
+      || resolution.preview_size <= 0 || resolution.preview_size > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+      throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了不一致的预览图解析结果', false, 502)
+    }
+    const data = await this.client.downloadPreview(resolution, signal)
+    const sha256 = createHash('sha256').update(data).digest('hex')
+    if (data.byteLength !== resolution.preview_size || sha256 !== resolution.preview_sha256) {
+      throw new ArkmePluginError('extension-preview-download-invalid', '扩展预览图下载校验失败', false, 502)
+    }
+    const value: ArkmeExtensionPreviewBytes = {
+      extensionId, previewRef, mediaType: resolution.content_type, data: new Uint8Array(data),
+    }
+    this.previewCache.set(cacheKey, value)
+    while (this.previewCache.size > 128) {
+      const oldest = this.previewCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.previewCache.delete(oldest)
     }
     return { ...value, data: new Uint8Array(value.data) }
   }
