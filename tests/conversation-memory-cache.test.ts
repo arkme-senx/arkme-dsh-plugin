@@ -55,6 +55,16 @@ describe('ArkmeConversationMemoryCache', () => {
     expect(cache.getTimeline('private-two')).toBeUndefined()
   })
 
+  it('replaces an authoritative first-page snapshot instead of retaining absent messages', () => {
+    const cache = new ArkmeConversationMemoryCache()
+    cache.storeTimeline('group-one', timeline('message-before-refresh'))
+
+    cache.storeTimeline('group-one', timeline('message-after-refresh'))
+
+    expect(cache.getTimeline('group-one')?.items.map(item => item.itemUid))
+      .toEqual(['message-after-refresh'])
+  })
+
   it('keeps interwoven loading and failures out of the conversation markup', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 

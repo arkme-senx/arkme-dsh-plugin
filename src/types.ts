@@ -444,6 +444,8 @@ export interface ArkmeTimelineCursor {
 
 export interface ArkmeTimelineItem {
   itemUid: string
+  /** Account-bound opaque reference for reporting this concrete group-chat message. */
+  messageRef?: string
   senderName: string
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
@@ -567,6 +569,12 @@ export interface ArkmeLongArticleDraft {
   textContent: string
   durationMillis: number
   updatedAtMillis: number
+}
+
+export interface ArkmeMessageReportResult {
+  messageRef: string
+  reportUid: string
+  status: number
 }
 
 export interface ArkmeTimelinePage {

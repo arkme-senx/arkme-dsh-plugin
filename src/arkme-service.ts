@@ -73,6 +73,7 @@ import type {
   ArkmeImageBytes,
   ArkmeImageMediaType,
   ArkmeFileAssetDisplayItem,
+  ArkmeMessageReportResult,
   ArkmeOpenPrivateChatResult,
   ArkmeInterwovenBootstrap,
   ArkmeInterwovenDetail,
@@ -297,6 +298,13 @@ interface ArkmeAiPolishTextResult {
   promptVersion: string
   failureMessage: string
   extra: Record<string, unknown>
+}
+
+interface ArkmeMessageRefPayload {
+  version: 1
+  userId: number
+  chatSessionUid: string
+  relationUid: string
 }
 
 interface ArkmeProfileImageRefPayload {
@@ -3588,23 +3596,33 @@ export class ArkmeService {
     )
     const items: ArkmeTimelineItem[] = []
     const senderUserIdByIndex = new Map<number, number>()
+    const messageRefSigningKey = source.kind === 'group_chat'
+      ? await this.stateStore.uniqueCode()
+      : undefined
     for (const raw of listValue(data.items)) {
       const item = objectValue(raw)
       const relation = objectValue(item.relation)
       const record = objectValue(item.record)
       const payload = objectValue(record.payload)
+      const recordStatus = numberValue(record.status)
+      // Only fully hydrated records are readable messages and eligible for an Agent-facing report reference.
+      if (recordStatus !== 1) continue
       const uid = stringValue(relation.record_uid ?? payload.record_uid).trim()
       if (uid === '') continue
+      const relationUid = stringValue(relation.rel_uid).trim()
       const senderUserId = numberValue(relation.sender_user_id)
       const aiPolish = this.timelineAiPolish(record, payload)
       const itemIndex = items.push({
         itemUid: uid,
+        ...(source.kind !== 'group_chat' || relationUid === '' || senderUserId === session.userId ? {} : {
+          messageRef: this.sealMessageRef(session.userId, source.ownerRef, relationUid, messageRefSigningKey!),
+        }),
         senderName: stringValue(relation.display_name_snapshot).trim() || 'Arkme用户',
         isMe: senderUserId === session.userId,
         sendAtMillis: numberValue(relation.attach_at ?? payload.send_at),
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
-        status: numberValue(record.status),
+        status: recordStatus,
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
         ...(aiPolish === undefined ? {} : { aiPolish }),
@@ -3864,6 +3882,35 @@ export class ArkmeService {
       .update(`related-recording:${userId}:${chatSessionUid}:${momentId}`)
       .digest('base64url')
     return `arkme-related-recording-v1.${signature}`
+  }
+
+  async reportMessage(
+    messageRef: string,
+    reportType: 1 | 2 | 3 | 4,
+    options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageReportResult> {
+    const session = await this.requireSession()
+    const reference = await this.openMessageRef(messageRef, session.userId)
+    const reason = options.reason?.trim() ?? ''
+    if (![1, 2, 3, 4].includes(reportType) || (reportType === 4 && reason === '') || [...reason].length > 500) {
+      throw new ArkmePluginError('message-report-invalid', '举报类型或补充说明无效', false)
+    }
+    const data = await this.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/report',
+      {
+        chat_session_uid: reference.chatSessionUid,
+        rel_uid: reference.relationUid,
+        ...(options.requestUid?.trim() === '' || options.requestUid === undefined ? {} : { request_uid: options.requestUid.trim() }),
+        report_type: reportType,
+        ...(reason === '' ? {} : { reason }),
+      },
+      session,
+      options.signal,
+    )
+    const report = objectValue(data.report)
+    const reportUid = stringValue(report.report_uid).trim()
+    if (reportUid === '') throw new ArkmePluginError('message-report-invalid-response', '举报服务返回无效', true, 502)
+    return { messageRef, reportUid, status: numberValue(report.status) }
   }
 
   async sendSourceText(
@@ -6608,6 +6655,42 @@ export class ArkmeService {
     const payload = encodeOpaqueJson({ version: 1, userId, kind, ownerRef, displayName } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `arkme-source-v1.${payload}.${signature}`
+  }
+
+  private sealMessageRef(userId: number, chatSessionUid: string, relationUid: string, signingKey: string): string {
+    const payload = encodeOpaqueJson({ version: 1, userId, chatSessionUid, relationUid } satisfies ArkmeMessageRefPayload)
+    const signature = createHmac('sha256', signingKey).update(payload).digest('base64url')
+    return `arkme-message-v1.${payload}.${signature}`
+  }
+
+  private async openMessageRef(messageRef: string, expectedUserId: number): Promise<ArkmeMessageRefPayload> {
+    const parts = messageRef.trim().split('.')
+    if (parts.length !== 3 || parts[0] !== 'arkme-message-v1') {
+      throw new ArkmePluginError('message-ref-invalid', 'Arkme 消息引用无效', false)
+    }
+    const payload = parts[1] ?? ''
+    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
+    const expected = createHmac('sha256', await this.stateStore.uniqueCode()).update(payload).digest()
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new ArkmePluginError('message-ref-invalid', 'Arkme 消息引用无效', false)
+    }
+    let parsed: Record<string, unknown>
+    try {
+      parsed = objectValue(decodeOpaqueJson(payload))
+    } catch (error) {
+      throw new ArkmePluginError('message-ref-invalid', 'Arkme 消息引用无效', false, 400, { cause: error })
+    }
+    const result: ArkmeMessageRefPayload = {
+      version: 1,
+      userId: numberValue(parsed.userId),
+      chatSessionUid: stringValue(parsed.chatSessionUid).trim(),
+      relationUid: stringValue(parsed.relationUid).trim(),
+    }
+    if (parsed.version !== 1 || result.userId !== expectedUserId || result.chatSessionUid === ''
+      || result.relationUid === '') {
+      throw new ArkmePluginError('message-ref-invalid', 'Arkme 消息引用与当前账号不匹配', false, 403)
+    }
+    return result
   }
 
   private async openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload> {

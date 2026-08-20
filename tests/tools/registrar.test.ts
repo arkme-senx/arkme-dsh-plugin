@@ -100,6 +100,7 @@ describe('registerArkmeTools', () => {
       'arkme_wechat_locations',
       'arkme_sources_list',
       'arkme_source_read',
+      'arkme_message_report',
       'arkme_related_recordings_read',
       'arkme_group_ai_polish_manage',
       'arkme_text_send',
