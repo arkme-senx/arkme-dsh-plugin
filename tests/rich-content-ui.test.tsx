@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewDragTop, arkmeNextImagePreviewMode } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
-import { arkmeClipboardImageFiles } from '../src/client/ArkmeSidebar.js'
+import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
   it('contains the whole image initially and exposes fixed-width zoom without horizontal overflow', () => {
@@ -191,6 +191,21 @@ describe('Arkme rich content presentation', () => {
       files: [],
     } as unknown as Pick<DataTransfer, 'files' | 'items'>
     expect(arkmeClipboardImageFiles(textOnlyClipboard)).toEqual([])
+  })
+
+  it('dismisses the add menu only for pointer targets outside both menu and trigger', () => {
+    const insideMenu = {} as Node
+    const insideTrigger = {} as Node
+    const outside = {} as Node
+    const menu = { contains: (target: Node | null) => target === insideMenu }
+    const trigger = { contains: (target: Node | null) => target === insideTrigger }
+
+    expect(arkmeShouldDismissAnchoredMenu(insideMenu, menu, trigger)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(insideTrigger, menu, trigger)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(outside, menu, trigger)).toBe(true)
+    expect(arkmeShouldDismissAnchoredMenu(null, menu, trigger)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(insideMenu, menu, null)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(outside, menu, null)).toBe(true)
   })
 
   it('renders a separate long-article composer with title, body, timer, count, and publish action', () => {

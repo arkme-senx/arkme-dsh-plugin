@@ -50,6 +50,14 @@ interface ArkmeComposerAttachment {
   previewUrl?: string
 }
 
+export function arkmeShouldDismissAnchoredMenu(
+  target: Node | null,
+  menu: Pick<Node, 'contains'> | null,
+  trigger: Pick<Node, 'contains'> | null,
+): boolean {
+  return target !== null && menu?.contains(target) !== true && trigger?.contains(target) !== true
+}
+
 const colors = {
   panel: 'var(--dsw-alias-bg-base, #ffffff)',
   text: 'var(--dsw-alias-label-primary, #17191c)',
@@ -277,6 +285,8 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const sentinelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const addMenuRef = useRef<HTMLDivElement>(null)
+  const addMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [timelineStateSourceRef, setTimelineStateSourceRef] = useState('')
@@ -309,6 +319,24 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
+
+  useEffect(() => {
+    if (!addMenuOpen || typeof document === 'undefined') return
+    const closeFromOutside = (event: PointerEvent) => {
+      const target = event.target instanceof Node ? event.target : null
+      if (arkmeShouldDismissAnchoredMenu(target, addMenuRef.current, addMenuTriggerRef.current)) setAddMenuOpen(false)
+    }
+    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setAddMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [addMenuOpen])
+
   const qrRequestStartedRef = useRef(false)
   const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
   const cacheAccountUserIdRef = useRef<number>()
@@ -342,6 +370,24 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const relatedGenerationRef = useRef(0)
   const relatedLoadingMoreRef = useRef(false)
   const activeRelatedSourceRef = useRef('')
+  const relatedMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!relatedMenuOpen || typeof document === 'undefined') return
+    const closeFromOutside = (event: PointerEvent) => {
+      const target = event.target instanceof Node ? event.target : null
+      if (arkmeShouldDismissAnchoredMenu(target, relatedMenuRef.current, null)) setRelatedMenuOpen(false)
+    }
+    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setRelatedMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [relatedMenuOpen])
 
   const releaseAttachmentPreview = useCallback((attachment: ArkmeComposerAttachment) => {
     if (attachment.previewUrl === undefined) return
@@ -1062,8 +1108,8 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
             onSourceActivated={activateSource}
             onError={setError}
           />}
-          {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div style={styles.headerActions}>
-            <button type="button" style={styles.moreButton} aria-label="更多私聊操作" aria-expanded={relatedMenuOpen}
+          {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div ref={relatedMenuRef} style={styles.headerActions}>
+            <button type="button" style={styles.moreButton} aria-label="更多私聊操作" aria-haspopup="menu" aria-expanded={relatedMenuOpen}
               onClick={() => { setRelatedMenuOpen(value => !value) }}>•••</button>
             {relatedMenuOpen && <div style={styles.popover} role="menu">
               <button type="button" role="menuitem" style={styles.menuItem} onClick={openRelatedPanel}>
@@ -1174,8 +1220,8 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
             </ul>}
           </div>
           <footer style={styles.composer}><div style={styles.composerInner}>
-            {addMenuOpen && <div style={styles.addMenu} role="menu">
-              <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
+            {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
+              <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
               <div style={styles.menuDivider} />
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setLongArticleCreating(true); setAddMenuOpen(false) }}><span aria-hidden>✎</span>写长文</button>
             </div>}
@@ -1199,7 +1245,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
                 void selectFiles(imageFiles)
               }}
               onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draft.trim() !== '') void send() } }} />
-            <div style={styles.tools}><button type="button" style={styles.plus} aria-label="添加内容" aria-expanded={addMenuOpen} onClick={() => { setAddMenuOpen(value => !value) }}>+</button><button
+            <div style={styles.tools}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => { setAddMenuOpen(value => !value) }}>+</button><button
               type="button"
               style={{ ...styles.send, opacity: busy || (draft.trim() === '' && attachments.length === 0) ? .4 : 1 }}
               disabled={busy || (draft.trim() === '' && attachments.length === 0)}
