@@ -33,5 +33,9 @@ export function selectLatestUserPreviewAttachments(
     || new Set(indices).size !== indices.length) {
     throw new Error('attachment_indices must contain unique 1-based image positions from the latest direct user message')
   }
-  return indices.map(index => ({ index, ref: refs[index - 1]! }))
+  const selected = indices.map(index => ({ index, ref: refs[index - 1]! }))
+  if (new Set(selected.map(item => String(item.ref.attachmentId))).size !== selected.length) {
+    throw new Error('selected image attachments must be unique')
+  }
+  return selected
 }

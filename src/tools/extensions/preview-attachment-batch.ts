@@ -21,10 +21,6 @@ function mutationUuid(extensionId: string, attachmentId: string): string {
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim() !== '' ? error.message : '预览图上传失败'
-}
-
 export async function addPreviewAttachmentBatch(input: {
   extensionId: string
   attachments: readonly SelectedPreviewAttachment[]
@@ -73,7 +69,7 @@ export async function addPreviewAttachmentBatch(input: {
       return {
         outcome: 'partial', extension_id: input.extensionId, added_count: added,
         preview_images: gallery.preview_images, preview_revision: gallery.preview_revision,
-        failed: { index: item.selected.index, message: errorMessage(error) },
+        failed: { index: item.selected.index, message: '预览图上传失败，请刷新后重试' },
       }
     }
   }

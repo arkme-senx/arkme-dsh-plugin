@@ -25,6 +25,12 @@ describe('extension preview message attachments', () => {
     ])
     expect(() => selectLatestUserPreviewAttachments(agent, [1, 1])).toThrow('unique 1-based')
     expect(() => selectLatestUserPreviewAttachments(agent, [3])).toThrow('unique 1-based')
+    const duplicateAgent = { session: { events: [{
+      seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [
+        { type: 'image', attachment: first }, { type: 'image', attachment: first },
+      ] },
+    }] } } as never
+    expect(() => selectLatestUserPreviewAttachments(duplicateAgent)).toThrow('selected image attachments must be unique')
   })
 
   it('does not fall back to an older image message', () => {
@@ -73,7 +79,7 @@ describe('extension preview message attachments', () => {
     expect(result).toEqual({
       outcome: 'partial', extension_id: 'ext-1', added_count: 1,
       preview_images: [{ preview_ref: addedRef, content_type: 'image/png', preview_size: 4, width: 1, height: 1, created_at: 1 }],
-      preview_revision: 1, failed: { index: 2, message: 'remote unavailable' },
+      preview_revision: 1, failed: { index: 2, message: '预览图上传失败，请刷新后重试' },
     })
     expect(JSON.stringify(result)).not.toContain('sha256:')
     expect(addPreview).toHaveBeenCalledTimes(2)
