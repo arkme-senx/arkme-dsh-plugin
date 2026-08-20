@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter, extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
-  extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
+  extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
   formatExtensionBytes,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
@@ -60,6 +60,13 @@ describe('Arkme extension market UI', () => {
     expect(extensionInstallPercent({ phase: 'verifying' })).toBe(80)
     expect(extensionInstallPercent({ phase: 'active' })).toBe(100)
     expect(formatExtensionBytes(5 * 1024 * 1024)).toBe('5.0 MB')
+  })
+
+  it('surfaces the completed install task failure instead of silently resetting the button', () => {
+    expect(extensionInstallFailureMessage({
+      phase: 'failed', message: '安装失败', error: { code: 'download-failed', message: '扩展制品下载失败', retryable: true },
+    })).toBe('扩展制品下载失败')
+    expect(extensionInstallFailureMessage({ phase: 'installed', message: '安装完成' })).toBeUndefined()
   })
 
   it('does not offer installation for an owned extension without a published version', () => {

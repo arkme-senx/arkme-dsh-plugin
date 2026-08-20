@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -66,6 +66,8 @@ export interface Config {
   openclawProfile: string
 }
 
+export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
+
 export const Config: Schema<Config> = Schema.object({
   environment: Schema.union(['test', 'prod']).default('test'),
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
@@ -81,7 +83,7 @@ export const Config: Schema<Config> = Schema.object({
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
   extensionPublishBaseUrl: Schema.string().default(''),
   extensionArtifactDirectory: Schema.string().default(''),
-  extensionTrustedSigningKeys: Schema.string().default('{}'),
+  extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -110,7 +112,9 @@ export const inject = ['webServer', 'tools', 'systemPrompt']
 export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   if (dshBinPath.trim() === '') return undefined
   try {
-    const manifest = JSON.parse(readFileSync(join(dirname(dshBinPath), '..', 'package.json'), 'utf8')) as { version?: unknown }
+    let resolvedBinPath = dshBinPath
+    try { resolvedBinPath = realpathSync(dshBinPath) } catch { /* Preserve metadata-only probes. */ }
+    const manifest = JSON.parse(readFileSync(join(dirname(resolvedBinPath), '..', 'package.json'), 'utf8')) as { version?: unknown }
     return typeof manifest.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version)
       ? manifest.version
       : undefined

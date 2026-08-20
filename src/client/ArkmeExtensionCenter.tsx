@@ -107,6 +107,7 @@ const styles: Record<string, CSSProperties> = {
   activeChip: { background: colors.accentSoft, color: colors.accent },
   warningChip: { background: arkmeTheme.warningSoft, color: colors.warning },
   error: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 12 },
+  installStatus: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
   restartNotice: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
   empty: { display: 'grid', justifyItems: 'center', padding: '46px 18px 24px', textAlign: 'center' },
   emptyIcon: { width: 38, height: 38, display: 'grid', placeItems: 'center', color: colors.caption },
@@ -269,6 +270,13 @@ export function extensionInstallPercent(task: Pick<ArkmeExtensionInstallTaskSnap
     case 'active':
     case 'failed': return 100
   }
+}
+
+export function extensionInstallFailureMessage(
+  task: Pick<ArkmeExtensionInstallTaskSnapshot, 'phase' | 'message' | 'error'>,
+): string | undefined {
+  if (task.phase !== 'failed') return undefined
+  return task.error?.message.trim() || task.message?.trim() || '扩展安装失败，请重试。'
 }
 
 export function formatExtensionBytes(bytes: number): string {
@@ -557,6 +565,8 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
         }, controller.signal)
         setInstallTask(next)
         if (next.done) {
+          const failure = extensionInstallFailureMessage(next)
+          if (failure !== undefined) setInstallError(failure)
           if (next.result?.restartRequired === true) {
             setRestartNotice('扩展已写入 DSH 插件列表，请手动重启 DSH 后生效。')
             setRestartPrompt({ extensionId: next.extensionId, kind: 'apply' })
@@ -658,6 +668,12 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
     <main style={styles.list}>
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
+      {installTask !== undefined && !installTask.done && <div style={styles.installStatus} role="status">
+        {installTask.message}
+        {installTask.phase === 'downloading' && installTask.downloadedBytes !== undefined
+          ? ` · ${formatExtensionBytes(installTask.downloadedBytes)}${installTask.totalBytes === undefined ? '' : ` / ${formatExtensionBytes(installTask.totalBytes)}`}`
+          : ''}
+      </div>}
       {restartNotice !== '' && <div style={styles.restartNotice} role="status">{restartNotice}</div>}
       {busy && <LoadingState />}
       {!busy && error === '' && detail !== undefined && <div style={styles.detail}>

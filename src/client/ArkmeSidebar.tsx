@@ -25,6 +25,10 @@ import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import {
+  appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
+  truncateArkmeSourceBreadcrumbTrail,
+} from './ArkmeSourceBreadcrumb.js'
+import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution,
 } from './ArkmeTopicDirectoryPopover.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -56,6 +60,7 @@ export interface ArkmeSurfaceProps {
 
 export type ArkmeAuthView = 'login' | 'content'
 
+const EMPTY_SELF_SOURCES: readonly ArkmeSourceItem[] = []
 export function arkmeShouldDismissAnchoredMenu(
   target: Node | null,
   menu: Pick<Node, 'contains'> | null,
@@ -108,7 +113,7 @@ const styles: Record<string, CSSProperties> = {
     flex: 'none', height: ARKME_CONVERSATION_HEADER_HEIGHT, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
-  titleGroup: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 },
+  titleGroup: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 4 },
   titleBlock: { flex: 1, minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
@@ -467,11 +472,25 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const selectedSource = ui.mode === 'source' ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
+  const [selfBreadcrumbTrail, setSelfBreadcrumbTrail] = useState<ArkmeSourceItem[]>([])
   const activeSelfSourcesResolution = selfSourcesResolution === undefined
     || selfSourcesResolution.userId !== authenticatedUserId
     ? undefined
     : selfSourcesResolution.resolution
   const aggregateSource = arkmeAggregateSourceForUser(authenticatedUserId, selfSourcesResolution)
+  const selfSources = activeSelfSourcesResolution?.status === 'ready'
+    ? activeSelfSourcesResolution.sources
+    : EMPTY_SELF_SOURCES
+  const selfSourcesRef = useRef(selfSources)
+  selfSourcesRef.current = selfSources
+  const breadcrumbUserIdRef = useRef(authenticatedUserId)
+  useEffect(() => {
+    const accountChanged = breadcrumbUserIdRef.current !== authenticatedUserId
+    breadcrumbUserIdRef.current = authenticatedUserId
+    setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(
+      accountChanged ? [] : current, selectedSource, selfSources,
+    ))
+  }, [authenticatedUserId, selectedSource, selfSources])
   const source = ui.mode === 'source' ? selectedSource ?? aggregateSource : undefined
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
   useSyncExternalStore(
@@ -1210,13 +1229,29 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
+  const activateSelfSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
+    setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(current, nextSource, selfSourcesRef.current))
+    activateSource(nextSource)
+  }, [activateSource])
+  const activateBreadcrumbSource = useCallback((trailIndex: number, nextSource: ArkmeTimelinePage['source']) => {
+    setSelfBreadcrumbTrail(current => truncateArkmeSourceBreadcrumbTrail(current, trailIndex))
+    activateSource(nextSource)
+  }, [activateSource])
+  const activateSendToSelf = useCallback(() => {
+    setSelfBreadcrumbTrail([])
+    arkmeUi.focusSendToSelf()
+    arkmeUi.chatChanged()
+  }, [])
   const acceptSelfSourcesResolution = useCallback((
     userId: number,
     resolution: ArkmeSelfSourcesResolution,
   ) => {
     setSelfSourcesResolution({ userId, resolution })
   }, [])
-  const invalidateTopicSelection = useCallback(() => { arkmeUi.focusSendToSelf() }, [])
+  const invalidateTopicSelection = useCallback(() => {
+    setSelfBreadcrumbTrail([])
+    arkmeUi.focusSendToSelf()
+  }, [])
 
   const loadMomentDetail = async (moment: ArkmeInterwovenMention, force = false) => {
     if (source === undefined || source.kind !== 'private_chat') return
@@ -1281,10 +1316,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     [chatDirectory, detailState],
   )
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
+  const selfBreadcrumbLabel = isArkmeSelfWorkspaceSource(selectedSource)
+    ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
+    : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'arko' ? 'Arko'
-    : ui.mode === 'source' ? arkmeSourceDestinationLabel(selectedSource)
+    : ui.mode === 'source' ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
 
@@ -1293,12 +1331,19 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       <section ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
         {!arkoContentVisible && <header style={styles.header}>
           <div style={styles.titleGroup}>
-            <div style={styles.titleBlock}>
-              <h2 style={styles.title}>{surfaceTitle}</h2>
-              {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
-                && aiPolishSettings?.enabled === true
-                && <span style={styles.headerSubtitle}>AI润色已开启</span>}
-            </div>
+            {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
+              ? <ArkmeSourceBreadcrumb
+                trail={selfBreadcrumbTrail}
+                sources={selfSources}
+                onSelect={activateBreadcrumbSource}
+                onSelectAggregate={activateSendToSelf}
+              />
+              : <div style={styles.titleBlock}>
+                <h2 style={styles.title}>{surfaceTitle}</h2>
+                {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
+                  && aiPolishSettings?.enabled === true
+                  && <span style={styles.headerSubtitle}>AI润色已开启</span>}
+              </div>}
             {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon /></span>}
           </div>
           {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
@@ -1306,7 +1351,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               key={auth.userId}
               userId={auth.userId}
               selectedSource={selectedSource}
-              onSelect={activateSource}
+              onSelect={activateSelfSource}
               onSelectionInvalidated={invalidateTopicSelection}
               onSelfSourcesResolution={acceptSelfSourcesResolution}
               retryRevision={selfSourcesRetryRevision}
