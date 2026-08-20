@@ -25,7 +25,7 @@ const styles: Record<string, CSSProperties> = {
   review: { position: 'relative', padding: '11px 0', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', cursor: 'pointer' },
   openThreadButton: { position: 'absolute', zIndex: 0, inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
   reviewContent: { position: 'relative', zIndex: 1, pointerEvents: 'none' },
-  reviewLayout: { display: 'grid', gridTemplateColumns: '44px minmax(0, 1fr)', columnGap: 10, alignItems: 'start' },
+  reviewLayout: { display: 'grid', gridTemplateColumns: '38px minmax(0, 1fr)', columnGap: 10, alignItems: 'start' },
   reviewMain: { minWidth: 0 },
   authorRow: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
   author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 12, fontWeight: 650 },
@@ -122,7 +122,7 @@ function ReviewPresentation({ item, replyCount, onReply, clickThrough = false }:
     <ArkmeUserAvatar
       {...(item.authorAvatarRef === undefined ? {} : { avatarRef: item.authorAvatarRef })}
       {...(item.authorAvatarFallback === undefined ? {} : { fallback: item.authorAvatarFallback })}
-      size={44}
+      size={38}
       label={`${item.authorName}头像`}
     />
     <div data-arkme-review-main="true" style={styles.reviewMain}>
