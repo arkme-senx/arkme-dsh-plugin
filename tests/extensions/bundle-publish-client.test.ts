@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ArkmePluginError } from '../../src/arkme-service.js'
 import { packLocalBundleDirectory } from '../../src/extensions/bundle-artifact.js'
 import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -27,6 +28,9 @@ describe('Bundle v2 publish client', () => {
     const root = fixture()
     try {
       const source = packLocalBundleDirectory(root)
+      expect(Buffer.from(source.source.bytes).equals(Buffer.from(source.bundle.bytes))).toBe(true)
+      expect(source.source.bytes.byteLength).toBe(source.bundle.bytes.byteLength)
+      expect(source.source.sourceSha256).toBe(source.bundle.bundleSha256)
       const requests: Array<{ path: string; body: Record<string, unknown> }> = []
       const post = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
         requests.push({ path, body })
@@ -62,8 +66,10 @@ describe('Bundle v2 publish client', () => {
           version: '1.0.0',
           execution_model: 'dsh-native',
           bundle_sha256: source.bundle.bundleSha256,
+          bundle_size: source.bundle.bytes.byteLength,
           package_json_sha256: source.bundle.packageJsonSha256,
           source_sha256: source.source.sourceSha256,
+          source_size: source.bundle.bytes.byteLength,
         },
       })
       expect(uploads).toEqual([
@@ -73,5 +79,24 @@ describe('Bundle v2 publish client', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('marks only upload-pending completion conflicts as retryable', async () => {
+    for (const message of ['制品尚未上传完成（服务错误码 40901）', '源码尚未上传完成（服务错误码 40901）']) {
+      const client = new ExtensionPublishClient(async (): Promise<never> => {
+        throw new ArkmePluginError('arkme-code-40901', message, false, 409, { upstreamStatus: 409 })
+      })
+
+      await expect(client.completePublishSession('pub-v2')).rejects.toMatchObject({
+        code: 'extension-publish-upload-pending', retryable: true, httpStatus: 409, upstreamStatus: 409,
+      })
+    }
+
+    const conflict = new ExtensionPublishClient(async (): Promise<never> => {
+      throw new ArkmePluginError('arkme-code-40901', '资源状态冲突（服务错误码 40901）', false, 409, { upstreamStatus: 409 })
+    })
+    await expect(conflict.completePublishSession('pub-v2')).rejects.toMatchObject({
+      code: 'arkme-code-40901', retryable: false,
+    })
   })
 })

@@ -87,6 +87,9 @@ describe('standard DSH Bundle artifact', () => {
     }))
     const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Record<string, any>
     manifest.files = ['lib', 'arkme', 'cordis.patch.yml']
+    manifest.type = 'module'
+    manifest.main = './lib/index.js'
+    manifest.exports = { '.': './lib/index.js', './package.json': './package.json' }
     manifest.dsh.arkme = { executionModel: 'arkme-sandboxed', runtimeContract: 2 }
     writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
     writeFileSync(join(root, 'lib', 'index.js'), 'export function apply() { process.exit(1) }\n')

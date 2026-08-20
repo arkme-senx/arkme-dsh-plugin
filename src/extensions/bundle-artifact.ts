@@ -171,6 +171,9 @@ function readTar(tar: Buffer): Map<string, Buffer> {
 interface BundleManifest {
   name: string
   version: string
+  type?: unknown
+  main?: unknown
+  exports?: unknown
   files: string[]
   scripts?: Record<string, unknown>
   dependencies?: Record<string, string>
@@ -235,17 +238,41 @@ function validateManifest(manifest: BundleManifest, files: ReadonlyMap<string, B
     || !files.has('package/arkme/source.json')) {
     throw new ArkmeBundleArtifactError('bundle-sandbox-marker-invalid', 'Arkme sandbox Bundle marker 无效')
   }
+  const exports = manifest.exports
+  if (manifest.type !== 'module' || manifest.main !== './lib/index.js'
+    || exports === null || typeof exports !== 'object' || Array.isArray(exports)) {
+    throw new ArkmeBundleArtifactError('bundle-sandbox-manifest-invalid', 'Arkme sandbox Bundle module 合同无效')
+  }
+  const exportEntries = Object.entries(exports as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
+  if (exportEntries.length !== 2
+    || exportEntries[0]?.[0] !== '.' || exportEntries[0]?.[1] !== './lib/index.js'
+    || exportEntries[1]?.[0] !== './package.json' || exportEntries[1]?.[1] !== './package.json') {
+    throw new ArkmeBundleArtifactError('bundle-sandbox-manifest-invalid', 'Arkme sandbox Bundle exports 合同无效')
+  }
   if (files.get('package/lib/index.js')?.toString('utf8') !== renderArkmeSandboxHostEntry(manifest.name)) {
     throw new ArkmeBundleArtifactError('bundle-sandbox-entry-invalid', 'Arkme sandbox Bundle Host 入口无效')
   }
   return 'arkme-sandboxed'
 }
 
-function validatePatch(raw: Buffer, packageName: string): string[] {
+function validatePatch(raw: Buffer, packageName: string, executionModel: ArkmeBundleExecutionModel): string[] {
   const document = parseDocument(raw.toString('utf8'), { uniqueKeys: true })
   if (document.errors.length > 0) throw new ArkmeBundleArtifactError('bundle-patch-invalid', 'Bundle patch YAML 格式无效')
   const value = document.toJS() as unknown
   if (!Array.isArray(value)) throw new ArkmeBundleArtifactError('bundle-patch-invalid', 'Bundle patch 必须是操作数组')
+  if (executionModel === 'arkme-sandboxed') {
+    const operation = value[0] as { insert?: unknown } | undefined
+    const rows = operation?.insert
+    const row = Array.isArray(rows) ? rows[0] as { id?: unknown; name?: unknown } | undefined : undefined
+    if (value.length !== 1 || operation === undefined || Object.keys(operation).length !== 1
+      || !Array.isArray(rows) || rows.length !== 1
+      || row?.id !== arkmeSandboxEntryId(packageName) || row.name !== packageName) {
+      throw new ArkmeBundleArtifactError(
+        'bundle-sandbox-patch-invalid',
+        'Arkme sandbox Bundle patch 必须唯一加载 package root',
+      )
+    }
+  }
   const prefix = `arkme-${bundleSha256(packageName).slice(0, 16)}-`
   const ids = new Set<string>()
   for (const operation of value) {
@@ -283,7 +310,7 @@ export function inspectBundleArtifact(bytes: Uint8Array): InspectedBundleArtifac
   const manifest = readManifest(packageJSON)
   const executionModel = validateManifest(manifest, files)
   const patchPath = `package/${posix.normalize(manifest.dsh!.bundle!.patch!.replace(/^\.\//, ''))}`
-  const patchIds = validatePatch(files.get(patchPath)!, manifest.name)
+  const patchIds = validatePatch(files.get(patchPath)!, manifest.name, executionModel)
   return {
     bytes: Buffer.from(bytes),
     bundleSha256: bundleSha256(bytes),

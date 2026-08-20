@@ -188,9 +188,23 @@ export class ExtensionPublishClient {
   }
 
   async completePublishSession(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
-    return await this.post('/api/v1/extensions/publish-session/complete', {
-      publish_session_id: publishSessionId,
-    }, signal)
+    try {
+      return await this.post('/api/v1/extensions/publish-session/complete', {
+        publish_session_id: publishSessionId,
+      }, signal)
+    } catch (error) {
+      if (error instanceof ArkmePluginError && error.upstreamStatus === 409
+        && ['制品尚未上传完成', '源码尚未上传完成'].some(message => error.message.includes(message))) {
+        throw new ArkmePluginError(
+          'extension-publish-upload-pending',
+          error.message,
+          true,
+          409,
+          { cause: error, upstreamStatus: error.upstreamStatus, ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }) },
+        )
+      }
+      throw error
+    }
   }
 
   async publishStatus(publishSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
