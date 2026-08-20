@@ -41,7 +41,10 @@ describe('extension reviews UI', () => {
     expect(html).toContain('>评论</button>')
     expect(html).toContain('aria-label="查看小林的评论及 1 条回复"')
     expect(html).toContain('aria-label="回复小林，已有 1 条回复"')
-    expect(html).toContain('<svg')
+    expect(html).toContain('<svg aria-hidden="true" width="15" height="15"')
+    expect(html).toContain('d="M8.5 19H8C4 19 2 18 2 13V8C2 4 4 2 8 2H16C20 2 22 4 22 8V13C22 17 20 19 16 19H15.5')
+    expect(html).toContain('d="M7 8H17"')
+    expect(html).toContain('d="M7 13H13"')
   })
 
   it('hides the top-level comment entry for the extension owner while keeping replies', () => {

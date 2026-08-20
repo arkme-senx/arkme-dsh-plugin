@@ -30,7 +30,7 @@ const styles: Record<string, CSSProperties> = {
   time: { marginLeft: 'auto', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9 },
   content: { margin: '6px 0 0 31px', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '7px 0 0 31px' },
-  replyButton: { display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 30, padding: '2px 4px 2px 0', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 10, lineHeight: '16px', cursor: 'pointer' },
+  replyButton: { display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 30, padding: '2px 4px 2px 0', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 12, fontWeight: 600, lineHeight: '16px', cursor: 'pointer' },
   state: { padding: '18px 0 10px', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 11, textAlign: 'center' },
   error: { marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(194,65,59,.08)', color: 'var(--dsw-alias-state-error-primary, #c2413b)', fontSize: 11 },
   loadMore: { width: '100%', height: 30, marginTop: 6, border: 0, borderRadius: 8, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 10, cursor: 'pointer' },
@@ -106,8 +106,10 @@ function authorInitial(name: string): string {
 }
 
 function ReplyIcon() {
-  return <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none">
-    <path d="M20.25 11.5a7.75 7.75 0 0 1-7.75 7.75H8.4L4 21l1.47-3.92A7.75 7.75 0 1 1 20.25 11.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  return <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none">
+    <path d="M8.5 19H8C4 19 2 18 2 13V8C2 4 4 2 8 2H16C20 2 22 4 22 8V13C22 17 20 19 16 19H15.5C15.19 19 14.89 19.15 14.7 19.4L13.2 21.4C12.54 22.28 11.46 22.28 10.8 21.4L9.3 19.4C9.14 19.18 8.77 19 8.5 19Z" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 8H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M7 13H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 }
 
