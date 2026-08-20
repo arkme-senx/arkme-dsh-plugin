@@ -32,6 +32,12 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
 import {
+  arkmeComposerDraftStore,
+  arkmeSourceComposerDraftKey,
+  releaseArkmeComposerDraft,
+  type ArkmeComposerAttachment,
+} from './composer-draft-store.js'
+import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, resolveInterwovenGroupTarget,
   type ArkmeConversationRow, type ArkmeInterwovenDetailViewState,
@@ -49,11 +55,6 @@ export interface ArkmeSurfaceProps {
 }
 
 export type ArkmeAuthView = 'login' | 'content'
-
-interface ArkmeComposerAttachment {
-  asset: ArkmeUploadedAsset
-  previewUrl?: string
-}
 
 export function arkmeShouldDismissAnchoredMenu(
   target: Node | null,
@@ -472,6 +473,15 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     : selfSourcesResolution.resolution
   const aggregateSource = arkmeAggregateSourceForUser(authenticatedUserId, selfSourcesResolution)
   const source = ui.mode === 'source' ? selectedSource ?? aggregateSource : undefined
+  const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
+  useSyncExternalStore(
+    arkmeComposerDraftStore.subscribe,
+    arkmeComposerDraftStore.getRevision,
+    arkmeComposerDraftStore.getRevision,
+  )
+  const composerDraft = arkmeComposerDraftStore.get(composerDraftKey)
+  const draft = composerDraft.text
+  const attachments = composerDraft.attachments
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -492,11 +502,9 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
-  const [draft, setDraft] = useState('')
   const [longArticleCreating, setLongArticleCreating] = useState(false)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
-  const [attachments, setAttachments] = useState<ArkmeComposerAttachment[]>([])
-  const [uploadStatus, setUploadStatus] = useState('')
+  const [uploadStatus, setUploadStatus] = useState<{ key: string; message: string }>()
   const [busy, setBusy] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -538,7 +546,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const detailRequestMomentRef = useRef('')
   const lastReadAckRef = useRef('')
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
-  const attachmentPreviewUrlsRef = useRef(new Set<string>())
   const ignoreStaleBindingAuthRef = useRef(false)
   const authenticated = auth?.status === 'authenticated'
   const authView = arkmeAuthView(auth)
@@ -579,21 +586,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       document.removeEventListener('keydown', closeFromKeyboard)
     }
   }, [relatedMenuOpen])
-
-  const releaseAttachmentPreview = useCallback((attachment: ArkmeComposerAttachment) => {
-    if (attachment.previewUrl === undefined) return
-    URL.revokeObjectURL(attachment.previewUrl)
-    attachmentPreviewUrlsRef.current.delete(attachment.previewUrl)
-  }, [])
-
-  const releaseAttachmentPreviews = useCallback((values: ArkmeComposerAttachment[]) => {
-    for (const attachment of values) releaseAttachmentPreview(attachment)
-  }, [releaseAttachmentPreview])
-
-  useEffect(() => () => {
-    for (const previewUrl of attachmentPreviewUrlsRef.current) URL.revokeObjectURL(previewUrl)
-    attachmentPreviewUrlsRef.current.clear()
-  }, [])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
     const previous = arkmeAuthStore.getSnapshot().auth
@@ -862,7 +854,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     setHasMore(cachedTimeline?.hasMore ?? false)
     setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
     if (authenticated) setError('')
-    setAttachments(current => { releaseAttachmentPreviews(current); return [] }); setLongArticleCreating(false); setAddMenuOpen(false)
+    setLongArticleCreating(false); setAddMenuOpen(false)
     interwovenRequestRef.current?.abort()
     interwovenGenerationRef.current += 1
     detailRequestRef.current?.abort()
@@ -872,7 +864,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       : conversationCacheRef.current.getInterwovenMoments(sourceRef) ?? [])
     setSelectedMoment(undefined)
     setDetailState(undefined)
-  }, [authenticated, auth?.userId, releaseAttachmentPreviews, source?.sourceRef])
+  }, [authenticated, auth?.userId, source?.sourceRef])
   useEffect(() => {
     if (!authenticated || source === undefined) return
     const generation = timelineGenerationRef.current
@@ -1060,15 +1052,15 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     if (mode !== 'wechat') qrRequestStartedRef.current = false
   }
 
-  const uploadFile = async (file: File): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
+  const uploadFile = async (file: File, targetDraftKey: string): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open('POST', '/arkme-self/api/upload')
     request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
     request.setRequestHeader('X-Arkme-File-Name', encodeURIComponent(file.name))
     request.upload.onprogress = event => {
-      if (event.lengthComputable) setUploadStatus(`正在上传 ${file.name} ${String(Math.round(event.loaded / event.total * 100))}%`)
+      if (event.lengthComputable) setUploadStatus({ key: targetDraftKey, message: `正在上传 ${file.name} ${String(Math.round(event.loaded / event.total * 100))}%` })
     }
-    request.upload.onload = () => { setUploadStatus(`正在保存 ${file.name}…`) }
+    request.upload.onload = () => { setUploadStatus({ key: targetDraftKey, message: `正在保存 ${file.name}…` }) }
     request.onerror = () => { reject(new Error('文件上传网络错误')) }
     request.onload = () => {
       try {
@@ -1082,6 +1074,9 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
 
   const selectFiles = async (files: FileList | readonly File[] | null) => {
     if (files === null || files.length === 0) return
+    const targetDraftKey = composerDraftKey
+    const targetUserId = authenticatedUserId
+    if (targetDraftKey === undefined || targetUserId === undefined) return
     setAddMenuOpen(false); setBusy(true); setError('')
     const uploaded: ArkmeComposerAttachment[] = []
     try {
@@ -1089,59 +1084,60 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
         const previewUrl = file.type.toLowerCase().startsWith('image/') && typeof URL.createObjectURL === 'function'
           ? URL.createObjectURL(file)
           : undefined
-        if (previewUrl !== undefined) attachmentPreviewUrlsRef.current.add(previewUrl)
         try {
-          const asset = await uploadFile(file)
+          const asset = await uploadFile(file, targetDraftKey)
           uploaded.push({ asset, ...(previewUrl === undefined ? {} : { previewUrl }) })
         } catch (caught) {
-          if (previewUrl !== undefined) {
-            URL.revokeObjectURL(previewUrl)
-            attachmentPreviewUrlsRef.current.delete(previewUrl)
-          }
+          if (previewUrl !== undefined) URL.revokeObjectURL(previewUrl)
           throw caught
         }
       }
-      setAttachments(current => {
-        const retained = [...current, ...uploaded].slice(0, 20)
-        const retainedIds = new Set(retained.map(item => item.asset.fileAssetUid))
-        releaseAttachmentPreviews(uploaded.filter(item => !retainedIds.has(item.asset.fileAssetUid)))
-        return retained
-      })
+      const currentAuth = arkmeAuthStore.getSnapshot().auth
+      if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
+        arkmeComposerDraftStore.appendAttachments(targetDraftKey, uploaded)
+      } else {
+        releaseArkmeComposerDraft({ text: '', attachments: uploaded })
+      }
     } catch (caught) {
-      releaseAttachmentPreviews(uploaded)
+      releaseArkmeComposerDraft({ text: '', attachments: uploaded })
       setError(errorMessage(caught))
     }
     finally {
-      setUploadStatus(''); setBusy(false)
+      setUploadStatus(current => current?.key === targetDraftKey ? undefined : current); setBusy(false)
       if (fileInputRef.current !== null) fileInputRef.current.value = ''
     }
   }
 
   const send = async () => {
-    if (source === undefined) return
+    if (source === undefined || composerDraftKey === undefined) return
+    const targetSource = source
+    const targetDraftKey = composerDraftKey
+    const targetUserId = authenticatedUserId
+    if (targetUserId === undefined) return
     const textContent = draft.trim()
     if (textContent === '' && attachments.length === 0) return
     const recordUid = crypto.randomUUID(); const relationUid = crypto.randomUUID(); const now = Date.now()
     const optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: '我', isMe: true, sendAtMillis: now,
       title: '', textContent, status: 0,
-      ...(source.kind === 'group_chat' && aiPolishSettings?.enabled === true
+      ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
         ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
         : {}),
       displayKind: 0,
     }
-    const pendingAttachments = attachments
+    const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
+    const pendingAttachments = [...pendingDraft.attachments]
     const pendingAssets = pendingAttachments.map(attachment => attachment.asset)
-    setItems(current => mergeItems(current, [optimistic])); setDraft(''); setAttachments([]); setBusy(true); setError('')
+    setItems(current => mergeItems(current, [optimistic])); setBusy(true); setError('')
     requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
     try {
       const result = pendingAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
-          sourceRef: source.sourceRef, title: '', textContent, displayKind: 0,
+          sourceRef: targetSource.sourceRef, title: '', textContent, displayKind: 0,
           assets: pendingAssets, recordUid, relationUid,
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
-          sourceRef: source.sourceRef, textContent, recordUid, relationUid,
+          sourceRef: targetSource.sourceRef, textContent, recordUid, relationUid,
         })
       setItems(current => current.map(item => {
         if (item.itemUid !== recordUid) return item
@@ -1159,7 +1155,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           }),
         }
       }))
-      releaseAttachmentPreviews(pendingAttachments)
+      releaseArkmeComposerDraft(pendingDraft)
       if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
       if (result.aiPolish?.state === 'kept_original') {
         setTimeout(() => {
@@ -1172,8 +1168,14 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       }
       if (pendingAssets.length > 0) await loadTimeline()
     } catch (caught) {
-      setItems(current => current.filter(item => item.itemUid !== recordUid)); setDraft(textContent)
-      setAttachments(pendingAttachments); setError(errorMessage(caught))
+      setItems(current => current.filter(item => item.itemUid !== recordUid))
+      const currentAuth = arkmeAuthStore.getSnapshot().auth
+      if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
+        arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+      } else {
+        releaseArkmeComposerDraft(pendingDraft)
+      }
+      setError(errorMessage(caught))
     } finally { setBusy(false) }
   }
 
@@ -1465,13 +1467,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               asset={attachment.asset}
               {...(attachment.previewUrl === undefined ? {} : { previewUrl: attachment.previewUrl })}
               onRemove={() => {
-                releaseAttachmentPreview(attachment)
-                setAttachments(current => current.filter(item => item.asset.fileAssetUid !== attachment.asset.fileAssetUid))
+                arkmeComposerDraftStore.removeAttachment(composerDraftKey, attachment.asset.fileAssetUid)
               }}
             />)}</div>}
-            {uploadStatus !== '' && <div style={styles.uploadStatus} role="status">{uploadStatus}</div>}
+            {uploadStatus !== undefined && uploadStatus.key === composerDraftKey
+              && <div style={styles.uploadStatus} role="status">{uploadStatus.message}</div>}
             <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
-              onChange={event => { setDraft(event.target.value) }}
+              onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)
                 if (imageFiles.length === 0) return
