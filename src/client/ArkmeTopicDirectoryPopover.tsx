@@ -20,6 +20,7 @@ import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
@@ -55,14 +56,16 @@ export function reconcileArkmeTopicSelection(
 }
 
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #242629)',
-  secondary: 'var(--dsw-alias-label-secondary, #8a9099)',
-  caption: 'var(--dsw-alias-label-caption, #b0b5bc)',
-  border: 'var(--dsw-alias-border-l1, #eceef0)',
-  surface: 'var(--dsw-alias-bg-base, rgba(255,255,255,.97))',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  caption: arkmeTheme.caption,
+  border: arkmeTheme.borderSoft,
+  surface: arkmeTheme.base,
 }
 
 export const ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT = 'min(550px, calc(100vh - 112px))'
+export const ARKME_TOPIC_DIRECTORY_SEARCH_BACKGROUND = arkmeTheme.input
+export const ARKME_TOPIC_DIRECTORY_ACTIVE_BACKGROUND = arkmeTheme.accentSoft
 
 const styles: Record<string, CSSProperties> = {
   trigger: {
@@ -71,8 +74,8 @@ const styles: Record<string, CSSProperties> = {
     background: 'transparent', color: colors.secondary, cursor: 'pointer',
   },
   triggerActive: {
-    color: 'var(--dsw-alias-state-success, #176d3d)',
-    background: 'var(--dsw-alias-fill-secondary, rgba(23,109,61,.08))',
+    color: arkmeTheme.accent,
+    background: ARKME_TOPIC_DIRECTORY_ACTIVE_BACKGROUND,
   },
   popover: {
     position: 'absolute', zIndex: 12, top: 48, right: 48,
@@ -80,7 +83,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'grid', gridTemplateRows: 'auto auto minmax(0, 1fr)', overflow: 'hidden',
     boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 16,
     background: colors.surface,
-    boxShadow: '0 24px 64px rgba(20,24,31,.18), 0 2px 10px rgba(20,24,31,.06)',
+    boxShadow: arkmeTheme.shadow,
     backdropFilter: 'blur(24px) saturate(1.08)', WebkitBackdropFilter: 'blur(24px) saturate(1.08)',
   },
   head: {
@@ -96,7 +99,7 @@ const styles: Record<string, CSSProperties> = {
   search: {
     height: 34, display: 'flex', alignItems: 'center', gap: 8,
     margin: '0 14px 10px', padding: '0 10px', boxSizing: 'border-box', borderRadius: 9,
-    background: 'var(--dsw-alias-fill-secondary, #f3f4f5)', color: colors.caption,
+    background: ARKME_TOPIC_DIRECTORY_SEARCH_BACKGROUND, color: colors.caption,
   },
   searchInput: {
     width: '100%', minWidth: 0, border: 0, outline: 0, padding: 0,
@@ -106,7 +109,7 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 120, overflowY: 'auto', margin: 0, padding: '2px 0 74px', listStyle: 'none',
   },
   status: { padding: '22px 18px 80px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
-  error: { color: '#c2413b' },
+  error: { color: arkmeTheme.danger },
 }
 
 /** Keep matching topics and their ancestors so search never destroys the directory hierarchy. */

@@ -4,7 +4,8 @@ import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
 import {
-  ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT, ArkmeTopicDirectoryPopover, filterArkmeTopicSources,
+  ARKME_TOPIC_DIRECTORY_ACTIVE_BACKGROUND, ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT,
+  ARKME_TOPIC_DIRECTORY_SEARCH_BACKGROUND, ArkmeTopicDirectoryPopover, filterArkmeTopicSources,
   reconcileArkmeTopicSelection,
 } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import {
@@ -133,6 +134,9 @@ describe('topic create UI', () => {
     const resting = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} hovered={false} />)
     const hovered = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} hovered />)
     const selected = renderToStaticMarkup(<ArkmeTopicTreeRow {...baseProps} selected hovered={false} />)
+    const leaf = renderToStaticMarkup(<ArkmeTopicTreeRow
+      {...baseProps} row={{ ...topicRow, hasChildren: false, expanded: false }} hovered={false}
+    />)
     const created = renderToStaticMarkup(<ArkmeTopicTreeRow
       {...baseProps} createdHighlightActive createdHighlightVisible hovered={false}
     />)
@@ -145,6 +149,7 @@ describe('topic create UI', () => {
     expect(hovered).toContain('width:58px')
     expect(hovered).toContain('padding-right:12px')
     expect(hovered).toContain('var(--dsw-alias-label-caption, #a3a8ae)')
+    expect(leaf).toContain('background:var(--dsw-alias-label-caption, #a3a8ae)')
     expect(hovered).not.toContain('＋')
     expect(resting).not.toContain('transition:')
     expect(hovered).not.toContain('transition:')
@@ -161,6 +166,7 @@ describe('topic create UI', () => {
     expect(footer).toContain('新建主题')
     expect(footer).toContain('position:absolute')
     expect(footer).toContain('background:transparent')
+    expect(footer).toContain('background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
     expect(footer).toContain('padding:10px 12px 22px')
     expect(footer).not.toContain('box-shadow')
   })
@@ -177,6 +183,8 @@ describe('topic create UI', () => {
     expect(markup).not.toContain('position:absolute')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).toContain('100vh')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).not.toContain('100%')
+    expect(ARKME_TOPIC_DIRECTORY_SEARCH_BACKGROUND).toContain('--dsw-specific-input-major')
+    expect(ARKME_TOPIC_DIRECTORY_ACTIVE_BACKGROUND).toContain('--dsw-alias-state-success-tertiary')
     expect(markup).not.toContain('选择发送目标')
   })
 

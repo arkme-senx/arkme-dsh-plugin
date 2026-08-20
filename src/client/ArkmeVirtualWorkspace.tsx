@@ -159,7 +159,7 @@ const styles: Record<string, CSSProperties> = {
   },
   topicToggle: { cursor: 'pointer' },
   topicChevron: { display: 'inline-block', fontSize: 17, lineHeight: 1, transformOrigin: '50% 50%' },
-  topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: '#d6d9dd' },
+  topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: colors.caption },
   topicSelect: {
     position: 'relative', zIndex: 1, minWidth: 0, minHeight: 38, flex: 1, display: 'flex',
     alignItems: 'center', gap: 10, padding: 0, border: 0, background: 'transparent',
