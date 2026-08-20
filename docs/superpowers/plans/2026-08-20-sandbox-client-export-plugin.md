@@ -137,7 +137,11 @@ Detect the regular tar entry `package/lib/client.js` and exact `./client` export
 
 Do not weaken entry normalization, symlink/hardlink rejection, path traversal rules, dependency/script/native/bin restrictions, deterministic identity, or patch root-only validation.
 
-- [ ] **Step 5: Run focused tests**
+- [ ] **Step 5: Keep serialized Client factories self-contained**
+
+Execute the generated Client module with a fixture that mirrors `tsx`/esbuild name preservation. If `persistentClientFactory.toString()` contains `__name(...)`, the emitted module must provide the compatible helper inside its own ModuleLoader factory and execute without inheriting variables from the generation process.
+
+- [ ] **Step 6: Run focused tests**
 
 ```bash
 pnpm test -- tests/extensions/bundle-artifact.test.ts tests/extensions/bundle-materializer.test.ts --run
@@ -145,7 +149,7 @@ pnpm test -- tests/extensions/bundle-artifact.test.ts tests/extensions/bundle-ma
 
 Expected: the full valid/invalid matrix passes.
 
-- [ ] **Step 6: Commit the validator**
+- [ ] **Step 7: Commit the validator**
 
 ```bash
 git add src/extensions/bundle-artifact.ts

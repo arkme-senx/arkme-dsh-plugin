@@ -88,6 +88,7 @@ DSH ClientModuleRegistry 对每个声明 `dsh.client.platform=web` 的 package �
 - `package/lib/client.js` 必须存在并为普通文件。
 - `exports["./client"]` 必须是精确字符串 `./lib/client.js`，不接受条件对象、通配符或其他路径。
 - exports 恰好 3 项。
+- `lib/client.js` 必须是自包含浏览器模块；如果构建器在序列化工厂函数中保留 `__name` 等命名辅助调用，生成文件必须同时提供对应的局部 helper，不能依赖生成进程的闭包。
 
 ### 3.3 一致性矩阵
 
@@ -179,6 +180,7 @@ v1 不属于这次直接切换：v1 artifact-only 与带 source 的发布、reso
 - resolve-install 返回的 Bundle SHA/签名验证通过。
 - 官方 `dsh plugin --profile web add <bundle.tgz>` 安装成功。
 - DSH 重启时 ClientModuleRegistry 找到 `./client`，没有 composition error。
+- 浏览器执行 `./client` 时不得出现 `__name is not defined` 或其他来自生成进程闭包的未定义符号。
 - 扩展 Host 与 Client 半边均 active，设置页或目标 Slot 能看到 Client UI。
 - Host-only v2 安装不产生 Client module。
 - v1 artifact-only 安装仍通过。
