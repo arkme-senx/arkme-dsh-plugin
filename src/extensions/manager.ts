@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { ArkmePluginError } from '../arkme-service.js'
@@ -20,8 +20,10 @@ export { verifyExtensionResolutionSignature } from './signature.js'
 import {
   type ArkmeExtensionCatalogItem, type ArkmeExtensionCatalogPage,
   type ArkmeExtensionDeleteResult, type ArkmeExtensionEnabledResult, type ArkmeExtensionEnabledState,
-  type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
-  type ArkmeExtensionPublishResult, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+  ARKME_EXTENSION_ICON_MAX_BYTES, type ArkmeExtensionIconBytes, type ArkmeExtensionIconMediaType,
+  type ArkmeExtensionIconResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
+  type ArkmeExtensionPublishResult,
+  type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type ArkmeInstalledExtensionView, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
 } from './types.js'
@@ -210,6 +212,7 @@ export class ArkmeExtensionManager {
   private readonly activeAgents = new Map<string, unknown>()
   private readonly pendingProfileChanges = new Map<string, PendingProfileChange>()
   private enabledMutationTail: Promise<void> = Promise.resolve()
+  private readonly iconCache = new Map<string, ArkmeExtensionIconBytes>()
 
   constructor(
     readonly client: ExtensionPublishClient,
@@ -373,6 +376,89 @@ export class ArkmeExtensionManager {
 
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.client.deleteExtension(requiredId(extensionId, 'extension_id'), signal)
+  }
+
+  async setIcon(input: {
+    extensionId: string
+    mediaType: ArkmeExtensionIconMediaType
+    data: Uint8Array
+    idempotencyKey: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionIconResult> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(input.mediaType)) {
+      throw new ArkmePluginError('extension-icon-type-invalid', '扩展头像仅支持 PNG、JPEG 或 WebP', false, 400)
+    }
+    if (input.data.byteLength <= 0 || input.data.byteLength > ARKME_EXTENSION_ICON_MAX_BYTES) {
+      throw new ArkmePluginError('extension-icon-size-invalid', '扩展头像必须小于 2 MiB', false, 400)
+    }
+    const iconSha256 = createHash('sha256').update(input.data).digest('hex')
+    const session = await this.client.createIconUploadSession({
+      extension_id: extensionId,
+      content_type: input.mediaType,
+      icon_size: input.data.byteLength,
+      icon_sha256: iconSha256,
+      idempotency_key: input.idempotencyKey,
+    }, input.signal)
+    if (session.status === 'uploading') {
+      if (session.upload_url === undefined) {
+        throw new ArkmePluginError('extension-icon-upload-contract-invalid', '扩展市场未返回头像上传地址', false, 502)
+      }
+      await this.client.uploadIcon(
+        session.upload_url,
+        input.data,
+        input.mediaType,
+        session.upload_headers ?? {},
+        input.signal,
+      )
+    }
+    const result = await this.client.completeIconUploadSession(session.icon_upload_session_id, input.signal)
+    if (result.extension_id !== extensionId || result.icon_sha256 !== iconSha256 || result.content_type !== input.mediaType) {
+      throw new ArkmePluginError('extension-icon-contract-invalid', '扩展市场返回了不一致的头像事实', false, 502)
+    }
+    // A replacement invalidates every previously authorized ref for this extension.
+    // Keeping an old immutable-ref entry would let the same-origin image route serve
+    // it without re-checking the registry's current pointer.
+    const cachePrefix = `${extensionId}\0`
+    for (const key of this.iconCache.keys()) {
+      if (key.startsWith(cachePrefix)) this.iconCache.delete(key)
+    }
+    return result
+  }
+
+  async readIcon(extensionIdValue: string, iconRefValue: string, signal?: AbortSignal): Promise<ArkmeExtensionIconBytes> {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    const iconRef = iconRefValue.trim()
+    if (!/^icon_v1_[a-f0-9]{64}$/.test(iconRef)) {
+      throw new ArkmePluginError('extension-icon-ref-invalid', '扩展头像引用无效', false, 400)
+    }
+    const cacheKey = `${extensionId}\0${iconRef}`
+    const cached = this.iconCache.get(cacheKey)
+    if (cached !== undefined) return { ...cached, data: new Uint8Array(cached.data) }
+    const resolution = await this.client.resolveIcon(extensionId, iconRef, signal)
+    if (resolution.extension_id !== extensionId || resolution.icon_ref !== iconRef
+      || !['image/png', 'image/jpeg', 'image/webp'].includes(resolution.content_type)
+      || resolution.icon_size <= 0 || resolution.icon_size > ARKME_EXTENSION_ICON_MAX_BYTES) {
+      throw new ArkmePluginError('extension-icon-contract-invalid', '扩展市场返回了不一致的头像解析结果', false, 502)
+    }
+    const data = await this.client.downloadIcon(resolution, signal)
+    const sha256 = createHash('sha256').update(data).digest('hex')
+    if (data.byteLength !== resolution.icon_size || sha256 !== resolution.icon_sha256) {
+      throw new ArkmePluginError('extension-icon-download-invalid', '扩展头像下载校验失败', false, 502)
+    }
+    const value: ArkmeExtensionIconBytes = {
+      extensionId,
+      iconRef,
+      mediaType: resolution.content_type,
+      data: new Uint8Array(data),
+    }
+    this.iconCache.set(cacheKey, value)
+    while (this.iconCache.size > 128) {
+      const oldest = this.iconCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.iconCache.delete(oldest)
+    }
+    return { ...value, data: new Uint8Array(value.data) }
   }
 
   listInstalled(): ArkmeInstalledExtensionView[] {

@@ -406,6 +406,8 @@ export interface ArkmeProviderCapabilities {
     groupSettings: true
     /** Installed-extension inspection and desired enable/disable state are available. */
     extensionManagement?: true
+    /** Extension-level icon upload and same-origin rendering are available. */
+    extensionIcons?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true

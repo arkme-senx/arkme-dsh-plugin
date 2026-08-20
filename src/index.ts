@@ -19,6 +19,7 @@ import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmeService } from './arkme-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
+import { createArkmeExtensionIconReadHandler, createArkmeExtensionIconUploadHandler } from './extensions/icon-routes.js'
 import { ArkmeExtensionManager } from './extensions/manager.js'
 import { ExtensionPublishClient } from './extensions/publish-client.js'
 import { ArkmeExtensionProfileInstaller } from './extensions/profile-installer.js'
@@ -231,7 +232,7 @@ export function apply(ctx: Context, config: Config): void {
       agents,
     )
     extensionInstallTasks = tasks
-    registerArkmeExtensionTools(dynamicCtx, manager, inventory, config.toolProfile)
+    registerArkmeExtensionTools(dynamicCtx, manager, inventory, service, config.toolProfile)
     dynamicCtx.on('tools/result', (exec, result) => {
       if (exec.name !== 'cordis_define' || result.isError || exec.agent === undefined
         || result.value === null || typeof result.value !== 'object' || Array.isArray(result.value)) return
@@ -267,6 +268,13 @@ export function apply(ctx: Context, config: Config): void {
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
+  const extensionIconOptions = {
+    expectedPort: ctx.webServer.port,
+    allowNonLoopback: config.allowNonLoopback,
+    manager: () => extensionManager,
+  }
+  const extensionIconUploadHandler = createArkmeExtensionIconUploadHandler(extensionIconOptions)
+  const extensionIconReadHandler = createArkmeExtensionIconReadHandler(extensionIconOptions)
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -299,6 +307,16 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/media`,
     handler: mediaHandler,
   }), 'dsh-arkme: rich content media route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-icon/upload`,
+    handler: extensionIconUploadHandler,
+  }), 'dsh-arkme: extension icon upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-icon`,
+    handler: extensionIconReadHandler,
+  }), 'dsh-arkme: extension icon read route')
   ctx.effect(() => {
     const disposeRoute = ctx.webServer.register({
       kind: 'exact',

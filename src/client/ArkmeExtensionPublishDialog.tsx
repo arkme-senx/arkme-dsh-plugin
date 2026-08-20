@@ -8,6 +8,7 @@ export interface ArkmeExtensionPublishFormValue {
   version: string
   visibility: ArkmeExtensionVisibility
   changelog?: string
+  iconFile?: File
 }
 
 export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSubmit }: {
@@ -22,15 +23,18 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
   const [version, setVersion] = useState(nextVersion(item.published?.version))
   const [visibility, setVisibility] = useState<ArkmeExtensionVisibility>(item.published?.visibility ?? 'private')
   const [changelog, setChangelog] = useState('')
+  const [iconFile, setIconFile] = useState<File>()
+  const [iconError, setIconError] = useState('')
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (busy) return
+    if (busy || iconError !== '') return
     onSubmit({
       name: name.trim(),
       description: description.trim(),
       version: version.trim(),
       visibility,
       ...(changelog.trim() === '' ? {} : { changelog: changelog.trim() }),
+      ...(iconFile === undefined ? {} : { iconFile }),
     })
   }
   return <div style={styles.backdrop}>
@@ -44,6 +48,20 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
           <option value="private">仅自己</option><option value="unlisted">仅链接可见</option><option value="public">公开</option>
         </select></label>
         <label style={styles.label}>更新说明<textarea style={styles.textarea} value={changelog} maxLength={2000} disabled={busy} onChange={event => { setChangelog(event.target.value) }} /></label>
+        <label style={styles.label}>扩展头像（可选，PNG/JPEG/WebP，最大 2 MiB）<input
+          type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
+          onChange={event => {
+            const file = event.target.files?.[0]
+            if (file === undefined) { setIconFile(undefined); setIconError(''); return }
+            if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type.toLowerCase()) || file.size <= 0 || file.size > 2 * 1024 * 1024) {
+              setIconFile(undefined); setIconError('头像仅支持 PNG/JPEG/WebP，且必须小于 2 MiB')
+              return
+            }
+            setIconFile(file); setIconError('')
+          }}
+        /></label>
+        {iconFile !== undefined && <div style={styles.fileName}>{iconFile.name}</div>}
+        {iconError !== '' && <div role="alert" style={styles.error}>{iconError}</div>}
         {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
         <div style={styles.actions}>
           <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
@@ -67,7 +85,8 @@ const styles: Record<string, CSSProperties> = {
   input: { width: '100%', height: 36, padding: '0 10px', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },
   textarea: { width: '100%', minHeight: 62, padding: 10, resize: 'vertical', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },
   error: { marginTop: 12, color: '#b42318', fontSize: 12 },
+  fileName: { marginTop: 5, color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 11 },
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 },
   secondary: { height: 34, padding: '0 14px', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit' },
-  primary: { height: 34, padding: '0 16px', border: 0, borderRadius: 8, background: '#09B83E', color: '#fff', fontWeight: 600 },
+  primary: { height: 34, padding: '0 16px', border: 0, borderRadius: 8, background: 'var(--dsw-alias-label-primary, #292929)', color: '#fff', fontWeight: 600 },
 }

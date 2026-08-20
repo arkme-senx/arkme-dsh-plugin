@@ -1,6 +1,7 @@
 export const ARKME_EXTENSION_FORMAT = 'arkme-cordis-extension' as const
 export const ARKME_EXTENSION_FORMAT_VERSION = 1 as const
 export const ARKME_EXTENSION_MAX_BYTES = 100 * 1024 * 1024
+export const ARKME_EXTENSION_ICON_MAX_BYTES = 2 * 1024 * 1024
 
 export type ArkmeExtensionVisibility = 'private' | 'unlisted' | 'public'
 export type ArkmeExtensionChannel = 'stable' | 'beta'
@@ -43,6 +44,7 @@ export interface ArkmeExtensionCatalogItem {
   installed_version?: string
   update_available?: boolean
   package_name?: string
+  icon_ref?: string
 }
 
 export interface ArkmeExtensionCatalogPage {
@@ -101,6 +103,53 @@ export interface ArkmeExtensionDeleteResult {
   extension_id: string
   status: 'deleted'
   deleted_at: number
+}
+
+export type ArkmeExtensionIconMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
+
+export interface ArkmeExtensionIconUploadSession {
+  icon_upload_session_id: string
+  extension_id: string
+  status: 'uploading' | 'applied' | 'rejected' | 'expired'
+  icon_ref?: string
+  upload_url?: string
+  upload_method?: 'PUT'
+  upload_headers?: Record<string, string>
+  expires_at: string | number
+  idempotent_replay?: boolean
+}
+
+export interface ArkmeExtensionIconResult {
+  icon_upload_session_id: string
+  extension_id: string
+  status: 'applied'
+  icon_ref: string
+  content_type: ArkmeExtensionIconMediaType
+  icon_size: number
+  icon_sha256: string
+  width?: number
+  height?: number
+  updated_at: number
+}
+
+export interface ArkmeExtensionIconResolution {
+  extension_id: string
+  icon_ref: string
+  content_type: ArkmeExtensionIconMediaType
+  icon_size: number
+  icon_sha256: string
+  width: number
+  height: number
+  download_url: string
+  download_headers?: Record<string, string>
+  expires_at: string | number
+}
+
+export interface ArkmeExtensionIconBytes {
+  extensionId: string
+  iconRef: string
+  mediaType: ArkmeExtensionIconMediaType
+  data: Uint8Array
 }
 
 export interface ArkmeExtensionInstallResolution {

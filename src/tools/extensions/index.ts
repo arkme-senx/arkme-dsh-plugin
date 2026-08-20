@@ -6,11 +6,16 @@ import { TEXT_OUTPUT } from '../shared/output.js'
 import type { ArkmeExtensionManager } from '../../extensions/manager.js'
 import type { ArkmeOwnedExtensionInventory } from '../../extensions/owned-inventory.js'
 import type { ArkmeExtensionVisibility } from '../../extensions/types.js'
+import type { ArkmeImageBytes } from '../../types.js'
 
 const EXTENSION_TOOL_NAMES = [
   'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
-  'arkme_extension_list_mine', 'arkme_extension_set_enabled',
+  'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
 ] as const
+
+export interface ArkmeExtensionIconSource {
+  readImage(imageRef: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<ArkmeImageBytes>
+}
 
 function clean(value: string | undefined): string {
   return value?.replace(/[\u0000-\u001F\u007F]/g, ' ').trim() ?? ''
@@ -25,6 +30,7 @@ export function registerArkmeExtensionTools(
   ctx: Context,
   manager: ArkmeExtensionManager,
   ownedInventory: ArkmeOwnedExtensionInventory,
+  iconSource: ArkmeExtensionIconSource,
   profile: ArkmeToolProfile,
 ): void {
   if (profile === 'disabled' || profile === 'atomic') return
@@ -152,9 +158,37 @@ export function registerArkmeExtensionTools(
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_icon_set',
+    description: 'Set or replace the icon of one extension owned by the current Arkme user. The image_ref must come from an Arkme profile or source result; the Host reads and uploads the bytes without exposing signed storage URLs. Use only after an explicit current human request.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
+      image_ref: { type: 'string', required: true, description: 'Opaque Arkme image_ref returned by profile or source tools.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const imageRef = clean(args.image_ref)
+      if (imageRef === '') throw new Error('image_ref must not be empty')
+      const image = await iconSource.readImage(imageRef, { maxBytes: 2 * 1024 * 1024, signal: exec.signal })
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
+        throw new Error('extension icons accept PNG, JPEG, or WebP only')
+      }
+      const result = await manager.setIcon({
+        extensionId: args.extension_id,
+        mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
+        data: image.data,
+        idempotencyKey: createHash('sha256')
+          .update(`arkme-extension-icon\0${String(exec.callId)}\0${args.extension_id}\0${imageRef}`)
+          .digest('hex'),
+        signal: exec.signal,
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
-    if (!['arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled'].includes(exec.name)) return await next()
+    if (!['arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled', 'arkme_extension_icon_set'].includes(exec.name)) return await next()
     const decision = await next()
     if (decision.kind !== 'allow') return decision
     const args = exec.arguments as Record<string, unknown>
@@ -181,6 +215,12 @@ export function registerArkmeExtensionTools(
         reason: enabled
           ? `确认启用已安装扩展 ${extensionId} 吗？如果当前运行时无法热加载，会明确提示重启 DSH。`
           : `确认关闭已安装扩展 ${extensionId} 吗？扩展和版本会保留，稍后可重新启用。`,
+      }
+    }
+    if (exec.name === 'arkme_extension_icon_set') {
+      return {
+        kind: 'ask',
+        reason: `确认使用当前账号可读取的图片替换扩展 ${extensionId} 的头像吗？`,
       }
     }
     const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40) || '最新兼容版本'

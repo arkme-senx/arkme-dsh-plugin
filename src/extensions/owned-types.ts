@@ -11,7 +11,7 @@ export interface ArkmeMyExtensionItem {
   halves: { host: boolean; client: boolean }
   cordis?: { packageCount: number; active: boolean }
   persisted?: { packageName: string; version?: string; active: boolean }
-  published?: { extensionId: string; version?: string; visibility: ArkmeExtensionVisibility }
+  published?: { extensionId: string; version?: string; visibility: ArkmeExtensionVisibility; iconRef?: string }
   publish: { allowed: boolean; mode?: 'new' | 'version'; reason?: string }
 }
 

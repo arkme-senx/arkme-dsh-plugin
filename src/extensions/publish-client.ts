@@ -1,7 +1,10 @@
 import { ArkmePluginError } from '../arkme-service.js'
-import { ARKME_EXTENSION_MAX_BYTES, type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
-  type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
-  type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
+  type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
+  type ArkmeExtensionIconResolution, type ArkmeExtensionIconResult, type ArkmeExtensionIconUploadSession,
+  type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
+  type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession,
+  type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeInstalledExtension,
 } from './types.js'
 import { assertExtensionArtifactSize } from './artifact.js'
@@ -222,6 +225,133 @@ export class ExtensionPublishClient {
 
   async deleteExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.post('/api/v1/extensions/delete', { extension_id: extensionId }, signal)
+  }
+
+  async createIconUploadSession(input: {
+    extension_id: string
+    content_type: ArkmeExtensionIconMediaType
+    icon_size: number
+    icon_sha256: string
+    idempotency_key: string
+  }, signal?: AbortSignal): Promise<ArkmeExtensionIconUploadSession> {
+    if (input.icon_size <= 0 || input.icon_size > ARKME_EXTENSION_ICON_MAX_BYTES) {
+      throw new ArkmePluginError('extension-icon-size-invalid', '扩展头像必须小于 2 MiB', false, 400)
+    }
+    return await this.post('/api/v1/extensions/icon-upload-session/create', input, signal)
+  }
+
+  async uploadIcon(
+    uploadUrl: string,
+    data: Uint8Array,
+    mediaType: ArkmeExtensionIconMediaType,
+    uploadHeaders: Readonly<Record<string, string>> = {},
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (data.byteLength <= 0 || data.byteLength > ARKME_EXTENSION_ICON_MAX_BYTES) {
+      throw new ArkmePluginError('extension-icon-size-invalid', '扩展头像必须小于 2 MiB', false, 400)
+    }
+    let url: URL
+    try { url = new URL(uploadUrl) } catch (error) {
+      throw new ArkmePluginError('extension-icon-upload-url-invalid', '扩展市场返回了无效头像上传地址', false, 502, { cause: error })
+    }
+    assertSafeArtifactUrl(url, 'upload')
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal?.reason)
+    if (signal?.aborted === true) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    try {
+      const headers = safeSignedHeaders(uploadHeaders)
+      const response = await this.fetchImpl(url, {
+        method: 'PUT',
+        headers: {
+          ...headers,
+          ...Object.keys(headers).some(key => key.toLowerCase() === 'content-type') ? {} : { 'Content-Type': mediaType },
+        },
+        body: data as BodyInit,
+        signal: controller.signal,
+        redirect: 'error',
+      })
+      if (!response.ok) {
+        throw new ArkmePluginError('extension-icon-upload-failed', `扩展头像上传返回 HTTP ${String(response.status)}`, true, 502)
+      }
+    } catch (error) {
+      if (error instanceof ArkmePluginError) throw error
+      if ((error as Error).name === 'AbortError') {
+        throw new ArkmePluginError('extension-icon-upload-timeout', '扩展头像上传超时或已取消', true, 504, { cause: error })
+      }
+      throw new ArkmePluginError('extension-icon-upload-failed', '无法上传扩展头像', true, 502, { cause: error })
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  async completeIconUploadSession(iconUploadSessionId: string, signal?: AbortSignal): Promise<ArkmeExtensionIconResult> {
+    return await this.post('/api/v1/extensions/icon-upload-session/complete', {
+      icon_upload_session_id: iconUploadSessionId,
+    }, signal)
+  }
+
+  async resolveIcon(extensionId: string, iconRef: string, signal?: AbortSignal): Promise<ArkmeExtensionIconResolution> {
+    return await this.post('/api/v1/extensions/icon-resolve', {
+      extension_id: extensionId,
+      icon_ref: iconRef,
+    }, signal)
+  }
+
+  async downloadIcon(
+    resolution: ArkmeExtensionIconResolution,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array> {
+    let url: URL
+    try { url = new URL(resolution.download_url) } catch (error) {
+      throw new ArkmePluginError('extension-icon-download-url-invalid', '扩展市场返回了无效头像下载地址', false, 502, { cause: error })
+    }
+    assertSafeArtifactUrl(url, 'download')
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal?.reason)
+    if (signal?.aborted === true) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    try {
+      const response = await this.fetchImpl(url, {
+        method: 'GET', headers: safeSignedHeaders(resolution.download_headers ?? {}), redirect: 'error', signal: controller.signal,
+      })
+      if (!response.ok || response.body === null) {
+        throw new ArkmePluginError('extension-icon-download-failed', `扩展头像下载返回 HTTP ${String(response.status)}`, true, 502)
+      }
+      const declared = Number(response.headers.get('content-length') ?? 0)
+      if (Number.isFinite(declared) && declared > ARKME_EXTENSION_ICON_MAX_BYTES) {
+        throw new ArkmePluginError('extension-icon-size-invalid', '扩展头像超过 2 MiB', false, 502)
+      }
+      const chunks: Uint8Array[] = []
+      let total = 0
+      const reader = response.body.getReader()
+      while (true) {
+        const next = await reader.read()
+        if (next.done) break
+        total += next.value.byteLength
+        if (total > ARKME_EXTENSION_ICON_MAX_BYTES) {
+          await reader.cancel().catch(() => undefined)
+          throw new ArkmePluginError('extension-icon-size-invalid', '扩展头像超过 2 MiB', false, 502)
+        }
+        chunks.push(next.value)
+      }
+      const data = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength }
+      return data
+    } catch (error) {
+      if (error instanceof ArkmePluginError) throw error
+      if ((error as Error).name === 'AbortError') {
+        throw new ArkmePluginError('extension-icon-download-timeout', '扩展头像下载超时或已取消', true, 504, { cause: error })
+      }
+      throw new ArkmePluginError('extension-icon-download-failed', '无法下载扩展头像', true, 502, { cause: error })
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
   }
 
   async resolveInstall(extensionId: string, version?: string, signal?: AbortSignal): Promise<ArkmeExtensionInstallResolution> {

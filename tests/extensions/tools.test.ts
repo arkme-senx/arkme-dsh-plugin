@@ -22,11 +22,15 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-1', installed: true, enabled: false, active: false,
       restart_required: true, message: '已关闭',
     }))
-    registerArkmeExtensionTools(context as never, { previewInstall, setEnabled } as never, {} as never, 'business')
+    const setIcon = vi.fn(async () => ({
+      extension_id: 'ext-1', status: 'applied', icon_ref: `icon_v1_${'a'.repeat(64)}`,
+    }))
+    const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: 4, data: new Uint8Array([1, 2, 3, 4]) }))
+    registerArkmeExtensionTools(context as never, { previewInstall, setEnabled, setIcon } as never, {} as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
-      'arkme_extension_list_mine', 'arkme_extension_set_enabled',
+      'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
     expect(listMine?.description).toContain('current Arkme user')
@@ -57,6 +61,15 @@ describe('Arkme extension tools', () => {
     expect(setEnabled).toHaveBeenCalledWith({
       agent: { id: 'session-1' }, extensionId: 'ext-1', enabled: false,
     })
+    const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
+    await expect(iconTool?.execute?.(
+      { extension_id: 'ext-1', image_ref: 'arkme-image-ref' },
+      { agent: { id: 'session-1' }, callId: 'call-1' },
+    )).resolves.toContain('"status": "applied"')
+    expect(readImage).toHaveBeenCalledWith('arkme-image-ref', expect.objectContaining({ maxBytes: 2 * 1024 * 1024 }))
+    expect(setIcon).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-1', mediaType: 'image/png', data: new Uint8Array([1, 2, 3, 4]),
+    }))
     await expect(guard!(
       { name: 'arkme_extension_publish', arguments: {
         owned_ref: 'owned-ref', name: '天气', version: '1.0.0', visibility: 'public',
@@ -92,12 +105,18 @@ describe('Arkme extension tools', () => {
       kind: 'ask',
       reason: '确认关闭已安装扩展 ext-1 吗？扩展和版本会保留，稍后可重新启用。',
     })
+    await expect(guard!(
+      { name: 'arkme_extension_icon_set', arguments: { extension_id: 'ext-1', image_ref: 'arkme-image-ref' } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({
+      kind: 'ask', reason: '确认使用当前账号可读取的图片替换扩展 ext-1 的头像吗？',
+    })
   })
 
   it('does not expose extension writes in atomic or disabled profiles', () => {
     for (const profile of ['atomic', 'disabled'] as const) {
       const register = vi.fn()
-      registerArkmeExtensionTools({ tools: { register }, on: vi.fn() } as never, {} as never, {} as never, profile)
+      registerArkmeExtensionTools({ tools: { register }, on: vi.fn() } as never, {} as never, {} as never, {} as never, profile)
       expect(register).not.toHaveBeenCalled()
     }
   })

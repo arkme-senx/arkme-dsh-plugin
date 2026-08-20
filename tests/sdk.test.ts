@@ -18,6 +18,27 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('uploads owned extension icons through same-origin Host without signed URLs', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/arkme-self/api/extension-icon/upload')
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('x-arkme-extension-id')).toBe('ext-1')
+      expect(new Headers(init?.headers).has('authorization')).toBe(false)
+      return success({
+        icon_upload_session_id: 'iconup-1', extension_id: 'ext-1', status: 'applied',
+        icon_ref: `icon_v1_${'a'.repeat(64)}`, content_type: 'image/png', icon_size: 4,
+        icon_sha256: 'a'.repeat(64), updated_at: 1,
+      })
+    })
+    const sdk = createArkmeSdk({ fetchImpl: fetchImpl as typeof fetch })
+    await expect(sdk.setExtensionIcon(
+      'ext-1', new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' }),
+      { clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432' },
+    )).resolves.toMatchObject({ status: 'applied' })
+    expect(sdk.extensionIconUrl('ext-1', `icon_v1_${'a'.repeat(64)}`))
+      .toBe(`/arkme-self/api/extension-icon?extension_id=ext-1&icon_ref=icon_v1_${'a'.repeat(64)}`)
+  })
+
   it('exposes installed extensions and desired enable state without raw Profile paths', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -74,6 +95,7 @@ describe('Arkme SDK', () => {
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
               extensionManagement: true,
+              extensionIcons: true,
             },
             limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
           })
@@ -101,7 +123,7 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
     await expect(sdk.profile({ refresh: true })).resolves.toMatchObject({

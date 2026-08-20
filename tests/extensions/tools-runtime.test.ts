@@ -20,7 +20,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
       }],
       warnings: [],
     }))
-    registerArkmeExtensionTools(ctx, {} as never, { list } as never, 'business')
+    registerArkmeExtensionTools(ctx, {} as never, { list } as never, {} as never, 'business')
     const agent = { id: SessionId('session-1') } as Agent
 
     expect(ctx.tools.schemas(agent).map(schema => schema.name)).toContain('arkme_extension_list_mine')

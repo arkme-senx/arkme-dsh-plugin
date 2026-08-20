@@ -40,7 +40,8 @@ import type {
   ArkmeWorldInteractionPage,
 } from '../types.js'
 import type {
-  ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 
@@ -112,6 +113,8 @@ export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublis
 export type {
   ArkmeExtensionEnabledResult,
   ArkmeExtensionEnabledState,
+  ArkmeExtensionIconMediaType,
+  ArkmeExtensionIconResult,
   ArkmeInstalledExtensionView,
 } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
@@ -193,6 +196,48 @@ export class ArkmeSdk {
   ): Promise<ArkmeExtensionEnabledResult> {
     if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
     return await this.call<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled }, signal)
+  }
+
+  /** Build the same-origin URL used by every extension list/detail avatar surface. */
+  extensionIconUrl(extensionId: string, iconRef: string): string {
+    if (extensionId.trim() === '' || !/^icon_v1_[a-f0-9]{64}$/.test(iconRef.trim())) {
+      throw new TypeError('Arkme extension icon identity is invalid')
+    }
+    return `${this.route}/extension-icon?extension_id=${encodeURIComponent(extensionId.trim())}&icon_ref=${encodeURIComponent(iconRef.trim())}`
+  }
+
+  /** Upload or replace an owned extension icon without exposing registry signed transport. */
+  async setExtensionIcon(
+    extensionId: string,
+    file: Blob,
+    options: { clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeExtensionIconResult> {
+    const mediaType = file.type.toLowerCase() as ArkmeExtensionIconMediaType
+    if (extensionId.trim() === '' || !['image/png', 'image/jpeg', 'image/webp'].includes(mediaType)) {
+      throw new TypeError('Arkme extension icon must be PNG, JPEG, or WebP')
+    }
+    if (file.size <= 0 || file.size > 2 * 1024 * 1024) throw new TypeError('Arkme extension icon must be smaller than 2 MiB')
+    const mutationId = options.clientMutationId ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mutationId)) {
+      throw new TypeError('Arkme extension icon mutation id must be a UUID')
+    }
+    const response = await this.fetchImpl(`${this.route}/extension-icon/upload`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': mediaType,
+        'X-Arkme-Extension-Id': extensionId.trim(),
+        'X-Arkme-Idempotency-Key': mutationId,
+      },
+      body: file,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    let body: ArkmePluginResponse<ArkmeExtensionIconResult>
+    try { body = await response.json() as ArkmePluginResponse<ArkmeExtensionIconResult> } catch {
+      throw new ArkmeClientError({ code: 'local-response-invalid', message: 'Arkme 插件返回了无效响应', retryable: true })
+    }
+    if (!body.ok) throw new ArkmeClientError(body.error)
+    return body.value
   }
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {

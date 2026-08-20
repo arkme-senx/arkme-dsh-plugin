@@ -168,11 +168,11 @@ describe('Arkme extension market UI', () => {
       states: ['cordis', 'persisted', 'published'], halves: { host: true, client: false },
       cordis: { packageCount: 1, active: true },
       persisted: { packageName: 'local-weather', version: '1.0.0', active: true },
-      published: { extensionId: 'ext-1', version: '1.0.0', visibility: 'private' },
+      published: { extensionId: 'ext-1', version: '1.0.0', visibility: 'private', iconRef: `icon_v1_${'a'.repeat(64)}` },
       publish: { allowed: true, mode: 'version' },
     }
 
-    const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} />)
+    const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} onIconSelect={() => {}} />)
 
     expect(html).toContain('天气助手')
     expect(html).toContain('Cordis 临时')
@@ -183,6 +183,8 @@ describe('Arkme extension market UI', () => {
     expect(html.indexOf('天气助手')).toBeLessThan(html.indexOf('Cordis 临时'))
     expect(html.indexOf('Cordis 临时')).toBeLessThan(html.indexOf('天气卡片'))
     expect(html).toContain('border-radius:999px')
+    expect(html).toContain('更换头像')
+    expect(html).toContain(`/arkme-self/api/extension-icon?extension_id=ext-1&amp;icon_ref=icon_v1_${'a'.repeat(64)}`)
     expect(html).not.toContain('local-weather')
   })
 
@@ -214,5 +216,6 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('发布扩展')
     expect(html).toContain('value="天气助手"')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
+    expect(html).toContain('accept="image/png,image/jpeg,image/webp"')
   })
 })
