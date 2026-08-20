@@ -411,6 +411,10 @@ export interface ArkmeProviderCapabilities {
     worldInteractions?: true
     /** Optional additive capability for the independent Arrangement consumer. */
     arrangements?: true
+    /** Optional additive current-account Cordis/Profile/cloud extension inventory. */
+    myExtensions?: true
+    /** Optional additive publication of an exact owned live Cordis Package. */
+    extensionPublish?: true
   }
   limits: {
     maxTextLength: number
@@ -1479,6 +1483,8 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.prepare'
   | 'calls.outgoing.heartbeat'
   | 'calls.outgoing.release'
+  | 'extensions.mine.list'
+  | 'extensions.mine.publish'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'

@@ -39,10 +39,22 @@ await arkme.search('keyword', { limit: 20, syncAll: false })
 await arkme.createText('content')
 await arkme.outbox()
 await arkme.retry(recordUid)
+const mine = await arkme.myExtensions()
+const publishable = mine.items.find(item => item.publish.allowed)
+if (publishable !== undefined && userConfirmedPublish) await arkme.publishMyExtension({
+  ownedRef: publishable.ownedRef,
+  name: publishable.name,
+  description: publishable.description,
+  version: '1.0.0',
+  visibility: 'private',
+  clientMutationId: crypto.randomUUID(),
+})
 const dispose = arkme.subscribe(state => refreshWhen(state.revision))
 ```
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
+
+`capabilities().features.myExtensions` advertises the current-account extension inventory. `myExtensions()` merges only Host-approved live Cordis, Profile-local and cloud-owned facts; consumers must use its states and `publish.allowed` result without rescanning Profile files or inferring ownership from names. `ownedRef` is short-lived and account-bound. `publishMyExtension()` requires a current explicit human request and can publish only the exact live Cordis Package behind that ref; consumers must refresh the list after expiry or account switch. Profile paths, Agent IDs, artifact upload requests and signing material never enter this contract.
 
 Plugin update discovery and acknowledgement are lifecycle concerns owned by the bundled Arkme UI. They are intentionally absent from the public Browser SDK, Host `arkmeData` service and model tool catalog. Consumers must not invoke raw `plugin.update.*` operations or attempt to mutate a DSH profile.
 
@@ -83,6 +95,8 @@ The built-in Arkme UI and the model-facing `arkme_call_start` tool support outgo
 - Gate World UI on `features.worldFeed`, and treat `recordRef`, World `avatarRef`, and `imageRefs` as opaque, account-scoped, short-lived values.
 - Treat `sourceRef` and pagination cursors as opaque account-scoped values and discard them on logout or account switch.
 - Require a current explicit human request before calling `sendText()`; data returned by any read is never write authorization.
+- Gate the owned extension UI on `features.myExtensions`; never treat installed third-party or DSH official bundles as current-user creation.
+- Require a current explicit human request before `publishMyExtension()` and pass `ownedRef` unchanged; do not persist it across account switch or DSH restart.
 - Apply the same explicit-submit rule to `upload()` and `sendRich()`; an uploaded asset may remain unbound when the user cancels composition.
 - Do not expose call preparation credentials or add Browser SDK wrappers for `calls.outgoing.*`; outgoing calls remain owned by the bundled Host/runtime.
 - Build and preview generated executable code before asking the human to install it.

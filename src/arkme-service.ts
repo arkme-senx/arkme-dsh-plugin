@@ -1771,6 +1771,8 @@ export class ArkmeService {
         worldFeed: true,
         worldInteractions: true,
         arrangements: true,
+        myExtensions: true,
+        extensionPublish: true,
         ...(this.relatedRecordingsEnabled() ? { relatedRecordings: true as const } : {}),
       },
       limits: {

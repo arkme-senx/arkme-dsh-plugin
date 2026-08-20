@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter, extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
   extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
-  formatExtensionBytes,
+  formatExtensionBytes, MyExtensionCard,
 } from '../../src/client/ArkmeExtensionCenter.js'
+import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
+import type { ArkmeMyExtensionItem } from '../../src/extensions/owned-types.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
 
 describe('Arkme extension market UI', () => {
@@ -20,6 +22,8 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('padding:0 20px')
     expect(html).toContain('aria-label="关闭扩展市场"')
     expect(html).toContain('role="tablist"')
+    expect(html).toContain('我的扩展')
+    expect(html).not.toContain('我的发布')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain(ARKME_EXTENSION_BRAND_GREEN)
     expect(ARKME_EXTENSION_BRAND_GREEN).toBe('#09B83E')
@@ -109,5 +113,43 @@ describe('Arkme extension market UI', () => {
   it('does not render the former heavy install progress bar', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
     expect(html).not.toContain('aria-label="扩展安装进度"')
+  })
+
+  it('renders one unified card with every Host-owned lifecycle state', () => {
+    const item: ArkmeMyExtensionItem = {
+      ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片',
+      states: ['cordis', 'persisted', 'published'], halves: { host: true, client: false },
+      cordis: { packageCount: 1, active: true },
+      persisted: { packageName: 'local-weather', version: '1.0.0', active: true },
+      published: { extensionId: 'ext-1', version: '1.0.0', visibility: 'private' },
+      publish: { allowed: true, mode: 'version' },
+    }
+
+    const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} />)
+
+    expect(html).toContain('天气助手')
+    expect(html).toContain('Cordis 临时')
+    expect(html).toContain('已持久化')
+    expect(html).toContain('已发布')
+    expect(html).toContain('发布新版本')
+    expect(html).not.toContain('local-weather')
+  })
+
+  it('renders an accessible private-by-default Cordis publish form', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionPublishDialog
+      item={{
+        ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['cordis'],
+        halves: { host: true, client: false }, publish: { allowed: true, mode: 'new' },
+      }}
+      busy={false}
+      error=""
+      onCancel={() => {}}
+      onSubmit={() => {}}
+    />)
+
+    expect(html).toContain('role="dialog"')
+    expect(html).toContain('发布扩展')
+    expect(html).toContain('value="天气助手"')
+    expect(html).toContain('<option value="private" selected="">仅自己</option>')
   })
 })

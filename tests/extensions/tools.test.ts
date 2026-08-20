@@ -9,11 +9,15 @@ describe('Arkme extension tools', () => {
       tools: { register: vi.fn(definition => { definitions.push(definition) }) },
       on: vi.fn((_event, listener) => { guard = listener }),
     }
-    registerArkmeExtensionTools(context as never, {} as never, 'business')
+    registerArkmeExtensionTools(context as never, {} as never, {} as never, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect',
+      'arkme_extension_apply', 'arkme_extension_list_mine',
     ])
+    const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
+    expect(listMine?.description).toContain('current Arkme user')
+    expect(listMine?.description).toContain('untrusted')
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).not.toHaveProperty('permissions')
     expect(publish?.description).toContain('exact returned validation message')
@@ -54,7 +58,7 @@ describe('Arkme extension tools', () => {
   it('does not expose extension writes in atomic or disabled profiles', () => {
     for (const profile of ['atomic', 'disabled'] as const) {
       const register = vi.fn()
-      registerArkmeExtensionTools({ tools: { register }, on: vi.fn() } as never, {} as never, profile)
+      registerArkmeExtensionTools({ tools: { register }, on: vi.fn() } as never, {} as never, {} as never, profile)
       expect(register).not.toHaveBeenCalled()
     }
   })

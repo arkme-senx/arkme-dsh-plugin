@@ -179,7 +179,25 @@ export interface DynamicCordisPackageInspectionLike {
   activeRun?: { pluginRunId: string; packageId: string }
 }
 
+export interface DynamicCordisInventoryPackageLike {
+  packageId: string
+  name: string
+  purpose: string
+  hasHostHalf: boolean
+  hasClientHalf: boolean
+}
+
+export interface DynamicCordisInventoryRowLike {
+  pluginId: string
+  agentId: string
+  packages: DynamicCordisInventoryPackageLike[]
+  currentPackageId?: string
+  nextPackageId?: string
+  activeRun?: { pluginRunId: string; packageId: string }
+}
+
 export interface DynamicCordisRunnerLike {
+  inventory?(): DynamicCordisInventoryRowLike[]
   inspectPackage(agent: unknown, pluginId: string, packageId: string): DynamicCordisPackageInspectionLike
   define(request: {
     sessionId: string

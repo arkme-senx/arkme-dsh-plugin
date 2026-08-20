@@ -11,6 +11,7 @@ import type {
 import type { ArkmeCaptchaResult } from './types.js'
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
+import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from './extensions/types.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
 
@@ -253,6 +254,7 @@ export interface ArkmeHostApiOptions {
   >
   extensionManager?: () => ArkmeExtensionManager | undefined
   extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
+  ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -279,7 +281,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke']
+      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -290,6 +292,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.updateManager,
         options.extensionManager?.(),
         options.extensionInstallTasks?.(),
+        options.ownedExtensionInventory?.(),
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -318,6 +321,7 @@ export async function dispatchArkmeHostOperation(
   >,
   extensionManager?: ArkmeExtensionManager,
   extensionInstallTasks?: ArkmeExtensionInstallTasks,
+  ownedExtensionInventory?: ArkmeOwnedExtensionInventory,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -690,6 +694,18 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'extensionId'),
     )
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
+    case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
+      ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
+    })
+    case 'extensions.mine.publish': return await requireOwnedExtensionInventory(ownedExtensionInventory).publishCordis({
+      ownedRef: stringParam(params, 'ownedRef'),
+      name: stringParam(params, 'name'),
+      description: stringParam(params, 'description'),
+      version: stringParam(params, 'version'),
+      visibility: extensionVisibilityParam(params),
+      ...(stringParam(params, 'changelog').trim() === '' ? {} : { changelog: stringParam(params, 'changelog') }),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
     case 'extensions.updates': return await requireExtensionManager(extensionManager).updates()
     case 'extensions.install.preview': return await requireExtensionManager(extensionManager).previewInstall(
       stringParam(params, 'extensionId'),
@@ -755,4 +771,17 @@ function requireExtensionManager(manager: ArkmeExtensionManager | undefined): Ar
     throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展市场不可用', false, 503)
   }
   return manager
+}
+
+function requireOwnedExtensionInventory(inventory: ArkmeOwnedExtensionInventory | undefined): ArkmeOwnedExtensionInventory {
+  if (inventory === undefined) throw new ArkmePluginError('extension-runtime-unavailable', '扩展运行时尚未就绪', true, 503)
+  return inventory
+}
+
+function extensionVisibilityParam(params: Record<string, unknown>): 'private' | 'unlisted' | 'public' {
+  const value = stringParam(params, 'visibility')
+  if (!['private', 'unlisted', 'public'].includes(value)) {
+    throw new ArkmePluginError('extension-visibility-invalid', '扩展可见范围无效', false, 400)
+  }
+  return value as 'private' | 'unlisted' | 'public'
 }

@@ -39,6 +39,8 @@ import type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
 } from '../types.js'
+import type { ArkmeExtensionPublishResult } from '../extensions/types.js'
+import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 
 export type {
   ArkmeArrangementDetail,
@@ -102,6 +104,9 @@ export type {
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
 } from '../types.js'
+export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+  ArkmeMyExtensionState, ArkmeMyExtensionWarning,
+} from '../extensions/owned-types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
@@ -173,6 +178,38 @@ export class ArkmeSdk {
       undefined,
       options.signal,
     )
+  }
+
+  /** List current-account Cordis, Profile-local and cloud-published extensions through one Host owner. */
+  async myExtensions(options: { currentSessionId?: string; signal?: AbortSignal } = {}): Promise<ArkmeMyExtensionPage> {
+    return await this.call<ArkmeMyExtensionPage>('extensions.mine.list', {
+      ...(options.currentSessionId === undefined || options.currentSessionId.trim() === ''
+        ? {}
+        : { currentSessionId: options.currentSessionId.trim() }),
+    }, options.signal)
+  }
+
+  /** Publish one exact live Cordis Package after the caller has obtained explicit current-user intent. */
+  publishMyExtension(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    if (input.ownedRef.trim() === '') throw new TypeError('Arkme extension reference must not be empty')
+    if (input.name.trim() === '' || input.name.trim().length > 120) throw new TypeError('Arkme extension name is invalid')
+    if (input.description.length > 2_000) throw new TypeError('Arkme extension description is too long')
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(input.version.trim())) {
+      throw new TypeError('Arkme extension version must be SemVer')
+    }
+    if (!['private', 'unlisted', 'public'].includes(input.visibility)) throw new TypeError('Arkme extension visibility is invalid')
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new TypeError('Arkme extension client mutation id must be a UUID')
+    }
+    return this.call<ArkmeExtensionPublishResult>('extensions.mine.publish', {
+      ownedRef: input.ownedRef,
+      name: input.name,
+      description: input.description,
+      version: input.version,
+      visibility: input.visibility,
+      ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog }),
+      clientMutationId: input.clientMutationId,
+    }, signal)
   }
 
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */

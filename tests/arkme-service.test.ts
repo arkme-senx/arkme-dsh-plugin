@@ -432,6 +432,8 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         outgoingCall: true,
+        myExtensions: true,
+        extensionPublish: true,
       },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })

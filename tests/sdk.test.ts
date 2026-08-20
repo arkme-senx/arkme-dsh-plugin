@@ -145,6 +145,38 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('exposes typed current-user extension inventory and Cordis publication', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'extensions.mine.list') return success({ items: [], warnings: [] })
+        if (request.operation === 'extensions.mine.publish') {
+          return success({ extension_id: 'ext-1', version: '1.0.0', status: 'published' })
+        }
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toEqual({ items: [], warnings: [] })
+    await expect(sdk.publishMyExtension({
+      ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+      visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+    })).resolves.toMatchObject({ status: 'published' })
+    expect(calls).toEqual([
+      { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
+      { operation: 'extensions.mine.publish', params: {
+        ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+        visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      } },
+    ])
+    expect(() => sdk.publishMyExtension({
+      ownedRef: '', name: '天气', description: '天气卡片', version: '1.0.0',
+      visibility: 'private', clientMutationId: 'bad',
+    })).toThrow(/reference|引用/)
+  })
+
   it('keeps all five outgoing-call Host operations typed while credentials stay off dedicated SDK methods', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

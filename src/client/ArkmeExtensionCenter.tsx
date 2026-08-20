@@ -4,8 +4,13 @@ import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
   ArkmeExtensionUpdateResolution, ArkmeInstalledExtension,
 } from '../extensions/types.js'
+import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
+import { ArkmeExtensionPublishDialog, type ArkmeExtensionPublishFormValue } from './ArkmeExtensionPublishDialog.js'
 import { callArkme } from './api.js'
+import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
+  type ExtensionPublishMutation,
+} from './my-extension-model.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 export const ARKME_EXTENSION_BRAND_GREEN = '#09B83E'
@@ -148,11 +153,11 @@ const styles: Record<string, CSSProperties> = {
   },
 }
 
-const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的发布', updates: '更新' }
+const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
 const EMPTY_COPY: Record<Tab, { title: string; description: string }> = {
   discover: { title: '还没有可发现的扩展', description: '和 DSH 对话生成并发布扩展后，它会出现在这里。' },
   installed: { title: '还没有安装扩展', description: '从发现页选择扩展，或在 DSH 对话中指定 extension_id。' },
-  mine: { title: '还没有发布扩展', description: '先和 DSH 生成动态 Cordis 插件，再让它发布到扩展市场。' },
+  mine: { title: '还没有我的扩展', description: '和 DSH 生成 Cordis 扩展，或把自建 Bundle 加入当前 Profile。' },
   updates: { title: '所有扩展均为最新版本', description: '有新版本或安全撤销时，会在这里提醒你。' },
 }
 
@@ -235,6 +240,27 @@ function ExtensionCard({ item, actionLabel, status, statusColor, installTask, ac
       disabled={onAction === undefined}
       onClick={onAction}
     >{actionLabel}</button>}
+  </div>
+}
+
+export function MyExtensionCard({ item, onPublish }: { item: ArkmeMyExtensionItem; onPublish(): void }) {
+  const action = myExtensionPrimaryAction(item)
+  return <div
+    style={styles.card}
+    onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
+    onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+  >
+    <span style={styles.appIcon}><ArkmeExtensionIcon /></span>
+    <span style={styles.cardBody}>
+      <span style={styles.name}>{item.name}</span>
+      <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
+      <Chips>{myExtensionBadges(item.states).map(label => <Chip key={label} tone={label === '已发布' ? 'active' : 'default'}>{label}</Chip>)}</Chips>
+      <span style={styles.meta}>{[item.halves.host ? 'Host' : '', item.halves.client ? 'Client' : ''].filter(Boolean).join(' + ')}</span>
+    </span>
+    <button
+      type="button" style={{ ...styles.installSmall, ...(action.disabled ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
+      disabled={action.disabled} onClick={onPublish}
+    >{action.label}</button>
   </div>
 }
 
@@ -348,6 +374,8 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
   const [publishedItems, setPublishedItems] = useState<ArkmeExtensionCatalogItem[]>([])
+  const [myExtensions, setMyExtensions] = useState<ArkmeMyExtensionItem[]>([])
+  const [myExtensionWarnings, setMyExtensionWarnings] = useState<ArkmeMyExtensionPage['warnings']>([])
   const [installed, setInstalled] = useState<ArkmeInstalledExtension[]>([])
   const [updates, setUpdates] = useState<ArkmeExtensionUpdateResolution[]>([])
   const [detail, setDetail] = useState<ArkmeExtensionCatalogItem>()
@@ -359,10 +387,14 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   const [restartNotice, setRestartNotice] = useState('')
   const [restartPrompt, setRestartPrompt] = useState<{ extensionId: string; kind: 'apply' | 'remove' }>()
   const [restarting, setRestarting] = useState(false)
+  const [publishItem, setPublishItem] = useState<ArkmeMyExtensionItem>()
+  const [publishBusy, setPublishBusy] = useState(false)
+  const [publishError, setPublishError] = useState('')
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
   const requestController = useRef<AbortController>()
+  const publishMutation = useRef<ExtensionPublishMutation>()
 
   const hostInstance = async (): Promise<string | undefined> => {
     try { return (await callArkme<{ instanceId: string }>('provider.instance')).instanceId }
@@ -401,8 +433,10 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
         ])
         if (sequence === requestSequence.current) { setDiscoverItems(page.items); setInstalled(local) }
       } else if (target === 'mine') {
-        const page = await callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
-        if (sequence === requestSequence.current) setPublishedItems(page.items)
+        const page = await callArkme<ArkmeMyExtensionPage>('extensions.mine.list', {
+          ...(currentSessionId === undefined || currentSessionId.trim() === '' ? {} : { currentSessionId: currentSessionId.trim() }),
+        }, controller.signal)
+        if (sequence === requestSequence.current) { setMyExtensions(page.items); setMyExtensionWarnings(page.warnings) }
       } else if (target === 'installed') {
         const local = await callArkme<ArkmeInstalledExtension[]>('extensions.installed-list', undefined, controller.signal)
         if (sequence === requestSequence.current) setInstalled(local)
@@ -596,8 +630,28 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
     }
   }
 
+  const publishMyExtension = async (item: ArkmeMyExtensionItem, value: ArkmeExtensionPublishFormValue) => {
+    setPublishBusy(true); setPublishError('')
+    try {
+      const mutation = nextExtensionPublishMutation(publishMutation.current, item.ownedRef, value.version, () => crypto.randomUUID())
+      publishMutation.current = mutation
+      await callArkme('extensions.mine.publish', {
+        ownedRef: item.ownedRef,
+        ...value,
+        clientMutationId: mutation.id,
+      })
+      publishMutation.current = undefined
+      setPublishItem(undefined)
+      await load('mine', 'refresh')
+    } catch (caught) {
+      setPublishError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setPublishBusy(false)
+    }
+  }
+
   const updateCount = updates.filter(item => item.update_available || item.revoked).length
-  const visibleItems = tab === 'mine' ? publishedItems : discoverItems
+  const visibleItems = discoverItems
   const busy = loadingTab === tab || detailBusy
   const detailInstalled = detail === undefined ? undefined : installed.find(item => item.extensionId === detail.extension_id)
   const detailUpdate = detail === undefined ? undefined : updates.find(item => item.extension_id === detail.extension_id)
@@ -623,12 +677,13 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (restartPrompt !== undefined && !restarting) setRestartPrompt(undefined)
+      if (publishItem !== undefined && !publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) }
+      else if (restartPrompt !== undefined && !restarting) setRestartPrompt(undefined)
       else if (restartPrompt === undefined) onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [onClose, restartPrompt, restarting])
+  }, [onClose, publishBusy, publishItem, restartPrompt, restarting])
 
   const dialog = <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
   <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-center-title">
@@ -658,6 +713,8 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
       {restartNotice !== '' && <div style={styles.restartNotice} role="status">{restartNotice}</div>}
+      {tab === 'mine' && myExtensionWarningText(myExtensionWarnings) !== ''
+        && <div style={styles.restartNotice} role="status">{myExtensionWarningText(myExtensionWarnings)}</div>}
       {busy && <LoadingState />}
       {!busy && error === '' && detail !== undefined && <div style={styles.detail}>
         <button type="button" style={styles.detailBack} onClick={() => {
@@ -700,15 +757,14 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
         </section>}
         {detailInstallAction.disabled && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。请在 DSH 对话中重新发布成功后再安装。</div>}
       </div>}
-      {!busy && error === '' && detail === undefined && (tab === 'discover' || tab === 'mine') && <>
+      {!busy && error === '' && detail === undefined && tab === 'discover' && <>
         {visibleItems.map(item => {
           const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
-          const action = extensionCatalogAction(item, local?.installedVersion, tab === 'mine')
+          const action = extensionCatalogAction(item, local?.installedVersion)
           return <ExtensionCard
             key={item.extension_id}
             item={item}
             actionLabel={action.label}
-            {...(tab === 'mine' ? { status: extensionVisibilityLabel(item.visibility) } : {})}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
             actionBusy={actionBusyExtensionId === item.extension_id}
             onClick={() => { void inspect(item.extension_id) }}
@@ -723,6 +779,14 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
           />
         })}
         {visibleItems.length === 0 && <EmptyState tab={tab} />}
+      </>}
+      {!busy && error === '' && detail === undefined && tab === 'mine' && <>
+        {myExtensions.map(item => <MyExtensionCard
+          key={item.ownedRef}
+          item={item}
+          onPublish={() => { publishMutation.current = undefined; setPublishError(''); setPublishItem(item) }}
+        />)}
+        {myExtensions.length === 0 && <EmptyState tab="mine" />}
       </>}
       {!busy && error === '' && tab === 'installed' && <>
         {installed.map(item => <ExtensionCard
@@ -783,6 +847,13 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
         </div>
       </section>
     </div>}
+    {publishItem !== undefined && <ArkmeExtensionPublishDialog
+      item={publishItem}
+      busy={publishBusy}
+      error={publishError}
+      onCancel={() => { if (!publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) } }}
+      onSubmit={value => { void publishMyExtension(publishItem, value) }}
+    />}
   </div>
   </section>
   </div>

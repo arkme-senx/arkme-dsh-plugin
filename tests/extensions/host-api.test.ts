@@ -54,6 +54,29 @@ describe('extension center Host BFF', () => {
     expect(deleteExtension).toHaveBeenCalledWith('ext-owned')
   })
 
+  it('routes my-extension list and publish through the unified Host owner', async () => {
+    const list = vi.fn(async () => ({ items: [], warnings: [] }))
+    const publishCordis = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))
+    const owner = { list, publishCordis }
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.mine.list', { currentSessionId: 'session-1' },
+      undefined, undefined, undefined, owner as never,
+    )).resolves.toEqual({ items: [], warnings: [] })
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.mine.publish', {
+        ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+        visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      }, undefined, undefined, undefined, owner as never,
+    )).resolves.toMatchObject({ status: 'published' })
+
+    expect(list).toHaveBeenCalledWith({ currentSessionId: 'session-1' })
+    expect(publishCordis).toHaveBeenCalledWith({
+      ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+      visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+    })
+  })
+
   it('starts and reads a Host-owned install task without exposing the artifact URL', async () => {
     const start = vi.fn(() => ({ taskId: 'task-1', phase: 'resolving' }))
     const status = vi.fn(() => ({ taskId: 'task-1', phase: 'downloading', downloadedBytes: 7, totalBytes: 10 }))
