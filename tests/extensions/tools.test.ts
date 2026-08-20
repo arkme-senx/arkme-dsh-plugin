@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { registerArkmeExtensionTools } from '../../src/tools/extensions/index.js'
+import {
+  ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT,
+  registerArkmeExtensionTools,
+} from '../../src/tools/extensions/index.js'
 
 describe('Arkme extension tools', () => {
   it('registers the exact MVP surface only for business profiles and asks before writes', async () => {
@@ -9,9 +12,11 @@ describe('Arkme extension tools', () => {
       parameters?: Record<string, unknown>
       execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
     }> = []
+    const sections: Array<{ name: string; order: number; text: () => string }> = []
     let guard: ((exec: { name: string; arguments: Record<string, unknown> }, next: () => Promise<{ kind: string }>) => Promise<unknown>) | undefined
     const context = {
       tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      systemPrompt: { section: vi.fn(section => { sections.push(section) }) },
       on: vi.fn((_event, listener) => { guard = listener }),
     }
     const previewInstall = vi.fn(async () => ({
@@ -57,6 +62,13 @@ describe('Arkme extension tools', () => {
     expect(publish?.description).toContain('do not retry unchanged bytes')
     expect(publish?.description).toContain('arkme_extension_list_mine')
     expect(publish?.description).toContain('Profile-local DSH Bundle')
+    expect(publish?.description).toContain('cordis_define')
+    expect(publish?.description).toContain('arkme_extension_list_mine')
+    expect(sections).toHaveLength(1)
+    expect(sections[0]).toMatchObject({ name: 'tool:arkme-extension-authoring', order: 117 })
+    expect(sections[0]?.text()).toBe(ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT)
+    expect(sections[0]?.text()).toContain('before planning, coding, searching, or calling tools')
+    expect(sections[0]?.text()).toContain('validated Profile-local Bundle')
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',
@@ -170,8 +182,10 @@ describe('Arkme extension tools', () => {
   it('does not expose extension writes in atomic or disabled profiles', () => {
     for (const profile of ['atomic', 'disabled'] as const) {
       const register = vi.fn()
-      registerArkmeExtensionTools({ tools: { register }, on: vi.fn() } as never, {} as never, {} as never, {} as never, profile)
+      const section = vi.fn()
+      registerArkmeExtensionTools({ tools: { register }, systemPrompt: { section }, on: vi.fn() } as never, {} as never, {} as never, {} as never, profile)
       expect(register).not.toHaveBeenCalled()
+      expect(section).not.toHaveBeenCalled()
     }
   })
 })

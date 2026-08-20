@@ -18,6 +18,15 @@ export interface ArkmeExtensionImageSource {
   readImage(imageRef: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<ArkmeImageBytes>
 }
 
+export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
+  'When the user asks to create a new Dynamic Cordis extension for publication, inspect the currently visible tool catalog '
+  + 'before planning, coding, searching, or calling tools. If cordis_define or cordis_inspect_self is absent, explain immediately '
+  + 'that this Agent session cannot mint a publishable Dynamic Cordis Package and ask the user to switch to a Cordis authoring '
+  + 'session or preset. Do not work around the missing capability with repository files, npm packages, guessed IDs, or IDs from '
+  + 'before a DSH restart. Existing sources returned by arkme_extension_list_mine are different: a validated Profile-local Bundle '
+  + 'can be published without Cordis authoring tools, while a live Cordis source must still belong to this current Agent session '
+  + 'and DSH process. Always publish the exact opaque owned_ref returned by arkme_extension_list_mine.'
+
 function clean(value: string | undefined): string {
   return value?.replace(/[\u0000-\u001F\u007F]/g, ' ').trim() ?? ''
 }
@@ -36,9 +45,15 @@ export function registerArkmeExtensionTools(
 ): void {
   if (profile === 'disabled' || profile === 'atomic') return
 
+  ctx.systemPrompt.section({
+    name: 'tool:arkme-extension-authoring',
+    order: 117,
+    text: () => ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT,
+  })
+
   ctx.tools.register(defineTool({
     name: 'arkme_extension_publish',
-    description: 'Publish one exact current-user source returned by arkme_extension_list_mine. The source may be Dynamic Cordis or a validated Profile-local DSH Bundle. Use only after the current human explicitly asks to publish. This tool does not generate or modify user code. If Bundle validation fails, use the exact returned validation message and do not retry unchanged bytes.',
+    description: 'Publish one exact current-user source returned by arkme_extension_list_mine. When creating a new Dynamic Cordis extension, first require visible cordis_define and cordis_inspect_self tools in this Agent session; if either is absent, immediately explain the limitation before doing any work. A validated Profile-local DSH Bundle returned by arkme_extension_list_mine does not require Cordis authoring tools. Use only after the current human explicitly asks to publish. The Bundle-first flow uploads both the installable bundle.tgz and its complete owner-only source.tgz, and publication completes only after both are verified. This tool does not generate or modify user code. If Bundle validation fails, use the exact returned validation message and do not retry unchanged bytes.',
     parameters: {
       owned_ref: { type: 'string', required: true, description: 'Opaque ownedRef returned by arkme_extension_list_mine.' },
       name: { type: 'string', required: true, description: 'User-facing extension name.' },
