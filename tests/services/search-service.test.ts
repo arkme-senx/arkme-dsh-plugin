@@ -26,7 +26,7 @@ describe('SearchService', () => {
     const record = new RecordService(runtime, media, {
       async openSourceRef() { throw new Error('unexpected') },
     })
-    const service = new SearchService(runtime, record)
+    const service = new SearchService(runtime, record, media)
 
     await expect(service.searchRemote({ query: ' ', limit: 20 })).rejects.toMatchObject({
       code: 'record-query-empty',

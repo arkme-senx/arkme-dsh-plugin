@@ -98,9 +98,11 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
       assertLocalRequest(req, options)
       const ref = new URL(req.url ?? '/', `http://127.0.0.1:${String(options.expectedPort)}`).searchParams.get('ref') ?? ''
       const { response, descriptor } = await service.fetchMedia(ref, headerText(req, 'range') || undefined)
+      const contentType = response.headers.get('content-type') ?? descriptor.mimeType
+      const cacheableImage = contentType.toLowerCase().startsWith('image/') && response.status === 200
       const headers: Record<string, string> = {
-        'Content-Type': response.headers.get('content-type') ?? descriptor.mimeType,
-        'Cache-Control': 'private, max-age=60',
+        'Content-Type': contentType,
+        'Cache-Control': cacheableImage ? 'private, max-age=86400, immutable' : 'private, max-age=60',
         'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(descriptor.fileName)}`,
         'X-Content-Type-Options': 'nosniff',
         'Accept-Ranges': response.headers.get('accept-ranges') ?? 'bytes',

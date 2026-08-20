@@ -173,8 +173,8 @@ describe('outgoing call Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'search.scene', {
       scene: 'image_video', limit: 8, userId: 999,
     })
-    await dispatchArkmeHostOperation(service as never, 'search.scene', {
-      scene: 'image_video', mediaKind: 'image', limit: 50, cursor: 'next-images', userId: 999,
+    await dispatchArkmeHostOperation(service as never, 'images.list', {
+      limit: 50, cursor: 'next-images', userId: 999,
     })
     await dispatchArkmeHostOperation(service as never, 'search.recordings', {
       query: '北京', limit: 9, userId: 999,

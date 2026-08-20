@@ -3071,6 +3071,12 @@ describe('ArkmeService', () => {
           preview_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/private/video-cover.jpg?x-oss-signature=test',
         }] } })
       }
+      if (url.includes('/private/signed-image.png')) {
+        return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/png', 'Content-Length': '8' },
+        })
+      }
       throw new Error(`unexpected request ${url}`)
     })
 
@@ -3087,6 +3093,9 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(result)).not.toContain('image-asset')
     expect(JSON.stringify(result)).not.toContain('video-cover')
     expect(JSON.stringify(result)).not.toContain('ambiguous-video')
+    await expect(service.readImage(result.items[0]!.mediaRef)).resolves.toMatchObject({
+      mediaType: 'image/png', bytes: 8,
+    })
     expect(requestBodies).toEqual([
       { scene_kind: 3, limit: 10, search_scope: 'global' },
       { scene_kind: 3, limit: 10, search_scope: 'global', cursor: 'image-page' },
@@ -4050,7 +4059,11 @@ describe('ArkmeService', () => {
     })
     expect(page.items[0]?.contentBlocks).toHaveLength(2)
     const mediaRef = page.items[0]?.contentBlocks?.[0]?.mediaRef ?? ''
+    const audioMediaRef = page.items[0]?.contentBlocks?.[1]?.mediaRef ?? ''
     expect(mediaRef).toMatch(/^arkme-media-v1\./)
+    const repeatedPage = await service.readSource(sourceRef)
+    expect(repeatedPage.items[0]?.contentBlocks?.[0]?.mediaRef).toBe(mediaRef)
+    expect(repeatedPage.items[0]?.contentBlocks?.[1]?.mediaRef).not.toBe(audioMediaRef)
     expect(JSON.stringify(page)).not.toContain('x-oss-signature=secret')
     expect(JSON.stringify(page)).not.toContain('jotmo_mobile_background_sound')
     expect(JSON.stringify(page)).not.toContain('asset-background')

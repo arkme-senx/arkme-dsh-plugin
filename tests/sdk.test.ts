@@ -18,6 +18,20 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('lists image-library pages through the public same-origin operation', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({ items: [], hasMore: false, queryGuard: { state: 'complete' } })
+      },
+    })
+
+    await expect(sdk.images({ limit: 24, cursor: 'next-images' })).resolves.toMatchObject({ hasMore: false })
+    expect(calls).toEqual([{ operation: 'images.list', params: { limit: 24, cursor: 'next-images' } }])
+  })
+
   it('manages extension previews through same-origin Host operations', async () => {
     const previewRef = `preview_v1_${'a'.repeat(64)}`
     const secondRef = `preview_v1_${'b'.repeat(64)}`

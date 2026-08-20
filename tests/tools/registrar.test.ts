@@ -85,6 +85,7 @@ describe('registerArkmeTools', () => {
       'arkme_arko_run_status',
       'arkme_arko_cancel',
       'arkme_records_search',
+      'arkme_images_list',
       'arkme_record_create',
       'arkme_bots_list',
       'arkme_bot_create',

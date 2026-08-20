@@ -413,6 +413,8 @@ export interface ArkmeProviderCapabilities {
     revisionPolling: true
     userProfile: true
     imageRead: true
+    /** Authorized image-library listing with opaque, account-bound media references is available. */
+    imageLibrary?: true
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
@@ -1467,6 +1469,7 @@ export type ArkmePluginOperation =
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
+  | 'images.list'
   | 'world.feed'
   | 'world.interactions.list'
   | 'world.interactions.create-text'

@@ -376,13 +376,14 @@ export async function dispatchArkmeHostOperation(
         : {}),
       ...(stringParam(params, 'sourceUid') === '' ? {} : { sourceUid: stringParam(params, 'sourceUid') }),
     })
+    case 'images.list': return await service.searchImages({
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
+    })
     case 'search.scene': {
       const scene = stringParam(params, 'scene') as ArkmeSearchSceneKind
       const limit = numberParam(params, 'limit', 20)
       const cursor = stringParam(params, 'cursor')
-      if (scene === 'image_video' && stringParam(params, 'mediaKind') === 'image') {
-        return await service.searchImages({ limit, ...(cursor === '' ? {} : { cursor }) })
-      }
       return await service.searchScene({ scene, limit, ...(cursor === '' ? {} : { cursor }) })
     }
     case 'search.recordings': return await service.searchRecordings({

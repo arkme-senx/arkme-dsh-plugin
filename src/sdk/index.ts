@@ -15,6 +15,7 @@ import type {
   ArkmeContentBlock,
   ArkmeCreateTextResult,
   ArkmeImagePayload,
+  ArkmeImageSearchResult,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
@@ -80,6 +81,8 @@ export type {
   ArkmeGroupAvatarSlot,
   ArkmeImageMediaType,
   ArkmeImagePayload,
+  ArkmeImageSearchItem,
+  ArkmeImageSearchResult,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
@@ -166,6 +169,12 @@ export interface ArkmeSearchOptions {
   limit?: number
   beforeMillis?: number
   syncAll?: boolean
+}
+
+export interface ArkmeImageListOptions {
+  limit?: number
+  cursor?: string
+  signal?: AbortSignal
 }
 
 export interface ArkmeSubscribeOptions {
@@ -751,6 +760,14 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.beforeMillis === undefined ? {} : { beforeMillis: options.beforeMillis }),
       ...(options.syncAll === undefined ? {} : { syncAll: options.syncAll }),
+    }, options.signal)
+  }
+
+  /** List the signed-in user's image library without exposing storage URLs. */
+  async images(options: ArkmeImageListOptions = {}): Promise<ArkmeImageSearchResult> {
+    return await this.call<ArkmeImageSearchResult>('images.list', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
     }, options.signal)
   }
 

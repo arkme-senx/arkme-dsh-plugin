@@ -1,6 +1,9 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type {
   ArkmeCachedQueryResult,
+  ArkmeFileAssetDisplayItem,
+  ArkmeImageSearchItem,
+  ArkmeImageSearchResult,
   ArkmeRecordSearchResult,
   ArkmeRecordingSearchResult,
   ArkmeSearchAssetItem,
@@ -9,6 +12,7 @@ import type {
   ArkmeSearchSceneKind,
   ArkmeSearchSourceAggregate,
 } from '../types.js'
+import { MediaService } from './media-service.js'
 import { RecordService } from './record-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
 
@@ -23,6 +27,7 @@ export class SearchService {
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly record: RecordService,
+    private readonly media: MediaService,
   ) {}
 
   async searchRecords(options: {
@@ -136,6 +141,81 @@ export class SearchService {
       options.signal,
     )
     return this.recordSearchResult(data)
+  }
+
+  /** Build the desktop image library from the mixed image/video scene. */
+  async searchImages(options: {
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeImageSearchResult> {
+    const session = await this.runtime.requireSession()
+    const pageLimit = Math.min(50, Math.max(1, Math.trunc(options.limit)))
+    const seenCursors = new Set<string>()
+    let cursor = options.cursor?.trim() ?? ''
+    if (cursor !== '') seenCursors.add(cursor)
+    let lastPage: ArkmeRecordSearchResult | undefined
+
+    for (let pageIndex = 0; pageIndex < 8; pageIndex += 1) {
+      const page = await this.searchScene({
+        scene: 'image_video',
+        limit: pageLimit,
+        ...(cursor === '' ? {} : { cursor }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })
+      lastPage = page
+      const candidates = page.items.flatMap(record => record.media.flatMap(asset => {
+        const mimeType = asset.mimeType?.trim().toLowerCase() ?? ''
+        const isImageCandidate = mimeType.startsWith('image/')
+          || (mimeType === '' && (asset.fileKind === undefined || asset.fileKind === 1))
+        return isImageCandidate ? [{ record, asset }] : []
+      }))
+      const uniqueAssetUids = [...new Set(candidates.map(candidate => candidate.asset.fileAssetUid))]
+      const displayItems: ArkmeFileAssetDisplayItem[] = []
+      for (let offset = 0; offset < uniqueAssetUids.length; offset += 50) {
+        displayItems.push(...await this.media.queryFileAssets(uniqueAssetUids.slice(offset, offset + 50), options.signal))
+      }
+      const displayByUid = new Map(displayItems.map(item => [item.fileAssetUid, item]))
+      const emitted = new Set<string>()
+      const items = candidates.flatMap(({ record, asset }): ArkmeImageSearchItem[] => {
+        const itemIdentity = `${record.recordUid}\0${asset.fileAssetUid}`
+        if (emitted.has(itemIdentity)) return []
+        const display = displayByUid.get(asset.fileAssetUid)
+        if (display === undefined) return []
+        const mimeType = (display.mimeType ?? asset.mimeType ?? '').trim().toLowerCase()
+        if (!mimeType.startsWith('image/')) return []
+        const remoteUrl = display.previewUrl ?? display.downloadUrl
+        if (remoteUrl === undefined) return []
+        emitted.add(itemIdentity)
+        const fileName = display.fileName ?? asset.fileName ?? '图片'
+        return [{
+          itemKey: createHash('sha256').update(itemIdentity).digest('base64url'),
+          mediaRef: this.media.issueImageMediaRef(session.userId, {
+            remoteUrl,
+            mimeType: mimeType || 'application/octet-stream',
+            fileName,
+            size: Math.max(0, Math.trunc(asset.size ?? 0)),
+          }, asset.fileAssetUid),
+          recordUid: record.recordUid,
+          sendAtMillis: record.sendAtMillis,
+          fileName,
+          mimeType: mimeType || 'application/octet-stream',
+          size: Math.max(0, Math.trunc(asset.size ?? 0)),
+          recordTitle: record.title || record.nickname || '快记',
+          ...(record.sourceTitle === undefined ? {} : { sourceTitle: record.sourceTitle }),
+        }]
+      })
+      const nextCursor = page.nextCursor?.trim() ?? ''
+      const canContinue = page.hasMore && nextCursor !== '' && !seenCursors.has(nextCursor)
+      if (items.length > 0 || !canContinue) {
+        return { items, hasMore: canContinue, ...(canContinue ? { nextCursor } : {}), queryGuard: page.queryGuard }
+      }
+      if (pageIndex === 7) return { items: [], hasMore: true, nextCursor, queryGuard: page.queryGuard }
+      seenCursors.add(nextCursor)
+      cursor = nextCursor
+    }
+
+    return { items: [], hasMore: false, queryGuard: lastPage?.queryGuard ?? { state: 'complete' } }
   }
 
   async searchRecordings(options: {

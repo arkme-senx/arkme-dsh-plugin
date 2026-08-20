@@ -15,6 +15,7 @@ import { textAiVideoToolModule } from './media/text-ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
 import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
+import { listImagesToolModule } from './records/images.js'
 import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
 import { worldPublishTextToolModule, worldRecentToolModule } from './world/index.js'
@@ -27,6 +28,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...accountBusinessToolModules,
   ...arkoToolModules,
   searchRecordsToolModule,
+  listImagesToolModule,
   createRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
