@@ -88,18 +88,54 @@ describe('Arkme Bot tools', () => {
     const tool = module!.create(ports)
 
     const output = await tool.execute(
-      { name: '八卦雷达', description: '高亮八卦' },
+      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦' },
       { callId: 'bot-create-1', signal: new AbortController().signal } as never,
     ) as string
 
     expect(ports.createBot).toHaveBeenCalledWith(
-      { name: '八卦雷达', description: '高亮八卦' },
+      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(output).toContain('arkme-bot-v1.created')
     expect(output).not.toContain('jbot_')
     expect(output).not.toContain('secret')
     expect(output).not.toContain('bot_id')
+  })
+
+  it('requires and forwards an explicit Webhook provider when creating a Bot', async () => {
+    const ports = fakePorts()
+    const tool = moduleFor('arkme_bot_create')!.create(ports)
+
+    expect(tool.parameters).toMatchObject({
+      properties: {
+        provider: { enum: ['openclaw', 'webhook'] },
+      },
+      required: expect.arrayContaining(['name', 'provider']),
+    })
+
+    await tool.execute(
+      { name: '回调测试', provider: 'webhook', description: '验证回调' },
+      { callId: 'bot-create-webhook-1', signal: new AbortController().signal } as never,
+    )
+    expect(ports.createBot).toHaveBeenCalledWith(
+      { name: '回调测试', provider: 'webhook', description: '验证回调' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it('describes both providers without registering a Webhook simulator', () => {
+    const ports = fakePorts()
+    const list = moduleFor('arkme_bots_list')!.create(ports)
+    const create = moduleFor('arkme_bot_create')!.create(ports)
+    const connect = moduleFor('arkme_bot_openclaw_connect')!.create(ports)
+    const names = businessToolModules.map(module => module.meta.toolName)
+
+    expect(list.description).toContain('Webhook')
+    expect(create.description).toContain('provider')
+    expect(connect.description).toContain('only')
+    expect(ARKME_BUSINESS_TOOL_PROMPT).toContain('webhook')
+    expect(names.some(name => name.includes('webhook') && name.includes('trigger'))).toBe(false)
+    expect(names.some(name => name.includes('webhook') && name.includes('send'))).toBe(false)
   })
 
   it('passes only opaque references through group Bot tools', async () => {

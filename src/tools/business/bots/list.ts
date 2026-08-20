@@ -7,7 +7,7 @@ export const listBotsToolModule = defineArkmeCoreToolModule({
   create(ports) {
     return defineTool({
       name: 'arkme_bots_list',
-      description: 'List OpenClaw Bots owned by the signed-in Arkme account. Use returned bot_ref values for later Bot operations.',
+      description: 'List OpenClaw and Webhook Bots owned by the signed-in Arkme account. Use returned bot_ref and provider values for later Bot operations.',
       parameters: {},
       output: TEXT_OUTPUT,
       isConcurrencySafe: () => true,

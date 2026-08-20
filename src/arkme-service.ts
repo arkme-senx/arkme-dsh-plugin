@@ -1091,7 +1091,10 @@ export class ArkmeService {
 
   async connectOpenClawBot(botRef: string, options: { signal?: AbortSignal } = {}): Promise<OpenClawProvisionResult> {
     const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
-    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 OpenClaw Bot', false, 404)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 Bot', false, 404)
+    if (bot.provider !== 'openclaw') {
+      throw new ArkmePluginError('bot-provider-mismatch', '只有 OpenClaw Bot 可以连接本地 OpenClaw', false, 400)
+    }
     if (this.openClawProvisioner === undefined) {
       throw new ArkmePluginError('openclaw-not-configured', '请先安装并配置本地 OpenClaw', false, 503)
     }
@@ -1112,7 +1115,8 @@ export class ArkmeService {
     const items: ArkmeBotSummary[] = []
     for (const value of listValue(data.bots)) {
       const raw = objectValue(value)
-      if (stringValue(raw.provider).trim() !== 'openclaw') continue
+      const provider = stringValue(raw.provider).trim()
+      if (provider !== 'openclaw' && provider !== 'webhook') continue
       items.push(await this.botSummaryFromData(raw, session.userId))
     }
     return { items }
@@ -1123,14 +1127,18 @@ export class ArkmeService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeBotCreateResult> {
     const name = input.name.trim()
+    const provider = input.provider
     const description = input.description?.trim() ?? ''
     const avatar = input.avatar?.trim() ?? ''
     if (name === '') throw new ArkmePluginError('bot-name-invalid', 'Bot 名称不能为空', false)
+    if (provider !== 'openclaw' && provider !== 'webhook') {
+      throw new ArkmePluginError('bot-provider-unsupported', 'Bot Provider 不受支持', false, 400)
+    }
     const session = await this.requireSession()
     let data: Record<string, unknown>
     try {
       data = await this.authenticatedBotPost<Record<string, unknown>>(
-        '/api/v1/bot/create', { name, provider: 'openclaw', description, avatar }, session, options.signal,
+        '/api/v1/bot/create', { name, provider, description, avatar }, session, options.signal,
       )
     } catch (error) {
       if (error instanceof ArkmePluginError && ['arkme-network-error', 'arkme-timeout'].includes(error.code)) {
@@ -1308,7 +1316,8 @@ export class ArkmeService {
   private async botSummaryFromData(raw: Record<string, unknown>, userId: number): Promise<ArkmeBotSummary> {
     const botId = stringValue(raw.bot_id).trim()
     const name = stringValue(raw.name).trim()
-    if (botId === '' || name === '' || stringValue(raw.provider).trim() !== 'openclaw') {
+    const provider = stringValue(raw.provider).trim()
+    if (botId === '' || name === '' || (provider !== 'openclaw' && provider !== 'webhook')) {
       throw new ArkmePluginError('bot-contract-invalid', 'Bot 响应不完整', true, 502)
     }
     const rawStatus = stringValue(raw.status).trim()
@@ -1316,7 +1325,7 @@ export class ArkmeService {
     return {
       botRef: await this.sealBotRef(userId, botId),
       name,
-      provider: 'openclaw',
+      provider,
       description: stringValue(raw.description).trim(),
       status,
       directChatAvailable: stringValue(raw.subject_uid).trim() !== ''

@@ -1,9 +1,10 @@
 import type { SecretValue } from '../../secret-value.js'
-import type { ArkmeBotList, ArkmeBotSummary } from '../../types.js'
+import type { ArkmeBotList, ArkmeBotProvider, ArkmeBotSummary } from '../../types.js'
 import type { ArkmeSourceItem } from '../../types.js'
 
 export interface ArkmeBotCreateInput {
   name: string
+  provider: ArkmeBotProvider
   description?: string
   avatar?: string
 }

@@ -7,7 +7,7 @@ export const connectOpenClawBotToolModule = defineArkmeCoreToolModule({
   create(ports) {
     return defineTool({
       name: 'arkme_bot_openclaw_connect',
-      description: 'Connect one existing Arkme Bot to the host-configured local OpenClaw profile. The profile, package, workspace and credentials are never model parameters. A first configuration pass may require a separate profile-wide Gateway restart confirmation.',
+      description: 'Connect only one existing OpenClaw Bot to the host-configured local OpenClaw profile. Webhook Bots are not supported. The profile, package, workspace and credentials are never model parameters. A first configuration pass may require a separate profile-wide Gateway restart confirmation.',
       parameters: {
         bot_ref: { type: 'string', required: true, description: 'Opaque bot_ref returned by arkme_bots_list or arkme_bot_create.' },
       },

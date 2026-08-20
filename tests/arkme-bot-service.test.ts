@@ -86,6 +86,34 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(JSON.stringify(result)).not.toContain('jbot_')
   })
 
+  it('projects owned OpenClaw and Webhook Bots without exposing raw IDs', async () => {
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async () => json({
+      code: 200,
+      data: {
+        bots: [
+          {
+            bot_id: 'openclaw-raw-1', name: '本地助手', provider: 'openclaw', description: '',
+            status: 'online', subject_uid: 'subject-openclaw', chat_session_uid: '',
+          },
+          {
+            bot_id: 'webhook-raw-1', name: '回调测试', provider: 'webhook', description: '',
+            status: 'default', subject_uid: 'subject-webhook', chat_session_uid: '',
+          },
+        ],
+      },
+    }))
+
+    const result = await service.listBots()
+
+    expect(result.items.map(item => [item.name, item.provider, item.status])).toEqual([
+      ['本地助手', 'openclaw', 'online'],
+      ['回调测试', 'webhook', 'unknown'],
+    ])
+    expect(JSON.stringify(result)).not.toContain('openclaw-raw-1')
+    expect(JSON.stringify(result)).not.toContain('webhook-raw-1')
+  })
+
   it('creates only an OpenClaw Bot and keeps the returned token behind a non-serializable secret boundary', async () => {
     const requests: Array<{ body: unknown }> = []
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
@@ -104,7 +132,7 @@ describe('ArkmeService Bot owner adapter', () => {
       })
     })
 
-    const result = await service.createBot({ name: ' 八卦雷达 ', description: ' 高亮八卦 ' })
+    const result = await service.createBot({ name: ' 八卦雷达 ', provider: 'openclaw', description: ' 高亮八卦 ' })
 
     expect(requests).toEqual([{ body: {
       name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: '',
@@ -120,6 +148,43 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(JSON.stringify(result.bot)).not.toContain('bot-owner-id-2')
   })
 
+  it('creates a Webhook Bot without exposing its raw ID, token, or Webhook URL', async () => {
+    const requests: Array<{ body: unknown }> = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async (_input, init) => {
+      requests.push({ body: JSON.parse(String(init?.body)) as unknown })
+      return json({
+        code: 200,
+        data: {
+          bot: {
+            bot_id: 'webhook-owner-id-1', name: '回调测试', provider: 'webhook', description: '验证回调',
+            avatar: '', status: 'default', subject_uid: 'subject-webhook', chat_session_uid: '', token_preview: 'jbot_***',
+          },
+          token_info: { token: 'jbot_webhook_secret', token_preview: 'jbot_***', issued_at: 123 },
+          webhook_url: 'https://bot.test/api/public/v1/bot/webhook/webhook-owner-id-1',
+        },
+      })
+    })
+
+    const result = await service.createBot({
+      name: ' 回调测试 ', provider: 'webhook', description: ' 验证回调 ',
+    })
+
+    expect(requests).toEqual([{ body: {
+      name: '回调测试', provider: 'webhook', description: '验证回调', avatar: '',
+    } }])
+    expect(result.bot).toMatchObject({
+      botRef: expect.stringMatching(/^arkme-bot-v1\./),
+      name: '回调测试',
+      provider: 'webhook',
+    })
+    expect(result.secret.reveal()).toBe('jbot_webhook_secret')
+    expect(JSON.stringify(result.secret)).toBe('{}')
+    expect(JSON.stringify(result.bot)).not.toContain('webhook-owner-id-1')
+    expect(JSON.stringify(result.bot)).not.toContain('jbot_')
+    expect(JSON.stringify(result.bot)).not.toContain('webhook_url')
+  })
+
   it('does not retry Bot creation when the remote outcome is unknown', async () => {
     let attempts = 0
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
@@ -128,7 +193,7 @@ describe('ArkmeService Bot owner adapter', () => {
       throw new TypeError('connection reset')
     })
 
-    await expect(service.createBot({ name: '只创建一次' })).rejects.toMatchObject({
+    await expect(service.createBot({ name: '只创建一次', provider: 'openclaw' })).rejects.toMatchObject({
       code: 'bot-create-outcome-unknown',
       retryable: false,
     })
@@ -207,6 +272,32 @@ describe('ArkmeService Bot owner adapter', () => {
     })
     expect(revealed).toBe('jbot_connect_secret')
     await expect(service.connectOpenClawBot('arkme-bot-v1.not-owned')).rejects.toMatchObject({ code: 'bot-ref-not-owned' })
+  })
+
+  it('rejects a Webhook Bot before accessing the OpenClaw provisioner or profile', async () => {
+    const requests: string[] = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async input => {
+      requests.push(String(input))
+      return json({ code: 200, data: { bots: [{
+        bot_id: 'webhook-connect-id', name: '回调测试', provider: 'webhook', description: '', status: 'default',
+        subject_uid: 'subject-webhook', chat_session_uid: '',
+      }] } })
+    })
+    const botRef = (await service.listBots()).items[0]!.botRef
+    const reconcile = async () => {
+      throw new Error('Webhook Bot must not enter OpenClaw reconciliation')
+    }
+    service.attachOpenClawProvisioner({ reconcile } as never)
+
+    await expect(service.connectOpenClawBot(botRef)).rejects.toMatchObject({
+      code: 'bot-provider-mismatch',
+      retryable: false,
+    })
+    expect(requests).toEqual([
+      'https://bot.test/api/v1/bot/list',
+      'https://bot.test/api/v1/bot/list',
+    ])
   })
 
   it('opens a Chat-owned Bot private session as a reusable opaque source', async () => {

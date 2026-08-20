@@ -74,7 +74,7 @@ export interface ArkmeCreateTextResult {
   status: number
 }
 
-export type ArkmeBotProvider = 'openclaw'
+export type ArkmeBotProvider = 'openclaw' | 'webhook'
 export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
 
 export interface ArkmeBotSummary {
