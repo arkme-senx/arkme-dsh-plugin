@@ -465,9 +465,15 @@ export async function dispatchArkmeHostOperation(
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
-    case 'arrangements.reminders.mark-read': return await service.markArrangementRemindersRead(
-      [...new Set(stringListParam(params, 'eventRefs').map(value => value.trim()).filter(value => value !== ''))],
-    )
+    case 'arrangements.reminders.mark-read': {
+      const eventRefs = [...new Set(stringListParam(params, 'eventRefs')
+        .map(value => value.trim())
+        .filter(value => value !== ''))]
+      if (eventRefs.length === 0 || eventRefs.length > 50) {
+        throw new ArkmePluginError('arrangement-reminder-refs-invalid', '请选择 1 至 50 条安排提醒', false)
+      }
+      return await service.markArrangementRemindersRead(eventRefs)
+    }
     case 'arrangements.reminders.mark-all-read': return await service.markAllArrangementRemindersRead()
     case 'arrangements.reminders.clear': return await service.clearArrangementReminders()
     case 'world.feed': return await service.listWorldFeed({
