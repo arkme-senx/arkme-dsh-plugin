@@ -242,6 +242,6 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('发布扩展')
     expect(html).toContain('value="天气助手"')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
-    expect(html).toContain('accept="image/png,image/jpeg,image/webp"')
+    expect(html).toContain('accept="image/*"')
   })
 })
