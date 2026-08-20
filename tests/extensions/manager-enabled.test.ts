@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +26,52 @@ function installed(root: string, client: boolean): ArkmeInstalledExtension {
 }
 
 describe('extension desired enable state owner', () => {
+  it('accepts an equivalent real path while retaining the Profile containment guard', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-realpath-'))
+    directories.push(root)
+    const actualRoot = join(root, 'actual')
+    const aliasRoot = join(root, 'alias')
+    const bundle = join(actualRoot, 'profile', 'arkme-extensions', 'bundle')
+    mkdirSync(bundle, { recursive: true })
+    symlinkSync(actualRoot, aliasRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    writeFileSync(join(bundle, 'activation.json'), JSON.stringify({ schema_version: 1, extension_id: 'ext-host', enabled: true }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put(installed(aliasRoot, false))
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: join(actualRoot, 'profile'),
+      profileInstaller: { install: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled: vi.fn() },
+    })
+
+    await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-host', enabled: false }))
+      .resolves.toMatchObject({ enabled: false })
+    expect(JSON.parse(readFileSync(join(bundle, 'activation.json'), 'utf8'))).toMatchObject({ enabled: false })
+    store.close()
+  })
+
+  it('rejects a Bundle symlink that resolves outside the Profile extension root', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-realpath-escape-'))
+    directories.push(root)
+    const extensionRoot = join(root, 'profile', 'arkme-extensions')
+    const outside = join(root, 'outside')
+    mkdirSync(extensionRoot, { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'activation.json'), JSON.stringify({ schema_version: 1, extension_id: 'ext-host', enabled: true }))
+    symlinkSync(outside, join(extensionRoot, 'bundle'), process.platform === 'win32' ? 'junction' : 'dir')
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put(installed(root, false))
+    const setEnabled = vi.fn(async () => undefined)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: join(root, 'profile'),
+      profileInstaller: { install: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled },
+    })
+
+    await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-host', enabled: false }))
+      .rejects.toThrow('本地扩展 Bundle 路径无效')
+    expect(setEnabled).not.toHaveBeenCalled()
+    expect(JSON.parse(readFileSync(join(outside, 'activation.json'), 'utf8'))).toMatchObject({ enabled: true })
+    store.close()
+  })
+
   it('keeps the artifact installed, removes only the Profile layer, and exposes no Host paths', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-enabled-'))
     directories.push(root)

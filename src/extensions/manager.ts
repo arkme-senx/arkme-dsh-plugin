@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import { canonicalExtensionJson, sha256Hex, unpackArkmeExtension } from './artifact.js'
@@ -1292,10 +1292,9 @@ export class ArkmeExtensionManager {
 
   private removeLegacyBundle(bundlePath: string): void {
     if (this.options.profileDirectory === undefined) return
-    const root = resolve(this.options.profileDirectory, 'arkme-extensions')
-    const target = resolve(bundlePath)
-    const pathFromRoot = relative(root, target)
-    if (pathFromRoot.startsWith('..') || pathFromRoot === '') {
+    if (!existsSync(bundlePath)) return
+    const target = this.resolveLegacyBundlePath(bundlePath)
+    if (target === undefined) {
       throw new ArkmePluginError('extension-bundle-path-invalid', '本地扩展 Bundle 路径无效，拒绝删除', false, 500)
     }
     rmSync(target, { recursive: true, force: true })
@@ -1360,13 +1359,25 @@ export class ArkmeExtensionManager {
     if (this.options.profileDirectory === undefined) {
       throw new ArkmePluginError('extension-bundle-path-invalid', '当前 DSH Profile 路径不可用', false, 500)
     }
-    const root = resolve(this.options.profileDirectory, 'arkme-extensions')
-    const target = resolve(bundlePath)
-    const pathFromRoot = relative(root, target)
-    if (pathFromRoot.startsWith('..') || pathFromRoot === '') {
+    const target = this.resolveLegacyBundlePath(bundlePath)
+    if (target === undefined) {
       throw new ArkmePluginError('extension-bundle-path-invalid', '本地扩展 Bundle 路径无效，拒绝修改启用状态', false, 500)
     }
     writePersistentExtensionActivation(target, extensionId, enabled)
+  }
+
+  private resolveLegacyBundlePath(bundlePath: string): string | undefined {
+    if (this.options.profileDirectory === undefined) return undefined
+    try {
+      const root = realpathSync(resolve(this.options.profileDirectory, 'arkme-extensions'))
+      const target = realpathSync(resolve(bundlePath))
+      const pathFromRoot = relative(root, target)
+      if (pathFromRoot === '' || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)
+        || isAbsolute(pathFromRoot)) return undefined
+      return target
+    } catch {
+      return undefined
+    }
   }
 
   private profileContains(packageName: string, enabled = true): boolean {
