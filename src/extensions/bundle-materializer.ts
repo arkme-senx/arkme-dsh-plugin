@@ -35,7 +35,11 @@ export function materializeCordisBundle(input: CordisBundleMaterializeInput): Ar
     type: 'module',
     main: './lib/index.js',
     files: ['lib', 'arkme', 'cordis.patch.yml'],
-    exports: { '.': './lib/index.js', './package.json': './package.json' },
+    exports: {
+      '.': './lib/index.js',
+      ...(input.clientCode === undefined ? {} : { './client': './lib/client.js' }),
+      './package.json': './package.json',
+    },
     peerDependencies: {
       '@deepseek-ai/cordis': '^4.0.1',
       '@senguoyun/dsh-arkme': '^0.1.8',
