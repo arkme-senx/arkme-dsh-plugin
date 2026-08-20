@@ -1497,6 +1497,7 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.release'
   | 'extensions.mine.list'
   | 'extensions.mine.publish'
+  | 'extensions.metadata.update'
   | 'extensions.installed-list'
   | 'extensions.enabled-state'
   | 'extensions.enabled.set'

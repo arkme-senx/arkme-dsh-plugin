@@ -11,6 +11,7 @@ import type { ArkmeImageBytes } from '../../types.js'
 const EXTENSION_TOOL_NAMES = [
   'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
   'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
+  'arkme_extension_edit',
   'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
 ] as const
 
@@ -34,6 +35,11 @@ function clean(value: string | undefined): string {
 function requireAgent(exec: { agent?: unknown }): unknown {
   if (exec.agent === undefined) throw new Error('该扩展操作必须在一个真实 DSH Agent 会话中执行')
   return exec.agent
+}
+
+function mutationUuid(namespace: string, callId: unknown): string {
+  const digest = createHash('sha256').update(`${namespace}\0${String(callId)}`).digest('hex')
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`
 }
 
 export function registerArkmeExtensionTools(
@@ -203,6 +209,37 @@ export function registerArkmeExtensionTools(
   }))
 
   ctx.tools.register(defineTool({
+    name: 'arkme_extension_edit',
+    description: 'Edit the user-facing name, description, and private/public visibility of one exact extension owned by the current Arkme user. This does not change versions, code, package identity, runtime, permissions, or artifacts. Use only after an explicit current human request.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
+      name: { type: 'string', required: true, description: 'Trimmed display name, 1-120 characters.' },
+      description: { type: 'string', required: true, description: 'Optional display description, up to 2000 characters; pass an empty string to clear it.' },
+      visibility: { type: 'string', enum: ['private', 'public'], required: true },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      requireAgent(exec)
+      const result = await manager.updateMetadata({
+        extensionId: args.extension_id,
+        name: args.name,
+        description: args.description,
+        visibility: args.visibility as 'private' | 'public',
+        clientMutationId: mutationUuid('arkme-extension-edit', exec.callId),
+        signal: exec.signal,
+      })
+      return JSON.stringify({
+        extension_id: result.extension_id,
+        name: result.name,
+        description: result.description,
+        visibility: result.visibility,
+        updated_at: result.updated_at,
+        message: '扩展信息已更新',
+      }, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'arkme_extension_preview_add',
     description: 'Add one image to the ordered preview gallery of an extension owned by the current Arkme user. The image_ref must come from an Arkme profile or source result. The Host reads and uploads bytes without exposing signed storage transport. Use only after an explicit current human request.',
     parameters: {
@@ -281,7 +318,7 @@ export function registerArkmeExtensionTools(
     if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
     if (![
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled',
-      'arkme_extension_icon_set', 'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
+      'arkme_extension_icon_set', 'arkme_extension_edit', 'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ].includes(exec.name)) return await next()
     const decision = await next()
     if (decision.kind !== 'allow') return decision
@@ -315,6 +352,14 @@ export function registerArkmeExtensionTools(
       return {
         kind: 'ask',
         reason: `确认使用当前账号可读取的图片替换扩展 ${extensionId} 的头像吗？`,
+      }
+    }
+    if (exec.name === 'arkme_extension_edit') {
+      const name = clean(typeof args.name === 'string' ? args.name : '').slice(0, 120)
+      const visibility = args.visibility === 'public' ? '公开' : '仅自己'
+      return {
+        kind: 'ask',
+        reason: `确认把扩展 ${extensionId} 的资料更新为“${name}”，可见范围：${visibility}吗？`,
       }
     }
     if (exec.name === 'arkme_extension_preview_add') {

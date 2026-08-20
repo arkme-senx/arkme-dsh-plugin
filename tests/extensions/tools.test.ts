@@ -27,6 +27,9 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-1', installed: true, enabled: false, active: false,
       restart_required: true, message: '已关闭',
     }))
+    const updateMetadata = vi.fn(async () => ({
+      extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private', updated_at: 2,
+    }))
     const setIcon = vi.fn(async () => ({
       extension_id: 'ext-1', status: 'applied', icon_ref: `icon_v1_${'a'.repeat(64)}`,
     }))
@@ -42,12 +45,13 @@ describe('Arkme extension tools', () => {
     }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: 4, data: new Uint8Array([1, 2, 3, 4]) }))
     registerArkmeExtensionTools(context as never, {
-      previewInstall, setEnabled, setIcon, addPreview, deletePreview, reorderPreviews,
+      previewInstall, setEnabled, updateMetadata, setIcon, addPreview, deletePreview, reorderPreviews,
     } as never, {} as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
+      'arkme_extension_edit',
       'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
@@ -86,6 +90,16 @@ describe('Arkme extension tools', () => {
     expect(setEnabled).toHaveBeenCalledWith({
       agent: { id: 'session-1' }, extensionId: 'ext-1', enabled: false,
     })
+    const editTool = definitions.find(item => item.name === 'arkme_extension_edit')
+    expect(editTool?.parameters).toHaveProperty('properties.visibility.enum', ['private', 'public'])
+    await expect(editTool?.execute?.(
+      { extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private' },
+      { agent: { id: 'session-1' }, callId: 'call-edit', signal: new AbortController().signal },
+    )).resolves.toContain('"name": "新名称"')
+    expect(updateMetadata).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-1', name: '新名称', description: '', visibility: 'private',
+      clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    }))
     const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
     await expect(iconTool?.execute?.(
       { extension_id: 'ext-1', image_ref: 'arkme-image-ref' },
@@ -164,6 +178,14 @@ describe('Arkme extension tools', () => {
       async () => ({ kind: 'allow' }),
     )).resolves.toEqual({
       kind: 'ask', reason: '确认使用当前账号可读取的图片替换扩展 ext-1 的头像吗？',
+    })
+    await expect(guard!(
+      { name: 'arkme_extension_edit', arguments: {
+        extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private',
+      } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({
+      kind: 'ask', reason: '确认把扩展 ext-1 的资料更新为“新名称”，可见范围：仅自己吗？',
     })
     await expect(guard!(
       { name: 'arkme_extension_preview_add', arguments: { extension_id: 'ext-1', image_ref: 'arkme-preview-ref' } },

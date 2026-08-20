@@ -290,7 +290,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -713,6 +713,13 @@ export async function dispatchArkmeHostOperation(
       service,
       await requireExtensionManager(extensionManager).myList(),
     )
+    case 'extensions.metadata.update': return await requireExtensionManager(extensionManager).updateMetadata({
+      extensionId: stringParam(params, 'extensionId'),
+      name: stringParam(params, 'name'),
+      description: stringParam(params, 'description'),
+      visibility: extensionEditableVisibilityParam(params),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
     case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
       stringParam(params, 'extensionId'),
     )
@@ -830,4 +837,12 @@ function extensionVisibilityParam(params: Record<string, unknown>): 'private' | 
     throw new ArkmePluginError('extension-visibility-invalid', '扩展可见范围无效', false, 400)
   }
   return value as 'private' | 'unlisted' | 'public'
+}
+
+function extensionEditableVisibilityParam(params: Record<string, unknown>): 'private' | 'public' {
+  const value = stringParam(params, 'visibility')
+  if (value !== 'private' && value !== 'public') {
+    throw new ArkmePluginError('extension-metadata-invalid', '扩展可见范围无效', false, 400)
+  }
+  return value
 }

@@ -245,6 +245,11 @@ describe('Arkme SDK', () => {
         if (request.operation === 'extensions.mine.publish') {
           return success({ extension_id: 'ext-1', version: '1.0.0', status: 'published' })
         }
+        if (request.operation === 'extensions.metadata.update') {
+          return success({
+            extension_id: 'ext-1', name: '新名称', description: '', visibility: 'public', updated_at: 2,
+          })
+        }
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -254,17 +259,29 @@ describe('Arkme SDK', () => {
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
       visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
     })).resolves.toMatchObject({ status: 'published' })
+    await expect(sdk.updateExtensionMetadata('ext-1', {
+      name: '新名称', description: '', visibility: 'public',
+      clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
+    })).resolves.toMatchObject({ name: '新名称', visibility: 'public' })
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
       { operation: 'extensions.mine.publish', params: {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
         visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
       } },
+      { operation: 'extensions.metadata.update', params: {
+        extensionId: 'ext-1', name: '新名称', description: '', visibility: 'public',
+        clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
+      } },
     ])
     expect(() => sdk.publishMyExtension({
       ownedRef: '', name: '天气', description: '天气卡片', version: '1.0.0',
       visibility: 'private', clientMutationId: 'bad',
     })).toThrow(/reference|引用/)
+    await expect(sdk.updateExtensionMetadata('ext-1', {
+      name: '新名称', description: '', visibility: 'unlisted' as never,
+      clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
+    })).rejects.toThrow(/metadata|visibility/)
   })
 
   it('keeps all five outgoing-call Host operations typed while credentials stay off dedicated SDK methods', async () => {

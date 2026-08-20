@@ -6,6 +6,9 @@ describe('extension center Host BFF', () => {
   it('requires same-origin requests for preview delete and reorder', async () => {
     const deletePreview = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 2 }))
     const reorderPreviews = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 3 }))
+    const updateMetadata = vi.fn(async () => ({
+      extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private', updated_at: 1,
+    }))
     let handler: ReturnType<typeof createArkmeHostApi>
     const server = createServer((req, res) => { void handler(req, res) })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -15,7 +18,7 @@ describe('extension center Host BFF', () => {
       const origin = `http://127.0.0.1:${String(address.port)}`
       handler = createArkmeHostApi({} as never, {
         expectedPort: address.port, allowNonLoopback: false,
-        extensionManager: () => ({ deletePreview, reorderPreviews }) as never,
+        extensionManager: () => ({ deletePreview, reorderPreviews, updateMetadata }) as never,
       })
       const body = JSON.stringify({
         operation: 'extensions.preview.delete',
@@ -32,6 +35,26 @@ describe('extension center Host BFF', () => {
       expect(allowed.status).toBe(200)
       expect(deletePreview).toHaveBeenCalledWith({
         extensionId: 'ext-1', previewRef: `preview_v1_${'a'.repeat(64)}`, expectedRevision: 1,
+      })
+      const metadataBody = JSON.stringify({
+        operation: 'extensions.metadata.update',
+        params: {
+          extensionId: 'ext-1', name: '新名称', description: '', visibility: 'private',
+          clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+        },
+      })
+      const metadataMissingOrigin = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: metadataBody,
+      })
+      expect(metadataMissingOrigin.status).toBe(403)
+      expect(updateMetadata).not.toHaveBeenCalled()
+      const metadataAllowed = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: metadataBody,
+      })
+      expect(metadataAllowed.status).toBe(200)
+      expect(updateMetadata).toHaveBeenCalledWith({
+        extensionId: 'ext-1', name: '新名称', description: '', visibility: 'private',
+        clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
       })
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
@@ -107,6 +130,22 @@ describe('extension center Host BFF', () => {
       {} as never, 'extensions.delete', { extensionId: 'ext-owned' }, undefined, { delete: deleteExtension } as never,
     )).resolves.toEqual({ extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123 })
     expect(deleteExtension).toHaveBeenCalledWith('ext-owned')
+  })
+
+  it('routes metadata editing through the authenticated Host manager', async () => {
+    const updateMetadata = vi.fn(async () => ({
+      extension_id: 'ext-owned', name: '新名称', description: '', visibility: 'public', updated_at: 2,
+    }))
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.metadata.update',
+      {
+        extensionId: 'ext-owned', name: '新名称', description: '', visibility: 'public',
+        clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      },
+      undefined,
+      { updateMetadata } as never,
+    )).resolves.toMatchObject({ name: '新名称', visibility: 'public' })
   })
 
   it('routes my-extension list and publish through the unified Host owner', async () => {

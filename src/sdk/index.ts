@@ -40,8 +40,9 @@ import type {
   ArkmeWorldInteractionPage,
 } from '../types.js'
 import type {
-  ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionCatalogItem, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
   ArkmeExtensionReviewCreateInput,
   ArkmeExtensionReviewCreateResult,
@@ -117,10 +118,12 @@ export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublis
   ArkmeMyExtensionState, ArkmeMyExtensionWarning,
 } from '../extensions/owned-types.js'
 export type {
+  ArkmeExtensionCatalogItem,
   ArkmeExtensionEnabledResult,
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult,
+  ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery,
   ArkmeExtensionPreviewItem,
   ArkmeExtensionPreviewMediaType,
@@ -367,6 +370,26 @@ export class ArkmeSdk {
       version: input.version,
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog }),
+      clientMutationId: input.clientMutationId,
+    }, signal)
+  }
+
+  async updateExtensionMetadata(
+    extensionId: string,
+    input: ArkmeExtensionMetadataUpdateInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionCatalogItem> {
+    const name = input.name.trim()
+    const description = input.description.trim()
+    if (extensionId.trim() === '' || name === '' || [...name].length > 120 || [...description].length > 2_000
+      || (input.visibility !== 'private' && input.visibility !== 'public')) {
+      throw new TypeError('Arkme extension metadata or visibility is invalid')
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new TypeError('Arkme extension metadata mutation id must be a UUID')
+    }
+    return await this.call<ArkmeExtensionCatalogItem>('extensions.metadata.update', {
+      extensionId: extensionId.trim(), name, description, visibility: input.visibility,
       clientMutationId: input.clientMutationId,
     }, signal)
   }
