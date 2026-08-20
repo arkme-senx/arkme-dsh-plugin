@@ -1,5 +1,14 @@
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import type {
+  ArkmeArrangementDetail,
+  ArkmeArrangementListStatus,
+  ArkmeArrangementMutationIntent,
+  ArkmeArrangementMutationResult,
+  ArkmeArrangementPage,
+  ArkmeArrangementReminderPage,
+  ArkmeArrangementReminderSummary,
+  ArkmeArrangementReminderToggleResult,
+  ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
@@ -32,6 +41,19 @@ import type {
 } from '../types.js'
 
 export type {
+  ArkmeArrangementDetail,
+  ArkmeArrangementItem,
+  ArkmeArrangementListStatus,
+  ArkmeArrangementMutationIntent,
+  ArkmeArrangementMutationOutcome,
+  ArkmeArrangementMutationResult,
+  ArkmeArrangementPage,
+  ArkmeArrangementReminderEvent,
+  ArkmeArrangementReminderPage,
+  ArkmeArrangementReminderSummary,
+  ArkmeArrangementReminderToggleResult,
+  ArkmeArrangementReminderWriteResult,
+  ArkmeArrangementStatus,
   ArkmeAuthSnapshot,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
@@ -206,6 +228,99 @@ export class ArkmeSdk {
   async readWorldImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {
     if (imageRef.trim() === '') throw new TypeError('Arkme World image reference must not be empty')
     return await this.call<ArkmeImagePayload>('world.image.read', { imageRef }, signal)
+  }
+
+  /** Read the current account's Arrangement owner projection. */
+  async arrangements(
+    options: { status?: ArkmeArrangementListStatus; limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeArrangementPage> {
+    return await this.call<ArkmeArrangementPage>('arrangements.list', {
+      ...(options.status === undefined ? {} : { status: options.status }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
+  /** Read one Arrangement through a Provider-issued, account-bound reference. */
+  async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
+    if (arrangementRef.trim() === '') throw new TypeError('Arrangement reference must not be empty')
+    return await this.call<ArkmeArrangementDetail>('arrangements.detail', { arrangementRef }, signal)
+  }
+
+  async arrangementReminders(
+    options: { unreadOnly?: boolean; limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeArrangementReminderPage> {
+    return await this.call<ArkmeArrangementReminderPage>('arrangements.reminders.list', {
+      ...(options.unreadOnly === undefined ? {} : { unreadOnly: options.unreadOnly }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
+  async arrangementReminderSummary(signal?: AbortSignal): Promise<ArkmeArrangementReminderSummary> {
+    return await this.call<ArkmeArrangementReminderSummary>('arrangements.reminders.summary', undefined, signal)
+  }
+
+  async mutateArrangement(
+    arrangementRef: string,
+    intent: ArkmeArrangementMutationIntent,
+    signal?: AbortSignal,
+  ): Promise<ArkmeArrangementMutationResult> {
+    const normalizedRef = arrangementRef.trim()
+    if (normalizedRef === '') throw new TypeError('Arrangement reference must not be empty')
+    if (!['start-follow', 'cancel-follow', 'complete', 'cancel-complete', 'delete'].includes(intent)) {
+      throw new TypeError('Arrangement mutation intent is invalid')
+    }
+    return await this.call<ArkmeArrangementMutationResult>(
+      'arrangements.mutate',
+      { arrangementRef: normalizedRef, intent },
+      signal,
+    )
+  }
+
+  async setArrangementReminderEnabled(
+    arrangementRef: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeArrangementReminderToggleResult> {
+    const normalizedRef = arrangementRef.trim()
+    if (normalizedRef === '') throw new TypeError('Arrangement reference must not be empty')
+    return await this.call<ArkmeArrangementReminderToggleResult>(
+      'arrangements.reminder-enabled',
+      { arrangementRef: normalizedRef, enabled },
+      signal,
+    )
+  }
+
+  async markArrangementRemindersRead(
+    eventRefs: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeArrangementReminderWriteResult> {
+    const normalizedRefs = eventRefs.map(eventRef => eventRef.trim())
+    if (normalizedRefs.length === 0 || normalizedRefs.some(eventRef => eventRef === '')) {
+      throw new TypeError('Reminder references must not be empty')
+    }
+    if (new Set(normalizedRefs).size !== normalizedRefs.length) {
+      throw new TypeError('Reminder references must be unique')
+    }
+    if (normalizedRefs.length > 50) throw new TypeError('At most 50 reminder references are allowed')
+    return await this.call<ArkmeArrangementReminderWriteResult>(
+      'arrangements.reminders.mark-read',
+      { eventRefs: normalizedRefs },
+      signal,
+    )
+  }
+
+  async markAllArrangementRemindersRead(signal?: AbortSignal): Promise<ArkmeArrangementReminderWriteResult> {
+    return await this.call<ArkmeArrangementReminderWriteResult>(
+      'arrangements.reminders.mark-all-read',
+      undefined,
+      signal,
+    )
+  }
+
+  async clearArrangementReminders(signal?: AbortSignal): Promise<ArkmeArrangementReminderWriteResult> {
+    return await this.call<ArkmeArrangementReminderWriteResult>('arrangements.reminders.clear', undefined, signal)
   }
 
   async listSources(
