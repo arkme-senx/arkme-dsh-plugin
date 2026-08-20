@@ -14,7 +14,7 @@
 
 | 仓库 | 规划时基线 | 规划 worktree | 实施要求 |
 | --- | --- | --- | --- |
-| `arkme-senx/arkme-dsh-plugin` | `origin/master=f41b186` | `/Users/apple/hehs/arkme-dsh-plugin-c20260820-bundle-first-market-plan` | 唯一插件业务代码可写根 |
+| `arkme-senx/arkme-dsh-plugin` | `origin/master=3425a07` | `/Users/apple/hehs/arkme-dsh-plugin-c20260820-bundle-first-market-plan` | 唯一插件业务代码可写根 |
 | `jotmo-extension-publish` | `master=3c7f40c` | `/Users/apple/hehs/jotmo-extension-publish-c20260820-bundle-first-plan-readonly` | 当前只读快照；实施前另建任务 worktree |
 | `jotmo-meta` | `origin/master=61a3fe64` | `/Users/apple/hehs/senqisi_refactor/.worktrees/c20260820-arkme-bundle-first-market-meta` | 只写本 change |
 | DSH | 当前 `/Users/apple/hehs/dsh` checkout | `/Users/apple/hehs/dsh` | 只读；不建修复分支、不提交 |
