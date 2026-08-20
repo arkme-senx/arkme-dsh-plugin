@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
+import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
 
 const PACKAGE_NAME = '@senguoyun/dsh-arkme'
@@ -254,6 +255,23 @@ export async function runPluginUpdater(planPath: string): Promise<void> {
   const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
   if (!await waitForProcessExit(plan.parentPid, PARENT_EXIT_TIMEOUT_MS)) {
     await writePhase(store, plan, 'failed', '旧 DSH 进程未能退出，更新已取消。')
+    return
+  }
+
+  try {
+    prepareProfilePackageManager(plan.dshHome, plan.profileName)
+  } catch (error) {
+    restartDsh(plan)
+    const detail = error instanceof Error ? error.message : String(error)
+    const healthy = await waitForHealthy(plan, plan.previousVersion)
+    await writePhase(
+      store,
+      plan,
+      'failed',
+      healthy
+        ? `Profile pnpm 不可用，更新已取消并重新启动旧版本：${detail}`
+        : `Profile pnpm 不可用，更新已取消，但旧版本未能自动启动：${detail}`,
+    )
     return
   }
 

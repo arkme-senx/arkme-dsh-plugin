@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import semver from 'semver'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
+import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
 import type {
   ArkmePluginUpdateAvailability,
@@ -66,6 +67,7 @@ export interface PluginUpdateInstallRuntime {
   helperPath?: string
   spawnUpdater?: (planPath: string, logPath: string) => Promise<void>
   requestShutdown?: () => void
+  preparePackageManager?: (dshHome: string, profileName: string) => void
   allowLocalInstall?: boolean
 }
 
@@ -347,6 +349,16 @@ export class ArkmePluginUpdateManager {
     }
 
     const runtime = this.installRuntime
+    try {
+      (runtime.preparePackageManager ?? prepareProfilePackageManager)(runtime.dshHome, runtime.profileName)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new ArkmePluginUpdateError(
+        'profile-package-manager-unavailable',
+        `无法确认 DSH Profile 的 pnpm：${detail}`,
+        false,
+      )
+    }
     const execArgv = runtime.execArgv ?? process.execArgv
     const jobId = randomUUID()
     const now = this.now()
