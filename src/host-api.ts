@@ -87,6 +87,14 @@ function requiredBooleanParam(params: Record<string, unknown>, key: string): boo
   return value
 }
 
+function requiredArrangementReminderEnabledParam(params: Record<string, unknown>): boolean {
+  const value = params.enabled
+  if (typeof value !== 'boolean') {
+    throw new ArkmePluginError('arrangement-reminder-enabled-invalid', '安排提醒开关参数无效', false, 400)
+  }
+  return value
+}
+
 function arrangementListStatusParam(params: Record<string, unknown>): ArkmeArrangementListStatus {
   const status = stringParam(params, 'status')
   return status === 'identified' || status === 'following' || status === 'completed' ? status : 'all'
@@ -462,7 +470,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'arrangements.reminder-enabled': return await service.setArrangementReminderEnabled(
       stringParam(params, 'arrangementRef'),
-      requiredBooleanParam(params, 'enabled'),
+      requiredArrangementReminderEnabledParam(params),
     )
     case 'arrangements.reminders.summary': return await service.arrangementReminderSummary()
     case 'arrangements.reminders.list': return await service.listArrangementReminders({
