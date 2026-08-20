@@ -203,6 +203,22 @@ describe('standard DSH Bundle artifact', () => {
       },
     },
     {
+      name: 'declaration missing the fixed empty inject array',
+      options: {
+        clientDeclaration: { platform: 'web' },
+        clientExport: './lib/client.js',
+        clientFile: true,
+      },
+    },
+    {
+      name: 'declaration with a non-empty inject array',
+      options: {
+        clientDeclaration: { platform: 'web', inject: ['react'] },
+        clientExport: './lib/client.js',
+        clientFile: true,
+      },
+    },
+    {
       name: 'extra export in a complete Client bundle',
       options: {
         clientDeclaration: { platform: 'web', inject: [] },

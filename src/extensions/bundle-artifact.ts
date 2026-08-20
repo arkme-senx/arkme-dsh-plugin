@@ -185,6 +185,7 @@ interface BundleManifest {
   dsh?: {
     bundle?: { patch?: string }
     arkme?: { executionModel?: string; runtimeContract?: number }
+    client?: { platform?: unknown; inject?: unknown }
   }
 }
 
@@ -243,10 +244,32 @@ function validateManifest(manifest: BundleManifest, files: ReadonlyMap<string, B
     || exports === null || typeof exports !== 'object' || Array.isArray(exports)) {
     throw new ArkmeBundleArtifactError('bundle-sandbox-manifest-invalid', 'Arkme sandbox Bundle module 合同无效')
   }
-  const exportEntries = Object.entries(exports as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
-  if (exportEntries.length !== 2
-    || exportEntries[0]?.[0] !== '.' || exportEntries[0]?.[1] !== './lib/index.js'
-    || exportEntries[1]?.[0] !== './package.json' || exportEntries[1]?.[1] !== './package.json') {
+  const exportMap = exports as Record<string, unknown>
+  if (exportMap['.'] !== './lib/index.js' || exportMap['./package.json'] !== './package.json') {
+    throw new ArkmeBundleArtifactError('bundle-sandbox-manifest-invalid', 'Arkme sandbox Bundle exports 合同无效')
+  }
+  const dsh = manifest.dsh
+  const clientDeclared = dsh !== null && typeof dsh === 'object'
+    && Object.prototype.hasOwnProperty.call(dsh, 'client')
+  const clientFile = files.has('package/lib/client.js')
+  const clientExported = Object.prototype.hasOwnProperty.call(exportMap, './client')
+  const client = clientDeclared ? dsh.client : undefined
+  if (clientDeclared) {
+    if (client === null || typeof client !== 'object' || Array.isArray(client)
+      || client.platform !== 'web' || !Array.isArray(client.inject) || client.inject.length !== 0
+      || !clientFile || !clientExported || exportMap['./client'] !== './lib/client.js'
+      || Object.keys(exportMap).length !== 3) {
+      throw new ArkmeBundleArtifactError(
+        'bundle-sandbox-client-invalid',
+        'Arkme sandbox Bundle Client 声明、文件与导出不一致',
+      )
+    }
+  } else if (clientFile || clientExported) {
+    throw new ArkmeBundleArtifactError(
+      'bundle-sandbox-client-invalid',
+      'Arkme sandbox Bundle 不允许孤立的 Client 文件或导出',
+    )
+  } else if (Object.keys(exportMap).length !== 2) {
     throw new ArkmeBundleArtifactError('bundle-sandbox-manifest-invalid', 'Arkme sandbox Bundle exports 合同无效')
   }
   if (files.get('package/lib/index.js')?.toString('utf8') !== renderArkmeSandboxHostEntry(manifest.name)) {
