@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -57,9 +57,9 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.10 更新",
-      "summary": "基于最新 master 重新发布，包含当前扩展市场、Agent 预览图上传及新版 DSH 兼容修复。",
-      "publishedAt": "2026-08-20T14:25:34.000Z",
+      "title": "Arkme 插件 0.1.11 更新",
+      "summary": "新增 Arkme Tool 对话式确认，并支持扩展外部来源标记与只读分享链接。",
+      "publishedAt": "2026-08-20T18:02:35.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },
