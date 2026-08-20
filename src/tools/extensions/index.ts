@@ -11,8 +11,7 @@ import type { ArkmeImageBytes } from '../../types.js'
 import { ArkmeExtensionPublishConversation } from './publish-conversation.js'
 
 const EXTENSION_TOOL_NAMES = [
-  'arkme_extension_publish_prepare', 'arkme_extension_publish_confirm',
-  'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+  'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
   'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
   'arkme_extension_edit',
   'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
@@ -30,10 +29,10 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   + 'before a DSH restart. Existing sources returned by arkme_extension_list_mine are different: a validated Profile-local Bundle '
   + 'can be published without Cordis authoring tools, while a live Cordis source must still belong to this current Agent session '
   + 'and DSH process. Always publish the exact opaque owned_ref returned by arkme_extension_list_mine. To publish one or more '
-  + 'extensions, call arkme_extension_publish_prepare once with the complete batch. It only validates and returns a question. '
+  + 'extensions, call arkme_extension_publish with action=prepare once with the complete batch. It only validates and returns a question. '
   + 'Show that question in ordinary conversation, tell the human to reply with expectedReply exactly, and wait for a later direct '
-  + 'human message. Never call arkme_extension_publish_confirm in the prepare turn. After the exact later reply, call confirm with '
-  + 'no arguments; do not claim publication for the prepare result.'
+  + 'human message. Never call action=confirm in the prepare turn. After the exact later reply, call the same tool with action=confirm '
+  + 'and no items; do not claim publication for the prepare result.'
 
 function clean(value: string | undefined): string {
   return value?.replace(/[\u0000-\u001F\u007F]/g, ' ').trim() ?? ''
@@ -73,12 +72,16 @@ export function registerArkmeExtensionTools(
   })
 
   ctx.tools.register(defineTool({
-    name: 'arkme_extension_publish_prepare',
-    description: 'Prepare a batch of 1 to 10 exact current-user sources returned by arkme_extension_list_mine. This validates ownership, versions, Bundle policy, and source fingerprints but does not publish or upload anything. After success, show the returned question in ordinary conversation and wait for the later direct human reply that exactly matches expectedReply. Do not call arkme_extension_publish_confirm in the same turn.',
+    name: 'arkme_extension_publish',
+    description: 'Prepare or confirm one conversational publish batch. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, Bundle policy, and source fingerprints, and does not publish or upload anything. Show its returned question in ordinary conversation and wait. Only after the later direct human reply exactly matches expectedReply, call this same tool with action=confirm and omit items.',
     parameters: {
+      action: {
+        type: 'string', enum: ['prepare', 'confirm'], required: true,
+        description: 'prepare validates and asks; confirm publishes the current Agent pending batch after the later human reply.',
+      },
       items: {
-        type: 'array', required: true,
-        description: 'Complete intended publish batch, 1-10 unique owned_ref values.',
+        type: 'array',
+        description: 'Complete intended publish batch, 1-10 unique owned_ref values. Required only for action=prepare and omitted for action=confirm.',
         items: {
           type: 'object', additionalProperties: false,
           properties: {
@@ -95,7 +98,13 @@ export function registerArkmeExtensionTools(
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const agent = requireAgent(exec) as Agent
-      const result = await publishConversation.prepare(agent, args.items.map(item => ({
+      if (args.action === 'confirm') {
+        if ((args.items?.length ?? 0) > 0) throw new Error('确认发布时不能重新提交发布参数')
+        const result = await publishConversation.confirm(agent, exec.signal)
+        return JSON.stringify(result, undefined, 2)
+      }
+      const items = args.items ?? []
+      const result = await publishConversation.prepare(agent, items.map(item => ({
         ownedRef: item.owned_ref,
         name: item.name,
         description: item.description,
@@ -103,17 +112,6 @@ export function registerArkmeExtensionTools(
         visibility: item.visibility as ArkmeExtensionVisibility,
         ...(clean(item.changelog) === '' ? {} : { changelog: clean(item.changelog) }),
       })), exec.signal)
-      return JSON.stringify(result, undefined, 2)
-    },
-  }))
-
-  ctx.tools.register(defineTool({
-    name: 'arkme_extension_publish_confirm',
-    description: 'Publish the exact prepared extension batch only after a later direct human reply exactly matches the expectedReply returned by arkme_extension_publish_prepare. Takes no arguments, never accepts replacement publish fields, and returns one result per extension.',
-    parameters: {},
-    output: TEXT_OUTPUT,
-    async execute(_args, exec) {
-      const result = await publishConversation.confirm(requireAgent(exec) as Agent, exec.signal)
       return JSON.stringify(result, undefined, 2)
     },
   }))

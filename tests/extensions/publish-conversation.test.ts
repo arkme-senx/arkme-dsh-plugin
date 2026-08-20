@@ -17,7 +17,7 @@ describe('extension publish conversation confirmation', () => {
     const events: Array<Record<string, unknown>> = [
       { seq: 0, type: 'turn/start', data: { turn: 1 } },
       { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '发布这两个扩展' }], source: { kind: 'user' } } },
-      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare-1', name: 'arkme_extension_publish_prepare', arguments: '{}' } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare-1', name: 'arkme_extension_publish', arguments: '{}' } },
     ]
     const agent = { id: 'session-1', session: { get events() { return events } } }
     const publish = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({

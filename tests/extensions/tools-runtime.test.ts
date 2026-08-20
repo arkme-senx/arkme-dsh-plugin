@@ -25,8 +25,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
 
     expect(ctx.tools.schemas(agent).map(schema => schema.name)).toEqual(expect.arrayContaining([
       'arkme_extension_list_mine',
-      'arkme_extension_publish_prepare',
-      'arkme_extension_publish_confirm',
+      'arkme_extension_publish',
       'arkme_extension_edit',
       'arkme_extension_preview_add',
       'arkme_extension_preview_delete',
@@ -49,7 +48,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     const events: Array<Record<string, unknown>> = [
       { seq: 0, type: 'turn/start', data: { turn: 1 } },
       { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '发布两个扩展' }], source: { kind: 'user' } } },
-      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_extension_publish_prepare', arguments: '{}' } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_extension_publish', arguments: '{}' } },
     ]
     const agent = {
       id: SessionId('session-publish'),
@@ -66,8 +65,8 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     }
     registerArkmeExtensionTools(ctx, {} as never, inventory as never, {} as never, 'business')
     const prepare = await ctx.tools.execute({
-      callId: CallId('prepare'), name: 'arkme_extension_publish_prepare', agent,
-      arguments: { items: [
+      callId: CallId('prepare'), name: 'arkme_extension_publish', agent,
+      arguments: { action: 'prepare', items: [
         { owned_ref: 'weather', name: '天气', description: '', version: '1.0.0', visibility: 'private' },
         { owned_ref: 'calendar', name: '日程', description: '', version: '1.0.0', visibility: 'private' },
       ] },
@@ -78,7 +77,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     expect(publish).not.toHaveBeenCalled()
 
     const sameTurn = await ctx.tools.execute({
-      callId: CallId('confirm-same-turn'), name: 'arkme_extension_publish_confirm', arguments: {}, agent,
+      callId: CallId('confirm-same-turn'), name: 'arkme_extension_publish', arguments: { action: 'confirm' }, agent,
       signal: new AbortController().signal,
     })
     expect(sameTurn).toMatchObject({ isError: true })
@@ -90,7 +89,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
       { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '确认发布全部 2 个扩展' }], source: { kind: 'user' } } },
     )
     const confirmed = await ctx.tools.execute({
-      callId: CallId('confirm-later'), name: 'arkme_extension_publish_confirm', arguments: {}, agent,
+      callId: CallId('confirm-later'), name: 'arkme_extension_publish', arguments: { action: 'confirm' }, agent,
       signal: new AbortController().signal,
     })
     expect(confirmed.isError).toBe(false)
