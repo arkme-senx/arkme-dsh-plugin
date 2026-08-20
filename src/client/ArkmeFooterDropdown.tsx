@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import type { ArkmeChatClientEvent } from '../types.js'
 import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
@@ -25,11 +25,14 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
+  const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
   const currentSession = props.useSessions(state => state.current)
-  const [unreadCount, setUnreadCount] = useState(0)
   const hasOpened = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const auth = authState.auth
+  const unreadCount = auth?.status === 'authenticated' && chatDirectory.revision > 0
+    ? arkmeChatDirectory.totalUnreadCount()
+    : 0
   const updateInstalling = updateState.install !== undefined
     && ['preparing', 'installing', 'restarting'].includes(updateState.install.phase)
   if (ui.open) hasOpened.current = true
@@ -55,21 +58,14 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
   }, [ui.authRevision])
   useEffect(() => {
     if (auth?.status !== 'authenticated') {
-      setUnreadCount(0)
       arkmeChatDirectory.activateAccount(undefined)
       return
     }
     arkmeChatDirectory.activateAccount(auth.userId)
     let stopped = false
     let observedRevision: number | undefined
-    let refreshGeneration = 0
     const refreshUnread = async (force = false) => {
-      const generation = ++refreshGeneration
-      const sources = await arkmeChatDirectory.refreshRoot({ force })
-      const total = sources.reduce((sum, source) => sum + Math.max(0, Math.trunc(source.unreadCount)), 0)
-      if (!stopped && generation === refreshGeneration) {
-        setUnreadCount(total)
-      }
+      await arkmeChatDirectory.refreshRoot({ force })
     }
     const events = new EventSource('/arkme-self/api/events')
     events.onmessage = event => {
@@ -92,14 +88,12 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
             update.effectiveReadSequence,
             update.unreadCount,
           )
-          setUnreadCount(arkmeChatDirectory.totalUnreadCount())
           return
         }
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({
           source: item.source,
           ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),
         })))
-        setUnreadCount(arkmeChatDirectory.totalUnreadCount())
         const timelineUpdates = update.updates
           .filter(item => item.timelineItems.length > 0)
           .map(item => ({ sourceRef: item.source.sourceRef, items: item.timelineItems }))
@@ -109,7 +103,6 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
     }
     return () => {
       stopped = true
-      refreshGeneration += 1
       events.close()
     }
   }, [auth?.status, auth?.userId, ui.authRevision])
