@@ -51,7 +51,10 @@ const styles: Record<string, CSSProperties> = {
   modal: { position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 28, background: 'var(--dsw-alias-bg-mask-3, rgba(0,0,0,.55))' }, detail: { width: 'min(700px, 92vw)', maxHeight: '86vh', overflowY: 'auto', padding: 24, boxSizing: 'border-box', borderRadius: 14, background: colors.panel }, preview: { width: 'min(960px, 92vw)', maxHeight: '90vh', padding: 12, borderRadius: 14, background: '#111' }, previewMedia: { maxWidth: '100%', maxHeight: '78vh', display: 'block', margin: '0 auto', borderRadius: 8 }, closeText: { display: 'block', margin: '12px 0 0 auto', border: 0, borderRadius: 8, padding: '7px 12px', background: colors.subtle, color: colors.text, cursor: 'pointer' },
 }
 
-const quickEntries: Array<{ key: QuickKey; label: string }> = [{ key: 'image', label: '图片' }, { key: 'ai_video', label: 'AI 视频' }]
+const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = [
+  { key: 'image', label: '图片', tabLabel: '图片库' },
+  { key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' },
+]
 type QuickKey = 'image' | 'ai_video'
 type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
 
@@ -92,6 +95,7 @@ export function ArkmeSearchSurface() {
   const [loading, setLoading] = useState(false)
   const [recordError, setRecordError] = useState('')
   const requestId = useRef(0)
+  const quickRequestAbort = useRef<AbortController>()
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
   const resetResults = useCallback(() => { requestId.current += 1; setRecords(undefined); setRecordError(''); setLoading(false) }, [])
@@ -115,18 +119,26 @@ export function ArkmeSearchSurface() {
   useEffect(() => { if (query.trim() === '') { resetResults(); return }; const timer = window.setTimeout(() => { void runSearch(query) }, 300); return () => window.clearTimeout(timer) }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
+    quickRequestAbort.current?.abort()
+    const controller = new AbortController()
+    quickRequestAbort.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 20_000)
     const id = ++requestId.current
     setQuick(value); setQuery(''); setLoading(true); setRecords(undefined); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setRecordError('')
     try {
       if (value === 'image') {
-        const result = await callArkme<ArkmeImageSearchResult>('search.scene', { scene: 'image_video', mediaKind: 'image', limit: 50 })
+        const result = await callArkme<ArkmeImageSearchResult>('search.scene', { scene: 'image_video', mediaKind: 'image', limit: 50 }, controller.signal)
         if (id === requestId.current) { setImages(result.items); setImageCursor(result.nextCursor ?? ''); setImageHasMore(result.hasMore) }
       } else {
-        const result = await callArkme<ArkmeAiVideoListResult>('ai-video.list', { limit: 30 })
+        const result = await callArkme<ArkmeAiVideoListResult>('ai-video.list', { limit: 30 }, controller.signal)
         if (id === requestId.current) setVideos(result.items)
       }
-    } catch (caught) { if (id === requestId.current) setRecordError(errorMessage(caught)) }
-    finally { if (id === requestId.current) setLoading(false) }
+    } catch (caught) { if (id === requestId.current) setRecordError(controller.signal.aborted ? '加载超时，请重试' : errorMessage(caught)) }
+    finally {
+      window.clearTimeout(timeout)
+      if (quickRequestAbort.current === controller) quickRequestAbort.current = undefined
+      if (id === requestId.current) setLoading(false)
+    }
   }, [])
 
   const loadMoreImages = useCallback(async () => {
@@ -145,7 +157,8 @@ export function ArkmeSearchSurface() {
     finally { setLoadingMore(false) }
   }, [imageCursor, imageHasMore, loadingMore])
 
-  const leaveQuick = useCallback(() => { requestId.current += 1; setQuick(undefined); setQuery(''); setRecords(undefined); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setRecordError(''); setLoading(false); setLoadingMore(false) }, [])
+  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; requestId.current += 1; setQuick(undefined); setQuery(''); setRecords(undefined); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setRecordError(''); setLoading(false); setLoadingMore(false) }, [])
+  useEffect(() => () => { quickRequestAbort.current?.abort() }, [])
   useEffect(() => {
     const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined).map(fileAssetUid => ({ fileAssetUid }))
     const uids = [...new Set(videoAssets.map(item => item.fileAssetUid))].filter(uid => !resolvedAssetUids.has(uid))
@@ -193,7 +206,16 @@ export function ArkmeSearchSurface() {
         <div style={styles.scroll}>{loading ? <Status loading /> : recordItems.length === 0 && recordError === '' ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</div>
       </>}
     </div> : <div style={styles.quickShell}>
-      <header style={styles.quickHeader}><div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><img src={`${assetRoot}/image_search_grey.svg`} alt="" style={styles.quickSearchIcon} /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div><div style={styles.tabs}><button type="button" style={{ ...styles.tab, ...styles.tabActive }}>{hasQuery ? '搜索快记' : quick === 'image' ? '图片库' : 'AI 视频'}<span style={styles.indicator} /></button></div></header>
+      <header style={styles.quickHeader}>
+        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><img src={`${assetRoot}/image_search_grey.svg`} alt="" style={styles.quickSearchIcon} /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div>
+        <div style={styles.tabs}>{hasQuery
+          ? <button type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
+          : quickEntries.map(entry => {
+            const active = quick === entry.key
+            return <button key={entry.key} type="button" style={{ ...styles.tab, ...(active ? styles.tabActive : {}) }} onClick={() => { if (!active) void loadQuick(entry.key) }}>{entry.tabLabel}{active && <span style={styles.indicator} />}</button>
+          })}
+        </div>
+      </header>
       <main style={styles.quickBody}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</> : quickBody}</main>
     </div>}
 

@@ -1123,8 +1123,12 @@ export class ArkmeService {
       lastPage = page
       const candidates = page.items.flatMap(record => record.media.flatMap(asset => {
         const mimeType = asset.mimeType?.trim().toLowerCase() ?? ''
-        const isImage = mimeType === '' ? asset.fileKind === 1 : mimeType.startsWith('image/')
-        return isImage ? [{ record, asset }] : []
+        // Scene search intentionally returns a lightweight media projection in
+        // production, so MIME/file_kind may both be absent. Keep unknown assets
+        // as candidates and let the authoritative File owner projection decide.
+        const isImageCandidate = mimeType.startsWith('image/')
+          || (mimeType === '' && (asset.fileKind === undefined || asset.fileKind === 1))
+        return isImageCandidate ? [{ record, asset }] : []
       }))
       const uniqueAssetUids = [...new Set(candidates.map(candidate => candidate.asset.fileAssetUid))]
       const displayItems: ArkmeFileAssetDisplayItem[] = []
@@ -1144,7 +1148,7 @@ export class ArkmeService {
         const mimeType = (display.mimeType ?? asset.mimeType ?? '').trim().toLowerCase()
         // Prefer the owner-projected MIME when it is available. This prevents a
         // video preview thumbnail from being presented as a user-owned image.
-        if (mimeType !== '' && !mimeType.startsWith('image/')) return []
+        if (!mimeType.startsWith('image/')) return []
         const remoteUrl = display.previewUrl ?? display.downloadUrl
         if (remoteUrl === undefined) return []
         emitted.add(itemIdentity)

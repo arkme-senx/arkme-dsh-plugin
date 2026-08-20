@@ -3051,9 +3051,10 @@ describe('ArkmeService', () => {
             record_uid: 'image-record', send_at: 100, record_core: {
               title: '桌面截图',
               content_payload: { media_refs: [
-                { file_asset_uid: 'image-asset', file_kind: 1, mime_type: 'image/png', file_name: '截图.png', size: 2048 },
+                // Production scene search may omit both MIME and file_kind.
+                { file_asset_uid: 'image-asset', file_name: '截图.png', size: 2048 },
                 { file_asset_uid: 'video-cover', file_kind: 3, mime_type: 'video/mp4', file_name: '片段.mp4' },
-                { file_asset_uid: 'ambiguous-video', file_kind: 1, file_name: '视频封面.jpg' },
+                { file_asset_uid: 'ambiguous-video', file_name: '视频封面.jpg' },
               ] },
             },
           }],
