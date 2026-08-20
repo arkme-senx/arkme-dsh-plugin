@@ -349,7 +349,12 @@ export class ArkmeSdk {
   async sendText(
     sourceRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+    options: {
+      recordUid?: string
+      relationUid?: string
+      agentAuthored?: boolean
+      signal?: AbortSignal
+    } = {},
   ): Promise<ArkmeSourceSendResult> {
     if (sourceRef.trim() === '' || textContent.trim() === '') {
       throw new TypeError('Arkme source reference and text must not be empty')
@@ -359,6 +364,7 @@ export class ArkmeSdk {
       textContent,
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
+      ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
     }, options.signal)
   }
 

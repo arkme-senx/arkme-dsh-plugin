@@ -480,6 +480,7 @@ const IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024
 const IMAGE_CACHE_MAX_ENTRIES = 64
 const IMAGE_DOWNLOAD_CONCURRENCY = 4
 const MAX_PROJECTION_RETRIES = 5
+const ARKO_PROFILE_DISPLAY_NAME_CACHE_TTL_MS = 10 * 60_000
 
 interface CacheEntry<T> {
   value: T
@@ -536,6 +537,15 @@ function booleanValue(value: unknown): boolean {
   return value === true
 }
 
+function integerLikeValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return Math.trunc(parsed)
+  }
+  return 0
+}
+
 function compactAiPolishActorLabel(value: unknown): string {
   const normalized = stringValue(value).replace(/\s+/g, ' ').trim()
   if (normalized === '') return ''
@@ -569,6 +579,81 @@ function safeHttpsUrl(value: unknown): string | undefined {
 function clippedText(value: unknown, limit = 4_000): string {
   const text = stringValue(value).trim()
   return text.length > limit ? `${text.slice(0, limit)}…[已截断]` : text
+}
+
+function isAgentAuthoredChatSend(options: { agentAuthored?: boolean }): boolean {
+  return options.agentAuthored === true
+}
+
+function normalizedAgentDisplayName(displayName: string | undefined): string | undefined {
+  const normalized = displayName?.replace(/[\u0000-\u001F\u007F]/g, ' ').trim()
+  if (normalized === undefined || normalized === '') return undefined
+  return normalized.length <= 64 ? normalized : normalized.slice(0, 64).trimEnd()
+}
+
+function agentSourceLabel(displayName: string): string {
+  const normalized = normalizedAgentDisplayName(displayName) ?? 'Agent'
+  return `${normalized}代发`
+}
+
+function isAgentCreationSource(
+  relation: Record<string, unknown>,
+  record: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): boolean {
+  const relationMetadata = objectValue(relation.metadata)
+  const recordMetadata = objectValue(record.metadata)
+  return integerLikeValue(payload.creation_source ?? payload.creationSource) === 1
+    || integerLikeValue(record.creation_source ?? record.creationSource) === 1
+    || integerLikeValue(relation.creation_source ?? relation.creationSource) === 1
+    || integerLikeValue(recordMetadata.creation_source ?? recordMetadata.creationSource) === 1
+    || integerLikeValue(relationMetadata.creation_source ?? relationMetadata.creationSource) === 1
+}
+
+function agentDisplayNameFromTimeline(
+  relation: Record<string, unknown>,
+  record: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): string {
+  const relationMetadata = objectValue(relation.metadata)
+  const recordMetadata = objectValue(record.metadata)
+  const profile = objectValue(
+    payload.agent_profile ?? payload.agentProfile ?? payload.agent
+    ?? record.agent_profile ?? record.agentProfile ?? record.agent
+    ?? recordMetadata.agent_profile ?? recordMetadata.agentProfile ?? recordMetadata.agent
+    ?? relation.agent_profile ?? relation.agentProfile ?? relation.agent
+    ?? relationMetadata.agent_profile ?? relationMetadata.agentProfile ?? relationMetadata.agent
+  )
+  return optionalString(payload.agent_display_name)
+    ?? optionalString(payload.agentDisplayName)
+    ?? optionalString(payload.agent_name)
+    ?? optionalString(payload.agentName)
+    ?? optionalString(record.agent_display_name)
+    ?? optionalString(record.agentDisplayName)
+    ?? optionalString(record.agent_name)
+    ?? optionalString(record.agentName)
+    ?? optionalString(recordMetadata.agent_display_name)
+    ?? optionalString(recordMetadata.agentDisplayName)
+    ?? optionalString(recordMetadata.agent_name)
+    ?? optionalString(recordMetadata.agentName)
+    ?? optionalString(relationMetadata.agent_display_name)
+    ?? optionalString(relationMetadata.agentDisplayName)
+    ?? optionalString(relationMetadata.agent_name)
+    ?? optionalString(relationMetadata.agentName)
+    ?? optionalString(profile.display_name)
+    ?? optionalString(profile.displayName)
+    ?? optionalString(profile.name)
+    ?? 'Agent'
+}
+
+function timelineAgentSource(
+  relation: Record<string, unknown>,
+  record: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): ArkmeTimelineItem['agentSource'] | undefined {
+  if (!isAgentCreationSource(relation, record, payload)) return undefined
+  const displayName = agentDisplayNameFromTimeline(relation, record, payload)
+  return { kind: 'agent', displayName, label: agentSourceLabel(displayName) }
 }
 
 const WECHAT_MESSAGE_TYPES: Readonly<Record<number, string>> = {
@@ -1096,6 +1181,7 @@ export class ArkmeService {
   private activeImageDownloads = 0
   private readonly imageDownloadWaiters: Array<() => void> = []
   private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
+  private readonly arkoProfileDisplayNameCache = new Map<number, { displayName: string; expiresAtMillis: number }>()
   private readonly pendingProjectionSequences = new Map<string, number>()
   private readonly projectionRetryCounts = new Map<string, number>()
   private projectionTimer: ReturnType<typeof setTimeout> | undefined
@@ -2110,7 +2196,9 @@ export class ArkmeService {
       session,
       signal,
     )
-    return arkoProfileFromData(data)
+    const profile = arkoProfileFromData(data)
+    this.cacheArkoProfileDisplayName(session.userId, profile)
+    return profile
   }
 
   async arkoEnsureSession(signal?: AbortSignal): Promise<ArkmeArkoSession> {
@@ -4030,12 +4118,17 @@ export class ArkmeService {
       const aiPolish = this.timelineAiPolish(record, payload)
       const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
       const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
+      const rawAgentSource = timelineAgentSource(relation, record, payload)
+      const agentSource = senderUserId === session.userId
+        ? this.currentUserAgentSourceFallback(session.userId, rawAgentSource)
+        : rawAgentSource
       const itemIndex = items.push({
         itemUid: uid,
         ...(source.kind !== 'group_chat' || relationUid === '' || senderUserId === session.userId ? {} : {
           messageRef: this.sealMessageRef(session.userId, source.ownerRef, relationUid, messageRefSigningKey!),
         }),
         senderName: stringValue(relation.display_name_snapshot).trim() || 'Arkme用户',
+        ...(agentSource === undefined ? {} : { agentSource }),
         isMe: senderUserId === session.userId,
         sendAtMillis,
         title: stringValue(payload.title),
@@ -4053,7 +4146,9 @@ export class ArkmeService {
         editDurationMillis: numberValue(payload.edit_duration_millis),
         contentBlocks: this.richContentBlocks(item, session.userId),
       }) - 1
-      if (Number.isSafeInteger(senderUserId) && senderUserId > 0) senderUserIdByIndex.set(itemIndex, senderUserId)
+      if (Number.isSafeInteger(senderUserId) && senderUserId > 0) {
+        senderUserIdByIndex.set(itemIndex, senderUserId)
+      }
     }
     try {
       const profiles = await this.publicProfilesByUserIds(
@@ -4335,7 +4430,13 @@ export class ArkmeService {
   async sendSourceText(
     sourceRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; botRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: {
+      recordUid?: string
+      relationUid?: string
+      botRefs?: readonly string[]
+      signal?: AbortSignal
+      agentAuthored?: boolean
+    } = {},
   ): Promise<ArkmeSourceSendResult> {
     const session = await this.requireSession()
     const source = await this.openSourceRef(sourceRef, session.userId)
@@ -4363,23 +4464,36 @@ export class ArkmeService {
       return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
     }
     const relationUid = options.relationUid?.trim() || crypto.randomUUID()
+    const agentAuthored = isAgentAuthoredChatSend(options)
+    let sent: ArkmeSourceSendResult
     if (source.kind === 'group_chat') {
       if (options.botRefs !== undefined && options.botRefs.length > 0) {
-        const mentionSend = await this.groupBotMentionSend(
-          sourceRef, source, text, options.botRefs, recordUid, relationUid, session, options.signal,
+        sent = await this.groupBotMentionSend(
+          sourceRef, source, text, options.botRefs, recordUid, relationUid, session, options.signal, { agentAuthored },
         )
-        return mentionSend
+      } else {
+        sent = await this.sendGroupSourceTextWithAiPolish(
+          sourceRef,
+          source.ownerRef,
+          text,
+          recordUid,
+          relationUid,
+          session,
+          {
+            agentAuthored,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          },
+        )
       }
-      return await this.sendGroupSourceTextWithAiPolish(
-        sourceRef, source.ownerRef, text, recordUid, relationUid, session,
+    } else if (options.botRefs !== undefined && options.botRefs.length > 0) {
+      throw new ArkmePluginError('bot-mention-group-required', 'Bot mention 只能发送到群聊', false)
+    } else {
+      sent = await this.sendChatSourceTextRaw(
+        sourceRef, source.ownerRef, text, recordUid, relationUid, session, undefined, undefined, options.signal, { agentAuthored },
       )
     }
-    if (options.botRefs !== undefined && options.botRefs.length > 0) {
-      throw new ArkmePluginError('bot-mention-group-required', 'Bot mention 只能发送到群聊', false)
-    }
-    return await this.sendChatSourceTextRaw(
-      sourceRef, source.ownerRef, text, recordUid, relationUid, session,
-    )
+    if (agentAuthored && sent.localState === 'synced') void this.agentSourceDisplayName(session)
+    return sent
   }
 
   private async groupBotMentionSend(
@@ -4391,6 +4505,7 @@ export class ArkmeService {
     relationUid: string,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    options: { agentAuthored?: boolean } = {},
   ): Promise<ArkmeSourceSendResult> {
     const uniqueRefs = new Set(botRefs.map(ref => ref.trim()))
     if (uniqueRefs.has('') || uniqueRefs.size !== botRefs.length) {
@@ -4455,7 +4570,7 @@ export class ArkmeService {
       },
     }
     return await this.sendChatSourceTextRaw(
-      sourceRef, source.ownerRef, visibleText, recordUid, relationUid, session, undefined, contentPayload, signal,
+      sourceRef, source.ownerRef, visibleText, recordUid, relationUid, session, undefined, contentPayload, signal, options,
     )
   }
 
@@ -4524,6 +4639,7 @@ export class ArkmeService {
     initialAiPolish?: Record<string, unknown>,
     contentPayload?: Record<string, unknown>,
     signal?: AbortSignal,
+    options: { agentAuthored?: boolean } = {},
   ): Promise<ArkmeSourceSendResult> {
     const result = await this.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/records/send',
@@ -4533,6 +4649,7 @@ export class ArkmeService {
         rel_uid: relationUid,
         template_kind: 1,
         text_content: text,
+        ...(options.agentAuthored === true ? { creation_source: 1 } : {}),
         ...(initialAiPolish === undefined ? {} : { initial_ai_polish: initialAiPolish }),
         ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
         send_at: Date.now(),
@@ -4556,18 +4673,19 @@ export class ArkmeService {
     recordUid: string,
     relationUid: string,
     session: ArkmeSessionCredentials,
+    options: { agentAuthored?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     let config: ArkmeAiPolishConfigSnapshot
     try {
-      config = await this.queryGroupAiPolishConfig(chatSessionUid, session)
+      config = await this.queryGroupAiPolishConfig(chatSessionUid, session, options.signal)
     } catch {
       return await this.sendChatSourceTextRaw(
-        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session,
+        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
       )
     }
     if (!config.enabled || config.activeRuleUid === '') {
       return await this.sendChatSourceTextRaw(
-        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session,
+        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
       )
     }
     const taskUid = crypto.randomUUID()
@@ -4583,11 +4701,12 @@ export class ArkmeService {
           extra: { input_source: 'dsh_plugin', content_kind: 'plain_text' },
         },
         session,
+        options.signal,
       )
       polished = this.aiPolishTextResult(data)
     } catch (error) {
       const sent = await this.sendChatSourceTextRaw(
-        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session,
+        sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
       )
       return this.withFailedAiPolishRetry(
         sent, sourceRef, chatSessionUid, relationUid, recordUid, originalText, 1, session.userId,
@@ -4614,6 +4733,9 @@ export class ArkmeService {
           prompt: polished.promptVersion,
           ...(Object.keys(polished.extra).length === 0 ? {} : { extra: polished.extra }),
         },
+        undefined,
+        options.signal,
+        options,
       )
       return {
         ...sent,
@@ -4621,7 +4743,7 @@ export class ArkmeService {
       }
     }
     const sent = await this.sendChatSourceTextRaw(
-      sourceRef, chatSessionUid, originalText, recordUid, relationUid, session,
+      sourceRef, chatSessionUid, originalText, recordUid, relationUid, session, undefined, undefined, options.signal, options,
     )
     if (polished.action === 2) {
       return { ...sent, aiPolish: { state: 'kept_original', originalText } }
@@ -4946,6 +5068,57 @@ export class ArkmeService {
     return { response, descriptor }
   }
 
+  private arkoProfileDisplayName(profile: ArkmeArkoProfile): string {
+    const displayName = normalizedAgentDisplayName(profile.displayName)
+    return profile.version === 0 && displayName === 'Agent' ? 'Arko' : displayName ?? 'Agent'
+  }
+
+  private cacheArkoProfileDisplayName(userId: number, profile: ArkmeArkoProfile): string {
+    const displayName = this.arkoProfileDisplayName(profile)
+    this.arkoProfileDisplayNameCache.set(userId, {
+      displayName,
+      expiresAtMillis: Date.now() + ARKO_PROFILE_DISPLAY_NAME_CACHE_TTL_MS,
+    })
+    return displayName
+  }
+
+  private cachedArkoProfileDisplayName(userId: number): string | undefined {
+    const cached = this.arkoProfileDisplayNameCache.get(userId)
+    if (cached === undefined) return undefined
+    if (cached.expiresAtMillis <= Date.now()) {
+      this.arkoProfileDisplayNameCache.delete(userId)
+      return undefined
+    }
+    return cached.displayName
+  }
+
+  private currentUserAgentSourceFallback(
+    userId: number,
+    source: ArkmeTimelineItem['agentSource'] | undefined,
+  ): ArkmeTimelineItem['agentSource'] | undefined {
+    if (source === undefined) return undefined
+    if (source.displayName !== 'Agent') return source
+    const displayName = this.cachedArkoProfileDisplayName(userId)
+    if (displayName === undefined) return source
+    return { kind: 'agent', displayName, label: agentSourceLabel(displayName) }
+  }
+
+  private async agentSourceDisplayName(session: ArkmeSessionCredentials): Promise<string> {
+    const cached = this.cachedArkoProfileDisplayName(session.userId)
+    if (cached !== undefined) return cached
+    try {
+      const data = await this.authenticatedIntelligentPost<Record<string, unknown>>(
+        '/api/v1/agent/profile/query',
+        {},
+        session,
+      )
+      const profile = arkoProfileFromData(data)
+      return this.cacheArkoProfileDisplayName(session.userId, profile)
+    } catch {
+      return 'Agent'
+    }
+  }
+
   async sendDirectText(
     recipientArkmeId: string,
     textContent: string,
@@ -4978,6 +5151,7 @@ export class ArkmeService {
         record_uid: recordUid,
         rel_uid: relationUid,
         text_content: text,
+        creation_source: 1,
         send_at: sendAtMillis,
       },
       session,
@@ -4989,11 +5163,14 @@ export class ArkmeService {
     if (chatSessionUid === '' || !Number.isSafeInteger(sequence) || sequence <= 0 || targetKind !== 'direct') {
       throw new ArkmePluginError('direct-send-response-invalid', 'Chat Agent 发送返回了无效响应', true, 502)
     }
+    const responseRecordUid = stringValue(result.record_uid).trim() || recordUid
+    const responseRelationUid = stringValue(result.rel_uid).trim() || relationUid
+    void this.agentSourceDisplayName(session)
     return {
       recipientArkmeId: recipient,
       chatSessionUid,
-      recordUid: stringValue(result.record_uid).trim() || recordUid,
-      relationUid: stringValue(result.rel_uid).trim() || relationUid,
+      recordUid: responseRecordUid,
+      relationUid: responseRelationUid,
       sequence,
       targetKind: 'direct',
     }
@@ -5113,9 +5290,14 @@ export class ArkmeService {
       const aiPolish = this.timelineAiPolish(record, payload)
       const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
       const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
+      const rawAgentSource = timelineAgentSource(relation, record, payload)
+      const agentSource = senderUserId === session.userId
+        ? this.currentUserAgentSourceFallback(session.userId, rawAgentSource)
+        : rawAgentSource
       items.push({
         itemUid: uid,
         senderName: stringValue(relation.display_name_snapshot).trim() || 'Arkme用户',
+        ...(agentSource === undefined ? {} : { agentSource }),
         ...(senderUserId > 0 ? { avatarRef: await this.sealProfileImageRef(session.userId, senderUserId) } : {}),
         isMe: senderUserId === session.userId,
         sendAtMillis,

@@ -538,6 +538,7 @@ export async function dispatchArkmeHostOperation(
       {
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+        ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
       },
     )
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(

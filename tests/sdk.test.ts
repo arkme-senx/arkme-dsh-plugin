@@ -123,10 +123,25 @@ describe('Arkme SDK', () => {
     await expect(sdk.readSource('source-1')).resolves.toMatchObject({ source: { displayName: '小林' } })
     await expect(sdk.sendText('source-1', '你好', { recordUid: 'record-1', relationUid: 'rel-1' }))
       .resolves.toMatchObject({ itemUid: 'record-1' })
+    await expect(sdk.sendText('source-1', '代发', {
+      recordUid: 'record-agent-1',
+      relationUid: 'rel-agent-1',
+      agentAuthored: true,
+    })).resolves.toMatchObject({ itemUid: 'record-agent-1' })
     expect(calls).toMatchObject([
       { operation: 'sources.list', params: { directory: 'root' } },
       { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
       { operation: 'source.send-text', params: { sourceRef: 'source-1', textContent: '你好', recordUid: 'record-1', relationUid: 'rel-1' } },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '代发',
+          recordUid: 'record-agent-1',
+          relationUid: 'rel-agent-1',
+          agentAuthored: true,
+        },
+      },
     ])
   })
 

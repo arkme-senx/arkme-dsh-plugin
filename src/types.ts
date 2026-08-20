@@ -551,6 +551,7 @@ export interface ArkmeTimelineItem {
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
   messageRef?: string
   senderName: string
+  agentSource?: ArkmeTimelineAgentSource
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
   isMe: boolean
@@ -589,6 +590,12 @@ export interface ArkmeForwardRecordPreviewItem {
   title: string
   textContent: string
   contentLabel?: string
+}
+
+export interface ArkmeTimelineAgentSource {
+  kind: 'agent'
+  displayName: string
+  label: string
 }
 
 export type ArkmeAiPolishSendState = 'none' | 'polishing' | 'polished' | 'kept_original' | 'failed'

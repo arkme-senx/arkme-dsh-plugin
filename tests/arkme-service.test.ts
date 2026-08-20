@@ -1535,6 +1535,10 @@ describe('ArkmeService', () => {
             relation: { rel_uid: 'chat-relation-2', record_uid: 'chat-record-2', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 181, seq: 8 },
             record: { status: 1, payload: { text_content: '我的回复' } },
           },
+          ...(body.chat_session_uid === 'chat-private' ? [{
+            relation: { rel_uid: 'chat-relation-agent', record_uid: 'chat-record-agent', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 182, seq: 9 },
+            record: { status: 1, payload: { text_content: 'Agent 代发', creation_source: 1, agent_display_name: 'Codex' } },
+          }] : []),
           {
             relation: { rel_uid: 'chat-relation-unavailable', record_uid: 'chat-record-unavailable', sender_user_id: 20002, attach_at: 179, seq: 6 },
             record: {},
@@ -1584,6 +1588,14 @@ describe('ArkmeService', () => {
       items: [
         { textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         { textContent: '我的回复', senderName: '我', isMe: true, sequence: 8, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
+        {
+          textContent: 'Agent 代发',
+          senderName: '我',
+          isMe: true,
+          sequence: 9,
+          agentSource: { kind: 'agent', displayName: 'Codex', label: 'Codex代发' },
+          avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
+        },
       ],
       nextCursor: { beforeSequence: 6 },
     })
@@ -2036,6 +2048,10 @@ describe('ArkmeService', () => {
         body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
         signal: init?.signal as AbortSignal | null,
       })
+      if (String(input).endsWith('/api/v1/agent/profile/query')) return json({ code: 200, data: {
+        display_name: 'Codex',
+        version: 1,
+      } })
       return json({ code: 200, data: {
         chat_session_uid: 'chat-direct-1',
         record_uid: 'record-direct-1',
@@ -2058,8 +2074,8 @@ describe('ArkmeService', () => {
       sequence: 11,
       targetKind: 'direct',
     })
-    expect(requests).toHaveLength(1)
-    expect(requests[0]).toMatchObject({
+    const sendRequest = requests.find(request => request.url.endsWith('/api/v1/chats/agent/records/send'))
+    expect(sendRequest).toMatchObject({
       url: 'https://chat.test/api/v1/chats/agent/records/send',
       authorization: 'Bearer access',
       body: {
@@ -2067,13 +2083,49 @@ describe('ArkmeService', () => {
         record_uid: 'record-direct-1',
         rel_uid: 'relation-direct-1',
         text_content: '你好，这是 Agent 代发消息',
+        creation_source: 1,
         send_at: 1787036400000,
       },
     })
-    expect(requests[0]?.signal).toBeInstanceOf(AbortSignal)
-    expect(requests[0]?.signal?.aborted).toBe(false)
-    expect(requests[0]?.body).not.toHaveProperty('chat_session_uid')
-    expect(requests[0]?.body).not.toHaveProperty('template_kind')
+    expect(sendRequest?.signal).toBeInstanceOf(AbortSignal)
+    expect(sendRequest?.signal?.aborted).toBe(false)
+    expect(sendRequest?.body).not.toHaveProperty('chat_session_uid')
+    expect(sendRequest?.body).not.toHaveProperty('template_kind')
+  })
+
+  it('uses cached Arkme Agent profile name when timeline only reports a generic Agent source', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/agent/profile/query')) return json({ code: 200, data: {
+        display_name: '海底捞',
+        version: 2,
+      } })
+      if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
+        items: [{
+          relation: { record_uid: 'agent-record-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 1787036400000, seq: 11 },
+          record: { status: 1, payload: { text_content: '缓存名字代发', creation_source: 1 } },
+        }],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [{ user_id: 10001, nick_name: '我', head_img: '' }],
+      } })
+      throw new Error(`unexpected ${url} ${JSON.stringify(body)}`)
+    })
+
+    await expect(service.arkoProfile()).resolves.toMatchObject({ displayName: '海底捞', version: 2 })
+    await expect(service.readSource(sourceRefFor('private_chat', 'chat-agent-1', '小林'))).resolves.toMatchObject({
+      items: [{
+        itemUid: 'agent-record-1',
+        senderName: '我',
+        isMe: true,
+        textContent: '缓存名字代发',
+        agentSource: { kind: 'agent', displayName: '海底捞', label: '海底捞代发' },
+      }],
+    })
   })
 
   it('rejects an empty direct recipient before any Chat write', async () => {
