@@ -13,6 +13,7 @@ import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
 import {
@@ -45,19 +46,19 @@ export interface ArkmeNavigationProps {
 export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
 
 const colors = {
-  panel: 'var(--dsw-specific-sidebar-fill, #f8f9fa)',
-  text: 'var(--dsw-alias-label-primary, #242629)',
-  secondary: 'var(--dsw-alias-label-secondary, #8a9099)',
-  caption: 'var(--dsw-alias-label-caption, #b0b5bc)',
-  border: 'var(--dsw-alias-border-l1, #eceef0)',
-  active: '#def3e8',
-  accent: '#20c66a',
+  panel: arkmeTheme.sidebar,
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  caption: arkmeTheme.caption,
+  border: arkmeTheme.borderSoft,
+  active: arkmeTheme.accentSoft,
+  accent: arkmeTheme.accent,
 }
 
 const styles: Record<string, CSSProperties> = {
   shell: {
     position: 'relative', width: '100%', height: '100%', minHeight: 0,
-    display: 'flex', flexDirection: 'column', color: colors.text,
+    display: 'flex', flexDirection: 'column', background: colors.panel, color: colors.text,
   },
   header: {
     position: 'relative', zIndex: 5, flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
@@ -83,7 +84,7 @@ const styles: Record<string, CSSProperties> = {
   sortMenu: {
     position: 'absolute', zIndex: 30, top: 30, right: -8, width: 80, padding: 3,
     boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-inverted, #e2e4e7)',
-    borderRadius: 10, background: 'var(--dsw-specific-menu, #fff)',
+    borderRadius: 10, background: arkmeTheme.menu,
     boxShadow: 'var(--dsw-shadow-lv3, 0 4px 12px rgba(22, 26, 31, 0.12))', color: colors.text,
   },
   sortMenuItem: {
@@ -122,7 +123,7 @@ const styles: Record<string, CSSProperties> = {
   unread: {
     minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ff5f57',
-    color: '#fff', fontSize: 10, lineHeight: '17px',
+    color: arkmeTheme.foreground, fontSize: 10, lineHeight: '17px',
   },
   avatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
@@ -134,15 +135,15 @@ const styles: Record<string, CSSProperties> = {
   },
   selfAvatar: {
     width: 44, height: 44, flex: 'none', position: 'relative', borderRadius: 999,
-    background: '#f0f1f2', border: '1px solid #e1e3e5', boxSizing: 'border-box',
+    background: arkmeTheme.layer2, border: `1px solid ${arkmeTheme.border}`, boxSizing: 'border-box',
   },
   selfBubbleBack: {
     position: 'absolute', left: 15, top: 11, width: 18, height: 14, borderRadius: 7,
-    background: '#a9e8bb', boxShadow: '0 0 0 2px #f0f1f2',
+    background: arkmeTheme.accentSoft, boxShadow: `0 0 0 2px ${arkmeTheme.layer2}`,
   },
   selfBubbleFront: {
     position: 'absolute', left: 10, top: 17, width: 18, height: 14, borderRadius: 7,
-    background: '#70d98d', boxShadow: '0 0 0 2px #f0f1f2',
+    background: arkmeTheme.accent, boxShadow: `0 0 0 2px ${arkmeTheme.layer2}`,
   },
   topicRow: {
     position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
@@ -172,7 +173,7 @@ const styles: Record<string, CSSProperties> = {
   topicCount: {
     width: 20, flex: 'none', color: colors.caption, fontSize: 12, lineHeight: '22px', textAlign: 'center',
   },
-  topicHover: { background: 'var(--dsw-alias-fill-secondary, #f3f4f5)' },
+  topicHover: { background: arkmeTheme.hover },
   topicCreated: { background: colors.active, boxShadow: 'none' },
   topicCreateMask: {
     position: 'absolute', zIndex: 3, top: 8, right: 0, width: 58, height: 22,
@@ -189,7 +190,7 @@ const styles: Record<string, CSSProperties> = {
   topicCard: {
     position: 'relative', width: 'calc(100% - 24px)', minHeight: 56, margin: '0 12px 8px',
     boxSizing: 'border-box', overflow: 'hidden', borderRadius: 9,
-    background: 'var(--dsw-alias-fill-secondary, #f6f6f6)', color: 'inherit',
+    background: arkmeTheme.layer2, color: 'inherit',
   },
   topicCardButton: {
     width: '100%', minHeight: 56, display: 'flex', flexDirection: 'column', alignItems: 'stretch',
@@ -207,11 +208,11 @@ const styles: Record<string, CSSProperties> = {
   topicCardCount: {
     minWidth: 18, height: 17, padding: '0 4px', boxSizing: 'border-box', borderRadius: 4,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    background: 'var(--dsw-specific-sidebar-fill, #fff)', color: colors.caption,
+    background: colors.panel, color: colors.caption,
   },
   topicCardMetaText: { flex: 'none', whiteSpace: 'nowrap' },
   topicCardPreview: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  topicCardHover: { background: 'var(--dsw-alias-fill-tertiary, #f1f2f3)' },
+  topicCardHover: { background: arkmeTheme.hover },
   topicCreateFooter: {
     position: 'absolute', zIndex: 4, left: 0, right: 0, bottom: 0,
     display: 'flex', justifyContent: 'center', padding: '10px 12px 22px',
@@ -219,7 +220,7 @@ const styles: Record<string, CSSProperties> = {
   },
   topicCreateButton: {
     minWidth: 100, height: 36, padding: '0 16px', border: 0, borderRadius: 8,
-    background: 'var(--dsw-alias-fill-tertiary, #eceeef)', color: colors.text,
+    background: arkmeTheme.layer2, color: colors.text,
     cursor: 'pointer', font: 'inherit', fontSize: 14, pointerEvents: 'auto',
   },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },

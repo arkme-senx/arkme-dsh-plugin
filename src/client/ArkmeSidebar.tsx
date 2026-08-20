@@ -27,6 +27,7 @@ import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution,
 } from './ArkmeTopicDirectoryPopover.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
@@ -88,11 +89,11 @@ function AgentAssistantIcon({ size = 12 }: { size?: number }) {
 }
 
 const colors = {
-  panel: 'var(--dsw-alias-bg-base, #ffffff)',
-  text: 'var(--dsw-alias-label-primary, #17191c)',
-  secondary: 'var(--dsw-alias-label-secondary, #68707c)',
-  border: 'var(--dsw-alias-border-l2, #e2e5e9)',
-  danger: '#c2413b',
+  panel: arkmeTheme.base,
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  danger: arkmeTheme.danger,
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -116,9 +117,9 @@ const styles: Record<string, CSSProperties> = {
   popover: { position: 'absolute', zIndex: 40, top: 38, right: 0, width: 150, padding: 6, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.12)' },
   menuItem: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, border: 0, borderRadius: 8, padding: '9px 10px', background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
-  error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
+  error: { padding: '10px 12px', borderRadius: 9, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
-  date: { alignSelf: 'center', padding: '4px 9px', borderRadius: 999, color: '#9097a1', fontSize: 12, background: '#f6f7f9' },
+  date: { alignSelf: 'center', padding: '4px 9px', borderRadius: 999, color: arkmeTheme.tertiary, fontSize: 12, background: arkmeTheme.subtle },
   row: { width: '100%', display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
   rowOther: { justifyContent: 'flex-start' },
@@ -130,7 +131,7 @@ const styles: Record<string, CSSProperties> = {
   forwardMessageBody: { flex: 1 },
   messageAvatar: {
     width: 32, height: 32, flex: 'none', overflow: 'hidden', borderRadius: 999,
-    display: 'grid', placeItems: 'center', background: 'transparent', color: '#737982', fontSize: 11, fontWeight: 600,
+    display: 'grid', placeItems: 'center', background: 'transparent', color: arkmeTheme.secondary, fontSize: 11, fontWeight: 600,
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },
@@ -141,13 +142,13 @@ const styles: Record<string, CSSProperties> = {
   agentSourceIcon: { flex: 'none', width: 12, height: 12, display: 'grid', placeItems: 'center', overflow: 'hidden' },
   agentSourceText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
-  bubbleMe: { background: 'var(--arkme-chat-self-bubble, #effaf0)', '--arkme-bubble-fade': 'var(--arkme-chat-self-bubble, #effaf0)' } as CSSProperties,
-  bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)', '--arkme-bubble-fade': 'var(--dsw-alias-bg-subtle, #f0f2f5)' } as CSSProperties,
+  bubbleMe: { background: arkmeTheme.messageOwn, '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
+  bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
   forwardBubble: { width: '100%', maxWidth: 400, minWidth: 0, padding: 0, borderRadius: 0, background: 'transparent' },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
-  meta: { color: '#adb2b8', fontSize: 11 },
+  meta: { color: arkmeTheme.caption, fontSize: 11 },
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
-  retry: { border: 0, padding: 0, background: 'transparent', color: '#c2413b', cursor: 'pointer', fontSize: 11 },
+  retry: { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', fontSize: 11 },
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
@@ -156,7 +157,7 @@ const styles: Record<string, CSSProperties> = {
     position: 'relative', width: 'min(780px,100%)', overflow: 'visible', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
     border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 22,
-    background: 'var(--dsw-specific-input-major, #fff)', boxShadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.08))',
+    background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
   },
   textarea: {
     width: '100%', minHeight: 28, maxHeight: 336, resize: 'none', overflowY: 'auto',
@@ -179,7 +180,7 @@ const styles: Record<string, CSSProperties> = {
   send: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
     border: 0, borderRadius: 999, background: 'var(--dsw-alias-button-info-fill, #3964fe)',
-    color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
+    color: arkmeTheme.foreground, cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
   },
   drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 10, width: 'min(420px, 92%)', display: 'flex', flexDirection: 'column', background: colors.panel, borderLeft: `1px solid ${colors.border}`, boxShadow: '-12px 0 30px rgba(0,0,0,.12)' },
   forwardDrawer: { top: ARKME_CONVERSATION_HEADER_HEIGHT, width: 'min(420px, 92%)' },
@@ -189,7 +190,7 @@ const styles: Record<string, CSSProperties> = {
   },
   drawerHeader: { height: 56, flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', borderBottom: `1px solid ${colors.border}`, boxSizing: 'border-box' },
   drawerTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
-  close: { marginLeft: 'auto', width: 32, height: 32, border: 0, borderRadius: 999, background: '#f1f3f6', cursor: 'pointer', color: colors.text },
+  close: { marginLeft: 'auto', width: 32, height: 32, border: 0, borderRadius: 999, background: arkmeTheme.hover, cursor: 'pointer', color: colors.text },
   drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 },
   detailText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' },
   forwardDetailHeader: { minHeight: 76, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center', padding: '12px 60px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}` },
@@ -207,7 +208,7 @@ const styles: Record<string, CSSProperties> = {
   forwardDetailRecordText: { margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: colors.text, fontSize: 16, lineHeight: '25px' },
   forwardDetailDivider: { height: 1, background: colors.border },
   forwardDetailFooter: { flex: 'none', padding: '12px 24px 18px', color: '#a2a7ae', textAlign: 'center', fontSize: 13, lineHeight: '18px' },
-  toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: '#f1efff', color: '#694fd0', cursor: 'pointer', fontSize: 12 },
+  toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: arkmeTheme.infoSoft, color: arkmeTheme.info, cursor: 'pointer', fontSize: 12 },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
 }
 
