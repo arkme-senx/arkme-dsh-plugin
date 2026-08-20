@@ -33,7 +33,7 @@ describe('ArkmeChatDirectoryStore', () => {
     const second = { ...first, sourceRef: 'source-2', displayName: '第二', unreadCount: 0 }
     store.publish([first, second])
 
-    store.updateUnread('source-1', 0)
+    store.updateReadAck('source-1', 'chat:source-1', 10, 0)
     store.upsert({ ...second, unreadCount: 2 })
     expect(store.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['source-1', 'source-2'])
     expect(store.getSnapshot().sources[1]?.unreadCount).toBe(2)
@@ -86,7 +86,7 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.unreadCount('source-2')).toBe(1)
     store.upsert(latestRealtime)
     expect(store.unreadCount('source-2')).toBe(2)
-    store.updateUnread('source-1', 0)
+    store.updateReadAck('source-1', 'chat:source-1', 10, 0)
     expect(store.getSnapshot()).toEqual({ revision: 0, sources: [] })
     expect(listener).not.toHaveBeenCalled()
 
@@ -96,6 +96,115 @@ describe('ArkmeChatDirectoryStore', () => {
       sources: [latestRealtime, { ...baseline, unreadCount: 0 }],
     })
     expect(listener).toHaveBeenCalledOnce()
+  })
+
+  it('keeps read acknowledgements authoritative over stale realtime projections', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+
+    store.updateReadAck('source-1', 'chat:group-1', 8, 0)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.totalUnreadCount()).toBe(0)
+
+    store.upsert({ ...source, unreadCount: 2, activeAtMillis: 11, latestSequence: 8 }, 'chat:group-1')
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.totalUnreadCount()).toBe(0)
+  })
+
+  it('keeps the read watermark when a renamed projection changes sourceRef', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-old-name', kind: 'group_chat' as const, displayName: '旧群名',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.updateReadAck('source-old-name', 'chat:group-1', 8, 0)
+
+    store.upsert({
+      ...source,
+      sourceRef: 'source-new-name',
+      displayName: '新群名',
+      activeAtMillis: 11,
+      unreadCount: 2,
+      latestSequence: 8,
+    }, 'chat:group-1')
+
+    expect(store.getSnapshot().sources).toHaveLength(1)
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      sourceRef: 'source-new-name',
+      displayName: '新群名',
+      unreadCount: 0,
+      latestSequence: 8,
+    })
+    expect(store.unreadCount('source-old-name')).toBe(0)
+    expect(store.unreadCount('source-new-name')).toBe(0)
+  })
+
+  it('keeps the read watermark when a refreshed source list changes sourceRef after rename', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-old-name', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '旧群名',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.updateReadAck('source-old-name', undefined, 8, 0)
+
+    store.publish([{
+      ...source,
+      sourceRef: 'source-new-name',
+      displayName: '新群名',
+      activeAtMillis: 11,
+      unreadCount: 2,
+      latestSequence: 8,
+    }])
+
+    expect(store.getSnapshot().sources).toHaveLength(1)
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      sourceRef: 'source-new-name',
+      sourceKey: 'chat:group-1',
+      displayName: '新群名',
+      unreadCount: 0,
+      latestSequence: 8,
+    })
+    expect(store.totalUnreadCount()).toBe(0)
+  })
+
+  it('allows unread badges to return when a realtime projection moves beyond the read watermark', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.updateReadAck('source-1', 'chat:private-1', 8, 0)
+
+    store.upsert({ ...source, latestPreview: '新消息', activeAtMillis: 12, unreadCount: 1, latestSequence: 9 }, 'chat:private-1')
+    expect(store.getSnapshot().sources[0]).toMatchObject({ latestPreview: '新消息', unreadCount: 1, latestSequence: 9 })
+    expect(store.totalUnreadCount()).toBe(1)
+  })
+
+  it('does not let lower-sequence projections clear newer unread state', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.updateReadAck('source-1', 'chat:private-1', 8, 0)
+    store.upsert({ ...source, latestPreview: '新消息', activeAtMillis: 12, unreadCount: 1, latestSequence: 9 }, 'chat:private-1')
+
+    store.upsert({ ...source, latestPreview: '旧消息', activeAtMillis: 13, unreadCount: 0, latestSequence: 8 }, 'chat:private-1')
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      activeAtMillis: 12,
+      latestPreview: '新消息',
+      unreadCount: 1,
+      latestSequence: 9,
+    })
+    expect(store.totalUnreadCount()).toBe(1)
   })
 
   it('drops pending realtime mutations and stale refresh results when the account changes', async () => {
