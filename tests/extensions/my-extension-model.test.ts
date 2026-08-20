@@ -17,11 +17,13 @@ describe('my-extension view model', () => {
 
   it('offers publication only when the Host owner marked an exact Cordis Package publishable', () => {
     expect(myExtensionPrimaryAction({ ...base, states: ['cordis'], publish: { allowed: true, mode: 'new' } }))
-      .toEqual({ label: '发布', disabled: false })
+      .toEqual({ label: '发布' })
     expect(myExtensionPrimaryAction({ ...base, states: ['persisted'], publish: { allowed: false } }))
-      .toEqual({ label: '仅本地', disabled: true })
+      .toBeUndefined()
     expect(myExtensionPrimaryAction({ ...base, states: ['published'], publish: { allowed: false } }))
-      .toEqual({ label: '已发布', disabled: true })
+      .toBeUndefined()
+    expect(myExtensionPrimaryAction({ ...base, states: ['cordis', 'published'], publish: { allowed: true, mode: 'version' } }))
+      .toBeUndefined()
   })
 
   it('turns source degradation into one non-blocking user message', () => {

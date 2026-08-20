@@ -131,8 +131,24 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('Cordis 临时')
     expect(html).toContain('已持久化')
     expect(html).toContain('已发布')
-    expect(html).toContain('发布新版本')
+    expect(html).not.toContain('发布新版本')
+    expect(html).not.toContain('<button')
+    expect(html.indexOf('天气助手')).toBeLessThan(html.indexOf('Cordis 临时'))
+    expect(html.indexOf('Cordis 临时')).toBeLessThan(html.indexOf('天气卡片'))
+    expect(html).toContain('border-radius:999px')
     expect(html).not.toContain('local-weather')
+  })
+
+  it('renders a button only for an unpublished live Cordis action', () => {
+    const html = renderToStaticMarkup(<MyExtensionCard item={{
+      ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['cordis'],
+      halves: { host: true, client: false }, cordis: { packageCount: 1, active: true },
+      publish: { allowed: true, mode: 'new' },
+    }} onPublish={() => {}} />)
+
+    expect(html).toContain('>发布</button>')
+    expect(html).not.toContain('>仅本地</button>')
+    expect(html).not.toContain('>已发布</button>')
   })
 
   it('renders an accessible private-by-default Cordis publish form', () => {

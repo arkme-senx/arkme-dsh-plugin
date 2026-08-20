@@ -59,6 +59,8 @@ UI、SDK 和 Tool 共用 Host `ArkmeOwnedExtensionInventory`。浏览器和外�
 - Persisted-only：显示“已持久化”；没有可发布 Cordis 源码时不伪造发布入口。
 - Published-only：显示“已发布”和云端可见范围。
 - 多状态：同一张卡同时显示对应标签，不重复成多行。
+- 状态标签以轻量灰色胶囊紧跟标题，不占用卡片右侧动作区域。
+- 卡片右侧只显示真实行为：仅尚未发布且有精确 Cordis Package 的条目显示“发布”；已发布和仅本地条目不渲染按钮。
 - Cordis 发布必须锁定确切 Package：优先当前成功运行的 `currentPackageId`；没有 current 时选择定义顺序最后一个 Package；不得自动选择失败或进行中的 `nextPackageId`。
 - UI 发布表单收集名称、说明、语义化版本、可见范围和 changelog，复用现有 artifact 校验、幂等 publish session 和失败恢复。
 - 发布成功后立即记录血缘并刷新统一列表；失败时保留原 Cordis 行和用户输入。

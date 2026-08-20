@@ -568,12 +568,12 @@ git commit -m "feat(tools): 功能点: 查询并发布我的扩展"
 ```ts
 expect(myExtensionBadges(['cordis', 'persisted', 'published']))
   .toEqual(['Cordis 临时', '已持久化', '已发布'])
-expect(myExtensionPrimaryAction(cordisOnly)).toEqual({ label: '发布', disabled: false })
-expect(myExtensionPrimaryAction(persistedOnly)).toEqual({ label: '仅本地', disabled: true })
-expect(myExtensionPrimaryAction(publishedOnly)).toEqual({ label: '已发布', disabled: true })
+expect(myExtensionPrimaryAction(cordisOnly)).toEqual({ label: '发布' })
+expect(myExtensionPrimaryAction(persistedOnly)).toBeUndefined()
+expect(myExtensionPrimaryAction(publishedOnly)).toBeUndefined()
 ```
 
-再覆盖 warnings 去重、published visibility 文案和不把同名条目在客户端二次合并。
+再覆盖状态胶囊紧跟标题、右侧不渲染状态按钮、warnings 去重、published visibility 文案和不把同名条目在客户端二次合并。
 
 - [ ] **Step 2: 运行 model 测试确认失败**
 

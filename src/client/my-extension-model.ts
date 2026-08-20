@@ -10,10 +10,9 @@ export function myExtensionBadges(states: readonly ArkmeMyExtensionState[]): str
   return states.map(state => STATE_LABELS[state])
 }
 
-export function myExtensionPrimaryAction(item: ArkmeMyExtensionItem): { label: string; disabled: boolean } {
-  if (item.publish.allowed) return { label: item.publish.mode === 'version' ? '发布新版本' : '发布', disabled: false }
-  if (item.states.includes('published')) return { label: '已发布', disabled: true }
-  return { label: '仅本地', disabled: true }
+export function myExtensionPrimaryAction(item: ArkmeMyExtensionItem): { label: '发布' } | undefined {
+  if (item.states.includes('published') || !item.publish.allowed) return undefined
+  return { label: '发布' }
 }
 
 export function myExtensionWarningText(warnings: readonly ArkmeMyExtensionWarning[]): string {

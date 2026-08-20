@@ -100,6 +100,13 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 9, background: colors.subtle, color: colors.secondary,
   },
   cardBody: { minWidth: 0, flex: 1 },
+  titleRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
+  stateBadges: { flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 },
+  stateBadge: {
+    display: 'inline-flex', alignItems: 'center', padding: '0 8px', borderRadius: 999,
+    background: colors.subtle, color: colors.caption, fontSize: 10, fontWeight: 600, lineHeight: '19px',
+    whiteSpace: 'nowrap',
+  },
   name: { overflow: 'hidden', color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: '19px', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   meta: { display: 'block', marginTop: 2, color: colors.secondary, fontSize: 11, lineHeight: '16px', wordBreak: 'break-word' },
   description: {
@@ -252,15 +259,14 @@ export function MyExtensionCard({ item, onPublish }: { item: ArkmeMyExtensionIte
   >
     <span style={styles.appIcon}><ArkmeExtensionIcon /></span>
     <span style={styles.cardBody}>
-      <span style={styles.name}>{item.name}</span>
+      <span style={styles.titleRow}>
+        <span style={styles.name}>{item.name}</span>
+        <span style={styles.stateBadges}>{myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}</span>
+      </span>
       <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
-      <Chips>{myExtensionBadges(item.states).map(label => <Chip key={label} tone={label === '已发布' ? 'active' : 'default'}>{label}</Chip>)}</Chips>
       <span style={styles.meta}>{[item.halves.host ? 'Host' : '', item.halves.client ? 'Client' : ''].filter(Boolean).join(' + ')}</span>
     </span>
-    <button
-      type="button" style={{ ...styles.installSmall, ...(action.disabled ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
-      disabled={action.disabled} onClick={onPublish}
-    >{action.label}</button>
+    {action !== undefined && <button type="button" style={styles.installSmall} onClick={onPublish}>{action.label}</button>}
   </div>
 }
 
