@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ArkmeExtensionPublishResult, ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeMyExtensionPublishInput, ArkmePreparedExtensionPublish } from '../../extensions/owned-types.js'
+import { hasLaterDirectUserMessage, lastSessionSeq } from '../shared/conversational-confirmation.js'
 
 const DEFAULT_CONFIRMATION_TTL_MILLIS = 10 * 60_000
 const MAX_PUBLISH_BATCH_SIZE = 10
@@ -12,7 +13,6 @@ export interface ArkmeExtensionPublishBatchPreview {
   status: 'confirmation_required'
   count: number
   question: string
-  expectedReply: string
   items: Array<{
     ownedRef: string
     name: string
@@ -39,7 +39,6 @@ export interface ArkmeExtensionPublishBatchResult {
 interface PendingPublishBatch {
   preparedAfterSeq: number
   expiresAtMillis: number
-  expectedReply: string
   items: ArkmePreparedExtensionPublish[]
 }
 
@@ -65,6 +64,14 @@ export class ArkmeExtensionPublishConversation {
 
   async prepare(agent: Agent, drafts: ArkmeExtensionPublishDraft[], signal?: AbortSignal): Promise<ArkmeExtensionPublishBatchPreview> {
     const agentId = requiredAgentId(agent)
+    const existing = this.pending.get(agentId)
+    if (existing !== undefined) {
+      if (this.now() > existing.expiresAtMillis) {
+        this.pending.delete(agentId)
+      } else if (!hasLaterDirectUserMessage(agent, existing.preparedAfterSeq)) {
+        throw new Error('当前已有等待确认的扩展发布批次，请先在对话中处理该批次')
+      }
+    }
     if (drafts.length <= 0 || drafts.length > MAX_PUBLISH_BATCH_SIZE) {
       throw new Error(`一次只能准备发布 1-${String(MAX_PUBLISH_BATCH_SIZE)} 个扩展`)
     }
@@ -74,19 +81,16 @@ export class ArkmeExtensionPublishConversation {
     }
     const items: ArkmePreparedExtensionPublish[] = []
     for (const input of inputs) items.push(await this.options.preflight(input, signal))
-    const expectedReply = inputs.length === 1 ? '确认发布' : `确认发布全部 ${String(inputs.length)} 个扩展`
     const expiresAtMillis = this.now() + this.confirmationTtlMillis
     this.pending.set(agentId, {
       preparedAfterSeq: lastSessionSeq(agent),
       expiresAtMillis,
-      expectedReply,
       items,
     })
     return {
       status: 'confirmation_required',
       count: items.length,
       question: publishQuestion(inputs),
-      expectedReply,
       items: inputs.map(item => ({
         ownedRef: item.ownedRef,
         name: item.name,
@@ -105,8 +109,8 @@ export class ArkmeExtensionPublishConversation {
       this.pending.delete(agentId)
       throw new Error('扩展发布确认已过期，请重新准备发布')
     }
-    if (!hasLaterDirectConfirmation(agent, pending.preparedAfterSeq, pending.expectedReply)) {
-      throw new Error(`需要在准备发布后的新消息中确认，并回复“${pending.expectedReply}”`)
+    if (!hasLaterDirectUserMessage(agent, pending.preparedAfterSeq)) {
+      throw new Error('需要用户在准备发布后的新消息中明确确认')
     }
     for (const prepared of pending.items) {
       const current = await this.options.preflight(prepared.input, signal)
@@ -193,22 +197,4 @@ function requiredAgentId(agent: Agent): string {
   const id = String(agent.id).trim()
   if (id === '') throw new Error('当前 DSH Agent 会话身份无效')
   return id
-}
-
-function lastSessionSeq(agent: Agent): number {
-  return agent.session.events.at(-1)?.seq ?? -1
-}
-
-function hasLaterDirectConfirmation(agent: Agent, preparedAfterSeq: number, expectedReply: string): boolean {
-  const messages = agent.session.events.filter(event => event.seq > preparedAfterSeq
-    && event.type === 'user/message' && event.data.source.kind === 'user')
-  const latest = messages.at(-1)
-  if (latest?.type !== 'user/message') return false
-  const text = latest.data.content
-    .filter(block => block.type === 'text')
-    .map(block => block.text)
-    .join('\n')
-    .replace(/[。！!]+$/g, '')
-    .trim()
-  return text === expectedReply
 }

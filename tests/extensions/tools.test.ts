@@ -8,8 +8,29 @@ import {
   registerArkmeExtensionTools,
 } from '../../src/tools/extensions/index.js'
 
+function confirmationAgent(id: string, intent: string) {
+  return {
+    id,
+    session: { events: [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: intent }] } },
+    ] },
+  }
+}
+
+function addNaturalConfirmation(agent: ReturnType<typeof confirmationAgent>, text = '可以，就这样做吧') {
+  agent.session.events.push({
+    seq: agent.session.events.length + 1,
+    type: 'user/message',
+    data: { source: { kind: 'user' }, content: [{ type: 'text', text }] },
+  })
+}
+
+function toolExec(agent: ReturnType<typeof confirmationAgent>, callId: string) {
+  return { agent, callId, signal: new AbortController().signal }
+}
+
 describe('Arkme extension tools', () => {
-  it('registers the exact MVP surface only for business profiles and keeps low-risk image writes out of ACK approval', async () => {
+  it('registers the exact MVP surface and uses conversational confirmation without approval hooks', async () => {
     const raster = new Uint8Array(await sharp({
       create: { width: 640, height: 480, channels: 4, background: '#16a34a' },
     }).png().toBuffer())
@@ -20,11 +41,10 @@ describe('Arkme extension tools', () => {
       execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
     }> = []
     const sections: Array<{ name: string; order: number; text: () => string }> = []
-    let guard: ((exec: { name: string; arguments: Record<string, unknown> }, next: () => Promise<{ kind: string }>) => Promise<unknown>) | undefined
     const context = {
       tools: { register: vi.fn(definition => { definitions.push(definition) }) },
       systemPrompt: { section: vi.fn(section => { sections.push(section) }) },
-      on: vi.fn((_event, listener) => { guard = listener }),
+      on: vi.fn(),
     }
     const previewInstall = vi.fn(async () => ({
       extension_id: 'ext-native', version: '1.0.0', execution_model: 'dsh-native',
@@ -50,9 +70,15 @@ describe('Arkme extension tools', () => {
     const reorderPreviews = vi.fn(async () => ({
       extension_id: 'ext-1', preview_images: [{ preview_ref: previewRef }], preview_revision: 3,
     }))
+    const deleteExtension = vi.fn(async () => ({ extension_id: 'ext-1', status: 'deleted' }))
+    const applyExtension = vi.fn(async () => ({
+      extension_id: 'ext-native', version: '1.0.0', state: 'active', installed: true, active: true,
+      approval_required: false, restart_required: false, message: '已激活',
+    }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
       previewInstall, setEnabled, updateMetadata, setIcon, addPreview, deletePreview, reorderPreviews,
+      delete: deleteExtension, apply: applyExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, {} as never, { readImage }, 'business')
 
@@ -72,7 +98,7 @@ describe('Arkme extension tools', () => {
     expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('1 to 10')
     expect(publish?.description).toContain('does not publish')
-    expect(publish?.description).toContain('later direct human reply')
+    expect(publish?.description).toContain('later direct human message')
     expect(sections).toHaveLength(1)
     expect(sections[0]).toMatchObject({ name: 'tool:arkme-extension-authoring', order: 117 })
     expect(sections[0]?.text()).toBe(ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT)
@@ -92,18 +118,32 @@ describe('Arkme extension tools', () => {
     })
     expect(deleteTool?.description).toContain('explicitly asks to delete it')
     const enabledTool = definitions.find(item => item.name === 'arkme_extension_set_enabled')
+    const enabledAgent = confirmationAgent('session-enabled', '关闭这个扩展')
     await expect(enabledTool?.execute?.(
       { extension_id: 'ext-1', enabled: false },
-      { agent: { id: 'session-1' } },
+      toolExec(enabledAgent, 'call-enabled-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(setEnabled).not.toHaveBeenCalled()
+    addNaturalConfirmation(enabledAgent, '行，先关掉吧')
+    await expect(enabledTool?.execute?.(
+      { extension_id: 'ext-1', enabled: false },
+      toolExec(enabledAgent, 'call-enabled-confirm'),
     )).resolves.toContain('"enabled": false')
     expect(setEnabled).toHaveBeenCalledWith({
-      agent: { id: 'session-1' }, extensionId: 'ext-1', enabled: false,
+      agent: enabledAgent, extensionId: 'ext-1', enabled: false,
     })
     const editTool = definitions.find(item => item.name === 'arkme_extension_edit')
     expect(editTool?.parameters).toHaveProperty('properties.visibility.enum', ['private', 'public'])
+    const editAgent = confirmationAgent('session-edit', '修改扩展资料')
     await expect(editTool?.execute?.(
       { extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private' },
-      { agent: { id: 'session-1' }, callId: 'call-edit', signal: new AbortController().signal },
+      toolExec(editAgent, 'call-edit-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(updateMetadata).not.toHaveBeenCalled()
+    addNaturalConfirmation(editAgent, '没问题，保存')
+    await expect(editTool?.execute?.(
+      { extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private' },
+      toolExec(editAgent, 'call-edit-confirm'),
     )).resolves.toContain('"name": "新名称"')
     expect(updateMetadata).toHaveBeenCalledWith(expect.objectContaining({
       extensionId: 'ext-1', name: '新名称', description: '', visibility: 'private',
@@ -113,20 +153,15 @@ describe('Arkme extension tools', () => {
     expect(iconTool?.parameters).toHaveProperty('properties.workspace_path')
     expect(iconTool?.parameters).toHaveProperty('required', ['action'])
     expect(iconTool?.description).toContain('ordinary conversation')
-    const iconAgent = { id: 'session-icon', session: { events: [
-      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '替换头像' }] } },
-    ] } }
+    const iconAgent = confirmationAgent('session-icon', '替换头像')
     const iconPrepare = await iconTool?.execute?.(
       { action: 'prepare', extension_id: 'ext-1', image_ref: 'arkme-image-ref' },
       { agent: iconAgent, callId: 'call-1' },
     ) as string
     expect(iconPrepare).toContain('"status": "confirmation_required"')
     expect(setIcon).not.toHaveBeenCalled()
-    const iconExpectedReply = (JSON.parse(iconPrepare) as { expectedReply: string }).expectedReply
-    expect(iconExpectedReply).toBe('确认')
-    iconAgent.session.events.push({
-      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: iconExpectedReply }] },
-    })
+    expect(iconPrepare).not.toContain('expectedReply')
+    addNaturalConfirmation(iconAgent, '可以，用这张')
     await expect(iconTool?.execute?.(
       { action: 'confirm' }, { agent: iconAgent, callId: 'call-2' },
     )).resolves.toContain('"status": "applied"')
@@ -138,19 +173,14 @@ describe('Arkme extension tools', () => {
     expect(addPreviewTool?.parameters).toHaveProperty('properties.workspace_paths.items.type', 'string')
     expect(addPreviewTool?.description).toContain('Agent-workspace')
     expect(addPreviewTool?.description).toContain('ordinary conversation')
-    const previewAgent = { id: 'session-preview', session: { events: [
-      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '添加预览图' }] } },
-    ] } }
+    const previewAgent = confirmationAgent('session-preview', '添加预览图')
     const previewPrepare = await addPreviewTool?.execute?.(
       { action: 'prepare', extension_id: 'ext-1', image_ref: 'arkme-preview-ref' },
       { agent: previewAgent, callId: 'call-preview-prepare' },
     ) as string
     expect(previewPrepare).toContain('"status": "confirmation_required"')
-    const previewExpectedReply = (JSON.parse(previewPrepare) as { expectedReply: string }).expectedReply
-    expect(previewExpectedReply).toBe('确认')
-    previewAgent.session.events.push({
-      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: previewExpectedReply }] },
-    })
+    expect(previewPrepare).not.toContain('expectedReply')
+    addNaturalConfirmation(previewAgent, '加进去吧')
     const addPreviewOutput = await addPreviewTool?.execute?.(
       { action: 'confirm' },
       { agent: previewAgent, callId: 'call-preview-confirm' },
@@ -164,77 +194,61 @@ describe('Arkme extension tools', () => {
       extensionId: 'ext-1', mediaType: 'image/png', data: raster,
     }))
     const deletePreviewTool = definitions.find(item => item.name === 'arkme_extension_preview_delete')
+    const deletePreviewAgent = confirmationAgent('session-preview-delete', '删除这张预览图')
     await expect(deletePreviewTool?.execute?.(
       { extension_id: 'ext-1', preview_ref: previewRef, expected_revision: 1 },
-      { agent: { id: 'session-1' }, callId: 'call-preview-delete' },
+      toolExec(deletePreviewAgent, 'call-preview-delete-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(deletePreview).not.toHaveBeenCalled()
+    addNaturalConfirmation(deletePreviewAgent, '删掉吧')
+    await expect(deletePreviewTool?.execute?.(
+      { extension_id: 'ext-1', preview_ref: previewRef, expected_revision: 1 },
+      toolExec(deletePreviewAgent, 'call-preview-delete-confirm'),
     )).resolves.toContain('"preview_revision": 2')
     expect(deletePreview).toHaveBeenCalledWith(expect.objectContaining({
       extensionId: 'ext-1', previewRef, expectedRevision: 1,
     }))
     const reorderPreviewTool = definitions.find(item => item.name === 'arkme_extension_preview_reorder')
+    const reorderAgent = confirmationAgent('session-preview-reorder', '调整预览图顺序')
     await expect(reorderPreviewTool?.execute?.(
       { extension_id: 'ext-1', ordered_preview_refs: [previewRef], expected_revision: 2 },
-      { agent: { id: 'session-1' }, callId: 'call-preview-reorder' },
+      toolExec(reorderAgent, 'call-preview-reorder-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(reorderPreviews).not.toHaveBeenCalled()
+    addNaturalConfirmation(reorderAgent, '这个顺序可以')
+    await expect(reorderPreviewTool?.execute?.(
+      { extension_id: 'ext-1', ordered_preview_refs: [previewRef], expected_revision: 2 },
+      toolExec(reorderAgent, 'call-preview-reorder-confirm'),
     )).resolves.toContain('"preview_revision": 3')
     expect(reorderPreviews).toHaveBeenCalledWith(expect.objectContaining({
       extensionId: 'ext-1', orderedPreviewRefs: [previewRef], expectedRevision: 2,
     }))
-    await expect(guard!(
-      { name: 'arkme_extension_publish', arguments: { action: 'prepare', items: [{
-        owned_ref: 'owned-ref', name: '天气', description: '天气', version: '1.0.0', visibility: 'public',
-      }] } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({ kind: 'allow' })
-    await expect(guard!(
-      { name: 'arkme_extension_delete', arguments: { extension_id: 'ext-1' } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({
-      kind: 'ask',
-      reason: '确认软删除扩展 ext-1 吗？删除后将从扩展市场隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。',
-    })
-    await expect(guard!(
-      { name: 'arkme_extension_search', arguments: {} },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({ kind: 'allow' })
-    await expect(guard!(
-      { name: 'arkme_extension_apply', arguments: { extension_id: 'ext-native', version: '1.0.0' } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({
-      kind: 'ask',
-      reason: '确认下载、验签并在当前 DSH 会话应用扩展 ext-native@1.0.0 吗？该扩展是原生 DSH Bundle，将以 DSH 插件进程权限运行。',
-    })
+    const deleteAgent = confirmationAgent('session-delete', '删除扩展')
+    await expect(deleteTool?.execute?.(
+      { extension_id: 'ext-1' }, toolExec(deleteAgent, 'call-delete-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(deleteExtension).not.toHaveBeenCalled()
+    addNaturalConfirmation(deleteAgent, '是的，删除它')
+    await expect(deleteTool?.execute?.(
+      { extension_id: 'ext-1' }, toolExec(deleteAgent, 'call-delete-confirm'),
+    )).resolves.toContain('"status": "deleted"')
+    expect(deleteExtension).toHaveBeenCalledWith('ext-1', expect.any(AbortSignal))
+
+    const applyTool = definitions.find(item => item.name === 'arkme_extension_apply')
+    const applyAgent = confirmationAgent('session-apply', '安装原生扩展')
+    await expect(applyTool?.execute?.(
+      { extension_id: 'ext-native', version: '1.0.0' }, toolExec(applyAgent, 'call-apply-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(applyExtension).not.toHaveBeenCalled()
+    addNaturalConfirmation(applyAgent, '我了解风险，继续安装')
+    await expect(applyTool?.execute?.(
+      { extension_id: 'ext-native', version: '1.0.0' }, toolExec(applyAgent, 'call-apply-confirm'),
+    )).resolves.toContain('"active": true')
+    expect(applyExtension).toHaveBeenCalledWith(expect.objectContaining({
+      agent: applyAgent, extensionId: 'ext-native', version: '1.0.0',
+    }))
     expect(previewInstall).toHaveBeenCalledWith('ext-native', '1.0.0')
-    await expect(guard!(
-      { name: 'arkme_extension_set_enabled', arguments: { extension_id: 'ext-1', enabled: false } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({
-      kind: 'ask',
-      reason: '确认关闭已安装扩展 ext-1 吗？扩展和版本会保留，稍后可重新启用。',
-    })
-    await expect(guard!(
-      { name: 'arkme_extension_icon_set', arguments: { action: 'prepare', extension_id: 'ext-1', image_ref: 'arkme-image-ref' } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({ kind: 'allow' })
-    await expect(guard!(
-      { name: 'arkme_extension_edit', arguments: {
-        extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private',
-      } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({
-      kind: 'ask', reason: '确认把扩展 ext-1 的资料更新为“新名称”，可见范围：仅自己吗？',
-    })
-    await expect(guard!(
-      { name: 'arkme_extension_preview_add', arguments: { action: 'prepare', extension_id: 'ext-1', image_ref: 'arkme-preview-ref' } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({ kind: 'allow' })
-    await expect(guard!(
-      { name: 'arkme_extension_preview_delete', arguments: { extension_id: 'ext-1', preview_ref: previewRef, expected_revision: 1 } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({ kind: 'ask', reason: `确认从扩展 ext-1 删除预览图 ${previewRef} 吗？` })
-    await expect(guard!(
-      { name: 'arkme_extension_preview_reorder', arguments: { extension_id: 'ext-1', ordered_preview_refs: [previewRef], expected_revision: 2 } },
-      async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({ kind: 'ask', reason: '确认把扩展 ext-1 的 1 张预览图按新顺序保存吗？第一张会作为封面。' })
+    expect(context.on).not.toHaveBeenCalled()
   })
 
   it('does not expose extension writes in atomic or disabled profiles', () => {
@@ -312,10 +326,10 @@ describe('Arkme extension tools', () => {
       signal: new AbortController().signal,
     }) as string
     expect(attachmentPrepare).toContain('"status": "confirmation_required"')
+    expect(attachmentPrepare).not.toContain('expectedReply')
     expect(addPreview).not.toHaveBeenCalled()
-    const attachmentExpectedReply = (JSON.parse(attachmentPrepare) as { expectedReply: string }).expectedReply
     previewAgent.session.events.push({
-      seq: 4, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: attachmentExpectedReply }] },
+      seq: 4, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '这些图可以，添加吧' }] },
     } as never)
     const output = await tool?.execute?.({ action: 'confirm' }, {
       agent: previewAgent,
@@ -391,10 +405,10 @@ describe('Arkme extension tools', () => {
         callId: 'call-workspace-previews',
       }) as string
       expect(workspacePrepare).toContain('"status": "confirmation_required"')
+      expect(workspacePrepare).not.toContain('expectedReply')
       expect(addPreview).not.toHaveBeenCalled()
-      const workspaceExpectedReply = (JSON.parse(workspacePrepare) as { expectedReply: string }).expectedReply
       previewAgent.session.events.push({
-        seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: workspaceExpectedReply }] },
+        seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '按这个顺序加进去' }] },
       } as never)
       const output = await tool?.execute?.({ action: 'confirm' }, {
         agent: previewAgent,
@@ -486,10 +500,10 @@ describe('Arkme extension tools', () => {
         },
       ) as string
       expect(workspaceIconPrepare).toContain('"status": "confirmation_required"')
+      expect(workspaceIconPrepare).not.toContain('expectedReply')
       expect(setIcon).not.toHaveBeenCalled()
-      const workspaceIconExpectedReply = (JSON.parse(workspaceIconPrepare) as { expectedReply: string }).expectedReply
       iconAgent.session.events.push({
-        seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: workspaceIconExpectedReply }] },
+        seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '就用这个图标' }] },
       } as never)
       await expect(iconTool?.execute?.(
         { action: 'confirm' }, { agent: iconAgent, callId: 'call-workspace-icon-confirm' },

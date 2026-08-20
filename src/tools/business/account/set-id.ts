@@ -15,7 +15,7 @@ export const setArkmeIdToolModule = defineArkmeCoreToolModule({
   create(ports) {
     return defineTool({
       name: 'arkme_id_set',
-      description: 'Set the signed-in user\'s own Arkme ID (即我号). This is normally a one-time account change. First read arkme_user_profile and proceed only when canUpdateArkmeId=true. Call only after the human explicitly asks in the current conversation to use this exact value. The user must approve the final tool call before it runs.',
+      description: 'Set the signed-in user\'s own Arkme ID (即我号). This is normally a one-time account change. First read arkme_user_profile and proceed only when canUpdateArkmeId=true. Call only after the human explicitly asks in the current conversation to use this exact value. The Tool first returns a conversational confirmation question and runs only after a later clear human confirmation in any natural wording.',
       parameters: {
         arkme_id: {
           type: 'string',

@@ -73,7 +73,8 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
       signal: new AbortController().signal,
     })
     expect(prepare.isError).toBe(false)
-    expect(prepare.isError ? '' : prepare.value).toContain('确认发布全部 2 个扩展')
+    expect(prepare.isError ? '' : prepare.value).toContain('"status": "confirmation_required"')
+    expect(prepare.isError ? '' : prepare.value).not.toContain('expectedReply')
     expect(publish).not.toHaveBeenCalled()
 
     const sameTurn = await ctx.tools.execute({
@@ -86,7 +87,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     events.push(
       { seq: 3, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
       { seq: 4, type: 'turn/start', data: { turn: 2 } },
-      { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '确认发布全部 2 个扩展' }], source: { kind: 'user' } } },
+      { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '这两个都可以发出去' }], source: { kind: 'user' } } },
     )
     const confirmed = await ctx.tools.execute({
       callId: CallId('confirm-later'), name: 'arkme_extension_publish', arguments: { action: 'confirm' }, agent,

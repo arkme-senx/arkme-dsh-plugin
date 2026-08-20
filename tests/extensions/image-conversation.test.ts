@@ -10,7 +10,6 @@ describe('extension image conversational confirmation', () => {
     let fingerprint = 'digest-a'
     const apply = vi.fn(async (_draft: { extensionId: string }, prepared: { fingerprint: string }) => prepared.fingerprint)
     const conversation = new ArkmeImageMutationConversation({
-      expectedReply: () => '确认',
       question: () => '是否确认添加这些预览图？',
       preflight: vi.fn(async () => ({ fingerprint, prepared: { fingerprint } })),
       apply,
@@ -20,12 +19,12 @@ describe('extension image conversational confirmation', () => {
     ])
 
     await expect(conversation.prepare(current, { extensionId: 'ext-1' })).resolves.toMatchObject({
-      status: 'confirmation_required', question: '是否确认添加这些预览图？', expectedReply: '确认',
+      status: 'confirmation_required', question: '是否确认添加这些预览图？',
     })
-    await expect(conversation.confirm(current)).rejects.toThrow('需要在准备操作后的新消息中确认')
+    await expect(conversation.confirm(current)).rejects.toThrow('需要用户在准备操作后的新消息中明确确认')
 
     current.session.events.push({
-      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认。' }] },
+      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '可以，把它们加进去吧' }] },
     } as never)
     await expect(conversation.confirm(current)).resolves.toBe('digest-a')
     expect(apply).toHaveBeenCalledTimes(1)
@@ -36,7 +35,6 @@ describe('extension image conversational confirmation', () => {
     let fingerprint = 'digest-a'
     const apply = vi.fn()
     const conversation = new ArkmeImageMutationConversation({
-      expectedReply: () => '确认',
       question: () => '是否确认替换头像？',
       preflight: vi.fn(async () => ({ fingerprint, prepared: { fingerprint } })),
       apply,
@@ -54,10 +52,9 @@ describe('extension image conversational confirmation', () => {
     expect(apply).not.toHaveBeenCalled()
   })
 
-  it('does not let a different prepare replace an unconfirmed operation', async () => {
+  it('re-prepares a changed image target after a later user correction', async () => {
     const apply = vi.fn(async (draft: { extensionId: string }) => draft.extensionId)
     const conversation = new ArkmeImageMutationConversation({
-      expectedReply: () => '确认',
       question: draft => `确认 ${draft.extensionId}`,
       preflight: vi.fn(async (_agent, draft: { extensionId: string }) => ({
         fingerprint: draft.extensionId,
@@ -69,22 +66,23 @@ describe('extension image conversational confirmation', () => {
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '准备 A' }] } },
     ])
     await conversation.prepare(current, { extensionId: 'ext-a' })
+    await expect(conversation.prepare(current, { extensionId: 'ext-b' }))
+      .rejects.toThrow('已有等待确认')
     current.session.events.push({
       seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '准备 B' }] },
     } as never)
     await expect(conversation.prepare(current, { extensionId: 'ext-b' }))
-      .rejects.toThrow('已有等待确认')
+      .resolves.toMatchObject({ status: 'confirmation_required', question: '确认 ext-b' })
     expect(apply).not.toHaveBeenCalled()
     current.session.events.push({
-      seq: 3, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认' }] },
+      seq: 3, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'B 可以，就用它' }] },
     } as never)
-    await expect(conversation.confirm(current)).resolves.toBe('ext-a')
+    await expect(conversation.confirm(current)).resolves.toBe('ext-b')
   })
 
   it('rejects invalid Agent identities and expired confirmations', async () => {
     let now = 100
     const conversation = new ArkmeImageMutationConversation({
-      expectedReply: () => '确认',
       question: () => '确认？',
       preflight: vi.fn(async () => ({ fingerprint: 'digest', prepared: {} })),
       apply: vi.fn(),
@@ -109,7 +107,6 @@ describe('extension image conversational confirmation', () => {
     const confirmStarted = new Promise<void>(resolve => { markConfirmStarted = resolve })
     let preflightCalls = 0
     const conversation = new ArkmeImageMutationConversation({
-      expectedReply: () => '确认',
       question: draft => `确认 ${draft.extensionId}`,
       async preflight(_agent, draft: { extensionId: string }) {
         preflightCalls += 1
@@ -124,9 +121,9 @@ describe('extension image conversational confirmation', () => {
     const current = agent([
       { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '准备 A' }] } },
     ])
-    const prepared = await conversation.prepare(current, { extensionId: 'ext-a' })
+    await conversation.prepare(current, { extensionId: 'ext-a' })
     current.session.events.push({
-      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: prepared.expectedReply }] },
+      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '行，就这么做' }] },
     } as never)
     const confirming = conversation.confirm(current)
     await confirmStarted

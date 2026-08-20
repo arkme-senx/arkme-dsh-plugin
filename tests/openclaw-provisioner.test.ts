@@ -132,16 +132,12 @@ describe('OpenClawProvisioner', () => {
       .resolves.toMatchObject({ status: 'connected_unverified' })
   })
 
-  it('restarts only on a later explicitly approved reconciliation', async () => {
+  it('applies the Gateway restart inside the already-confirmed reconciliation', async () => {
     const { cli, calls } = fixture()
     const secretStore = secretStoreFixture()
     const provisioner = createOpenClawProvisioner({ cli, secretStore, workspaceRoot: '/owned/workspaces', isRuntimeOnline: async () => true })
 
     await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'secret' }), revealSecret: async () => new SecretValue('secret') }))
-      .resolves.toMatchObject({ status: 'gateway_restart_confirmation_required' })
-    expect(calls).not.toContain('restart')
-
-    await expect(provisioner.reconcile({ botRef: 'opaque.bot.alpha', allowGatewayRestart: true, resolveConnectionMetadata: async () => ({ gatewayUrl: 'wss://bot.test/ws/v1/bot/gateway', tokenPreview: 'unused' }), revealSecret: async () => new SecretValue('unused') }))
       .resolves.toMatchObject({ status: 'runtime_online' })
     expect(calls).toContain('restart')
   })

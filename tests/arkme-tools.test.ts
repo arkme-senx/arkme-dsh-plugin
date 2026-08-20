@@ -450,47 +450,62 @@ describe('Arkme conversation tools', () => {
     expect(service.arkoHistoryPage).not.toHaveBeenCalled()
   })
 
-  it('requires explicit approval for the one-time Arkme ID write and preserves downstream decisions', async () => {
-    let preExecute: ((exec: {
+  it('uses ordinary conversation instead of blocking approval hooks for sensitive core writes', async () => {
+    const definitions: Array<{
       name: string
-      arguments: Record<string, unknown>
-    }, next: () => Promise<{ kind: string; reason?: string }>) => Promise<{ kind: string; reason?: string }>) | undefined
+      execute(args: Record<string, unknown>, exec: Record<string, unknown>): Promise<unknown>
+    }> = []
+    const service = fakeService()
     const ctx = {
       systemPrompt: { section: vi.fn() },
-      tools: { register: vi.fn() },
-      on: vi.fn((event: string, listener: typeof preExecute) => {
-        expect(event).toBe('tools/pre-execute')
-        preExecute = listener
-      }),
+      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      on: vi.fn(),
       inject: vi.fn(),
       get: vi.fn(),
     }
 
-    registerArkmeTools(ctx as never, fakeService() as never)
-    expect(preExecute).toBeDefined()
+    registerArkmeTools(ctx as never, service as never)
+    expect(ctx.on).not.toHaveBeenCalled()
 
-    const ask = await preExecute!(
-      { name: 'arkme_id_set', arguments: { arkme_id: 'Chosen_01' } },
-      async () => ({ kind: 'allow' }),
-    )
-    expect(ask).toEqual({
-      kind: 'ask',
-      reason: 'Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“Chosen_01”吗？',
+    const events: Array<Record<string, unknown>> = [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '把即我号改成 Chosen_01' }] } },
+    ]
+    const agent = { id: 'session-id-set', session: { events } }
+    const idSet = definitions.find(definition => definition.name === 'arkme_id_set')!
+    const idArgs = { arkme_id: 'Chosen_01' }
+    const idPrepare = await idSet.execute(idArgs, {
+      agent, callId: 'id-prepare', signal: new AbortController().signal,
+    }) as string
+    expect(idPrepare).toContain('"status": "confirmation_required"')
+    expect(idPrepare).toContain('Chosen_01')
+    expect(idPrepare).not.toContain('expectedReply')
+    expect(service.setArkmeIdOnce).not.toHaveBeenCalled()
+
+    events.push({
+      seq: 2, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Yes, that is the one I want.' }] },
     })
+    const idResult = await idSet.execute(idArgs, {
+      agent, callId: 'id-confirm', signal: new AbortController().signal,
+    }) as string
+    expect(idResult).toContain('arkme_id_changed=true')
+    expect(service.setArkmeIdOnce).toHaveBeenCalledWith('Chosen_01')
 
-    const connectAsk = await preExecute!(
-      { name: 'arkme_bot_openclaw_connect', arguments: { bot_ref: 'arkme-bot-v1.opaque' } },
-      async () => ({ kind: 'allow' }),
-    )
-    expect(connectAsk).toMatchObject({ kind: 'ask' })
-    expect(connectAsk.reason).toContain('全部 Agent')
-    expect(connectAsk.reason).toContain('接管')
-
-    const denied = { kind: 'deny', reason: 'blocked by policy' }
-    await expect(preExecute!(
-      { name: 'arkme_id_set', arguments: { arkme_id: 'Chosen_01' } },
-      async () => denied,
-    )).resolves.toBe(denied)
+    const connect = definitions.find(definition => definition.name === 'arkme_bot_openclaw_connect')!
+    const connectPrepare = await connect.execute(
+      { bot_ref: 'arkme-bot-v1.opaque' },
+      {
+        agent: {
+          id: 'session-connect',
+          session: { events: [{ seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [] } }] },
+        },
+        callId: 'connect-prepare',
+        signal: new AbortController().signal,
+      },
+    ) as string
+    expect(connectPrepare).toContain('"status": "confirmation_required"')
+    expect(connectPrepare).toContain('全部 Agent')
+    expect(connectPrepare).toContain('接管')
+    expect(connectPrepare).not.toContain('kind')
   })
 
   it('returns an authorized Arkme profile image as a durable model image block', async () => {

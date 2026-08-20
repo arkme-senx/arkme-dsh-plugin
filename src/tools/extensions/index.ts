@@ -3,6 +3,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createHash } from 'node:crypto'
 import type { ArkmeToolProfile } from '../contract/module.js'
+import { ArkmeConversationalConfirmation } from '../shared/conversational-confirmation.js'
 import { TEXT_OUTPUT } from '../shared/output.js'
 import type { ArkmeExtensionManager } from '../../extensions/manager.js'
 import type { ArkmeOwnedExtensionInventory } from '../../extensions/owned-inventory.js'
@@ -27,13 +28,6 @@ import {
 import { resolvePreviewWorkspaceImages } from './preview-workspace-batch.js'
 import { ArkmeImageMutationConversation } from './image-conversation.js'
 import { ArkmeExtensionPublishConversation } from './publish-conversation.js'
-
-const EXTENSION_TOOL_NAMES = [
-  'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
-  'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
-  'arkme_extension_edit',
-  'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
-] as const
 
 export interface ArkmeExtensionImageSource {
   readImage(imageRef: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<ArkmeImageBytes>
@@ -60,14 +54,14 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   + 'can be published without Cordis authoring tools, while a live Cordis source must still belong to this current Agent session '
   + 'and DSH process. Always publish the exact opaque owned_ref returned by arkme_extension_list_mine. To publish one or more '
   + 'extensions, call arkme_extension_publish with action=prepare once with the complete batch. It only validates and returns a question. '
-  + 'Show that question in ordinary conversation, tell the human to reply with expectedReply exactly, and wait for a later direct '
-  + 'human message. Never call action=confirm in the prepare turn. After the exact later reply, call the same tool with action=confirm '
+  + 'Show that question in ordinary conversation and wait for a later direct human message that clearly confirms it in any natural wording. '
+  + 'Never call action=confirm in the prepare turn. After that clear confirmation, call the same tool with action=confirm '
   + 'and no items; do not claim publication for the prepare result. When the user asks to create or replace an extension icon and an '
   + 'image already exists inside this current Agent workspace, call arkme_extension_icon_set with its relative workspace_path; safe SVG '
   + 'is accepted and normalized by the Host. For extension preview galleries, arkme_extension_preview_add accepts workspace_paths for one '
   + 'or more PNG, JPEG, WebP, or safe SVG files generated inside this current Agent workspace, as well as direct user-message attachments. '
   + 'For icon replacement or preview addition, first call the matching Tool with action=prepare and the exact source. Show its question in '
-  + 'ordinary conversation, ask the human to reply with expectedReply exactly, and wait for a later direct human message. Only then call '
+  + 'ordinary conversation and wait for a later direct human message that clearly confirms it in any natural wording. Only then call '
   + 'the same Tool with action=confirm and omit all source fields. Never confirm in the prepare turn and never rely on a tools/pre-execute '
   + 'approval card for these image writes. Do not search for image upload '
   + 'routes, signed storage URLs, conversion CLIs, or old plugin '
@@ -124,9 +118,9 @@ export function registerArkmeExtensionTools(
       ...(signal === undefined ? {} : { signal }),
     }),
   })
+  const actionConversation = new ArkmeConversationalConfirmation()
 
   const iconConversation = new ArkmeImageMutationConversation<IconMutationDraft, ArkmeImageBytes, unknown>({
-    expectedReply: () => '确认',
     question: draft => `是否确认使用刚才选择或生成的图片替换扩展 ${draft.extensionId} 的头像？`,
     async preflight(agent, draft, signal) {
       const image = draft.source.kind === 'workspace'
@@ -200,7 +194,6 @@ export function registerArkmeExtensionTools(
   }
 
   const previewConversation = new ArkmeImageMutationConversation<PreviewMutationDraft, ResolvedPreviewImage[], unknown>({
-    expectedReply: () => '确认',
     question: draft => `是否确认把来自${previewSourceLabel(draft.source)}的 ${String(previewSourceCount(draft.source))} 张图片追加到扩展 ${draft.extensionId} 的预览画廊？`,
     async preflight(agent, draft, signal) {
       const images = await resolvePreviewDraft(agent, draft, signal)
@@ -236,7 +229,7 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_publish',
-    description: 'Prepare or confirm one conversational publish batch. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, Bundle policy, and source fingerprints, and does not publish or upload anything. Show its returned question in ordinary conversation and wait. Only after the later direct human reply exactly matches expectedReply, call this same tool with action=confirm and omit items.',
+    description: 'Prepare or confirm one conversational publish batch. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, Bundle policy, and source fingerprints, and does not publish or upload anything. Show its returned question in ordinary conversation and wait. Only after a later direct human message clearly confirms it in any natural wording, call this same tool with action=confirm and omit items.',
     parameters: {
       action: {
         type: 'string', enum: ['prepare', 'confirm'], required: true,
@@ -287,8 +280,15 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      requireAgent(exec)
-      const result = await manager.delete(args.extension_id, exec.signal)
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_delete',
+        arguments: args,
+        question: `是否确认软删除扩展 ${extensionId}？删除后将从扩展市场隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。`,
+        execute: async () => await manager.delete(args.extension_id, exec.signal),
+      })
       return JSON.stringify(result, undefined, 2)
     },
   }))
@@ -331,11 +331,24 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      const result = await manager.apply({
-        agent: requireAgent(exec),
-        extensionId: args.extension_id,
-        ...(clean(args.version) === '' ? {} : { version: clean(args.version) }),
-        signal: exec.signal,
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const version = clean(args.version).slice(0, 40)
+      const preview = await manager.previewInstall(extensionId, version === '' ? undefined : version)
+      const authority = preview.execution_model === 'dsh-native'
+        ? '该扩展是原生 DSH Bundle，将以 DSH 插件进程权限运行。'
+        : '该扩展使用 Arkme 沙箱 Bundle Runtime。'
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_apply',
+        arguments: args,
+        question: `是否确认下载、验签并在当前 DSH 会话应用扩展 ${extensionId}@${version || '最新兼容版本'}？${authority}`,
+        execute: async () => await manager.apply({
+          agent,
+          extensionId: args.extension_id,
+          ...(version === '' ? {} : { version }),
+          signal: exec.signal,
+        }),
       })
       return JSON.stringify(result, undefined, 2)
     },
@@ -364,10 +377,20 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      const result = await manager.setEnabled({
-        agent: requireAgent(exec),
-        extensionId: args.extension_id,
-        enabled: args.enabled,
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_set_enabled',
+        arguments: args,
+        question: args.enabled
+          ? `是否确认启用已安装扩展 ${extensionId}？如果当前运行时无法热加载，会明确提示重启 DSH。`
+          : `是否确认关闭已安装扩展 ${extensionId}？扩展和版本会保留，稍后可重新启用。`,
+        execute: async () => await manager.setEnabled({
+          agent,
+          extensionId: args.extension_id,
+          enabled: args.enabled,
+        }),
       })
       return JSON.stringify(result, undefined, 2)
     },
@@ -375,9 +398,9 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_icon_set',
-    description: 'Prepare or confirm a conversational icon replacement for one extension owned by the current Arkme user. action=prepare requires extension_id and exactly one source: image_ref from an Arkme profile/source result, or workspace_path for a PNG, JPEG, WebP, or safe SVG generated inside this current Agent workspace. It validates and fingerprints the image without writing. Show its question in ordinary conversation and wait for the later direct human expectedReply. Then call action=confirm with no source fields; the Host revalidates the exact target and bytes before upload and does not use an ACK card.',
+    description: 'Prepare or confirm a conversational icon replacement for one extension owned by the current Arkme user. action=prepare requires extension_id and exactly one source: image_ref from an Arkme profile/source result, or workspace_path for a PNG, JPEG, WebP, or safe SVG generated inside this current Agent workspace. It validates and fingerprints the image without writing. Show its question in ordinary conversation and wait for a later direct human message that clearly confirms it in any natural wording. Then call action=confirm with no source fields; the Host revalidates the exact target and bytes before upload and does not use an approval card.',
     parameters: {
-      action: { type: 'string', enum: ['prepare', 'confirm'], required: true, description: 'Prepare validates and asks; confirm applies only after the later exact human reply.' },
+      action: { type: 'string', enum: ['prepare', 'confirm'], required: true, description: 'Prepare validates and asks; confirm applies only after a later clear human confirmation in natural language.' },
       extension_id: { type: 'string', description: 'Exact owned extension_id. Required only for action=prepare.' },
       image_ref: { type: 'string', description: 'Opaque Arkme image_ref returned by profile or source tools. Only for action=prepare; mutually exclusive with workspace_path.' },
       workspace_path: { type: 'string', description: 'Relative path to a PNG, JPEG, WebP, or safe SVG inside the current Agent session workspace. Only for action=prepare; mutually exclusive with image_ref.' },
@@ -417,31 +440,43 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      requireAgent(exec)
-      const result = await manager.updateMetadata({
-        extensionId: args.extension_id,
-        name: args.name,
-        description: args.description,
-        visibility: args.visibility as 'private' | 'public',
-        clientMutationId: mutationUuid('arkme-extension-edit', exec.callId),
-        signal: exec.signal,
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const name = clean(args.name).slice(0, 120)
+      const visibility = args.visibility === 'public' ? '公开' : '仅自己'
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_edit',
+        arguments: args,
+        question: `是否确认把扩展 ${extensionId} 的资料更新为“${name}”，可见范围：${visibility}？`,
+        execute: async () => {
+          const updated = await manager.updateMetadata({
+            extensionId: args.extension_id,
+            name: args.name,
+            description: args.description,
+            visibility: args.visibility as 'private' | 'public',
+            clientMutationId: mutationUuid('arkme-extension-edit', exec.callId),
+            signal: exec.signal,
+          })
+          return {
+            extension_id: updated.extension_id,
+            name: updated.name,
+            description: updated.description,
+            visibility: updated.visibility,
+            updated_at: updated.updated_at,
+            message: '扩展信息已更新',
+          }
+        },
       })
-      return JSON.stringify({
-        extension_id: result.extension_id,
-        name: result.name,
-        description: result.description,
-        visibility: result.visibility,
-        updated_at: result.updated_at,
-        message: '扩展信息已更新',
-      }, undefined, 2)
+      return JSON.stringify(result, undefined, 2)
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_preview_add',
-    description: 'Prepare or confirm adding images to an owned extension preview gallery. action=prepare requires extension_id and exactly one source mode: workspace_paths for Agent-workspace PNG/JPEG/WebP/safe SVG files; image_ref for one Arkme profile/source image; or latest direct user-message attachments by omitting both and optionally selecting attachment_indices. It validates ownership, capacity, dimensions and content fingerprints without writing. Show its question in ordinary conversation and wait for the later direct human expectedReply. Then call action=confirm with no source fields; the Host revalidates the captured source and bytes before upload and does not use an ACK card.',
+    description: 'Prepare or confirm adding images to an owned extension preview gallery. action=prepare requires extension_id and exactly one source mode: workspace_paths for Agent-workspace PNG/JPEG/WebP/safe SVG files; image_ref for one Arkme profile/source image; or latest direct user-message attachments by omitting both and optionally selecting attachment_indices. It validates ownership, capacity, dimensions and content fingerprints without writing. Show its question in ordinary conversation and wait for a later direct human message that clearly confirms it in any natural wording. Then call action=confirm with no source fields; the Host revalidates the captured source and bytes before upload and does not use an approval card.',
     parameters: {
-      action: { type: 'string', enum: ['prepare', 'confirm'], required: true, description: 'Prepare validates and asks; confirm applies only after the later exact human reply.' },
+      action: { type: 'string', enum: ['prepare', 'confirm'], required: true, description: 'Prepare validates and asks; confirm applies only after a later clear human confirmation in natural language.' },
       extension_id: { type: 'string', description: 'Exact owned extension_id. Required only for action=prepare.' },
       image_ref: { type: 'string', description: 'Optional opaque Arkme image_ref returned by profile or source tools. Only for action=prepare; mutually exclusive with attachment_indices and workspace_paths.' },
       attachment_indices: {
@@ -498,12 +533,20 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      requireAgent(exec)
-      const result = await manager.deletePreview({
-        extensionId: args.extension_id,
-        previewRef: args.preview_ref,
-        expectedRevision: args.expected_revision,
-        signal: exec.signal,
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const previewRef = clean(args.preview_ref).slice(0, 96)
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_preview_delete',
+        arguments: args,
+        question: `是否确认从扩展 ${extensionId} 删除预览图 ${previewRef}？`,
+        execute: async () => await manager.deletePreview({
+          extensionId: args.extension_id,
+          previewRef: args.preview_ref,
+          expectedRevision: args.expected_revision,
+          signal: exec.signal,
+        }),
       })
       return JSON.stringify(result, undefined, 2)
     },
@@ -522,72 +565,21 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      requireAgent(exec)
-      const result = await manager.reorderPreviews({
-        extensionId: args.extension_id,
-        orderedPreviewRefs: args.ordered_preview_refs,
-        expectedRevision: args.expected_revision,
-        signal: exec.signal,
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_preview_reorder',
+        arguments: args,
+        question: `是否确认把扩展 ${extensionId} 的 ${String(args.ordered_preview_refs.length)} 张预览图按新顺序保存？第一张会作为封面。`,
+        execute: async () => await manager.reorderPreviews({
+          extensionId: args.extension_id,
+          orderedPreviewRefs: args.ordered_preview_refs,
+          expectedRevision: args.expected_revision,
+          signal: exec.signal,
+        }),
       })
       return JSON.stringify(result, undefined, 2)
     },
   }))
-
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
-    if (![
-      'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled',
-      'arkme_extension_edit', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
-    ].includes(exec.name)) return await next()
-    const decision = await next()
-    if (decision.kind !== 'allow') return decision
-    const args = exec.arguments as Record<string, unknown>
-    const extensionId = clean(typeof args.extension_id === 'string' ? args.extension_id : '').slice(0, 100)
-    if (exec.name === 'arkme_extension_delete') {
-      return {
-        kind: 'ask',
-        reason: `确认软删除扩展 ${extensionId} 吗？删除后将从扩展市场隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。`,
-      }
-    }
-    if (exec.name === 'arkme_extension_set_enabled') {
-      const enabled = args.enabled === true
-      return {
-        kind: 'ask',
-        reason: enabled
-          ? `确认启用已安装扩展 ${extensionId} 吗？如果当前运行时无法热加载，会明确提示重启 DSH。`
-          : `确认关闭已安装扩展 ${extensionId} 吗？扩展和版本会保留，稍后可重新启用。`,
-      }
-    }
-    if (exec.name === 'arkme_extension_edit') {
-      const name = clean(typeof args.name === 'string' ? args.name : '').slice(0, 120)
-      const visibility = args.visibility === 'public' ? '公开' : '仅自己'
-      return {
-        kind: 'ask',
-        reason: `确认把扩展 ${extensionId} 的资料更新为“${name}”，可见范围：${visibility}吗？`,
-      }
-    }
-    if (exec.name === 'arkme_extension_preview_delete') {
-      const previewRef = clean(typeof args.preview_ref === 'string' ? args.preview_ref : '').slice(0, 96)
-      return {
-        kind: 'ask',
-        reason: `确认从扩展 ${extensionId} 删除预览图 ${previewRef} 吗？`,
-      }
-    }
-    if (exec.name === 'arkme_extension_preview_reorder') {
-      const count = Array.isArray(args.ordered_preview_refs) ? args.ordered_preview_refs.length : 0
-      return {
-        kind: 'ask',
-        reason: `确认把扩展 ${extensionId} 的 ${String(count)} 张预览图按新顺序保存吗？第一张会作为封面。`,
-      }
-    }
-    const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40) || '最新兼容版本'
-    const preview = await manager.previewInstall(extensionId, version === '最新兼容版本' ? undefined : version)
-    const authority = preview.execution_model === 'dsh-native'
-      ? '该扩展是原生 DSH Bundle，将以 DSH 插件进程权限运行。'
-      : '该扩展使用 Arkme 沙箱 Bundle Runtime。'
-    return {
-      kind: 'ask',
-      reason: `确认下载、验签并在当前 DSH 会话应用扩展 ${extensionId}@${version} 吗？${authority}`,
-    }
-  })
 }

@@ -121,6 +121,10 @@ describe('registerArkmeTools', () => {
     const assembly = await ctx.systemPrompt.assemble()
     expect(assembly.sections.find(section => section.name === 'tool:arkme')?.text)
       .toBe(promptForArkmeToolProfile('business', { attachments: false }))
+    const confirmationPrompt = assembly.sections
+      .find(section => section.name === 'tool:arkme-conversational-confirmation')?.text
+    expect(confirmationPrompt).toContain('any language or wording')
+    expect(confirmationPrompt).toContain('never require a fixed phrase')
   })
 
   it('keeps atomic and disabled profiles free of inherited business tools and guidance', async () => {
@@ -128,11 +132,17 @@ describe('registerArkmeTools', () => {
     await mountArkmeTools(atomic, 'atomic')
     expect(atomic.tools.schemas().map(schema => schema.name)).toEqual(['arkme_plugin_contract'])
     expect((await atomic.systemPrompt.assemble()).sections.some(section => section.name === 'tool:arkme')).toBe(false)
+    expect((await atomic.systemPrompt.assemble()).sections.some(
+      section => section.name === 'tool:arkme-conversational-confirmation',
+    )).toBe(false)
 
     const disabled = await setup()
     await mountArkmeTools(disabled, 'disabled')
     expect(disabled.tools.schemas()).toEqual([])
     expect((await disabled.systemPrompt.assemble()).sections.some(section => section.name === 'tool:arkme')).toBe(false)
+    expect((await disabled.systemPrompt.assemble()).sections.some(
+      section => section.name === 'tool:arkme-conversational-confirmation',
+    )).toBe(false)
   })
 
   it('adds and withdraws attachment-phase tools with the dependency fiber', async () => {

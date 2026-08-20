@@ -38,7 +38,6 @@ export function createOpenClawProvisioner(options: {
       if (!current.binding) changed = (await options.cli.ensureBinding({ agentId, accountId }, runOptions)).changed || changed
       if (changed) {
         await options.secretStore.markRestartRequired(hash)
-        return { status: 'gateway_restart_confirmation_required', resource_ref: resourceRef, impact: 'profile_all_agents' }
       }
       if (await options.secretStore.isRestartRequired(hash)) {
         if (input.allowGatewayRestart !== true) {
