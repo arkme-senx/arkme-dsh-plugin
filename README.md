@@ -35,6 +35,10 @@ Cordis 与本地 Bundle 的新发布统一为标准 DSH `bundle.tgz`；安装验
 
 公开 SDK 可通过 `myExtensions()` 读取同一投影，并在取得明确用户意图后通过 `publishMyExtension()` 发布 opaque ref 指向的确切来源。完整合同见 [Consumer Plugin Contract](docs/consumer-plugin-contract.md)。
 
+## 扩展评论与评分
+
+公开扩展详情包含用户评分、评论和回复。顶级评论必须选择 1-5 星，回复不改变评分；评论正文先写入普通 Record，因此同时出现在当前账号首页。Host 使用持久 operation 和稳定 UID 处理“Record 已成功、市场关系暂时失败”的恢复，并只向 UI、Tools 和公开 SDK 暴露账号绑定的 `reviewRef`。完整能力矩阵和失败语义见 [`docs/extension-reviews.md`](docs/extension-reviews.md)。
+
 ## 本地开发
 
 ```sh

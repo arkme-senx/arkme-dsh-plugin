@@ -38,6 +38,25 @@ describe('extension center Host BFF', () => {
     }
   })
 
+  it('routes extension reviews through the always-available Arkme Host owner', async () => {
+    const service = {
+      listExtensionReviews: vi.fn(async () => ({ items: [], total: 0, hasMore: false })),
+      createExtensionReview: vi.fn(async (input: unknown) => ({ review: { reviewRef: 'review-ref' }, input })),
+    }
+
+    await dispatchArkmeHostOperation(service as never, 'extensions.reviews.list', {
+      extensionId: 'ext-1', limit: 20, offset: 0,
+    })
+    await dispatchArkmeHostOperation(service as never, 'extensions.reviews.create', {
+      extensionId: 'ext-1', textContent: '很好用', rating: 5, clientMutationId: 'mutation-0001',
+    })
+
+    expect(service.listExtensionReviews).toHaveBeenCalledWith('ext-1', { limit: 20, offset: 0 })
+    expect(service.createExtensionReview).toHaveBeenCalledWith({
+      extensionId: 'ext-1', textContent: '很好用', rating: 5, clientMutationId: 'mutation-0001',
+    })
+  })
+
   it('fails loud when Dynamic Cordis is absent', async () => {
     await expect(dispatchArkmeHostOperation(
       {} as never,

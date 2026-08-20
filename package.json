@@ -67,7 +67,7 @@
     "build": "pnpm run clean:build && pnpm run build:types && pnpm run bundle",
     "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "bundle": "tsdown",
+    "bundle": "node scripts/clean-bundle.mjs && tsdown",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",

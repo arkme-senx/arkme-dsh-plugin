@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { ArkmeLocalDatabase } from '../src/local-database.js'
 import { ArkmeStateStore } from '../src/state-store.js'
 import type { ArkmePendingWrite, ArkmeSelfRecordItem, ArkmeUserProfile } from '../src/types.js'
+import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
 
 function pending(recordUid: string, textContent: string): ArkmePendingWrite {
   return {
@@ -149,5 +150,40 @@ describe('ArkmeLocalDatabase', () => {
     expect(cachedProfile.revision).toBeGreaterThan(profileBefore)
     expect((await database.cachedProfile(10002)).profile).toBeNull()
     database.close()
+  })
+
+  it('durably stores extension review recovery state per account', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-review-db-'))
+    const database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    const operation: ArkmeExtensionReviewOperation = {
+      extensionId: 'ext-review',
+      recordUid: '11111111-1111-4111-8111-111111111111',
+      textContent: '首页与扩展详情都要保留',
+      rating: 5,
+      clientMutationId: 'review-mutation-0001',
+      state: 'record_pending',
+      attempts: 0,
+      createdAtMillis: 123,
+    }
+
+    await database.putExtensionReviewOperation(10001, operation)
+    expect(await database.listExtensionReviewOperations(10001)).toEqual([operation])
+    expect(await database.listExtensionReviewOperations(10002)).toEqual([])
+
+    await database.markExtensionReviewOperation(10001, operation.clientMutationId, 'registry_pending')
+    expect(await database.listExtensionReviewOperations(10001)).toMatchObject([{
+      state: 'registry_pending', attempts: 1,
+    }])
+    await database.markExtensionReviewOperation(10001, operation.clientMutationId, 'failed', 'registry unavailable')
+    expect(await database.listExtensionReviewOperations(10001)).toMatchObject([{
+      state: 'failed', attempts: 2, lastError: 'registry unavailable',
+    }])
+    database.close()
+
+    const reopened = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    expect(await reopened.listExtensionReviewOperations(10001)).toHaveLength(1)
+    await reopened.removeExtensionReviewOperation(10001, operation.clientMutationId)
+    expect(await reopened.listExtensionReviewOperations(10001)).toEqual([])
+    reopened.close()
   })
 })

@@ -43,6 +43,11 @@ import type {
   ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
   ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
+  ArkmeExtensionReviewCreateInput,
+  ArkmeExtensionReviewCreateResult,
+  ArkmeExtensionReviewItem,
+  ArkmeExtensionReviewPage,
+  ArkmeExtensionRatingSummary,
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 
@@ -120,6 +125,11 @@ export type {
   ArkmeExtensionPreviewItem,
   ArkmeExtensionPreviewMediaType,
   ArkmeInstalledExtensionView,
+  ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewCreateInput,
+  ArkmeExtensionReviewCreateResult,
+  ArkmeExtensionReviewItem,
+  ArkmeExtensionReviewPage,
 } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
@@ -426,6 +436,19 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read public reviews and rating summary for one extension. */
+  async extensionReviews(
+    extensionId: string,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeExtensionReviewPage> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension id must not be empty')
+    return await this.call<ArkmeExtensionReviewPage>('extensions.reviews.list', {
+      extensionId,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
   /** Read one Arrangement through a Provider-issued, account-bound reference. */
   async arrangementDetail(arrangementRef: string, signal?: AbortSignal): Promise<ArkmeArrangementDetail> {
     if (arrangementRef.trim() === '') throw new TypeError('Arrangement reference must not be empty')
@@ -506,6 +529,23 @@ export class ArkmeSdk {
 
   async clearArrangementReminders(signal?: AbortSignal): Promise<ArkmeArrangementReminderWriteResult> {
     return await this.call<ArkmeArrangementReminderWriteResult>('arrangements.reminders.clear', undefined, signal)
+  }
+
+  /** Create a top-level review or reply through the account-bound Host owner. */
+  async createExtensionReview(
+    input: ArkmeExtensionReviewCreateInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionReviewCreateResult> {
+    if (input.extensionId.trim() === '' || input.textContent.trim() === '' || input.clientMutationId.trim() === '') {
+      throw new TypeError('Arkme extension review id, text, and mutation id must not be empty')
+    }
+    return await this.call<ArkmeExtensionReviewCreateResult>('extensions.reviews.create', {
+      extensionId: input.extensionId,
+      textContent: input.textContent,
+      ...(input.rating === undefined ? {} : { rating: input.rating }),
+      ...(input.parentReviewRef === undefined ? {} : { parentReviewRef: input.parentReviewRef }),
+      clientMutationId: input.clientMutationId,
+    }, signal)
   }
 
   async listSources(

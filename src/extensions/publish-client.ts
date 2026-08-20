@@ -8,6 +8,7 @@ import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENS
   type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
   type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession,
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+  type ArkmeExtensionReviewWireCreateResult, type ArkmeExtensionReviewWirePage,
   type ArkmeInstalledExtension,
 } from './types.js'
 import { assertExtensionArtifactSize } from './artifact.js'
@@ -224,6 +225,36 @@ export class ExtensionPublishClient {
 
   async myList(input: { cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/v1/extensions/my-list', input, signal)
+  }
+
+  async listReviews(
+    extensionId: string,
+    input: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionReviewWirePage> {
+    return await this.post('/api/public/v1/extensions/reviews/list', {
+      extension_id: extensionId,
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.offset === undefined ? {} : { offset: input.offset }),
+    }, signal)
+  }
+
+  async createReview(input: {
+    extensionId: string
+    recordUid: string
+    parentReviewId?: string
+    textContent: string
+    rating?: number
+    clientMutationId: string
+  }, signal?: AbortSignal): Promise<ArkmeExtensionReviewWireCreateResult> {
+    return await this.post('/api/v1/extensions/reviews/create', {
+      extension_id: input.extensionId,
+      record_uid: input.recordUid,
+      ...(input.parentReviewId === undefined ? {} : { parent_review_id: input.parentReviewId }),
+      text_content: input.textContent,
+      ...(input.rating === undefined ? {} : { rating: input.rating }),
+      client_mutation_id: input.clientMutationId,
+    }, signal)
   }
 
   async deleteExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {

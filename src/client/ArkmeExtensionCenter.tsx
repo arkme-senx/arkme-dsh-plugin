@@ -8,6 +8,7 @@ import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/o
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeExtensionPublishDialog, type ArkmeExtensionPublishFormValue } from './ArkmeExtensionPublishDialog.js'
+import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
@@ -285,6 +286,7 @@ function ExtensionCard({ item, installed, actionLabel, status, statusColor, inst
         <span style={styles.name}>{item.name}</span>
         <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
         {metadata !== '' && <span style={styles.meta}>{metadata}</span>}
+        {item.rating_summary !== undefined && <span style={styles.meta}>★ {extensionRatingLabel(item.rating_summary)}</span>}
         {status !== undefined && <span style={{ ...styles.meta, color: statusColor ?? colors.secondary }}>{status}</span>}
       </span>
     </button>
@@ -968,6 +970,10 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
             {detail.manifest.permissions.map(permission => <Chip key={permission}>{permission}</Chip>)}
           </Chips>
         </section>}
+        {detail.visibility === 'public' && <ArkmeExtensionReviews
+          extensionId={detail.extension_id}
+          {...(detail.rating_summary === undefined ? {} : { initialRatingSummary: detail.rating_summary })}
+        />}
         {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。请在 DSH 对话中重新发布成功后再安装。</div>}
         {detailInstalled !== undefined && (uninstallConfirmExtensionId === detail.extension_id
           ? <div style={styles.detailConfirm} role="alert">

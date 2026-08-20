@@ -8,6 +8,13 @@ export const ARKME_EXTENSION_PREVIEW_MAX_ITEMS = 20
 export type ArkmeExtensionVisibility = 'private' | 'unlisted' | 'public'
 export type ArkmeExtensionChannel = 'stable' | 'beta'
 
+export interface ArkmeExtensionRatingSummary {
+  average: number
+  count: number
+  /** Index 0..4 corresponds to 1..5 stars. */
+  histogram: [number, number, number, number, number]
+}
+
 export interface ArkmeExtensionManifest {
   format: typeof ARKME_EXTENSION_FORMAT
   format_version: typeof ARKME_EXTENSION_FORMAT_VERSION
@@ -51,12 +58,89 @@ export interface ArkmeExtensionCatalogItem {
   preview_count?: number
   preview_images?: ArkmeExtensionPreviewItem[]
   preview_revision?: number
+  rating_summary?: ArkmeExtensionRatingSummary
 }
 
 export interface ArkmeExtensionCatalogPage {
   items: ArkmeExtensionCatalogItem[]
   total: number
   next_cursor?: string
+}
+
+/** Browser/SDK-safe extension review projection. Record UIDs remain inside the Host. */
+export interface ArkmeExtensionReviewItem {
+  reviewRef: string
+  parentReviewRef?: string
+  authorName: string
+  authorArkmeId?: string
+  textContent: string
+  rating: number
+  createdAtMillis: number
+}
+
+export interface ArkmeExtensionReviewPage {
+  items: ArkmeExtensionReviewItem[]
+  total: number
+  limit: number
+  offset: number
+  hasMore: boolean
+  nextOffset?: number
+  ratingSummary: ArkmeExtensionRatingSummary
+}
+
+export interface ArkmeExtensionReviewCreateResult {
+  review: ArkmeExtensionReviewItem
+  ratingSummary: ArkmeExtensionRatingSummary
+  idempotentReplay: boolean
+}
+
+export interface ArkmeExtensionReviewCreateInput {
+  extensionId: string
+  textContent: string
+  rating?: number
+  parentReviewRef?: string
+  clientMutationId: string
+}
+
+export type ArkmeExtensionReviewOperationState = 'record_pending' | 'registry_pending' | 'failed'
+
+/** Host-only durable operation; adapters must never expose record UIDs. */
+export interface ArkmeExtensionReviewOperation {
+  extensionId: string
+  recordUid: string
+  parentReviewId?: string
+  textContent: string
+  rating?: number
+  clientMutationId: string
+  state: ArkmeExtensionReviewOperationState
+  attempts: number
+  createdAtMillis: number
+  lastError?: string
+}
+
+export interface ArkmeExtensionReviewWireItem {
+  extension_id: string
+  review_id: string
+  parent_review_id?: string
+  user_id: number
+  text_content: string
+  rating: number
+  created_at: number
+}
+
+export interface ArkmeExtensionReviewWirePage {
+  items: ArkmeExtensionReviewWireItem[]
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+  rating_summary: ArkmeExtensionRatingSummary
+}
+
+export interface ArkmeExtensionReviewWireCreateResult {
+  review: ArkmeExtensionReviewWireItem
+  rating_summary: ArkmeExtensionRatingSummary
+  idempotent_replay: boolean
 }
 
 export interface ArkmeExtensionPublishSession {

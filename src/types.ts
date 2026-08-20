@@ -421,6 +421,8 @@ export interface ArkmeProviderCapabilities {
     myExtensions?: true
     /** Optional additive publication of an exact owned live Cordis Package. */
     extensionPublish?: true
+    /** Optional additive capability for extension reviews, replies, and rating summaries. */
+    extensionReviews?: true
   }
   limits: {
     maxTextLength: number
@@ -1456,6 +1458,8 @@ export type ArkmePluginOperation =
   | 'arrangements.reminders.mark-read'
   | 'arrangements.reminders.mark-all-read'
   | 'arrangements.reminders.clear'
+  | 'extensions.reviews.list'
+  | 'extensions.reviews.create'
   | 'sources.list'
   | 'source.timeline'
   | 'source.mark-read'

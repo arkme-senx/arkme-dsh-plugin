@@ -499,6 +499,13 @@ export type {
 } from './types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 export type {
+  ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewCreateInput,
+  ArkmeExtensionReviewCreateResult,
+  ArkmeExtensionReviewItem,
+  ArkmeExtensionReviewPage,
+} from './extensions/types.js'
+export type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallIntentClaim,
   ArkmeOutgoingCallIntentResolutionInput,

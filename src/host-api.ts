@@ -290,7 +290,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -695,6 +695,20 @@ export async function dispatchArkmeHostOperation(
       const item = await requireExtensionManager(extensionManager).inspect(stringParam(params, 'extensionId'))
       return (await enrichExtensionAuthors(service, [item]))[0]
     }
+    case 'extensions.reviews.list': return await service.listExtensionReviews(
+      stringParam(params, 'extensionId'),
+      {
+        limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      },
+    )
+    case 'extensions.reviews.create': return await service.createExtensionReview({
+      extensionId: stringParam(params, 'extensionId'),
+      textContent: stringParam(params, 'textContent'),
+      ...(numberParam(params, 'rating', 0) <= 0 ? {} : { rating: Math.trunc(numberParam(params, 'rating', 0)) }),
+      ...(stringParam(params, 'parentReviewRef') === '' ? {} : { parentReviewRef: stringParam(params, 'parentReviewRef') }),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
     case 'extensions.my-list': return await enrichExtensionPageAuthors(
       service,
       await requireExtensionManager(extensionManager).myList(),
