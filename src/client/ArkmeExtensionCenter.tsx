@@ -14,7 +14,7 @@ import {
   applyEditedMyExtension, nextExtensionEditMutation, saveExtensionEdit, type ExtensionEditMutation,
 } from './extension-edit-flow.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
-import { ArkmeExtensionShareSection } from './ArkmeExtensionShareSection.js'
+import { ArkmeExtensionShareDialog, ArkmeExtensionSourceLink } from './ArkmeExtensionShare.js'
 import { extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -70,6 +70,10 @@ const styles: Record<string, CSSProperties> = {
   iconButton: {
     width: 30, height: 30, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
     border: 0, borderRadius: 8, background: 'transparent', color: colors.text, cursor: 'pointer',
+  },
+  headerShareButton: {
+    height: 30, flex: 'none', padding: '0 11px', border: `1px solid ${colors.border}`, borderRadius: 8,
+    background: 'transparent', color: colors.text, font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
   title: { flex: 1, minWidth: 0, margin: 0, fontSize: 17, lineHeight: '24px', fontWeight: 600 },
   tabs: {
@@ -556,8 +560,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [editItem, setEditItem] = useState<ArkmeMyExtensionItem>()
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState('')
-	const [shareBusy, setShareBusy] = useState(false)
-	const [shareNotice, setShareNotice] = useState('')
+  const [shareDialogExtensionId, setShareDialogExtensionId] = useState<string>()
+  const [shareNotice, setShareNotice] = useState('')
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
@@ -937,34 +941,15 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
     }
   }
 
-	const copyShareLink = async () => {
-		if (detail?.share === undefined) return
-		try {
-			await navigator.clipboard.writeText(detail.share.url)
-			setShareNotice('分享链接已复制。')
-		} catch {
-			setShareNotice('复制失败，请稍后重试。')
-		}
-	}
-
-	const rotateShareLink = async () => {
-		if (detail?.share === undefined || shareBusy) return
-		if (typeof window !== 'undefined' && !window.confirm('轮换后旧分享链接会立即失效，确认继续吗？')) return
-		setShareBusy(true); setShareNotice('')
-		try {
-			const share = await extensionSdk.rotateExtensionShare(detail.extension_id, crypto.randomUUID())
-			setDetail(current => current?.extension_id === detail.extension_id ? { ...current, share } : current)
-			setPublishedItems(current => current.map(item => item.extension_id === detail.extension_id ? { ...item, share } : item))
-			setMyExtensions(current => current.map(item => item.published?.extensionId === detail.extension_id
-				? { ...item, published: { ...item.published, share } }
-				: item))
-			setShareNotice('分享链接已轮换，旧链接已经失效。')
-		} catch (caught) {
-			setShareNotice(caught instanceof Error ? caught.message : String(caught))
-		} finally {
-			setShareBusy(false)
-		}
-	}
+  const copyShareLink = async () => {
+    if (detail?.share === undefined) return
+    try {
+      await navigator.clipboard.writeText(detail.share.url)
+      setShareNotice('分享链接已复制。')
+    } catch {
+      setShareNotice('复制失败，请稍后重试。')
+    }
+  }
 
   const updateCount = updates.filter(item => item.update_available || item.revoked).length
   const visibleItems = mergeExtensionDiscoverItems(discoverItems, publishedItems)
@@ -981,7 +966,6 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       : extensionCatalogAction(detail, detailInstalled?.installedVersion, tab === 'mine')
   const detailAction = detailInstallAction.label
   const detailTask = installTask?.extensionId === detail?.extension_id ? installTask : undefined
-	const detailOwned = detail !== undefined && myExtensions.some(item => item.published?.extensionId === detail.extension_id)
   const detailStatus = detail === undefined
     ? undefined
     : detailInstalled !== undefined
@@ -995,20 +979,27 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (editItem !== undefined && !editBusy) { editMutation.current = undefined; setEditItem(undefined) }
+      if (shareDialogExtensionId !== undefined) { setShareDialogExtensionId(undefined); setShareNotice('') }
+      else if (editItem !== undefined && !editBusy) { editMutation.current = undefined; setEditItem(undefined) }
       else if (publishItem !== undefined && !publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) }
       else if (restartPrompt !== undefined && !restarting) setRestartPrompt(undefined)
       else if (restartPrompt === undefined) onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting])
+  }, [editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting, shareDialogExtensionId])
 
   const dialog = <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
   <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-center-title">
   <div style={styles.shell} aria-label="Arkme 扩展市场">
     <header style={styles.header}>
       <h2 id="arkme-extension-center-title" style={styles.title}>扩展市场</h2>
+      {detail?.share !== undefined && <button
+        type="button"
+        style={styles.headerShareButton}
+        aria-haspopup="dialog"
+        onClick={() => { setShareNotice(''); setShareDialogExtensionId(detail.extension_id) }}
+      >分享</button>}
       <button
         type="button" style={styles.iconButton} aria-label="关闭扩展市场" title="关闭"
         onClick={onClose}
@@ -1046,6 +1037,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       {!busy && error === '' && detail !== undefined && <div style={styles.detail}>
         <button type="button" style={styles.detailBack} onClick={() => {
           setDetail(undefined); setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined)
+          setShareDialogExtensionId(undefined); setShareNotice('')
         }}><BackIcon size={14} />返回列表</button>
         <div style={styles.detailHero}>
           <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={46} fallbackColor={colors.accent} />
@@ -1088,16 +1080,11 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
         {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
         <section style={styles.detailSection}><div style={styles.detailLabel}>扩展说明</div><div style={styles.detailValue}>{detail.description || '这个扩展还没有填写说明。'}</div></section>
-		<ArkmeExtensionShareSection
-			{...(detail.source === undefined ? {} : { source: detail.source })}
-			{...(detail.share === undefined ? {} : { share: detail.share })}
-			canRotate={detailOwned}
-			busy={shareBusy}
-			notice={shareNotice}
-			onCopy={() => { void copyShareLink() }}
-			onRotate={() => { void rotateShareLink() }}
-		/>
-		<ArkmeExtensionManifestDetails manifest={detail.manifest} />
+        {detail.source !== undefined && <section style={styles.detailSection}>
+          <div style={styles.detailLabel}>来源</div>
+          <div style={styles.detailValue}><ArkmeExtensionSourceLink source={detail.source} /></div>
+        </section>}
+        <ArkmeExtensionManifestDetails manifest={detail.manifest} />
         {detail.visibility === 'public' && <ArkmeExtensionReviews
           extensionId={detail.extension_id}
           canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
@@ -1234,6 +1221,13 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         </div>
       </section>
     </div>}
+    {shareDialogExtensionId !== undefined && detail?.extension_id === shareDialogExtensionId && detail.share !== undefined
+      && <ArkmeExtensionShareDialog
+        url={detail.share.url}
+        notice={shareNotice}
+        onClose={() => { setShareDialogExtensionId(undefined); setShareNotice('') }}
+        onCopy={() => { void copyShareLink() }}
+      />}
     {publishItem !== undefined && <ArkmeExtensionPublishDialog
       item={publishItem}
       busy={publishBusy}
