@@ -75,9 +75,21 @@ describe('Bundle v2 profile installation', () => {
     directories.push(stateRoot)
     const profile = join(stateRoot, 'profiles', 'web')
     mkdirSync(profile, { recursive: true })
-    writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: [] } } }))
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: { '@arkme-local/ext-0123456789abcdef': 'link:../../arkme-extensions/legacy' },
+      dsh: { profile: { bundles: ['@arkme-local/ext-0123456789abcdef'] } },
+    }))
     const store = new ArkmeExtensionInstallStore(join(stateRoot, 'state'))
+    store.put({
+      extensionId: 'ext-bundle', installedVersion: '0.9.0', artifactSha256: 'legacy-sha',
+      artifactPath: join(stateRoot, 'legacy.arkext'), manifest: resolution.manifest,
+      enabled: true, active: false,
+      profilePackageName: '@arkme-local/ext-0123456789abcdef',
+      profileBundlePath: join(profile, 'arkme-extensions', 'legacy'),
+      permissionSnapshot: [], updateChannel: 'stable', installedAtMillis: 1, lastCheckedAtMillis: 1,
+    })
     const installTarball = vi.fn(async () => undefined)
+    const remove = vi.fn(async () => undefined)
     const manager = new ArkmeExtensionManager(client, store, {
       inspectPackage: () => { throw new Error('not used') },
       define: () => { throw new Error('not used') },
@@ -88,7 +100,7 @@ describe('Bundle v2 profile installation', () => {
         'bundle-key': publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
       }),
       profileDirectory: profile,
-      profileInstaller: { install: vi.fn(), installTarball, remove: vi.fn(), restart: vi.fn() } as never,
+      profileInstaller: { install: vi.fn(), installTarball, remove, restart: vi.fn(), setEnabled: vi.fn() } as never,
       pluginInventory: {
         list: () => ({ entries: [{
           entryId: 'arkme-test', moduleName: '@example/install-bundle', enabled: true, fiberPhase: 'active',
@@ -119,6 +131,7 @@ describe('Bundle v2 profile installation', () => {
       executionModel: 'dsh-native',
     })
     expect(store.get('ext-bundle')?.profilePackageName).not.toMatch(/^@arkme-local\//)
+    expect(remove).toHaveBeenCalledWith('@arkme-local/ext-0123456789abcdef')
     expect(manager.listInstalled()[0]?.active).toBe(true)
     store.close()
   })

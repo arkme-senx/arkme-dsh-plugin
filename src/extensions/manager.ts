@@ -603,9 +603,9 @@ export class ArkmeExtensionManager {
     return this.store.list().map(item => {
       const loaderActive = item.profilePackageName !== undefined && loaderEntries.some(entry =>
         entry.moduleName === item.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
-      const active = item.enabled && (loaderActive || item.active || (item.executionModel === 'arkme-sandboxed' && item.profilePackageName !== undefined
+      const active = loaderActive || item.active || (item.executionModel === 'arkme-sandboxed' && item.profilePackageName !== undefined
         ? arkmeBundleActive(item.profilePackageName)
-        : persistentArkmeExtensionActive(item.extensionId)))
+        : persistentArkmeExtensionActive(item.extensionId))
       return installedView({ ...item, active })
     })
   }
@@ -878,6 +878,7 @@ export class ArkmeExtensionManager {
         await this.options.profileInstaller.install(persistentBundle.bundleDirectory)
         this.writeActivation(persistentBundle.bundleDirectory, extensionId, desiredEnabled)
         if (!desiredEnabled) await this.options.profileInstaller.setEnabled(persistentBundle.packageName, false)
+        await this.removeSupersededProfilePackage(previous, persistentBundle.packageName)
         await this.restoreDisabledProfileLayers(extensionId)
         await deactivatePersistentArkmeExtension(extensionId)
       } catch (error) {
@@ -1084,15 +1085,11 @@ export class ArkmeExtensionManager {
     try {
       await this.options.profileInstaller.installTarball(artifactPath)
       if (!desiredEnabled) await this.options.profileInstaller.setEnabled(resolution.package_name, false)
+      await this.removeSupersededProfilePackage(previous, resolution.package_name)
       await this.restoreDisabledProfileLayers(extensionId)
     } catch (error) {
       try {
-        if (previous?.profileBundlePath !== undefined) {
-          if (previous.profileBundlePath.endsWith('.tgz')) await this.options.profileInstaller.installTarball(previous.profileBundlePath)
-          else await this.options.profileInstaller.install(previous.profileBundlePath)
-        } else {
-          await this.options.profileInstaller.remove(resolution.package_name)
-        }
+        await this.restorePreviousProfilePackage(previous, resolution.package_name)
       } catch { /* Preserve the original install error. */ }
       this.removeArtifact(artifactPath)
       throw new ArkmePluginError(
@@ -1278,16 +1275,39 @@ export class ArkmeExtensionManager {
     previous: ArkmeInstalledExtension | undefined,
   ): Promise<void> {
     if (persistentBundle === undefined || this.options.profileInstaller === undefined) return
-    if (previous?.profileBundlePath !== undefined) {
-      if (previous.profileBundlePath.endsWith('.tgz')) {
-        await this.options.profileInstaller.installTarball(previous.profileBundlePath)
-      } else {
-        await this.options.profileInstaller.install(previous.profileBundlePath)
-      }
-    } else {
-      await this.options.profileInstaller.remove(persistentBundle.packageName)
-    }
+    await this.restorePreviousProfilePackage(previous, persistentBundle.packageName)
     this.removeLegacyBundle(persistentBundle.bundleDirectory)
+  }
+
+  private async removeSupersededProfilePackage(
+    previous: ArkmeInstalledExtension | undefined,
+    nextPackageName: string,
+  ): Promise<void> {
+    if (this.options.profileInstaller === undefined || previous?.profilePackageName === undefined
+      || previous.profilePackageName === nextPackageName) return
+    await this.options.profileInstaller.remove(previous.profilePackageName)
+  }
+
+  private async restorePreviousProfilePackage(
+    previous: ArkmeInstalledExtension | undefined,
+    newPackageName: string,
+  ): Promise<void> {
+    if (this.options.profileInstaller === undefined) return
+    if (previous?.profileBundlePath === undefined) {
+      await this.options.profileInstaller.remove(newPackageName)
+      return
+    }
+    if (previous.profilePackageName !== undefined && previous.profilePackageName !== newPackageName) {
+      await this.options.profileInstaller.remove(newPackageName)
+    }
+    if (previous.profileBundlePath.endsWith('.tgz')) {
+      await this.options.profileInstaller.installTarball(previous.profileBundlePath)
+    } else {
+      await this.options.profileInstaller.install(previous.profileBundlePath)
+    }
+    if (!previous.enabled && previous.profilePackageName !== undefined) {
+      await this.options.profileInstaller.setEnabled(previous.profilePackageName, false)
+    }
   }
 
   private removeArtifact(artifactPath: string): void {

@@ -71,6 +71,41 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
+  it('keeps a native Bundle active until restart while persisting the disabled Profile layer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-native-enabled-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, false),
+      extensionId: 'ext-native',
+      artifactPath: join(root, 'bundle.tgz'),
+      profilePackageName: '@example/native-bundle',
+      profileBundlePath: join(root, 'bundle.tgz'),
+      executionModel: 'dsh-native',
+    })
+    const setEnabled = vi.fn(async () => undefined)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: join(root, 'profile'),
+      profileInstaller: {
+        install: vi.fn(), installTarball: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled,
+      } as never,
+      pluginInventory: {
+        list: () => ({ entries: [{
+          entryId: 'native', moduleName: '@example/native-bundle', enabled: true, fiberPhase: 'active',
+        }] }),
+      },
+    })
+
+    await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-native', enabled: false }))
+      .resolves.toMatchObject({ enabled: false, active: true, restart_required: true })
+    expect(setEnabled).toHaveBeenCalledWith('@example/native-bundle', false)
+    expect(manager.listInstalled()).toEqual([
+      expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: true }),
+    ])
+    expect(manager.listInstalled()[0]).not.toHaveProperty('profileBundlePath')
+    store.close()
+  })
+
   it('re-applies other disabled Profile layers after DSH package reconciliation', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-reconcile-'))
     directories.push(root)
