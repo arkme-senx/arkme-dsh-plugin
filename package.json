@@ -37,7 +37,7 @@
     "assets/desktop_call",
     "cordis.patch.yml",
     "README.md",
-    "docs"
+    "docs/*.md"
   ],
   "dsh": {
     "bundle": {
