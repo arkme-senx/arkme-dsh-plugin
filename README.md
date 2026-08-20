@@ -75,6 +75,8 @@ dsh plugin --profile web up @senguoyun/dsh-arkme --latest
 
 Arkme 不修改 DSH，也不选择或打包 pnpm。执行 Profile 变更前，它优先使用 Profile 的 `packageManager`；旧 Profile 缺失时，只从 pnpm 生成的 `node_modules/.modules.yaml` 安装元数据回填精确版本，再确认用户 PATH 中的 pnpm 能按该声明解析。校验失败发生在依赖修改或 DSH 停止之前。扩展 Bundle 仍由 Arkme 完成摘要、平台签名和运行时兼容性校验。
 
+本地扩展 Bundle 的安装、卸载和回滚不会解析新的 Registry 版本，因此 Arkme 只为这些固定命令传入 `--config.minimum-release-age=0`，避免刚更新的 Profile 依赖阻断无关的本地扩展操作；pnpm 仍执行其余 lockfile 供应链校验。Registry 插件更新不使用该参数。
+
 ## 私聊主动呼叫
 
 主动呼叫仅支持一对一私聊，不注册来电 UI，也不提供接听或拒接入口。人工入口只出现在私聊标题后；模型工具必须先通过 `arkme_sources_list(root)` 获得精确的 `private_chat` `source_ref`，并且只有当前对话中的明确用户请求才能授权 `arkme_call_start`。

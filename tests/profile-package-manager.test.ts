@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { prepareProfilePackageManager } from '../src/profile-package-manager.js'
+import { localExtensionPnpmArgs, prepareProfilePackageManager } from '../src/profile-package-manager.js'
 
 const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -25,6 +25,12 @@ function fixture(
 }
 
 describe('Arkme Profile package manager resolver', () => {
+  it('disables only the release-age gate for local extension mutations', () => {
+    expect(localExtensionPnpmArgs(['remove', '@arkme-local/ext-test'])).toEqual([
+      '--config.minimum-release-age=0', 'remove', '@arkme-local/ext-test',
+    ])
+  })
+
   it('backfills a legacy Profile only from pnpm-owned install metadata', () => {
     const { root, profile, manifestPath } = fixture(
       { name: 'dsh-profile-web', dependencies: { example: '1.0.0' } },

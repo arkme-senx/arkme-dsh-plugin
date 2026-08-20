@@ -4,11 +4,20 @@ import { chmod, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
-import { prepareProfilePackageManager } from '../profile-package-manager.js'
+import { localExtensionPnpmArgs, prepareProfilePackageManager } from '../profile-package-manager.js'
 import type { ArkmeExtensionProfileRestartPlan } from './profile-restart-helper.js'
 import type { ArkmeInstalledExtension } from './types.js'
 
 const execFileAsync = promisify(execFile)
+
+export function profilePluginCommandErrorDetail(error: unknown): string {
+  const child = error as { stdout?: unknown; stderr?: unknown }
+  return [child.stdout, child.stderr]
+    .map(value => String(value ?? '').trim())
+    .filter(value => value !== '')
+    .join('\n')
+    .slice(0, 2_000)
+}
 
 export interface ArkmeExtensionProfileInstallerOptions {
   dshHome: string
@@ -31,12 +40,18 @@ export class ArkmeExtensionProfileInstaller {
 
   async install(bundleDirectory: string): Promise<void> {
     if (!existsSync(bundleDirectory)) throw new Error('扩展 Bundle 目录不存在')
-    await this.run(['plugin', '--profile', this.options.profileName, 'add', `link:${bundleDirectory}`])
+    await this.run([
+      'plugin', '--profile', this.options.profileName,
+      ...localExtensionPnpmArgs(['add', `link:${bundleDirectory}`]),
+    ])
   }
 
   async remove(packageName: string): Promise<void> {
     if (!/^@arkme-local\/ext-[a-f0-9]{16}$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
-    await this.run(['plugin', '--profile', this.options.profileName, 'remove', packageName])
+    await this.run([
+      'plugin', '--profile', this.options.profileName,
+      ...localExtensionPnpmArgs(['remove', packageName]),
+    ])
   }
 
   async restart(input: {
@@ -107,8 +122,8 @@ export class ArkmeExtensionProfileInstaller {
         timeout: 120_000,
       })
     } catch (error) {
-      const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().slice(0, 1_000)
-      throw new Error(stderr === '' ? 'DSH Profile 插件操作失败' : `DSH Profile 插件操作失败：${stderr}`, { cause: error })
+      const detail = profilePluginCommandErrorDetail(error)
+      throw new Error(detail === '' ? 'DSH Profile 插件操作失败' : `DSH Profile 插件操作失败：${detail}`, { cause: error })
     }
   }
 }
