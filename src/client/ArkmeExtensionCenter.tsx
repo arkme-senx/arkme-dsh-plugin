@@ -224,12 +224,13 @@ export function ArkmeExtensionManifestDetails({ manifest }: { manifest: unknown 
     || halves === null || typeof halves !== 'object' || Array.isArray(halves)
     || typeof (runtime as Record<string, unknown>).dsh !== 'string'
     || typeof (halves as Record<string, unknown>).host !== 'boolean'
-    || typeof (halves as Record<string, unknown>).client !== 'boolean'
-    || !Array.isArray(value.permissions)
-    || !value.permissions.every(permission => typeof permission === 'string')) return null
+    || typeof (halves as Record<string, unknown>).client !== 'boolean') return null
   const safeRuntime = runtime as { dsh: string }
   const safeHalves = halves as { host: boolean; client: boolean }
-  const permissions = value.permissions as string[]
+  const permissions = Array.isArray(value.permissions)
+    ? value.permissions.filter((permission): permission is string => typeof permission === 'string')
+    : []
+  if (!safeHalves.host && !safeHalves.client && safeRuntime.dsh.trim() === '' && permissions.length === 0) return null
   return <section style={styles.detailSection}>
     <div style={styles.detailLabel}>运行能力</div>
     <Chips>
