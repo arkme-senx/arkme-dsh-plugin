@@ -3,51 +3,40 @@ import type { ArkmeExtensionEditableVisibility } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem } from '../extensions/owned-types.js'
 import { ArkmeExtensionAvatarField } from './ArkmeExtensionAvatarField.js'
 
-export interface ArkmeExtensionPublishFormValue {
+export interface ArkmeExtensionEditFormValue {
   name: string
   description: string
-  version: string
   visibility: ArkmeExtensionEditableVisibility
-  changelog?: string
   iconFile?: File
 }
 
-export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSubmit }: {
+export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit }: {
   item: ArkmeMyExtensionItem
   busy: boolean
   error: string
   onCancel(): void
-  onSubmit(value: ArkmeExtensionPublishFormValue): void
+  onSubmit(value: ArkmeExtensionEditFormValue): void
 }) {
   const [name, setName] = useState(item.name)
   const [description, setDescription] = useState(item.description)
-  const [version, setVersion] = useState(nextVersion(item.published?.version))
-  const [visibility, setVisibility] = useState<ArkmeExtensionEditableVisibility>(item.published?.visibility === 'public' ? 'public' : 'private')
-  const [changelog, setChangelog] = useState('')
+  const initialVisibility = item.published?.visibility
+  const [visibility, setVisibility] = useState<ArkmeExtensionEditableVisibility | ''>(
+    initialVisibility === 'private' || initialVisibility === 'public' ? initialVisibility : '',
+  )
   const [iconFile, setIconFile] = useState<File>()
+  const legacyVisibility = initialVisibility === 'unlisted'
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (busy) return
+    if (busy || visibility === '' || name.trim() === '' || [...name.trim()].length > 120 || [...description.trim()].length > 2_000) return
     onSubmit({
-      name: name.trim(),
-      description: description.trim(),
-      version: version.trim(),
-      visibility,
-      ...(changelog.trim() === '' ? {} : { changelog: changelog.trim() }),
+      name: name.trim(), description: description.trim(), visibility,
       ...(iconFile === undefined ? {} : { iconFile }),
     })
   }
   return <div style={styles.backdrop}>
-    <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-publish-title">
-      <h3 id="arkme-extension-publish-title" style={styles.title}>{item.publish.mode === 'version' ? '发布新版本' : '发布扩展'}</h3>
+    <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-edit-title">
+      <h3 id="arkme-extension-edit-title" style={styles.title}>编辑扩展</h3>
       <form onSubmit={submit}>
-        <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
-        <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
-        <label style={styles.label}>版本<input style={styles.input} value={version} pattern="\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?" required disabled={busy} onChange={event => { setVersion(event.target.value) }} /></label>
-        <label style={styles.label}>可见范围<select style={styles.input} value={visibility} disabled={busy} onChange={event => { setVisibility(event.target.value as ArkmeExtensionEditableVisibility) }}>
-          <option value="private">仅自己</option><option value="public">公开</option>
-        </select></label>
-        <label style={styles.label}>更新说明<textarea style={styles.textarea} value={changelog} maxLength={2000} disabled={busy} onChange={event => { setChangelog(event.target.value) }} /></label>
         <ArkmeExtensionAvatarField
           {...(item.published?.extensionId === undefined ? {} : { extensionId: item.published.extensionId })}
           {...(item.published?.iconRef === undefined ? {} : { iconRef: item.published.iconRef })}
@@ -55,19 +44,24 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
           disabled={busy}
           onSelect={setIconFile}
         />
+        <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
+        <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
+        <label style={styles.label}>可见范围<select
+          style={styles.input} value={visibility} required disabled={busy}
+          onChange={event => { setVisibility(event.target.value as ArkmeExtensionEditableVisibility | '') }}
+        >
+          {visibility === '' && <option value="">请选择可见范围</option>}
+          <option value="private">仅自己</option><option value="public">公开</option>
+        </select></label>
+        {legacyVisibility && visibility === '' && <div role="status" style={styles.notice}>该历史可见范围已隐藏，请选择仅自己或公开后保存。</div>}
         {error !== '' && <div role="alert" style={styles.error}>{error}</div>}
         <div style={styles.actions}>
           <button type="button" style={styles.secondary} disabled={busy} onClick={onCancel}>取消</button>
-          <button type="submit" style={styles.primary} disabled={busy}>{busy ? '发布中…' : '确认发布'}</button>
+          <button type="submit" style={styles.primary} disabled={busy || visibility === ''}>{busy ? '保存中…' : '保存'}</button>
         </div>
       </form>
     </section>
   </div>
-}
-
-function nextVersion(current: string | undefined): string {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(current ?? '')
-  return match === null ? '1.0.0' : `${match[1]}.${match[2]}.${String(Number(match[3]) + 1)}`
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -77,6 +71,7 @@ const styles: Record<string, CSSProperties> = {
   label: { display: 'grid', gap: 6, marginTop: 11, color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12 },
   input: { width: '100%', height: 36, padding: '0 10px', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },
   textarea: { width: '100%', minHeight: 62, padding: 10, resize: 'vertical', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },
+  notice: { marginTop: 10, color: '#b06b16', fontSize: 11 },
   error: { marginTop: 12, color: '#b42318', fontSize: 12 },
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 },
   secondary: { height: 34, padding: '0 14px', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit' },
