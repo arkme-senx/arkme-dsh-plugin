@@ -20,6 +20,7 @@ import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
 } from './my-extension-model.js'
+import { createExtensionPreviewDraft, type ExtensionPreviewDraft } from './extension-preview-edit.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
@@ -522,6 +523,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [publishBusy, setPublishBusy] = useState(false)
   const [publishError, setPublishError] = useState('')
   const [editItem, setEditItem] = useState<ArkmeMyExtensionItem>()
+  const [editPreviewDraft, setEditPreviewDraft] = useState<ExtensionPreviewDraft>()
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState('')
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
@@ -902,13 +904,16 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         return
       }
       if (result.kind === 'profile-saved-preview-failed') {
+        setEditPreviewDraft(result.previewDraft)
         setEditError(`资料已保存，但预览图更新未完成：${result.error}`)
         return
       }
       editMutation.current = undefined
+      setEditPreviewDraft(undefined)
       setEditItem(undefined)
       setRestartNotice('扩展信息已更新。')
     } catch (caught) {
+      await load('mine', 'refresh')
       setEditError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setEditBusy(false)
@@ -1093,7 +1098,11 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
               onToggle: (enabled: boolean) => { void toggleEnabled(extensionId!, enabled) },
             })}
             onPublish={() => { publishMutation.current = undefined; setPublishError(''); setPublishItem(item) }}
-            onEdit={() => { editMutation.current = undefined; setEditError(''); setEditItem(item) }}
+            onEdit={() => {
+              editMutation.current = undefined; setEditError('')
+              setEditPreviewDraft(createExtensionPreviewDraft(item.published?.previewImages ?? [], item.published?.previewRevision ?? 0))
+              setEditItem(item)
+            }}
           />
         })}
         {myExtensions.length === 0 && <EmptyState tab="mine" />}
@@ -1167,7 +1176,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       item={editItem}
       busy={editBusy}
       error={editError}
-      onCancel={() => { if (!editBusy) { editMutation.current = undefined; setEditItem(undefined) } }}
+      {...(editPreviewDraft === undefined ? {} : { previewDraft: editPreviewDraft, onPreviewDraftChange: setEditPreviewDraft })}
+      onCancel={() => { if (!editBusy) { editMutation.current = undefined; setEditPreviewDraft(undefined); setEditItem(undefined) } }}
       onSubmit={value => { void saveMyExtensionEdit(editItem, value) }}
     />}
   </div>

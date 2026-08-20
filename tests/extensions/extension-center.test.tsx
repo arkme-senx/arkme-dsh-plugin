@@ -355,5 +355,7 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('accept="image/png,image/jpeg,image/webp"')
     expect(html).toContain('封面')
     expect(html).toContain('aria-label="删除第 1 张预览图"')
+    expect(html).toContain('max-height:calc(100% - 32px)')
+    expect(html).toContain('overflow-y:auto')
   })
 })

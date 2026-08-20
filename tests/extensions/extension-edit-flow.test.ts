@@ -92,6 +92,59 @@ describe('extension edit save flow', () => {
     expect(result).toMatchObject({ kind: 'saved', previews: { preview_revision: 1 } })
   })
 
+  it('rejects a stale edit draft before any preview write', async () => {
+    const remoteRef = `preview_v1_${'c'.repeat(64)}`
+    const deletePreview = vi.fn()
+    await expect(saveExtensionEdit({
+      extension: { ...extension, preview_images: [], preview_revision: 3 },
+      value: {
+        ...value,
+        previewDraft: {
+          revision: 2, initialRemoteRefs: [remoteRef],
+          items: [],
+        },
+      }, clientMutationId: 'mutation-stale',
+    }, {
+      updateMetadata: vi.fn(async () => ({ ...extension, ...value, preview_images: [], preview_revision: 3 })),
+      setIcon: vi.fn(), addPreview: vi.fn(), deletePreview, reorderPreviews: vi.fn(),
+    })).rejects.toThrow('预览图已在其他位置更新')
+    expect(deletePreview).not.toHaveBeenCalled()
+  })
+
+  it('reconciles successful local uploads while retaining the failed local file for retry', async () => {
+    const firstFile = new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })
+    const secondFile = new File([new Uint8Array([2])], 'second.png', { type: 'image/png' })
+    const appliedRef = `preview_v1_${'d'.repeat(64)}`
+    const addPreview = vi.fn()
+      .mockResolvedValueOnce({
+        extension_id: 'ext-1', applied_preview_ref: appliedRef,
+        preview_images: [{ preview_ref: appliedRef, content_type: 'image/png', preview_size: 1, width: 1, height: 1, created_at: 1 }],
+        preview_revision: 1,
+      })
+      .mockRejectedValueOnce(new Error('second failed'))
+    const result = await saveExtensionEdit({
+      extension: { ...extension, preview_images: [], preview_revision: 0 },
+      value: {
+        ...value,
+        previewDraft: { revision: 0, initialRemoteRefs: [], items: [
+          { kind: 'local', id: 'local-1', file: firstFile, mutationId: '11111111-1111-4111-8111-111111111111' },
+          { kind: 'local', id: 'local-2', file: secondFile, mutationId: '22222222-2222-4222-8222-222222222222' },
+        ] },
+      }, clientMutationId: 'mutation-partial',
+    }, {
+      updateMetadata: vi.fn(async () => ({ ...extension, ...value })), setIcon: vi.fn(), addPreview,
+      deletePreview: vi.fn(), reorderPreviews: vi.fn(),
+    })
+
+    expect(result).toMatchObject({
+      kind: 'profile-saved-preview-failed',
+      previewDraft: {
+        revision: 1, initialRemoteRefs: [appliedRef],
+        items: [{ kind: 'remote', id: appliedRef }, { kind: 'local', id: 'local-2', mutationId: '22222222-2222-4222-8222-222222222222' }],
+      },
+    })
+  })
+
   it('reuses a mutation UUID for the same normalized edit and rotates it after a field changes', () => {
     let sequence = 0
     const mint = () => `mutation-${String(++sequence)}`

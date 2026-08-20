@@ -3,6 +3,7 @@ import type {
 } from '../extensions/types.js'
 import type { ArkmeExtensionEditFormValue } from './ArkmeExtensionEditDialog.js'
 import type { ArkmeMyExtensionItem } from '../extensions/owned-types.js'
+import type { ExtensionPreviewDraft, ExtensionPreviewDraftItem } from './extension-preview-edit.js'
 
 export interface ExtensionEditMutation {
   signature: string
@@ -22,7 +23,33 @@ export function nextExtensionEditMutation(
 export type ExtensionEditSaveResult =
   | { kind: 'saved'; extension: ArkmeExtensionCatalogItem; icon?: ArkmeExtensionIconResult; previews?: ArkmeExtensionPreviewGallery }
   | { kind: 'metadata-saved-icon-failed'; extension: ArkmeExtensionCatalogItem; error: string }
-  | { kind: 'profile-saved-preview-failed'; extension: ArkmeExtensionCatalogItem; icon?: ArkmeExtensionIconResult; previews?: ArkmeExtensionPreviewGallery; error: string }
+  | { kind: 'profile-saved-preview-failed'; extension: ArkmeExtensionCatalogItem; icon?: ArkmeExtensionIconResult; previews?: ArkmeExtensionPreviewGallery; previewDraft: ExtensionPreviewDraft; error: string }
+
+function reconciledPreviewDraft(
+  draft: ExtensionPreviewDraft,
+  gallery: ArkmeExtensionPreviewGallery,
+  appliedRefs: ReadonlyMap<string, string>,
+): ExtensionPreviewDraft {
+  const server = new Map(gallery.preview_images.map(item => [item.preview_ref, item]))
+  const items: ExtensionPreviewDraftItem[] = []
+  const included = new Set<string>()
+  for (const item of draft.items) {
+    const ref = item.kind === 'remote' ? item.preview.preview_ref : appliedRefs.get(item.id)
+    const preview = ref === undefined ? undefined : server.get(ref)
+    if (preview !== undefined) {
+      items.push({ kind: 'remote', id: preview.preview_ref, preview })
+      included.add(preview.preview_ref)
+    } else if (item.kind === 'local') items.push(item)
+  }
+  for (const preview of gallery.preview_images) if (!included.has(preview.preview_ref)) {
+    items.push({ kind: 'remote', id: preview.preview_ref, preview })
+  }
+  return {
+    revision: gallery.preview_revision,
+    initialRemoteRefs: gallery.preview_images.map(item => item.preview_ref),
+    items,
+  }
+}
 
 export function applyEditedMyExtension(
   item: ArkmeMyExtensionItem,
@@ -80,11 +107,15 @@ export async function saveExtensionEdit(input: {
   const withIcon = icon === undefined ? extension : { ...extension, icon_ref: icon.icon_ref, updated_at: icon.updated_at }
   const draft = input.value.previewDraft
   if (draft === undefined) return { kind: 'saved', extension: withIcon, ...(icon === undefined ? {} : { icon }) }
+  if ((input.extension.preview_revision ?? draft.revision) !== draft.revision) {
+    throw new Error('预览图已在其他位置更新，请刷新后重新编辑')
+  }
   let gallery: ArkmeExtensionPreviewGallery = {
     extension_id: input.extension.extension_id,
-    preview_images: input.extension.preview_images ?? [],
-    preview_revision: input.extension.preview_revision ?? draft.revision,
+    preview_images: draft.items.filter(item => item.kind === 'remote').map(item => item.preview),
+    preview_revision: draft.revision,
   }
+  const refs = new Map(draft.items.filter(item => item.kind === 'remote').map(item => [item.id, item.preview.preview_ref]))
   try {
     const desiredRemote = new Set(draft.items.filter(item => item.kind === 'remote').map(item => item.preview.preview_ref))
     for (const ref of draft.initialRemoteRefs.filter(ref => !desiredRemote.has(ref)
@@ -92,7 +123,6 @@ export async function saveExtensionEdit(input: {
       if (dependencies.deletePreview === undefined) throw new Error('preview delete adapter unavailable')
       gallery = await dependencies.deletePreview(input.extension.extension_id, ref, gallery.preview_revision)
     }
-    const refs = new Map(draft.items.filter(item => item.kind === 'remote').map(item => [item.id, item.preview.preview_ref]))
     for (const item of draft.items) if (item.kind === 'local') {
       if (dependencies.addPreview === undefined) throw new Error('preview upload adapter unavailable')
       const before = new Set(gallery.preview_images.map(current => current.preview_ref))
@@ -114,7 +144,7 @@ export async function saveExtensionEdit(input: {
     return {
       kind: 'profile-saved-preview-failed',
       extension: { ...withIcon, preview_images: gallery.preview_images, preview_revision: gallery.preview_revision },
-      ...(icon === undefined ? {} : { icon }), previews: gallery,
+      ...(icon === undefined ? {} : { icon }), previews: gallery, previewDraft: reconciledPreviewDraft(draft, gallery, refs),
       error: error instanceof Error ? error.message : String(error),
     }
   }

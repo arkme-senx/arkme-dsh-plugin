@@ -13,10 +13,12 @@ export interface ArkmeExtensionEditFormValue {
   previewDraft?: ExtensionPreviewDraft
 }
 
-export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit }: {
+export function ArkmeExtensionEditDialog({ item, busy, error, previewDraft: controlledPreviewDraft, onPreviewDraftChange, onCancel, onSubmit }: {
   item: ArkmeMyExtensionItem
   busy: boolean
   error: string
+  previewDraft?: ExtensionPreviewDraft
+  onPreviewDraftChange?(draft: ExtensionPreviewDraft): void
   onCancel(): void
   onSubmit(value: ArkmeExtensionEditFormValue): void
 }) {
@@ -27,9 +29,11 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
     initialVisibility === 'private' || initialVisibility === 'public' ? initialVisibility : '',
   )
   const [iconFile, setIconFile] = useState<File>()
-  const [previewDraft, setPreviewDraft] = useState(() => createExtensionPreviewDraft(
+  const [localPreviewDraft, setLocalPreviewDraft] = useState(() => createExtensionPreviewDraft(
     item.published?.previewImages ?? [], item.published?.previewRevision ?? 0,
   ))
+  const previewDraft = controlledPreviewDraft ?? localPreviewDraft
+  const setPreviewDraft = onPreviewDraftChange ?? setLocalPreviewDraft
   const legacyVisibility = initialVisibility === 'unlisted'
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -79,7 +83,7 @@ export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit
 
 const styles: Record<string, CSSProperties> = {
   backdrop: { position: 'absolute', zIndex: 4, inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(17, 24, 39, .28)' },
-  dialog: { width: 'min(430px, calc(100% - 40px))', padding: 22, boxSizing: 'border-box', borderRadius: 14, background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 20px 55px rgba(0,0,0,.22)' },
+  dialog: { width: 'min(430px, calc(100% - 40px))', maxHeight: 'calc(100% - 32px)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 14, background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 20px 55px rgba(0,0,0,.22)' },
   title: { margin: '0 0 16px', fontSize: 17 },
   label: { display: 'grid', gap: 6, marginTop: 11, color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12 },
   input: { width: '100%', height: 36, padding: '0 10px', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },
