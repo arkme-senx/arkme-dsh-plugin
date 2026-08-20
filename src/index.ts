@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -18,12 +19,17 @@ import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmeService } from './arkme-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
+import { createArkmeExtensionIconReadHandler, createArkmeExtensionIconUploadHandler } from './extensions/icon-routes.js'
+import { createArkmeExtensionPreviewReadHandler, createArkmeExtensionPreviewUploadHandler } from './extensions/preview-routes.js'
 import { ArkmeExtensionManager } from './extensions/manager.js'
 import { ExtensionPublishClient } from './extensions/publish-client.js'
 import {
   ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
   ArkmeExtensionProfileInstaller,
 } from './extensions/profile-installer.js'
+import { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
+import { ArkmeOwnedExtensionRefs } from './extensions/owned-refs.js'
+import { ArkmeOwnedExtensionStore } from './extensions/owned-store.js'
 import type { DynamicCordisRunnerLike } from './extensions/types.js'
 import { ArkmeStateStore } from './state-store.js'
 import { registerArkmeExtensionTools } from './tools/extensions/index.js'
@@ -110,10 +116,15 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 export const name = 'dsh-arkme'
-export const inject = ['webServer', 'tools', 'systemPrompt']
+export const inject = ['webServer', 'tools', 'systemPrompt', 'pluginInventory']
 
 export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   if (dshBinPath.trim() === '') return undefined
+  // A source checkout can carry an unreleased/stale package version while its
+  // workspace code already implements the current DSH contract. Only a built
+  // CLI entry is authoritative release metadata; source runs keep the existing
+  // extension compatibility baseline owned by ArkmeExtensionManager.
+  if (dshBinPath.endsWith('/src/bin.ts') || dshBinPath.endsWith('\\src\\bin.ts')) return undefined
   try {
     let resolvedBinPath = dshBinPath
     try { resolvedBinPath = realpathSync(dshBinPath) } catch { /* Preserve metadata-only probes. */ }
@@ -191,6 +202,9 @@ export function apply(ctx: Context, config: Config): void {
       : {}),
   })
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
+  const ownedExtensionStore = new ArkmeOwnedExtensionStore(extensionDirectory)
+  const ownedExtensionRefs = new ArkmeOwnedExtensionRefs()
+  const ownedExtensionHostInstanceId = randomUUID()
   const extensionClient = new ExtensionPublishClient(
     async <T>(path: string, body: Record<string, unknown>, signal?: AbortSignal) => await service.extensionPost<T>(path, body, signal),
     fetch,
@@ -198,32 +212,62 @@ export function apply(ctx: Context, config: Config): void {
   )
   let extensionManager: ArkmeExtensionManager | undefined
   let extensionInstallTasks: ArkmeExtensionInstallTasks | undefined
+  let ownedExtensionInventory: ArkmeOwnedExtensionInventory | undefined
   ctx.provide('arkmeData', service)
   registerArkmeTools(ctx, service, config.toolProfile)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
+    const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
+    const agents = (dynamicCtx as Context & { agents: ArkmeAgentRegistryLike }).agents
     const manager = new ArkmeExtensionManager(
       extensionClient,
       extensionStore,
-      (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner,
+      runner,
       {
         artifactDirectory: extensionDirectory,
         trustedSigningKeys: config.extensionTrustedSigningKeys,
         profileDirectory: extensionProfileDirectory,
         profileInstaller: extensionProfileInstaller,
         clientApiPath: config.routePath,
+        pluginInventory: ctx.get('pluginInventory') as import('./extensions/manager.js').ArkmePluginInventoryLike,
         ...(dshRuntimeVersion === undefined ? {} : { dshRuntimeVersion }),
       },
     )
     extensionManager = manager
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: ownedExtensionHostInstanceId,
+      profileDirectory: extensionProfileDirectory,
+      profileName: 'web',
+      store: ownedExtensionStore,
+      refs: ownedExtensionRefs,
+      providerState: async () => await service.providerState(),
+      cloudList: async (input, signal) => await extensionClient.myList(input, signal),
+      runner,
+      agents,
+      publish: async input => await manager.publish(input),
+      publishBundle: async input => await manager.publishBundleSource(input),
+    })
+    ownedExtensionInventory = inventory
     const tasks = new ArkmeExtensionInstallTasks(
       manager,
-      (dynamicCtx as Context & { agents: ArkmeAgentRegistryLike }).agents,
+      agents,
     )
     extensionInstallTasks = tasks
-    registerArkmeExtensionTools(dynamicCtx, manager, config.toolProfile)
+    registerArkmeExtensionTools(dynamicCtx, manager, inventory, service, config.toolProfile)
+    dynamicCtx.on('tools/result', (exec, result) => {
+      if (exec.name !== 'cordis_define' || result.isError || exec.agent === undefined
+        || result.value === null || typeof result.value !== 'object' || Array.isArray(result.value)) return
+      const value = result.value as Record<string, unknown>
+      if (typeof value.pluginId !== 'string' || value.pluginId.trim() === '') return
+      void service.providerState().then(state => {
+        if (state.authStatus === 'authenticated' && state.userId !== undefined) {
+          inventory.captureCordisDefinition({ agentId: exec.agent!.id, pluginId: value.pluginId as string, creatorUserId: state.userId })
+        }
+      }).catch(() => { ctx.logger.warn('dsh-arkme: failed to bind Cordis extension ownership') })
+    })
     dynamicCtx.effect(() => () => {
       if (extensionManager === manager) extensionManager = undefined
       if (extensionInstallTasks === tasks) extensionInstallTasks = undefined
+      if (ownedExtensionInventory === inventory) ownedExtensionInventory = undefined
       tasks.dispose()
     }, 'dsh-arkme: extension center dynamic runner bridge')
   })
@@ -233,6 +277,7 @@ export function apply(ctx: Context, config: Config): void {
     updateManager,
     extensionManager: () => extensionManager,
     extensionInstallTasks: () => extensionInstallTasks,
+    ownedExtensionInventory: () => ownedExtensionInventory,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -243,6 +288,15 @@ export function apply(ctx: Context, config: Config): void {
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
+  const extensionIconOptions = {
+    expectedPort: ctx.webServer.port,
+    allowNonLoopback: config.allowNonLoopback,
+    manager: () => extensionManager,
+  }
+  const extensionIconUploadHandler = createArkmeExtensionIconUploadHandler(extensionIconOptions)
+  const extensionIconReadHandler = createArkmeExtensionIconReadHandler(extensionIconOptions)
+  const extensionPreviewUploadHandler = createArkmeExtensionPreviewUploadHandler(extensionIconOptions)
+  const extensionPreviewReadHandler = createArkmeExtensionPreviewReadHandler(extensionIconOptions)
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -251,6 +305,7 @@ export function apply(ctx: Context, config: Config): void {
     service.dispose()
     localDatabase.close()
     extensionStore.close()
+    ownedExtensionStore.close()
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
@@ -274,6 +329,26 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/media`,
     handler: mediaHandler,
   }), 'dsh-arkme: rich content media route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-icon/upload`,
+    handler: extensionIconUploadHandler,
+  }), 'dsh-arkme: extension icon upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-icon`,
+    handler: extensionIconReadHandler,
+  }), 'dsh-arkme: extension icon read route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-preview/upload`,
+    handler: extensionPreviewUploadHandler,
+  }), 'dsh-arkme: extension preview upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-preview`,
+    handler: extensionPreviewReadHandler,
+  }), 'dsh-arkme: extension preview read route')
   ctx.effect(() => {
     const disposeRoute = ctx.webServer.register({
       kind: 'exact',
@@ -442,6 +517,14 @@ export type {
   ArkmeWechatPhonePage,
 } from './types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+export type {
+  ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewAvatarFallback,
+  ArkmeExtensionReviewCreateInput,
+  ArkmeExtensionReviewCreateResult,
+  ArkmeExtensionReviewItem,
+  ArkmeExtensionReviewPage,
+} from './extensions/types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallIntentClaim,

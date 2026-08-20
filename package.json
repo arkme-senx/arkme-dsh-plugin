@@ -26,6 +26,10 @@
       "types": "./lib/types/extensions/persistent-runtime.d.ts",
       "default": "./lib/persistent-extension.js"
     },
+    "./bundle-runtime": {
+      "types": "./lib/types/extensions/bundle-runtime.d.ts",
+      "default": "./lib/bundle-runtime.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -60,9 +64,10 @@
     }
   },
   "scripts": {
-    "build": "pnpm run build:types && pnpm run bundle",
+    "build": "pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "bundle": "tsdown",
+    "bundle": "node scripts/clean-bundle.mjs && tsdown",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
@@ -71,7 +76,9 @@
   "dependencies": {
     "ali-oss": "6.23.0",
     "qrcode-generator": "2.0.4",
-    "semver": "7.8.5"
+    "semver": "7.8.5",
+    "sharp": "0.35.3",
+    "yaml": "2.9.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

@@ -1,22 +1,32 @@
-import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
-import {
-  canonicalExtensionJson, packArkmeExtension, sha256Hex, unpackArkmeExtension,
-} from './artifact.js'
+import { canonicalExtensionJson, sha256Hex, unpackArkmeExtension } from './artifact.js'
+import { materializeCordisBundle } from './bundle-materializer.js'
+import type { ArkmeBundlePublishSource } from './bundle-artifact.js'
+import { bundleSha256, inspectBundleArtifact } from './bundle-artifact.js'
+import { arkmeBundleActive, deactivateArkmeBundle } from './bundle-runtime.js'
 import { ArkmeExtensionInstallStore } from './install-store.js'
 import { ExtensionPublishClient } from './publish-client.js'
-import { materializePersistentExtensionBundle } from './persistent-bundle.js'
+import { materializePersistentExtensionBundle, writePersistentExtensionActivation } from './persistent-bundle.js'
 import type { ArkmeExtensionProfileInstaller } from './profile-installer.js'
-import { deactivatePersistentArkmeExtension, persistentArkmeExtensionActive } from './persistent-runtime.js'
-import { verifyExtensionResolutionSignature } from './signature.js'
+import {
+  activatePersistentArkmeExtension, deactivatePersistentArkmeExtension, persistentArkmeExtensionActive,
+} from './persistent-runtime.js'
+import { verifyBundleResolutionSignature, verifyExtensionResolutionSignature } from './signature.js'
 export { verifyExtensionResolutionSignature } from './signature.js'
 import {
   type ArkmeExtensionCatalogItem, type ArkmeExtensionCatalogPage,
-  type ArkmeExtensionDeleteResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionPublishResult, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
-  type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type DynamicCordisPackageInspectionLike,
+  type ArkmeExtensionDeleteResult, type ArkmeExtensionEnabledResult, type ArkmeExtensionEnabledState,
+  ARKME_EXTENSION_ICON_MAX_BYTES, type ArkmeExtensionIconBytes, type ArkmeExtensionIconMediaType,
+  type ArkmeExtensionIconResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
+  type ArkmeExtensionPublishResult,
+  ARKME_EXTENSION_PREVIEW_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_ITEMS,
+  type ArkmeExtensionPreviewBytes, type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
+  type ArkmeExtensionEditableVisibility, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+  type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type ArkmeInstalledExtensionView, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
 } from './types.js'
 
@@ -35,8 +45,20 @@ export interface ArkmeExtensionManagerOptions {
   trustedSigningKeys: string
   dshRuntimeVersion?: string
   profileDirectory?: string
-  profileInstaller?: Pick<ArkmeExtensionProfileInstaller, 'install' | 'remove' | 'restart'>
+  profileInstaller?: Pick<ArkmeExtensionProfileInstaller, 'install' | 'installTarball' | 'remove' | 'restart' | 'setEnabled'>
   clientApiPath?: string
+  pluginInventory?: ArkmePluginInventoryLike
+}
+
+export interface ArkmePluginInventoryLike {
+  list(): {
+    entries: ReadonlyArray<{
+      entryId: string
+      moduleName: string
+      enabled: boolean
+      fiberPhase: 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null
+    }>
+  }
 }
 
 export interface ArkmeExtensionApplyResult {
@@ -60,6 +82,61 @@ export interface ArkmeExtensionUninstallResult {
   message: string
 }
 
+type BundleInstallResolution = ArkmeExtensionInstallResolution & {
+  artifact_contract_version: 2
+  artifact_kind: 'dsh-bundle-tgz'
+  package_name: string
+  execution_model: 'arkme-sandboxed' | 'dsh-native'
+  bundle_url: string
+  bundle_size: number
+  bundle_sha256: string
+  package_json_sha256: string
+  source_sha256: string
+}
+
+function bundleInstallResolution(value: ArkmeExtensionInstallResolution): boolean {
+  return value.artifact_contract_version === 2 && value.artifact_kind === 'dsh-bundle-tgz'
+    && typeof value.package_name === 'string' && value.package_name.trim() !== ''
+    && (value.execution_model === 'arkme-sandboxed' || value.execution_model === 'dsh-native')
+    && typeof value.bundle_url === 'string' && value.bundle_url.trim() !== ''
+    && typeof value.bundle_size === 'number' && value.bundle_size > 0
+    && typeof value.bundle_sha256 === 'string' && typeof value.package_json_sha256 === 'string'
+    && typeof value.source_sha256 === 'string'
+}
+
+function completedPublishSession(
+  session: import('./types.js').ArkmeBundlePublishSession,
+  fallbackVersion: string,
+): ArkmeExtensionPublishResult | undefined {
+  return session.status === 'published'
+    ? { extension_id: session.extension_id, version: session.version ?? fallbackVersion, status: 'published' }
+    : undefined
+}
+
+function requireBundleUploadSlots(session: import('./types.js').ArkmeBundlePublishSession): {
+  bundle: NonNullable<typeof session.bundle_upload>
+  source: NonNullable<typeof session.source_upload>
+} {
+  if (session.bundle_upload === undefined || session.source_upload === undefined) {
+    throw new ArkmePluginError('extension-publish-contract-invalid', '扩展市场没有返回完整的 Bundle/source 上传槽', false, 502)
+  }
+  return { bundle: session.bundle_upload, source: session.source_upload }
+}
+
+function installedView(item: ArkmeInstalledExtension): ArkmeInstalledExtensionView {
+  return {
+    extensionId: item.extensionId,
+    installedVersion: item.installedVersion,
+    manifest: item.manifest,
+    enabled: item.enabled,
+    active: item.active,
+    permissionSnapshot: [...item.permissionSnapshot],
+    updateChannel: item.updateChannel,
+    installedAtMillis: item.installedAtMillis,
+    lastCheckedAtMillis: item.lastCheckedAtMillis,
+  }
+}
+
 interface PendingProfileChange {
   extensionId: string
   packageName: string
@@ -76,6 +153,33 @@ function requiredId(value: string, label: string): string {
     throw new ArkmePluginError('extension-id-invalid', `${label}无效`, false)
   }
   return normalized
+}
+
+function requiredPreviewRef(value: string): string {
+  const normalized = value.trim()
+  if (!/^preview_v1_[a-f0-9]{64}$/.test(normalized)) {
+    throw new ArkmePluginError('extension-preview-ref-invalid', '扩展预览图引用无效', false, 400)
+  }
+  return normalized
+}
+
+function assertPreviewGallery(value: ArkmeExtensionPreviewGallery, extensionId: string): ArkmeExtensionPreviewGallery {
+  if (value.extension_id !== extensionId || !Number.isSafeInteger(value.preview_revision) || value.preview_revision < 0
+    || !Array.isArray(value.preview_images) || value.preview_images.length > ARKME_EXTENSION_PREVIEW_MAX_ITEMS) {
+    throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了不一致的预览图集', false, 502)
+  }
+  const refs = new Set<string>()
+  for (const item of value.preview_images) {
+    if (!/^preview_v1_[a-f0-9]{64}$/.test(item.preview_ref) || refs.has(item.preview_ref)
+      || !['image/png', 'image/jpeg', 'image/webp'].includes(item.content_type)
+      || !Number.isSafeInteger(item.preview_size) || item.preview_size <= 0 || item.preview_size > ARKME_EXTENSION_PREVIEW_MAX_BYTES
+      || !Number.isSafeInteger(item.width) || !Number.isSafeInteger(item.height)
+      || item.width < 320 || item.height < 320 || item.width > 4096 || item.height > 4096) {
+      throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了无效预览图元数据', false, 502)
+    }
+    refs.add(item.preview_ref)
+  }
+  return value
 }
 
 function parseTrustedKeys(raw: string): Map<string, string> {
@@ -136,6 +240,9 @@ export class ArkmeExtensionManager {
   private readonly dshRuntimeVersion: string
   private readonly activeAgents = new Map<string, unknown>()
   private readonly pendingProfileChanges = new Map<string, PendingProfileChange>()
+  private enabledMutationTail: Promise<void> = Promise.resolve()
+  private readonly iconCache = new Map<string, ArkmeExtensionIconBytes>()
+  private readonly previewCache = new Map<string, ArkmeExtensionPreviewBytes>()
 
   constructor(
     readonly client: ExtensionPublishClient,
@@ -168,6 +275,7 @@ export class ArkmeExtensionManager {
     agent: unknown
     pluginId: string
     packageId: string
+    packageName?: string
     extensionId?: string
     name: string
     description: string
@@ -178,32 +286,71 @@ export class ArkmeExtensionManager {
     signal?: AbortSignal
   }): Promise<ArkmeExtensionPublishResult> {
     const inspected = this.inspectPackage(input.agent, input.pluginId, input.packageId)
-    const artifact = packArkmeExtension({
+    const source = materializeCordisBundle({
+      packageName: input.packageName ?? `@arkme-generated/${bundleSha256(`cordis\0${input.pluginId}`).slice(0, 24)}`,
       name: input.name.trim() || inspected.name,
       description: input.description.trim() || inspected.purpose,
       version: input.version,
-      arkmeProviderContract: ARKME_PROVIDER_CONTRACT_VERSION,
-      permissions: [],
       ...(inspected.code.host === undefined ? {} : { hostCode: inspected.code.host }),
       ...(inspected.code.client === undefined ? {} : { clientCode: inspected.code.client }),
     })
-    const session = await this.client.createPublishSession({
+    const session = await this.client.createBundlePublishSession({
       ...(input.extensionId === undefined || input.extensionId.trim() === ''
         ? {}
         : { extension_id: requiredId(input.extensionId, 'extension_id') }),
-      name: artifact.manifest.name,
-      description: artifact.manifest.description,
-      version: artifact.manifest.version,
+      name: input.name.trim() || inspected.name,
+      description: input.description.trim() || inspected.purpose,
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
-      artifact_size: artifact.bytes.byteLength,
-      artifact_sha256: artifact.artifactSha256,
-      manifest_sha256: artifact.manifestSha256,
-      manifest: artifact.manifest as unknown as Record<string, unknown>,
       idempotency_key: input.idempotencyKey,
+      bundle: source.bundle,
+      source: source.source,
     }, input.signal)
+    const completed = completedPublishSession(session, source.bundle.version)
+    if (completed !== undefined) return completed
+    const slots = requireBundleUploadSlots(session)
     try {
-      await this.client.uploadArtifact(session.upload_url, artifact, session.upload_headers ?? {}, input.signal)
+      await this.client.uploadBundle(slots.bundle, source.bundle, input.signal)
+      await this.client.uploadSource(slots.source, source.source, input.signal)
+      return await this.client.completePublishSession(session.publish_session_id, input.signal)
+    } catch (error) {
+      if (input.signal?.aborted === true) throw error
+      try {
+        const recovered = await this.client.publishStatus(session.publish_session_id, input.signal)
+        if (['validating', 'published'].includes(recovered.status)) return recovered
+      } catch { /* The original failure retains the best causal signal. */ }
+      throw error
+    }
+  }
+
+  async publishBundleSource(input: {
+    source: ArkmeBundlePublishSource
+    extensionId?: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionVisibility
+    changelog?: string
+    idempotencyKey: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPublishResult> {
+    const session = await this.client.createBundlePublishSession({
+      ...(input.extensionId === undefined || input.extensionId.trim() === ''
+        ? {}
+        : { extension_id: requiredId(input.extensionId, 'extension_id') }),
+      name: input.name.trim() || input.source.bundle.packageName,
+      description: input.description.trim(),
+      visibility: input.visibility,
+      ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
+      idempotency_key: input.idempotencyKey,
+      bundle: input.source.bundle,
+      source: input.source.source,
+    }, input.signal)
+    const completed = completedPublishSession(session, input.source.bundle.version)
+    if (completed !== undefined) return completed
+    const slots = requireBundleUploadSlots(session)
+    try {
+      await this.client.uploadBundle(slots.bundle, input.source.bundle, input.signal)
+      await this.client.uploadSource(slots.source, input.source.source, input.signal)
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
@@ -229,6 +376,20 @@ export class ArkmeExtensionManager {
     if (resolution.extension_id !== requestedId) {
       throw new ArkmePluginError('extension-install-contract-invalid', '扩展市场返回了错误的扩展身份', false, 502)
     }
+    if (bundleInstallResolution(resolution)) {
+      const bundle = resolution as BundleInstallResolution
+      return {
+        extension_id: bundle.extension_id,
+        version: bundle.version,
+        package_name: bundle.package_name,
+        execution_model: bundle.execution_model,
+        bundle_size: bundle.bundle_size,
+        requires_native_confirmation: bundle.requires_native_confirmation === true,
+        manifest: bundle.manifest,
+        revoked: bundle.revoked,
+        ...(bundle.revocation_reason === undefined ? {} : { revocation_reason: bundle.revocation_reason }),
+      }
+    }
     return {
       extension_id: resolution.extension_id,
       version: resolution.version,
@@ -243,14 +404,393 @@ export class ArkmeExtensionManager {
     return await this.client.myList({ limit: 50 }, signal)
   }
 
+  async updateMetadata(input: {
+    extensionId: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionEditableVisibility
+    clientMutationId: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionCatalogItem> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    const name = input.name.trim()
+    const description = input.description.trim()
+    if (name === '' || [...name].length > 120 || [...description].length > 2_000
+      || (input.visibility !== 'private' && input.visibility !== 'public')
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new ArkmePluginError('extension-metadata-invalid', '扩展信息无效', false, 400)
+    }
+    const result = await this.client.updateMetadata({
+      extension_id: extensionId,
+      name,
+      description,
+      visibility: input.visibility,
+      client_mutation_id: input.clientMutationId,
+    }, input.signal)
+    const extension = result.extension
+    if (extension.extension_id !== extensionId || extension.name !== name || extension.description !== description
+      || extension.visibility !== input.visibility || !Number.isSafeInteger(extension.updated_at) || extension.updated_at! <= 0) {
+      throw new ArkmePluginError('extension-metadata-contract-invalid', '扩展市场返回了不一致的资料事实', false, 502)
+    }
+    return extension
+  }
+
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.client.deleteExtension(requiredId(extensionId, 'extension_id'), signal)
   }
 
-  listInstalled(): ArkmeInstalledExtension[] {
-    return this.store.list().map(item => persistentArkmeExtensionActive(item.extensionId)
-      ? { ...item, active: true }
-      : item)
+  async setIcon(input: {
+    extensionId: string
+    mediaType: ArkmeExtensionIconMediaType
+    data: Uint8Array
+    idempotencyKey: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionIconResult> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(input.mediaType)) {
+      throw new ArkmePluginError('extension-icon-type-invalid', '扩展头像仅支持 PNG、JPEG 或 WebP', false, 400)
+    }
+    if (input.data.byteLength <= 0 || input.data.byteLength > ARKME_EXTENSION_ICON_MAX_BYTES) {
+      throw new ArkmePluginError('extension-icon-size-invalid', '扩展头像必须小于 2 MiB', false, 400)
+    }
+    const iconSha256 = createHash('sha256').update(input.data).digest('hex')
+    const session = await this.client.createIconUploadSession({
+      extension_id: extensionId,
+      content_type: input.mediaType,
+      icon_size: input.data.byteLength,
+      icon_sha256: iconSha256,
+      idempotency_key: input.idempotencyKey,
+    }, input.signal)
+    if (session.status === 'uploading') {
+      if (session.upload_url === undefined) {
+        throw new ArkmePluginError('extension-icon-upload-contract-invalid', '扩展市场未返回头像上传地址', false, 502)
+      }
+      await this.client.uploadIcon(
+        session.upload_url,
+        input.data,
+        input.mediaType,
+        session.upload_headers ?? {},
+        input.signal,
+      )
+    }
+    const result = await this.client.completeIconUploadSession(session.icon_upload_session_id, input.signal)
+    if (result.extension_id !== extensionId || result.icon_sha256 !== iconSha256 || result.content_type !== input.mediaType) {
+      throw new ArkmePluginError('extension-icon-contract-invalid', '扩展市场返回了不一致的头像事实', false, 502)
+    }
+    // A replacement invalidates every previously authorized ref for this extension.
+    // Keeping an old immutable-ref entry would let the same-origin image route serve
+    // it without re-checking the registry's current pointer.
+    const cachePrefix = `${extensionId}\0`
+    for (const key of this.iconCache.keys()) {
+      if (key.startsWith(cachePrefix)) this.iconCache.delete(key)
+    }
+    return result
+  }
+
+  async readIcon(extensionIdValue: string, iconRefValue: string, signal?: AbortSignal): Promise<ArkmeExtensionIconBytes> {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    const iconRef = iconRefValue.trim()
+    if (!/^icon_v1_[a-f0-9]{64}$/.test(iconRef)) {
+      throw new ArkmePluginError('extension-icon-ref-invalid', '扩展头像引用无效', false, 400)
+    }
+    const cacheKey = `${extensionId}\0${iconRef}`
+    const cached = this.iconCache.get(cacheKey)
+    if (cached !== undefined) return { ...cached, data: new Uint8Array(cached.data) }
+    const resolution = await this.client.resolveIcon(extensionId, iconRef, signal)
+    if (resolution.extension_id !== extensionId || resolution.icon_ref !== iconRef
+      || !['image/png', 'image/jpeg', 'image/webp'].includes(resolution.content_type)
+      || resolution.icon_size <= 0 || resolution.icon_size > ARKME_EXTENSION_ICON_MAX_BYTES) {
+      throw new ArkmePluginError('extension-icon-contract-invalid', '扩展市场返回了不一致的头像解析结果', false, 502)
+    }
+    const data = await this.client.downloadIcon(resolution, signal)
+    const sha256 = createHash('sha256').update(data).digest('hex')
+    if (data.byteLength !== resolution.icon_size || sha256 !== resolution.icon_sha256) {
+      throw new ArkmePluginError('extension-icon-download-invalid', '扩展头像下载校验失败', false, 502)
+    }
+    const value: ArkmeExtensionIconBytes = {
+      extensionId,
+      iconRef,
+      mediaType: resolution.content_type,
+      data: new Uint8Array(data),
+    }
+    this.iconCache.set(cacheKey, value)
+    while (this.iconCache.size > 128) {
+      const oldest = this.iconCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.iconCache.delete(oldest)
+    }
+    return { ...value, data: new Uint8Array(value.data) }
+  }
+
+  async addPreview(input: {
+    extensionId: string
+    mediaType: ArkmeExtensionPreviewMediaType
+    data: Uint8Array
+    idempotencyKey: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPreviewGallery> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(input.mediaType)) {
+      throw new ArkmePluginError('extension-preview-type-invalid', '扩展预览图仅支持 PNG、JPEG 或 WebP', false, 400)
+    }
+    if (input.data.byteLength <= 0 || input.data.byteLength > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+      throw new ArkmePluginError('extension-preview-size-invalid', '扩展预览图必须小于 5 MiB', false, 400)
+    }
+    const previewSha256 = createHash('sha256').update(input.data).digest('hex')
+    const session = await this.client.createPreviewUploadSession({
+      extension_id: extensionId,
+      content_type: input.mediaType,
+      preview_size: input.data.byteLength,
+      preview_sha256: previewSha256,
+      idempotency_key: input.idempotencyKey,
+    }, input.signal)
+    if (session.status === 'uploading') {
+      if (session.upload_url === undefined) {
+        throw new ArkmePluginError('extension-preview-upload-contract-invalid', '扩展市场未返回预览图上传地址', false, 502)
+      }
+      await this.client.uploadPreview(
+        session.upload_url, input.data, input.mediaType, session.upload_headers ?? {}, input.signal,
+      )
+    }
+    const result = assertPreviewGallery(
+      await this.client.completePreviewUploadSession(session.preview_upload_session_id, input.signal),
+      extensionId,
+    )
+    if (result.applied_preview_ref !== `preview_v1_${previewSha256}`) {
+      throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了不一致的预览图事实', false, 502)
+    }
+    return result
+  }
+
+  async deletePreview(input: {
+    extensionId: string
+    previewRef: string
+    expectedRevision: number
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPreviewGallery> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    const previewRef = requiredPreviewRef(input.previewRef)
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new ArkmePluginError('extension-preview-revision-invalid', '扩展预览图版本无效', false, 400)
+    }
+    const result = assertPreviewGallery(
+      await this.client.deletePreview(extensionId, previewRef, input.expectedRevision, input.signal), extensionId,
+    )
+    this.previewCache.delete(`${extensionId}\0${previewRef}`)
+    return result
+  }
+
+  async reorderPreviews(input: {
+    extensionId: string
+    orderedPreviewRefs: string[]
+    expectedRevision: number
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionPreviewGallery> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || input.orderedPreviewRefs.length <= 0 || input.orderedPreviewRefs.length > ARKME_EXTENSION_PREVIEW_MAX_ITEMS) {
+      throw new ArkmePluginError('extension-preview-reorder-invalid', '扩展预览图排序参数无效', false, 400)
+    }
+    const refs = input.orderedPreviewRefs.map(requiredPreviewRef)
+    if (new Set(refs).size !== refs.length) {
+      throw new ArkmePluginError('extension-preview-reorder-invalid', '扩展预览图排序不能包含重复引用', false, 400)
+    }
+    return assertPreviewGallery(
+      await this.client.reorderPreviews(extensionId, refs, input.expectedRevision, input.signal), extensionId,
+    )
+  }
+
+  async readPreview(extensionIdValue: string, previewRefValue: string, signal?: AbortSignal): Promise<ArkmeExtensionPreviewBytes> {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    const previewRef = requiredPreviewRef(previewRefValue)
+    const cacheKey = `${extensionId}\0${previewRef}`
+    const cached = this.previewCache.get(cacheKey)
+    if (cached !== undefined) return { ...cached, data: new Uint8Array(cached.data) }
+    const resolution = await this.client.resolvePreview(extensionId, previewRef, signal)
+    if (resolution.extension_id !== extensionId || resolution.preview_ref !== previewRef
+      || !['image/png', 'image/jpeg', 'image/webp'].includes(resolution.content_type)
+      || resolution.preview_size <= 0 || resolution.preview_size > ARKME_EXTENSION_PREVIEW_MAX_BYTES) {
+      throw new ArkmePluginError('extension-preview-contract-invalid', '扩展市场返回了不一致的预览图解析结果', false, 502)
+    }
+    const data = await this.client.downloadPreview(resolution, signal)
+    const sha256 = createHash('sha256').update(data).digest('hex')
+    if (data.byteLength !== resolution.preview_size || sha256 !== resolution.preview_sha256) {
+      throw new ArkmePluginError('extension-preview-download-invalid', '扩展预览图下载校验失败', false, 502)
+    }
+    const value: ArkmeExtensionPreviewBytes = {
+      extensionId, previewRef, mediaType: resolution.content_type, data: new Uint8Array(data),
+    }
+    this.previewCache.set(cacheKey, value)
+    while (this.previewCache.size > 128) {
+      const oldest = this.previewCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.previewCache.delete(oldest)
+    }
+    return { ...value, data: new Uint8Array(value.data) }
+  }
+
+  listInstalled(): ArkmeInstalledExtensionView[] {
+    const loaderEntries = this.options.pluginInventory?.list().entries ?? []
+    return this.store.list().map(item => {
+      const loaderActive = item.profilePackageName !== undefined && loaderEntries.some(entry =>
+        entry.moduleName === item.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
+      const active = loaderActive || item.active || (item.executionModel === 'arkme-sandboxed' && item.profilePackageName !== undefined
+        ? arkmeBundleActive(item.profilePackageName)
+        : persistentArkmeExtensionActive(item.extensionId))
+      return installedView({ ...item, active })
+    })
+  }
+
+  enabledState(extensionIdValue: string): ArkmeExtensionEnabledState {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    const installed = this.listInstalled().find(item => item.extensionId === extensionId)
+    if (installed === undefined) return { extension_id: extensionId, installed: false, enabled: false, active: false }
+    return {
+      extension_id: extensionId,
+      installed: true,
+      enabled: installed.enabled,
+      active: installed.active,
+    }
+  }
+
+  async setEnabled(input: { agent: unknown; extensionId: string; enabled: boolean }): Promise<ArkmeExtensionEnabledResult> {
+    const result = this.enabledMutationTail.then(
+      async () => await this.setEnabledNow(input),
+      async () => await this.setEnabledNow(input),
+    )
+    this.enabledMutationTail = result.then(() => undefined, () => undefined)
+    return await result
+  }
+
+  private async setEnabledNow(input: { agent: unknown; extensionId: string; enabled: boolean }): Promise<ArkmeExtensionEnabledResult> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    const installed = this.store.get(extensionId)
+    if (installed === undefined) {
+      throw new ArkmePluginError('extension-not-installed', '该扩展尚未安装', false, 404)
+    }
+    const current = this.listInstalled().find(item => item.extensionId === extensionId)
+    const currentActive = current?.active === true
+    if (installed.enabled === input.enabled) {
+      const restartRequired = input.enabled
+        ? !currentActive
+        : installed.manifest.halves.client && installed.profilePackageName !== undefined
+      return {
+        extension_id: extensionId,
+        installed: true,
+        enabled: input.enabled,
+        active: currentActive,
+        restart_required: restartRequired,
+        message: input.enabled
+          ? currentActive ? '扩展已启用' : '扩展已设为启用，重启 DSH 后生效'
+          : restartRequired ? '扩展已关闭，重启 DSH 后 Client 界面完全移除' : '扩展已关闭',
+      }
+    }
+
+    const profilePackageName = installed.profilePackageName
+    const legacyProfileBundle = installed.executionModel === undefined
+      && installed.profileBundlePath !== undefined && !installed.profileBundlePath.endsWith('.tgz')
+      ? installed.profileBundlePath
+      : undefined
+    if (profilePackageName !== undefined && this.options.profileInstaller === undefined) {
+      throw new ArkmePluginError('extension-profile-toggle-unavailable', '当前 DSH 运行方式不支持修改扩展启用状态', false, 503)
+    }
+
+    if (!input.enabled) {
+      try {
+        if (legacyProfileBundle !== undefined) {
+          this.writeActivation(legacyProfileBundle, extensionId, false)
+        }
+        if (profilePackageName !== undefined) await this.options.profileInstaller?.setEnabled(profilePackageName, false)
+      } catch (error) {
+        if (legacyProfileBundle !== undefined) {
+          try { this.writeActivation(legacyProfileBundle, extensionId, true) } catch { /* Preserve the causal failure. */ }
+        }
+        throw error
+      }
+      try {
+        if (installed.dynamicPluginId !== undefined) {
+          if (this.runner.undefine === undefined) {
+            throw new ArkmePluginError('extension-disable-runtime-unavailable', '当前 Dynamic Cordis 不支持关闭扩展', false, 503)
+          }
+          const agent = this.activeAgents.get(extensionId) ?? input.agent
+          const result = await this.runner.undefine(agent, installed.dynamicPluginId)
+          if (!result.ok && result.reason !== 'plugin-missing') {
+            throw new ArkmePluginError(
+              'extension-disable-failed', result.message?.trim() || 'Dynamic Cordis 无法关闭扩展', false, 409,
+            )
+          }
+        }
+        if (installed.executionModel === 'arkme-sandboxed' && profilePackageName !== undefined) {
+          await deactivateArkmeBundle(profilePackageName)
+        } else if (installed.executionModel === undefined) {
+          await deactivatePersistentArkmeExtension(extensionId)
+        }
+      } catch (error) {
+        if (profilePackageName !== undefined) await this.options.profileInstaller?.setEnabled(profilePackageName, true).catch(() => undefined)
+        if (legacyProfileBundle !== undefined) {
+          try { this.writeActivation(legacyProfileBundle, extensionId, true) } catch { /* Preserve the causal failure. */ }
+        }
+        throw error
+      }
+      const activeUntilRestart = installed.executionModel === 'dsh-native' && currentActive
+      const { lastError: _lastError, dynamicPluginId: _pluginId, dynamicPackageId: _packageId, ...retained } = installed
+      this.store.put({ ...retained, enabled: false, active: activeUntilRestart })
+      this.activeAgents.delete(extensionId)
+      const restartRequired = activeUntilRestart || installed.manifest.halves.client
+      return {
+        extension_id: extensionId,
+        installed: true,
+        enabled: false,
+        active: activeUntilRestart,
+        restart_required: restartRequired,
+        message: restartRequired
+          ? activeUntilRestart
+            ? '扩展已设为关闭，重启 DSH 后停止原生 Bundle'
+            : '扩展已关闭；Host 能力已停止，重启 DSH 后 Client 界面完全移除'
+          : '扩展已关闭，无需重启 DSH',
+      }
+    }
+
+    try {
+      if (legacyProfileBundle !== undefined) {
+        this.writeActivation(legacyProfileBundle, extensionId, true)
+      }
+      if (profilePackageName !== undefined) await this.options.profileInstaller?.setEnabled(profilePackageName, true)
+    } catch (error) {
+      if (legacyProfileBundle !== undefined) {
+        try { this.writeActivation(legacyProfileBundle, extensionId, false) } catch { /* Preserve the causal failure. */ }
+      }
+      throw error
+    }
+    let active = currentActive
+    let activationError = ''
+    if (installed.executionModel === undefined) {
+      try {
+        active = await activatePersistentArkmeExtension(extensionId)
+      } catch (error) {
+        activationError = error instanceof Error ? error.message : String(error)
+      }
+    }
+    const restartRequired = !active || installed.manifest.halves.client
+    const { lastError: _lastError, ...retained } = installed
+    this.store.put({
+      ...retained,
+      enabled: true,
+      active,
+      ...(activationError === '' ? {} : { lastError: activationError }),
+    })
+    return {
+      extension_id: extensionId,
+      installed: true,
+      enabled: true,
+      active,
+      restart_required: restartRequired,
+      message: restartRequired
+        ? activationError === ''
+          ? '扩展已设为启用，重启 DSH 后完全生效'
+          : `扩展已设为启用，当前进程加载失败：${activationError}；可重启 DSH 重试`
+        : '扩展已启用，无需重启 DSH',
+    }
   }
 
   async updates(signal?: AbortSignal): Promise<ArkmeExtensionUpdateResolution[]> {
@@ -270,7 +810,7 @@ export class ArkmeExtensionManager {
   }): Promise<ArkmeExtensionApplyResult> {
     const extensionId = requiredId(input.extensionId, 'extension_id')
     let previous = this.store.get(extensionId)
-    if (previous?.profilePackageName !== undefined && !this.profileContains(previous.profilePackageName)) {
+    if (previous?.profilePackageName !== undefined && !this.profileContains(previous.profilePackageName, previous.enabled)) {
       const { profilePackageName: _package, profileBundlePath: _bundle, ...withoutStaleProfile } = previous
       previous = withoutStaleProfile
       this.store.put(previous)
@@ -288,6 +828,28 @@ export class ArkmeExtensionManager {
     if (resolution.extension_id !== extensionId) {
       throw new ArkmePluginError('extension-install-contract-invalid', '扩展市场返回了错误的扩展身份', false, 502)
     }
+    if (bundleInstallResolution(resolution)) {
+      return await this.applyBundleV2(input, resolution as BundleInstallResolution, previous)
+    }
+    const contractVersion = (resolution as { artifact_contract_version?: unknown }).artifact_contract_version
+    if (contractVersion !== undefined && contractVersion !== 0) {
+      throw new ArkmePluginError('extension-install-contract-invalid', '扩展市场返回了不完整或不受支持的制品合同', false, 502)
+    }
+    return await this.applyLegacyV1(input, resolution, previous)
+  }
+
+  private async applyLegacyV1(
+    input: {
+      agent: unknown
+      extensionId: string
+      version?: string
+      signal?: AbortSignal
+      onProgress?: (progress: ArkmeExtensionInstallProgress) => void
+    },
+    resolution: ArkmeExtensionInstallResolution,
+    previous: ArkmeInstalledExtension | undefined,
+  ): Promise<ArkmeExtensionApplyResult> {
+    const extensionId = resolution.extension_id
     const declaredArtifactSize = typeof resolution.artifact_size === 'number' && resolution.artifact_size > 0
       ? resolution.artifact_size
       : undefined
@@ -328,6 +890,7 @@ export class ArkmeExtensionManager {
     input.onProgress?.({ phase: 'persisting', version: resolution.version, message: '正在安全写入本地' })
     const artifactPath = this.persistArtifact(extensionId, resolution.version, bytes)
     let persistentBundle: ReturnType<typeof materializePersistentExtensionBundle> | undefined
+    const desiredEnabled = previous?.enabled ?? true
     if (this.options.profileDirectory !== undefined && this.options.profileInstaller !== undefined) {
       const trustedPublicKey = this.trustedKeys.get(resolution.signing_key_id)
       if (trustedPublicKey === undefined) {
@@ -344,9 +907,13 @@ export class ArkmeExtensionManager {
       input.onProgress?.({ phase: 'registering', version: resolution.version, message: '正在加入 DSH 插件列表' })
       try {
         await this.options.profileInstaller.install(persistentBundle.bundleDirectory)
+        this.writeActivation(persistentBundle.bundleDirectory, extensionId, desiredEnabled)
+        if (!desiredEnabled) await this.options.profileInstaller.setEnabled(persistentBundle.packageName, false)
+        await this.removeSupersededProfilePackage(previous, persistentBundle.packageName)
+        await this.restoreDisabledProfileLayers(extensionId)
         await deactivatePersistentArkmeExtension(extensionId)
       } catch (error) {
-        await this.rollbackProfileInstall(persistentBundle, previous).catch(() => undefined)
+        await this.rollbackLegacyProfileInstall(persistentBundle, previous).catch(() => undefined)
         throw new ArkmePluginError(
           'extension-profile-install-failed',
           `扩展制品已验证，但无法加入 DSH Profile：${error instanceof Error ? error.message : String(error)}`,
@@ -362,7 +929,7 @@ export class ArkmeExtensionManager {
       artifactSha256: resolution.artifact_sha256,
       artifactPath,
       manifest: unpacked.manifest,
-      enabled: true,
+      enabled: desiredEnabled,
       active: false,
       ...(persistentBundle === undefined ? {} : {
         profilePackageName: persistentBundle.packageName,
@@ -376,17 +943,21 @@ export class ArkmeExtensionManager {
     this.store.put(installed)
 
     if (persistentBundle !== undefined && !APPLY_PERSISTENT_EXTENSION_TO_DYNAMIC_CORDIS) {
-      this.pendingProfileChanges.set(extensionId, {
-        extensionId,
-        packageName: persistentBundle.packageName,
-        expectActive: true,
-        targetBundlePath: persistentBundle.bundleDirectory,
-        ...(previous?.profileBundlePath === undefined ? {} : { previousBundlePath: previous.profileBundlePath }),
-        cleanupPaths: previous === undefined ? [] : [previous.profileBundlePath, previous.artifactPath]
-          .filter((path): path is string => path !== undefined
-            && path !== persistentBundle.bundleDirectory && path !== artifactPath),
-        ...(previous === undefined ? {} : { previousInstalled: previous }),
-      })
+      if (desiredEnabled) {
+        this.pendingProfileChanges.set(extensionId, {
+          extensionId,
+          packageName: persistentBundle.packageName,
+          expectActive: true,
+          targetBundlePath: persistentBundle.bundleDirectory,
+          ...(previous?.profileBundlePath === undefined ? {} : { previousBundlePath: previous.profileBundlePath }),
+          cleanupPaths: previous === undefined ? [] : [previous.profileBundlePath, previous.artifactPath]
+            .filter((path): path is string => path !== undefined
+              && path !== persistentBundle.bundleDirectory && path !== artifactPath),
+          ...(previous === undefined ? {} : { previousInstalled: previous }),
+        })
+      } else {
+        this.pendingProfileChanges.delete(extensionId)
+      }
       return {
         extension_id: extensionId,
         version: resolution.version,
@@ -394,8 +965,10 @@ export class ArkmeExtensionManager {
         installed: true,
         active: false,
         approval_required: false,
-        restart_required: true,
-        message: '扩展已加入 DSH 插件列表；请手动重启 DSH 后生效',
+        restart_required: desiredEnabled,
+        message: desiredEnabled
+          ? '扩展已加入 DSH 插件列表；请手动重启 DSH 后生效'
+          : '扩展已更新并保持关闭',
       }
     }
 
@@ -434,7 +1007,7 @@ export class ArkmeExtensionManager {
       if (run.ok) this.activeAgents.set(extensionId, input.agent)
       else this.activeAgents.delete(extensionId)
       if (!run.ok) {
-        await this.rollbackProfileInstall(persistentBundle, previous)
+        await this.rollbackLegacyProfileInstall(persistentBundle, previous)
         return {
           extension_id: extensionId,
           version: resolution.version,
@@ -481,7 +1054,7 @@ export class ArkmeExtensionManager {
       }
     } catch (error) {
       this.activeAgents.delete(extensionId)
-      await this.rollbackProfileInstall(persistentBundle, previous).catch(() => undefined)
+      await this.rollbackLegacyProfileInstall(persistentBundle, previous).catch(() => undefined)
       this.store.put({ ...installed, lastError: error instanceof Error ? error.message : String(error) })
       throw new ArkmePluginError(
         'extension-apply-failed',
@@ -490,6 +1063,131 @@ export class ArkmeExtensionManager {
         409,
         { cause: error },
       )
+    }
+  }
+
+  private async applyBundleV2(
+    input: {
+      agent: unknown
+      extensionId: string
+      version?: string
+      signal?: AbortSignal
+      onProgress?: (progress: ArkmeExtensionInstallProgress) => void
+    },
+    resolution: BundleInstallResolution,
+    previous: ArkmeInstalledExtension | undefined,
+  ): Promise<ArkmeExtensionApplyResult> {
+    const extensionId = resolution.extension_id
+    input.onProgress?.({
+      phase: 'downloading', version: resolution.version, downloadedBytes: 0, totalBytes: resolution.bundle_size,
+      message: '正在下载 DSH Bundle',
+    })
+    const bytes = await this.client.downloadArtifact(
+      resolution.bundle_url,
+      resolution.bundle_headers ?? {},
+      input.signal,
+      progress => input.onProgress?.({
+        phase: 'downloading', version: resolution.version, downloadedBytes: progress.downloadedBytes,
+        totalBytes: progress.totalBytes ?? resolution.bundle_size, message: '正在下载 DSH Bundle',
+      }),
+    )
+    input.onProgress?.({
+      phase: 'verifying', version: resolution.version, downloadedBytes: bytes.byteLength,
+      totalBytes: resolution.bundle_size, message: '正在校验 Bundle 摘要、签名和 package identity',
+    })
+    if (bundleSha256(bytes) !== resolution.bundle_sha256) {
+      throw new ArkmePluginError('extension-bundle-sha256', '下载的 DSH Bundle 摘要不匹配', false, 502)
+    }
+    const inspected = inspectBundleArtifact(bytes)
+    if (inspected.packageName !== resolution.package_name || inspected.version !== resolution.version
+      || inspected.executionModel !== resolution.execution_model
+      || inspected.packageJsonSha256 !== resolution.package_json_sha256) {
+      throw new ArkmePluginError('extension-bundle-identity-mismatch', 'DSH Bundle 与发布记录不一致', false, 502)
+    }
+    verifyBundleResolutionSignature(resolution, this.trustedKeys)
+    input.onProgress?.({ phase: 'persisting', version: resolution.version, message: '正在安全保存不可变 Bundle' })
+    const artifactPath = this.persistArtifact(extensionId, resolution.version, bytes, 'bundle.tgz')
+    if (this.options.profileInstaller === undefined || this.options.profileDirectory === undefined) {
+      this.removeArtifact(artifactPath)
+      throw new ArkmePluginError('extension-profile-install-unavailable', '当前 DSH 运行方式不支持安装 Bundle', false, 503)
+    }
+    const desiredEnabled = previous?.enabled ?? true
+    input.onProgress?.({ phase: 'registering', version: resolution.version, message: '正在通过 DSH CLI 加入 Bundle' })
+    try {
+      await this.options.profileInstaller.installTarball(artifactPath)
+      if (!desiredEnabled) await this.options.profileInstaller.setEnabled(resolution.package_name, false)
+      await this.removeSupersededProfilePackage(previous, resolution.package_name)
+      await this.restoreDisabledProfileLayers(extensionId)
+    } catch (error) {
+      try {
+        await this.restorePreviousProfilePackage(previous, resolution.package_name)
+      } catch { /* Preserve the original install error. */ }
+      this.removeArtifact(artifactPath)
+      throw new ArkmePluginError(
+        'extension-profile-install-failed',
+        `Bundle 已验证，但无法加入 DSH Profile：${error instanceof Error ? error.message : String(error)}`,
+        true,
+        500,
+        { cause: error },
+      )
+    }
+    const manifest: ArkmeInstalledExtension['manifest'] = {
+      format: 'arkme-cordis-extension',
+      format_version: 1,
+      name: resolution.package_name,
+      description: '',
+      version: resolution.version,
+      runtime: { dsh: '*', arkme_provider_contract: ARKME_PROVIDER_CONTRACT_VERSION },
+      halves: { host: true, client: inspected.files.has('package/lib/client.js') },
+      permissions: [],
+      entrypoints: { host: 'host.js', ...(inspected.files.has('package/lib/client.js') ? { client: 'client.js' as const } : {}) },
+    }
+    const installed: ArkmeInstalledExtension = {
+      extensionId,
+      installedVersion: resolution.version,
+      artifactSha256: resolution.bundle_sha256,
+      artifactPath,
+      manifest,
+      enabled: desiredEnabled,
+      active: false,
+      profilePackageName: resolution.package_name,
+      profileBundlePath: artifactPath,
+      executionModel: resolution.execution_model,
+      packageJsonSha256: resolution.package_json_sha256,
+      sourceSha256: resolution.source_sha256,
+      permissionSnapshot: [],
+      updateChannel: 'stable',
+      installedAtMillis: Date.now(),
+      lastCheckedAtMillis: Date.now(),
+    }
+    this.store.put(installed)
+    if (desiredEnabled) {
+      this.pendingProfileChanges.set(extensionId, {
+        extensionId,
+        packageName: resolution.package_name,
+        expectActive: true,
+        targetBundlePath: artifactPath,
+        ...(previous?.profileBundlePath === undefined ? {} : { previousBundlePath: previous.profileBundlePath }),
+        cleanupPaths: previous === undefined ? [] : [previous.profileBundlePath, previous.artifactPath]
+          .filter((path): path is string => path !== undefined && path !== artifactPath),
+        ...(previous === undefined ? {} : { previousInstalled: previous }),
+      })
+    } else {
+      this.pendingProfileChanges.delete(extensionId)
+    }
+    return {
+      extension_id: extensionId,
+      version: resolution.version,
+      state: 'installed',
+      installed: true,
+      active: false,
+      approval_required: false,
+      restart_required: desiredEnabled,
+      message: desiredEnabled
+        ? resolution.execution_model === 'dsh-native'
+          ? '原生 DSH Bundle 已安装；它拥有 DSH 插件进程权限，请重启 DSH 后生效'
+          : 'Arkme 沙箱 Bundle 已安装；请重启 DSH 后生效'
+        : 'Bundle 已更新并保持关闭',
     }
   }
 
@@ -515,9 +1213,11 @@ export class ArkmeExtensionManager {
       }
     }
     await deactivatePersistentArkmeExtension(extensionId)
+    if (installed.profilePackageName !== undefined) await deactivateArkmeBundle(installed.profilePackageName)
     if (installed.profilePackageName !== undefined && this.options.profileInstaller !== undefined) {
       try {
         await this.options.profileInstaller.remove(installed.profilePackageName)
+        await this.restoreDisabledProfileLayers(extensionId)
       } catch (error) {
         throw new ArkmePluginError(
           'extension-profile-remove-failed',
@@ -590,6 +1290,56 @@ export class ArkmeExtensionManager {
     }
   }
 
+  private removeLegacyBundle(bundlePath: string): void {
+    if (this.options.profileDirectory === undefined) return
+    if (!existsSync(bundlePath)) return
+    const target = this.resolveLegacyBundlePath(bundlePath)
+    if (target === undefined) {
+      throw new ArkmePluginError('extension-bundle-path-invalid', '本地扩展 Bundle 路径无效，拒绝删除', false, 500)
+    }
+    rmSync(target, { recursive: true, force: true })
+  }
+
+  private async rollbackLegacyProfileInstall(
+    persistentBundle: ReturnType<typeof materializePersistentExtensionBundle> | undefined,
+    previous: ArkmeInstalledExtension | undefined,
+  ): Promise<void> {
+    if (persistentBundle === undefined || this.options.profileInstaller === undefined) return
+    await this.restorePreviousProfilePackage(previous, persistentBundle.packageName)
+    this.removeLegacyBundle(persistentBundle.bundleDirectory)
+  }
+
+  private async removeSupersededProfilePackage(
+    previous: ArkmeInstalledExtension | undefined,
+    nextPackageName: string,
+  ): Promise<void> {
+    if (this.options.profileInstaller === undefined || previous?.profilePackageName === undefined
+      || previous.profilePackageName === nextPackageName) return
+    await this.options.profileInstaller.remove(previous.profilePackageName)
+  }
+
+  private async restorePreviousProfilePackage(
+    previous: ArkmeInstalledExtension | undefined,
+    newPackageName: string,
+  ): Promise<void> {
+    if (this.options.profileInstaller === undefined) return
+    if (previous?.profileBundlePath === undefined) {
+      await this.options.profileInstaller.remove(newPackageName)
+      return
+    }
+    if (previous.profilePackageName !== undefined && previous.profilePackageName !== newPackageName) {
+      await this.options.profileInstaller.remove(newPackageName)
+    }
+    if (previous.profileBundlePath.endsWith('.tgz')) {
+      await this.options.profileInstaller.installTarball(previous.profileBundlePath)
+    } else {
+      await this.options.profileInstaller.install(previous.profileBundlePath)
+    }
+    if (!previous.enabled && previous.profilePackageName !== undefined) {
+      await this.options.profileInstaller.setEnabled(previous.profilePackageName, false)
+    }
+  }
+
   private removeArtifact(artifactPath: string): void {
     const root = resolve(this.options.artifactDirectory)
     const target = resolve(artifactPath)
@@ -605,18 +1355,32 @@ export class ArkmeExtensionManager {
     }
   }
 
-  private removeBundle(bundlePath: string): void {
-    if (this.options.profileDirectory === undefined) return
-    const root = resolve(this.options.profileDirectory, 'arkme-extensions')
-    const target = resolve(bundlePath)
-    const pathFromRoot = relative(root, target)
-    if (pathFromRoot.startsWith('..') || pathFromRoot === '') {
-      throw new ArkmePluginError('extension-bundle-path-invalid', '本地扩展 Bundle 路径无效，拒绝删除', false, 500)
+  private writeActivation(bundlePath: string, extensionId: string, enabled: boolean): void {
+    if (this.options.profileDirectory === undefined) {
+      throw new ArkmePluginError('extension-bundle-path-invalid', '当前 DSH Profile 路径不可用', false, 500)
     }
-    rmSync(target, { recursive: true, force: true })
+    const target = this.resolveLegacyBundlePath(bundlePath)
+    if (target === undefined) {
+      throw new ArkmePluginError('extension-bundle-path-invalid', '本地扩展 Bundle 路径无效，拒绝修改启用状态', false, 500)
+    }
+    writePersistentExtensionActivation(target, extensionId, enabled)
   }
 
-  private profileContains(packageName: string): boolean {
+  private resolveLegacyBundlePath(bundlePath: string): string | undefined {
+    if (this.options.profileDirectory === undefined) return undefined
+    try {
+      const root = realpathSync(resolve(this.options.profileDirectory, 'arkme-extensions'))
+      const target = realpathSync(resolve(bundlePath))
+      const pathFromRoot = relative(root, target)
+      if (pathFromRoot === '' || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)
+        || isAbsolute(pathFromRoot)) return undefined
+      return target
+    } catch {
+      return undefined
+    }
+  }
+
+  private profileContains(packageName: string, enabled = true): boolean {
     if (this.options.profileDirectory === undefined) return false
     try {
       const manifest = JSON.parse(readFileSync(join(this.options.profileDirectory, 'package.json'), 'utf8')) as {
@@ -624,29 +1388,27 @@ export class ArkmeExtensionManager {
         dsh?: { profile?: { bundles?: string[] } }
       }
       return manifest.dependencies?.[packageName] !== undefined
-        && manifest.dsh?.profile?.bundles?.includes(packageName) === true
+        && (!enabled || manifest.dsh?.profile?.bundles?.includes(packageName) === true)
     } catch {
       return false
     }
   }
 
-  private async rollbackProfileInstall(
-    persistentBundle: ReturnType<typeof materializePersistentExtensionBundle> | undefined,
-    previous: ArkmeInstalledExtension | undefined,
-  ): Promise<void> {
-    if (persistentBundle === undefined || this.options.profileInstaller === undefined) return
-    if (previous?.profileBundlePath !== undefined) await this.options.profileInstaller.install(previous.profileBundlePath)
-    else await this.options.profileInstaller.remove(persistentBundle.packageName)
-    this.removeBundle(persistentBundle.bundleDirectory)
+  private async restoreDisabledProfileLayers(exceptExtensionId: string): Promise<void> {
+    if (this.options.profileInstaller === undefined) return
+    for (const item of this.store.list()) {
+      if (item.extensionId === exceptExtensionId || item.enabled || item.profilePackageName === undefined) continue
+      await this.options.profileInstaller.setEnabled(item.profilePackageName, false)
+    }
   }
 
-  private persistArtifact(extensionId: string, version: string, bytes: Uint8Array): string {
+  private persistArtifact(extensionId: string, version: string, bytes: Uint8Array, filename = 'extension.arkext'): string {
     requiredId(version, 'version')
     const directory = join(this.options.artifactDirectory, extensionId, version)
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     chmodSync(directory, 0o700)
-    const target = join(directory, 'extension.arkext')
-    const temporary = join(directory, `.extension.${randomUUID()}.tmp`)
+    const target = join(directory, filename)
+    const temporary = join(directory, `.${filename}.${randomUUID()}.tmp`)
     writeFileSync(temporary, bytes, { mode: 0o600, flag: 'wx' })
     renameSync(temporary, target)
     chmodSync(target, 0o600)

@@ -95,6 +95,8 @@ describe('registerArkmeTools', () => {
       'arkme_group_bot_remove',
       'arkme_world_recent',
       'arkme_world_publish_text',
+      'arkme_extension_reviews_read',
+      'arkme_extension_review_create',
       'arkme_recording_days_list',
       'arkme_recording_read',
       'arkme_wechat_conversations',

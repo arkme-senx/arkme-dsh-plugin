@@ -21,6 +21,10 @@ Business and atomic tools share typed application Ports; a business tool must no
 
 Per-tool instructions stay in `ToolDefinition.description`. Cross-tool guidance is selected by Profile and registered in the same Arkme registrar. Prompt text must not name a tool outside the selected Profile or an unavailable dependency phase; attachment guidance appears and disappears with the attachment-backed tool. Prompt visibility is not authorization: write metadata declares ownership, and the one-time Arkme ID mutation additionally installs a DSH `tools/pre-execute` approval decision before execution. Other write grants remain available for a future shared guard resolver.
 
+## Extension preview gallery Tools
+
+Business and hybrid profiles expose `arkme_extension_preview_add`, `arkme_extension_preview_delete`, and `arkme_extension_preview_reorder`. Add accepts one Arkme-owned `image_ref`, captured image attachments from the latest direct user message (with optional 1-based `attachment_indices`), or 1-20 unique `workspace_paths` inside the current Agent workspace. Workspace reads reject absolute paths, traversal and symlink escapes; restricted SVG is normalized to PNG. `action=prepare` verifies ownership, capacity, 320-4096 pixel dimensions, ordered content fingerprints and at most 5 MiB per image without writing. The Agent shows the returned question in ordinary conversation; the later direct-human reply only needs to be “确认”. `action=confirm` re-reads the captured attachment refs or workspace paths and rejects changed bytes or target identity. A different prepare cannot replace an unconfirmed operation. Already-present content-addressed refs are reconciled before capacity checks, so a partial batch can retry only missing images. Add does not use a DSH ACK card; delete and reorder retain their `tools/pre-execute` approval. Results contain only the safe ordered gallery and revision—never attachment ids, `image_ref`, base64, workspace paths, object keys, signed URLs, or signed headers. Atomic and disabled profiles expose none of these Tools.
+
 ## Adding a tool
 
 1. Add one module under `src/tools/business`, `src/tools/atomic` or `src/tools/system`.

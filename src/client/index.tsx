@@ -107,6 +107,12 @@ export { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 export { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 export { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
+export {
+  ArkmeExtensionReviewComposerDialog,
+  ArkmeExtensionReviews,
+  extensionRatingLabel,
+  extensionReviewTree,
+} from './ArkmeExtensionReviews.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeDirectoryRow, ArkmeNavigation, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'

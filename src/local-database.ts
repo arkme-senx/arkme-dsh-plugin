@@ -14,6 +14,7 @@ import type {
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
 } from './types.js'
+import type { ArkmeExtensionReviewOperation } from './extensions/types.js'
 
 type CacheState = 'synced' | 'pending' | 'failed'
 
@@ -122,6 +123,23 @@ export class ArkmeLocalDatabase {
         email_masked TEXT,
         updated_at_millis INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS extension_review_outbox (
+        user_id INTEGER NOT NULL,
+        client_mutation_id TEXT NOT NULL,
+        extension_id TEXT NOT NULL,
+        record_uid TEXT NOT NULL,
+        parent_review_id TEXT,
+        text_content TEXT NOT NULL,
+        rating INTEGER,
+        operation_state TEXT NOT NULL CHECK (operation_state IN ('record_pending', 'registry_pending', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at_millis INTEGER NOT NULL,
+        updated_at_millis INTEGER NOT NULL,
+        PRIMARY KEY (user_id, client_mutation_id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS extension_review_outbox_user_record
+        ON extension_review_outbox (user_id, record_uid);
     `)
     const metaColumns = this.database.prepare('PRAGMA table_info(cache_meta)').all() as unknown as Array<{ name: string }>
     if (!metaColumns.some(column => column.name === 'pagination_initialized')) {
@@ -339,6 +357,91 @@ export class ArkmeLocalDatabase {
     await this.ensureMigrated(userId)
     this.insertPending(userId, pending)
     this.bumpRevision(userId)
+    this.secureDatabaseFiles()
+  }
+
+  async listExtensionReviewOperations(userId: number): Promise<ArkmeExtensionReviewOperation[]> {
+    await this.ensureMigrated(userId)
+    const rows = this.database.prepare(`
+      SELECT extension_id, record_uid, parent_review_id, text_content, rating,
+             client_mutation_id, operation_state, attempts, last_error, created_at_millis
+      FROM extension_review_outbox
+      WHERE user_id = ?
+      ORDER BY created_at_millis ASC, client_mutation_id ASC
+    `).all(userId) as unknown as Array<{
+      extension_id: string
+      record_uid: string
+      parent_review_id: string | null
+      text_content: string
+      rating: number | null
+      client_mutation_id: string
+      operation_state: ArkmeExtensionReviewOperation['state']
+      attempts: number
+      last_error: string | null
+      created_at_millis: number
+    }>
+    return rows.map(row => ({
+      extensionId: row.extension_id,
+      recordUid: row.record_uid,
+      ...(row.parent_review_id == null || row.parent_review_id === '' ? {} : { parentReviewId: row.parent_review_id }),
+      textContent: row.text_content,
+      ...(row.rating == null ? {} : { rating: row.rating }),
+      clientMutationId: row.client_mutation_id,
+      state: row.operation_state,
+      attempts: row.attempts,
+      createdAtMillis: row.created_at_millis,
+      ...(row.last_error == null || row.last_error === '' ? {} : { lastError: row.last_error }),
+    }))
+  }
+
+  async putExtensionReviewOperation(userId: number, operation: ArkmeExtensionReviewOperation): Promise<void> {
+    await this.ensureMigrated(userId)
+    const now = Date.now()
+    this.database.prepare(`
+      INSERT INTO extension_review_outbox (
+        user_id, client_mutation_id, extension_id, record_uid, parent_review_id,
+        text_content, rating, operation_state, attempts, last_error,
+        created_at_millis, updated_at_millis
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, client_mutation_id) DO UPDATE SET
+        extension_id = excluded.extension_id,
+        record_uid = excluded.record_uid,
+        parent_review_id = excluded.parent_review_id,
+        text_content = excluded.text_content,
+        rating = excluded.rating,
+        operation_state = excluded.operation_state,
+        attempts = excluded.attempts,
+        last_error = excluded.last_error,
+        updated_at_millis = excluded.updated_at_millis
+    `).run(
+      userId, operation.clientMutationId, operation.extensionId, operation.recordUid,
+      operation.parentReviewId ?? null, operation.textContent, operation.rating ?? null,
+      operation.state, operation.attempts, operation.lastError ?? null,
+      operation.createdAtMillis, now,
+    )
+    this.secureDatabaseFiles()
+  }
+
+  async markExtensionReviewOperation(
+    userId: number,
+    clientMutationId: string,
+    state: ArkmeExtensionReviewOperation['state'],
+    error?: string,
+  ): Promise<void> {
+    await this.ensureMigrated(userId)
+    this.database.prepare(`
+      UPDATE extension_review_outbox
+      SET operation_state = ?, attempts = attempts + 1, last_error = ?, updated_at_millis = ?
+      WHERE user_id = ? AND client_mutation_id = ?
+    `).run(state, error?.slice(0, 500) ?? null, Date.now(), userId, clientMutationId)
+    this.secureDatabaseFiles()
+  }
+
+  async removeExtensionReviewOperation(userId: number, clientMutationId: string): Promise<void> {
+    await this.ensureMigrated(userId)
+    this.database.prepare(`
+      DELETE FROM extension_review_outbox WHERE user_id = ? AND client_mutation_id = ?
+    `).run(userId, clientMutationId)
     this.secureDatabaseFiles()
   }
 

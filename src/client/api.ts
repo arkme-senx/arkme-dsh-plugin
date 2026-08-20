@@ -40,6 +40,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.persistent.invoke'
+  | 'extensions.bundle.invoke'
   | 'search.history'
   | 'search.history.create'
   | 'search.records'

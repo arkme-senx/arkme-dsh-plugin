@@ -11,8 +11,10 @@ import type {
 import type { ArkmeCaptchaResult } from './types.js'
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
+import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from './extensions/types.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
+import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 
 const MAX_REQUEST_BYTES = 128 * 1024
 const ARKME_HOST_INSTANCE_ID = randomUUID()
@@ -79,6 +81,14 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean {
 
 function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
   const value = params[key]
+  if (typeof value !== 'boolean') {
+    throw new ArkmePluginError('boolean-param-required', `${key}必须是布尔值`, false, 400)
+  }
+  return value
+}
+
+function requiredArrangementReminderEnabledParam(params: Record<string, unknown>): boolean {
+  const value = params.enabled
   if (typeof value !== 'boolean') {
     throw new ArkmePluginError('arrangement-reminder-enabled-invalid', '安排提醒开关参数无效', false, 400)
   }
@@ -253,6 +263,7 @@ export interface ArkmeHostApiOptions {
   >
   extensionManager?: () => ArkmeExtensionManager | undefined
   extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
+  ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -279,7 +290,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -290,6 +301,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.updateManager,
         options.extensionManager?.(),
         options.extensionInstallTasks?.(),
+        options.ownedExtensionInventory?.(),
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -318,6 +330,7 @@ export async function dispatchArkmeHostOperation(
   >,
   extensionManager?: ArkmeExtensionManager,
   extensionInstallTasks?: ArkmeExtensionInstallTasks,
+  ownedExtensionInventory?: ArkmeOwnedExtensionInventory,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -457,7 +470,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'arrangements.reminder-enabled': return await service.setArrangementReminderEnabled(
       stringParam(params, 'arrangementRef'),
-      requiredBooleanParam(params, 'enabled'),
+      requiredArrangementReminderEnabledParam(params),
     )
     case 'arrangements.reminders.summary': return await service.arrangementReminderSummary()
     case 'arrangements.reminders.list': return await service.listArrangementReminders({
@@ -682,14 +695,65 @@ export async function dispatchArkmeHostOperation(
       const item = await requireExtensionManager(extensionManager).inspect(stringParam(params, 'extensionId'))
       return (await enrichExtensionAuthors(service, [item]))[0]
     }
+    case 'extensions.reviews.list': return await service.listExtensionReviews(
+      stringParam(params, 'extensionId'),
+      {
+        limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      },
+    )
+    case 'extensions.reviews.create': return await service.createExtensionReview({
+      extensionId: stringParam(params, 'extensionId'),
+      textContent: stringParam(params, 'textContent'),
+      ...(numberParam(params, 'rating', 0) <= 0 ? {} : { rating: Math.trunc(numberParam(params, 'rating', 0)) }),
+      ...(stringParam(params, 'parentReviewRef') === '' ? {} : { parentReviewRef: stringParam(params, 'parentReviewRef') }),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
     case 'extensions.my-list': return await enrichExtensionPageAuthors(
       service,
       await requireExtensionManager(extensionManager).myList(),
     )
+    case 'extensions.metadata.update': return await requireExtensionManager(extensionManager).updateMetadata({
+      extensionId: stringParam(params, 'extensionId'),
+      name: stringParam(params, 'name'),
+      description: stringParam(params, 'description'),
+      visibility: extensionEditableVisibilityParam(params),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
     case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
       stringParam(params, 'extensionId'),
     )
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
+    case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
+      ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
+    })
+    case 'extensions.mine.publish': return await requireOwnedExtensionInventory(ownedExtensionInventory).publish({
+      ownedRef: stringParam(params, 'ownedRef'),
+      name: stringParam(params, 'name'),
+      description: stringParam(params, 'description'),
+      version: stringParam(params, 'version'),
+      visibility: extensionVisibilityParam(params),
+      ...(stringParam(params, 'changelog').trim() === '' ? {} : { changelog: stringParam(params, 'changelog') }),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
+    case 'extensions.enabled-state': return requireExtensionManager(extensionManager).enabledState(
+      stringParam(params, 'extensionId'),
+    )
+    case 'extensions.enabled.set': return await requireExtensionManager(extensionManager).setEnabled({
+      agent: undefined,
+      extensionId: stringParam(params, 'extensionId'),
+      enabled: requiredBooleanParam(params, 'enabled'),
+    })
+    case 'extensions.preview.delete': return await requireExtensionManager(extensionManager).deletePreview({
+      extensionId: stringParam(params, 'extensionId'),
+      previewRef: stringParam(params, 'previewRef'),
+      expectedRevision: numberParam(params, 'expectedRevision', -1),
+    })
+    case 'extensions.preview.reorder': return await requireExtensionManager(extensionManager).reorderPreviews({
+      extensionId: stringParam(params, 'extensionId'),
+      orderedPreviewRefs: stringListParam(params, 'orderedPreviewRefs'),
+      expectedRevision: numberParam(params, 'expectedRevision', -1),
+    })
     case 'extensions.updates': return await requireExtensionManager(extensionManager).updates()
     case 'extensions.install.preview': return await requireExtensionManager(extensionManager).previewInstall(
       stringParam(params, 'extensionId'),
@@ -724,6 +788,11 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'method'),
       params.args,
     )
+    case 'extensions.bundle.invoke': return await invokeArkmeBundle(
+      stringParam(params, 'packageName'),
+      stringParam(params, 'method'),
+      params.args,
+    )
     default: throw new ArkmePluginError('operation-unknown', '不支持的Arkme 插件操作', false, 404)
   }
 }
@@ -755,4 +824,25 @@ function requireExtensionManager(manager: ArkmeExtensionManager | undefined): Ar
     throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展市场不可用', false, 503)
   }
   return manager
+}
+
+function requireOwnedExtensionInventory(inventory: ArkmeOwnedExtensionInventory | undefined): ArkmeOwnedExtensionInventory {
+  if (inventory === undefined) throw new ArkmePluginError('extension-runtime-unavailable', '扩展运行时尚未就绪', true, 503)
+  return inventory
+}
+
+function extensionVisibilityParam(params: Record<string, unknown>): 'private' | 'unlisted' | 'public' {
+  const value = stringParam(params, 'visibility')
+  if (!['private', 'unlisted', 'public'].includes(value)) {
+    throw new ArkmePluginError('extension-visibility-invalid', '扩展可见范围无效', false, 400)
+  }
+  return value as 'private' | 'unlisted' | 'public'
+}
+
+function extensionEditableVisibilityParam(params: Record<string, unknown>): 'private' | 'public' {
+  const value = stringParam(params, 'visibility')
+  if (value !== 'private' && value !== 'public') {
+    throw new ArkmePluginError('extension-metadata-invalid', '扩展可见范围无效', false, 400)
+  }
+  return value
 }

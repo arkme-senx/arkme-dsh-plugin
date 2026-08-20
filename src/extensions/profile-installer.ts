@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync } from 'node:fs'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { closeSync, existsSync, openSync, statSync } from 'node:fs'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
@@ -40,22 +40,69 @@ export interface ArkmeExtensionProfileInstallerOptions {
 }
 
 export class ArkmeExtensionProfileInstaller {
+  private mutationTail: Promise<void> = Promise.resolve()
+
   constructor(private readonly options: ArkmeExtensionProfileInstallerOptions) {}
 
   async install(bundleDirectory: string): Promise<void> {
-    if (!existsSync(bundleDirectory)) throw new Error('扩展 Bundle 目录不存在')
-    await this.run([
-      'plugin', '--profile', this.options.profileName,
-      ...localExtensionPnpmArgs(['add', `link:${bundleDirectory}`]),
-    ])
+    await this.mutate(async () => {
+      if (!existsSync(bundleDirectory)) throw new Error('扩展 Bundle 目录不存在')
+      await this.run([
+        'plugin', '--profile', this.options.profileName,
+        ...localExtensionPnpmArgs(['add', `link:${bundleDirectory}`]),
+      ])
+    })
+  }
+
+  async installTarball(bundlePath: string): Promise<void> {
+    await this.mutate(async () => {
+      if (!existsSync(bundlePath) || !statSync(bundlePath).isFile()) throw new Error('扩展 Bundle tgz 不存在')
+      await this.run([
+        'plugin', '--profile', this.options.profileName,
+        ...localExtensionPnpmArgs(['add', bundlePath]),
+      ])
+    })
   }
 
   async remove(packageName: string): Promise<void> {
-    if (!/^@arkme-local\/ext-[a-f0-9]{16}$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
-    await this.run([
-      'plugin', '--profile', this.options.profileName,
-      ...localExtensionPnpmArgs(['remove', packageName]),
-    ])
+    await this.mutate(async () => {
+      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
+      await this.run([
+        'plugin', '--profile', this.options.profileName,
+        ...localExtensionPnpmArgs(['remove', packageName]),
+      ])
+    })
+  }
+
+  /** Keep the dependency installed while changing whether its public Profile bundle layer composes at boot. */
+  async setEnabled(packageName: string, enabled: boolean): Promise<void> {
+    await this.mutate(async () => {
+      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
+      const profileDirectory = join(this.options.dshHome, 'profiles', this.options.profileName)
+      const manifestPath = join(profileDirectory, 'package.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+        dependencies?: Record<string, string>
+        dsh?: { profile?: { bundles?: string[] } }
+      }
+      if (manifest.dependencies?.[packageName] === undefined) throw new Error('扩展尚未安装到当前 DSH Profile')
+      const bundles = manifest.dsh?.profile?.bundles
+      if (!Array.isArray(bundles) || bundles.some(value => typeof value !== 'string')) {
+        throw new Error('DSH Profile Bundle 配置无效')
+      }
+      const nextBundles = bundles.filter(value => value !== packageName)
+      if (enabled) nextBundles.push(packageName)
+      if (nextBundles.length === bundles.length && nextBundles.every((value, index) => value === bundles[index])) return
+      manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: nextBundles } }
+      const temporary = join(profileDirectory, `.package.${randomUUID()}.tmp`)
+      try {
+        await writeFile(temporary, `${JSON.stringify(manifest, undefined, 2)}\n`, { mode: 0o600, flag: 'wx' })
+        await chmod(temporary, 0o600)
+        await rename(temporary, manifestPath)
+      } finally {
+        await rm(temporary, { force: true }).catch(() => undefined)
+        try { await chmod(manifestPath, 0o600) } catch { /* Preserve the original error when replacement failed. */ }
+      }
+    })
   }
 
   async restart(input: {
@@ -67,11 +114,14 @@ export class ArkmeExtensionProfileInstaller {
     previousInstalled?: ArkmeInstalledExtension
     expectActive: boolean
   }): Promise<void> {
+    await this.mutationTail
     if (this.options.stateDirectory === undefined || this.options.healthUrl === undefined
       || this.options.helperPath === undefined || this.options.restartArgv === undefined
       || this.options.installStoreDirectory === undefined) return
     const plan: ArkmeExtensionProfileRestartPlan = {
-      schemaVersion: 1,
+      schemaVersion: input.targetBundlePath?.endsWith('.tgz') === true
+        || input.previousBundlePath?.endsWith('.tgz') === true
+        || input.previousInstalled?.executionModel !== undefined ? 2 : 1,
       parentPid: process.pid,
       execPath: this.options.execPath,
       dshBinPath: this.options.dshBinPath,
@@ -148,5 +198,11 @@ export class ArkmeExtensionProfileInstaller {
       const detail = profilePluginCommandErrorDetail(error)
       throw new Error(detail === '' ? 'DSH Profile 插件操作失败' : `DSH Profile 插件操作失败：${detail}`, { cause: error })
     }
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation, operation)
+    this.mutationTail = result.then(() => undefined, () => undefined)
+    return await result
   }
 }

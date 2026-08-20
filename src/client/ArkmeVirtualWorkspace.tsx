@@ -983,6 +983,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   return <section style={styles.shell} aria-label="Arkme 会话列表">
     {extensionCenterOpen && <ArkmeExtensionCenter
       currentSessionId={currentSessionId}
+      {...(auth?.userId === undefined ? {} : { currentUserId: auth.userId })}
       onClose={() => { setExtensionCenterOpen(false) }}
     />}
     {directory === 'send_to_self' && <header style={styles.header}>

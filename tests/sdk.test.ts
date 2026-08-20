@@ -18,6 +18,94 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('manages extension previews through same-origin Host operations', async () => {
+    const previewRef = `preview_v1_${'a'.repeat(64)}`
+    const secondRef = `preview_v1_${'b'.repeat(64)}`
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/extension-preview/upload')) {
+        expect(init?.method).toBe('POST')
+        expect(new Headers(init?.headers).has('authorization')).toBe(false)
+        return success({
+          extension_id: 'ext-1', applied_preview_ref: previewRef,
+          preview_images: [{ preview_ref: previewRef, content_type: 'image/png', preview_size: 4, width: 640, height: 480, created_at: 1 }],
+          preview_revision: 1,
+        })
+      }
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      if (request.operation === 'extensions.preview.delete') return success({
+        extension_id: 'ext-1', preview_images: [], preview_revision: 2,
+      })
+      if (request.operation === 'extensions.preview.reorder') return success({
+        extension_id: 'ext-1',
+        preview_images: [
+          { preview_ref: secondRef, content_type: 'image/png', preview_size: 5, width: 800, height: 600, created_at: 2 },
+          { preview_ref: previewRef, content_type: 'image/png', preview_size: 4, width: 640, height: 480, created_at: 1 },
+        ],
+        preview_revision: 3,
+      })
+      throw new Error(`unexpected ${request.operation}`)
+    })
+    const sdk = createArkmeSdk({ fetchImpl: fetchImpl as typeof fetch })
+    await expect(sdk.addExtensionPreview(
+      'ext-1', new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' }),
+      { clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432' },
+    )).resolves.toMatchObject({ applied_preview_ref: previewRef, preview_revision: 1 })
+    await expect(sdk.deleteExtensionPreview('ext-1', previewRef, 1)).resolves.toMatchObject({ preview_revision: 2 })
+    await expect(sdk.reorderExtensionPreviews('ext-1', [secondRef, previewRef], 2)).resolves.toMatchObject({ preview_revision: 3 })
+    expect(sdk.extensionPreviewUrl('ext-1', previewRef))
+      .toBe(`/arkme-self/api/extension-preview?extension_id=ext-1&preview_ref=${previewRef}`)
+    expect(calls).toEqual([
+      { operation: 'extensions.preview.delete', params: { extensionId: 'ext-1', previewRef, expectedRevision: 1 } },
+      { operation: 'extensions.preview.reorder', params: { extensionId: 'ext-1', orderedPreviewRefs: [secondRef, previewRef], expectedRevision: 2 } },
+    ])
+  })
+
+  it('uploads owned extension icons through same-origin Host without signed URLs', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/arkme-self/api/extension-icon/upload')
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('x-arkme-extension-id')).toBe('ext-1')
+      expect(new Headers(init?.headers).has('authorization')).toBe(false)
+      return success({
+        icon_upload_session_id: 'iconup-1', extension_id: 'ext-1', status: 'applied',
+        icon_ref: `icon_v1_${'a'.repeat(64)}`, content_type: 'image/png', icon_size: 4,
+        icon_sha256: 'a'.repeat(64), updated_at: 1,
+      })
+    })
+    const sdk = createArkmeSdk({ fetchImpl: fetchImpl as typeof fetch })
+    await expect(sdk.setExtensionIcon(
+      'ext-1', new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' }),
+      { clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432' },
+    )).resolves.toMatchObject({ status: 'applied' })
+    expect(sdk.extensionIconUrl('ext-1', `icon_v1_${'a'.repeat(64)}`))
+      .toBe(`/arkme-self/api/extension-icon?extension_id=ext-1&icon_ref=icon_v1_${'a'.repeat(64)}`)
+  })
+
+  it('exposes installed extensions and desired enable state without raw Profile paths', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'extensions.installed-list') return success([])
+        if (request.operation === 'extensions.enabled.set') return success({
+          extension_id: 'ext-1', installed: true, enabled: false, active: false,
+          restart_required: true, message: '已关闭',
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.installedExtensions()).resolves.toEqual([])
+    await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({ enabled: false })
+    expect(calls).toEqual([
+      { operation: 'extensions.installed-list' },
+      { operation: 'extensions.enabled.set', params: { extensionId: 'ext-1', enabled: false } },
+    ])
+  })
+
   it('binds the default browser fetch to the global receiver', async () => {
     const originalFetch = globalThis.fetch
     const receiverFetch = vi.fn(function (this: unknown) {
@@ -50,6 +138,8 @@ describe('Arkme SDK', () => {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
+              extensionManagement: true,
+              extensionIcons: true,
             },
             limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
           })
@@ -77,7 +167,7 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
     await expect(sdk.profile({ refresh: true })).resolves.toMatchObject({
@@ -143,6 +233,55 @@ describe('Arkme SDK', () => {
         },
       },
     ])
+  })
+
+  it('exposes typed current-user extension inventory and Cordis publication', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'extensions.mine.list') return success({ items: [], warnings: [] })
+        if (request.operation === 'extensions.mine.publish') {
+          return success({ extension_id: 'ext-1', version: '1.0.0', status: 'published' })
+        }
+        if (request.operation === 'extensions.metadata.update') {
+          return success({
+            extension_id: 'ext-1', name: '新名称', description: '', visibility: 'public', updated_at: 2,
+          })
+        }
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toEqual({ items: [], warnings: [] })
+    await expect(sdk.publishMyExtension({
+      ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+      visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+    })).resolves.toMatchObject({ status: 'published' })
+    await expect(sdk.updateExtensionMetadata('ext-1', {
+      name: '新名称', description: '', visibility: 'public',
+      clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
+    })).resolves.toMatchObject({ name: '新名称', visibility: 'public' })
+    expect(calls).toEqual([
+      { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
+      { operation: 'extensions.mine.publish', params: {
+        ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+        visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      } },
+      { operation: 'extensions.metadata.update', params: {
+        extensionId: 'ext-1', name: '新名称', description: '', visibility: 'public',
+        clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
+      } },
+    ])
+    expect(() => sdk.publishMyExtension({
+      ownedRef: '', name: '天气', description: '天气卡片', version: '1.0.0',
+      visibility: 'private', clientMutationId: 'bad',
+    })).toThrow(/reference|引用/)
+    await expect(sdk.updateExtensionMetadata('ext-1', {
+      name: '新名称', description: '', visibility: 'unlisted' as never,
+      clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
+    })).rejects.toThrow(/metadata|visibility/)
   })
 
   it('keeps all five outgoing-call Host operations typed while credentials stay off dedicated SDK methods', async () => {

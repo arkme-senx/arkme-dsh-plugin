@@ -45,9 +45,11 @@ export function registerArkmeTools(
   }
   for (const definition of createArkmeCoreToolDefinitions(ports, profile)) ctx.tools.register(definition)
   const toolNames = arkmeToolCatalog.toolNamesFor(profile)
-  if (toolNames.includes('arkme_id_set') || toolNames.includes('arkme_bot_openclaw_connect')) {
+  if (toolNames.includes('arkme_id_set') || toolNames.includes('arkme_bot_openclaw_connect')
+    || toolNames.includes('arkme_extension_review_create')) {
     ctx.on('tools/pre-execute', async (exec, next) => {
-      if (exec.name !== 'arkme_id_set' && exec.name !== 'arkme_bot_openclaw_connect') return await next()
+      if (exec.name !== 'arkme_id_set' && exec.name !== 'arkme_bot_openclaw_connect'
+        && exec.name !== 'arkme_extension_review_create') return await next()
       const decision = await next()
       if (decision.kind !== 'allow') return decision
       if (exec.name === 'arkme_bot_openclaw_connect') {
@@ -57,14 +59,25 @@ export function registerArkmeTools(
         }
       }
       const args = exec.arguments as Record<string, unknown>
-      const raw = typeof args.arkme_id === 'string' ? args.arkme_id.trim() : ''
-      const sanitized = raw.replace(/[\u0000-\u001F\u007F]/g, ' ')
-      const display = sanitized.length > 64 ? `${sanitized.slice(0, 64)}…` : sanitized
+      if (exec.name === 'arkme_id_set') {
+        const raw = typeof args.arkme_id === 'string' ? args.arkme_id.trim() : ''
+        const sanitized = raw.replace(/[\u0000-\u001F\u007F]/g, ' ')
+        const display = sanitized.length > 64 ? `${sanitized.slice(0, 64)}…` : sanitized
+        return {
+          kind: 'ask',
+          reason: display === ''
+            ? 'Arkme ID 通常只能修改一次。确认执行本次设置吗？'
+            : `Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“${display}”吗？`,
+        }
+      }
+      const extensionId = typeof args.extension_id === 'string' ? args.extension_id.trim().slice(0, 128) : ''
+      const parentRef = typeof args.parent_review_ref === 'string' ? args.parent_review_ref.trim() : ''
+      const rating = typeof args.rating === 'number' && Number.isSafeInteger(args.rating) ? args.rating : undefined
       return {
         kind: 'ask',
-        reason: display === ''
-          ? 'Arkme ID 通常只能修改一次。确认执行本次设置吗？'
-          : `Arkme ID 通常只能修改一次。确认将当前账号的 Arkme ID 设置为“${display}”吗？`,
+        reason: parentRef === ''
+          ? `确认向扩展 ${extensionId} 发表 ${String(rating ?? '?')} 星评价吗？评论正文也会作为普通快记显示在首页。`
+          : `确认回复扩展 ${extensionId} 的这条评论吗？回复正文也会作为普通快记显示在首页。`,
       }
     })
   }

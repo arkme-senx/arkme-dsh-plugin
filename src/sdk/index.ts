@@ -39,6 +39,18 @@ import type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
 } from '../types.js'
+import type {
+  ArkmeExtensionCatalogItem, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionMetadataUpdateInput,
+  ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
+  ArkmeExtensionReviewCreateInput,
+  ArkmeExtensionReviewCreateResult,
+  ArkmeExtensionReviewItem,
+  ArkmeExtensionReviewPage,
+  ArkmeExtensionRatingSummary,
+} from '../extensions/types.js'
+import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 
 export type {
   ArkmeArrangementDetail,
@@ -102,6 +114,27 @@ export type {
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
 } from '../types.js'
+export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+  ArkmeMyExtensionState, ArkmeMyExtensionWarning,
+} from '../extensions/owned-types.js'
+export type {
+  ArkmeExtensionCatalogItem,
+  ArkmeExtensionEnabledResult,
+  ArkmeExtensionEnabledState,
+  ArkmeExtensionIconMediaType,
+  ArkmeExtensionIconResult,
+  ArkmeExtensionMetadataUpdateInput,
+  ArkmeExtensionPreviewGallery,
+  ArkmeExtensionPreviewItem,
+  ArkmeExtensionPreviewMediaType,
+  ArkmeInstalledExtensionView,
+  ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewAvatarFallback,
+  ArkmeExtensionReviewCreateInput,
+  ArkmeExtensionReviewCreateResult,
+  ArkmeExtensionReviewItem,
+  ArkmeExtensionReviewPage,
+} from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
@@ -163,6 +196,140 @@ export class ArkmeSdk {
     return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
   }
 
+  /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
+  async installedExtensions(signal?: AbortSignal): Promise<ArkmeInstalledExtensionView[]> {
+    return await this.call<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, signal)
+  }
+
+  async extensionEnabledState(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionEnabledState> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionEnabledState>('extensions.enabled-state', { extensionId }, signal)
+  }
+
+  /** Change desired activation without uninstalling the verified extension artifact. */
+  async setExtensionEnabled(
+    extensionId: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionEnabledResult> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled }, signal)
+  }
+
+  /** Build the same-origin URL used by every extension list/detail avatar surface. */
+  extensionIconUrl(extensionId: string, iconRef: string): string {
+    if (extensionId.trim() === '' || !/^icon_v1_[a-f0-9]{64}$/.test(iconRef.trim())) {
+      throw new TypeError('Arkme extension icon identity is invalid')
+    }
+    return `${this.route}/extension-icon?extension_id=${encodeURIComponent(extensionId.trim())}&icon_ref=${encodeURIComponent(iconRef.trim())}`
+  }
+
+  /** Upload or replace an owned extension icon without exposing registry signed transport. */
+  async setExtensionIcon(
+    extensionId: string,
+    file: Blob,
+    options: { clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeExtensionIconResult> {
+    const mediaType = file.type.toLowerCase() as ArkmeExtensionIconMediaType
+    if (extensionId.trim() === '' || !['image/png', 'image/jpeg', 'image/webp'].includes(mediaType)) {
+      throw new TypeError('Arkme extension icon must be PNG, JPEG, or WebP')
+    }
+    if (file.size <= 0 || file.size > 2 * 1024 * 1024) throw new TypeError('Arkme extension icon must be smaller than 2 MiB')
+    const mutationId = options.clientMutationId ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mutationId)) {
+      throw new TypeError('Arkme extension icon mutation id must be a UUID')
+    }
+    const response = await this.fetchImpl(`${this.route}/extension-icon/upload`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': mediaType,
+        'X-Arkme-Extension-Id': extensionId.trim(),
+        'X-Arkme-Idempotency-Key': mutationId,
+      },
+      body: file,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    let body: ArkmePluginResponse<ArkmeExtensionIconResult>
+    try { body = await response.json() as ArkmePluginResponse<ArkmeExtensionIconResult> } catch {
+      throw new ArkmeClientError({ code: 'local-response-invalid', message: 'Arkme 插件返回了无效响应', retryable: true })
+    }
+    if (!body.ok) throw new ArkmeClientError(body.error)
+    return body.value
+  }
+
+  extensionPreviewUrl(extensionId: string, previewRef: string): string {
+    if (extensionId.trim() === '' || !/^preview_v1_[a-f0-9]{64}$/.test(previewRef.trim())) {
+      throw new TypeError('Arkme extension preview identity is invalid')
+    }
+    return `${this.route}/extension-preview?extension_id=${encodeURIComponent(extensionId.trim())}&preview_ref=${encodeURIComponent(previewRef.trim())}`
+  }
+
+  async addExtensionPreview(
+    extensionId: string,
+    file: Blob,
+    options: { clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    const mediaType = file.type.toLowerCase() as ArkmeExtensionPreviewMediaType
+    if (extensionId.trim() === '' || !['image/png', 'image/jpeg', 'image/webp'].includes(mediaType)) {
+      throw new TypeError('Arkme extension preview must be PNG, JPEG, or WebP')
+    }
+    if (file.size <= 0 || file.size > 5 * 1024 * 1024) throw new TypeError('Arkme extension preview must be smaller than 5 MiB')
+    const mutationId = options.clientMutationId ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mutationId)) {
+      throw new TypeError('Arkme extension preview mutation id must be a UUID')
+    }
+    const response = await this.fetchImpl(`${this.route}/extension-preview/upload`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': mediaType,
+        'X-Arkme-Extension-Id': extensionId.trim(),
+        'X-Arkme-Idempotency-Key': mutationId,
+      },
+      body: file,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    let body: ArkmePluginResponse<ArkmeExtensionPreviewGallery>
+    try { body = await response.json() as ArkmePluginResponse<ArkmeExtensionPreviewGallery> } catch {
+      throw new ArkmeClientError({ code: 'local-response-invalid', message: 'Arkme 插件返回了无效响应', retryable: true })
+    }
+    if (!body.ok) throw new ArkmeClientError(body.error)
+    return body.value
+  }
+
+  async deleteExtensionPreview(
+    extensionId: string,
+    previewRef: string,
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    if (extensionId.trim() === '' || !/^preview_v1_[a-f0-9]{64}$/.test(previewRef.trim())
+      || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new TypeError('Arkme extension preview delete parameters are invalid')
+    }
+    return await this.call<ArkmeExtensionPreviewGallery>('extensions.preview.delete', {
+      extensionId: extensionId.trim(), previewRef: previewRef.trim(), expectedRevision,
+    }, signal)
+  }
+
+  async reorderExtensionPreviews(
+    extensionId: string,
+    orderedPreviewRefs: string[],
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    const refs = orderedPreviewRefs.map(value => value.trim())
+    if (extensionId.trim() === '' || refs.length <= 0 || refs.length > 20
+      || refs.some(value => !/^preview_v1_[a-f0-9]{64}$/.test(value)) || new Set(refs).size !== refs.length
+      || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new TypeError('Arkme extension preview reorder parameters are invalid')
+    }
+    return await this.call<ArkmeExtensionPreviewGallery>('extensions.preview.reorder', {
+      extensionId: extensionId.trim(), orderedPreviewRefs: refs, expectedRevision,
+    }, signal)
+  }
+
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
   }
@@ -173,6 +340,58 @@ export class ArkmeSdk {
       undefined,
       options.signal,
     )
+  }
+
+  /** List current-account Cordis, Profile-local and cloud-published extensions through one Host owner. */
+  async myExtensions(options: { currentSessionId?: string; signal?: AbortSignal } = {}): Promise<ArkmeMyExtensionPage> {
+    return await this.call<ArkmeMyExtensionPage>('extensions.mine.list', {
+      ...(options.currentSessionId === undefined || options.currentSessionId.trim() === ''
+        ? {}
+        : { currentSessionId: options.currentSessionId.trim() }),
+    }, options.signal)
+  }
+
+  /** Publish one exact live Cordis Package after the caller has obtained explicit current-user intent. */
+  publishMyExtension(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
+    if (input.ownedRef.trim() === '') throw new TypeError('Arkme extension reference must not be empty')
+    if (input.name.trim() === '' || input.name.trim().length > 120) throw new TypeError('Arkme extension name is invalid')
+    if (input.description.length > 2_000) throw new TypeError('Arkme extension description is too long')
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(input.version.trim())) {
+      throw new TypeError('Arkme extension version must be SemVer')
+    }
+    if (!['private', 'unlisted', 'public'].includes(input.visibility)) throw new TypeError('Arkme extension visibility is invalid')
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new TypeError('Arkme extension client mutation id must be a UUID')
+    }
+    return this.call<ArkmeExtensionPublishResult>('extensions.mine.publish', {
+      ownedRef: input.ownedRef,
+      name: input.name,
+      description: input.description,
+      version: input.version,
+      visibility: input.visibility,
+      ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog }),
+      clientMutationId: input.clientMutationId,
+    }, signal)
+  }
+
+  async updateExtensionMetadata(
+    extensionId: string,
+    input: ArkmeExtensionMetadataUpdateInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionCatalogItem> {
+    const name = input.name.trim()
+    const description = input.description.trim()
+    if (extensionId.trim() === '' || name === '' || [...name].length > 120 || [...description].length > 2_000
+      || (input.visibility !== 'private' && input.visibility !== 'public')) {
+      throw new TypeError('Arkme extension metadata or visibility is invalid')
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new TypeError('Arkme extension metadata mutation id must be a UUID')
+    }
+    return await this.call<ArkmeExtensionCatalogItem>('extensions.metadata.update', {
+      extensionId: extensionId.trim(), name, description, visibility: input.visibility,
+      clientMutationId: input.clientMutationId,
+    }, signal)
   }
 
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
@@ -236,6 +455,19 @@ export class ArkmeSdk {
   ): Promise<ArkmeArrangementPage> {
     return await this.call<ArkmeArrangementPage>('arrangements.list', {
       ...(options.status === undefined ? {} : { status: options.status }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
+  /** Read public reviews and rating summary for one extension. */
+  async extensionReviews(
+    extensionId: string,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeExtensionReviewPage> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension id must not be empty')
+    return await this.call<ArkmeExtensionReviewPage>('extensions.reviews.list', {
+      extensionId,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
     }, options.signal)
@@ -321,6 +553,23 @@ export class ArkmeSdk {
 
   async clearArrangementReminders(signal?: AbortSignal): Promise<ArkmeArrangementReminderWriteResult> {
     return await this.call<ArkmeArrangementReminderWriteResult>('arrangements.reminders.clear', undefined, signal)
+  }
+
+  /** Create a top-level review or reply through the account-bound Host owner. */
+  async createExtensionReview(
+    input: ArkmeExtensionReviewCreateInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionReviewCreateResult> {
+    if (input.extensionId.trim() === '' || input.textContent.trim() === '' || input.clientMutationId.trim() === '') {
+      throw new TypeError('Arkme extension review id, text, and mutation id must not be empty')
+    }
+    return await this.call<ArkmeExtensionReviewCreateResult>('extensions.reviews.create', {
+      extensionId: input.extensionId,
+      textContent: input.textContent,
+      ...(input.rating === undefined ? {} : { rating: input.rating }),
+      ...(input.parentReviewRef === undefined ? {} : { parentReviewRef: input.parentReviewRef }),
+      clientMutationId: input.clientMutationId,
+    }, signal)
   }
 
   async listSources(

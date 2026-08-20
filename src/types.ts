@@ -404,6 +404,14 @@ export interface ArkmeProviderCapabilities {
     userCard: true
     openPrivateChat: true
     groupSettings: true
+    /** Installed-extension inspection and desired enable/disable state are available. */
+    extensionManagement?: true
+    /** Owner-authorized extension name, description, and private/public visibility editing is available. */
+    extensionMetadataEdit?: true
+    /** Extension-level icon upload and same-origin rendering are available. */
+    extensionIcons?: true
+    /** Extension-level preview gallery SDK and Tool mutations are available. */
+    extensionPreviews?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
@@ -411,6 +419,12 @@ export interface ArkmeProviderCapabilities {
     worldInteractions?: true
     /** Optional additive capability for the independent Arrangement consumer. */
     arrangements?: true
+    /** Optional additive current-account Cordis/Profile/cloud extension inventory. */
+    myExtensions?: true
+    /** Optional additive publication of an exact owned live Cordis Package. */
+    extensionPublish?: true
+    /** Optional additive capability for extension reviews, replies, and rating summaries. */
+    extensionReviews?: true
   }
   limits: {
     maxTextLength: number
@@ -1446,6 +1460,8 @@ export type ArkmePluginOperation =
   | 'arrangements.reminders.mark-read'
   | 'arrangements.reminders.mark-all-read'
   | 'arrangements.reminders.clear'
+  | 'extensions.reviews.list'
+  | 'extensions.reviews.create'
   | 'sources.list'
   | 'source.timeline'
   | 'source.mark-read'
@@ -1479,6 +1495,14 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.prepare'
   | 'calls.outgoing.heartbeat'
   | 'calls.outgoing.release'
+  | 'extensions.mine.list'
+  | 'extensions.mine.publish'
+  | 'extensions.metadata.update'
+  | 'extensions.installed-list'
+  | 'extensions.enabled-state'
+  | 'extensions.enabled.set'
+  | 'extensions.preview.delete'
+  | 'extensions.preview.reorder'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
@@ -1514,7 +1538,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.catalog.detail'
   | 'extensions.my-list'
   | 'extensions.delete'
-  | 'extensions.installed-list'
   | 'extensions.updates'
   | 'extensions.install.preview'
   | 'extensions.install.start'
@@ -1524,6 +1547,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.persistent.invoke'
+  | 'extensions.bundle.invoke'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

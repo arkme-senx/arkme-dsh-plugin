@@ -25,6 +25,22 @@ DSH_HOME=<arkme-dsh-home> dsh plugin --profile web add <artifact-directory>/seng
 DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 ```
 
+## 我的扩展
+
+扩展市场的“我的扩展”统一展示当前 Arkme 账号创建的 Dynamic Cordis、本地 Profile Bundle 和云端发布记录。同一扩展通过明确血缘合并状态，不按名称猜测。
+
+本地准入读取 `link:`、目录型 `file:` 和本地 `file:*.tgz` Bundle；`@deepseek-ai/*` 官方插件、远端依赖和第三方市场安装项不会进入列表。未发布且通过安全校验的 Cordis/本地 Bundle 显示“发布”，已发布状态只以标题旁的 badge 呈现。
+
+Cordis 与本地 Bundle 的新发布统一为标准 DSH `bundle.tgz`；安装验签后直接调用官方 `dsh plugin add <tgz>`。历史已发布 `.arkext` 在迁移覆盖完成前继续通过隔离的 `@arkme-local` wrapper 安装，但不会再产生新的 v1 发布。原生 Bundle 安装前会明确提示其拥有 DSH 插件进程权限。
+
+公开 SDK 可通过 `myExtensions()` 读取同一投影，并在取得明确用户意图后通过 `publishMyExtension()` 发布 opaque ref 指向的确切来源。完整合同见 [Consumer Plugin Contract](docs/consumer-plugin-contract.md)。
+
+创建新的 Cordis 扩展时，当前 Agent 会话必须具备 `cordis_define` 与 `cordis_inspect_self`；缺少能力时模型会在编码前立即说明。已经由“我的扩展”验证的本地 Profile Bundle 不受这项 Cordis 创作限制。新发布统一双上传 `bundle.tgz + source.tgz`，两者都通过服务端校验后才进入目录。
+
+## 扩展评论与评分
+
+公开扩展详情包含用户评分、评论和回复。顶级评论必须选择 1-5 星，回复不改变评分；评论正文先写入普通 Record，因此同时出现在当前账号首页。Host 使用持久 operation 和稳定 UID 处理“Record 已成功、市场关系暂时失败”的恢复，并只向 UI、Tools 和公开 SDK 暴露账号绑定的 `reviewRef`。完整能力矩阵和失败语义见 [`docs/extension-reviews.md`](docs/extension-reviews.md)。
+
 ## 本地开发
 
 ```sh

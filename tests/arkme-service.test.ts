@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmePluginError, ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
 import type { ArkmeLongArticleDraft, ArkmePendingWrite } from '../src/types.js'
+import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
 import type {
   ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -20,6 +21,7 @@ class MemoryStateStore {
   readonly cached = new Map<number, ArkmeSelfRecordItem[]>()
   readonly events: string[] = []
   readonly longArticleDrafts = new Map<string, ArkmeLongArticleDraft>()
+  readonly extensionReviewOperations = new Map<number, ArkmeExtensionReviewOperation[]>()
   summary: ArkmeSelfSummary | undefined
   page: ArkmeSelfRecordList | undefined
   revisionValue = 0
@@ -81,6 +83,34 @@ class MemoryStateStore {
       : item))
     this.events.push('local-synced')
     this.revisionValue += 1
+  }
+  async listExtensionReviewOperations(userId: number) {
+    return [...(this.extensionReviewOperations.get(userId) ?? [])].map(item => ({ ...item }))
+  }
+  async putExtensionReviewOperation(userId: number, operation: ArkmeExtensionReviewOperation) {
+    this.extensionReviewOperations.set(userId, [
+      ...(this.extensionReviewOperations.get(userId) ?? [])
+        .filter(item => item.clientMutationId !== operation.clientMutationId),
+      { ...operation },
+    ])
+  }
+  async markExtensionReviewOperation(
+    userId: number,
+    clientMutationId: string,
+    state: ArkmeExtensionReviewOperation['state'],
+    error?: string,
+  ) {
+    const operation = (this.extensionReviewOperations.get(userId) ?? [])
+      .find(item => item.clientMutationId === clientMutationId)
+    if (operation !== undefined) {
+      operation.state = state
+      operation.attempts += 1
+      operation.lastError = error
+    }
+  }
+  async removeExtensionReviewOperation(userId: number, clientMutationId: string) {
+    this.extensionReviewOperations.set(userId, (this.extensionReviewOperations.get(userId) ?? [])
+      .filter(item => item.clientMutationId !== clientMutationId))
   }
   async getLongArticleDraft(userId: number, sourceRef: string, itemUid?: string) {
     return this.longArticleDrafts.get(`${String(userId)}:${sourceRef}:${itemUid ?? ''}`)
@@ -151,22 +181,183 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
-  it('resolves extension authors from public Arkme profiles without requiring an avatar', async () => {
+  it('resolves extension authors with safe real and default avatar projections', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       expect(String(input)).toBe('https://auth.test/api/v1/auth/get-public-users-by-ids')
       expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
-      expect(JSON.parse(String(init?.body))).toEqual({ user_ids: [77] })
-      return json({ code: 200, data: { items: [{
-        user_id: 77, nick_name: '发布者', name_slug: 'publisher', head_img: '',
-      }] } })
+      expect(JSON.parse(String(init?.body))).toEqual({ user_ids: [77, 78, 79] })
+      return json({ code: 200, data: { items: [
+        {
+          user_id: 77, nick_name: '真实头像', name_slug: 'publisher',
+          head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+        },
+        { user_id: 78, nick_name: '手机号头像', name_slug: '', head_img: 'phone_avatar://v1/7/林' },
+        { user_id: 79, nick_name: '默认头像', name_slug: '', head_img: '' },
+      ] } })
     })
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
 
-    await expect(service.extensionAuthors([77])).resolves.toEqual(new Map([[
-      77, { displayName: '发布者', arkmeId: 'publisher' },
-    ]]))
+    const authors = await service.extensionAuthors([79, 77, 78])
+    expect(authors.get(77)).toEqual({
+      displayName: '真实头像', arkmeId: 'publisher', avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
+    })
+    expect(authors.get(78)).toEqual({
+      displayName: '手机号头像', avatarFallback: { kind: 'phone_default', colorIndex: 7, label: '林' },
+    })
+    expect(authors.get(79)).toEqual({ displayName: '默认头像' })
+  })
+
+  it('writes extension reviews to Record first, hides raw record ids, and repairs registry failure on refresh', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    let registryAvailable = false
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url === 'https://extension.test/api/public/v1/extensions/detail') {
+        return json({ code: 0, data: { extension: {
+          extension_id: body.extension_id, owner_user_id: 20002, name: '扩展', description: '', visibility: 'public',
+        } } })
+      }
+      if (url === 'https://record.test/api/v1/records/create') {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url === 'https://extension.test/api/v1/extensions/reviews/create') {
+        if (!registryAvailable) return json({ code: 50001, message: 'temporary unavailable', data: null }, 500)
+        return json({ code: 0, data: {
+          review: {
+            extension_id: body.extension_id, review_id: `rvw_${String(body.record_uid).slice(0, 8)}`, user_id: 10001,
+            ...(body.parent_review_id === undefined ? {} : { parent_review_id: body.parent_review_id }),
+            text_content: body.text_content, rating: body.rating ?? 0,
+            created_at: 123,
+          },
+          rating_summary: { average: 5, count: 1, histogram: [0, 0, 0, 0, 1] },
+          idempotent_replay: true,
+        } })
+      }
+      if (url === 'https://extension.test/api/public/v1/extensions/reviews/list') {
+        return json({ code: 0, data: {
+          items: [
+            { extension_id: 'ext-review-1', review_id: 'rvw_root', user_id: 10001, text_content: '值得推荐', rating: 5, created_at: 123 },
+            { extension_id: 'ext-review-1', review_id: 'rvw_reply', parent_review_id: 'rvw_root', user_id: 20002, text_content: '谢谢反馈', rating: 0, created_at: 124 },
+          ],
+          total: 1, limit: 20, offset: 0, has_more: false,
+          rating_summary: { average: 5, count: 1, histogram: [0, 0, 0, 0, 1] },
+        } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        const userIds = Array.isArray(body.user_ids) ? body.user_ids : []
+        return json({ code: 200, data: { items: userIds.map(userId => ({
+          user_id: userId, nick_name: userId === 10001 ? '我' : '作者', name_slug: `user-${String(userId)}`, head_img: '',
+        })) } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extension.test' }, sessions, state, fetchImpl,
+    )
+    const input = {
+      extensionId: 'ext-review-1', textContent: '值得推荐', rating: 5,
+      clientMutationId: 'review-mutation-0001',
+    }
+
+    await expect(service.createExtensionReview(input)).rejects.toMatchObject({
+      code: 'extension-review-registry-pending', retryable: true,
+    })
+    const recordCall = calls.find(call => call.url.endsWith('/api/v1/records/create'))
+    const reviewCall = calls.find(call => call.url.endsWith('/api/v1/extensions/reviews/create'))
+    expect(recordCall?.body).toMatchObject({ text_content: '值得推荐', template_kind: 1 })
+    expect(reviewCall?.body).toMatchObject({
+      extension_id: 'ext-review-1', record_uid: recordCall?.body.record_uid,
+      text_content: '值得推荐', rating: 5, client_mutation_id: 'review-mutation-0001',
+    })
+    expect(await state.listExtensionReviewOperations(10001)).toMatchObject([{
+      state: 'failed', clientMutationId: 'review-mutation-0001',
+    }])
+
+    registryAvailable = true
+    const page = await service.listExtensionReviews('ext-review-1')
+    expect(page).toMatchObject({
+      ratingSummary: { average: 5, count: 1 },
+      total: 1,
+    })
+    expect(page.items[1]).toMatchObject({ parentReviewRef: page.items[0]?.reviewRef, textContent: '谢谢反馈' })
+    expect(await state.listExtensionReviewOperations(10001)).toEqual([])
+    const successfulCreate = calls.filter(call => call.url.endsWith('/api/v1/extensions/reviews/create')).at(-1)!
+    expect(successfulCreate.body.record_uid).toBe(recordCall?.body.record_uid)
+
+    const result = await service.createExtensionReview({
+      extensionId: input.extensionId, clientMutationId: 'review-mutation-0002', textContent: '回复内容',
+      parentReviewRef: page.items[0]!.reviewRef,
+    })
+    expect(result.review.reviewRef).toMatch(/^arkme-extension-review-v1\./)
+    const latestRecordUid = calls.filter(call => call.url.endsWith('/api/v1/records/create')).at(-1)?.body.record_uid
+    expect(JSON.stringify(result)).not.toContain(String(latestRecordUid))
+    expect(calls.filter(call => call.url.endsWith('/api/v1/extensions/reviews/create')).at(-1)?.body)
+      .toMatchObject({ parent_review_id: 'rvw_root', text_content: '回复内容' })
+  })
+
+  it('rejects an extension owner rating before creating the home Record', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      expect(String(input)).toBe('https://extension.test/api/public/v1/extensions/detail')
+      return json({ code: 0, data: { extension: {
+        extension_id: 'ext-review-owner', owner_user_id: 10001, name: '我的扩展', description: '', visibility: 'public',
+      } } })
+    })
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extension.test' }, sessions, state, fetchImpl,
+    )
+
+    await expect(service.createExtensionReview({
+      extensionId: 'ext-review-owner', textContent: '不能自评', rating: 4,
+      clientMutationId: 'review-owner-mutation-0001',
+    })).rejects.toMatchObject({
+      code: 'extension-review-owner-forbidden', retryable: false, httpStatus: 403,
+    })
+    expect(await state.listExtensionReviewOperations(10001)).toEqual([])
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a terminal registry rejection and removes its retry operation', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const urls: string[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      urls.push(url)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (url.endsWith('/api/public/v1/extensions/detail')) return json({ code: 0, data: { extension: {
+        extension_id: body.extension_id, owner_user_id: 20002, name: '他人扩展', description: '', visibility: 'public',
+      } } })
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/extensions/reviews/create')) {
+        return json({ code: 40301, message: '无权执行该操作', data: null }, 403)
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extension.test' }, sessions, state, fetchImpl,
+    )
+
+    await expect(service.createExtensionReview({
+      extensionId: 'ext-review-terminal', textContent: '服务拒绝', rating: 4,
+      clientMutationId: 'review-terminal-mutation-0001',
+    })).rejects.toMatchObject({
+      code: 'extension-review-registry-rejected', retryable: false, httpStatus: 403,
+    })
+    expect(await state.listExtensionReviewOperations(10001)).toEqual([])
+    expect(urls).not.toContain('https://auth.test/api/v1/auth/refresh-token')
   })
 
   it('preserves an extension service validation error so the calling agent can correct the package', async () => {
@@ -432,6 +623,12 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         outgoingCall: true,
+        myExtensions: true,
+        extensionPublish: true,
+        extensionManagement: true,
+        extensionMetadataEdit: true,
+        extensionIcons: true,
+        extensionPreviews: true,
       },
       limits: { maxImageBytes: 2 * 1024 * 1024 },
     })
