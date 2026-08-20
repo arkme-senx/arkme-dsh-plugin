@@ -342,6 +342,13 @@ export function extensionInstallOwnerId(
   return instance === '' ? undefined : `profile:${instance}`
 }
 
+export function extensionNativeInstallWarning(
+  preview: Pick<ArkmeExtensionInstallPreview, 'execution_model' | 'package_name'>,
+): string | undefined {
+  if (preview.execution_model !== 'dsh-native') return undefined
+  return `扩展 ${preview.package_name ?? '（未知 package）'} 是原生 DSH Bundle，将以 DSH 插件进程权限运行。确认继续安装吗？`
+}
+
 export function extensionAuthorLabel(
   item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name' | 'owner_arkme_id'>,
 ): string {
@@ -528,6 +535,12 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
   const startInstall = async (target: { extensionId: string; version?: string }) => {
     setActionBusyExtensionId(target.extensionId); setInstallError(''); setRestartNotice('')
     try {
+      const preview = await callArkme<ArkmeExtensionInstallPreview>('extensions.install.preview', {
+        extensionId: target.extensionId,
+        ...(target.version === undefined ? {} : { version: target.version }),
+      })
+      const nativeWarning = extensionNativeInstallWarning(preview)
+      if (nativeWarning !== undefined && !window.confirm(nativeWarning)) return
       const ownerId = extensionInstallOwnerId(currentSessionId, await hostInstance())
       if (ownerId === undefined) throw new Error('无法确认当前 DSH 实例，请刷新后重试。')
       const task = await callArkme<ArkmeExtensionInstallTaskSnapshot>('extensions.install.start', {

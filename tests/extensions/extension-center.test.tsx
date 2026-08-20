@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter, extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
   extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
-  formatExtensionBytes, MyExtensionCard,
+  extensionNativeInstallWarning, formatExtensionBytes, MyExtensionCard,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 import type { ArkmeMyExtensionItem } from '../../src/extensions/owned-types.js'
@@ -86,6 +86,12 @@ describe('Arkme extension market UI', () => {
     expect(extensionInstallOwnerId('', 'instance-1')).toBe('profile:instance-1')
     expect(extensionInstallOwnerId('session-1', 'instance-1')).toBe('session-1')
     expect(extensionInstallOwnerId(undefined, undefined)).toBeUndefined()
+  })
+
+  it('discloses native DSH process authority before installation', () => {
+    expect(extensionNativeInstallWarning({ execution_model: 'dsh-native', package_name: '@example/native' }))
+      .toBe('扩展 @example/native 是原生 DSH Bundle，将以 DSH 插件进程权限运行。确认继续安装吗？')
+    expect(extensionNativeInstallWarning({ execution_model: 'arkme-sandboxed' })).toBeUndefined()
   })
 
   it('renders the resolved author without exposing a version in its label', () => {

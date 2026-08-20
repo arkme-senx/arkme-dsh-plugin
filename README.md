@@ -29,9 +29,11 @@ DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 
 扩展市场的“我的扩展”统一展示当前 Arkme 账号创建的 Dynamic Cordis、本地 Profile Bundle 和云端发布记录。同一扩展通过明确血缘合并状态，不按名称猜测。
 
-本地准入只读取 `link:` 和目录型 `file:` Bundle；`@deepseek-ai/*` 官方插件、远端依赖和第三方市场安装项不会进入列表。只有仍有可读 Cordis Package、尚未发布的条目显示“发布”按钮，已发布和仅本地状态只以标题旁的 badge 呈现。
+本地准入读取 `link:`、目录型 `file:` 和本地 `file:*.tgz` Bundle；`@deepseek-ai/*` 官方插件、远端依赖和第三方市场安装项不会进入列表。未发布且通过安全校验的 Cordis/本地 Bundle 显示“发布”，已发布状态只以标题旁的 badge 呈现。
 
-公开 SDK 可通过 `myExtensions()` 读取同一投影，并在取得明确用户意图后通过 `publishMyExtension()` 发布确切 Cordis Package。完整合同见 [Consumer Plugin Contract](docs/consumer-plugin-contract.md)。
+Cordis 与本地 Bundle 都发布为同一种标准 DSH `bundle.tgz`；安装验签后直接调用官方 `dsh plugin add <tgz>`，不再生成 `@arkme-local` wrapper。原生 Bundle 安装前会明确提示其拥有 DSH 插件进程权限。
+
+公开 SDK 可通过 `myExtensions()` 读取同一投影，并在取得明确用户意图后通过 `publishMyExtension()` 发布 opaque ref 指向的确切来源。完整合同见 [Consumer Plugin Contract](docs/consumer-plugin-contract.md)。
 
 ## 本地开发
 

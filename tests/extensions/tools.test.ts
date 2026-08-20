@@ -9,7 +9,11 @@ describe('Arkme extension tools', () => {
       tools: { register: vi.fn(definition => { definitions.push(definition) }) },
       on: vi.fn((_event, listener) => { guard = listener }),
     }
-    registerArkmeExtensionTools(context as never, {} as never, {} as never, 'business')
+    const previewInstall = vi.fn(async () => ({
+      extension_id: 'ext-native', version: '1.0.0', execution_model: 'dsh-native',
+      package_name: '@example/native', manifest: { permissions: [] }, revoked: false,
+    }))
+    registerArkmeExtensionTools(context as never, { previewInstall } as never, {} as never, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect',
@@ -56,6 +60,14 @@ describe('Arkme extension tools', () => {
       { name: 'arkme_extension_search', arguments: {} },
       async () => ({ kind: 'allow' }),
     )).resolves.toEqual({ kind: 'allow' })
+    await expect(guard!(
+      { name: 'arkme_extension_apply', arguments: { extension_id: 'ext-native', version: '1.0.0' } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({
+      kind: 'ask',
+      reason: '确认下载、验签并在当前 DSH 会话应用扩展 ext-native@1.0.0 吗？该扩展是原生 DSH Bundle，将以 DSH 插件进程权限运行。',
+    })
+    expect(previewInstall).toHaveBeenCalledWith('ext-native', '1.0.0')
   })
 
   it('does not expose extension writes in atomic or disabled profiles', () => {

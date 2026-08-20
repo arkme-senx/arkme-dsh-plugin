@@ -157,9 +157,13 @@ export function registerArkmeExtensionTools(
       }
     }
     const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40) || '最新兼容版本'
+    const preview = await manager.previewInstall(extensionId, version === '最新兼容版本' ? undefined : version)
+    const authority = preview.execution_model === 'dsh-native'
+      ? '该扩展是原生 DSH Bundle，将以 DSH 插件进程权限运行。'
+      : '该扩展使用 Arkme 沙箱 Bundle Runtime。'
     return {
       kind: 'ask',
-      reason: `确认下载、验签并在当前 DSH 会话应用扩展 ${extensionId}@${version} 吗？Host/Client 代码及权限以扩展详情为准。`,
+      reason: `确认下载、验签并在当前 DSH 会话应用扩展 ${extensionId}@${version} 吗？${authority}`,
     }
   })
 }

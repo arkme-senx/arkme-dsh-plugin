@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -56,17 +56,23 @@ describe('persistent extension profile bundle', () => {
     const installer = new ArkmeExtensionProfileInstaller({
       dshHome: root, profileName: 'web', execPath: process.execPath, dshBinPath: '/dsh/bin', run,
     })
+    const tarball = join(root, 'bundle with spaces.tgz')
+    writeFileSync(tarball, 'fixture')
     await installer.install(root)
+    await installer.installTarball(tarball)
     await installer.remove('@arkme-local/ext-0123456789abcdef')
     await installer.remove('@example/install-bundle')
     expect(run).toHaveBeenNthCalledWith(1, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', `link:${root}`,
     ])
     expect(run).toHaveBeenNthCalledWith(2, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', tarball,
+    ])
+    expect(run).toHaveBeenNthCalledWith(3, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0',
       'remove', '@arkme-local/ext-0123456789abcdef',
     ])
-    expect(run).toHaveBeenNthCalledWith(3, [
+    expect(run).toHaveBeenNthCalledWith(4, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0',
       'remove', '@example/install-bundle',
     ])

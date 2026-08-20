@@ -109,7 +109,7 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 export const name = 'dsh-arkme'
-export const inject = ['webServer', 'tools', 'systemPrompt']
+export const inject = ['webServer', 'tools', 'systemPrompt', 'pluginInventory']
 
 export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   if (dshBinPath.trim() === '') return undefined
@@ -207,6 +207,7 @@ export function apply(ctx: Context, config: Config): void {
         profileDirectory: extensionProfileDirectory,
         profileInstaller: extensionProfileInstaller,
         clientApiPath: config.routePath,
+        pluginInventory: ctx.get('pluginInventory') as import('./extensions/manager.js').ArkmePluginInventoryLike,
         ...(dshRuntimeVersion === undefined ? {} : { dshRuntimeVersion }),
       },
     )

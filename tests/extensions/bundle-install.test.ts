@@ -87,6 +87,11 @@ describe('Bundle v2 profile installation', () => {
       }),
       profileDirectory: profile,
       profileInstaller: { install: vi.fn(), installTarball, remove: vi.fn(), restart: vi.fn() } as never,
+      pluginInventory: {
+        list: () => ({ entries: [{
+          entryId: 'arkme-test', moduleName: '@example/install-bundle', enabled: true, fiberPhase: 'active',
+        }] }),
+      },
     })
 
     await expect(manager.previewInstall('ext-bundle')).resolves.toMatchObject({
@@ -112,6 +117,32 @@ describe('Bundle v2 profile installation', () => {
       executionModel: 'dsh-native',
     })
     expect(store.get('ext-bundle')?.profilePackageName).not.toMatch(/^@arkme-local\//)
+    expect(manager.listInstalled()[0]?.active).toBe(true)
+    store.close()
+  })
+
+  it('rejects a legacy arkext resolution instead of rebuilding a local wrapper', async () => {
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({
+      extension_id: 'ext-legacy', version: '1.0.0', artifact_url: 'https://objects.test/legacy.arkext',
+      artifact_sha256: 'a'.repeat(64), manifest_sha256: 'b'.repeat(64),
+      manifest: {
+        format: 'arkme-cordis-extension', format_version: 1, name: 'Legacy', description: '', version: '1.0.0',
+        runtime: { dsh: '>=0.1.0-rc.7', arkme_provider_contract: 1 }, halves: { host: true, client: false },
+        permissions: [], entrypoints: { host: 'host.js' },
+      },
+      signature: 'legacy', signing_key_id: 'legacy-key', published_at: 1, revoked: false,
+    } as T))
+    const root = mkdtempSync(join(tmpdir(), 'legacy-install-rejection-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(root)
+    const manager = new ArkmeExtensionManager(client, store, {
+      inspectPackage: () => { throw new Error('not used') }, define: () => { throw new Error('not used') },
+      run: async () => { throw new Error('not used') },
+    }, { artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}' })
+
+    await expect(manager.apply({ agent: {}, extensionId: 'ext-legacy' })).rejects.toMatchObject({
+      code: 'extension-artifact-legacy-unsupported',
+    })
     store.close()
   })
 })
