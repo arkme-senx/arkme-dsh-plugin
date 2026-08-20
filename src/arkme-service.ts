@@ -112,6 +112,8 @@ import type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmeImageBytes,
+  ArkmeImageSearchItem,
+  ArkmeImageSearchResult,
   ArkmeInterwovenBootstrap,
   ArkmeInterwovenDetail,
   ArkmeLongArticleDetail,
@@ -1091,6 +1093,106 @@ export class ArkmeService {
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
     return await this.search.searchScene(options)
+  }
+
+  /**
+   * Build the desktop image library from the owner's mixed image/video scene.
+   * Signed storage URLs stay inside the Provider and are replaced by account-bound media refs.
+   */
+  async searchImages(options: {
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeImageSearchResult> {
+    const session = await this.requireSession()
+    const pageLimit = Math.min(50, Math.max(1, Math.trunc(options.limit)))
+    const seenCursors = new Set<string>()
+    let cursor = options.cursor?.trim() ?? ''
+    if (cursor !== '') seenCursors.add(cursor)
+    let lastPage: ArkmeRecordSearchResult | undefined
+
+    // scene_kind=3 is intentionally mixed. Drain bounded video-only pages so the
+    // image library does not show a false empty state while later images exist.
+    for (let pageIndex = 0; pageIndex < 8; pageIndex += 1) {
+      const page = await this.searchScene({
+        scene: 'image_video',
+        limit: pageLimit,
+        ...(cursor === '' ? {} : { cursor }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })
+      lastPage = page
+      const candidates = page.items.flatMap(record => record.media.flatMap(asset => {
+        const mimeType = asset.mimeType?.trim().toLowerCase() ?? ''
+        const isImage = mimeType === '' ? asset.fileKind === 1 : mimeType.startsWith('image/')
+        return isImage ? [{ record, asset }] : []
+      }))
+      const uniqueAssetUids = [...new Set(candidates.map(candidate => candidate.asset.fileAssetUid))]
+      const displayItems: ArkmeFileAssetDisplayItem[] = []
+      for (let offset = 0; offset < uniqueAssetUids.length; offset += 50) {
+        displayItems.push(...await this.queryFileAssets(
+          uniqueAssetUids.slice(offset, offset + 50),
+          options.signal,
+        ))
+      }
+      const displayByUid = new Map(displayItems.map(item => [item.fileAssetUid, item]))
+      const emitted = new Set<string>()
+      const items = candidates.flatMap(({ record, asset }): ArkmeImageSearchItem[] => {
+        const itemIdentity = `${record.recordUid}\0${asset.fileAssetUid}`
+        if (emitted.has(itemIdentity)) return []
+        const display = displayByUid.get(asset.fileAssetUid)
+        if (display === undefined) return []
+        const mimeType = (display.mimeType ?? asset.mimeType ?? '').trim().toLowerCase()
+        // Prefer the owner-projected MIME when it is available. This prevents a
+        // video preview thumbnail from being presented as a user-owned image.
+        if (mimeType !== '' && !mimeType.startsWith('image/')) return []
+        const remoteUrl = display.previewUrl ?? display.downloadUrl
+        if (remoteUrl === undefined) return []
+        emitted.add(itemIdentity)
+        const fileName = display.fileName ?? asset.fileName ?? '图片'
+        return [{
+          itemKey: createHash('sha256').update(`${record.recordUid}\0${asset.fileAssetUid}`).digest('base64url'),
+          mediaRef: this.issueMediaRef(session.userId, {
+            remoteUrl,
+            mimeType: mimeType || 'application/octet-stream',
+            fileName,
+            size: Math.max(0, Math.trunc(asset.size ?? 0)),
+          }),
+          recordUid: record.recordUid,
+          sendAtMillis: record.sendAtMillis,
+          fileName,
+          mimeType: mimeType || 'application/octet-stream',
+          size: Math.max(0, Math.trunc(asset.size ?? 0)),
+          recordTitle: record.title || record.nickname || '快记',
+          ...(record.sourceTitle === undefined ? {} : { sourceTitle: record.sourceTitle }),
+        }]
+      })
+      const nextCursor = page.nextCursor?.trim() ?? ''
+      const canContinue = page.hasMore && nextCursor !== '' && !seenCursors.has(nextCursor)
+      if (items.length > 0 || !canContinue) {
+        return {
+          items,
+          hasMore: canContinue,
+          ...(canContinue ? { nextCursor } : {}),
+          queryGuard: page.queryGuard,
+        }
+      }
+      if (pageIndex === 7) {
+        return {
+          items: [],
+          hasMore: true,
+          nextCursor,
+          queryGuard: page.queryGuard,
+        }
+      }
+      seenCursors.add(nextCursor)
+      cursor = nextCursor
+    }
+
+    return {
+      items: [],
+      hasMore: false,
+      queryGuard: lastPage?.queryGuard ?? { state: 'complete' },
+    }
   }
 
   async searchRecordings(options: {

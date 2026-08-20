@@ -319,6 +319,26 @@ export interface ArkmeSearchAssetItem {
   durationMillis?: number
 }
 
+/** Browser-safe image projection used by the desktop search image library. */
+export interface ArkmeImageSearchItem {
+  itemKey: string
+  mediaRef: string
+  recordUid: string
+  sendAtMillis: number
+  fileName: string
+  mimeType: string
+  size: number
+  recordTitle: string
+  sourceTitle?: string
+}
+
+export interface ArkmeImageSearchResult {
+  items: ArkmeImageSearchItem[]
+  hasMore: boolean
+  nextCursor?: string
+  queryGuard: ArkmeSearchQueryGuard
+}
+
 export interface ArkmeSearchRecordItem {
   recordUid: string
   sourceKind: number

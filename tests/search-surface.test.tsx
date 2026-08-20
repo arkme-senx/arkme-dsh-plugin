@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { ArkmeSearchSurface } from '../src/client/ArkmeSearchSurface.js'
 
 describe('Arkme search surface', () => {
-  it('starts with quick-note search and only exposes the supported AI video quick entry', () => {
+  it('starts with quick-note search and exposes desktop image and AI video quick entries', () => {
     const markup = renderToStaticMarkup(<ArkmeSearchSurface />)
 
     expect(markup).toContain('placeholder="搜索"')
     expect(markup).toContain('/arkme-self/api/call/image_search_grey.svg')
     expect(markup).not.toContain('>搜索</button>')
+    expect(markup).toContain('>图片</button>')
     expect(markup).toContain('AI 视频')
     for (const label of ['图片/视频', '录音', '外部链接', '文件', '长文']) expect(markup).not.toContain(label)
   })
@@ -19,6 +20,10 @@ describe('Arkme search surface', () => {
 
     expect(source).not.toContain("height: 'min(600px, calc(100vh - 96px))'")
     expect(source).not.toContain("width: 'min(470px, 100%)'")
+    expect(source).toContain("gridTemplateColumns: 'repeat(5, minmax(0, 1fr))'")
+    expect(source).toContain("quick === 'image' ? '图片库' : 'AI 视频'")
+    expect(source).toContain('if (items.length === 0) return <><Status')
+    expect(source).toContain('{loadMoreButton}</>')
     expect(source).toContain("src={`${assetRoot}/arrow_left.svg`}")
   })
 })

@@ -10,6 +10,7 @@ function fakeService() {
     releaseOutgoingCall: vi.fn(async () => undefined),
     searchRemote: vi.fn(async (input: unknown) => input),
     searchScene: vi.fn(async (input: unknown) => input),
+    searchImages: vi.fn(async (input: unknown) => input),
     searchRecordings: vi.fn(async (input: unknown) => input),
     aiVideoList: vi.fn(async (input: unknown) => input),
     queryFileAssets: vi.fn(async (input: unknown) => input),
@@ -172,12 +173,16 @@ describe('outgoing call Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'search.scene', {
       scene: 'image_video', limit: 8, userId: 999,
     })
+    await dispatchArkmeHostOperation(service as never, 'search.scene', {
+      scene: 'image_video', mediaKind: 'image', limit: 50, cursor: 'next-images', userId: 999,
+    })
     await dispatchArkmeHostOperation(service as never, 'search.recordings', {
       query: '北京', limit: 9, userId: 999,
     })
 
     expect(service.searchRemote).toHaveBeenCalledWith({ query: '复盘', limit: 12, cursor: 'next-records', searchScope: 'topic', sourceUid: 'topic-1' })
     expect(service.searchScene).toHaveBeenCalledWith({ scene: 'image_video', limit: 8 })
+    expect(service.searchImages).toHaveBeenCalledWith({ limit: 50, cursor: 'next-images' })
     expect(service.searchRecordings).toHaveBeenCalledWith({ query: '北京', limit: 9 })
   })
 
