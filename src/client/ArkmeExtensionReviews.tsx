@@ -21,22 +21,33 @@ const styles: Record<string, CSSProperties> = {
   stars: { display: 'inline-flex', gap: 2, color: '#f3aa18', letterSpacing: 0, fontSize: 14 },
   count: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 10 },
   list: { marginTop: 10 },
-  review: { padding: '11px 0', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
-  reply: { marginLeft: 24, paddingLeft: 10, borderLeft: '2px solid rgba(9,184,62,.12)' },
+  review: { position: 'relative', padding: '11px 0', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', cursor: 'pointer' },
+  openThreadButton: { position: 'absolute', zIndex: 0, inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
+  reviewContent: { position: 'relative', zIndex: 1, pointerEvents: 'none' },
   authorRow: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
   avatar: { width: 24, height: 24, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 10, fontWeight: 650 },
   author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 11, fontWeight: 600 },
   time: { marginLeft: 'auto', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9 },
   content: { margin: '6px 0 0 31px', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-  itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '6px 0 0 31px' },
-  replyButton: { padding: 0, border: 0, background: 'transparent', color: accent, font: 'inherit', fontSize: 10, cursor: 'pointer' },
+  itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '7px 0 0 31px' },
+  replyButton: { display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 30, padding: '2px 4px 2px 0', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 10, lineHeight: '16px', cursor: 'pointer' },
   state: { padding: '18px 0 10px', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 11, textAlign: 'center' },
   error: { marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(194,65,59,.08)', color: 'var(--dsw-alias-state-error-primary, #c2413b)', fontSize: 11 },
   loadMore: { width: '100%', height: 30, marginTop: 6, border: 0, borderRadius: 8, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 10, cursor: 'pointer' },
   overlay: { position: 'fixed', zIndex: 120, inset: 0, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(17,24,39,.28)' },
   composer: { width: 'min(480px, calc(100vw - 48px))', padding: 18, boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 14, background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 18px 50px rgba(20,24,31,.22)' },
+  threadDialog: { width: 'min(520px, calc(100vw - 48px))', maxHeight: 'min(680px, calc(100vh - 48px))', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 14, overflow: 'hidden', background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 18px 50px rgba(20,24,31,.22)' },
+  threadHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '15px 18px', borderBottom: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
+  threadBody: { minHeight: 0, overflowY: 'auto', padding: '0 18px 18px' },
+  threadOriginal: { padding: '15px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
+  threadSectionLabel: { margin: '14px 0 2px', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 11, lineHeight: '18px', fontWeight: 650 },
+  threadReply: { padding: '11px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
+  closeButton: { width: 28, height: 28, padding: 0, border: 0, borderRadius: 7, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 18, lineHeight: '28px', cursor: 'pointer' },
   composerTitle: { margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 650, color: 'var(--dsw-alias-label-primary, #242629)' },
   composerHint: { marginTop: 4, color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 10, lineHeight: '16px' },
+  originalQuote: { marginTop: 12, padding: '9px 11px', borderLeft: `3px solid ${accent}`, borderRadius: '0 8px 8px 0', background: 'var(--dsw-alias-fill-secondary, #f4f5f6)' },
+  originalLabel: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9, lineHeight: '14px', fontWeight: 600 },
+  originalText: { maxHeight: 54, margin: '3px 0 0', overflow: 'auto', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 11, lineHeight: '17px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   ratingPicker: { display: 'flex', gap: 3, marginTop: 12 },
   starButton: { width: 28, height: 28, padding: 0, border: 0, background: 'transparent', fontSize: 22, cursor: 'pointer' },
   textarea: { width: '100%', minHeight: 112, marginTop: 12, padding: 10, resize: 'vertical', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 9, outline: 0, background: 'var(--dsw-specific-sidebar-fill, #fff)', color: 'var(--dsw-alias-label-primary, #242629)', font: 'inherit', fontSize: 12, lineHeight: '18px' },
@@ -62,6 +73,10 @@ export function extensionReviewTree(items: readonly ArkmeExtensionReviewItem[]):
     else parent.children.push(node)
   }
   return roots
+}
+
+export function extensionReviewReplyCount(node: ArkmeExtensionReviewTreeNode): number {
+  return node.children.reduce((total, child) => total + 1 + extensionReviewReplyCount(child), 0)
 }
 
 export function extensionRatingLabel(summary: ArkmeExtensionRatingSummary): string {
@@ -90,25 +105,107 @@ function authorInitial(name: string): string {
   return [...name.trim()].slice(0, 2).join('') || 'A'
 }
 
-function ReviewNode({ node, depth, onReply }: {
+function ReplyIcon() {
+  return <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none">
+    <path d="M20.25 11.5a7.75 7.75 0 0 1-7.75 7.75H8.4L4 21l1.47-3.92A7.75 7.75 0 1 1 20.25 11.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+}
+
+function ReplyButton({ item, count, onReply }: {
+  item: ArkmeExtensionReviewItem
+  count: number
+  onReply(item: ArkmeExtensionReviewItem): void
+}) {
+  return <button
+    type="button"
+    style={styles.replyButton}
+    aria-label={`回复${item.authorName}，已有 ${String(count)} 条回复`}
+    onClick={event => { event.stopPropagation(); onReply(item) }}
+  >
+    <ReplyIcon />
+    <span>{count}</span>
+  </button>
+}
+
+function ReviewNode({ node, onOpen, onReply }: {
   node: ArkmeExtensionReviewTreeNode
-  depth: number
+  onOpen(node: ArkmeExtensionReviewTreeNode): void
   onReply(item: ArkmeExtensionReviewItem): void
 }) {
   const item = node.item
-  return <div style={{ ...styles.review, ...(depth > 0 ? styles.reply : {}) }}>
-    <div style={styles.authorRow}>
+  const replyCount = extensionReviewReplyCount(node)
+  return <article style={styles.review}>
+    <button
+      type="button"
+      style={styles.openThreadButton}
+      aria-label={`查看${item.authorName}的评论及 ${String(replyCount)} 条回复`}
+      onClick={() => { onOpen(node) }}
+    />
+    <div style={{ ...styles.authorRow, ...styles.reviewContent }}>
       <span style={styles.avatar} aria-hidden>{authorInitial(item.authorName)}</span>
       <span style={styles.author}>{item.authorName}{item.authorArkmeId ? ` · @${item.authorArkmeId}` : ''}</span>
       {item.rating > 0 && <Stars value={item.rating} size={11} />}
       <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
     </div>
-    <p style={styles.content}>{item.textContent}</p>
-    <div style={styles.itemActions}>
-      <button type="button" style={styles.replyButton} onClick={() => { onReply(item) }}>回复</button>
+    <p style={{ ...styles.content, ...styles.reviewContent }}>{item.textContent}</p>
+    <div style={{ ...styles.itemActions, position: 'relative', zIndex: 2 }}>
+      <ReplyButton item={item} count={replyCount} onReply={onReply} />
     </div>
-    {node.children.map(child => <ReviewNode key={child.item.reviewRef} node={child} depth={depth + 1} onReply={onReply} />)}
+  </article>
+}
+
+function ThreadReply({ node, depth, onReply }: {
+  node: ArkmeExtensionReviewTreeNode
+  depth: number
+  onReply(item: ArkmeExtensionReviewItem): void
+}) {
+  const item = node.item
+  const replyCount = extensionReviewReplyCount(node)
+  return <div style={{ ...styles.threadReply, marginLeft: Math.min(depth * 18, 54) }}>
+    <div style={styles.authorRow}>
+      <span style={styles.avatar} aria-hidden>{authorInitial(item.authorName)}</span>
+      <span style={styles.author}>{item.authorName}{item.authorArkmeId ? ` · @${item.authorArkmeId}` : ''}</span>
+      <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
+    </div>
+    <p style={styles.content}>{item.textContent}</p>
+    <div style={styles.itemActions}><ReplyButton item={item} count={replyCount} onReply={onReply} /></div>
+    {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={depth + 1} onReply={onReply} />)}
   </div>
+}
+
+export function ArkmeExtensionReplyListDialog({ root, onClose, onReply }: {
+  root: ArkmeExtensionReviewTreeNode
+  onClose(): void
+  onReply(item: ArkmeExtensionReviewItem): void
+}) {
+  const item = root.item
+  const replyCount = extensionReviewReplyCount(root)
+  const dialog = <div style={styles.overlay} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section role="dialog" aria-modal="true" aria-labelledby="arkme-extension-replies-title" style={styles.threadDialog}>
+      <header style={styles.threadHeader}>
+        <h3 id="arkme-extension-replies-title" style={styles.composerTitle}>评论回复</h3>
+        <button type="button" style={styles.closeButton} aria-label="关闭回复列表" onClick={onClose}>×</button>
+      </header>
+      <div style={styles.threadBody}>
+        <div style={styles.threadOriginal}>
+          <div style={styles.originalLabel}>原评论</div>
+          <div style={{ ...styles.authorRow, marginTop: 7 }}>
+            <span style={styles.avatar} aria-hidden>{authorInitial(item.authorName)}</span>
+            <span style={styles.author}>{item.authorName}{item.authorArkmeId ? ` · @${item.authorArkmeId}` : ''}</span>
+            {item.rating > 0 && <Stars value={item.rating} size={11} />}
+            <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
+          </div>
+          <p style={styles.content}>{item.textContent}</p>
+          <div style={styles.itemActions}><ReplyButton item={item} count={replyCount} onReply={onReply} /></div>
+        </div>
+        <div style={styles.threadSectionLabel}>全部回复 {replyCount}</div>
+        {root.children.length === 0
+          ? <div style={styles.state}>还没有回复。</div>
+          : root.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={0} onReply={onReply} />)}
+      </div>
+    </section>
+  </div>
+  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body)
 }
 
 export interface ArkmeExtensionReviewComposerState {
@@ -154,6 +251,10 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-extension-review-composer-title" style={styles.composer}>
       <h3 id="arkme-extension-review-composer-title" style={styles.composerTitle}>{replying ? `回复 ${state.parent!.authorName}` : '发表评价'}</h3>
       <div style={styles.composerHint}>{replying ? '回复不会改变扩展评分。' : '评论正文会同时保存为首页中的普通快记。'}</div>
+      {replying && <div style={styles.originalQuote} aria-label="回复原文">
+        <div style={styles.originalLabel}>回复原文 · {state.parent!.authorName}</div>
+        <p style={styles.originalText}>{state.parent!.textContent}</p>
+      </div>}
       {!replying && <div style={styles.ratingPicker} aria-label="选择评分">
         {[1, 2, 3, 4, 5].map(star => <button
           key={star} type="button" style={{ ...styles.starButton, color: star <= state.rating ? '#f3aa18' : '#d7d9dd' }}
@@ -196,8 +297,13 @@ export function ArkmeExtensionReviews({
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [composer, setComposer] = useState<ArkmeExtensionReviewComposerState>()
+  const [selectedThreadRef, setSelectedThreadRef] = useState<string>()
   const [submitting, setSubmitting] = useState(false)
   const tree = useMemo(() => extensionReviewTree(page?.items ?? []), [page?.items])
+  const selectedThread = useMemo(
+    () => tree.find(node => node.item.reviewRef === selectedThreadRef),
+    [selectedThreadRef, tree],
+  )
   const summary = page?.ratingSummary ?? initialRatingSummary
 
   const load = async (offset = 0) => {
@@ -229,6 +335,12 @@ export function ArkmeExtensionReviews({
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [composer !== undefined, submitting])
+  useEffect(() => {
+    if (selectedThreadRef === undefined || composer !== undefined) return
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectedThreadRef(undefined) }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [selectedThreadRef, composer !== undefined])
 
   const openComposer = (parent?: ArkmeExtensionReviewItem) => {
     try {
@@ -272,11 +384,21 @@ export function ArkmeExtensionReviews({
       {canCreateTopLevelReview ? '还没有评论，来发表第一条评价吧。' : '还没有用户评价。'}
     </div>}
     {!loading && tree.length > 0 && <div style={styles.list}>
-      {tree.map(node => <ReviewNode key={node.item.reviewRef} node={node} depth={0} onReply={openComposer} />)}
+      {tree.map(node => <ReviewNode
+        key={node.item.reviewRef}
+        node={node}
+        onOpen={selected => { setSelectedThreadRef(selected.item.reviewRef) }}
+        onReply={openComposer}
+      />)}
     </div>}
     {page?.hasMore === true && <button type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void load(page.nextOffset ?? page.offset + page.limit) }}>
       {loadingMore ? '加载中…' : '加载更多'}
     </button>}
+    {selectedThread !== undefined && <ArkmeExtensionReplyListDialog
+      root={selectedThread}
+      onClose={() => { setSelectedThreadRef(undefined) }}
+      onReply={openComposer}
+    />}
     {composer !== undefined && <ArkmeExtensionReviewComposerDialog
       state={composer} submitting={submitting} onChange={setComposer}
       onClose={() => { if (!submitting) setComposer(undefined) }} onSubmit={() => { void submit() }}

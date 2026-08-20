@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   ArkmeExtensionReviews,
   ArkmeExtensionReviewComposerDialog,
+  ArkmeExtensionReplyListDialog,
   extensionRatingLabel,
   extensionReviewComposerCanSubmit,
   extensionReviewCreateParams,
+  extensionReviewReplyCount,
   extensionReviewTree,
 } from '../../src/client/ArkmeExtensionReviews.js'
 import type { ArkmeExtensionReviewPage } from '../../src/extensions/types.js'
@@ -29,16 +31,17 @@ const page: ArkmeExtensionReviewPage = {
 }
 
 describe('extension reviews UI', () => {
-  it('renders rating, nested replies, and the comment/reply entry points in extension detail', () => {
+  it('renders top-level comments with a reply icon and existing reply count', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionReviews extensionId="ext-1" initialPage={page} />)
 
     expect(html).toContain('用户评价')
     expect(html).toContain('5.0 · 1 个评分')
     expect(html).toContain('很好用')
-    expect(html).toContain('谢谢反馈')
+    expect(html).not.toContain('谢谢反馈')
     expect(html).toContain('>评论</button>')
-    expect(html.match(/>回复<\/button>/g)).toHaveLength(2)
-    expect(html).toContain('border-left:2px solid')
+    expect(html).toContain('aria-label="查看小林的评论及 1 条回复"')
+    expect(html).toContain('aria-label="回复小林，已有 1 条回复"')
+    expect(html).toContain('<svg')
   })
 
   it('hides the top-level comment entry for the extension owner while keeping replies', () => {
@@ -47,7 +50,7 @@ describe('extension reviews UI', () => {
     />)
 
     expect(html).not.toContain('>评论</button>')
-    expect(html.match(/>回复<\/button>/g)).toHaveLength(2)
+    expect(html).toContain('aria-label="回复小林，已有 1 条回复"')
   })
 
   it('uses an owner-specific empty state without inviting a self rating', () => {
@@ -65,6 +68,7 @@ describe('extension reviews UI', () => {
     const tree = extensionReviewTree(page.items)
     expect(tree).toHaveLength(1)
     expect(tree[0]?.children[0]?.item.reviewRef).toBe('review-reply')
+    expect(extensionReviewReplyCount(tree[0]!)).toBe(1)
     expect(extensionRatingLabel(page.ratingSummary)).toBe('5.0 · 1 个评分')
     expect(extensionReviewComposerCanSubmit({ textContent: '评价', rating: 0, replying: false })).toBe(false)
     expect(extensionReviewComposerCanSubmit({ textContent: '回复', rating: 0, replying: true })).toBe(true)
@@ -86,5 +90,31 @@ describe('extension reviews UI', () => {
     expect(html).toContain('普通快记')
     expect(html).toContain('aria-label="4 星"')
     expect(html).toContain('发表评论')
+  })
+
+  it('renders a reply list dialog with the original comment and all replies', () => {
+    const root = extensionReviewTree(page.items)[0]!
+    const html = renderToStaticMarkup(<ArkmeExtensionReplyListDialog
+      root={root} onClose={() => undefined} onReply={() => undefined}
+    />)
+
+    expect(html).toContain('评论回复')
+    expect(html).toContain('原评论')
+    expect(html).toContain('很好用')
+    expect(html).toContain('全部回复 1')
+    expect(html).toContain('谢谢反馈')
+    expect(html).toContain('aria-label="回复作者，已有 0 条回复"')
+  })
+
+  it('shows the original text in the reply composer', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionReviewComposerDialog
+      state={{ parent: page.items[0], textContent: '', rating: 0, clientMutationId: 'mutation-2', error: '' }}
+      submitting={false} onChange={() => undefined} onClose={() => undefined} onSubmit={() => undefined}
+    />)
+
+    expect(html).toContain('回复 小林')
+    expect(html).toContain('回复原文')
+    expect(html).toContain('很好用')
+    expect(html).not.toContain('选择评分')
   })
 })
