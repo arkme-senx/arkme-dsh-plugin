@@ -3,9 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  ARKME_BUNDLE_CONTRACT_VERSION,
+  arkmeSandboxEntryId,
+  canonicalBundleJson,
   inspectBundleArtifact,
+  packBundleFiles,
   packLocalBundleDirectory,
   readLocalBundleTarball,
+  renderArkmeSandboxHostEntry,
 } from '../../src/extensions/bundle-artifact.js'
 
 const directories: string[] = []
@@ -32,6 +37,49 @@ function bundleDirectory(scripts?: Record<string, string>): string {
   writeFileSync(join(root, 'lib', 'index.js'), 'export function apply() {}\n')
   writeFileSync(join(root, '.env'), 'MUST_NOT_SHIP=secret\n')
   return root
+}
+
+const sandboxPackageName = '@example/sandbox-client'
+
+function sandboxFiles(options: {
+  clientDeclaration?: Record<string, unknown>
+  clientExport?: unknown
+  clientFile?: boolean
+  extraExport?: boolean
+} = {}): Map<string, Buffer> {
+  const exports: Record<string, unknown> = {
+    '.': './lib/index.js',
+    './package.json': './package.json',
+  }
+  if (options.clientExport !== undefined) exports['./client'] = options.clientExport
+  if (options.extraExport === true) exports['./extra'] = './lib/index.js'
+  const manifest = {
+    name: sandboxPackageName,
+    version: '1.0.0',
+    type: 'module',
+    main: './lib/index.js',
+    files: ['lib', 'arkme', 'cordis.patch.yml'],
+    exports,
+    peerDependencies: { '@senguoyun/dsh-arkme': '^0.1.8' },
+    dsh: {
+      bundle: { patch: './cordis.patch.yml' },
+      arkme: { executionModel: 'arkme-sandboxed', runtimeContract: ARKME_BUNDLE_CONTRACT_VERSION },
+      ...(options.clientDeclaration === undefined ? {} : { client: options.clientDeclaration }),
+    },
+  }
+  const files = new Map<string, Buffer>([
+    ['package/package.json', Buffer.from(canonicalBundleJson(manifest), 'utf8')],
+    ['package/cordis.patch.yml', Buffer.from([
+      '- insert:',
+      `    - id: ${arkmeSandboxEntryId(sandboxPackageName)}`,
+      `      name: '${sandboxPackageName}'`,
+      '',
+    ].join('\n'), 'utf8')],
+    ['package/arkme/source.json', Buffer.from('{"format":"arkme-cordis-source","formatVersion":1}\n', 'utf8')],
+    ['package/lib/index.js', Buffer.from(renderArkmeSandboxHostEntry(sandboxPackageName), 'utf8')],
+  ])
+  if (options.clientFile === true) files.set('package/lib/client.js', Buffer.from('export default {}\n', 'utf8'))
+  return files
 }
 
 afterEach(() => {
@@ -96,6 +144,76 @@ describe('standard DSH Bundle artifact', () => {
 
     expect(() => packLocalBundleDirectory(root)).toThrowError(expect.objectContaining({
       code: 'bundle-sandbox-entry-invalid',
+    }))
+  })
+
+  it('accepts the exact Host-only sandbox Client consistency shape', () => {
+    const packed = packBundleFiles(sandboxFiles())
+
+    expect(packed.bundle.executionModel).toBe('arkme-sandboxed')
+    expect(inspectBundleArtifact(packed.bundle.bytes).files.has('package/lib/client.js')).toBe(false)
+  })
+
+  it('accepts the exact Host+Client sandbox consistency shape', () => {
+    const packed = packBundleFiles(sandboxFiles({
+      clientDeclaration: { platform: 'web', inject: [] },
+      clientExport: './lib/client.js',
+      clientFile: true,
+    }))
+
+    expect(packed.bundle.executionModel).toBe('arkme-sandboxed')
+    expect(inspectBundleArtifact(packed.bundle.bytes).files.has('package/lib/client.js')).toBe(true)
+  })
+
+  it.each([
+    {
+      name: 'declaration without file or export',
+      options: { clientDeclaration: { platform: 'web', inject: [] } },
+    },
+    {
+      name: 'declaration and file without export',
+      options: { clientDeclaration: { platform: 'web', inject: [] }, clientFile: true },
+    },
+    {
+      name: 'declaration and export without file',
+      options: { clientDeclaration: { platform: 'web', inject: [] }, clientExport: './lib/client.js' },
+    },
+    {
+      name: 'declaration with wrong export target',
+      options: {
+        clientDeclaration: { platform: 'web', inject: [] },
+        clientExport: './lib/index.js',
+        clientFile: true,
+      },
+    },
+    {
+      name: 'file without declaration or export',
+      options: { clientFile: true },
+    },
+    {
+      name: 'export without declaration or file',
+      options: { clientExport: './lib/client.js' },
+    },
+    {
+      name: 'non-web declaration with otherwise complete Client bundle',
+      options: {
+        clientDeclaration: { platform: 'desktop', inject: [] },
+        clientExport: './lib/client.js',
+        clientFile: true,
+      },
+    },
+    {
+      name: 'extra export in a complete Client bundle',
+      options: {
+        clientDeclaration: { platform: 'web', inject: [] },
+        clientExport: './lib/client.js',
+        clientFile: true,
+        extraExport: true,
+      },
+    },
+  ])('rejects sandbox Client mismatch: $name', ({ options }) => {
+    expect(() => packBundleFiles(sandboxFiles(options))).toThrowError(expect.objectContaining({
+      code: 'bundle-sandbox-client-invalid',
     }))
   })
 })

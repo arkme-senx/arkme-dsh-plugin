@@ -29,9 +29,15 @@ describe('Cordis to DSH Bundle materializer', () => {
     const packageJSON = JSON.parse(inspected.files.get('package/package.json')!.toString('utf8')) as Record<string, unknown>
     expect(packageJSON).toMatchObject({
       type: 'module', main: './lib/index.js',
-      exports: { '.': './lib/index.js', './package.json': './package.json' },
+      exports: {
+        '.': './lib/index.js',
+        './client': './lib/client.js',
+        './package.json': './package.json',
+      },
     })
-    expect(Object.keys(packageJSON.exports as Record<string, unknown>).sort()).toEqual(['.', './package.json'])
+    expect(Object.keys(packageJSON.exports as Record<string, unknown>).sort()).toEqual([
+      '.', './client', './package.json',
+    ])
     expect(inspected.patchIds).toEqual([arkmeSandboxEntryId(input.packageName)])
     expect(Buffer.from(first.source.bytes).equals(Buffer.from(first.bundle.bytes))).toBe(true)
     expect(first.source.bytes.byteLength).toBe(first.bundle.bytes.byteLength)
@@ -48,6 +54,26 @@ describe('Cordis to DSH Bundle materializer', () => {
     )
     expect(inspected.files.get('package/lib/client.js')?.toString('utf8')).toContain('extensions.bundle.invoke')
     expect(inspected.files.get('package/lib/client.js')?.toString('utf8')).not.toContain('尚未加载')
+  })
+
+  it('keeps a Host-only sandboxed Bundle free of Client declaration, file, and export', () => {
+    const source = materializeCordisBundle({
+      packageName: '@arkme-generated/host-only',
+      name: 'Host only',
+      description: '',
+      version: '1.0.0',
+      hostCode: 'return { apply() {} }',
+    })
+
+    const inspected = inspectBundleArtifact(source.bundle.bytes)
+    const manifest = JSON.parse(inspected.files.get('package/package.json')!.toString('utf8')) as Record<string, any>
+
+    expect(manifest.exports).toEqual({
+      '.': './lib/index.js',
+      './package.json': './package.json',
+    })
+    expect(manifest.dsh.client).toBeUndefined()
+    expect(inspected.files.has('package/lib/client.js')).toBe(false)
   })
 
   it('rejects an arkme-sandboxed patch that loads a package subpath', () => {
