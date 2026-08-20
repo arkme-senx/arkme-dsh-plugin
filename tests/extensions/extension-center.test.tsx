@@ -23,9 +23,33 @@ const previewModule = extensionCenterModule as unknown as {
   }>
   arkmeExtensionPreviewUrl?: (extensionId: string, previewRef: string) => string
   extensionPreviewSelection?: (currentRef: string | undefined, previews: ArkmeExtensionPreviewItem[]) => string | undefined
+  ArkmeExtensionManifestDetails?: ComponentType<{ manifest: unknown }>
 }
 
 describe('Arkme extension market UI', () => {
+  it('treats missing manifest permissions as no declared permissions', () => {
+    const ManifestDetails = previewModule.ArkmeExtensionManifestDetails
+    expect(ManifestDetails).toBeTypeOf('function')
+    if (ManifestDetails === undefined) return
+
+    const html = renderToStaticMarkup(<ManifestDetails manifest={{
+      runtime: { dsh: '>=0.1.0-rc.7' }, halves: { host: true, client: false }, permissions: null,
+    }} />)
+    expect(html).toContain('运行能力')
+    expect(html).toContain('Host')
+    expect(html).toContain('&gt;=0.1.0-rc.7')
+  })
+
+  it('hides an empty legacy manifest without affecting the rest of the detail', () => {
+    const ManifestDetails = previewModule.ArkmeExtensionManifestDetails
+    expect(ManifestDetails).toBeTypeOf('function')
+    if (ManifestDetails === undefined) return
+    const html = renderToStaticMarkup(<ManifestDetails manifest={{
+      runtime: { dsh: '' }, halves: { host: false, client: false }, permissions: null,
+    }} />)
+    expect(html).toBe('')
+  })
+
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
 

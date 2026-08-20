@@ -24,6 +24,30 @@ function fixture() {
 }
 
 describe('Bundle v2 publish client', () => {
+  it('does not project an empty legacy manifest into a v2 catalog detail', async () => {
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({
+      extension: {
+        extension_id: 'ext-v2', name: '贪吃蛇游戏3', description: '说明', visibility: 'public',
+        latest_stable_version: '1.0.0',
+      },
+      latest_version: {
+        version: '1.0.0', artifact_contract_version: 2, execution_model: 'arkme-sandboxed', permissions: [],
+        manifest: {
+          format: '', format_version: 0, name: '', description: '', version: '',
+          runtime: { dsh: '', arkme_provider_contract: 0 },
+          halves: { host: false, client: false }, permissions: null, entrypoints: {},
+        },
+      },
+    } as T))
+
+    const detail = await client.detail('ext-v2')
+
+    expect(detail).toMatchObject({
+      extension_id: 'ext-v2', name: '贪吃蛇游戏3', description: '说明', version: '1.0.0',
+    })
+    expect(detail).not.toHaveProperty('manifest')
+  })
+
   it('creates one dual-upload session and uses the signed content types', async () => {
     const root = fixture()
     try {
