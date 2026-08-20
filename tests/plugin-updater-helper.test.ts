@@ -275,7 +275,7 @@ describe('companion plugin updater', () => {
     await mkdir(stateDirectory, { recursive: true })
     const profileDirectory = join(root, 'profiles', 'web')
     await mkdir(profileDirectory, { recursive: true })
-    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.7.0' }))
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.19.0' }))
     await writeFile(versionPath, '0.1.3')
     await writeFile(fakeDsh, `
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'

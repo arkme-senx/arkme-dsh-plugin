@@ -20,6 +20,7 @@ import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
 } from './my-extension-model.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
@@ -31,23 +32,23 @@ export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: st
 }
 
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #242629)',
-  secondary: 'var(--dsw-alias-label-secondary, #717780)',
-  caption: 'var(--dsw-alias-label-caption, #9ba1a9)',
-  border: 'var(--dsw-alias-border-l1, #e7e9ec)',
-  accent: ARKME_EXTENSION_BRAND_GREEN,
-  accentSoft: 'rgba(9, 184, 62, .10)',
-  surface: 'var(--dsw-specific-sidebar-fill, #fff)',
-  subtle: 'var(--dsw-alias-fill-secondary, #f4f5f6)',
-  hover: 'var(--dsw-alias-interactive-bg-hover, #eef1f3)',
-  warning: 'var(--dsw-alias-state-warning-primary, #b06b16)',
-  danger: 'var(--dsw-alias-state-error-primary, #c2413b)',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  caption: arkmeTheme.caption,
+  border: arkmeTheme.borderSoft,
+  accent: arkmeTheme.accent,
+  accentSoft: arkmeTheme.accentSoft,
+  surface: arkmeTheme.layer2,
+  subtle: arkmeTheme.subtle,
+  hover: arkmeTheme.hover,
+  warning: arkmeTheme.warning,
+  danger: arkmeTheme.danger,
 }
 
 const styles: Record<string, CSSProperties> = {
   backdrop: {
     position: 'fixed', zIndex: 90, inset: 0, display: 'grid', placeItems: 'center', padding: 32,
-    boxSizing: 'border-box', background: 'rgba(17, 24, 39, .20)',
+    boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(17, 24, 39, .20))',
     backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)',
   },
   dialog: {
@@ -141,8 +142,9 @@ const styles: Record<string, CSSProperties> = {
   chips: { display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 },
   chip: { padding: '1px 6px', borderRadius: 999, background: colors.surface, color: colors.secondary, fontSize: 10, lineHeight: '17px' },
   activeChip: { background: colors.accentSoft, color: colors.accent },
-  warningChip: { background: 'rgba(176,107,22,.10)', color: colors.warning },
-  error: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: 'rgba(194,65,59,.08)', color: colors.danger, fontSize: 12 },
+  warningChip: { background: arkmeTheme.warningSoft, color: colors.warning },
+  error: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 12 },
+  installStatus: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
   restartNotice: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
   empty: { display: 'grid', justifyItems: 'center', padding: '46px 18px 24px', textAlign: 'center' },
   emptyIcon: { width: 38, height: 38, display: 'grid', placeItems: 'center', color: colors.caption },
@@ -176,7 +178,7 @@ const styles: Record<string, CSSProperties> = {
   },
   restartOverlay: {
     position: 'absolute', zIndex: 5, inset: 0, display: 'grid', placeItems: 'center',
-    padding: 24, boxSizing: 'border-box', background: 'rgba(17, 24, 39, .18)',
+    padding: 24, boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(17, 24, 39, .18))',
   },
   restartDialog: {
     width: 'min(380px, 100%)', padding: 20, boxSizing: 'border-box', borderRadius: 14,
@@ -967,6 +969,12 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
     <main style={styles.list}>
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
+      {installTask !== undefined && !installTask.done && <div style={styles.installStatus} role="status">
+        {installTask.message}
+        {installTask.phase === 'downloading' && installTask.downloadedBytes !== undefined
+          ? ` · ${formatExtensionBytes(installTask.downloadedBytes)}${installTask.totalBytes === undefined ? '' : ` / ${formatExtensionBytes(installTask.totalBytes)}`}`
+          : ''}
+      </div>}
       {restartNotice !== '' && <div style={styles.restartNotice} role="status">{restartNotice}</div>}
       {tab === 'discover' && discoverOwnerWarning !== ''
         && <div style={styles.restartNotice} role="status">{discoverOwnerWarning}</div>}

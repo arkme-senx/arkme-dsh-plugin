@@ -32,7 +32,12 @@ export interface ArkmeTopicDirectoryPopoverProps {
 
 export type ArkmeSelfSourcesResolution =
   | { status: 'loading' }
-  | { status: 'ready'; aggregateSource: ArkmeSourceItem; defaultCategorySource: ArkmeSourceItem }
+  | {
+    status: 'ready'
+    aggregateSource: ArkmeSourceItem
+    defaultCategorySource: ArkmeSourceItem
+    sources: ArkmeSourceItem[]
+  }
   | { status: 'error'; message: string }
 
 export type ArkmeTopicSelectionReconciliation =
@@ -250,7 +255,7 @@ export function ArkmeTopicDirectoryPopover({
     const aggregateSource = sources.find(source => source.kind === 'send_to_self')
     const defaultCategorySource = sources.find(source => source.kind === 'default_category')
     if (aggregateSource === undefined || defaultCategorySource === undefined) return
-    onSelfSourcesResolution(userId, { status: 'ready', aggregateSource, defaultCategorySource })
+    onSelfSourcesResolution(userId, { status: 'ready', aggregateSource, defaultCategorySource, sources })
   }, [onSelfSourcesResolution, sources, userId])
 
   useEffect(() => {

@@ -10,6 +10,10 @@ import {
 import {
   arkmeAggregateSourceForUser, arkmeSourceComposerPlaceholder, arkmeSourceDestinationLabel,
 } from '../src/client/ArkmeSidebar.js'
+import {
+  appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
+  truncateArkmeSourceBreadcrumbTrail,
+} from '../src/client/ArkmeSourceBreadcrumb.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeSourceSortControl, ArkmeSourceSortMenu, ArkmeTopicCard, ArkmeTopicCreateFooter,
@@ -140,13 +144,13 @@ describe('topic create UI', () => {
     expect(hovered).toContain('<svg')
     expect(hovered).toContain('width:58px')
     expect(hovered).toContain('padding-right:12px')
-    expect(hovered).toContain('#b0b5bc')
+    expect(hovered).toContain('var(--dsw-alias-label-caption, #a3a8ae)')
     expect(hovered).not.toContain('＋')
     expect(resting).not.toContain('transition:')
     expect(hovered).not.toContain('transition:')
-    expect(selected).toContain('background:#def3e8')
-    expect(selected).toContain('inset 2px 0 #20c66a')
-    expect(created).toContain('background:#def3e8')
+    expect(selected).toContain('background:var(--dsw-alias-state-success-tertiary, #def3e8)')
+    expect(selected).toContain('inset 2px 0 var(--dsw-alias-state-success-primary, #09b83e)')
+    expect(created).toContain('background:var(--dsw-alias-state-success-tertiary, #def3e8)')
     expect(created).toContain('box-shadow:none')
     expect(created).toContain('transition:background-color 140ms ease')
     expect(created).not.toContain('inset 2px 0 #20c66a')
@@ -205,6 +209,76 @@ describe('topic create UI', () => {
     expect(arkmeSourceComposerPlaceholder(topicRow.source)).toBe('发送到「工作」…')
   })
 
+  it('records visited personal destinations without inferring directory parents', () => {
+    const aggregate: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'aggregate', kind: 'send_to_self', displayName: '发给自己',
+    }
+    const defaultCategory: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'default', kind: 'default_category', displayName: '默认分类',
+    }
+    const rootTopic: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'product', displayName: '产品研发',
+    }
+    const childTopic: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'dsh', parentSourceRef: rootTopic.sourceRef, displayName: 'DSH 插件',
+    }
+    const leafTopic: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'release', parentSourceRef: childTopic.sourceRef, displayName: '发布流程',
+    }
+    const sources = [aggregate, defaultCategory, rootTopic, childTopic, leafTopic]
+
+    let trail: ArkmeSourceItem[] = []
+    expect(appendArkmeSourceBreadcrumbTrail(trail, undefined, sources)).toBe(trail)
+    expect(appendArkmeSourceBreadcrumbTrail(trail, aggregate, sources)).toBe(trail)
+    trail = appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)
+    trail = appendArkmeSourceBreadcrumbTrail(trail, leafTopic, sources)
+    expect(arkmeSourceBreadcrumb(trail, sources).map(segment => segment.label))
+      .toEqual(['发给自己', '产品研发', '发布流程'])
+
+    trail = appendArkmeSourceBreadcrumbTrail(trail, childTopic, sources)
+    trail = appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)
+    expect(arkmeSourceBreadcrumb(trail, sources).map(segment => segment.label))
+      .toEqual(['发给自己', '产品研发', '发布流程', 'DSH 插件', '产品研发'])
+    expect(appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)).toBe(trail)
+    expect(truncateArkmeSourceBreadcrumbTrail(trail, 1).map(source => source.displayName))
+      .toEqual(['产品研发', '发布流程'])
+    expect(appendArkmeSourceBreadcrumbTrail(trail, aggregate, sources)).toEqual([])
+
+    const markup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
+      trail={[rootTopic, leafTopic]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
+    />)
+    expect(markup).toContain('aria-label="当前主题路径"')
+    expect(markup).toContain('发给自己')
+    expect(markup).toContain('产品研发')
+    expect(markup).not.toContain('DSH 插件')
+    expect(markup).toContain('aria-current="page"')
+    expect(markup).toContain('--dsw-alias-label-secondary')
+    expect(markup).toContain('发布流程')
+
+    const aggregateMarkup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
+      trail={[]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
+    />)
+    expect(aggregateMarkup).toContain('aria-current="page"')
+    expect(aggregateMarkup).toContain('--dsw-alias-label-primary')
+    expect(aggregateMarkup).not.toContain('--dsw-alias-label-caption')
+  })
+
+  it('rebinds rotated source references without duplicating the visited destination', () => {
+    const stale: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'stale-topic-ref', displayName: '产品研发',
+    }
+    const current: ArkmeSourceItem = {
+      ...stale, sourceRef: 'current-topic-ref', recordCount: 48,
+    }
+
+    const trail = appendArkmeSourceBreadcrumbTrail([stale], stale, [current])
+    expect(trail).toEqual([current])
+
+    const segments = arkmeSourceBreadcrumb([stale], [current])
+    expect(segments).toHaveLength(2)
+    expect(segments[1]?.source).toBe(current)
+  })
+
   it('never reuses a resolved aggregate source across accounts', () => {
     const aggregate: ArkmeSourceItem = {
       ...topicRow.source, sourceRef: 'aggregate-a', kind: 'send_to_self', displayName: '发给自己',
@@ -214,7 +288,10 @@ describe('topic create UI', () => {
     }
     const state = {
       userId: 10001,
-      resolution: { status: 'ready' as const, aggregateSource: aggregate, defaultCategorySource: defaultCategory },
+      resolution: {
+        status: 'ready' as const, aggregateSource: aggregate, defaultCategorySource: defaultCategory,
+        sources: [aggregate, defaultCategory],
+      },
     }
 
     expect(arkmeAggregateSourceForUser(10001, state)).toBe(aggregate)

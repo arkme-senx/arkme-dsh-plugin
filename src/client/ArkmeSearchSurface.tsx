@@ -4,12 +4,13 @@ import type {
   ArkmeRecordSearchResult, ArkmeSearchHistoryResult, ArkmeSearchRecordItem,
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 const assetRoot = '/arkme-self/api/call'
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #17191c)', secondary: 'var(--dsw-alias-label-secondary, #777d86)',
-  tertiary: '#a4a4a4', border: 'var(--dsw-alias-border-l2, #e5e6e8)', panel: 'var(--dsw-alias-bg-base, #fff)',
-  subtle: 'var(--dsw-alias-bg-subtle, #f5f5f6)', hover: 'rgba(0,0,0,.035)', blue: '#0b8def', danger: '#c2413b',
+  text: arkmeTheme.text, secondary: arkmeTheme.secondary,
+  tertiary: arkmeTheme.tertiary, border: arkmeTheme.border, panel: arkmeTheme.base,
+  subtle: arkmeTheme.subtle, hover: arkmeTheme.hover, blue: arkmeTheme.info, danger: arkmeTheme.danger,
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -26,11 +27,11 @@ const styles: Record<string, CSSProperties> = {
   tab: { position: 'relative', minHeight: 38, padding: '0 0 11px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 14, whiteSpace: 'nowrap' }, tabActive: { fontWeight: 600 },
   indicator: { position: 'absolute', left: '50%', bottom: 5, width: 10, height: 2, marginLeft: -5, borderRadius: 22, background: colors.text },
   status: { padding: '54px 12px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
-  error: { margin: '14px 0 0', padding: '10px 12px', borderRadius: 8, background: 'rgba(194,65,59,.08)', color: colors.danger, fontSize: 13 },
+  error: { margin: '14px 0 0', padding: '10px 12px', borderRadius: 8, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
   list: { display: 'flex', flexDirection: 'column' }, row: { width: '100%', minWidth: 0, padding: '14px 10px', border: 0, borderBottom: `1px solid ${colors.border}`, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', boxSizing: 'border-box' },
   title: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '21px', fontWeight: 600 },
   text: { margin: '4px 0 0', display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: colors.secondary, fontSize: 13, lineHeight: '20px' },
-  meta: { display: 'block', marginTop: 6, color: '#9aa0a9', fontSize: 11, lineHeight: '16px' },
+  meta: { display: 'block', marginTop: 6, color: arkmeTheme.caption, fontSize: 11, lineHeight: '16px' },
   sourceLayout: { minHeight: 0, flex: 1, display: 'grid', gridTemplateColumns: 'minmax(180px, 36%) minmax(0, 1fr)', gap: 18, overflow: 'hidden' }, sourceList: { overflowY: 'auto', borderRight: `1px solid ${colors.border}`, paddingRight: 8 }, sourceResults: { overflowY: 'auto' },
   quickShell: { width: '100%' },
   quickHeader: { width: '100%' }, quickTopRow: { display: 'flex', alignItems: 'center', gap: 8 },
@@ -38,12 +39,12 @@ const styles: Record<string, CSSProperties> = {
   quickSearch: { height: 44, flex: 1, display: 'flex', alignItems: 'center', gap: 5, padding: '0 10px', boxSizing: 'border-box', border: '1px solid transparent', borderRadius: 12, background: colors.subtle }, quickSearchIcon: { width: 26, height: 26, flex: 'none' }, quickInput: { flex: 1, minWidth: 0, height: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 16 },
   quickBody: { paddingBottom: 40 },
   summary: { display: 'inline-block', margin: '12px 2px 4px', padding: '2px 8px', borderRadius: 4, background: colors.subtle, color: colors.secondary, fontSize: 10 }, month: { margin: '16px 2px 8px', fontSize: 13, fontWeight: 600 },
-  mediaGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 3 }, mediaButton: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 4, background: '#eceef1', cursor: 'pointer' }, mediaImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' }, play: { position: 'absolute', inset: 0, margin: 'auto', width: 38, height: 38, padding: 9, borderRadius: 999, background: 'rgba(0,0,0,.52)', boxSizing: 'border-box' }, duration: { position: 'absolute', right: 4, bottom: 4, padding: '1px 4px', borderRadius: 4, background: 'rgba(0,0,0,.58)', color: '#fff', fontSize: 9 },
+  mediaGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 3 }, mediaButton: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 4, background: arkmeTheme.subtle, cursor: 'pointer' }, mediaImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' }, play: { position: 'absolute', inset: 0, margin: 'auto', width: 38, height: 38, padding: 9, borderRadius: 999, background: 'rgba(0,0,0,.52)', boxSizing: 'border-box' }, duration: { position: 'absolute', right: 4, bottom: 4, padding: '1px 4px', borderRadius: 4, background: 'rgba(0,0,0,.58)', color: arkmeTheme.foreground, fontSize: 9 },
   audioRow: { padding: '12px 8px', borderBottom: `1px solid ${colors.border}` }, audio: { width: '100%', height: 34, marginTop: 8 },
   fileRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 8px', borderBottom: `1px solid ${colors.border}`, color: colors.text, textDecoration: 'none' }, fileIcon: { width: 38, height: 38, flex: 'none' }, fileText: { minWidth: 0, flex: 1 },
   linkCard: { display: 'block', marginTop: 10, padding: 12, border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, textDecoration: 'none', overflow: 'hidden' },
   aiGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 12 }, aiCard: { minWidth: 0, overflow: 'hidden', border: `1px solid ${colors.border}`, borderRadius: 9 }, aiCover: { ...({ position: 'relative', width: '100%', aspectRatio: '16 / 9', display: 'grid', placeItems: 'center', overflow: 'hidden', padding: 0, border: 0, background: '#20242c', cursor: 'pointer' } as CSSProperties) }, aiBody: { padding: '9px 10px 11px' },
-  modal: { position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 28, background: 'rgba(0,0,0,.55)' }, detail: { width: 'min(700px, 92vw)', maxHeight: '86vh', overflowY: 'auto', padding: 24, boxSizing: 'border-box', borderRadius: 14, background: colors.panel }, preview: { width: 'min(960px, 92vw)', maxHeight: '90vh', padding: 12, borderRadius: 14, background: '#111' }, previewMedia: { maxWidth: '100%', maxHeight: '78vh', display: 'block', margin: '0 auto', borderRadius: 8 }, closeText: { display: 'block', margin: '12px 0 0 auto', border: 0, borderRadius: 8, padding: '7px 12px', background: colors.subtle, color: colors.text, cursor: 'pointer' },
+  modal: { position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 28, background: 'var(--dsw-alias-bg-mask-3, rgba(0,0,0,.55))' }, detail: { width: 'min(700px, 92vw)', maxHeight: '86vh', overflowY: 'auto', padding: 24, boxSizing: 'border-box', borderRadius: 14, background: colors.panel }, preview: { width: 'min(960px, 92vw)', maxHeight: '90vh', padding: 12, borderRadius: 14, background: '#111' }, previewMedia: { maxWidth: '100%', maxHeight: '78vh', display: 'block', margin: '0 auto', borderRadius: 8 }, closeText: { display: 'block', margin: '12px 0 0 auto', border: 0, borderRadius: 8, padding: '7px 12px', background: colors.subtle, color: colors.text, cursor: 'pointer' },
 }
 
 const quickEntries: Array<{ key: QuickKey; label: string }> = [{ key: 'ai_video', label: 'AI 视频' }]

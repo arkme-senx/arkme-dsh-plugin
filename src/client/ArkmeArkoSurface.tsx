@@ -26,6 +26,8 @@ import {
 import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
 import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeTheme } from './arkme-theme.js'
+import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore } from './composer-draft-store.js'
 
 type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
@@ -57,12 +59,12 @@ interface ActiveArkoRun extends ArkoContinuationTarget {
 const ACTIVE_RUN_STATUSES = new Set(['accepted', 'queued', 'running', 'stream_timeout', 'waiting_tool'])
 
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #17191c)',
-  secondary: 'var(--dsw-alias-label-secondary, #68707c)',
-  border: 'var(--dsw-alias-border-l2, #e2e5e9)',
-  active: '#def3e8',
-  accent: '#20c66a',
-  danger: '#c2413b',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  active: arkmeTheme.accentSoft,
+  accent: arkmeTheme.accent,
+  danger: arkmeTheme.danger,
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -71,7 +73,7 @@ const styles: Record<string, CSSProperties> = {
   header: {
     flex: 'none', height: 56, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12,
     padding: '8px 64px 8px 20px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
-    background: 'var(--dsw-alias-bg-base, #fff)',
+    background: arkmeTheme.base,
   },
   headerTitle: {
     flex: 'none', minWidth: 0, maxWidth: '40%', margin: 0, padding: '4px 8px',
@@ -86,12 +88,12 @@ const styles: Record<string, CSSProperties> = {
   actionButton: {
     minWidth: 0, height: 34, display: 'flex', alignItems: 'center', gap: 7,
     padding: '5px 9px', boxSizing: 'border-box', border: `1px solid ${colors.border}`,
-    borderRadius: 8, background: 'var(--dsw-alias-bg-base, #fff)', color: colors.text,
+    borderRadius: 8, background: arkmeTheme.elevated, color: colors.text,
     cursor: 'pointer', textAlign: 'left', font: 'inherit',
   },
   actionIcon: {
     width: 22, height: 22, flex: 'none', display: 'grid', placeItems: 'center',
-    borderRadius: 999, background: colors.active, color: '#176d3d', fontSize: 12, fontWeight: 800,
+    borderRadius: 999, background: colors.active, color: arkmeTheme.accent, fontSize: 12, fontWeight: 800,
   },
   actionContent: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   actionTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, lineHeight: '18px', fontWeight: 600 },
@@ -104,15 +106,15 @@ const styles: Record<string, CSSProperties> = {
   lineMe: { flexDirection: 'row-reverse' },
   avatar: {
     width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
-    background: 'var(--dsw-alias-bg-subtle, #f0f2f5)', color: colors.secondary, fontSize: 12,
+    background: arkmeTheme.subtle, color: colors.secondary, fontSize: 12,
   },
   messageBody: { minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 },
   messageBodyMe: { alignItems: 'flex-end' },
   sender: { color: colors.secondary, fontSize: 11 },
   bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 18, boxSizing: 'border-box' },
   bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)' },
-  bubbleArko: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)' },
-  bubbleError: { background: 'rgba(194,65,59,.1)', color: colors.danger },
+  bubbleArko: { background: arkmeTheme.subtle },
+  bubbleError: { background: arkmeTheme.dangerSoft, color: colors.danger },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
   reasoning: {
     margin: '8px 0 0', paddingTop: 8, borderTop: `1px solid ${colors.border}`,
@@ -120,38 +122,38 @@ const styles: Record<string, CSSProperties> = {
   },
   thinking: {
     width: 'min(440px, 100%)', padding: 10, boxSizing: 'border-box', borderRadius: 12,
-    background: 'var(--dsw-specific-input-major, #fff)', border: `1px solid ${colors.border}`,
+    background: arkmeTheme.input, border: `1px solid ${colors.border}`,
   },
   thinkingHeader: {
     width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: 0, border: 0,
     background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', textAlign: 'left',
   },
   thinkingTitle: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: '18px' },
-  thinkingDuration: { flex: 'none', color: '#9298a0', fontSize: 12, lineHeight: '18px' },
+  thinkingDuration: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '18px' },
   thinkingDetail: {
     margin: '8px 0 0', color: colors.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
     fontSize: 13, lineHeight: '18px',
   },
-  meta: { color: '#9298a0', fontSize: 11 },
+  meta: { color: arkmeTheme.tertiary, fontSize: 11 },
   empty: { width: 'min(720px,100%)', margin: '28px auto', color: colors.secondary, textAlign: 'center', fontSize: 13 },
   historySentinel: { width: '100%', height: 1 },
   historyLoading: { width: 'min(780px,100%)', margin: '0 auto 12px', color: colors.secondary, textAlign: 'center', fontSize: 12 },
-  error: { width: 'min(780px,100%)', margin: '0 auto 12px', padding: '10px 12px', borderRadius: 8, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
-  notice: { width: 'min(780px,100%)', margin: '0 auto 12px', padding: '10px 12px', borderRadius: 8, background: colors.active, color: '#176d3d', fontSize: 13 },
+  error: { width: 'min(780px,100%)', margin: '0 auto 12px', padding: '10px 12px', borderRadius: 8, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
+  notice: { width: 'min(780px,100%)', margin: '0 auto 12px', padding: '10px 12px', borderRadius: 8, background: colors.active, color: arkmeTheme.accent, fontSize: 13 },
   feedbackRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   retryButton: {
     flex: 'none', height: 30, padding: '0 10px', border: `1px solid ${colors.border}`, borderRadius: 7,
-    background: 'var(--dsw-alias-bg-base, #fff)', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12,
+    background: arkmeTheme.elevated, color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12,
   },
   divider: { alignSelf: 'center', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   backdrop: {
     position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: 16, boxSizing: 'border-box', background: 'rgba(23,25,28,.34)',
+    padding: 16, boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(23,25,28,.34))',
   },
   dialog: {
     width: 'min(680px, 100%)', maxHeight: 'min(720px, calc(100vh - 32px))', overflowY: 'auto',
     padding: 20, boxSizing: 'border-box', borderRadius: 8,
-    background: 'var(--dsw-alias-bg-base, #fff)', color: colors.text,
+    background: arkmeTheme.layer2, color: colors.text,
     boxShadow: '0 18px 48px rgba(23,25,28,.18)',
   },
   dialogTitle: { margin: 0, fontSize: 22, lineHeight: '29px', fontWeight: 700 },
@@ -160,26 +162,26 @@ const styles: Record<string, CSSProperties> = {
   modelOption: {
     width: '100%', minHeight: 78, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     gap: 12, padding: '12px 14px', boxSizing: 'border-box', border: `1px solid ${colors.border}`,
-    borderRadius: 8, background: 'var(--dsw-alias-bg-base, #fff)', color: colors.text,
+    borderRadius: 8, background: arkmeTheme.elevated, color: colors.text,
     cursor: 'pointer', textAlign: 'left', font: 'inherit',
   },
-  modelOptionSelected: { borderColor: colors.accent, background: '#e9f8ef' },
+  modelOptionSelected: { borderColor: colors.accent, background: arkmeTheme.accentSoft },
   modelName: { fontSize: 16, lineHeight: '22px', fontWeight: 650 },
   modelDescription: { marginTop: 3, color: colors.secondary, fontSize: 13, lineHeight: '19px' },
-  recommended: { marginLeft: 8, color: '#08a94e', fontSize: 11, fontWeight: 600 },
-  check: { width: 26, height: 26, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999, background: colors.accent, color: '#fff', fontWeight: 800 },
+  recommended: { marginLeft: 8, color: arkmeTheme.accent, fontSize: 11, fontWeight: 600 },
+  check: { width: 26, height: 26, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999, background: colors.accent, color: arkmeTheme.foreground, fontWeight: 800 },
   dialogActions: { marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 8 },
   dialogButton: {
     minWidth: 76, height: 36, border: `1px solid ${colors.border}`, borderRadius: 8,
-    background: 'var(--dsw-alias-bg-base, #fff)', color: colors.text, font: 'inherit', cursor: 'pointer',
+    background: arkmeTheme.elevated, color: colors.text, font: 'inherit', cursor: 'pointer',
   },
-  dialogPrimary: { border: 0, background: colors.text, color: '#fff' },
+  dialogPrimary: { border: 0, background: arkmeTheme.info, color: arkmeTheme.foreground },
   composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
   composerInner: {
     position: 'relative', width: 'min(780px,100%)', overflow: 'hidden', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
     border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 18,
-    background: 'var(--dsw-specific-input-major, #fff)', boxShadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.08))',
+    background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
   },
   textarea: {
     width: '100%', minHeight: 28, maxHeight: 180, resize: 'none', overflowY: 'auto',
@@ -192,7 +194,7 @@ const styles: Record<string, CSSProperties> = {
   hint: { color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   send: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 999, background: colors.accent, color: '#fff', cursor: 'pointer',
+    border: 0, borderRadius: 999, background: colors.accent, color: arkmeTheme.foreground, cursor: 'pointer',
   },
   stop: { background: colors.danger },
 }
@@ -399,6 +401,13 @@ export function ArkmeArkoSurface() {
     arkmeArkoProfileStore.getSnapshot,
   )
   const profileUserId = authSnapshot.auth?.status === 'authenticated' ? authSnapshot.auth.userId : undefined
+  const composerDraftKey = arkmeArkoComposerDraftKey(profileUserId)
+  useSyncExternalStore(
+    arkmeComposerDraftStore.subscribe,
+    arkmeComposerDraftStore.getRevision,
+    arkmeComposerDraftStore.getRevision,
+  )
+  const draft = arkmeComposerDraftStore.get(composerDraftKey).text
   const profile = profileSnapshot.userId === profileUserId ? profileSnapshot.profile : undefined
   const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
   const [session, setSession] = useState<ArkmeArkoSession>()
@@ -406,7 +415,6 @@ export function ArkmeArkoSurface() {
   const [messages, setMessages] = useState<ArkoMessage[]>([])
   const [historyOffset, setHistoryOffset] = useState<number>()
   const [historyError, setHistoryError] = useState('')
-  const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sending, setSending] = useState(false)
@@ -754,7 +762,7 @@ export function ArkmeArkoSurface() {
   const send = useCallback(async () => {
     const text = draft.trim()
     if (text === '' || sending || activeRun !== undefined || pendingTurn !== undefined
-      || session === undefined || profileUserId === undefined) return
+      || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
     const continuation = latestContinuation(messages, session.sessionId)
     const createdAtMillis = Date.now()
     const turn: ArkmeArkoPendingTurn = {
@@ -774,7 +782,7 @@ export function ArkmeArkoSurface() {
     }
     writeArkoPendingTurn(turn)
     setPendingTurn(turn)
-    setDraft('')
+    arkmeComposerDraftStore.clear(composerDraftKey)
     setMessages(current => [...current, {
       id: turn.localUserMessageId,
       sessionId: turn.sessionId,
@@ -794,7 +802,7 @@ export function ArkmeArkoSurface() {
     }])
     scrollToBottom()
     await submitTurn(turn)
-  }, [activeRun, catalog, draft, messages, pendingTurn, profileUserId, scrollToBottom, sending, session, submitTurn])
+  }, [activeRun, catalog, composerDraftKey, draft, messages, pendingTurn, profileUserId, scrollToBottom, sending, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel) return
@@ -1006,7 +1014,7 @@ export function ArkmeArkoSurface() {
         placeholder={`问问 ${displayName}...`}
         aria-label={`发送给 ${displayName}`}
         disabled={loading || interactionLocked || session === undefined || profileUserId === undefined}
-        onChange={event => { setDraft(event.target.value) }}
+        onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()

@@ -25,11 +25,22 @@ import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import {
+  appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
+  truncateArkmeSourceBreadcrumbTrail,
+} from './ArkmeSourceBreadcrumb.js'
+import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution,
 } from './ArkmeTopicDirectoryPopover.js'
+import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
+import {
+  arkmeComposerDraftStore,
+  arkmeSourceComposerDraftKey,
+  releaseArkmeComposerDraft,
+  type ArkmeComposerAttachment,
+} from './composer-draft-store.js'
 import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, resolveInterwovenGroupTarget,
@@ -49,11 +60,7 @@ export interface ArkmeSurfaceProps {
 
 export type ArkmeAuthView = 'login' | 'content'
 
-interface ArkmeComposerAttachment {
-  asset: ArkmeUploadedAsset
-  previewUrl?: string
-}
-
+const EMPTY_SELF_SOURCES: readonly ArkmeSourceItem[] = []
 export function arkmeShouldDismissAnchoredMenu(
   target: Node | null,
   menu: Pick<Node, 'contains'> | null,
@@ -88,11 +95,11 @@ function AgentAssistantIcon({ size = 12 }: { size?: number }) {
 }
 
 const colors = {
-  panel: 'var(--dsw-alias-bg-base, #ffffff)',
-  text: 'var(--dsw-alias-label-primary, #17191c)',
-  secondary: 'var(--dsw-alias-label-secondary, #68707c)',
-  border: 'var(--dsw-alias-border-l2, #e2e5e9)',
-  danger: '#c2413b',
+  panel: arkmeTheme.base,
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  danger: arkmeTheme.danger,
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -106,7 +113,7 @@ const styles: Record<string, CSSProperties> = {
     flex: 'none', height: ARKME_CONVERSATION_HEADER_HEIGHT, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
-  titleGroup: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 },
+  titleGroup: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 4 },
   titleBlock: { flex: 1, minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
@@ -116,9 +123,9 @@ const styles: Record<string, CSSProperties> = {
   popover: { position: 'absolute', zIndex: 40, top: 38, right: 0, width: 150, padding: 6, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.12)' },
   menuItem: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, border: 0, borderRadius: 8, padding: '9px 10px', background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13 },
   body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
-  error: { padding: '10px 12px', borderRadius: 9, background: 'rgba(194,65,59,.1)', color: colors.danger, fontSize: 13 },
+  error: { padding: '10px 12px', borderRadius: 9, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
   records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
-  date: { alignSelf: 'center', padding: '4px 9px', borderRadius: 999, color: '#9097a1', fontSize: 12, background: '#f6f7f9' },
+  date: { alignSelf: 'center', padding: '4px 9px', borderRadius: 999, color: arkmeTheme.tertiary, fontSize: 12, background: arkmeTheme.subtle },
   row: { width: '100%', display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
   rowOther: { justifyContent: 'flex-start' },
@@ -130,7 +137,7 @@ const styles: Record<string, CSSProperties> = {
   forwardMessageBody: { flex: 1 },
   messageAvatar: {
     width: 32, height: 32, flex: 'none', overflow: 'hidden', borderRadius: 999,
-    display: 'grid', placeItems: 'center', background: 'transparent', color: '#737982', fontSize: 11, fontWeight: 600,
+    display: 'grid', placeItems: 'center', background: 'transparent', color: arkmeTheme.secondary, fontSize: 11, fontWeight: 600,
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   sender: { color: colors.secondary, fontSize: 11 },
@@ -141,13 +148,13 @@ const styles: Record<string, CSSProperties> = {
   agentSourceIcon: { flex: 'none', width: 12, height: 12, display: 'grid', placeItems: 'center', overflow: 'hidden' },
   agentSourceText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
-  bubbleMe: { background: 'var(--arkme-chat-self-bubble, #effaf0)', '--arkme-bubble-fade': 'var(--arkme-chat-self-bubble, #effaf0)' } as CSSProperties,
-  bubbleOther: { background: 'var(--dsw-alias-bg-subtle, #f0f2f5)', '--arkme-bubble-fade': 'var(--dsw-alias-bg-subtle, #f0f2f5)' } as CSSProperties,
+  bubbleMe: { background: arkmeTheme.messageOwn, '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
+  bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
   forwardBubble: { width: '100%', maxWidth: 400, minWidth: 0, padding: 0, borderRadius: 0, background: 'transparent' },
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
-  meta: { color: '#adb2b8', fontSize: 11 },
+  meta: { color: arkmeTheme.caption, fontSize: 11 },
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
-  retry: { border: 0, padding: 0, background: 'transparent', color: '#c2413b', cursor: 'pointer', fontSize: 11 },
+  retry: { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', fontSize: 11 },
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
@@ -156,7 +163,7 @@ const styles: Record<string, CSSProperties> = {
     position: 'relative', width: 'min(780px,100%)', overflow: 'visible', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
     border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 22,
-    background: 'var(--dsw-specific-input-major, #fff)', boxShadow: 'var(--dsw-shadow-lv2, 0 4px 16px rgba(0,0,0,.08))',
+    background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
   },
   textarea: {
     width: '100%', minHeight: 28, maxHeight: 336, resize: 'none', overflowY: 'auto',
@@ -179,7 +186,7 @@ const styles: Record<string, CSSProperties> = {
   send: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
     border: 0, borderRadius: 999, background: 'var(--dsw-alias-button-info-fill, #3964fe)',
-    color: '#fff', cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
+    color: arkmeTheme.foreground, cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
   },
   drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 10, width: 'min(420px, 92%)', display: 'flex', flexDirection: 'column', background: colors.panel, borderLeft: `1px solid ${colors.border}`, boxShadow: '-12px 0 30px rgba(0,0,0,.12)' },
   forwardDrawer: { top: ARKME_CONVERSATION_HEADER_HEIGHT, width: 'min(420px, 92%)' },
@@ -189,7 +196,7 @@ const styles: Record<string, CSSProperties> = {
   },
   drawerHeader: { height: 56, flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', borderBottom: `1px solid ${colors.border}`, boxSizing: 'border-box' },
   drawerTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
-  close: { marginLeft: 'auto', width: 32, height: 32, border: 0, borderRadius: 999, background: '#f1f3f6', cursor: 'pointer', color: colors.text },
+  close: { marginLeft: 'auto', width: 32, height: 32, border: 0, borderRadius: 999, background: arkmeTheme.hover, cursor: 'pointer', color: colors.text },
   drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 },
   detailText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' },
   forwardDetailHeader: { minHeight: 76, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center', padding: '12px 60px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}` },
@@ -207,7 +214,7 @@ const styles: Record<string, CSSProperties> = {
   forwardDetailRecordText: { margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: colors.text, fontSize: 16, lineHeight: '25px' },
   forwardDetailDivider: { height: 1, background: colors.border },
   forwardDetailFooter: { flex: 'none', padding: '12px 24px 18px', color: '#a2a7ae', textAlign: 'center', fontSize: 13, lineHeight: '18px' },
-  toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: '#f1efff', color: '#694fd0', cursor: 'pointer', fontSize: 12 },
+  toggle: { border: 0, borderRadius: 9, padding: '7px 10px', background: arkmeTheme.infoSoft, color: arkmeTheme.info, cursor: 'pointer', fontSize: 12 },
   loginBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
 }
 
@@ -465,12 +472,35 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const selectedSource = ui.mode === 'source' ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
+  const [selfBreadcrumbTrail, setSelfBreadcrumbTrail] = useState<ArkmeSourceItem[]>([])
   const activeSelfSourcesResolution = selfSourcesResolution === undefined
     || selfSourcesResolution.userId !== authenticatedUserId
     ? undefined
     : selfSourcesResolution.resolution
   const aggregateSource = arkmeAggregateSourceForUser(authenticatedUserId, selfSourcesResolution)
+  const selfSources = activeSelfSourcesResolution?.status === 'ready'
+    ? activeSelfSourcesResolution.sources
+    : EMPTY_SELF_SOURCES
+  const selfSourcesRef = useRef(selfSources)
+  selfSourcesRef.current = selfSources
+  const breadcrumbUserIdRef = useRef(authenticatedUserId)
+  useEffect(() => {
+    const accountChanged = breadcrumbUserIdRef.current !== authenticatedUserId
+    breadcrumbUserIdRef.current = authenticatedUserId
+    setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(
+      accountChanged ? [] : current, selectedSource, selfSources,
+    ))
+  }, [authenticatedUserId, selectedSource, selfSources])
   const source = ui.mode === 'source' ? selectedSource ?? aggregateSource : undefined
+  const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
+  useSyncExternalStore(
+    arkmeComposerDraftStore.subscribe,
+    arkmeComposerDraftStore.getRevision,
+    arkmeComposerDraftStore.getRevision,
+  )
+  const composerDraft = arkmeComposerDraftStore.get(composerDraftKey)
+  const draft = composerDraft.text
+  const attachments = composerDraft.attachments
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -491,11 +521,9 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
   const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
   const [hasMore, setHasMore] = useState(false)
-  const [draft, setDraft] = useState('')
   const [longArticleCreating, setLongArticleCreating] = useState(false)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
-  const [attachments, setAttachments] = useState<ArkmeComposerAttachment[]>([])
-  const [uploadStatus, setUploadStatus] = useState('')
+  const [uploadStatus, setUploadStatus] = useState<{ key: string; message: string }>()
   const [busy, setBusy] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -537,7 +565,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const detailRequestMomentRef = useRef('')
   const lastReadAckRef = useRef('')
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
-  const attachmentPreviewUrlsRef = useRef(new Set<string>())
   const ignoreStaleBindingAuthRef = useRef(false)
   const authenticated = auth?.status === 'authenticated'
   const authView = arkmeAuthView(auth)
@@ -578,21 +605,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       document.removeEventListener('keydown', closeFromKeyboard)
     }
   }, [relatedMenuOpen])
-
-  const releaseAttachmentPreview = useCallback((attachment: ArkmeComposerAttachment) => {
-    if (attachment.previewUrl === undefined) return
-    URL.revokeObjectURL(attachment.previewUrl)
-    attachmentPreviewUrlsRef.current.delete(attachment.previewUrl)
-  }, [])
-
-  const releaseAttachmentPreviews = useCallback((values: ArkmeComposerAttachment[]) => {
-    for (const attachment of values) releaseAttachmentPreview(attachment)
-  }, [releaseAttachmentPreview])
-
-  useEffect(() => () => {
-    for (const previewUrl of attachmentPreviewUrlsRef.current) URL.revokeObjectURL(previewUrl)
-    attachmentPreviewUrlsRef.current.clear()
-  }, [])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
     const previous = arkmeAuthStore.getSnapshot().auth
@@ -861,7 +873,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     setHasMore(cachedTimeline?.hasMore ?? false)
     setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
     if (authenticated) setError('')
-    setAttachments(current => { releaseAttachmentPreviews(current); return [] }); setLongArticleCreating(false); setAddMenuOpen(false)
+    setLongArticleCreating(false); setAddMenuOpen(false)
     interwovenRequestRef.current?.abort()
     interwovenGenerationRef.current += 1
     detailRequestRef.current?.abort()
@@ -871,7 +883,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       : conversationCacheRef.current.getInterwovenMoments(sourceRef) ?? [])
     setSelectedMoment(undefined)
     setDetailState(undefined)
-  }, [authenticated, auth?.userId, releaseAttachmentPreviews, source?.sourceRef])
+  }, [authenticated, auth?.userId, source?.sourceRef])
   useEffect(() => {
     if (!authenticated || source === undefined) return
     const generation = timelineGenerationRef.current
@@ -1059,15 +1071,15 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     if (mode !== 'wechat') qrRequestStartedRef.current = false
   }
 
-  const uploadFile = async (file: File): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
+  const uploadFile = async (file: File, targetDraftKey: string): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open('POST', '/arkme-self/api/upload')
     request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
     request.setRequestHeader('X-Arkme-File-Name', encodeURIComponent(file.name))
     request.upload.onprogress = event => {
-      if (event.lengthComputable) setUploadStatus(`正在上传 ${file.name} ${String(Math.round(event.loaded / event.total * 100))}%`)
+      if (event.lengthComputable) setUploadStatus({ key: targetDraftKey, message: `正在上传 ${file.name} ${String(Math.round(event.loaded / event.total * 100))}%` })
     }
-    request.upload.onload = () => { setUploadStatus(`正在保存 ${file.name}…`) }
+    request.upload.onload = () => { setUploadStatus({ key: targetDraftKey, message: `正在保存 ${file.name}…` }) }
     request.onerror = () => { reject(new Error('文件上传网络错误')) }
     request.onload = () => {
       try {
@@ -1081,6 +1093,9 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
 
   const selectFiles = async (files: FileList | readonly File[] | null) => {
     if (files === null || files.length === 0) return
+    const targetDraftKey = composerDraftKey
+    const targetUserId = authenticatedUserId
+    if (targetDraftKey === undefined || targetUserId === undefined) return
     setAddMenuOpen(false); setBusy(true); setError('')
     const uploaded: ArkmeComposerAttachment[] = []
     try {
@@ -1088,59 +1103,60 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
         const previewUrl = file.type.toLowerCase().startsWith('image/') && typeof URL.createObjectURL === 'function'
           ? URL.createObjectURL(file)
           : undefined
-        if (previewUrl !== undefined) attachmentPreviewUrlsRef.current.add(previewUrl)
         try {
-          const asset = await uploadFile(file)
+          const asset = await uploadFile(file, targetDraftKey)
           uploaded.push({ asset, ...(previewUrl === undefined ? {} : { previewUrl }) })
         } catch (caught) {
-          if (previewUrl !== undefined) {
-            URL.revokeObjectURL(previewUrl)
-            attachmentPreviewUrlsRef.current.delete(previewUrl)
-          }
+          if (previewUrl !== undefined) URL.revokeObjectURL(previewUrl)
           throw caught
         }
       }
-      setAttachments(current => {
-        const retained = [...current, ...uploaded].slice(0, 20)
-        const retainedIds = new Set(retained.map(item => item.asset.fileAssetUid))
-        releaseAttachmentPreviews(uploaded.filter(item => !retainedIds.has(item.asset.fileAssetUid)))
-        return retained
-      })
+      const currentAuth = arkmeAuthStore.getSnapshot().auth
+      if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
+        arkmeComposerDraftStore.appendAttachments(targetDraftKey, uploaded)
+      } else {
+        releaseArkmeComposerDraft({ text: '', attachments: uploaded })
+      }
     } catch (caught) {
-      releaseAttachmentPreviews(uploaded)
+      releaseArkmeComposerDraft({ text: '', attachments: uploaded })
       setError(errorMessage(caught))
     }
     finally {
-      setUploadStatus(''); setBusy(false)
+      setUploadStatus(current => current?.key === targetDraftKey ? undefined : current); setBusy(false)
       if (fileInputRef.current !== null) fileInputRef.current.value = ''
     }
   }
 
   const send = async () => {
-    if (source === undefined) return
+    if (source === undefined || composerDraftKey === undefined) return
+    const targetSource = source
+    const targetDraftKey = composerDraftKey
+    const targetUserId = authenticatedUserId
+    if (targetUserId === undefined) return
     const textContent = draft.trim()
     if (textContent === '' && attachments.length === 0) return
     const recordUid = crypto.randomUUID(); const relationUid = crypto.randomUUID(); const now = Date.now()
     const optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: '我', isMe: true, sendAtMillis: now,
       title: '', textContent, status: 0,
-      ...(source.kind === 'group_chat' && aiPolishSettings?.enabled === true
+      ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
         ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
         : {}),
       displayKind: 0,
     }
-    const pendingAttachments = attachments
+    const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
+    const pendingAttachments = [...pendingDraft.attachments]
     const pendingAssets = pendingAttachments.map(attachment => attachment.asset)
-    setItems(current => mergeItems(current, [optimistic])); setDraft(''); setAttachments([]); setBusy(true); setError('')
+    setItems(current => mergeItems(current, [optimistic])); setBusy(true); setError('')
     requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
     try {
       const result = pendingAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
-          sourceRef: source.sourceRef, title: '', textContent, displayKind: 0,
+          sourceRef: targetSource.sourceRef, title: '', textContent, displayKind: 0,
           assets: pendingAssets, recordUid, relationUid,
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
-          sourceRef: source.sourceRef, textContent, recordUid, relationUid,
+          sourceRef: targetSource.sourceRef, textContent, recordUid, relationUid,
         })
       setItems(current => current.map(item => {
         if (item.itemUid !== recordUid) return item
@@ -1158,7 +1174,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           }),
         }
       }))
-      releaseAttachmentPreviews(pendingAttachments)
+      releaseArkmeComposerDraft(pendingDraft)
       if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
       if (result.aiPolish?.state === 'kept_original') {
         setTimeout(() => {
@@ -1171,8 +1187,14 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       }
       if (pendingAssets.length > 0) await loadTimeline()
     } catch (caught) {
-      setItems(current => current.filter(item => item.itemUid !== recordUid)); setDraft(textContent)
-      setAttachments(pendingAttachments); setError(errorMessage(caught))
+      setItems(current => current.filter(item => item.itemUid !== recordUid))
+      const currentAuth = arkmeAuthStore.getSnapshot().auth
+      if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
+        arkmeComposerDraftStore.restore(targetDraftKey, pendingDraft)
+      } else {
+        releaseArkmeComposerDraft(pendingDraft)
+      }
+      setError(errorMessage(caught))
     } finally { setBusy(false) }
   }
 
@@ -1207,13 +1229,29 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
+  const activateSelfSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
+    setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(current, nextSource, selfSourcesRef.current))
+    activateSource(nextSource)
+  }, [activateSource])
+  const activateBreadcrumbSource = useCallback((trailIndex: number, nextSource: ArkmeTimelinePage['source']) => {
+    setSelfBreadcrumbTrail(current => truncateArkmeSourceBreadcrumbTrail(current, trailIndex))
+    activateSource(nextSource)
+  }, [activateSource])
+  const activateSendToSelf = useCallback(() => {
+    setSelfBreadcrumbTrail([])
+    arkmeUi.focusSendToSelf()
+    arkmeUi.chatChanged()
+  }, [])
   const acceptSelfSourcesResolution = useCallback((
     userId: number,
     resolution: ArkmeSelfSourcesResolution,
   ) => {
     setSelfSourcesResolution({ userId, resolution })
   }, [])
-  const invalidateTopicSelection = useCallback(() => { arkmeUi.focusSendToSelf() }, [])
+  const invalidateTopicSelection = useCallback(() => {
+    setSelfBreadcrumbTrail([])
+    arkmeUi.focusSendToSelf()
+  }, [])
 
   const loadMomentDetail = async (moment: ArkmeInterwovenMention, force = false) => {
     if (source === undefined || source.kind !== 'private_chat') return
@@ -1278,10 +1316,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     [chatDirectory, detailState],
   )
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
+  const selfBreadcrumbLabel = isArkmeSelfWorkspaceSource(selectedSource)
+    ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
+    : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'arko' ? 'Arko'
-    : ui.mode === 'source' ? arkmeSourceDestinationLabel(selectedSource)
+    : ui.mode === 'source' ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
 
@@ -1290,12 +1331,19 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       <section ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
         {!arkoContentVisible && <header style={styles.header}>
           <div style={styles.titleGroup}>
-            <div style={styles.titleBlock}>
-              <h2 style={styles.title}>{surfaceTitle}</h2>
-              {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
-                && aiPolishSettings?.enabled === true
-                && <span style={styles.headerSubtitle}>AI润色已开启</span>}
-            </div>
+            {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
+              ? <ArkmeSourceBreadcrumb
+                trail={selfBreadcrumbTrail}
+                sources={selfSources}
+                onSelect={activateBreadcrumbSource}
+                onSelectAggregate={activateSendToSelf}
+              />
+              : <div style={styles.titleBlock}>
+                <h2 style={styles.title}>{surfaceTitle}</h2>
+                {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
+                  && aiPolishSettings?.enabled === true
+                  && <span style={styles.headerSubtitle}>AI润色已开启</span>}
+              </div>}
             {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon /></span>}
           </div>
           {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
@@ -1303,7 +1351,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               key={auth.userId}
               userId={auth.userId}
               selectedSource={selectedSource}
-              onSelect={activateSource}
+              onSelect={activateSelfSource}
               onSelectionInvalidated={invalidateTopicSelection}
               onSelfSourcesResolution={acceptSelfSourcesResolution}
               retryRevision={selfSourcesRetryRevision}
@@ -1464,13 +1512,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               asset={attachment.asset}
               {...(attachment.previewUrl === undefined ? {} : { previewUrl: attachment.previewUrl })}
               onRemove={() => {
-                releaseAttachmentPreview(attachment)
-                setAttachments(current => current.filter(item => item.asset.fileAssetUid !== attachment.asset.fileAssetUid))
+                arkmeComposerDraftStore.removeAttachment(composerDraftKey, attachment.asset.fileAssetUid)
               }}
             />)}</div>}
-            {uploadStatus !== '' && <div style={styles.uploadStatus} role="status">{uploadStatus}</div>}
+            {uploadStatus !== undefined && uploadStatus.key === composerDraftKey
+              && <div style={styles.uploadStatus} role="status">{uploadStatus.message}</div>}
             <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
-              onChange={event => { setDraft(event.target.value) }}
+              onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)
                 if (imageFiles.length === 0) return

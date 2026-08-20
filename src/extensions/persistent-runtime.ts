@@ -15,8 +15,10 @@ interface PersistentRuntimeRegistration {
   installationUrl: URL
   fiber?: Fiber
   handlers?: Map<string, PersistentHandler>
+  clientActivation?: object
 }
 const persistentRegistrations = new Map<string, PersistentRuntimeRegistration>()
+const persistentClientActivations = new Map<string, object>()
 const VM_TIMEOUT_MS = 5_000
 
 function readInstallation(url: URL): ArkmePersistentInstallation {
@@ -137,7 +139,7 @@ async function mountPersistentArkmeHostExtension(
   installation: ArkmePersistentInstallation,
   registration: PersistentRuntimeRegistration,
 ): Promise<boolean> {
-  if (registration.fiber !== undefined) return true
+  if (registration.fiber !== undefined || registration.clientActivation !== undefined) return true
   const bytes = new Uint8Array(readFileSync(installation.artifact_path))
   if (sha256Hex(bytes) !== installation.artifact_sha256) throw new Error('persistent extension artifact checksum mismatch')
   const unpacked = unpackArkmeExtension(bytes)
@@ -154,7 +156,18 @@ async function mountPersistentArkmeHostExtension(
     signing_key_id: installation.signing_key_id,
     signature: installation.signature,
   }, new Map([[installation.signing_key_id, installation.trusted_public_key]]))
-  if (unpacked.hostCode === undefined) return false
+  if (unpacked.hostCode === undefined) {
+    const activation = {}
+    registration.ctx.effect(() => () => {
+      if (persistentClientActivations.get(installation.extension_id) === activation) {
+        persistentClientActivations.delete(installation.extension_id)
+      }
+      if (registration.clientActivation === activation) delete registration.clientActivation
+    }, `arkme-extension:${installation.extension_id}:client-active-state`)
+    persistentClientActivations.set(installation.extension_id, activation)
+    registration.clientActivation = activation
+    return true
+  }
   const handlers = new Map<string, PersistentHandler>()
   persistentHandlers.set(installation.extension_id, handlers)
   registration.handlers = handlers
@@ -209,7 +222,7 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
 }
 
 export function persistentArkmeExtensionActive(extensionId: string): boolean {
-  return persistentRegistrations.get(extensionId)?.fiber !== undefined
+  return persistentRegistrations.get(extensionId)?.fiber !== undefined || persistentClientActivations.has(extensionId)
 }
 
 /** Re-mount a verified Host half when its wrapper is already present in the current DSH process. */
@@ -221,7 +234,10 @@ export async function activatePersistentArkmeExtension(extensionId: string): Pro
 
 export async function deactivatePersistentArkmeExtension(extensionId: string): Promise<void> {
   const registration = persistentRegistrations.get(extensionId)
-  if (registration === undefined || registration.fiber === undefined) return
+  persistentClientActivations.delete(extensionId)
+  if (registration === undefined) return
+  delete registration.clientActivation
+  if (registration.fiber === undefined) return
   const fiber = registration.fiber
   delete registration.fiber
   persistentHandlers.delete(extensionId)

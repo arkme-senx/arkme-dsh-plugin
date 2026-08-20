@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,10 @@ import { createArkmeExtensionIconReadHandler, createArkmeExtensionIconUploadHand
 import { createArkmeExtensionPreviewReadHandler, createArkmeExtensionPreviewUploadHandler } from './extensions/preview-routes.js'
 import { ArkmeExtensionManager } from './extensions/manager.js'
 import { ExtensionPublishClient } from './extensions/publish-client.js'
-import { ArkmeExtensionProfileInstaller } from './extensions/profile-installer.js'
+import {
+  ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
+  ArkmeExtensionProfileInstaller,
+} from './extensions/profile-installer.js'
 import { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import { ArkmeOwnedExtensionRefs } from './extensions/owned-refs.js'
 import { ArkmeOwnedExtensionStore } from './extensions/owned-store.js'
@@ -72,6 +75,8 @@ export interface Config {
   openclawProfile: string
 }
 
+export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
+
 export const Config: Schema<Config> = Schema.object({
   environment: Schema.union(['test', 'prod']).default('test'),
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
@@ -87,7 +92,7 @@ export const Config: Schema<Config> = Schema.object({
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
   extensionPublishBaseUrl: Schema.string().default(''),
   extensionArtifactDirectory: Schema.string().default(''),
-  extensionTrustedSigningKeys: Schema.string().default('{}'),
+  extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -121,7 +126,9 @@ export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   // extension compatibility baseline owned by ArkmeExtensionManager.
   if (dshBinPath.endsWith('/src/bin.ts') || dshBinPath.endsWith('\\src\\bin.ts')) return undefined
   try {
-    const manifest = JSON.parse(readFileSync(join(dirname(dshBinPath), '..', 'package.json'), 'utf8')) as { version?: unknown }
+    let resolvedBinPath = dshBinPath
+    try { resolvedBinPath = realpathSync(dshBinPath) } catch { /* Preserve metadata-only probes. */ }
+    const manifest = JSON.parse(readFileSync(join(dirname(resolvedBinPath), '..', 'package.json'), 'utf8')) as { version?: unknown }
     return typeof manifest.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version)
       ? manifest.version
       : undefined
@@ -186,6 +193,13 @@ export function apply(ctx: Context, config: Config): void {
     restartArgv: [...process.execArgv, ...process.argv.slice(1)],
     helperPath: fileURLToPath(new URL('../lib/extension-profile-restart-helper.js', import.meta.url)),
     installStoreDirectory: extensionDirectory,
+    ...(process.env.ARKME_DESKTOP_MANAGED_RESTART === '1'
+      && process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH !== undefined
+      ? {
+          supervisedExitCode: ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
+          supervisedPlanPath: process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH,
+        }
+      : {}),
   })
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const ownedExtensionStore = new ArkmeOwnedExtensionStore(extensionDirectory)

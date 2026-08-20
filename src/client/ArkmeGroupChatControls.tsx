@@ -15,14 +15,15 @@ import type {
 import { callArkme } from './api.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 const colors = {
-  panel: 'var(--dsw-alias-bg-base, #ffffff)',
-  subtle: 'var(--dsw-alias-bg-subtle, #f5f6f7)',
-  text: 'var(--dsw-alias-label-primary, #2b2b2b)',
-  secondary: 'var(--dsw-alias-label-secondary, #888888)',
-  border: 'var(--dsw-alias-border-l2, rgba(0,0,0,.08))',
-  primary: 'var(--dsw-alias-button-info-fill, #3964fe)',
+  panel: arkmeTheme.layer2,
+  subtle: arkmeTheme.subtle,
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  primary: arkmeTheme.info,
 }
 
 const asset = (value: string) => `data:image/svg+xml;base64,${value}`
@@ -87,7 +88,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', alignItems: 'center', cursor: 'pointer', transition: 'background .15s ease',
   },
   switchThumb: {
-    width: 18, height: 18, borderRadius: 999, background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.14)',
+    width: 18, height: 18, borderRadius: 999, background: arkmeTheme.foreground, boxShadow: '0 1px 2px rgba(0,0,0,.14)',
     transition: 'transform .15s ease',
   },
   cardScrim: {
@@ -110,11 +111,11 @@ const styles: Record<string, CSSProperties> = {
   cardActions: { display: 'flex', padding: '0 18px 20px' },
   cardButton: {
     flex: 1, height: 38, border: 0, borderRadius: 999, background: colors.primary,
-    color: '#fff', fontSize: 14, cursor: 'pointer',
+    color: arkmeTheme.foreground, fontSize: 14, cursor: 'pointer',
   },
   dialogScrim: {
     position: 'absolute', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center',
-    background: 'rgba(0,0,0,.18)', padding: 20,
+    background: 'var(--dsw-alias-bg-mask-1, rgba(0,0,0,.18))', padding: 20,
   },
   dialog: {
     width: 420, maxWidth: '100%', padding: 16, borderRadius: 12, background: colors.panel,
@@ -266,7 +267,7 @@ function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (c
     disabled={props.busy}
     style={{
       ...styles.switch,
-      background: props.checked ? colors.primary : '#eeeeee',
+      background: props.checked ? colors.primary : arkmeTheme.active,
       opacity: props.busy ? .55 : 1,
       justifyContent: 'flex-start',
     }}
@@ -418,7 +419,7 @@ function RenameDialog(props: {
         <button type="button" style={{ ...styles.dialogButton, background: colors.subtle, color: colors.text }} disabled={busy} onClick={props.onClose}>取消</button>
         <button
           type="button"
-          style={{ ...styles.dialogButton, background: colors.primary, color: '#fff', opacity: busy || title.trim() === '' ? .55 : 1 }}
+          style={{ ...styles.dialogButton, background: colors.primary, color: arkmeTheme.foreground, opacity: busy || title.trim() === '' ? .55 : 1 }}
           disabled={busy || title.trim() === ''}
           onClick={() => {
             setBusy(true)
