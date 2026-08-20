@@ -134,6 +134,32 @@ export interface ArkmeWorldFeedPage {
   nextOffset?: number
 }
 
+/** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
+export interface ArkmeWorldInteractionItem {
+  interactionRef: string
+  parentRef: string
+  authorName: string
+  avatarRef?: string
+  avatarFallback?: ArkmeWorldAvatarFallback
+  textContent: string
+  createdAtMillis: number
+  publishedAtMillis: number
+  imageCount: number
+  videoCount: number
+  voiceCount: number
+}
+
+export interface ArkmeWorldInteractionPage {
+  items: ArkmeWorldInteractionItem[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export interface ArkmeWorldInteractionCreateResult {
+  interaction: ArkmeWorldInteractionItem
+}
+
 export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
 export interface ArkmeWorldPublishResult {
@@ -279,6 +305,8 @@ export interface ArkmeProviderCapabilities {
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
+    /** Optional additive capability for reading and writing World comments and replies. */
+    worldInteractions?: true
   }
   limits: {
     maxTextLength: number
@@ -1268,6 +1296,8 @@ export type ArkmePluginOperation =
   | 'user.profile.refresh'
   | 'image.read'
   | 'world.feed'
+  | 'world.interactions.list'
+  | 'world.interactions.create-text'
   | 'world.image.read'
   | 'sources.list'
   | 'source.timeline'
