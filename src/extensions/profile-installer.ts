@@ -4,6 +4,7 @@ import { chmod, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
+import { prepareProfilePackageManager } from '../profile-package-manager.js'
 import type { ArkmeExtensionProfileRestartPlan } from './profile-restart-helper.js'
 import type { ArkmeInstalledExtension } from './types.js'
 
@@ -97,6 +98,7 @@ export class ArkmeExtensionProfileInstaller {
     if (!existsSync(this.options.execPath) || !existsSync(this.options.dshBinPath)) {
       throw new Error('当前 DSH 运行方式不支持修改 Profile 插件')
     }
+    prepareProfilePackageManager(this.options.dshHome, this.options.profileName)
     try {
       await execFileAsync(this.options.execPath, [...(this.options.execArgv ?? []), this.options.dshBinPath, ...args], {
         env: { ...process.env, DSH_HOME: this.options.dshHome },

@@ -240,7 +240,7 @@ Registry 安装中，用户点击“立即更新并重启”后：
 1. Host 只接受自己当前已知的目标版本，并拒绝 Browser 传入包名、命令或任意版本。
 2. Host 校验 profile 中的依赖是合法 semver 范围；`link:`、`file:`、Git 和 URL 安装全部阻断。
 3. Host 写入权限为 `0600` 的计划文件，启动打包在插件内的独立 updater，然后向当前 DSH 发送 `SIGTERM`。
-4. updater 在旧进程退出后，通过同一个 DSH `bin.js` 和完整 Node `execArgv`，以 Host 已校验的精确目标版本执行插件 CLI `add`；它不再次解析可能陈旧的 `latest`。随后按原 `execArgv`、应用 `argv`、`DSH_HOME`、profile、Host 和端口重启；源码启动依赖的 loader 参数不能丢失。
+4. Host 在停止 DSH 前由 Arkme 校验 Profile 的 `packageManager`；旧 Profile 缺失时只从 pnpm 的 `.modules.yaml` 安装元数据回填，并确认用户 PATH 中的 pnpm 能解析到该精确版本。updater 在旧进程退出后，通过同一个 DSH `bin.js` 和完整 Node `execArgv`，以 Host 已校验的精确目标版本执行插件 CLI `add`，不再次解析可能陈旧的 `latest`。随后按原 `execArgv`、应用 `argv`、`DSH_HOME`、profile、Host 和端口重启；源码启动依赖的 loader 参数不能丢失。
 5. updater 调用 loopback Host API 验证目标版本已加载；失败则重新安装旧版本并再次重启。
 6. Browser 在服务离线期间保留“正在更新”状态，轮询恢复后的 Host；成功后自动刷新页面。
 

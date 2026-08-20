@@ -73,6 +73,8 @@ dsh plugin --profile web up @senguoyun/dsh-arkme --latest
 
 验签成功后，Arkme 会从不可变 `.arkext` 生成一个位于当前 DSH Profile 下的本地 Bundle，并通过官方 `dsh plugin --profile web add link:<bundle>` 写入 `dependencies` 与 `dsh.profile.bundles`。独立助手随后重启 DSH，并以原生插件列表中的 Loader 状态和 Arkme 持久运行态完成健康检查；启动失败会自动恢复旧 Bundle。成功重启后扩展由 Profile/Loader 加载，不再占用 Dynamic Cordis 列表。卸载执行相反事务，确认新进程不再加载后再清理 Bundle 与制品。
 
+Arkme 不修改 DSH，也不选择或打包 pnpm。执行 Profile 变更前，它优先使用 Profile 的 `packageManager`；旧 Profile 缺失时，只从 pnpm 生成的 `node_modules/.modules.yaml` 安装元数据回填精确版本，再确认用户 PATH 中的 pnpm 能按该声明解析。校验失败发生在依赖修改或 DSH 停止之前。扩展 Bundle 仍由 Arkme 完成摘要、平台签名和运行时兼容性校验。
+
 ## 私聊主动呼叫
 
 主动呼叫仅支持一对一私聊，不注册来电 UI，也不提供接听或拒接入口。人工入口只出现在私聊标题后；模型工具必须先通过 `arkme_sources_list(root)` 获得精确的 `private_chat` `source_ref`，并且只有当前对话中的明确用户请求才能授权 `arkme_call_start`。

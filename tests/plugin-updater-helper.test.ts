@@ -61,6 +61,7 @@ describe('companion plugin updater', () => {
         dshBinPath: fixture.dshBinPath,
         helperPath: fixture.helperPath,
         restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+        preparePackageManager: () => undefined,
         spawnUpdater,
         requestShutdown,
       },
@@ -98,6 +99,7 @@ describe('companion plugin updater', () => {
         healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
         dshBinPath: fixture.dshBinPath,
         helperPath: fixture.helperPath,
+        preparePackageManager: () => undefined,
         spawnUpdater,
         requestShutdown: () => undefined,
       },
@@ -132,6 +134,36 @@ describe('companion plugin updater', () => {
     const status = await manager.check({ manual: true })
     expect(status).toMatchObject({ canInstallInApp: false, installBlockedReason: 'local-install' })
     await expect(manager.install()).rejects.toMatchObject({ code: 'plugin-update-install-unavailable' })
+  })
+
+  it('does not stop DSH when the Profile package manager preflight fails', async () => {
+    const fixture = await runtimeFixture('0.1.3')
+    const spawnUpdater = vi.fn(async () => undefined)
+    const requestShutdown = vi.fn()
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      registryUrl: 'https://registry.npmjs.org',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: async () => response('0.1.4'),
+      installRuntime: {
+        dshHome: fixture.root,
+        profileName: 'web',
+        healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        dshBinPath: fixture.dshBinPath,
+        helperPath: fixture.helperPath,
+        preparePackageManager: () => { throw new Error('pnpm 版本不匹配') },
+        spawnUpdater,
+        requestShutdown,
+      },
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).rejects.toMatchObject({ code: 'profile-package-manager-unavailable' })
+    expect(spawnUpdater).not.toHaveBeenCalled()
+    expect(requestShutdown).not.toHaveBeenCalled()
   })
 
   it('allows the isolated preview to opt into replacing a local link for update testing', async () => {
@@ -213,6 +245,9 @@ describe('companion plugin updater', () => {
     const pidPath = join(root, 'server.pid')
     const stateDirectory = join(root, 'state')
     await mkdir(stateDirectory, { recursive: true })
+    const profileDirectory = join(root, 'profiles', 'web')
+    await mkdir(profileDirectory, { recursive: true })
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.7.0' }))
     await writeFile(versionPath, '0.1.3')
     await writeFile(fakeDsh, `
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'

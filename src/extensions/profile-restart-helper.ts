@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ArkmeExtensionInstallStore } from './install-store.js'
+import { prepareProfilePackageManager } from '../profile-package-manager.js'
 import type { ArkmeInstalledExtension } from './types.js'
 
 const PARENT_EXIT_TIMEOUT_MS = 20_000
@@ -111,6 +112,7 @@ async function healthy(plan: ArkmeExtensionProfileRestartPlan): Promise<boolean>
 }
 
 function profileCommand(plan: ArkmeExtensionProfileRestartPlan, args: string[]): boolean {
+  prepareProfilePackageManager(plan.dshHome, plan.profileName)
   return spawnSync(plan.execPath, [...plan.execArgv, plan.dshBinPath, 'plugin', '--profile', plan.profileName, ...args], {
     env: { ...process.env, DSH_HOME: plan.dshHome }, stdio: 'inherit', shell: false,
   }).status === 0
