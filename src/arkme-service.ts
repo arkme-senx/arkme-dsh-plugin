@@ -73,6 +73,7 @@ import type {
   ArkmeImageBytes,
   ArkmeImageMediaType,
   ArkmeFileAssetDisplayItem,
+  ArkmeForwardRecordPreviewItem,
   ArkmeMessageReportResult,
   ArkmeOpenPrivateChatResult,
   ArkmeInterwovenBootstrap,
@@ -3612,6 +3613,8 @@ export class ArkmeService {
       const relationUid = stringValue(relation.rel_uid).trim()
       const senderUserId = numberValue(relation.sender_user_id)
       const aiPolish = this.timelineAiPolish(record, payload)
+      const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
+      const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
       const itemIndex = items.push({
         itemUid: uid,
         ...(source.kind !== 'group_chat' || relationUid === '' || senderUserId === session.userId ? {} : {
@@ -3619,13 +3622,14 @@ export class ArkmeService {
         }),
         senderName: stringValue(relation.display_name_snapshot).trim() || 'Arkme用户',
         isMe: senderUserId === session.userId,
-        sendAtMillis: numberValue(relation.attach_at ?? payload.send_at),
+        sendAtMillis,
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
         status: recordStatus,
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
         ...(aiPolish === undefined ? {} : { aiPolish }),
+        ...(forwardRecords === undefined ? {} : { forwardRecords }),
         templateKind: numberValue(payload.template_kind),
         displayKind: numberValue(payload.display_kind),
         version: numberValue(payload.version ?? record.version),
@@ -4561,7 +4565,9 @@ export class ArkmeService {
     const latestItem = [...timelineItems].sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))[0]
     const latestPreview = latestItem === undefined
       ? cached?.latestPreview
-      : latestItem.textContent || latestItem.title || '非文本内容'
+      : latestItem.forwardRecords === undefined
+        ? latestItem.textContent || latestItem.title || '非文本内容'
+        : `[转发] ${latestItem.forwardRecords.title}`
     const latestSequence = Math.max(
       numberValue(unread.session_last_seq ?? chatSession.last_seq),
       latestItem?.sequence ?? 0,
@@ -4600,23 +4606,88 @@ export class ArkmeService {
       if (uid === '') continue
       const senderUserId = numberValue(relation.sender_user_id)
       const aiPolish = this.timelineAiPolish(record, payload)
+      const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
+      const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
       items.push({
         itemUid: uid,
         senderName: stringValue(relation.display_name_snapshot).trim() || 'Arkme用户',
         ...(senderUserId > 0 ? { avatarRef: await this.sealProfileImageRef(session.userId, senderUserId) } : {}),
         isMe: senderUserId === session.userId,
-        sendAtMillis: numberValue(relation.attach_at ?? payload.send_at),
+        sendAtMillis,
         title: stringValue(payload.title),
         textContent: stringValue(payload.text_content),
         status: numberValue(record.status),
         sequence: numberValue(relation.seq),
         ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
         ...(aiPolish === undefined ? {} : { aiPolish }),
+        ...(forwardRecords === undefined ? {} : { forwardRecords }),
         displayKind: numberValue(payload.display_kind),
         contentBlocks: this.richContentBlocks(item, session.userId),
       })
     }
     return items
+  }
+
+  private async chatForwardRecordsPreview(
+    raw: unknown,
+    viewerUserId: number,
+    fallbackCreatedAtMillis: number,
+  ): Promise<ArkmeTimelineItem['forwardRecords'] | undefined> {
+    const contentPayload = this.recordContentPayload(raw)
+    const nested = objectValue(contentPayload.forward_records ?? contentPayload.forwardRecords)
+    const payload = Object.keys(nested).length > 0 ? nested : contentPayload
+    if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
+
+    const projectedItems: ArkmeForwardRecordPreviewItem[] = []
+    const appendItems = async (values: unknown[], depth: number): Promise<void> => {
+      const sorted = values.map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
+        .sort((left, right) => (left.order || left.index) - (right.order || right.index))
+      for (const entry of sorted) {
+        if (projectedItems.length >= 100) return
+        const item = objectValue(entry.value)
+        const nestedForward = objectValue(item.forward_records ?? item.forwardRecords)
+        if (depth < 4
+          && stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records') {
+          await appendItems(listValue(nestedForward.items), depth + 1)
+          continue
+        }
+        const senderUserId = numberValue(item.source_sender_user_id ?? item.sourceSenderUserId ?? item.owner_id ?? item.ownerId)
+        const senderName = stringValue(
+          item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
+        ).trim() || 'Arkme用户'
+        const textContent = stringValue(item.text ?? item.text_preview ?? item.textPreview).trim()
+        const title = stringValue(item.title).trim()
+        const imageCount = Math.max(0, Math.trunc(numberValue(item.image_count ?? item.imageCount)))
+        const voiceCount = Math.max(0, Math.trunc(numberValue(item.voice_count ?? item.voiceCount)))
+        const fileCount = Math.max(0, Math.trunc(numberValue(item.file_count ?? item.fileCount)))
+        const fileName = listValue(item.file_names ?? item.fileNames)
+          .map(value => stringValue(value).trim()).find(value => value !== '')
+        const contentLabel = imageCount > 0
+          ? imageCount > 1 ? `[${String(imageCount)}张图片]` : '[图片]'
+          : voiceCount > 0 ? '[语音]'
+            : fileCount > 0 ? fileName === undefined ? '[文件]' : `[文件] ${fileName}`
+              : stringValue(item.availability).trim() !== '' ? '原快记暂不可查看' : undefined
+        projectedItems.push({
+          senderName,
+          ...(senderUserId > 0 ? { avatarRef: await this.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
+          sendAtMillis: numberValue(item.send_at ?? item.sendAt),
+          title,
+          textContent,
+          ...(contentLabel === undefined ? {} : { contentLabel }),
+        })
+      }
+    }
+    await appendItems(listValue(payload.items), 0)
+
+    const summaryLines = listValue(payload.summary_lines ?? payload.summaryLines)
+      .map(value => stringValue(value).trim()).filter(value => value !== '')
+    const createdAtMillis = numberValue(payload.created_at ?? payload.createdAt) || fallbackCreatedAtMillis
+    return {
+      title: stringValue(payload.title).trim() || '转发快记',
+      createdAtMillis,
+      summaryLines,
+      items: projectedItems,
+    }
   }
 
   private timelineAiPolish(

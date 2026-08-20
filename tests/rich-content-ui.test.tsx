@@ -1,21 +1,38 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeNextImagePreviewScale } from '../src/client/ArkmeRichContent.js'
+import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewDragTop, arkmeNextImagePreviewMode } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
-import { arkmeClipboardImageFiles } from '../src/client/ArkmeSidebar.js'
+import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
-  it('keeps image preview contained initially and exposes the double-click zoom viewport', () => {
+  it('contains the whole image initially and exposes fixed-width zoom without horizontal overflow', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
     expect(html).toContain('data-arkme-image-preview-viewport="true"')
-    expect(html).toContain('data-arkme-image-preview-scale="1"')
-    expect(html).toContain('overflow:hidden')
+    expect(html).toContain('data-arkme-image-preview-mode="contained"')
+    expect(html).toContain('overflow-x:hidden')
+    expect(html).toContain('overflow-y:hidden')
     expect(html).toContain('overscroll-behavior:contain')
+    expect(html).toContain('width:100%;height:100%;overflow:hidden')
     expect(html).toContain('width:100%;height:100%;object-fit:contain')
-    expect(html).toContain('title="双击放大图片"')
-    expect(arkmeNextImagePreviewScale(1)).toBe(2)
-    expect(arkmeNextImagePreviewScale(2)).toBe(1)
+    expect(html).toContain('title="双击铺满宽度"')
+    expect(arkmeNextImagePreviewMode('contained')).toBe('width')
+    expect(arkmeNextImagePreviewMode('width')).toBe('contained')
+  })
+
+  it('moves only the vertical viewport opposite to pointer drag and anchors width zoom at the double-click point', () => {
+    expect(arkmeImagePreviewDragTop({ clientY: 500, scrollTop: 120 }, 300)).toBe(320)
+    expect(arkmeImagePreviewAnchoredTop(0.75, 2400, 300)).toBe(1500)
+    expect(arkmeImagePreviewAnchoredTop(-1, 2400, 300)).toBe(0)
+  })
+
+  it('matches the client contained scale for a portrait image without cropping', () => {
+    expect(arkmeContainedImageRect(960, 720, 720, 3000)).toEqual({
+      left: 393.6,
+      top: 0,
+      width: 172.79999999999998,
+      height: 720,
+    })
   })
 
   it('renders image, video, audio, file, and long-article content through local media refs', () => {
@@ -174,6 +191,21 @@ describe('Arkme rich content presentation', () => {
       files: [],
     } as unknown as Pick<DataTransfer, 'files' | 'items'>
     expect(arkmeClipboardImageFiles(textOnlyClipboard)).toEqual([])
+  })
+
+  it('dismisses the add menu only for pointer targets outside both menu and trigger', () => {
+    const insideMenu = {} as Node
+    const insideTrigger = {} as Node
+    const outside = {} as Node
+    const menu = { contains: (target: Node | null) => target === insideMenu }
+    const trigger = { contains: (target: Node | null) => target === insideTrigger }
+
+    expect(arkmeShouldDismissAnchoredMenu(insideMenu, menu, trigger)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(insideTrigger, menu, trigger)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(outside, menu, trigger)).toBe(true)
+    expect(arkmeShouldDismissAnchoredMenu(null, menu, trigger)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(insideMenu, menu, null)).toBe(false)
+    expect(arkmeShouldDismissAnchoredMenu(outside, menu, null)).toBe(true)
   })
 
   it('renders a separate long-article composer with title, body, timer, count, and publish action', () => {

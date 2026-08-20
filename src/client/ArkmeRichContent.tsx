@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
@@ -37,10 +37,21 @@ const styles: Record<string, CSSProperties> = {
   articlePreview: { maxWidth: 'calc(100% - 22px)', margin: '4px 0 0 22px', display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 14, lineHeight: '20px' },
   articleMeta: { margin: '8px 0 0 22px', display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 12, lineHeight: '14px' },
   articleWordIcon: { width: 14, height: 14, flex: 'none' },
+  forwardCard: {
+    width: 'min(400px, 100%)', minWidth: 0, padding: '12px 16px', boxSizing: 'border-box', overflow: 'hidden',
+    border: '1px solid var(--dsw-alias-border-l2, #e2e5e9)', borderRadius: 18,
+    background: 'var(--dsw-specific-input-major, #fff)', color: 'var(--dsw-alias-label-primary, #17191c)',
+  },
+  forwardTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '22px', fontWeight: 600 },
+  forwardLines: { marginTop: 4, display: 'flex', flexDirection: 'column', gap: 1 },
+  forwardLine: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 14, lineHeight: '20px' },
   previewOverlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 48, boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
   previewBody: { position: 'relative', width: 'min(960px, 90vw)', height: 'min(720px, 82vh)' },
-  previewViewport: { width: '100%', height: '100%', overflow: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
-  previewCanvas: { width: '100%', height: '100%', display: 'grid', placeItems: 'center' },
+  previewViewport: { width: '100%', height: '100%', overflowX: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
+  previewCanvasContained: { width: '100%', height: '100%', overflow: 'hidden' },
+  previewCanvasWidth: { width: '100%', minHeight: '100%', display: 'block' },
+  previewImageContained: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none' },
+  previewImageWidth: { display: 'block', width: '100%', height: 'auto', userSelect: 'none' },
   previewMedia: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none' },
   previewClose: { position: 'absolute', top: -36, right: 0, width: 32, height: 32, border: 0, borderRadius: 999, background: 'rgba(255,255,255,.16)', color: '#fff', cursor: 'pointer', fontSize: 20 },
   previewNav: { position: 'absolute', top: '50%', width: 38, height: 48, marginTop: -24, border: 0, borderRadius: 10, background: 'rgba(255,255,255,.16)', color: '#fff', cursor: 'pointer', fontSize: 24 },
@@ -180,10 +191,46 @@ function ArticleCard({ title, text, onOpen }: { title: string; text: string; onO
   </button>
 }
 
-type ImagePreviewScale = 1 | 2
+type ImagePreviewMode = 'contained' | 'width'
 
-export function arkmeNextImagePreviewScale(scale: ImagePreviewScale): ImagePreviewScale {
-  return scale === 1 ? 2 : 1
+export function arkmeNextImagePreviewMode(mode: ImagePreviewMode): ImagePreviewMode {
+  return mode === 'contained' ? 'width' : 'contained'
+}
+
+interface ImagePreviewDragOrigin {
+  clientY: number
+  scrollTop: number
+}
+
+export function arkmeImagePreviewDragTop(origin: ImagePreviewDragOrigin, clientY: number): number {
+  return origin.scrollTop + origin.clientY - clientY
+}
+
+export function arkmeImagePreviewAnchoredTop(imageYRatio: number, scrollHeight: number, pointerY: number): number {
+  const ratio = Math.min(1, Math.max(0, imageYRatio))
+  return Math.max(0, ratio * scrollHeight - pointerY)
+}
+
+interface ImagePreviewRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export function arkmeContainedImageRect(viewportWidth: number, viewportHeight: number, imageWidth: number, imageHeight: number): ImagePreviewRect {
+  if (viewportWidth <= 0 || viewportHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+    return { left: 0, top: 0, width: Math.max(0, viewportWidth), height: Math.max(0, viewportHeight) }
+  }
+  const scale = Math.min(viewportWidth / imageWidth, viewportHeight / imageHeight)
+  const width = imageWidth * scale
+  const height = imageHeight * scale
+  return {
+    left: (viewportWidth - width) / 2,
+    top: (viewportHeight - height) / 2,
+    width,
+    height,
+  }
 }
 
 export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
@@ -194,16 +241,39 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
 }) {
   const index = Math.max(0, blocks.findIndex(block => block.mediaRef === selected.mediaRef))
   const viewportRef = useRef<HTMLDivElement>(null)
-  const [imageScale, setImageScale] = useState<ImagePreviewScale>(1)
+  const dragOriginRef = useRef<(ImagePreviewDragOrigin & { pointerId: number }) | undefined>(undefined)
+  const zoomAnchorRef = useRef<{ imageYRatio: number; pointerY: number } | undefined>(undefined)
+  const [imageMode, setImageMode] = useState<ImagePreviewMode>('contained')
+  const [imageDragging, setImageDragging] = useState(false)
 
   useEffect(() => {
-    setImageScale(1)
+    setImageMode('contained')
+    setImageDragging(false)
+    dragOriginRef.current = undefined
+    zoomAnchorRef.current = undefined
     const viewport = viewportRef.current
     if (viewport !== null) {
       viewport.scrollLeft = 0
       viewport.scrollTop = 0
     }
   }, [selected.mediaRef])
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (viewport === null) return
+    if (imageMode === 'contained') {
+      viewport.scrollLeft = 0
+      viewport.scrollTop = 0
+      return
+    }
+    const anchor = zoomAnchorRef.current
+    zoomAnchorRef.current = undefined
+    if (anchor === undefined) return
+    window.requestAnimationFrame(() => {
+      viewport.scrollLeft = 0
+      viewport.scrollTop = arkmeImagePreviewAnchoredTop(anchor.imageYRatio, viewport.scrollHeight, anchor.pointerY)
+    })
+  }, [imageMode])
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -219,27 +289,65 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
   const toggleImageScale = (event: ReactMouseEvent<HTMLImageElement>) => {
     const viewport = viewportRef.current
     if (viewport === null) return
-    const nextScale = arkmeNextImagePreviewScale(imageScale)
-    const bounds = viewport.getBoundingClientRect()
-    const pointerX = event.clientX - bounds.left
-    const pointerY = event.clientY - bounds.top
-    const contentXRatio = (viewport.scrollLeft + pointerX) / Math.max(1, viewport.scrollWidth)
-    const contentYRatio = (viewport.scrollTop + pointerY) / Math.max(1, viewport.scrollHeight)
-    setImageScale(nextScale)
-    window.requestAnimationFrame(() => {
-      if (nextScale === 1) {
-        viewport.scrollTo({ left: 0, top: 0 })
-        return
+    const nextMode = arkmeNextImagePreviewMode(imageMode)
+    const viewportBounds = viewport.getBoundingClientRect()
+    dragOriginRef.current = undefined
+    setImageDragging(false)
+    if (nextMode === 'width') {
+      const imageRect = arkmeContainedImageRect(
+        viewport.clientWidth,
+        viewport.clientHeight,
+        event.currentTarget.naturalWidth,
+        event.currentTarget.naturalHeight,
+      )
+      const localX = event.clientX - viewportBounds.left
+      const localY = event.clientY - viewportBounds.top
+      if (localX < imageRect.left || localX > imageRect.left + imageRect.width || localY < imageRect.top || localY > imageRect.top + imageRect.height) return
+      zoomAnchorRef.current = {
+        imageYRatio: (localY - imageRect.top) / Math.max(1, imageRect.height),
+        pointerY: localY,
       }
-      viewport.scrollTo({
-        left: contentXRatio * viewport.scrollWidth - pointerX,
-        top: contentYRatio * viewport.scrollHeight - pointerY,
-      })
-    })
+    } else {
+      zoomAnchorRef.current = undefined
+    }
+    setImageMode(nextMode)
+  }
+
+  const beginImageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (imageMode !== 'width' || event.button !== 0 || !event.isPrimary) return
+    const viewport = viewportRef.current
+    if (viewport === null || viewport.scrollHeight <= viewport.clientHeight) return
+    dragOriginRef.current = {
+      pointerId: event.pointerId,
+      clientY: event.clientY,
+      scrollTop: viewport.scrollTop,
+    }
+    viewport.setPointerCapture(event.pointerId)
+    setImageDragging(true)
+  }
+
+  const moveImageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    const viewport = viewportRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId || viewport === null) return
+    viewport.scrollLeft = 0
+    viewport.scrollTop = arkmeImagePreviewDragTop(origin, event.clientY)
+    event.preventDefault()
+  }
+
+  const endImageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId) return
+    dragOriginRef.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setImageDragging(false)
   }
 
   const selectMedia = (block: ArkmeContentBlock) => {
-    setImageScale(1)
+    setImageMode('contained')
+    setImageDragging(false)
+    dragOriginRef.current = undefined
+    zoomAnchorRef.current = undefined
     onSelect(block)
   }
 
@@ -249,18 +357,26 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
       {selected.kind === 'image'
         ? <div
           ref={viewportRef}
-          style={{ ...styles.previewViewport, overflow: imageScale === 1 ? 'hidden' : 'auto' }}
+          style={{
+            ...styles.previewViewport,
+            overflowY: imageMode === 'width' ? 'auto' : 'hidden',
+            cursor: imageMode === 'contained' ? 'zoom-in' : imageDragging ? 'grabbing' : 'grab',
+          }}
           data-arkme-image-preview-viewport="true"
-          data-arkme-image-preview-scale={imageScale}
+          data-arkme-image-preview-mode={imageMode}
           onWheel={event => { event.stopPropagation() }}
+          onPointerDown={beginImageDrag}
+          onPointerMove={moveImageDrag}
+          onPointerUp={endImageDrag}
+          onPointerCancel={endImageDrag}
         >
-          <div style={{ ...styles.previewCanvas, width: `${String(imageScale * 100)}%`, height: `${String(imageScale * 100)}%` }}>
+          <div style={imageMode === 'contained' ? styles.previewCanvasContained : styles.previewCanvasWidth}>
             <img
               src={mediaUrl(selected)}
               alt={selected.fileName}
               draggable={false}
-              title={imageScale === 1 ? '双击放大图片' : '双击恢复整图'}
-              style={{ ...styles.previewMedia, cursor: imageScale === 1 ? 'zoom-in' : 'zoom-out' }}
+              title={imageMode === 'contained' ? '双击铺满宽度' : '双击恢复整图'}
+              style={{ ...(imageMode === 'contained' ? styles.previewImageContained : styles.previewImageWidth), cursor: 'inherit' }}
               onDoubleClick={toggleImageScale}
             />
           </div>
@@ -298,6 +414,22 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated }: {
   const [preview, setPreview] = useState<ArkmeContentBlock>()
   const [articleOpen, setArticleOpen] = useState(false)
   const [failedRefs, setFailedRefs] = useState<Set<string>>(() => new Set())
+  if (item.forwardRecords !== undefined) {
+    const itemLines = item.forwardRecords.items.map(value => {
+      const summary = value.textContent || value.title || value.contentLabel || '非文本内容'
+      return `${value.senderName}：${summary}`
+    })
+    const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
+    return <div style={styles.forwardCard} data-arkme-forward-records-card="true">
+      <p style={styles.forwardTitle}>{item.forwardRecords.title}</p>
+      <div style={styles.forwardLines}>
+        {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
+          key={`${String(index)}:${line}`}
+          style={styles.forwardLine}
+        >{line}</p>)}
+      </div>
+    </div>
+  }
   const markFailed = (block: ArkmeContentBlock) => {
     setFailedRefs(current => new Set(current).add(block.mediaRef))
   }
