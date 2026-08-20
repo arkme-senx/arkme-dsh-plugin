@@ -1,5 +1,6 @@
 import { ArkmePluginError } from '../arkme-service.js'
-import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
+import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
+  ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
   type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
   type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResolution, type ArkmeExtensionIconResult, type ArkmeExtensionIconUploadSession,
@@ -11,6 +12,7 @@ import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENS
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionReviewWireCreateResult, type ArkmeExtensionReviewWirePage,
   type ArkmeInstalledExtension,
+  type ArkmeExtensionManifest,
 } from './types.js'
 import { assertExtensionArtifactSize } from './artifact.js'
 import {
@@ -28,6 +30,48 @@ export type ExtensionAuthenticatedPost = <T>(
 export interface ExtensionDownloadProgress {
   downloadedBytes: number
   totalBytes?: number
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function legacyManifest(value: unknown): ArkmeExtensionManifest | undefined {
+  const manifest = record(value)
+  const runtime = record(manifest?.runtime)
+  const halves = record(manifest?.halves)
+  const entrypoints = record(manifest?.entrypoints)
+  const permissions = manifest?.permissions
+  if (manifest?.format !== ARKME_EXTENSION_FORMAT || manifest.format_version !== ARKME_EXTENSION_FORMAT_VERSION
+    || typeof manifest.name !== 'string' || typeof manifest.description !== 'string' || typeof manifest.version !== 'string'
+    || typeof runtime?.dsh !== 'string' || typeof runtime.arkme_provider_contract !== 'number'
+    || typeof halves?.host !== 'boolean' || typeof halves.client !== 'boolean'
+    || !Array.isArray(permissions) || !permissions.every(permission => typeof permission === 'string')
+    || entrypoints === undefined
+    || (entrypoints.host !== undefined && entrypoints.host !== 'host.js')
+    || (entrypoints.client !== undefined && entrypoints.client !== 'client.js')) return undefined
+  return {
+    format: ARKME_EXTENSION_FORMAT,
+    format_version: ARKME_EXTENSION_FORMAT_VERSION,
+    name: manifest.name,
+    description: manifest.description,
+    version: manifest.version,
+    runtime: { dsh: runtime.dsh, arkme_provider_contract: runtime.arkme_provider_contract },
+    halves: { host: halves.host, client: halves.client },
+    permissions: [...permissions],
+    entrypoints: {
+      ...(entrypoints.host === 'host.js' ? { host: 'host.js' as const } : {}),
+      ...(entrypoints.client === 'client.js' ? { client: 'client.js' as const } : {}),
+    },
+  }
+}
+
+function catalogItemWithSafeManifest(item: ArkmeExtensionCatalogItem): ArkmeExtensionCatalogItem {
+  const { manifest: manifestValue, ...rest } = item
+  const manifest = legacyManifest(manifestValue)
+  return { ...rest, ...(manifest === undefined ? {} : { manifest }) }
 }
 
 export class ExtensionPublishClient {
@@ -223,13 +267,21 @@ export class ExtensionPublishClient {
       extension: ArkmeExtensionCatalogItem
       latest_version?: string | { version?: string; manifest?: ArkmeExtensionCatalogItem['manifest'] }
     }>('/api/public/v1/extensions/detail', { extension_id: extensionId }, signal)
-    if (!('extension' in response)) return response
+    if (!('extension' in response)) return catalogItemWithSafeManifest(response)
     const latest = response.latest_version
+    const extension = catalogItemWithSafeManifest(response.extension)
+    const latestManifest = latest !== null && typeof latest === 'object'
+      ? legacyManifest(latest.manifest)
+      : undefined
     return {
-      ...response.extension,
+      ...extension,
       ...(typeof latest === 'string' ? { latest_stable_version: latest } : {}),
       ...(latest !== null && typeof latest === 'object' && typeof latest.version === 'string'
-        ? { latest_stable_version: latest.version, version: latest.version, ...(latest.manifest === undefined ? {} : { manifest: latest.manifest }) }
+        ? {
+            latest_stable_version: latest.version,
+            version: latest.version,
+            ...(latestManifest === undefined ? {} : { manifest: latestManifest }),
+          }
         : {}),
     }
   }

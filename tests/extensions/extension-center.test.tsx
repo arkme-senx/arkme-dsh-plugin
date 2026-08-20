@@ -23,9 +23,23 @@ const previewModule = extensionCenterModule as unknown as {
   }>
   arkmeExtensionPreviewUrl?: (extensionId: string, previewRef: string) => string
   extensionPreviewSelection?: (currentRef: string | undefined, previews: ArkmeExtensionPreviewItem[]) => string | undefined
+  ArkmeExtensionManifestDetails?: ComponentType<{ manifest: unknown }>
 }
 
 describe('Arkme extension market UI', () => {
+  it('keeps details renderable when a v2 response contains an empty legacy manifest', () => {
+    const ManifestDetails = previewModule.ArkmeExtensionManifestDetails
+    expect(ManifestDetails).toBeTypeOf('function')
+    if (ManifestDetails === undefined) return
+
+    const html = renderToStaticMarkup(<ManifestDetails manifest={{
+      format: '', format_version: 0, name: '', description: '', version: '',
+      runtime: { dsh: '', arkme_provider_contract: 0 },
+      halves: { host: false, client: false }, permissions: null, entrypoints: {},
+    }} />)
+    expect(html).toBe('')
+  })
+
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
 

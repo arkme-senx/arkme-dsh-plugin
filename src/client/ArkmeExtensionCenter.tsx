@@ -215,6 +215,32 @@ function Chip({ children, tone = 'default' }: { children: ReactNode; tone?: 'def
   return <span style={{ ...styles.chip, ...(tone === 'active' ? styles.activeChip : tone === 'warning' ? styles.warningChip : {}) }}>{children}</span>
 }
 
+export function ArkmeExtensionManifestDetails({ manifest }: { manifest: unknown }) {
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return null
+  const value = manifest as Record<string, unknown>
+  const runtime = value.runtime
+  const halves = value.halves
+  if (runtime === null || typeof runtime !== 'object' || Array.isArray(runtime)
+    || halves === null || typeof halves !== 'object' || Array.isArray(halves)
+    || typeof (runtime as Record<string, unknown>).dsh !== 'string'
+    || typeof (halves as Record<string, unknown>).host !== 'boolean'
+    || typeof (halves as Record<string, unknown>).client !== 'boolean'
+    || !Array.isArray(value.permissions)
+    || !value.permissions.every(permission => typeof permission === 'string')) return null
+  const safeRuntime = runtime as { dsh: string }
+  const safeHalves = halves as { host: boolean; client: boolean }
+  const permissions = value.permissions as string[]
+  return <section style={styles.detailSection}>
+    <div style={styles.detailLabel}>运行能力</div>
+    <Chips>
+      {safeHalves.host && <Chip>Host</Chip>}
+      {safeHalves.client && <Chip>Client</Chip>}
+      {safeRuntime.dsh.trim() !== '' && <Chip>{safeRuntime.dsh}</Chip>}
+      {permissions.map(permission => <Chip key={permission}>{permission}</Chip>)}
+    </Chips>
+  </section>
+}
+
 function LoadingIcon() {
   return <svg aria-hidden width="15" height="15" viewBox="0 0 20 20" fill="none">
     <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" opacity=".22" />
@@ -1026,15 +1052,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
         {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
         <section style={styles.detailSection}><div style={styles.detailLabel}>扩展说明</div><div style={styles.detailValue}>{detail.description || '这个扩展还没有填写说明。'}</div></section>
-        {detail.manifest !== undefined && <section style={styles.detailSection}>
-          <div style={styles.detailLabel}>运行能力</div>
-          <Chips>
-            {detail.manifest.halves.host && <Chip>Host</Chip>}
-            {detail.manifest.halves.client && <Chip>Client</Chip>}
-            <Chip>{detail.manifest.runtime.dsh}</Chip>
-            {detail.manifest.permissions.map(permission => <Chip key={permission}>{permission}</Chip>)}
-          </Chips>
-        </section>}
+        <ArkmeExtensionManifestDetails manifest={detail.manifest} />
         {detail.visibility === 'public' && <ArkmeExtensionReviews
           extensionId={detail.extension_id}
           canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
