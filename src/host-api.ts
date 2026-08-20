@@ -428,6 +428,18 @@ export async function dispatchArkmeHostOperation(
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'world.interactions.list': return await service.listWorldInteractions(
+      stringParam(params, 'recordRef'),
+      {
+        limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 50)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      },
+    )
+    case 'world.interactions.create-text': return await service.createWorldTextInteraction({
+      targetRef: stringParam(params, 'targetRef'),
+      textContent: stringParam(params, 'textContent'),
+      clientMutationId: stringParam(params, 'clientMutationId'),
+    })
     case 'world.image.read': {
       const image = await service.readWorldImage(stringParam(params, 'imageRef'))
       return {

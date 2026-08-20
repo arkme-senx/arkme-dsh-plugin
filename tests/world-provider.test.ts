@@ -40,6 +40,142 @@ function json(data: unknown): Response {
 }
 
 describe('world Provider projection', () => {
+  it('lists an account-bound interaction tree without leaking stable record IDs', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '根内容',
+          images: [], videos: [], voices: [], extend_count: 2,
+        }], total: 1 } })
+      }
+      expect(String(input)).toBe('https://world.test/api/v1/public-record/extend-list')
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
+      expect(JSON.parse(String(init?.body))).toEqual({ record_uid: 'public-record-1', limit: 50, offset: 0 })
+      return json({ code: 200, data: { list: [
+        {
+          record_uid: 'comment-1', parent_record_uid: 'public-record-1', user_id: 30003,
+          nick_name: '阿七', text_content: '第一条评论', created_at: 11, published_at: 12,
+          images: [], videos: [], voices: [],
+        },
+        {
+          record_uid: 'reply-1', parent_record_uid: 'comment-1', user_id: 40004,
+          nick_name: '小满', text_content: '回复阿七', created_at: 13, published_at: 14,
+          images: [], videos: [], voices: [],
+        },
+      ], total: 1, has_more: false } })
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+
+    const result = await service.listWorldInteractions(feed.items[0]!.recordRef, { limit: 50 })
+
+    expect(result).toMatchObject({
+      total: 1,
+      hasMore: false,
+      items: [
+        {
+          interactionRef: expect.stringMatching(/^arkme-world-record-v1\./),
+          parentRef: feed.items[0]!.recordRef,
+          authorName: '阿七',
+          textContent: '第一条评论',
+        },
+        {
+          interactionRef: expect.stringMatching(/^arkme-world-record-v1\./),
+          parentRef: expect.stringMatching(/^arkme-world-record-v1\./),
+          authorName: '小满',
+          textContent: '回复阿七',
+        },
+      ],
+    })
+    expect(result.items[1]!.parentRef).toBe(result.items[0]!.interactionRef)
+    expect(JSON.stringify(result)).not.toContain('public-record-1')
+    expect(JSON.stringify(result)).not.toContain('comment-1')
+    expect(JSON.stringify(result)).not.toContain('reply-1')
+
+    sessions.session = { userId: 10002, accessToken: 'other', refreshToken: 'other-refresh' }
+    await expect(service.listWorldInteractions(feed.items[0]!.recordRef)).rejects.toMatchObject({
+      code: 'world-record-ref-invalid',
+    })
+  })
+
+  it('publishes text interactions with a stable mutation UID and the selected parent', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const interactionUids: string[] = []
+    let publishAttempts = 0
+    const interactionStateStore = {
+      ...stateStore,
+      async putPending() {},
+      async markSynced() {},
+      async markAttempt() {},
+      async listPending() { return [] },
+    }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '根内容',
+          images: [], videos: [], voices: [], extend_count: 0,
+        }], total: 1 } })
+      }
+      if (url === 'https://world.test/api/public/v1/public-record/status-batch') {
+        return json({ code: 200, data: { items: publishAttempts >= 2
+          ? [{ record_uid: interactionUids.at(-1), is_public: true }]
+          : [] } })
+      }
+      if (url === 'https://record.test/api/v1/records/create') {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        interactionUids.push(String(body.record_uid))
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      expect(url).toBe('https://world.test/api/v1/public-record/publish')
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      expect(body).toMatchObject({
+        record_uid: interactionUids.at(-1),
+        parent_record_uid: 'public-record-1',
+        content: '你好，世界',
+        text_content: '你好，世界',
+      })
+      publishAttempts += 1
+      if (publishAttempts === 2) return new Response('upstream timeout', { status: 500 })
+      return json({ code: 200, data: {} })
+    })
+    const service = new ArkmeService(config, sessions, interactionStateStore as never, fetchImpl)
+    vi.spyOn(service, 'refreshProfile').mockResolvedValue({
+      status: 'ready',
+      profile: {
+        userId: 10001, displayName: '我', nickname: '我', avatarRef: '', arkmeId: '',
+        arkmeIdChangeAvailable: false, accountType: 0, createdAtMillis: 1,
+        bindings: { phone: true, email: false, wechat: false },
+        contact: { phoneMasked: '138****0000' },
+      },
+    })
+    const feed = await service.listWorldFeed()
+
+    const first = await service.createWorldTextInteraction({
+      targetRef: feed.items[0]!.recordRef,
+      textContent: '  你好，世界  ',
+      clientMutationId: 'mutation-20260819-0001',
+    })
+    const second = await service.createWorldTextInteraction({
+      targetRef: feed.items[0]!.recordRef,
+      textContent: '你好，世界',
+      clientMutationId: 'mutation-20260819-0001',
+    })
+
+    expect(first.interaction).toMatchObject({
+      interactionRef: expect.stringMatching(/^arkme-world-record-v1\./),
+      parentRef: feed.items[0]!.recordRef,
+      authorName: '我',
+      textContent: '你好，世界',
+    })
+    expect(second.interaction.interactionRef).toBe(first.interaction.interactionRef)
+    expect(interactionUids).toHaveLength(2)
+    expect(interactionUids[1]).toBe(interactionUids[0])
+  })
+
   it('returns account-bound opaque refs without leaking signed URLs or stable record IDs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -182,6 +318,8 @@ describe('world Provider projection', () => {
   it('dispatches only bounded world feed and image inputs through the Host API', async () => {
     const service = {
       listWorldFeed: vi.fn(async (options: unknown) => options),
+      listWorldInteractions: vi.fn(async (_recordRef: string, options: unknown) => options),
+      createWorldTextInteraction: vi.fn(async (input: unknown) => input),
       readWorldImage: vi.fn(async (_imageRef: string) => ({
         mediaType: 'image/png' as const,
         bytes: 8,
@@ -190,9 +328,19 @@ describe('world Provider projection', () => {
     }
 
     await dispatchArkmeHostOperation(service as never, 'world.feed', { limit: 999, offset: -4, userId: 900 })
+    await dispatchArkmeHostOperation(service as never, 'world.interactions.list', {
+      recordRef: 'record-ref', limit: 999, offset: -4, recordUid: 'leak',
+    })
+    await dispatchArkmeHostOperation(service as never, 'world.interactions.create-text', {
+      targetRef: 'target-ref', textContent: '评论', clientMutationId: 'mutation-20260819-0001', recordUid: 'leak',
+    })
     await dispatchArkmeHostOperation(service as never, 'world.image.read', { imageRef: 'opaque-ref', url: 'https://evil.test' })
 
     expect(service.listWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
+    expect(service.listWorldInteractions).toHaveBeenCalledWith('record-ref', { limit: 50, offset: 0 })
+    expect(service.createWorldTextInteraction).toHaveBeenCalledWith({
+      targetRef: 'target-ref', textContent: '评论', clientMutationId: 'mutation-20260819-0001',
+    })
     expect(service.readWorldImage).toHaveBeenCalledWith('opaque-ref')
   })
 })

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeTopicCreateResult,
 } from '../types.js'
+import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 import { callArkme } from './api.js'
 import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
@@ -35,6 +36,7 @@ export interface ArkmeNavigationProps {
   currentSessionId?: string | undefined
   onClose?: () => void
   onActivateSurface?: () => void
+  renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
 }
 
 export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
@@ -234,6 +236,33 @@ function SelfAvatar() {
     <span style={styles.selfBubbleBack} />
     <span style={styles.selfBubbleFront} />
   </span>
+}
+
+/** Arkme-owned visual shell for every consumer contributed directory entry. */
+export function ArkmeDirectoryRow({
+  avatar, title, preview, selected, disabled = false, ariaLabel, onClick,
+}: ArkmeDirectoryRowProps) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-label={ariaLabel}
+    aria-selected={selected}
+    disabled={disabled}
+    title={title}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden>{avatar}</span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.entryName}>{title}</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>{preview}</span></span>
+    </span>
+  </button>
+}
+
+/** Stable renderer passed through the slot owner contract, including to dynamic extensions. */
+export function renderArkmeDirectoryRow(props: ArkmeDirectoryRowProps): ReactNode {
+  return <ArkmeDirectoryRow {...props} />
 }
 
 export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
@@ -548,7 +577,7 @@ export function ArkmeSourceSortControl({
   </div>
 }
 
-export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActivateSurface }: ArkmeNavigationProps) {
+export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActivateSurface, renderSlot }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
@@ -996,6 +1025,11 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
         </button>
         <ArkmeRecordingsRow selected={ui.mode === 'recordings'} onClick={showRecordings} />
         <ArkmeSearchRow selected={ui.mode === 'search'} onClick={showSearch} />
+        {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
+          wide: !!wide,
+          authenticated,
+          renderRow: renderArkmeDirectoryRow,
+        })}
         {sources.map(source => {
           const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button

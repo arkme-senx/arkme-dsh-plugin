@@ -16,6 +16,10 @@ describe('World consumer SDK', () => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
         if (request.operation === 'world.feed') return success({ items: [], total: 0, hasMore: false })
+        if (request.operation === 'world.interactions.list') return success({ items: [], total: 0, hasMore: false })
+        if (request.operation === 'world.interactions.create-text') {
+          return success({ interaction: { interactionRef: 'interaction-ref', parentRef: 'record-ref' } })
+        }
         if (request.operation === 'world.image.read') {
           return success({ mediaType: 'image/png', bytes: 8, dataBase64: 'iVBORw0KGgo=' })
         }
@@ -26,10 +30,21 @@ describe('World consumer SDK', () => {
     await expect(sdk.worldFeed({ limit: 20, offset: 40 })).resolves.toEqual({
       items: [], total: 0, hasMore: false,
     })
+    await expect(sdk.worldInteractions('record-ref', { limit: 50, offset: 10 })).resolves.toEqual({
+      items: [], total: 0, hasMore: false,
+    })
+    await expect(sdk.createWorldTextInteraction({
+      targetRef: 'record-ref', textContent: '评论', clientMutationId: 'mutation-20260819-0001',
+    })).resolves.toMatchObject({ interaction: { interactionRef: 'interaction-ref' } })
     const image = await sdk.readWorldImage('arkme-world-image-v1.payload.signature')
     expect(sdk.imageDataUrl(image)).toBe('data:image/png;base64,iVBORw0KGgo=')
     expect(calls).toEqual([
       { operation: 'world.feed', params: { limit: 20, offset: 40 } },
+      { operation: 'world.interactions.list', params: { recordRef: 'record-ref', limit: 50, offset: 10 } },
+      {
+        operation: 'world.interactions.create-text',
+        params: { targetRef: 'record-ref', textContent: '评论', clientMutationId: 'mutation-20260819-0001' },
+      },
       { operation: 'world.image.read', params: { imageRef: 'arkme-world-image-v1.payload.signature' } },
     ])
   })

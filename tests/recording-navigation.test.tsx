@@ -1,8 +1,36 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import * as navigation from '../src/client/ArkmeVirtualWorkspace.js'
 
 describe('recording navigation entry', () => {
+  it('exposes one owner-rendered directory row primitive for consumer slots', () => {
+    const ArkmeDirectoryRow = (navigation as unknown as Record<string, unknown>).ArkmeDirectoryRow
+    expect(ArkmeDirectoryRow).toBeDefined()
+    if (ArkmeDirectoryRow === undefined) return
+
+    const Row = ArkmeDirectoryRow as ComponentType<{
+      avatar: string
+      title: string
+      preview: string
+      selected: boolean
+      onClick(): void
+    }>
+    const markup = renderToStaticMarkup(<Row
+      avatar="世"
+      title="世界"
+      preview="世界公开动态"
+      selected
+      onClick={vi.fn()}
+    />)
+
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('>世界<')
+    expect(markup).toContain('>世界公开动态<')
+    expect(markup).toContain('background:#def3e8')
+  })
+
   it('renders a fixed all-day recording row with its read-only feature preview', () => {
     const ArkmeRecordingsRow = navigation.ArkmeRecordingsRow
     expect(ArkmeRecordingsRow).toBeDefined()

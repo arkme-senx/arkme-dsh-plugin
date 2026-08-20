@@ -27,6 +27,8 @@ import type {
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
   ArkmeWorldFeedPage,
+  ArkmeWorldInteractionCreateResult,
+  ArkmeWorldInteractionPage,
 } from '../types.js'
 
 export type {
@@ -68,6 +70,9 @@ export type {
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
   ArkmeWorldFeedItem,
+  ArkmeWorldInteractionCreateResult,
+  ArkmeWorldInteractionItem,
+  ArkmeWorldInteractionPage,
   ArkmeWorldFeedPage,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
@@ -165,6 +170,34 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
     }, options.signal)
+  }
+
+  /** Read comments and replies for one Provider-issued World record reference. */
+  async worldInteractions(
+    recordRef: string,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldInteractionPage> {
+    if (recordRef.trim() === '') throw new TypeError('Arkme World record reference must not be empty')
+    return await this.call<ArkmeWorldInteractionPage>('world.interactions.list', {
+      recordRef,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
+  /** Publish a text comment or reply using a caller-stable mutation id. */
+  async createWorldTextInteraction(
+    input: { targetRef: string; textContent: string; clientMutationId: string },
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldInteractionCreateResult> {
+    if (input.targetRef.trim() === '' || input.textContent.trim() === '' || input.clientMutationId.trim() === '') {
+      throw new TypeError('Arkme World interaction target, text, and mutation id must not be empty')
+    }
+    return await this.call<ArkmeWorldInteractionCreateResult>('world.interactions.create-text', {
+      targetRef: input.targetRef,
+      textContent: input.textContent,
+      clientMutationId: input.clientMutationId,
+    }, signal)
   }
 
   /** Resolve one Provider-issued World image ref without exposing its signed source URL. */

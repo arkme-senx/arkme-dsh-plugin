@@ -66,6 +66,9 @@ export function apply(ctx: ClientContext): void {
     id: 'arkme',
     order: 70,
     label: 'Arkme',
+    children: {
+      'arkme.directory.entry': { kind: 'list', scope: 'root' },
+    },
     inject: () => ({
       toggle: toggleArkme,
       activate: activateSurface,
@@ -93,7 +96,8 @@ export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 export { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 export { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
-export { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+export { ArkmeDirectoryRow, ArkmeNavigation, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
+export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'
 export { ArkmePluginUpdateStore, arkmePluginUpdateStore } from './plugin-update-store.js'
 export {
