@@ -574,7 +574,10 @@ describe('Arkme conversation tools', () => {
       recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       botRefs: ['arkme-bot-v1.bot'],
+      agentAuthored: true,
+      signal,
     }))
+    expect(service.arkoProfile).not.toHaveBeenCalled()
   })
 
   it('reports only an opaque message reference with a stable retry identity', async () => {
@@ -645,6 +648,7 @@ describe('Arkme conversation tools', () => {
         signal,
       }),
     )
+    expect(service.arkoProfile).not.toHaveBeenCalled()
     expect(output).toContain('chat-direct-1')
     expect(output).toContain('zhangsan_01')
     expect(output).not.toContain('你好，这是 Agent 代发消息')

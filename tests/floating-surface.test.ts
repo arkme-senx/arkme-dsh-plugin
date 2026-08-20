@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
-  aiPolishStatus, arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
+  aiPolishStatus, ArkmeTimelineAgentSourceBadge, arkmeTimelineDetailSenderText,
+  arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
 
@@ -98,5 +101,22 @@ describe('Arkme floating conversation frame', () => {
     expect(aiPolishStatus({ ...item, aiPolish: { state: 'polished' } })).toBe('✨已润色')
     expect(aiPolishStatus({ ...item, aiPolish: { state: 'kept_original' } })).toBe('保持原文')
     expect(aiPolishStatus({ ...item, aiPolish: { state: 'failed' } })).toBe('润色失败 · 重试')
+  })
+
+  it('renders agent-sent messages with a client-compatible source badge', () => {
+    const selfItem = {
+      itemUid: 'record-1', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent: '正文', status: 1,
+    }
+    const agentItem = {
+      ...selfItem,
+      agentSource: { kind: 'agent' as const, displayName: 'Codex', label: 'Codex代发' },
+    }
+    expect(arkmeTimelineDetailSenderText(agentItem)).toBe('我 · Codex代发')
+
+    const agentSourceHtml = renderToStaticMarkup(createElement(ArkmeTimelineAgentSourceBadge, { item: agentItem }))
+    expect(agentSourceHtml).toContain('Codex代发')
+    expect(agentSourceHtml).toContain('data-arkme-agent-source="agent"')
+    expect(agentSourceHtml).toContain('data-arkme-agent-source-icon="assistant"')
   })
 })

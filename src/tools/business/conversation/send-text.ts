@@ -30,6 +30,7 @@ export const sendTextToolModule = defineArkmeCoreToolModule({
           relationUid: stableUidForToolCall('source-relation', callId),
           ...(args.bot_refs === undefined ? {} : { botRefs: args.bot_refs }),
           signal: exec.signal,
+          agentAuthored: true,
         })
         return taggedJSON('Arkme 发送结果', result)
       },
