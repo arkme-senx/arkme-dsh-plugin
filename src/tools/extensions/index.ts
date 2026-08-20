@@ -11,9 +11,10 @@ import type { ArkmeImageBytes } from '../../types.js'
 const EXTENSION_TOOL_NAMES = [
   'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
   'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
+  'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
 ] as const
 
-export interface ArkmeExtensionIconSource {
+export interface ArkmeExtensionImageSource {
   readImage(imageRef: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<ArkmeImageBytes>
 }
 
@@ -30,7 +31,7 @@ export function registerArkmeExtensionTools(
   ctx: Context,
   manager: ArkmeExtensionManager,
   ownedInventory: ArkmeOwnedExtensionInventory,
-  iconSource: ArkmeExtensionIconSource,
+  imageSource: ArkmeExtensionImageSource,
   profile: ArkmeToolProfile,
 ): void {
   if (profile === 'disabled' || profile === 'atomic') return
@@ -169,7 +170,7 @@ export function registerArkmeExtensionTools(
     async execute(args, exec) {
       const imageRef = clean(args.image_ref)
       if (imageRef === '') throw new Error('image_ref must not be empty')
-      const image = await iconSource.readImage(imageRef, { maxBytes: 2 * 1024 * 1024, signal: exec.signal })
+      const image = await imageSource.readImage(imageRef, { maxBytes: 2 * 1024 * 1024, signal: exec.signal })
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
         throw new Error('extension icons accept PNG, JPEG, or WebP only')
       }
@@ -186,9 +187,87 @@ export function registerArkmeExtensionTools(
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_preview_add',
+    description: 'Add one image to the ordered preview gallery of an extension owned by the current Arkme user. The image_ref must come from an Arkme profile or source result. The Host reads and uploads bytes without exposing signed storage transport. Use only after an explicit current human request.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
+      image_ref: { type: 'string', required: true, description: 'Opaque Arkme image_ref returned by profile or source tools.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      requireAgent(exec)
+      const imageRef = clean(args.image_ref)
+      if (imageRef === '') throw new Error('image_ref must not be empty')
+      const image = await imageSource.readImage(imageRef, { maxBytes: 5 * 1024 * 1024, signal: exec.signal })
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
+        throw new Error('extension previews accept PNG, JPEG, or WebP only')
+      }
+      const digest = createHash('sha256')
+        .update(`arkme-extension-preview\0${String(exec.callId)}\0${args.extension_id}\0${imageRef}`)
+        .digest('hex')
+      const result = await manager.addPreview({
+        extensionId: args.extension_id,
+        mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
+        data: image.data,
+        idempotencyKey: `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`,
+        signal: exec.signal,
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_preview_delete',
+    description: 'Delete one exact preview_ref from an owned extension gallery using its current preview_revision. Use only after an explicit current human request. Refresh the owned extension list after a revision conflict.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
+      preview_ref: { type: 'string', required: true, description: 'Exact preview_ref from the current owned extension projection.' },
+      expected_revision: { type: 'integer', required: true, description: 'Current preview_revision from the owned extension projection.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      requireAgent(exec)
+      const result = await manager.deletePreview({
+        extensionId: args.extension_id,
+        previewRef: args.preview_ref,
+        expectedRevision: args.expected_revision,
+        signal: exec.signal,
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_preview_reorder',
+    description: 'Save the complete ordered preview_ref list for an owned extension using its current preview_revision. The first ref becomes the cover. Use only after an explicit current human request and refresh after a revision conflict.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
+      ordered_preview_refs: {
+        type: 'array', required: true, items: { type: 'string' },
+        description: 'Every current preview_ref exactly once, in the desired order.',
+      },
+      expected_revision: { type: 'integer', required: true, description: 'Current preview_revision from the owned extension projection.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      requireAgent(exec)
+      const result = await manager.reorderPreviews({
+        extensionId: args.extension_id,
+        orderedPreviewRefs: args.ordered_preview_refs,
+        expectedRevision: args.expected_revision,
+        signal: exec.signal,
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
-    if (!['arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled', 'arkme_extension_icon_set'].includes(exec.name)) return await next()
+    if (![
+      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled',
+      'arkme_extension_icon_set', 'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
+    ].includes(exec.name)) return await next()
     const decision = await next()
     if (decision.kind !== 'allow') return decision
     const args = exec.arguments as Record<string, unknown>
@@ -221,6 +300,26 @@ export function registerArkmeExtensionTools(
       return {
         kind: 'ask',
         reason: `确认使用当前账号可读取的图片替换扩展 ${extensionId} 的头像吗？`,
+      }
+    }
+    if (exec.name === 'arkme_extension_preview_add') {
+      return {
+        kind: 'ask',
+        reason: `确认把当前账号可读取的图片添加到扩展 ${extensionId} 的预览图集吗？`,
+      }
+    }
+    if (exec.name === 'arkme_extension_preview_delete') {
+      const previewRef = clean(typeof args.preview_ref === 'string' ? args.preview_ref : '').slice(0, 96)
+      return {
+        kind: 'ask',
+        reason: `确认从扩展 ${extensionId} 删除预览图 ${previewRef} 吗？`,
+      }
+    }
+    if (exec.name === 'arkme_extension_preview_reorder') {
+      const count = Array.isArray(args.ordered_preview_refs) ? args.ordered_preview_refs.length : 0
+      return {
+        kind: 'ask',
+        reason: `确认把扩展 ${extensionId} 的 ${String(count)} 张预览图按新顺序保存吗？第一张会作为封面。`,
       }
     }
     const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40) || '最新兼容版本'

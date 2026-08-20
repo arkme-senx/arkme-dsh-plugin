@@ -23,7 +23,12 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     registerArkmeExtensionTools(ctx, {} as never, { list } as never, {} as never, 'business')
     const agent = { id: SessionId('session-1') } as Agent
 
-    expect(ctx.tools.schemas(agent).map(schema => schema.name)).toContain('arkme_extension_list_mine')
+    expect(ctx.tools.schemas(agent).map(schema => schema.name)).toEqual(expect.arrayContaining([
+      'arkme_extension_list_mine',
+      'arkme_extension_preview_add',
+      'arkme_extension_preview_delete',
+      'arkme_extension_preview_reorder',
+    ]))
     const result = await ctx.tools.execute({
       callId: CallId('call-1'), name: 'arkme_extension_list_mine', arguments: {}, agent,
       signal: new AbortController().signal,

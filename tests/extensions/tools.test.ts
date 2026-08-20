@@ -25,12 +25,25 @@ describe('Arkme extension tools', () => {
     const setIcon = vi.fn(async () => ({
       extension_id: 'ext-1', status: 'applied', icon_ref: `icon_v1_${'a'.repeat(64)}`,
     }))
+    const previewRef = `preview_v1_${'c'.repeat(64)}`
+    const addPreview = vi.fn(async () => ({
+      extension_id: 'ext-1', applied_preview_ref: previewRef,
+      preview_images: [{ preview_ref: previewRef, content_type: 'image/png', preview_size: 4, width: 640, height: 480, created_at: 1 }],
+      preview_revision: 1,
+    }))
+    const deletePreview = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 2 }))
+    const reorderPreviews = vi.fn(async () => ({
+      extension_id: 'ext-1', preview_images: [{ preview_ref: previewRef }], preview_revision: 3,
+    }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: 4, data: new Uint8Array([1, 2, 3, 4]) }))
-    registerArkmeExtensionTools(context as never, { previewInstall, setEnabled, setIcon } as never, {} as never, { readImage }, 'business')
+    registerArkmeExtensionTools(context as never, {
+      previewInstall, setEnabled, setIcon, addPreview, deletePreview, reorderPreviews,
+    } as never, {} as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
+      'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
     expect(listMine?.description).toContain('current Arkme user')
@@ -69,6 +82,35 @@ describe('Arkme extension tools', () => {
     expect(readImage).toHaveBeenCalledWith('arkme-image-ref', expect.objectContaining({ maxBytes: 2 * 1024 * 1024 }))
     expect(setIcon).toHaveBeenCalledWith(expect.objectContaining({
       extensionId: 'ext-1', mediaType: 'image/png', data: new Uint8Array([1, 2, 3, 4]),
+    }))
+    const addPreviewTool = definitions.find(item => item.name === 'arkme_extension_preview_add')
+    const addPreviewOutput = await addPreviewTool?.execute?.(
+      { extension_id: 'ext-1', image_ref: 'arkme-preview-ref' },
+      { agent: { id: 'session-1' }, callId: 'call-preview-add' },
+    )
+    expect(addPreviewOutput).toContain('"preview_revision": 1')
+    expect(addPreviewOutput).not.toContain('arkme-preview-ref')
+    expect(addPreviewOutput).not.toContain('upload_url')
+    expect(addPreviewOutput).not.toContain('download_url')
+    expect(readImage).toHaveBeenCalledWith('arkme-preview-ref', expect.objectContaining({ maxBytes: 5 * 1024 * 1024 }))
+    expect(addPreview).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-1', mediaType: 'image/png', data: new Uint8Array([1, 2, 3, 4]),
+    }))
+    const deletePreviewTool = definitions.find(item => item.name === 'arkme_extension_preview_delete')
+    await expect(deletePreviewTool?.execute?.(
+      { extension_id: 'ext-1', preview_ref: previewRef, expected_revision: 1 },
+      { agent: { id: 'session-1' }, callId: 'call-preview-delete' },
+    )).resolves.toContain('"preview_revision": 2')
+    expect(deletePreview).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-1', previewRef, expectedRevision: 1,
+    }))
+    const reorderPreviewTool = definitions.find(item => item.name === 'arkme_extension_preview_reorder')
+    await expect(reorderPreviewTool?.execute?.(
+      { extension_id: 'ext-1', ordered_preview_refs: [previewRef], expected_revision: 2 },
+      { agent: { id: 'session-1' }, callId: 'call-preview-reorder' },
+    )).resolves.toContain('"preview_revision": 3')
+    expect(reorderPreviews).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-1', orderedPreviewRefs: [previewRef], expectedRevision: 2,
     }))
     await expect(guard!(
       { name: 'arkme_extension_publish', arguments: {
@@ -111,6 +153,18 @@ describe('Arkme extension tools', () => {
     )).resolves.toEqual({
       kind: 'ask', reason: '确认使用当前账号可读取的图片替换扩展 ext-1 的头像吗？',
     })
+    await expect(guard!(
+      { name: 'arkme_extension_preview_add', arguments: { extension_id: 'ext-1', image_ref: 'arkme-preview-ref' } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({ kind: 'ask', reason: '确认把当前账号可读取的图片添加到扩展 ext-1 的预览图集吗？' })
+    await expect(guard!(
+      { name: 'arkme_extension_preview_delete', arguments: { extension_id: 'ext-1', preview_ref: previewRef, expected_revision: 1 } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({ kind: 'ask', reason: `确认从扩展 ext-1 删除预览图 ${previewRef} 吗？` })
+    await expect(guard!(
+      { name: 'arkme_extension_preview_reorder', arguments: { extension_id: 'ext-1', ordered_preview_refs: [previewRef], expected_revision: 2 } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({ kind: 'ask', reason: '确认把扩展 ext-1 的 1 张预览图按新顺序保存吗？第一张会作为封面。' })
   })
 
   it('does not expose extension writes in atomic or disabled profiles', () => {
