@@ -317,4 +317,3 @@ Do not run the write E2E against production without a separate explicit authoriz
 git add docs/tool-registry.md docs/extension-market-controls.md docs/consumer-plugin-contract.md
 git commit -m "docs(extensions): 功能点: 说明用户附件预览图合同"
 ```
-
