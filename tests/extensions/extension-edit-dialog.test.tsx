@@ -47,6 +47,8 @@ describe('extension metadata dialogs', () => {
     expect(html).toContain('display:none')
     expect(html).toContain('>扩展头像<')
     expect(html).toContain('选择后可手动裁剪')
+    expect(html).not.toContain('扩展预览图')
+    expect(html).not.toContain('multiple=""')
     expect(html).toContain('>保存</button>')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
     expect(html).not.toContain('<option value="unlisted"')

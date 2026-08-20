@@ -2,23 +2,21 @@ import { useState, type CSSProperties, type FormEvent } from 'react'
 import type { ArkmeExtensionEditableVisibility } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem } from '../extensions/owned-types.js'
 import { ArkmeExtensionAvatarField } from './ArkmeExtensionAvatarField.js'
-import { ArkmeExtensionPreviewField } from './ArkmeExtensionPreviewField.js'
-import { createExtensionPreviewDraft, type ExtensionPreviewDraft } from './extension-preview-edit.js'
+import type { ExtensionPreviewDraft } from './extension-preview-edit.js'
 
 export interface ArkmeExtensionEditFormValue {
   name: string
   description: string
   visibility: ArkmeExtensionEditableVisibility
   iconFile?: File
+  /** Retained for non-UI callers; the built-in edit dialog never emits this field. */
   previewDraft?: ExtensionPreviewDraft
 }
 
-export function ArkmeExtensionEditDialog({ item, busy, error, previewDraft: controlledPreviewDraft, onPreviewDraftChange, onCancel, onSubmit }: {
+export function ArkmeExtensionEditDialog({ item, busy, error, onCancel, onSubmit }: {
   item: ArkmeMyExtensionItem
   busy: boolean
   error: string
-  previewDraft?: ExtensionPreviewDraft
-  onPreviewDraftChange?(draft: ExtensionPreviewDraft): void
   onCancel(): void
   onSubmit(value: ArkmeExtensionEditFormValue): void
 }) {
@@ -29,11 +27,6 @@ export function ArkmeExtensionEditDialog({ item, busy, error, previewDraft: cont
     initialVisibility === 'private' || initialVisibility === 'public' ? initialVisibility : '',
   )
   const [iconFile, setIconFile] = useState<File>()
-  const [localPreviewDraft, setLocalPreviewDraft] = useState(() => createExtensionPreviewDraft(
-    item.published?.previewImages ?? [], item.published?.previewRevision ?? 0,
-  ))
-  const previewDraft = controlledPreviewDraft ?? localPreviewDraft
-  const setPreviewDraft = onPreviewDraftChange ?? setLocalPreviewDraft
   const legacyVisibility = initialVisibility === 'unlisted'
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -41,7 +34,6 @@ export function ArkmeExtensionEditDialog({ item, busy, error, previewDraft: cont
     onSubmit({
       name: name.trim(), description: description.trim(), visibility,
       ...(iconFile === undefined ? {} : { iconFile }),
-      ...(item.published === undefined ? {} : { previewDraft }),
     })
   }
   return <div style={styles.backdrop}>
@@ -54,12 +46,6 @@ export function ArkmeExtensionEditDialog({ item, busy, error, previewDraft: cont
           {...(iconFile === undefined ? {} : { selectedFile: iconFile })}
           disabled={busy}
           onSelect={setIconFile}
-        />
-        <ArkmeExtensionPreviewField
-          {...(item.published?.extensionId === undefined ? {} : { extensionId: item.published.extensionId })}
-          draft={previewDraft}
-          disabled={busy}
-          onChange={setPreviewDraft}
         />
         <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
         <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>

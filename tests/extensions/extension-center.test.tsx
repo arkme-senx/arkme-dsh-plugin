@@ -328,7 +328,7 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('accept="image/*"')
   })
 
-  it('lets a published extension stage multiple local preview images in the edit dialog', () => {
+  it('keeps preview image management out of the extension edit dialog', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionEditDialog
       item={{
         ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['published'],
@@ -349,12 +349,10 @@ describe('Arkme extension market UI', () => {
       onSubmit={() => {}}
     />)
 
-    expect(html).toContain('扩展预览图')
-    expect(html).toContain('type="file"')
-    expect(html).toContain('multiple=""')
-    expect(html).toContain('accept="image/png,image/jpeg,image/webp"')
-    expect(html).toContain('封面')
-    expect(html).toContain('aria-label="删除第 1 张预览图"')
+    expect(html).not.toContain('扩展预览图')
+    expect(html).not.toContain('multiple=""')
+    expect(html).not.toContain('accept="image/png,image/jpeg,image/webp"')
+    expect(html).not.toContain('aria-label="删除第 1 张预览图"')
     expect(html).toContain('max-height:calc(100% - 32px)')
     expect(html).toContain('overflow-y:auto')
   })
