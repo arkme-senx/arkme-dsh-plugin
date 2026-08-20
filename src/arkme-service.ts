@@ -172,6 +172,7 @@ import type {
 import type {
   ArkmeExtensionCatalogItem,
   ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewAvatarFallback,
   ArkmeExtensionReviewCreateInput,
   ArkmeExtensionReviewCreateResult,
   ArkmeExtensionReviewItem,
@@ -412,6 +413,13 @@ interface ArkmePublicProfile {
   avatarUrl?: string
   avatarFallback?: ArkmeGroupAvatarFallback
   arkmeId?: string
+}
+
+interface ArkmeExtensionAuthorProjection {
+  displayName: string
+  arkmeId?: string
+  avatarRef?: string
+  avatarFallback?: ArkmeExtensionReviewAvatarFallback
 }
 
 interface ArkmeInterwovenMomentReference {
@@ -2046,13 +2054,19 @@ export class ArkmeService {
   async extensionAuthors(
     userIds: readonly number[],
     signal?: AbortSignal,
-  ): Promise<Map<number, { displayName: string; arkmeId?: string }>> {
+  ): Promise<Map<number, ArkmeExtensionAuthorProjection>> {
     const session = await this.requireSession()
     const profiles = await this.publicProfileSummariesByUserIds(userIds, session, signal)
-    return new Map([...profiles].map(([userId, profile]) => [userId, {
-      displayName: profile.displayName,
-      ...(profile.arkmeId === undefined ? {} : { arkmeId: profile.arkmeId }),
-    }]))
+    const authors = await Promise.all([...profiles].map(async ([userId, profile]) => {
+      const author: ArkmeExtensionAuthorProjection = {
+        displayName: profile.displayName,
+        ...(profile.arkmeId === undefined ? {} : { arkmeId: profile.arkmeId }),
+        ...(profile.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, userId) }),
+        ...(profile.avatarFallback?.kind === 'phone_default' ? { avatarFallback: profile.avatarFallback } : {}),
+      }
+      return [userId, author] as const
+    }))
+    return new Map(authors)
   }
 
   async listExtensionReviews(
@@ -2253,7 +2267,7 @@ export class ArkmeService {
     item: ArkmeExtensionReviewWireItem,
     viewerUserId: number,
     extensionId: string,
-    authors: ReadonlyMap<number, { displayName: string; arkmeId?: string }>,
+    authors: ReadonlyMap<number, ArkmeExtensionAuthorProjection>,
   ): Promise<ArkmeExtensionReviewItem> {
     const reviewId = item.review_id.trim()
     const parentReviewId = item.parent_review_id?.trim() ?? ''
@@ -2265,6 +2279,8 @@ export class ArkmeService {
       }),
       authorName: author?.displayName.trim() || 'Arkme 用户',
       ...(author?.arkmeId === undefined ? {} : { authorArkmeId: author.arkmeId }),
+      ...(author?.avatarRef === undefined ? {} : { authorAvatarRef: author.avatarRef }),
+      ...(author?.avatarFallback === undefined ? {} : { authorAvatarFallback: author.avatarFallback }),
       textContent: item.text_content.trim(),
       rating: Math.max(0, Math.min(5, Math.trunc(item.rating))),
       createdAtMillis: Math.max(0, Math.trunc(item.created_at)),

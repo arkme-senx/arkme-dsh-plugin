@@ -118,6 +118,40 @@ function PhoneDefaultAvatar({ fallback, size }: { fallback: Extract<ArkmeGroupAv
   }}>{fallback.label || '--'}</span>
 }
 
+export function ArkmeUserAvatar({
+  avatarRef,
+  fallback,
+  size = 44,
+  label = '用户头像',
+}: {
+  avatarRef?: string
+  fallback?: ArkmeGroupAvatarFallback
+  size?: number
+  label?: string
+}) {
+  const normalizedRef = avatarRef?.trim() ?? ''
+  const [imageUrl, setImageUrl] = useState<string>()
+
+  useEffect(() => {
+    let active = true
+    setImageUrl(undefined)
+    if (normalizedRef === '') return () => { active = false }
+    void loadArkmeImageDataUrl(normalizedRef)
+      .then(value => { if (active) setImageUrl(value) })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [normalizedRef])
+
+  const styles = avatarStyles(size)
+  return <span style={styles.avatar} aria-label={label}>
+    {imageUrl !== undefined
+      ? <img src={imageUrl} alt="" draggable={false} style={styles.image} />
+      : fallback?.kind === 'phone_default'
+        ? <PhoneDefaultAvatar fallback={fallback} size={size} />
+        : <DefaultUserAvatar size={size} />}
+  </span>
+}
+
 function GroupAvatarMember({ slot, size }: { slot: ResolvedGroupAvatarSlot; size: number }) {
   if (slot.imageUrl !== undefined) {
     return <img src={slot.imageUrl} alt="" draggable={false} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }} />

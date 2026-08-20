@@ -126,6 +126,7 @@ export type {
   ArkmeExtensionPreviewMediaType,
   ArkmeInstalledExtensionView,
   ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewAvatarFallback,
   ArkmeExtensionReviewCreateInput,
   ArkmeExtensionReviewCreateResult,
   ArkmeExtensionReviewItem,

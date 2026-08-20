@@ -16,6 +16,7 @@ const page: ArkmeExtensionReviewPage = {
   items: [
     {
       reviewRef: 'review-root', authorName: '小林', authorArkmeId: 'lin', textContent: '很好用',
+      authorAvatarFallback: { kind: 'phone_default', colorIndex: 7, label: '林' },
       rating: 5, createdAtMillis: 1_780_000_000_000,
     },
     {
@@ -41,6 +42,19 @@ describe('extension reviews UI', () => {
     expect(html).toContain('>评论</button>')
     expect(html).toContain('aria-label="查看小林的评论及 1 条回复"')
     expect(html).toContain('aria-label="回复小林，已有 1 条回复"')
+    expect(html).toContain('aria-label="小林头像"')
+    expect(html).toContain('grid-template-columns:44px minmax(0, 1fr)')
+    expect(html).not.toContain('@lin')
+    const mainColumn = html.indexOf('data-arkme-review-main="true"')
+    const author = html.indexOf('小林', mainColumn)
+    const rating = html.indexOf('aria-label="5.0 星"', author)
+    const content = html.indexOf('很好用', rating)
+    const replies = html.indexOf('aria-label="回复小林，已有 1 条回复"', content)
+    expect(mainColumn).toBeGreaterThan(-1)
+    expect(author).toBeGreaterThan(mainColumn)
+    expect(rating).toBeGreaterThan(author)
+    expect(content).toBeGreaterThan(rating)
+    expect(replies).toBeGreaterThan(content)
     expect(html).toContain('<svg aria-hidden="true" width="15" height="15"')
     expect(html).toContain('d="M8.5 19H8C4 19 2 18 2 13V8C2 4 4 2 8 2H16C20 2 22 4 22 8V13C22 17 20 19 16 19H15.5')
     expect(html).toContain('d="M7 8H17"')
@@ -107,6 +121,8 @@ describe('extension reviews UI', () => {
     expect(html).toContain('全部回复 1')
     expect(html).toContain('谢谢反馈')
     expect(html).toContain('aria-label="回复作者，已有 0 条回复"')
+    expect(html).toContain('aria-label="作者头像"')
+    expect(html).toContain('<circle cx="12" cy="8" r="4"></circle>')
   })
 
   it('shows the original text in the reply composer', () => {

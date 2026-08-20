@@ -9,6 +9,7 @@ describe('extension review tools', () => {
     const listExtensionReviews = vi.fn(async () => ({
       items: [{
         reviewRef: 'arkme-extension-review-v1.review', authorName: '小林', textContent: '很好用',
+        authorAvatarRef: 'arkme-profile-image-v1.avatar',
         rating: 5, createdAtMillis: 123,
       }],
       total: 1, limit: 20, offset: 0, hasMore: false,
@@ -29,6 +30,7 @@ describe('extension review tools', () => {
 
     const readResult = await read.execute!({ extension_id: 'ext-1', limit: 20 }, { callId: 'call-read', signal: new AbortController().signal } as never)
     expect(String(readResult)).toContain('arkme-extension-review-v1.review')
+    expect(String(readResult)).toContain('arkme-profile-image-v1.avatar')
     await create.execute!({
       extension_id: 'ext-1', text_content: '谢谢分享', parent_review_ref: 'arkme-extension-review-v1.review',
     }, { callId: 'call-create', signal: new AbortController().signal } as never)

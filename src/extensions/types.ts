@@ -68,11 +68,19 @@ export interface ArkmeExtensionCatalogPage {
 }
 
 /** Browser/SDK-safe extension review projection. Record UIDs remain inside the Host. */
+export interface ArkmeExtensionReviewAvatarFallback {
+  kind: 'phone_default'
+  colorIndex: number
+  label: string
+}
+
 export interface ArkmeExtensionReviewItem {
   reviewRef: string
   parentReviewRef?: string
   authorName: string
   authorArkmeId?: string
+  authorAvatarRef?: string
+  authorAvatarFallback?: ArkmeExtensionReviewAvatarFallback
   textContent: string
   rating: number
   createdAtMillis: number

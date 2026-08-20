@@ -7,6 +7,7 @@ import type {
   ArkmeExtensionReviewPage,
 } from '../extensions/types.js'
 import { callArkme } from './api.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 
 const accent = '#09B83E'
 const emptyRating: ArkmeExtensionRatingSummary = { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] }
@@ -24,12 +25,14 @@ const styles: Record<string, CSSProperties> = {
   review: { position: 'relative', padding: '11px 0', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', cursor: 'pointer' },
   openThreadButton: { position: 'absolute', zIndex: 0, inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
   reviewContent: { position: 'relative', zIndex: 1, pointerEvents: 'none' },
+  reviewLayout: { display: 'grid', gridTemplateColumns: '44px minmax(0, 1fr)', columnGap: 10, alignItems: 'start' },
+  reviewMain: { minWidth: 0 },
   authorRow: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
-  avatar: { width: 24, height: 24, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 10, fontWeight: 650 },
-  author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 11, fontWeight: 600 },
+  author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 12, fontWeight: 650 },
   time: { marginLeft: 'auto', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9 },
-  content: { margin: '6px 0 0 31px', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-  itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '7px 0 0 31px' },
+  ratingRow: { height: 20, display: 'flex', alignItems: 'center', marginTop: 2 },
+  content: { margin: '7px 0 0', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '7px 0 0' },
   replyButton: { display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 30, padding: '2px 4px 2px 0', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 12, fontWeight: 600, lineHeight: '16px', cursor: 'pointer' },
   state: { padding: '18px 0 10px', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 11, textAlign: 'center' },
   error: { marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(194,65,59,.08)', color: 'var(--dsw-alias-state-error-primary, #c2413b)', fontSize: 11 },
@@ -101,16 +104,39 @@ function reviewTime(createdAtMillis: number): string {
     .format(new Date(createdAtMillis))
 }
 
-function authorInitial(name: string): string {
-  return [...name.trim()].slice(0, 2).join('') || 'A'
-}
-
 function ReplyIcon() {
   return <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none">
     <path d="M8.5 19H8C4 19 2 18 2 13V8C2 4 4 2 8 2H16C20 2 22 4 22 8V13C22 17 20 19 16 19H15.5C15.19 19 14.89 19.15 14.7 19.4L13.2 21.4C12.54 22.28 11.46 22.28 10.8 21.4L9.3 19.4C9.14 19.18 8.77 19 8.5 19Z" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M7 8H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M7 13H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
+}
+
+function ReviewPresentation({ item, replyCount, onReply, clickThrough = false }: {
+  item: ArkmeExtensionReviewItem
+  replyCount: number
+  onReply(item: ArkmeExtensionReviewItem): void
+  clickThrough?: boolean
+}) {
+  return <div style={{ ...styles.reviewLayout, ...(clickThrough ? styles.reviewContent : {}) }}>
+    <ArkmeUserAvatar
+      {...(item.authorAvatarRef === undefined ? {} : { avatarRef: item.authorAvatarRef })}
+      {...(item.authorAvatarFallback === undefined ? {} : { fallback: item.authorAvatarFallback })}
+      size={44}
+      label={`${item.authorName}头像`}
+    />
+    <div data-arkme-review-main="true" style={styles.reviewMain}>
+      <div style={styles.authorRow}>
+        <span style={styles.author}>{item.authorName}</span>
+        <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
+      </div>
+      {item.rating > 0 && <div style={styles.ratingRow}><Stars value={item.rating} size={12} /></div>}
+      <p style={styles.content}>{item.textContent}</p>
+      <div style={{ ...styles.itemActions, position: 'relative', zIndex: 2, pointerEvents: 'auto' }}>
+        <ReplyButton item={item} count={replyCount} onReply={onReply} />
+      </div>
+    </div>
+  </div>
 }
 
 function ReplyButton({ item, count, onReply }: {
@@ -143,16 +169,7 @@ function ReviewNode({ node, onOpen, onReply }: {
       aria-label={`查看${item.authorName}的评论及 ${String(replyCount)} 条回复`}
       onClick={() => { onOpen(node) }}
     />
-    <div style={{ ...styles.authorRow, ...styles.reviewContent }}>
-      <span style={styles.avatar} aria-hidden>{authorInitial(item.authorName)}</span>
-      <span style={styles.author}>{item.authorName}{item.authorArkmeId ? ` · @${item.authorArkmeId}` : ''}</span>
-      {item.rating > 0 && <Stars value={item.rating} size={11} />}
-      <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
-    </div>
-    <p style={{ ...styles.content, ...styles.reviewContent }}>{item.textContent}</p>
-    <div style={{ ...styles.itemActions, position: 'relative', zIndex: 2 }}>
-      <ReplyButton item={item} count={replyCount} onReply={onReply} />
-    </div>
+    <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} clickThrough />
   </article>
 }
 
@@ -164,13 +181,7 @@ function ThreadReply({ node, depth, onReply }: {
   const item = node.item
   const replyCount = extensionReviewReplyCount(node)
   return <div style={{ ...styles.threadReply, marginLeft: Math.min(depth * 18, 54) }}>
-    <div style={styles.authorRow}>
-      <span style={styles.avatar} aria-hidden>{authorInitial(item.authorName)}</span>
-      <span style={styles.author}>{item.authorName}{item.authorArkmeId ? ` · @${item.authorArkmeId}` : ''}</span>
-      <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
-    </div>
-    <p style={styles.content}>{item.textContent}</p>
-    <div style={styles.itemActions}><ReplyButton item={item} count={replyCount} onReply={onReply} /></div>
+    <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
     {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={depth + 1} onReply={onReply} />)}
   </div>
 }
@@ -191,14 +202,9 @@ export function ArkmeExtensionReplyListDialog({ root, onClose, onReply }: {
       <div style={styles.threadBody}>
         <div style={styles.threadOriginal}>
           <div style={styles.originalLabel}>原评论</div>
-          <div style={{ ...styles.authorRow, marginTop: 7 }}>
-            <span style={styles.avatar} aria-hidden>{authorInitial(item.authorName)}</span>
-            <span style={styles.author}>{item.authorName}{item.authorArkmeId ? ` · @${item.authorArkmeId}` : ''}</span>
-            {item.rating > 0 && <Stars value={item.rating} size={11} />}
-            <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
+          <div style={{ marginTop: 7 }}>
+            <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
           </div>
-          <p style={styles.content}>{item.textContent}</p>
-          <div style={styles.itemActions}><ReplyButton item={item} count={replyCount} onReply={onReply} /></div>
         </div>
         <div style={styles.threadSectionLabel}>全部回复 {replyCount}</div>
         {root.children.length === 0

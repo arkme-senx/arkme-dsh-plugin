@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { createArkmeSdk } from '../../src/sdk/index.js'
+import {
+  createArkmeSdk,
+  type ArkmeExtensionReviewAvatarFallback,
+} from '../../src/sdk/index.js'
 
 function success(value: unknown): Response {
   return new Response(JSON.stringify({ ok: true, value }), {
@@ -10,6 +13,9 @@ function success(value: unknown): Response {
 
 describe('extension reviews SDK', () => {
   it('exposes typed read/create methods without leaking Host record ids', async () => {
+    const avatarFallback: ArkmeExtensionReviewAvatarFallback = {
+      kind: 'phone_default', colorIndex: 7, label: '林',
+    }
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
       fetchImpl: async (_input, init) => {
@@ -18,6 +24,8 @@ describe('extension reviews SDK', () => {
         if (request.operation === 'extensions.reviews.list') return success({
           items: [{
             reviewRef: 'arkme-extension-review-v1.review', authorName: '小林', textContent: '很好用',
+            authorAvatarRef: 'arkme-profile-image-v1.avatar',
+            authorAvatarFallback: avatarFallback,
             rating: 5, createdAtMillis: 123,
           }],
           total: 1, limit: 20, offset: 0, hasMore: false,
@@ -51,5 +59,6 @@ describe('extension reviews SDK', () => {
       },
     ])
     expect(JSON.stringify(page)).not.toContain('record_uid')
+    expect(page.items[0]?.authorAvatarRef).toBe('arkme-profile-image-v1.avatar')
   })
 })

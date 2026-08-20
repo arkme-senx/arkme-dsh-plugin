@@ -181,22 +181,32 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
-  it('resolves extension authors from public Arkme profiles without requiring an avatar', async () => {
+  it('resolves extension authors with safe real and default avatar projections', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       expect(String(input)).toBe('https://auth.test/api/v1/auth/get-public-users-by-ids')
       expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access')
-      expect(JSON.parse(String(init?.body))).toEqual({ user_ids: [77] })
-      return json({ code: 200, data: { items: [{
-        user_id: 77, nick_name: '发布者', name_slug: 'publisher', head_img: '',
-      }] } })
+      expect(JSON.parse(String(init?.body))).toEqual({ user_ids: [77, 78, 79] })
+      return json({ code: 200, data: { items: [
+        {
+          user_id: 77, nick_name: '真实头像', name_slug: 'publisher',
+          head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+        },
+        { user_id: 78, nick_name: '手机号头像', name_slug: '', head_img: 'phone_avatar://v1/7/林' },
+        { user_id: 79, nick_name: '默认头像', name_slug: '', head_img: '' },
+      ] } })
     })
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
 
-    await expect(service.extensionAuthors([77])).resolves.toEqual(new Map([[
-      77, { displayName: '发布者', arkmeId: 'publisher' },
-    ]]))
+    const authors = await service.extensionAuthors([79, 77, 78])
+    expect(authors.get(77)).toEqual({
+      displayName: '真实头像', arkmeId: 'publisher', avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
+    })
+    expect(authors.get(78)).toEqual({
+      displayName: '手机号头像', avatarFallback: { kind: 'phone_default', colorIndex: 7, label: '林' },
+    })
+    expect(authors.get(79)).toEqual({ displayName: '默认头像' })
   })
 
   it('writes extension reviews to Record first, hides raw record ids, and repairs registry failure on refresh', async () => {

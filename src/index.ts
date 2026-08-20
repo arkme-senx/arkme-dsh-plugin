@@ -500,6 +500,7 @@ export type {
 export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 export type {
   ArkmeExtensionRatingSummary,
+  ArkmeExtensionReviewAvatarFallback,
   ArkmeExtensionReviewCreateInput,
   ArkmeExtensionReviewCreateResult,
   ArkmeExtensionReviewItem,
