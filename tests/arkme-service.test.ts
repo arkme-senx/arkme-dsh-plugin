@@ -209,6 +209,11 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       calls.push({ url, body })
+      if (url === 'https://extension.test/api/public/v1/extensions/detail') {
+        return json({ code: 0, data: { extension: {
+          extension_id: body.extension_id, owner_user_id: 20002, name: '扩展', description: '', visibility: 'public',
+        } } })
+      }
       if (url === 'https://record.test/api/v1/records/create') {
         return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
       }
@@ -285,6 +290,64 @@ describe('ArkmeService', () => {
     expect(JSON.stringify(result)).not.toContain(String(latestRecordUid))
     expect(calls.filter(call => call.url.endsWith('/api/v1/extensions/reviews/create')).at(-1)?.body)
       .toMatchObject({ parent_review_id: 'rvw_root', text_content: '回复内容' })
+  })
+
+  it('rejects an extension owner rating before creating the home Record', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      expect(String(input)).toBe('https://extension.test/api/public/v1/extensions/detail')
+      return json({ code: 0, data: { extension: {
+        extension_id: 'ext-review-owner', owner_user_id: 10001, name: '我的扩展', description: '', visibility: 'public',
+      } } })
+    })
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extension.test' }, sessions, state, fetchImpl,
+    )
+
+    await expect(service.createExtensionReview({
+      extensionId: 'ext-review-owner', textContent: '不能自评', rating: 4,
+      clientMutationId: 'review-owner-mutation-0001',
+    })).rejects.toMatchObject({
+      code: 'extension-review-owner-forbidden', retryable: false, httpStatus: 403,
+    })
+    expect(await state.listExtensionReviewOperations(10001)).toEqual([])
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a terminal registry rejection and removes its retry operation', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const urls: string[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      urls.push(url)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (url.endsWith('/api/public/v1/extensions/detail')) return json({ code: 0, data: { extension: {
+        extension_id: body.extension_id, owner_user_id: 20002, name: '他人扩展', description: '', visibility: 'public',
+      } } })
+      if (url.endsWith('/api/v1/records/create')) {
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      if (url.endsWith('/api/v1/extensions/reviews/create')) {
+        return json({ code: 40301, message: '无权执行该操作', data: null }, 403)
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(
+      { ...config, extensionPublishBaseUrl: 'https://extension.test' }, sessions, state, fetchImpl,
+    )
+
+    await expect(service.createExtensionReview({
+      extensionId: 'ext-review-terminal', textContent: '服务拒绝', rating: 4,
+      clientMutationId: 'review-terminal-mutation-0001',
+    })).rejects.toMatchObject({
+      code: 'extension-review-registry-rejected', retryable: false, httpStatus: 403,
+    })
+    expect(await state.listExtensionReviewOperations(10001)).toEqual([])
+    expect(urls).not.toContain('https://auth.test/api/v1/auth/refresh-token')
   })
 
   it('preserves an extension service validation error so the calling agent can correct the package', async () => {

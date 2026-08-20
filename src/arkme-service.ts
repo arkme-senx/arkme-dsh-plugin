@@ -170,6 +170,7 @@ import type {
   ArkmeWechatPhonePage,
 } from './types.js'
 import type {
+  ArkmeExtensionCatalogItem,
   ArkmeExtensionRatingSummary,
   ArkmeExtensionReviewCreateInput,
   ArkmeExtensionReviewCreateResult,
@@ -2109,6 +2110,21 @@ export class ArkmeService {
       if (!Number.isSafeInteger(rating) || (rating ?? 0) < 1 || (rating ?? 0) > 5) {
         throw new ArkmePluginError('extension-review-rating-invalid', '发表评价时请选择 1 到 5 星', false)
       }
+      const detail = await this.extensionPost<ArkmeExtensionCatalogItem | { extension: ArkmeExtensionCatalogItem }>(
+        '/api/public/v1/extensions/detail',
+        { extension_id: extensionId },
+        signal,
+        { lane: 'interactive-read', key: `extension-detail:${extensionId}` },
+      )
+      const extension = 'extension' in detail ? detail.extension : detail
+      if (extension.owner_user_id === session.userId) {
+        throw new ArkmePluginError(
+          'extension-review-owner-forbidden',
+          '扩展作者不能给自己的扩展评分，可以回复其他用户的评论',
+          false,
+          403,
+        )
+      }
     } else if (rating !== undefined) {
       throw new ArkmePluginError('extension-review-reply-rating-invalid', '回复评论不能携带评分', false)
     }
@@ -2170,9 +2186,19 @@ export class ArkmeService {
         signal,
       )
     } catch (error) {
-      await this.stateStore.markExtensionReviewOperation(
-        userId, operation.clientMutationId, 'failed', safeFailureMessage(error),
-      )
+      const terminal = error instanceof ArkmePluginError && !error.retryable
+        && [400, 403, 404, 409, 422].includes(error.httpStatus)
+      if (terminal) {
+        await this.stateStore.removeExtensionReviewOperation(userId, operation.clientMutationId)
+        throw new ArkmePluginError(
+          'extension-review-registry-rejected',
+          `评论已写入首页，但扩展市场未接受：${error.message}`,
+          false,
+          error.httpStatus,
+          { cause: error },
+        )
+      }
+      await this.stateStore.markExtensionReviewOperation(userId, operation.clientMutationId, 'failed', safeFailureMessage(error))
       throw new ArkmePluginError(
         'extension-review-registry-pending',
         '评论已写入首页，但同步到扩展详情失败；请保留当前内容并重试',
@@ -8802,11 +8828,11 @@ export class ArkmeService {
       lane: options.lane ?? 'write',
     })
     try {
-      return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true, true)
     } catch (error) {
-      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      if (!(error instanceof ArkmePluginError) || error.code !== 'auth-http-401') throw error
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true, true)
     }
   }
 
@@ -9630,6 +9656,7 @@ export class ArkmeService {
     preferDataError = false,
     options: ArkmeRemoteRequestOptions = {},
     preserveHttpError = false,
+    preserveForbiddenError = false,
   ): Promise<T> {
     return await this.requestCoordinator.run({
       scope: options.scope ?? 'public',
@@ -9644,7 +9671,8 @@ export class ArkmeService {
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
       operation: async coordinatedSignal => await this.postDirect(
-        baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError, preserveHttpError,
+        baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
+        preserveHttpError, preserveForbiddenError,
       ),
     })
   }
@@ -9658,6 +9686,7 @@ export class ArkmeService {
     signal: AbortSignal,
     preferDataError: boolean,
     preserveHttpError = false,
+    preserveForbiddenError = false,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -9676,7 +9705,7 @@ export class ArkmeService {
         body: JSON.stringify(body),
         signal: controller.signal,
       })
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401 || (response.status === 403 && !preserveForbiddenError)) {
         throw new ArkmePluginError(
           `auth-http-${response.status}`,
           'Arkme 登录凭据已失效',
