@@ -2,8 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle, ExtensionCard,
-  extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
-  extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateVersionLabel,
+  extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionDirectInstallTarget,
+  extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
   extensionNativeInstallWarning, formatExtensionBytes, MyExtensionCard,
 } from '../../src/client/ArkmeExtensionCenter.js'
@@ -85,12 +85,22 @@ describe('Arkme extension market UI', () => {
 
   it('renders owner-private visibility as a title badge instead of an action', () => {
     const html = renderToStaticMarkup(<ExtensionCard
-      item={{ extension_id: 'ext-private', name: '私有扩展', description: '', visibility: 'private' }}
+      item={{
+        extension_id: 'ext-private', name: '私有扩展', description: '', visibility: 'private', version: '1.0.0',
+        manifest: {
+          format: 'arkme-cordis-extension', format_version: 1, name: '私有扩展', description: '', version: '1.0.0',
+          runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: true },
+          permissions: ['files.read'], entrypoints: { host: 'host.js', client: 'client.js' },
+        },
+      }}
       visibilityBadge="仅自己"
       onClick={() => {}}
     />)
     expect(html).toContain('私有扩展')
     expect(html).toContain('仅自己')
+    expect(html).toContain('v1.0.0')
+    expect(html).not.toContain('Host + Client')
+    expect(html).not.toContain('项权限')
     expect(html.indexOf('私有扩展')).toBeLessThan(html.indexOf('仅自己'))
     expect(html).not.toContain('>仅自己</button>')
   })
@@ -126,20 +136,25 @@ describe('Arkme extension market UI', () => {
       .toEqual({ label: '更新', disabled: false })
   })
 
-  it('keeps installed and latest versions visible independently from update status', () => {
+  it('keeps only the version in card metadata and hides normal update status copy', () => {
     expect(extensionVersionLabel({ latest_stable_version: '1.2.3' })).toBe('v1.2.3')
     expect(extensionVersionLabel({ version: '2.0.0', latest_stable_version: '1.2.3' })).toBe('v2.0.0')
-    expect(extensionUpdateVersionLabel({
+    expect(extensionCardMetadata({
+      version: '1.0.0', latest_stable_version: '1.1.0',
+      manifest: {
+        format: 'arkme-cordis-extension', format_version: 1, name: '扩展', description: '', version: '1.0.0',
+        runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: true },
+        permissions: ['files.read'], entrypoints: { host: 'host.js', client: 'client.js' },
+      },
+    })).toBe('v1.0.0')
+    expect(extensionUpdateCardStatus({
       extension_id: 'ext-1', installed_version: '1.0.0', latest_version: '1.1.0',
       update_available: true, revoked: false,
-    })).toBe('v1.0.0 → v1.1.0')
-    expect(extensionUpdateVersionLabel({
-      extension_id: 'ext-1', installed_version: '1.1.0', latest_version: '1.1.0',
-      update_available: false, revoked: false,
-    })).toBe('v1.1.0 · 已是最新')
-    expect(extensionUpdateVersionLabel({
-      extension_id: 'ext-1', installed_version: '1.1.0', update_available: false, revoked: false,
-    })).toBe('当前 v1.1.0 · 暂无法确认最新版本')
+    })).toBeUndefined()
+    expect(extensionUpdateCardStatus({
+      extension_id: 'ext-1', installed_version: '1.0.0', update_available: false,
+      revoked: true, revocation_reason: '版本已撤销',
+    })).toBe('版本已撤销')
   })
 
   it('starts list installation from the exact item without requiring detail navigation', () => {

@@ -277,12 +277,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
   onPause?: (() => void) | undefined
   onResume?: (() => void) | undefined
 }) {
-  const manifest = item.manifest
-  const metadata = [
-    extensionVersionLabel(item),
-    manifest === undefined ? '' : [manifest.halves.host ? 'Host' : '', manifest.halves.client ? 'Client' : ''].filter(Boolean).join(' + '),
-    (manifest?.permissions.length ?? 0) > 0 ? `${String(manifest?.permissions.length)} 项权限` : '',
-  ].filter(Boolean).join(' · ')
+  const metadata = extensionCardMetadata(item)
   return <div
     style={styles.card}
     onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
@@ -426,12 +421,15 @@ export function extensionVersionLabel(
   return displayVersion(item.version ?? item.latest_stable_version)
 }
 
-export function extensionUpdateVersionLabel(item: ArkmeExtensionUpdateResolution): string {
-  const installed = displayVersion(item.installed_version)
-  const latest = displayVersion(item.latest_version)
-  if (item.update_available && latest !== '') return `${installed} → ${latest}`
-  if (!item.update_available && latest !== '') return `${installed} · 已是最新`
-  return `当前 ${installed} · 暂无法确认最新版本`
+export function extensionCardMetadata(
+  item: Pick<ArkmeExtensionCatalogItem, 'latest_stable_version' | 'version' | 'manifest'>,
+): string {
+  return extensionVersionLabel(item)
+}
+
+export function extensionUpdateCardStatus(item: ArkmeExtensionUpdateResolution): string | undefined {
+  if (!item.revoked) return undefined
+  return item.revocation_reason?.trim() || '当前版本已撤销'
 }
 
 export function extensionDirectInstallTarget(
@@ -1089,8 +1087,6 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           key={item.extensionId}
           item={installedExtensionCatalogItem(item, iconRefFor(item.extensionId))}
           installed={item}
-          status={extensionEnabledLabel(item)}
-          statusColor={item.enabled ? item.active ? colors.accent : colors.warning : colors.secondary}
           actionBusy={actionBusyExtensionId === item.extensionId}
           onClick={() => { void inspect(item.extensionId) }}
           onToggle={enabled => { void toggleEnabled(item.extensionId, enabled) }}
@@ -1104,13 +1100,13 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
             ? { extension_id: item.extension_id, name: item.extension_id, description: '', visibility: 'private' as const }
             : installedExtensionCatalogItem(local, iconRefFor(item.extension_id))
           const canAct = installTask === undefined || installTask.done
+          const updateStatus = extensionUpdateCardStatus(item)
           return <ExtensionCard
             key={item.extension_id}
             item={catalogItem}
             {...(local === undefined ? {} : { installed: local })}
             {...(item.update_available && !item.revoked ? { actionLabel: '更新' } : {})}
-            status={item.revoked ? extensionUpdateLabel(item) : extensionUpdateVersionLabel(item)}
-            statusColor={item.revoked ? colors.danger : item.update_available ? colors.accent : colors.secondary}
+            {...(updateStatus === undefined ? {} : { status: updateStatus, statusColor: colors.danger })}
             actionBusy={actionBusyExtensionId === item.extension_id}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
             onClick={() => { void inspect(item.extension_id) }}
