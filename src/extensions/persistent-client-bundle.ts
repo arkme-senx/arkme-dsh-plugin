@@ -131,6 +131,7 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
 export function renderPersistentClientBundle(packageName: string, spec: PersistentClientSpec): string {
   return [
     `window.__ModuleLoader__.load({ id: ${JSON.stringify(packageName)}, factory: (require) => {`,
+    `  const __name = (target, value) => Object.defineProperty(target, 'name', { value, configurable: true })`,
     `  return (${persistentClientFactory.toString()})(require, ${JSON.stringify(spec)})`,
     `} })`,
     '',

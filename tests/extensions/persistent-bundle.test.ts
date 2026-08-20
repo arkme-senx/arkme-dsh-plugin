@@ -1,8 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packArkmeExtension } from '../../src/extensions/artifact.js'
+import { renderPersistentClientBundle } from '../../src/extensions/persistent-client-bundle.js'
 import { materializePersistentExtensionBundle } from '../../src/extensions/persistent-bundle.js'
 import {
   ArkmeExtensionProfileInstaller,
@@ -24,6 +26,38 @@ function fixture() {
 }
 
 describe('persistent extension profile bundle', () => {
+  it('keeps transpiler-injected function name helpers self-contained in the generated Client bundle', () => {
+    const nativeToString = Function.prototype.toString
+    const transformedFactory = [
+      'function persistentClientFactory() {',
+      '  class Styles { static { __name(this, "Styles") } }',
+      '  const helper = __name(() => 42, "helper")',
+      '  return { Styles, helper }',
+      '}',
+    ].join('\n')
+    const toStringSpy = vi.spyOn(Function.prototype, 'toString').mockImplementation(function (this: Function) {
+      return this.name === 'persistentClientFactory' ? transformedFactory : nativeToString.call(this)
+    })
+    let rendered: string
+    try {
+      rendered = renderPersistentClientBundle('@example/transformed-client', {
+        extensionId: 'ext_transformed', version: '1.0.0', name: 'Transformed Client',
+        code: 'return { apply() {} }', apiPath: '/arkme-self/api',
+      })
+    } finally {
+      toStringSpy.mockRestore()
+    }
+    let loaded: { factory: (requireModule: (id: string) => unknown) => unknown } | undefined
+    runInNewContext(rendered, {
+      window: { __ModuleLoader__: { load: (entry: typeof loaded) => { loaded = entry } } },
+    })
+
+    const client = loaded!.factory(() => undefined) as { Styles: { name: string }; helper: () => number }
+
+    expect(client.Styles.name).toBe('Styles')
+    expect(client.helper()).toBe(42)
+  })
+
   it('materializes one immutable DSH bundle with Host and Client wrappers', () => {
     const { root, artifact, artifactPath } = fixture()
     const result = materializePersistentExtensionBundle({
