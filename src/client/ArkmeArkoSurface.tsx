@@ -27,6 +27,7 @@ import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-stor
 import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-store.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore } from './composer-draft-store.js'
 
 type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
@@ -400,6 +401,13 @@ export function ArkmeArkoSurface() {
     arkmeArkoProfileStore.getSnapshot,
   )
   const profileUserId = authSnapshot.auth?.status === 'authenticated' ? authSnapshot.auth.userId : undefined
+  const composerDraftKey = arkmeArkoComposerDraftKey(profileUserId)
+  useSyncExternalStore(
+    arkmeComposerDraftStore.subscribe,
+    arkmeComposerDraftStore.getRevision,
+    arkmeComposerDraftStore.getRevision,
+  )
+  const draft = arkmeComposerDraftStore.get(composerDraftKey).text
   const profile = profileSnapshot.userId === profileUserId ? profileSnapshot.profile : undefined
   const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
   const [session, setSession] = useState<ArkmeArkoSession>()
@@ -407,7 +415,6 @@ export function ArkmeArkoSurface() {
   const [messages, setMessages] = useState<ArkoMessage[]>([])
   const [historyOffset, setHistoryOffset] = useState<number>()
   const [historyError, setHistoryError] = useState('')
-  const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sending, setSending] = useState(false)
@@ -755,7 +762,7 @@ export function ArkmeArkoSurface() {
   const send = useCallback(async () => {
     const text = draft.trim()
     if (text === '' || sending || activeRun !== undefined || pendingTurn !== undefined
-      || session === undefined || profileUserId === undefined) return
+      || session === undefined || profileUserId === undefined || composerDraftKey === undefined) return
     const continuation = latestContinuation(messages, session.sessionId)
     const createdAtMillis = Date.now()
     const turn: ArkmeArkoPendingTurn = {
@@ -775,7 +782,7 @@ export function ArkmeArkoSurface() {
     }
     writeArkoPendingTurn(turn)
     setPendingTurn(turn)
-    setDraft('')
+    arkmeComposerDraftStore.clear(composerDraftKey)
     setMessages(current => [...current, {
       id: turn.localUserMessageId,
       sessionId: turn.sessionId,
@@ -795,7 +802,7 @@ export function ArkmeArkoSurface() {
     }])
     scrollToBottom()
     await submitTurn(turn)
-  }, [activeRun, catalog, draft, messages, pendingTurn, profileUserId, scrollToBottom, sending, session, submitTurn])
+  }, [activeRun, catalog, composerDraftKey, draft, messages, pendingTurn, profileUserId, scrollToBottom, sending, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel) return
@@ -1007,7 +1014,7 @@ export function ArkmeArkoSurface() {
         placeholder={`问问 ${displayName}...`}
         aria-label={`发送给 ${displayName}`}
         disabled={loading || interactionLocked || session === undefined || profileUserId === undefined}
-        onChange={event => { setDraft(event.target.value) }}
+        onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
