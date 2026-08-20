@@ -492,7 +492,11 @@ function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
   return item.active ? '已启用' : '已启用，尚未加载'
 }
 
-export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSessionId?: string | undefined; onClose(): void }) {
+export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose }: {
+  currentSessionId?: string | undefined
+  currentUserId?: number | undefined
+  onClose(): void
+}) {
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
   const [publishedItems, setPublishedItems] = useState<ArkmeExtensionCatalogItem[]>([])
@@ -972,6 +976,7 @@ export function ArkmeExtensionCenter({ currentSessionId, onClose }: { currentSes
         </section>}
         {detail.visibility === 'public' && <ArkmeExtensionReviews
           extensionId={detail.extension_id}
+          canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
           {...(detail.rating_summary === undefined ? {} : { initialRatingSummary: detail.rating_summary })}
         />}
         {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。请在 DSH 对话中重新发布成功后再安装。</div>}

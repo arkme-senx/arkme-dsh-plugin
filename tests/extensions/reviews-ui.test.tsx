@@ -41,6 +41,26 @@ describe('extension reviews UI', () => {
     expect(html).toContain('border-left:2px solid')
   })
 
+  it('hides the top-level comment entry for the extension owner while keeping replies', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionReviews
+      extensionId="ext-1" canCreateTopLevelReview={false} initialPage={page}
+    />)
+
+    expect(html).not.toContain('>评论</button>')
+    expect(html.match(/>回复<\/button>/g)).toHaveLength(2)
+  })
+
+  it('uses an owner-specific empty state without inviting a self rating', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionReviews
+      extensionId="ext-1"
+      canCreateTopLevelReview={false}
+      initialPage={{ ...page, items: [], total: 0, ratingSummary: { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] } }}
+    />)
+
+    expect(html).toContain('还没有用户评价。')
+    expect(html).not.toContain('来发表第一条评价')
+  })
+
   it('groups replies and enforces top-level rating while replies omit it', () => {
     const tree = extensionReviewTree(page.items)
     expect(tree).toHaveLength(1)

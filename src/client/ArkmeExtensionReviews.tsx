@@ -182,10 +182,12 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
 
 export function ArkmeExtensionReviews({
   extensionId,
+  canCreateTopLevelReview = true,
   initialRatingSummary = emptyRating,
   initialPage,
 }: {
   extensionId: string
+  canCreateTopLevelReview?: boolean
   initialRatingSummary?: ArkmeExtensionRatingSummary
   initialPage?: ArkmeExtensionReviewPage
 }) {
@@ -217,6 +219,10 @@ export function ArkmeExtensionReviews({
   }
 
   useEffect(() => { if (initialPage === undefined) void load() }, [extensionId])
+  useEffect(() => {
+    if (canCreateTopLevelReview) return
+    setComposer(current => current?.parent === undefined ? undefined : current)
+  }, [canCreateTopLevelReview])
   useEffect(() => {
     if (composer === undefined) return
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !submitting) setComposer(undefined) }
@@ -254,7 +260,7 @@ export function ArkmeExtensionReviews({
   return <section style={styles.section} aria-label="扩展评论">
     <div style={styles.headingRow}>
       <h3 style={styles.heading}>用户评价</h3>
-      <button type="button" style={styles.commentButton} onClick={() => { openComposer() }}>评论</button>
+      {canCreateTopLevelReview && <button type="button" style={styles.commentButton} onClick={() => { openComposer() }}>评论</button>}
     </div>
     <div style={styles.summary}>
       <span style={styles.average}>{summary.count === 0 ? '—' : summary.average.toFixed(1)}</span>
@@ -262,7 +268,9 @@ export function ArkmeExtensionReviews({
     </div>
     {error !== '' && <div style={styles.error} role="alert">{error}</div>}
     {loading && <div style={styles.state}>正在加载评论…</div>}
-    {!loading && tree.length === 0 && error === '' && <div style={styles.state}>还没有评论，来发表第一条评价吧。</div>}
+    {!loading && tree.length === 0 && error === '' && <div style={styles.state}>
+      {canCreateTopLevelReview ? '还没有评论，来发表第一条评价吧。' : '还没有用户评价。'}
+    </div>}
     {!loading && tree.length > 0 && <div style={styles.list}>
       {tree.map(node => <ReviewNode key={node.item.reviewRef} node={node} depth={0} onReply={openComposer} />)}
     </div>}
