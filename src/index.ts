@@ -115,6 +115,11 @@ export const inject = ['webServer', 'tools', 'systemPrompt', 'pluginInventory']
 
 export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   if (dshBinPath.trim() === '') return undefined
+  // A source checkout can carry an unreleased/stale package version while its
+  // workspace code already implements the current DSH contract. Only a built
+  // CLI entry is authoritative release metadata; source runs keep the existing
+  // extension compatibility baseline owned by ArkmeExtensionManager.
+  if (dshBinPath.endsWith('/src/bin.ts') || dshBinPath.endsWith('\\src\\bin.ts')) return undefined
   try {
     const manifest = JSON.parse(readFileSync(join(dirname(dshBinPath), '..', 'package.json'), 'utf8')) as { version?: unknown }
     return typeof manifest.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version)

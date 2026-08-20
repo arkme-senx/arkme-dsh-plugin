@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle,
   extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
-  extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateVersionLabel,
+  extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateVersionLabel,
   extensionVersionLabel, installedExtensionCatalogItem,
   extensionNativeInstallWarning, formatExtensionBytes, MyExtensionCard,
 } from '../../src/client/ArkmeExtensionCenter.js'
@@ -89,6 +89,19 @@ describe('Arkme extension market UI', () => {
     expect(extensionInstallPercent({ phase: 'verifying' })).toBe(80)
     expect(extensionInstallPercent({ phase: 'active' })).toBe(100)
     expect(formatExtensionBytes(5 * 1024 * 1024)).toBe('5.0 MB')
+  })
+
+  it('surfaces an asynchronously failed install task instead of silently restoring the install button', () => {
+    expect(extensionInstallFailureMessage({
+      taskId: 'task-1', extensionId: 'ext-1', sessionId: 'profile:instance-1',
+      phase: 'failed', done: true, updatedAtMillis: 1,
+      message: '扩展需要 DSH >=0.1.0-rc.7',
+      error: { code: 'extension-dsh-incompatible', message: '扩展需要 DSH >=0.1.0-rc.7', retryable: false },
+    })).toBe('扩展需要 DSH >=0.1.0-rc.7')
+    expect(extensionInstallFailureMessage({
+      taskId: 'task-2', extensionId: 'ext-1', sessionId: 'profile:instance-1',
+      phase: 'installed', done: true, updatedAtMillis: 2, message: '扩展已安装',
+    })).toBeUndefined()
   })
 
   it('does not offer installation for an owned extension without a published version', () => {

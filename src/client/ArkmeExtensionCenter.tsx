@@ -392,6 +392,14 @@ export function formatExtensionBytes(bytes: number): string {
   return `${(safe / (1024 * 1024)).toFixed(1)} MB`
 }
 
+export function extensionInstallFailureMessage(
+  task: Pick<ArkmeExtensionInstallTaskSnapshot, 'done' | 'phase' | 'message' | 'error'> | undefined,
+): string | undefined {
+  if (task?.done !== true || task.phase !== 'failed') return undefined
+  const message = task.error?.message.trim() || task.message?.trim() || ''
+  return message === '' ? '扩展安装失败，请重试。' : message
+}
+
 export function extensionCatalogAction(
   item: Pick<ArkmeExtensionCatalogItem, 'latest_stable_version' | 'version'>,
   installedVersion?: string,
@@ -765,6 +773,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         }, controller.signal)
         setInstallTask(next)
         if (next.done) {
+          const failureMessage = extensionInstallFailureMessage(next)
+          if (failureMessage !== undefined) setInstallError(failureMessage)
           if (next.result?.restartRequired === true) {
             setRestartNotice('扩展已写入 DSH 插件列表，请手动重启 DSH 后生效。')
             setRestartPrompt({ extensionId: next.extensionId, kind: 'apply' })
