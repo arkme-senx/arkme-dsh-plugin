@@ -4,6 +4,8 @@ interface PersistentClientSpec {
   name: string
   code: string
   apiPath: string
+  operation?: 'extensions.persistent.invoke' | 'extensions.bundle.invoke'
+  identityKey?: 'extensionId' | 'packageName'
 }
 
 /** This function is serialized into each generated browser bundle. It must stay closure-free. */
@@ -28,7 +30,14 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
     const response = await fetch(spec.apiPath, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operation: 'extensions.persistent.invoke', params: { extensionId: spec.extensionId, method, args: jsonValue(args) } }),
+      body: JSON.stringify({
+        operation: spec.operation ?? 'extensions.persistent.invoke',
+        params: {
+          ...(spec.identityKey === 'packageName' ? { packageName: spec.extensionId } : { extensionId: spec.extensionId }),
+          method,
+          args: jsonValue(args),
+        },
+      }),
     })
     const envelope = await response.json() as { ok?: boolean; value?: unknown; error?: { message?: string } }
     if (!response.ok || envelope.ok !== true) throw new Error(envelope.error?.message ?? `Arkme Host returned HTTP ${String(response.status)}`)
@@ -118,4 +127,18 @@ export function renderPersistentClientBundle(packageName: string, spec: Persiste
     `} })`,
     '',
   ].join('\n')
+}
+
+export function renderArkmeBundleClientBundle(packageName: string, spec: {
+  version: string
+  name: string
+  code: string
+  apiPath: string
+}): string {
+  return renderPersistentClientBundle(packageName, {
+    extensionId: packageName,
+    ...spec,
+    operation: 'extensions.bundle.invoke',
+    identityKey: 'packageName',
+  })
 }

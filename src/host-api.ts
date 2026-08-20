@@ -14,6 +14,7 @@ import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from './extensions/types.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
+import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 
 const MAX_REQUEST_BYTES = 128 * 1024
 const ARKME_HOST_INSTANCE_ID = randomUUID()
@@ -281,7 +282,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -697,7 +698,7 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
     })
-    case 'extensions.mine.publish': return await requireOwnedExtensionInventory(ownedExtensionInventory).publishCordis({
+    case 'extensions.mine.publish': return await requireOwnedExtensionInventory(ownedExtensionInventory).publish({
       ownedRef: stringParam(params, 'ownedRef'),
       name: stringParam(params, 'name'),
       description: stringParam(params, 'description'),
@@ -737,6 +738,11 @@ export async function dispatchArkmeHostOperation(
     )
     case 'extensions.persistent.invoke': return await invokePersistentArkmeExtension(
       stringParam(params, 'extensionId'),
+      stringParam(params, 'method'),
+      params.args,
+    )
+    case 'extensions.bundle.invoke': return await invokeArkmeBundle(
+      stringParam(params, 'packageName'),
       stringParam(params, 'method'),
       params.args,
     )

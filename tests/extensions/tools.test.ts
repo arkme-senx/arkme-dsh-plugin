@@ -20,10 +20,13 @@ describe('Arkme extension tools', () => {
     expect(listMine?.description).toContain('untrusted')
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).not.toHaveProperty('permissions')
+    expect(publish?.parameters).toHaveProperty('properties.owned_ref')
+    expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
+    expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('exact returned validation message')
-    expect(publish?.description).toContain('do not retry the unchanged package')
-    expect(publish?.description).toContain('DSH >= 0.1.0-rc.7')
-    expect(publish?.description).toContain('ask the user to upgrade DSH before generating or uploading')
+    expect(publish?.description).toContain('do not retry unchanged bytes')
+    expect(publish?.description).toContain('arkme_extension_list_mine')
+    expect(publish?.description).toContain('Profile-local DSH Bundle')
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',
@@ -35,12 +38,12 @@ describe('Arkme extension tools', () => {
     expect(deleteTool?.description).toContain('explicitly asks to delete it')
     await expect(guard!(
       { name: 'arkme_extension_publish', arguments: {
-        plugin_id: 'plug-1', package_id: 'pkg-1', name: '天气', version: '1.0.0', visibility: 'public',
+        owned_ref: 'owned-ref', name: '天气', version: '1.0.0', visibility: 'public',
       } },
       async () => ({ kind: 'allow' }),
     )).resolves.toEqual({
       kind: 'ask',
-      reason: '确认将 Dynamic Cordis plug-1/pkg-1 作为“天气” 1.0.0 发布到扩展市场吗？可见范围：public。',
+      reason: '确认将“我的扩展”中的“天气” 1.0.0 发布到扩展市场吗？可见范围：public。',
     })
     await expect(guard!(
       { name: 'arkme_extension_delete', arguments: { extension_id: 'ext-1' } },

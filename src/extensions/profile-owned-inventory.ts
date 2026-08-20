@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { ArkmeOwnedExtensionStore } from './owned-store.js'
+import { ArkmeBundleArtifactError, packLocalBundleDirectory, readLocalBundleTarball } from './bundle-artifact.js'
+import type { ArkmeOwnedProfileTarget } from './owned-refs.js'
 
 export interface OwnedProfileExtension {
   sourceKey: string
@@ -12,6 +14,9 @@ export interface OwnedProfileExtension {
   active: boolean
   halves: { host: boolean; client: boolean }
   extensionId?: string
+  publishable: boolean
+  publishReason?: string
+  target?: ArkmeOwnedProfileTarget
 }
 
 export interface OwnedProfileInventoryResult {
@@ -52,29 +57,62 @@ export function scanOwnedProfileExtensions(input: {
     if (packageName.startsWith('@deepseek-ai/')) continue
     if (typeof rawSpec !== 'string' || (!rawSpec.startsWith('link:') && !rawSpec.startsWith('file:'))) continue
     try {
-      const packageDirectory = resolveLocalDirectory(input.profileDirectory, rawSpec)
-      if (packageDirectory === undefined) continue
-      const manifest = readJson(join(packageDirectory, 'package.json')) as PackageManifest | undefined
-      if (manifest?.name !== packageName || typeof manifest.dsh?.bundle?.patch !== 'string') throw new Error('manifest invalid')
-      const patchPath = realpathSync(join(packageDirectory, manifest.dsh.bundle.patch))
-      if (!isInside(packageDirectory, patchPath) || !statSync(patchPath).isFile()) throw new Error('patch invalid')
-      const sourceKey = `${input.profileName}\0${packageName}`
-      const extensionId = packageName.startsWith('@arkme-local/ext-')
-        ? extensionIdFromInstallation(packageDirectory)
+      const localSource = resolveLocalSource(input.profileDirectory, rawSpec)
+      if (localSource === undefined) continue
+      const manifest = localSource.kind === 'profile-directory'
+        ? readJson(join(localSource.path, 'package.json')) as PackageManifest | undefined
         : undefined
+      if (localSource.kind === 'profile-directory') {
+        if (manifest?.name !== packageName || typeof manifest.dsh?.bundle?.patch !== 'string') throw new Error('manifest invalid')
+        const patchPath = realpathSync(join(localSource.path, manifest.dsh.bundle.patch))
+        if (!isInside(localSource.path, patchPath) || !statSync(patchPath).isFile()) throw new Error('patch invalid')
+      }
+      const sourceKey = `${input.profileName}\0${packageName}`
+      const extensionId = packageName.startsWith('@arkme-local/ext-') && localSource.kind === 'profile-directory'
+	    ? extensionIdFromInstallation(localSource.path)
+	    : undefined
       if (packageName.startsWith('@arkme-local/ext-')
         && (extensionId === undefined || !input.cloudOwnedExtensionIds.has(extensionId))) continue
       const owner = input.store.owner('profile', sourceKey)
       if (owner !== undefined && owner !== input.userId) continue
-      input.store.claim('profile', sourceKey, input.userId, createHash('sha256').update(rawSpec).digest('hex'))
+      const specDigest = createHash('sha256').update(rawSpec).digest('hex')
+      input.store.claim('profile', sourceKey, input.userId, specDigest)
+      let publishable = !packageName.startsWith('@arkme-local/ext-')
+      let publishReason: string | undefined
+      let version = typeof manifest?.version === 'string' && manifest.version.trim() !== '' ? manifest.version : undefined
+      if (publishable) {
+        try {
+          const source = localSource.kind === 'profile-directory'
+            ? packLocalBundleDirectory(localSource.path)
+            : readLocalBundleTarball(localSource.path)
+          if (source.bundle.packageName !== packageName) throw new Error('package name mismatch')
+          version = source.bundle.version
+        } catch (error) {
+          publishable = false
+          publishReason = error instanceof ArkmeBundleArtifactError ? error.code : 'bundle-validation-failed'
+        }
+      } else {
+        publishReason = 'market-installation'
+      }
       items.push({
         sourceKey,
         packageName,
-        ...(typeof manifest.version === 'string' && manifest.version.trim() !== '' ? { version: manifest.version } : {}),
+	    ...(version === undefined ? {} : { version }),
         name: packageName,
-        description: typeof manifest.description === 'string' ? manifest.description : '',
+	    description: typeof manifest?.description === 'string' ? manifest.description : '',
         active: bundles.has(packageName),
-        halves: { host: true, client: manifest.dsh.client !== undefined },
+	    halves: { host: true, client: manifest?.dsh?.client !== undefined },
+	    publishable,
+	    ...(publishReason === undefined ? {} : { publishReason }),
+	    ...(publishable ? {
+	      target: {
+	        kind: localSource.kind,
+	        sourceKey,
+	        packageName,
+	        sourcePath: localSource.path,
+	        specDigest,
+	      },
+	    } : {}),
         ...(extensionId === undefined ? {} : { extensionId }),
       })
     } catch {
@@ -84,16 +122,21 @@ export function scanOwnedProfileExtensions(input: {
   return { items, invalidEntries }
 }
 
-function resolveLocalDirectory(profileDirectory: string, spec: string): string | undefined {
+function resolveLocalSource(
+  profileDirectory: string,
+  spec: string,
+): { kind: 'profile-directory' | 'profile-tarball'; path: string } | undefined {
   const raw = spec.slice(spec.indexOf(':') + 1)
   if (raw === '') throw new Error('empty local spec')
   const target = isAbsolute(raw) ? raw : resolve(profileDirectory, raw)
   if (!existsSync(target)) throw new Error('local spec does not exist')
   if (!statSync(target).isDirectory()) {
-    if (spec.startsWith('file:') && statSync(target).isFile()) return undefined
-    throw new Error('local spec is not a directory')
+	if (spec.startsWith('file:') && statSync(target).isFile() && target.toLowerCase().endsWith('.tgz')) {
+	  return { kind: 'profile-tarball', path: realpathSync(target) }
+	}
+	throw new Error('local spec is not a directory')
   }
-  return realpathSync(target)
+  return { kind: 'profile-directory', path: realpathSync(target) }
 }
 
 function extensionIdFromInstallation(packageDirectory: string): string | undefined {

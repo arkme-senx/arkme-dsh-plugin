@@ -31,11 +31,9 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_publish',
-    description: 'Publish one exact, already-generated Dynamic Cordis Package to the Arkme extension center. This publishing flow requires DSH >= 0.1.0-rc.7; if the current DSH is older, ask the user to upgrade DSH before generating or uploading and do not attempt publication. Use only after the current human explicitly asks to publish. This tool does not generate or modify code. MVP permissions are always an empty list; do not infer, invent, or retry permission names. If artifact validation fails, use the exact returned validation message to correct the Dynamic Cordis Package first; do not retry the unchanged package.',
+    description: 'Publish one exact current-user source returned by arkme_extension_list_mine. The source may be Dynamic Cordis or a validated Profile-local DSH Bundle. Use only after the current human explicitly asks to publish. This tool does not generate or modify user code. If Bundle validation fails, use the exact returned validation message and do not retry unchanged bytes.',
     parameters: {
-      plugin_id: { type: 'string', required: true, description: 'Exact Dynamic Cordis plugin_id from DSH.' },
-      package_id: { type: 'string', required: true, description: 'Exact immutable Dynamic Cordis package_id to publish.' },
-      extension_id: { type: 'string', description: 'Existing extension_id only when publishing a new version.' },
+      owned_ref: { type: 'string', required: true, description: 'Opaque ownedRef returned by arkme_extension_list_mine.' },
       name: { type: 'string', required: true, description: 'User-facing extension name.' },
       description: { type: 'string', required: true, description: 'User-facing purpose and behavior.' },
       version: { type: 'string', required: true, description: 'Semantic version such as 1.0.0.' },
@@ -44,12 +42,9 @@ export function registerArkmeExtensionTools(
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      const agent = requireAgent(exec)
-      const result = await ownedInventory.publishCordisPackage({
-        agent,
-        pluginId: args.plugin_id,
-        packageId: args.package_id,
-        ...(clean(args.extension_id) === '' ? {} : { extensionId: clean(args.extension_id) }),
+      requireAgent(exec)
+      const result = await ownedInventory.publish({
+        ownedRef: args.owned_ref,
         name: args.name,
         description: args.description,
         version: args.version,
@@ -149,11 +144,9 @@ export function registerArkmeExtensionTools(
       const name = clean(typeof args.name === 'string' ? args.name : '').slice(0, 80)
       const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40)
       const visibility = clean(typeof args.visibility === 'string' ? args.visibility : '').slice(0, 20)
-      const pluginId = clean(typeof args.plugin_id === 'string' ? args.plugin_id : '').slice(0, 80)
-      const packageId = clean(typeof args.package_id === 'string' ? args.package_id : '').slice(0, 80)
       return {
         kind: 'ask',
-        reason: `确认将 Dynamic Cordis ${pluginId}/${packageId} 作为“${name}” ${version} 发布到扩展市场吗？可见范围：${visibility}。`,
+        reason: `确认将“我的扩展”中的“${name}” ${version} 发布到扩展市场吗？可见范围：${visibility}。`,
       }
     }
     const extensionId = clean(typeof args.extension_id === 'string' ? args.extension_id : '').slice(0, 100)

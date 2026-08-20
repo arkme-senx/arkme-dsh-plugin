@@ -58,12 +58,17 @@ describe('persistent extension profile bundle', () => {
     })
     await installer.install(root)
     await installer.remove('@arkme-local/ext-0123456789abcdef')
+    await installer.remove('@example/install-bundle')
     expect(run).toHaveBeenNthCalledWith(1, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', `link:${root}`,
     ])
     expect(run).toHaveBeenNthCalledWith(2, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0',
       'remove', '@arkme-local/ext-0123456789abcdef',
+    ])
+    expect(run).toHaveBeenNthCalledWith(3, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
+      'remove', '@example/install-bundle',
     ])
   })
 

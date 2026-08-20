@@ -56,8 +56,8 @@ describe('extension center Host BFF', () => {
 
   it('routes my-extension list and publish through the unified Host owner', async () => {
     const list = vi.fn(async () => ({ items: [], warnings: [] }))
-    const publishCordis = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))
-    const owner = { list, publishCordis }
+    const publish = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))
+    const owner = { list, publish }
 
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.mine.list', { currentSessionId: 'session-1' },
@@ -71,7 +71,7 @@ describe('extension center Host BFF', () => {
     )).resolves.toMatchObject({ status: 'published' })
 
     expect(list).toHaveBeenCalledWith({ currentSessionId: 'session-1' })
-    expect(publishCordis).toHaveBeenCalledWith({
+    expect(publish).toHaveBeenCalledWith({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
       visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
     })

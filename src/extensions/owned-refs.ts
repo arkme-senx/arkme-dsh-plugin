@@ -8,9 +8,19 @@ export interface ArkmeOwnedCordisTarget {
   packageId: string
 }
 
+export interface ArkmeOwnedProfileTarget {
+  kind: 'profile-directory' | 'profile-tarball'
+  sourceKey: string
+  packageName: string
+  sourcePath: string
+  specDigest: string
+}
+
+export type ArkmeOwnedExtensionTarget = ArkmeOwnedCordisTarget | ArkmeOwnedProfileTarget
+
 interface OwnedReferenceEntry {
   userId: number
-  target: ArkmeOwnedCordisTarget
+  target: ArkmeOwnedExtensionTarget
   expiresAtMillis: number
 }
 
@@ -24,7 +34,7 @@ export class ArkmeOwnedExtensionRefs {
     now?: () => number
   } = {}) {}
 
-  issue(userId: number, target: ArkmeOwnedCordisTarget): string {
+  issue(userId: number, target: ArkmeOwnedExtensionTarget): string {
     this.prune()
     const ref = `owned_${randomUUID()}`
     this.entries.set(ref, {
@@ -37,7 +47,7 @@ export class ArkmeOwnedExtensionRefs {
     return ref
   }
 
-  resolve(userId: number, ref: string): ArkmeOwnedCordisTarget {
+  resolve(userId: number, ref: string): ArkmeOwnedExtensionTarget {
     const entry = this.entries.get(ref)
     if (entry === undefined) throw new Error('扩展引用不存在或已失效')
     if (entry.expiresAtMillis <= this.now()) {

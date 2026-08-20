@@ -1530,6 +1530,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.persistent.invoke'
+  | 'extensions.bundle.invoke'
 
 export interface ArkmePluginRequest {
   operation: ArkmeHostOperation

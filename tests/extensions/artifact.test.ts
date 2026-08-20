@@ -218,17 +218,21 @@ describe('extension signature and runtime bridge', () => {
 
   it('recovers publish completion through the idempotent status endpoint', async () => {
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const uploads: string[] = []
     const post = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
       requests.push({ path, body })
       if (path.endsWith('/create')) return {
-        publish_session_id: 'pub-1', extension_id: 'ext-1', upload_url: 'https://objects.test/upload', expires_at: 'soon',
+        publish_session_id: 'pub-1', extension_id: 'ext-1', status: 'uploading',
+        bundle_upload: { url: 'https://objects.test/bundle', method: 'PUT', headers: {}, expires_at: 'soon' },
+        source_upload: { url: 'https://objects.test/source', method: 'PUT', headers: {}, expires_at: 'soon' },
       } as T
       if (path.endsWith('/complete')) throw new Error('connection dropped after commit')
       if (path.endsWith('/status')) return { extension_id: 'ext-1', version: '1.0.0', status: 'published' } as T
       throw new Error(`unexpected ${path}`)
     }
-    const client = new ExtensionPublishClient(post, async (_input, init) => {
+    const client = new ExtensionPublishClient(post, async (input, init) => {
       expect(init?.method).toBe('PUT')
+      uploads.push(String(input))
       return new Response('', { status: 200 })
     })
     const directory = temporaryDirectory()
@@ -251,8 +255,16 @@ describe('extension signature and runtime bridge', () => {
       '/api/v1/extensions/publish-session/complete',
       '/api/v1/extensions/publish-session/status',
     ])
+    expect(uploads).toEqual(['https://objects.test/bundle', 'https://objects.test/source'])
     expect(requests[0]?.body.idempotency_key).toBe('same-key')
-    expect((requests[0]?.body.manifest as { permissions?: unknown }).permissions).toEqual([])
+    expect(requests[0]?.body).toMatchObject({
+      artifact_contract_version: 2,
+      artifact_kind: 'dsh-bundle-tgz',
+      execution_model: 'arkme-sandboxed',
+      package_name: expect.stringMatching(/^@arkme-generated\/[a-f0-9]{24}$/),
+      bundle_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
     store.close()
   })
 

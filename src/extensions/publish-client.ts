@@ -1,10 +1,15 @@
 import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_EXTENSION_MAX_BYTES, type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
   type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
-  type ArkmeExtensionPublishSession, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+  type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeInstalledExtension,
 } from './types.js'
 import { assertExtensionArtifactSize } from './artifact.js'
+import {
+  ARKME_BUNDLE_ARTIFACT_KIND, ARKME_BUNDLE_CONTRACT_VERSION, ARKME_BUNDLE_MAX_BYTES,
+  type ArkmeBundleArtifact, type ArkmeBundlePublishSource,
+} from './bundle-artifact.js'
+import type { ArkmeExtensionUploadSlot } from './types.js'
 
 export type ExtensionAuthenticatedPost = <T>(
   path: string,
@@ -39,6 +44,52 @@ export class ExtensionPublishClient {
   }, signal?: AbortSignal): Promise<ArkmeExtensionPublishSession> {
     assertExtensionArtifactSize(input.artifact_size)
     return await this.post('/api/v1/extensions/publish-session/create', input, signal)
+  }
+
+  async createBundlePublishSession(input: {
+    extension_id?: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionVisibility
+    changelog?: string
+    idempotency_key: string
+    bundle: ArkmeBundleArtifact
+    source: ArkmeBundlePublishSource['source']
+  }, signal?: AbortSignal): Promise<ArkmeBundlePublishSession> {
+    if (input.bundle.bytes.byteLength <= 0 || input.bundle.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES
+      || input.source.bytes.byteLength <= 0 || input.source.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES) {
+      throw new ArkmePluginError('extension-bundle-size-invalid', '扩展 Bundle 或源码大小无效', false, 400)
+    }
+    return await this.post('/api/v1/extensions/publish-session/create', {
+      artifact_contract_version: ARKME_BUNDLE_CONTRACT_VERSION,
+      artifact_kind: ARKME_BUNDLE_ARTIFACT_KIND,
+      ...(input.extension_id === undefined ? {} : { extension_id: input.extension_id }),
+      name: input.name,
+      description: input.description,
+      package_name: input.bundle.packageName,
+      version: input.bundle.version,
+      execution_model: input.bundle.executionModel,
+      visibility: input.visibility,
+      ...(input.changelog === undefined ? {} : { changelog: input.changelog }),
+      bundle_size: input.bundle.bytes.byteLength,
+      bundle_sha256: input.bundle.bundleSha256,
+      package_json_sha256: input.bundle.packageJsonSha256,
+      source_size: input.source.bytes.byteLength,
+      source_sha256: input.source.sourceSha256,
+      idempotency_key: input.idempotency_key,
+    }, signal)
+  }
+
+  async uploadBundle(slot: ArkmeExtensionUploadSlot, bundle: ArkmeBundleArtifact, signal?: AbortSignal): Promise<void> {
+    await this.uploadBytes(slot, bundle.bytes, 'application/vnd.dsh.bundle+gzip', 'Bundle', signal)
+  }
+
+  async uploadSource(
+    slot: ArkmeExtensionUploadSlot,
+    source: ArkmeBundlePublishSource['source'],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.uploadBytes(slot, source.bytes, 'application/vnd.arkme.extension-source+gzip', '源码', signal)
   }
 
   async uploadArtifact(
@@ -81,6 +132,48 @@ export class ExtensionPublishClient {
         throw new ArkmePluginError('extension-upload-timeout', '扩展制品上传超时或已取消', true, 504, { cause: error })
       }
       throw new ArkmePluginError('extension-upload-failed', '无法上传扩展制品', true, 502, { cause: error })
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  private async uploadBytes(
+    slot: ArkmeExtensionUploadSlot,
+    bytes: Uint8Array,
+    contentType: string,
+    label: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let url: URL
+    try { url = new URL(slot.url) } catch (error) {
+      throw new ArkmePluginError('extension-upload-url-invalid', `扩展${label}上传地址无效`, false, 502, { cause: error })
+    }
+    assertSafeArtifactUrl(url, 'upload')
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal?.reason)
+    if (signal?.aborted === true) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    try {
+      const headers = safeSignedHeaders(slot.headers ?? {})
+      const response = await this.fetchImpl(url, {
+        method: 'PUT',
+        headers: {
+          ...headers,
+          ...Object.keys(headers).some(key => key.toLowerCase() === 'content-type') ? {} : { 'Content-Type': contentType },
+        },
+        body: bytes as BodyInit,
+        signal: controller.signal,
+        redirect: 'error',
+      })
+      if (!response.ok) throw new ArkmePluginError('extension-upload-failed', `扩展${label}上传返回 HTTP ${response.status}`, true, 502)
+    } catch (error) {
+      if (error instanceof ArkmePluginError) throw error
+      if ((error as Error).name === 'AbortError') {
+        throw new ArkmePluginError('extension-upload-timeout', `扩展${label}上传超时或已取消`, true, 504, { cause: error })
+      }
+      throw new ArkmePluginError('extension-upload-failed', `无法上传扩展${label}`, true, 502, { cause: error })
     } finally {
       clearTimeout(timeout)
       signal?.removeEventListener('abort', abort)

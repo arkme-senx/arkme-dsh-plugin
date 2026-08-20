@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync } from 'node:fs'
+import { closeSync, existsSync, openSync, statSync } from 'node:fs'
 import { chmod, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -46,8 +46,16 @@ export class ArkmeExtensionProfileInstaller {
     ])
   }
 
+  async installTarball(bundlePath: string): Promise<void> {
+    if (!existsSync(bundlePath) || !statSync(bundlePath).isFile()) throw new Error('扩展 Bundle tgz 不存在')
+    await this.run([
+      'plugin', '--profile', this.options.profileName,
+      ...localExtensionPnpmArgs(['add', bundlePath]),
+    ])
+  }
+
   async remove(packageName: string): Promise<void> {
-    if (!/^@arkme-local\/ext-[a-f0-9]{16}$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
+    if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
     await this.run([
       'plugin', '--profile', this.options.profileName,
       ...localExtensionPnpmArgs(['remove', packageName]),
@@ -67,7 +75,9 @@ export class ArkmeExtensionProfileInstaller {
       || this.options.helperPath === undefined || this.options.restartArgv === undefined
       || this.options.installStoreDirectory === undefined) return
     const plan: ArkmeExtensionProfileRestartPlan = {
-      schemaVersion: 1,
+      schemaVersion: input.targetBundlePath?.endsWith('.tgz') === true
+        || input.previousBundlePath?.endsWith('.tgz') === true
+        || input.previousInstalled?.executionModel !== undefined ? 2 : 1,
       parentPid: process.pid,
       execPath: this.options.execPath,
       dshBinPath: this.options.dshBinPath,

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeOwnedExtensionInventory, selectPublishPackage } from '../../src/extensions/owned-inventory.js'
 import { ArkmeOwnedExtensionRefs } from '../../src/extensions/owned-refs.js'
 import { ArkmeOwnedExtensionStore } from '../../src/extensions/owned-store.js'
+import { createHash } from 'node:crypto'
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true })
@@ -75,7 +76,7 @@ describe('owned extension inventory', () => {
       cordis: { packageCount: 1, active: true },
       persisted: { packageName: '@arkme-local/ext-aaaaaaaaaaaaaaaa', active: true },
       published: { extensionId: 'ext-owned', version: '1.0.0', visibility: 'private' },
-      publish: { allowed: true, mode: 'version' },
+      publish: { allowed: false, reason: '该扩展已发布' },
     })
     expect(JSON.stringify(page)).not.toContain(profileDirectory)
     expect(JSON.stringify(page)).not.toContain('session-1')
@@ -144,6 +145,56 @@ describe('owned extension inventory', () => {
       agent, pluginId: 'weather-1', packageId: 'pkg-1', idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
     expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-new')
+    store.close()
+  })
+
+  it('publishes an owned Profile Bundle without exposing its local directory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-local-publish-'))
+    const profile = join(root, 'profiles', 'web')
+    const local = join(root, 'My Local Bundle')
+    const packageName = 'local-weather'
+    const prefix = createHash('sha256').update(packageName).digest('hex').slice(0, 16)
+    writeJson(join(local, 'package.json'), {
+      name: packageName, version: '1.0.0', description: '本地天气', files: ['lib', 'cordis.patch.yml'],
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    writeFileSync(join(local, 'cordis.patch.yml'), [
+      '- insert:', `    - id: arkme-${prefix}-main`, `      name: '${packageName}'`, '',
+    ].join('\n'))
+    mkdirSync(join(local, 'lib'), { recursive: true })
+    writeFileSync(join(local, 'lib', 'index.js'), 'export function apply() {}\n')
+    writeJson(join(profile, 'package.json'), {
+      dependencies: { [packageName]: 'link:../../My Local Bundle' },
+      dsh: { profile: { bundles: [packageName] } },
+    })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const publishBundle = vi.fn(async () => ({ extension_id: 'ext-local', version: '1.0.0', status: 'published' as const }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [], total: 0 }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') }, publishBundle,
+    })
+
+    const page = await inventory.list()
+    expect(page.items).toMatchObject([{
+      name: packageName, states: ['persisted'], publish: { allowed: true, mode: 'new' },
+    }])
+    expect(JSON.stringify(page)).not.toContain(local)
+
+    const result = await inventory.publish({
+      ownedRef: page.items[0]!.ownedRef, name: '本地天气', description: '', version: '1.0.0',
+      visibility: 'private', clientMutationId: '15ba6620-9952-4ea4-a34c-89966ad82ec4',
+    })
+
+    expect(result.status).toBe('published')
+    expect(publishBundle).toHaveBeenCalledWith(expect.objectContaining({
+      name: '本地天气', source: expect.objectContaining({
+        bundle: expect.objectContaining({ packageName, version: '1.0.0' }),
+      }),
+    }))
+    expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBe('ext-local')
     store.close()
   })
 

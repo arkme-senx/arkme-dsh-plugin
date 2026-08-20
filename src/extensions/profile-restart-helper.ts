@@ -11,7 +11,7 @@ const PARENT_EXIT_TIMEOUT_MS = 20_000
 const HEALTH_TIMEOUT_MS = 45_000
 
 export interface ArkmeExtensionProfileRestartPlan {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   parentPid: number
   execPath: string
   dshBinPath: string
@@ -56,20 +56,22 @@ export function parseExtensionProfileRestartPlan(value: unknown): ArkmeExtension
       : undefined,
     healthUrl: stringValue(source.healthUrl), logPath: stringValue(source.logPath),
   }
-  if (plan.schemaVersion !== 1 || typeof plan.parentPid !== 'number' || !Number.isSafeInteger(plan.parentPid)
+  if (![1, 2].includes(plan.schemaVersion as number) || typeof plan.parentPid !== 'number' || !Number.isSafeInteger(plan.parentPid)
     || plan.parentPid <= 0 || plan.execPath === undefined || plan.dshBinPath === undefined || plan.restartArgv.length === 0
     || plan.dshHome === undefined || plan.profileName === undefined || plan.packageName === undefined
     || plan.extensionId === undefined || typeof plan.expectActive !== 'boolean'
     || plan.installStoreDirectory === undefined
     || plan.healthUrl === undefined || plan.logPath === undefined
-    || !/^@arkme-local\/ext-[a-f0-9]{16}$/.test(plan.packageName)) {
+    || (plan.schemaVersion === 1
+      ? !/^@arkme-local\/ext-[a-f0-9]{16}$/.test(plan.packageName)
+      : !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(plan.packageName))) {
     throw new Error('extension restart plan is incomplete')
   }
   const health = new URL(plan.healthUrl)
   if (health.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(health.hostname)) {
     throw new Error('extension restart health URL must be loopback HTTP')
   }
-  return { ...plan, schemaVersion: 1, healthUrl: health.toString() } as ArkmeExtensionProfileRestartPlan
+  return { ...plan, schemaVersion: plan.schemaVersion as 1 | 2, healthUrl: health.toString() } as ArkmeExtensionProfileRestartPlan
 }
 
 function alive(pid: number): boolean {
@@ -124,9 +126,7 @@ function profileCommand(plan: ArkmeExtensionProfileRestartPlan, args: string[]):
 }
 
 async function rollback(plan: ArkmeExtensionProfileRestartPlan): Promise<void> {
-  const restored = plan.previousBundlePath === undefined
-    ? profileCommand(plan, ['remove', plan.packageName])
-    : profileCommand(plan, ['add', `link:${plan.previousBundlePath}`])
+  const restored = profileCommand(plan, extensionProfileRollbackArgs(plan))
   if (!restored) throw new Error('extension profile rollback failed')
   const store = new ArkmeExtensionInstallStore(plan.installStoreDirectory)
   try {
@@ -136,6 +136,13 @@ async function rollback(plan: ArkmeExtensionProfileRestartPlan): Promise<void> {
     store.close()
   }
   start(plan)
+}
+
+export function extensionProfileRollbackArgs(plan: ArkmeExtensionProfileRestartPlan): string[] {
+  if (plan.previousBundlePath === undefined) return ['remove', plan.packageName]
+  return plan.schemaVersion === 1
+    ? ['add', `link:${plan.previousBundlePath}`]
+    : ['add', plan.previousBundlePath]
 }
 
 export async function runExtensionProfileRestart(planPath: string): Promise<void> {

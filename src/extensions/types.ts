@@ -42,6 +42,7 @@ export interface ArkmeExtensionCatalogItem {
   updated_at?: string
   installed_version?: string
   update_available?: boolean
+  package_name?: string
 }
 
 export interface ArkmeExtensionCatalogPage {
@@ -62,12 +63,36 @@ export interface ArkmeExtensionPublishSession {
   idempotent_replay?: boolean
 }
 
+export interface ArkmeExtensionUploadSlot {
+  url: string
+  method: 'PUT'
+  headers?: Record<string, string>
+  expires_at: string | number
+}
+
+export interface ArkmeBundlePublishSession {
+  publish_session_id: string
+  extension_id: string
+  version?: string
+  status?: string
+  idempotent_replay?: boolean
+  bundle_upload: ArkmeExtensionUploadSlot
+  source_upload: ArkmeExtensionUploadSlot
+}
+
 export interface ArkmeExtensionPublishResult {
   publish_session_id?: string
   extension_id: string
   version: string
   status: 'uploading' | 'validating' | 'published' | 'rejected' | 'expired'
   artifact_sha256?: string
+  artifact_contract_version?: 2
+  artifact_kind?: 'dsh-bundle-tgz'
+  package_name?: string
+  execution_model?: 'arkme-sandboxed' | 'dsh-native'
+  bundle_sha256?: string
+  package_json_sha256?: string
+  source_sha256?: string
   validation_error_code?: string
   validation_error_message?: string
 }
@@ -93,6 +118,18 @@ export interface ArkmeExtensionInstallResolution {
   published_at: number
   revoked: boolean
   revocation_reason?: string
+  artifact_contract_version?: 2
+  artifact_kind?: 'dsh-bundle-tgz'
+  package_name?: string
+  execution_model?: 'arkme-sandboxed' | 'dsh-native'
+  bundle_url?: string
+  bundle_headers?: Record<string, string>
+  bundle_expires_at?: string | number
+  bundle_size?: number
+  bundle_sha256?: string
+  package_json_sha256?: string
+  source_sha256?: string
+  requires_native_confirmation?: boolean
 }
 
 export interface ArkmeExtensionInstallPreview {
@@ -102,6 +139,10 @@ export interface ArkmeExtensionInstallPreview {
   manifest: ArkmeExtensionManifest
   revoked: boolean
   revocation_reason?: string
+  package_name?: string
+  execution_model?: 'arkme-sandboxed' | 'dsh-native'
+  bundle_size?: number
+  requires_native_confirmation?: boolean
 }
 
 export interface ArkmeInstalledExtension {
@@ -116,6 +157,9 @@ export interface ArkmeInstalledExtension {
   dynamicPackageId?: string
   profilePackageName?: string
   profileBundlePath?: string
+  executionModel?: 'arkme-sandboxed' | 'dsh-native'
+  packageJsonSha256?: string
+  sourceSha256?: string
   permissionSnapshot: string[]
   updateChannel: ArkmeExtensionChannel
   installedAtMillis: number

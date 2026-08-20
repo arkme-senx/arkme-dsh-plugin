@@ -15,6 +15,9 @@ interface ExtensionRow {
   dynamic_package_id: string | null
   profile_package_name: string | null
   profile_bundle_path: string | null
+  execution_model: 'arkme-sandboxed' | 'dsh-native' | null
+  package_json_sha256: string | null
+  source_sha256: string | null
   permission_snapshot_json: string
   update_channel: 'stable' | 'beta'
   installed_at_millis: number
@@ -46,6 +49,9 @@ export class ArkmeExtensionInstallStore {
         dynamic_package_id TEXT,
         profile_package_name TEXT,
         profile_bundle_path TEXT,
+        execution_model TEXT,
+        package_json_sha256 TEXT,
+        source_sha256 TEXT,
         permission_snapshot_json TEXT NOT NULL DEFAULT '[]',
         update_channel TEXT NOT NULL DEFAULT 'stable' CHECK (update_channel IN ('stable', 'beta')),
         installed_at_millis INTEGER NOT NULL,
@@ -57,6 +63,9 @@ export class ArkmeExtensionInstallStore {
       .map(column => column.name))
     if (!columns.has('profile_package_name')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN profile_package_name TEXT')
     if (!columns.has('profile_bundle_path')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN profile_bundle_path TEXT')
+    if (!columns.has('execution_model')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN execution_model TEXT')
+    if (!columns.has('package_json_sha256')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN package_json_sha256 TEXT')
+    if (!columns.has('source_sha256')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN source_sha256 TEXT')
     // Dynamic Cordis runs are process-owned. Never restore a stale active claim after DSH restarts.
     this.database.exec('UPDATE installed_extensions SET active = 0, dynamic_plugin_id = NULL, dynamic_package_id = NULL')
     this.secureFiles()
@@ -65,7 +74,8 @@ export class ArkmeExtensionInstallStore {
   list(): ArkmeInstalledExtension[] {
     const rows = this.database.prepare(`
       SELECT extension_id, installed_version, artifact_sha256, artifact_path, manifest_json,
-             enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path, permission_snapshot_json,
+             enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path,
+             execution_model, package_json_sha256, source_sha256, permission_snapshot_json,
              update_channel, installed_at_millis, last_checked_at_millis, last_error
       FROM installed_extensions ORDER BY installed_at_millis DESC, extension_id ASC
     `).all() as unknown as ExtensionRow[]
@@ -75,7 +85,8 @@ export class ArkmeExtensionInstallStore {
   get(extensionId: string): ArkmeInstalledExtension | undefined {
     const row = this.database.prepare(`
       SELECT extension_id, installed_version, artifact_sha256, artifact_path, manifest_json,
-             enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path, permission_snapshot_json,
+             enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path,
+             execution_model, package_json_sha256, source_sha256, permission_snapshot_json,
              update_channel, installed_at_millis, last_checked_at_millis, last_error
       FROM installed_extensions WHERE extension_id = ?
     `).get(extensionId) as unknown as ExtensionRow | undefined
@@ -87,8 +98,9 @@ export class ArkmeExtensionInstallStore {
       INSERT INTO installed_extensions (
         extension_id, installed_version, artifact_sha256, artifact_path, manifest_json,
         enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path,
+        execution_model, package_json_sha256, source_sha256,
         permission_snapshot_json, update_channel, installed_at_millis, last_checked_at_millis, last_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(extension_id) DO UPDATE SET
         installed_version = excluded.installed_version,
         artifact_sha256 = excluded.artifact_sha256,
@@ -100,6 +112,9 @@ export class ArkmeExtensionInstallStore {
         dynamic_package_id = excluded.dynamic_package_id,
         profile_package_name = excluded.profile_package_name,
         profile_bundle_path = excluded.profile_bundle_path,
+        execution_model = excluded.execution_model,
+        package_json_sha256 = excluded.package_json_sha256,
+        source_sha256 = excluded.source_sha256,
         permission_snapshot_json = excluded.permission_snapshot_json,
         update_channel = excluded.update_channel,
         installed_at_millis = excluded.installed_at_millis,
@@ -110,6 +125,7 @@ export class ArkmeExtensionInstallStore {
       JSON.stringify(item.manifest), item.enabled ? 1 : 0, item.active ? 1 : 0,
       item.dynamicPluginId ?? null, item.dynamicPackageId ?? null,
       item.profilePackageName ?? null, item.profileBundlePath ?? null,
+      item.executionModel ?? null, item.packageJsonSha256 ?? null, item.sourceSha256 ?? null,
       JSON.stringify(item.permissionSnapshot), item.updateChannel, item.installedAtMillis,
       item.lastCheckedAtMillis, item.lastError ?? null,
     )
@@ -153,6 +169,9 @@ export class ArkmeExtensionInstallStore {
       ...(row.dynamic_package_id === null ? {} : { dynamicPackageId: row.dynamic_package_id }),
       ...(row.profile_package_name === null ? {} : { profilePackageName: row.profile_package_name }),
       ...(row.profile_bundle_path === null ? {} : { profileBundlePath: row.profile_bundle_path }),
+      ...(row.execution_model === null ? {} : { executionModel: row.execution_model }),
+      ...(row.package_json_sha256 === null ? {} : { packageJsonSha256: row.package_json_sha256 }),
+      ...(row.source_sha256 === null ? {} : { sourceSha256: row.source_sha256 }),
       permissionSnapshot: Array.isArray(permissionSnapshot)
         ? permissionSnapshot.filter((value): value is string => typeof value === 'string')
         : [],
