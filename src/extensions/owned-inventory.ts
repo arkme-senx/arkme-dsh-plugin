@@ -5,7 +5,7 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensi
   DynamicCordisRunnerLike,
 } from './types.js'
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
-  ArkmeMyExtensionState, ArkmeMyExtensionWarning,
+  ArkmeMyExtensionState, ArkmeMyExtensionWarning, ArkmePreparedExtensionPublish,
 } from './owned-types.js'
 import type { ArkmeOwnedExtensionRefs } from './owned-refs.js'
 import type { ArkmeOwnedExtensionStore } from './owned-store.js'
@@ -163,6 +163,50 @@ export class ArkmeOwnedExtensionInventory {
     const agent = this.options.agents.get(target.agentId)
     if (agent === undefined) throw new ArkmePluginError('extension-agent-unavailable', '创建该扩展的 DSH 会话已不可用', false, 409)
     return await this.publishTarget(userId, target, agent, input)
+  }
+
+  async preparePublish(input: ArkmeMyExtensionPublishInput): Promise<ArkmePreparedExtensionPublish> {
+    const userId = await this.currentUserId()
+    const target = this.options.refs.resolve(userId, input.ownedRef)
+    if (target.kind === 'cordis') {
+      const agent = this.options.agents.get(target.agentId)
+      if (agent === undefined) throw new ArkmePluginError('extension-agent-unavailable', '创建该扩展的 DSH 会话已不可用', false, 409)
+      const live = this.options.runner.inventory?.().find(row => row.agentId === target.agentId && row.pluginId === target.pluginId)
+      if (live === undefined || !live.packages.some(item => item.packageId === target.packageId)) {
+        throw new ArkmePluginError('extension-cordis-stale', 'Cordis 扩展已失效，请刷新列表', false, 409)
+      }
+      const inspected = this.options.runner.inspectPackage(agent, target.pluginId, target.packageId)
+      const sourceFingerprint = createHash('sha256').update(JSON.stringify({
+        kind: 'cordis',
+        sourceKey: target.sourceKey,
+        pluginId: inspected.pluginId,
+        packageId: inspected.packageId,
+        code: {
+          ...(inspected.code.host === undefined ? {} : { host: inspected.code.host.replace(/\r\n?/g, '\n') }),
+          ...(inspected.code.client === undefined ? {} : { client: inspected.code.client.replace(/\r\n?/g, '\n') }),
+        },
+      })).digest('hex')
+      return { input: { ...input }, sourceFingerprint }
+    }
+    if (this.options.store.owner('profile', target.sourceKey) !== userId
+      || this.options.store.specDigest('profile', target.sourceKey) !== target.specDigest) {
+      throw new ArkmePluginError('extension-owner-mismatch', '该本地扩展不属于当前 Arkme 账号', false, 403)
+    }
+    const source = target.kind === 'profile-directory'
+      ? packLocalBundleDirectory(target.sourcePath)
+      : readLocalBundleTarball(target.sourcePath)
+    if (source.bundle.packageName !== target.packageName) {
+      throw new ArkmePluginError('extension-profile-stale', '本地 Bundle package identity 已变化，请刷新列表', false, 409)
+    }
+    if (source.bundle.version !== input.version) {
+      throw new ArkmePluginError('extension-version-mismatch', '发布版本必须与 Bundle package.json.version 一致', false, 409)
+    }
+    return {
+      input: { ...input },
+      sourceFingerprint: createHash('sha256')
+        .update(`${source.bundle.bundleSha256}\0${source.source.sourceSha256}`)
+        .digest('hex'),
+    }
   }
 
   async publishCordis(input: ArkmeMyExtensionPublishInput & { signal?: AbortSignal }): Promise<ArkmeExtensionPublishResult> {

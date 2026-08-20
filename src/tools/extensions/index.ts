@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createHash } from 'node:crypto'
 import type { ArkmeToolProfile } from '../contract/module.js'
@@ -7,9 +8,11 @@ import type { ArkmeExtensionManager } from '../../extensions/manager.js'
 import type { ArkmeOwnedExtensionInventory } from '../../extensions/owned-inventory.js'
 import type { ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeImageBytes } from '../../types.js'
+import { ArkmeExtensionPublishConversation } from './publish-conversation.js'
 
 const EXTENSION_TOOL_NAMES = [
-  'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+  'arkme_extension_publish_prepare', 'arkme_extension_publish_confirm',
+  'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
   'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
   'arkme_extension_edit',
   'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
@@ -26,7 +29,11 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   + 'session or preset. Do not work around the missing capability with repository files, npm packages, guessed IDs, or IDs from '
   + 'before a DSH restart. Existing sources returned by arkme_extension_list_mine are different: a validated Profile-local Bundle '
   + 'can be published without Cordis authoring tools, while a live Cordis source must still belong to this current Agent session '
-  + 'and DSH process. Always publish the exact opaque owned_ref returned by arkme_extension_list_mine.'
+  + 'and DSH process. Always publish the exact opaque owned_ref returned by arkme_extension_list_mine. To publish one or more '
+  + 'extensions, call arkme_extension_publish_prepare once with the complete batch. It only validates and returns a question. '
+  + 'Show that question in ordinary conversation, tell the human to reply with expectedReply exactly, and wait for a later direct '
+  + 'human message. Never call arkme_extension_publish_confirm in the prepare turn. After the exact later reply, call confirm with '
+  + 'no arguments; do not claim publication for the prepare result.'
 
 function clean(value: string | undefined): string {
   return value?.replace(/[\u0000-\u001F\u007F]/g, ' ').trim() ?? ''
@@ -51,6 +58,14 @@ export function registerArkmeExtensionTools(
 ): void {
   if (profile === 'disabled' || profile === 'atomic') return
 
+  const publishConversation = new ArkmeExtensionPublishConversation({
+    preflight: async input => await ownedInventory.preparePublish(input),
+    publish: async (input, signal) => await ownedInventory.publish({
+      ...input,
+      ...(signal === undefined ? {} : { signal }),
+    }),
+  })
+
   ctx.systemPrompt.section({
     name: 'tool:arkme-extension-authoring',
     order: 117,
@@ -58,30 +73,47 @@ export function registerArkmeExtensionTools(
   })
 
   ctx.tools.register(defineTool({
-    name: 'arkme_extension_publish',
-    description: 'Publish one exact current-user source returned by arkme_extension_list_mine. When creating a new Dynamic Cordis extension, first require visible cordis_define and cordis_inspect_self tools in this Agent session; if either is absent, immediately explain the limitation before doing any work. A validated Profile-local DSH Bundle returned by arkme_extension_list_mine does not require Cordis authoring tools. Use only after the current human explicitly asks to publish. The Bundle-first flow uploads both the installable bundle.tgz and its complete owner-only source.tgz, and publication completes only after both are verified. This tool does not generate or modify user code. If Bundle validation fails, use the exact returned validation message and do not retry unchanged bytes.',
+    name: 'arkme_extension_publish_prepare',
+    description: 'Prepare a batch of 1 to 10 exact current-user sources returned by arkme_extension_list_mine. This validates ownership, versions, Bundle policy, and source fingerprints but does not publish or upload anything. After success, show the returned question in ordinary conversation and wait for the later direct human reply that exactly matches expectedReply. Do not call arkme_extension_publish_confirm in the same turn.',
     parameters: {
-      owned_ref: { type: 'string', required: true, description: 'Opaque ownedRef returned by arkme_extension_list_mine.' },
-      name: { type: 'string', required: true, description: 'User-facing extension name.' },
-      description: { type: 'string', required: true, description: 'User-facing purpose and behavior.' },
-      version: { type: 'string', required: true, description: 'Semantic version such as 1.0.0.' },
-      visibility: { type: 'string', enum: ['private', 'unlisted', 'public'], required: true },
-      changelog: { type: 'string', description: 'What changed in this immutable version.' },
+      items: {
+        type: 'array', required: true,
+        description: 'Complete intended publish batch, 1-10 unique owned_ref values.',
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            owned_ref: { type: 'string', required: true, description: 'Opaque ownedRef returned by arkme_extension_list_mine.' },
+            name: { type: 'string', required: true, description: 'User-facing extension name.' },
+            description: { type: 'string', required: true, description: 'User-facing purpose and behavior.' },
+            version: { type: 'string', required: true, description: 'Semantic version such as 1.0.0.' },
+            visibility: { type: 'string', enum: ['private', 'unlisted', 'public'], required: true },
+            changelog: { type: 'string', description: 'What changed in this immutable version.' },
+          },
+        },
+      },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      requireAgent(exec)
-      const result = await ownedInventory.publish({
-        ownedRef: args.owned_ref,
-        name: args.name,
-        description: args.description,
-        version: args.version,
-        visibility: args.visibility as ArkmeExtensionVisibility,
-        ...(clean(args.changelog) === '' ? {} : { changelog: clean(args.changelog) }),
-        clientMutationId: createHash('sha256').update(String(exec.callId)).digest('hex').slice(0, 8)
-          + '-0000-4000-8000-' + createHash('sha256').update(String(exec.callId)).digest('hex').slice(8, 20),
-        signal: exec.signal,
-      })
+      const agent = requireAgent(exec) as Agent
+      const result = await publishConversation.prepare(agent, args.items.map(item => ({
+        ownedRef: item.owned_ref,
+        name: item.name,
+        description: item.description,
+        version: item.version,
+        visibility: item.visibility as ArkmeExtensionVisibility,
+        ...(clean(item.changelog) === '' ? {} : { changelog: clean(item.changelog) }),
+      })), exec.signal)
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_publish_confirm',
+    description: 'Publish the exact prepared extension batch only after a later direct human reply exactly matches the expectedReply returned by arkme_extension_publish_prepare. Takes no arguments, never accepts replacement publish fields, and returns one result per extension.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute(_args, exec) {
+      const result = await publishConversation.confirm(requireAgent(exec) as Agent, exec.signal)
       return JSON.stringify(result, undefined, 2)
     },
   }))
@@ -317,21 +349,12 @@ export function registerArkmeExtensionTools(
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
     if (![
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled',
+      'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled',
       'arkme_extension_icon_set', 'arkme_extension_edit', 'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ].includes(exec.name)) return await next()
     const decision = await next()
     if (decision.kind !== 'allow') return decision
     const args = exec.arguments as Record<string, unknown>
-    if (exec.name === 'arkme_extension_publish') {
-      const name = clean(typeof args.name === 'string' ? args.name : '').slice(0, 80)
-      const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40)
-      const visibility = clean(typeof args.visibility === 'string' ? args.visibility : '').slice(0, 20)
-      return {
-        kind: 'ask',
-        reason: `确认将“我的扩展”中的“${name}” ${version} 发布到扩展市场吗？可见范围：${visibility}。`,
-      }
-    }
     const extensionId = clean(typeof args.extension_id === 'string' ? args.extension_id : '').slice(0, 100)
     if (exec.name === 'arkme_extension_delete') {
       return {

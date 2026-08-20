@@ -49,7 +49,8 @@ describe('Arkme extension tools', () => {
     } as never, {} as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+      'arkme_extension_publish_prepare', 'arkme_extension_publish_confirm',
+      'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
       'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
@@ -57,17 +58,15 @@ describe('Arkme extension tools', () => {
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
     expect(listMine?.description).toContain('current Arkme user')
     expect(listMine?.description).toContain('untrusted')
-    const publish = definitions.find(item => item.name === 'arkme_extension_publish')
-    expect(publish?.parameters).not.toHaveProperty('permissions')
-    expect(publish?.parameters).toHaveProperty('properties.owned_ref')
-    expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
-    expect(publish?.parameters).not.toHaveProperty('properties.package_id')
-    expect(publish?.description).toContain('exact returned validation message')
-    expect(publish?.description).toContain('do not retry unchanged bytes')
-    expect(publish?.description).toContain('arkme_extension_list_mine')
-    expect(publish?.description).toContain('Profile-local DSH Bundle')
-    expect(publish?.description).toContain('cordis_define')
-    expect(publish?.description).toContain('arkme_extension_list_mine')
+    const preparePublish = definitions.find(item => item.name === 'arkme_extension_publish_prepare')
+    const confirmPublish = definitions.find(item => item.name === 'arkme_extension_publish_confirm')
+    expect(preparePublish?.parameters).toHaveProperty('properties.items')
+    expect(preparePublish?.parameters).not.toHaveProperty('properties.plugin_id')
+    expect(preparePublish?.parameters).not.toHaveProperty('properties.package_id')
+    expect(preparePublish?.description).toContain('1 to 10')
+    expect(preparePublish?.description).toContain('does not publish')
+    expect(confirmPublish?.parameters).toEqual({ type: 'object', properties: {} })
+    expect(confirmPublish?.description).toContain('later direct human reply')
     expect(sections).toHaveLength(1)
     expect(sections[0]).toMatchObject({ name: 'tool:arkme-extension-authoring', order: 117 })
     expect(sections[0]?.text()).toBe(ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT)
@@ -139,14 +138,11 @@ describe('Arkme extension tools', () => {
       extensionId: 'ext-1', orderedPreviewRefs: [previewRef], expectedRevision: 2,
     }))
     await expect(guard!(
-      { name: 'arkme_extension_publish', arguments: {
-        owned_ref: 'owned-ref', name: '天气', version: '1.0.0', visibility: 'public',
-      } },
+      { name: 'arkme_extension_publish_prepare', arguments: { items: [{
+        owned_ref: 'owned-ref', name: '天气', description: '天气', version: '1.0.0', visibility: 'public',
+      }] } },
       async () => ({ kind: 'allow' }),
-    )).resolves.toEqual({
-      kind: 'ask',
-      reason: '确认将“我的扩展”中的“天气” 1.0.0 发布到扩展市场吗？可见范围：public。',
-    })
+    )).resolves.toEqual({ kind: 'allow' })
     await expect(guard!(
       { name: 'arkme_extension_delete', arguments: { extension_id: 'ext-1' } },
       async () => ({ kind: 'allow' }),

@@ -36,3 +36,8 @@ export interface ArkmeMyExtensionPublishInput {
   changelog?: string
   clientMutationId: string
 }
+
+export interface ArkmePreparedExtensionPublish {
+  input: ArkmeMyExtensionPublishInput
+  sourceFingerprint: string
+}

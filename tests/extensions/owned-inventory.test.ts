@@ -150,6 +150,50 @@ describe('owned extension inventory', () => {
     store.close()
   })
 
+  it('preflights a Cordis source fingerprint without publishing and detects later code changes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-preflight-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const publish = vi.fn(async () => ({ extension_id: 'ext-new', version: '1.0.0', status: 'published' as const }))
+    let hostCode = 'return { apply() {} }'
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(),
+      providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [], total: 0 }),
+      runner: {
+        inventory: () => [{
+          agentId: 'session-1', pluginId: 'weather-1', currentPackageId: 'pkg-1',
+          packages: [{ packageId: 'pkg-1', name: '天气助手', purpose: '天气', hasHostHalf: true, hasClientHalf: false }],
+        }],
+        inspectPackage: () => ({
+          pluginId: 'weather-1', packageId: 'pkg-1', name: '天气助手', purpose: '天气', code: { host: hostCode },
+        }),
+      },
+      agents: { get: () => ({ id: 'session-1' }) },
+      publish,
+    })
+    const page = await inventory.list({ currentSessionId: 'session-1' })
+    const input = {
+      ownedRef: page.items[0]!.ownedRef,
+      name: '天气助手', description: '天气', version: '1.0.0', visibility: 'private' as const,
+      clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+    }
+
+    const first = await inventory.preparePublish(input)
+    const replay = await inventory.preparePublish(input)
+    hostCode = 'return { apply() { return true } }'
+    const changed = await inventory.preparePublish(input)
+
+    expect(first.input).toEqual(input)
+    expect(first.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(replay.sourceFingerprint).toBe(first.sourceFingerprint)
+    expect(changed.sourceFingerprint).not.toBe(first.sourceFingerprint)
+    expect(publish).not.toHaveBeenCalled()
+    store.close()
+  })
+
   it('publishes an owned Profile Bundle without exposing its local directory', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-local-publish-'))
     const profile = join(root, 'profiles', 'web')
