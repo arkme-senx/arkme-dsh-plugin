@@ -8,6 +8,10 @@ import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/o
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeExtensionPublishDialog, type ArkmeExtensionPublishFormValue } from './ArkmeExtensionPublishDialog.js'
+import { ArkmeExtensionEditDialog, type ArkmeExtensionEditFormValue } from './ArkmeExtensionEditDialog.js'
+import {
+  applyEditedMyExtension, nextExtensionEditMutation, saveExtensionEdit, type ExtensionEditMutation,
+} from './extension-edit-flow.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
 import {
   extensionOwnerVisibilityBadge, extensionTabSelection, mergeExtensionDiscoverItems,
@@ -313,13 +317,12 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
   </div>
 }
 
-export function MyExtensionCard({ item, iconBusy = false, installed, toggleBusy = false, onPublish, onIconSelect, onToggle }: {
+export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish, onEdit, onToggle }: {
   item: ArkmeMyExtensionItem
-  iconBusy?: boolean
   installed?: ArkmeInstalledExtensionView | undefined
   toggleBusy?: boolean | undefined
-  onPublish(): void
-  onIconSelect?(file: File): void
+  onPublish?(): void
+  onEdit?(): void
   onToggle?(enabled: boolean): void
 }) {
   const action = myExtensionPrimaryAction(item)
@@ -338,20 +341,11 @@ export function MyExtensionCard({ item, iconBusy = false, installed, toggleBusy 
       <span style={styles.meta}>{[item.halves.host ? 'Host' : '', item.halves.client ? 'Client' : ''].filter(Boolean).join(' + ')}</span>
     </span>
     <span style={styles.actionGroup}>
-      {item.published !== undefined && onIconSelect !== undefined && <label
-        style={{ ...styles.iconSmall, ...(iconBusy ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
-        aria-label={`${item.published.iconRef === undefined ? '上传' : '更换'}扩展头像 ${item.name}`}
-      >{iconBusy ? '上传中…' : item.published.iconRef === undefined ? '上传头像' : '更换头像'}<input
-          type="file" accept="image/png,image/jpeg,image/webp" disabled={iconBusy}
-          style={{ display: 'none' }}
-          onChange={event => {
-            const file = event.target.files?.[0]
-            event.target.value = ''
-            if (file !== undefined) onIconSelect(file)
-          }}
-        /></label>}
       {action !== undefined && <button
-        type="button" style={styles.installSmall} onClick={onPublish}
+        type="button"
+        style={{ ...styles.installSmall, ...((action.kind === 'publish' ? onPublish : onEdit) === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
+        disabled={(action.kind === 'publish' ? onPublish : onEdit) === undefined}
+        onClick={action.kind === 'publish' ? onPublish : onEdit}
       >{action.label}</button>}
       {installed !== undefined && onToggle !== undefined && <ArkmeExtensionToggle
         item={installed} busy={toggleBusy} onChange={onToggle}
@@ -533,12 +527,15 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [publishItem, setPublishItem] = useState<ArkmeMyExtensionItem>()
   const [publishBusy, setPublishBusy] = useState(false)
   const [publishError, setPublishError] = useState('')
-  const [iconBusyOwnedRef, setIconBusyOwnedRef] = useState<string>()
+  const [editItem, setEditItem] = useState<ArkmeMyExtensionItem>()
+  const [editBusy, setEditBusy] = useState(false)
+  const [editError, setEditError] = useState('')
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
   const requestController = useRef<AbortController>()
   const publishMutation = useRef<ExtensionPublishMutation>()
+  const editMutation = useRef<ExtensionEditMutation>()
 
   const hostInstance = async (): Promise<string | undefined> => {
     try { return (await callArkme<{ instanceId: string }>('provider.instance')).instanceId }
@@ -862,27 +859,50 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
     }
   }
 
-  const uploadOwnedExtensionIcon = async (item: ArkmeMyExtensionItem, file: File) => {
-    const extensionId = item.published?.extensionId
-    if (extensionId === undefined) return
-    setIconBusyOwnedRef(item.ownedRef); setInstallError(''); setRestartNotice('')
+  const saveMyExtensionEdit = async (item: ArkmeMyExtensionItem, value: ArkmeExtensionEditFormValue) => {
+    const published = item.published
+    if (published === undefined) return
+    const extensionId = published.extensionId
+    const mutation = nextExtensionEditMutation(editMutation.current, extensionId, value, () => crypto.randomUUID())
+    editMutation.current = mutation
+    setEditBusy(true); setEditError(''); setRestartNotice('')
     try {
-      const result = await extensionSdk.setExtensionIcon(extensionId, file)
-      setMyExtensions(current => current.map(candidate => candidate.ownedRef === item.ownedRef && candidate.published !== undefined
-        ? { ...candidate, published: { ...candidate.published, iconRef: result.icon_ref } }
+      const baseline = publishedItems.find(candidate => candidate.extension_id === extensionId) ?? {
+        extension_id: extensionId,
+        name: item.name,
+        description: item.description,
+        visibility: published.visibility,
+        ...(published.version === undefined ? {} : { version: published.version }),
+        ...(published.iconRef === undefined ? {} : { icon_ref: published.iconRef }),
+      }
+      const result = await saveExtensionEdit({ extension: baseline, value, clientMutationId: mutation.id }, {
+        updateMetadata: async (targetExtensionId, input) => await extensionSdk.updateExtensionMetadata(targetExtensionId, input),
+        setIcon: async (targetExtensionId, file) => await extensionSdk.setExtensionIcon(targetExtensionId, file),
+      })
+      const nextItem = applyEditedMyExtension(item, result.extension)
+      setMyExtensions(current => current.map(candidate => candidate.ownedRef === item.ownedRef
+        ? applyEditedMyExtension(candidate, result.extension)
         : candidate))
       setDiscoverItems(current => current.map(candidate => candidate.extension_id === extensionId
-        ? { ...candidate, icon_ref: result.icon_ref }
+        ? { ...candidate, ...result.extension }
         : candidate))
-      setPublishedItems(current => current.map(candidate => candidate.extension_id === extensionId
-        ? { ...candidate, icon_ref: result.icon_ref }
-        : candidate))
-      setDetail(current => current?.extension_id === extensionId ? { ...current, icon_ref: result.icon_ref } : current)
-      setRestartNotice('扩展头像已更新。')
+      setPublishedItems(current => current.some(candidate => candidate.extension_id === extensionId)
+        ? current.map(candidate => candidate.extension_id === extensionId ? { ...candidate, ...result.extension } : candidate)
+        : [result.extension, ...current])
+      setDetail(current => current?.extension_id === extensionId ? { ...current, ...result.extension } : current)
+      setEditItem(nextItem)
+      await load('mine', 'refresh')
+      if (result.kind === 'metadata-saved-icon-failed') {
+        setEditError(`资料已保存，但头像更新失败：${result.error}`)
+        return
+      }
+      editMutation.current = undefined
+      setEditItem(undefined)
+      setRestartNotice('扩展信息已更新。')
     } catch (caught) {
-      setInstallError(caught instanceof Error ? caught.message : String(caught))
+      setEditError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setIconBusyOwnedRef(undefined)
+      setEditBusy(false)
     }
   }
 
@@ -914,13 +934,14 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (publishItem !== undefined && !publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) }
+      if (editItem !== undefined && !editBusy) { editMutation.current = undefined; setEditItem(undefined) }
+      else if (publishItem !== undefined && !publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) }
       else if (restartPrompt !== undefined && !restarting) setRestartPrompt(undefined)
       else if (restartPrompt === undefined) onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [onClose, publishBusy, publishItem, restartPrompt, restarting])
+  }, [editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting])
 
   const dialog = <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
   <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-center-title">
@@ -1052,14 +1073,13 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           return <MyExtensionCard
             key={item.ownedRef}
             item={item}
-            iconBusy={iconBusyOwnedRef === item.ownedRef}
             {...(local === undefined ? {} : {
               installed: local,
               toggleBusy: actionBusyExtensionId === extensionId,
               onToggle: (enabled: boolean) => { void toggleEnabled(extensionId!, enabled) },
             })}
             onPublish={() => { publishMutation.current = undefined; setPublishError(''); setPublishItem(item) }}
-            onIconSelect={file => { void uploadOwnedExtensionIcon(item, file) }}
+            onEdit={() => { editMutation.current = undefined; setEditError(''); setEditItem(item) }}
           />
         })}
         {myExtensions.length === 0 && <EmptyState tab="mine" />}
@@ -1130,6 +1150,13 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       error={publishError}
       onCancel={() => { if (!publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) } }}
       onSubmit={value => { void publishMyExtension(publishItem, value) }}
+    />}
+    {editItem !== undefined && <ArkmeExtensionEditDialog
+      item={editItem}
+      busy={editBusy}
+      error={editError}
+      onCancel={() => { if (!editBusy) { editMutation.current = undefined; setEditItem(undefined) } }}
+      onSubmit={value => { void saveMyExtensionEdit(editItem, value) }}
     />}
   </div>
   </section>

@@ -197,18 +197,19 @@ describe('Arkme extension market UI', () => {
       publish: { allowed: true, mode: 'version' },
     }
 
-    const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} onIconSelect={() => {}} />)
+    const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} onEdit={() => {}} />)
 
     expect(html).toContain('天气助手')
     expect(html).toContain('Cordis 临时')
     expect(html).toContain('已持久化')
     expect(html).toContain('已发布')
     expect(html).not.toContain('发布新版本')
-    expect(html).not.toContain('<button')
+    expect(html).toContain('>编辑</button>')
     expect(html.indexOf('天气助手')).toBeLessThan(html.indexOf('Cordis 临时'))
     expect(html.indexOf('Cordis 临时')).toBeLessThan(html.indexOf('天气卡片'))
     expect(html).toContain('border-radius:999px')
-    expect(html).toContain('更换头像')
+    expect(html).not.toContain('更换头像')
+    expect(html).not.toContain('上传头像')
     expect(html).toContain(`/arkme-self/api/extension-icon?extension_id=ext-1&amp;icon_ref=icon_v1_${'a'.repeat(64)}`)
     expect(html).not.toContain('local-weather')
   })
