@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
@@ -106,6 +107,18 @@ export const Config: Schema<Config> = Schema.object({
 export const name = 'dsh-arkme'
 export const inject = ['webServer', 'tools', 'systemPrompt']
 
+export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
+  if (dshBinPath.trim() === '') return undefined
+  try {
+    const manifest = JSON.parse(readFileSync(join(dirname(dshBinPath), '..', 'package.json'), 'utf8')) as { version?: unknown }
+    return typeof manifest.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version)
+      ? manifest.version
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Headless Arkme data provider for trusted Host-side consumer plugins. */
@@ -116,6 +129,8 @@ declare module '@deepseek-ai/cordis' {
 export function apply(ctx: Context, config: Config): void {
   validateConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
+  const dshBinPath = process.argv[1] ?? ''
+  const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
@@ -153,7 +168,7 @@ export function apply(ctx: Context, config: Config): void {
     dshHome,
     profileName: 'web',
     execPath: process.execPath,
-    dshBinPath: process.argv[1] ?? '',
+    dshBinPath,
     execArgv: process.execArgv,
     stateDirectory,
     healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
@@ -182,6 +197,7 @@ export function apply(ctx: Context, config: Config): void {
         profileDirectory: extensionProfileDirectory,
         profileInstaller: extensionProfileInstaller,
         clientApiPath: config.routePath,
+        ...(dshRuntimeVersion === undefined ? {} : { dshRuntimeVersion }),
       },
     )
     extensionManager = manager
