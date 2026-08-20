@@ -8,6 +8,8 @@
 
 **DSH 机制参考：** `/Users/apple/hehs/dsh` 当前 checkout，仅只读参考
 
+**兼容修订（2026-08-20）：** 新发布仍只接受 Bundle v2；在生产历史版本完成迁移且客户端覆盖得到验证前，服务端保留 v1 `resolve-install`，插件保留已发布 `.arkext` 的只读安装链。下文“不保留长期兼容层”应理解为迁移验收后的最终目标，不得用于提前阻断历史安装。
+
 ## 1. 结论
 
 扩展市场只保留一种可安装制品：标准 DSH Bundle 的 npm tarball（下文统一称 `bundle.tgz`）。Dynamic Cordis、本地 Bundle 目录和本地 Bundle `.tgz` 只是三种发布来源，不再各自形成一种市场安装格式。

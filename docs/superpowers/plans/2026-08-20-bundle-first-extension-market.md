@@ -2,6 +2,8 @@
 
 > 执行方式：用户已选择当前会话内顺序实施，功能整体完成后统一复核；不拆分子代理检查点。
 
+> 兼容修订（2026-08-20）：新发布保持 Bundle v2-only；历史 `.arkext` 的服务端只读解析与插件安装必须保留到迁移和客户端覆盖验收完成。
+
 **Goal:** 让 Dynamic Cordis、本地 DSH Bundle 目录和本地 Bundle tarball 都发布为唯一的标准 `bundle.tgz`，市场安装直接使用官方 DSH CLI，不再生成 `.arkext` wrapper Bundle。
 
 **Architecture:** `jotmo-extension-publish` 是 v2 Bundle/source、版本、签名和迁移 owner；`arkme-dsh-plugin` 是三种本地来源的校验/物化、UI/SDK/Tool 编排和安装回滚 owner；未修改的 DSH CLI 是 Profile 写入 owner。旧 `.arkext` 只在一次迁移窗口中读取，最终 API 只接受/返回 v2 Bundle。
