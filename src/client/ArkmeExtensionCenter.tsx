@@ -13,9 +13,7 @@ import {
   applyEditedMyExtension, nextExtensionEditMutation, saveExtensionEdit, type ExtensionEditMutation,
 } from './extension-edit-flow.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
-import {
-  extensionOwnerVisibilityBadge, extensionTabSelection, mergeExtensionDiscoverItems,
-} from './extension-market-model.js'
+import { extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
@@ -262,13 +260,12 @@ export function ArkmeExtensionToggle({ item, busy, onChange }: {
   </button>
 }
 
-export function ExtensionCard({ item, installed, actionLabel, status, statusColor, visibilityBadge, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume }: {
+export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume }: {
   item: ArkmeExtensionCatalogItem
   installed?: ArkmeInstalledExtensionView | undefined
   actionLabel?: string | undefined
   status?: string | undefined
   statusColor?: string | undefined
-  visibilityBadge?: string | undefined
   installTask?: ArkmeExtensionInstallTaskSnapshot | undefined
   actionBusy?: boolean
   onClick(): void
@@ -286,10 +283,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
     <button type="button" style={styles.cardPrimary} onClick={onClick}>
       <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} />
       <span style={styles.cardBody}>
-        <span style={styles.titleRow}>
-          <span style={styles.name}>{item.name}</span>
-          {visibilityBadge !== undefined && <span style={styles.stateBadge}>{visibilityBadge}</span>}
-        </span>
+        <span style={styles.name}>{item.name}</span>
         <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
         {metadata !== '' && <span style={styles.meta}>{metadata}</span>}
         {item.rating_summary !== undefined && <span style={styles.meta}>★ {extensionRatingLabel(item.rating_summary)}</span>}
@@ -1048,7 +1042,6 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           return <ExtensionCard
             key={item.extension_id}
             item={item}
-            visibilityBadge={extensionOwnerVisibilityBadge(item)}
             {...(local === undefined || action.label === '更新' ? { actionLabel: action.label } : {})}
             {...(local === undefined ? {} : { installed: local })}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}

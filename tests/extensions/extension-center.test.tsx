@@ -83,26 +83,22 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('translateX(18px)')
   })
 
-  it('renders owner-private visibility as a title badge instead of an action', () => {
+  it('renders only the version in catalog card metadata', () => {
     const html = renderToStaticMarkup(<ExtensionCard
       item={{
-        extension_id: 'ext-private', name: '私有扩展', description: '', visibility: 'private', version: '1.0.0',
+        extension_id: 'ext-public', name: '公开扩展', description: '', visibility: 'public', version: '1.0.0',
         manifest: {
-          format: 'arkme-cordis-extension', format_version: 1, name: '私有扩展', description: '', version: '1.0.0',
+          format: 'arkme-cordis-extension', format_version: 1, name: '公开扩展', description: '', version: '1.0.0',
           runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: true },
           permissions: ['files.read'], entrypoints: { host: 'host.js', client: 'client.js' },
         },
       }}
-      visibilityBadge="仅自己"
       onClick={() => {}}
     />)
-    expect(html).toContain('私有扩展')
-    expect(html).toContain('仅自己')
+    expect(html).toContain('公开扩展')
     expect(html).toContain('v1.0.0')
     expect(html).not.toContain('Host + Client')
     expect(html).not.toContain('项权限')
-    expect(html.indexOf('私有扩展')).toBeLessThan(html.indexOf('仅自己'))
-    expect(html).not.toContain('>仅自己</button>')
   })
 
   it('maps real download bytes into the install progress stage', () => {

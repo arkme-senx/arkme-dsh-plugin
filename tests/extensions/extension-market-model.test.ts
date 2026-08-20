@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
-  extensionOwnerVisibilityBadge,
   extensionTabSelection,
   mergeExtensionDiscoverItems,
 } from '../../src/client/extension-market-model.js'
 
 describe('extension market discovery projection', () => {
-  it('merges owner-private extensions, deduplicates public ownership, and hides unlisted history', () => {
+  it('uses only the public catalog and never supplements owner-private extensions', () => {
     const publicItems = [{
       extension_id: 'ext-public', name: '公开目录名称', description: '目录说明', visibility: 'public' as const,
       updated_at: 10, rating_summary: { average: 5, count: 1, histogram: [0, 0, 0, 0, 1] as [number, number, number, number, number] },
@@ -31,26 +30,20 @@ describe('extension market discovery projection', () => {
     ]
     const result = mergeExtensionDiscoverItems(publicItems, ownedItems)
 
-    expect(result.map(item => item.extension_id)).toEqual(['ext-private', 'ext-public'])
-    expect(result[1]).toMatchObject({
-      name: '公开目录名称', description: '目录说明', owner_name: '我',
+    expect(result.map(item => item.extension_id)).toEqual(['ext-public'])
+    expect(result[0]).toMatchObject({
+      name: '公开目录名称', description: '目录说明',
       rating_summary: { average: 5, count: 1 },
     })
-    expect(publicItems[0]).not.toHaveProperty('owner_name')
+    expect(result[0]).not.toHaveProperty('owner_name')
   })
 
-  it('sorts equal update times by extension identity for a stable projection', () => {
+  it('does not reveal private owned extensions when the public catalog is empty', () => {
     const result = mergeExtensionDiscoverItems([], [
       { extension_id: 'ext-b', name: 'B', description: '', visibility: 'private', latest_stable_version: '1.0.0', updated_at: 8 },
       { extension_id: 'ext-a', name: 'A', description: '', visibility: 'private', latest_stable_version: '1.0.0', updated_at: 8 },
     ])
-    expect(result.map(item => item.extension_id)).toEqual(['ext-a', 'ext-b'])
-  })
-
-  it('labels only owner-private discovery entries', () => {
-    expect(extensionOwnerVisibilityBadge({ visibility: 'private' })).toBe('仅自己')
-    expect(extensionOwnerVisibilityBadge({ visibility: 'public' })).toBeUndefined()
-    expect(extensionOwnerVisibilityBadge({ visibility: 'unlisted' })).toBeUndefined()
+    expect(result).toEqual([])
   })
 
   it('refreshes an active tab without changing selection', () => {
