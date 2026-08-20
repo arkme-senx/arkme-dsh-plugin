@@ -167,6 +167,36 @@ export interface ArkmeInstalledExtension {
   lastError?: string
 }
 
+/** Browser/model-safe projection. Host filesystem paths and Dynamic Cordis IDs stay private. */
+export type ArkmeInstalledExtensionView = Pick<
+  ArkmeInstalledExtension,
+  | 'extensionId'
+  | 'installedVersion'
+  | 'manifest'
+  | 'enabled'
+  | 'active'
+  | 'permissionSnapshot'
+  | 'updateChannel'
+  | 'installedAtMillis'
+  | 'lastCheckedAtMillis'
+>
+
+export interface ArkmeExtensionEnabledResult {
+  extension_id: string
+  installed: true
+  enabled: boolean
+  active: boolean
+  restart_required: boolean
+  message: string
+}
+
+export interface ArkmeExtensionEnabledState {
+  extension_id: string
+  installed: boolean
+  enabled: boolean
+  active: boolean
+}
+
 export interface ArkmeExtensionUpdateResolution {
   extension_id: string
   installed_version: string

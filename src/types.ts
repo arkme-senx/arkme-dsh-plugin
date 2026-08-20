@@ -404,6 +404,8 @@ export interface ArkmeProviderCapabilities {
     userCard: true
     openPrivateChat: true
     groupSettings: true
+    /** Installed-extension inspection and desired enable/disable state are available. */
+    extensionManagement?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
@@ -1485,6 +1487,9 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.release'
   | 'extensions.mine.list'
   | 'extensions.mine.publish'
+  | 'extensions.installed-list'
+  | 'extensions.enabled-state'
+  | 'extensions.enabled.set'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
@@ -1520,7 +1525,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.catalog.detail'
   | 'extensions.my-list'
   | 'extensions.delete'
-  | 'extensions.installed-list'
   | 'extensions.updates'
   | 'extensions.install.preview'
   | 'extensions.install.start'

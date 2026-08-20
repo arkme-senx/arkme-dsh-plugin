@@ -10,6 +10,13 @@ export interface ArkmePersistentBundleResult {
   packageName: string
   bundleDirectory: string
   installationPath: string
+  activationPath: string
+}
+
+export interface ArkmePersistentActivation {
+  schema_version: 1
+  extension_id: string
+  enabled: boolean
 }
 
 export interface ArkmePersistentInstallation {
@@ -33,6 +40,46 @@ function packageIdentity(extensionId: string): { packageName: string; entryId: s
 function writeSecure(path: string, content: string): void {
   writeFileSync(path, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
   chmodSync(path, 0o600)
+}
+
+function activationText(extensionId: string, enabled: boolean): string {
+  return `${JSON.stringify({ schema_version: 1, extension_id: extensionId, enabled } satisfies ArkmePersistentActivation, undefined, 2)}\n`
+}
+
+export function writePersistentExtensionActivation(
+  bundleDirectory: string,
+  extensionId: string,
+  enabled: boolean,
+): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(extensionId)) throw new Error('扩展身份无效')
+  const target = join(bundleDirectory, 'activation.json')
+  const temporary = join(bundleDirectory, `.activation.${randomUUID()}.tmp`)
+  writeSecure(temporary, activationText(extensionId, enabled))
+  try {
+    renameSync(temporary, target)
+    chmodSync(target, 0o600)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+  return target
+}
+
+export function readPersistentExtensionActivation(installationUrl: URL): ArkmePersistentActivation {
+  const activationUrl = new URL('./activation.json', installationUrl)
+  let value: unknown
+  try { value = JSON.parse(readFileSync(activationUrl, 'utf8')) as unknown } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      const installation = JSON.parse(readFileSync(installationUrl, 'utf8')) as { extension_id?: unknown }
+      return { schema_version: 1, extension_id: String(installation.extension_id ?? ''), enabled: true }
+    }
+    throw error
+  }
+  if (value === null || typeof value !== 'object') throw new Error('Arkme persistent extension activation state is invalid')
+  const state = value as Partial<ArkmePersistentActivation>
+  if (state.schema_version !== 1 || typeof state.extension_id !== 'string' || typeof state.enabled !== 'boolean') {
+    throw new Error('Arkme persistent extension activation state is invalid')
+  }
+  return state as ArkmePersistentActivation
 }
 
 export function materializePersistentExtensionBundle(input: {
@@ -64,6 +111,7 @@ export function materializePersistentExtensionBundle(input: {
   }
   const installationText = `${JSON.stringify(installation, undefined, 2)}\n`
   const installationPath = join(bundleDirectory, 'installation.json')
+  const activationPath = join(bundleDirectory, 'activation.json')
   if (existsSync(bundleDirectory)) {
     let existing: Partial<ArkmePersistentInstallation> | undefined
     try {
@@ -83,7 +131,8 @@ export function materializePersistentExtensionBundle(input: {
           )
           if (manifest.exports?.['.'] === './lib/index.js'
             && manifest.exports?.['./package.json'] === './package.json' && clientReady) {
-            return { packageName, bundleDirectory, installationPath }
+            if (!existsSync(activationPath)) writeSecure(activationPath, activationText(input.resolution.extension_id, true))
+            return { packageName, bundleDirectory, installationPath, activationPath }
           }
         } catch { /* Regenerate an incomplete wrapper from the same immutable artifact. */ }
         rmSync(bundleDirectory, { recursive: true, force: true })
@@ -120,6 +169,7 @@ export function materializePersistentExtensionBundle(input: {
   writeSecure(join(temporary, 'package.json'), `${JSON.stringify(manifest, undefined, 2)}\n`)
   writeSecure(join(temporary, 'cordis.patch.yml'), `- insert:\n    - id: ${entryId}\n      name: '${packageName}'\n`)
   writeSecure(join(temporary, 'installation.json'), installationText)
+  writeSecure(join(temporary, 'activation.json'), activationText(input.resolution.extension_id, true))
   writeSecure(join(temporary, 'lib', 'index.js'), [
     `import { applyPersistentArkmeHostExtension } from '@senguoyun/dsh-arkme/persistent-extension'`,
     `export const name = ${JSON.stringify(entryId)}`,
@@ -138,5 +188,5 @@ export function materializePersistentExtensionBundle(input: {
     }))
   }
   renameSync(temporary, bundleDirectory)
-  return { packageName, bundleDirectory, installationPath }
+  return { packageName, bundleDirectory, installationPath, activationPath }
 }

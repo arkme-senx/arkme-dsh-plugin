@@ -1768,6 +1768,7 @@ export class ArkmeService {
         userCard: true,
         openPrivateChat: true,
         groupSettings: true,
+        extensionManagement: true,
         worldFeed: true,
         worldInteractions: true,
         arrangements: true,

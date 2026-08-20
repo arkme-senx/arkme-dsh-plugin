@@ -9,7 +9,7 @@ import type { ArkmeExtensionVisibility } from '../../extensions/types.js'
 
 const EXTENSION_TOOL_NAMES = [
   'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
-  'arkme_extension_list_mine',
+  'arkme_extension_list_mine', 'arkme_extension_set_enabled',
 ] as const
 
 function clean(value: string | undefined): string {
@@ -134,9 +134,27 @@ export function registerArkmeExtensionTools(
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_set_enabled',
+    description: 'Enable or disable one already-installed Arkme extension without uninstalling its verified artifact or version. Use only after an explicit current human request. The result states whether the current DSH process reached active state or needs a restart.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact installed extension_id.' },
+      enabled: { type: 'boolean', required: true, description: 'True to enable, false to disable.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const result = await manager.setEnabled({
+        agent: requireAgent(exec),
+        extensionId: args.extension_id,
+        enabled: args.enabled,
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
-    if (!['arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply'].includes(exec.name)) return await next()
+    if (!['arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled'].includes(exec.name)) return await next()
     const decision = await next()
     if (decision.kind !== 'allow') return decision
     const args = exec.arguments as Record<string, unknown>
@@ -154,6 +172,15 @@ export function registerArkmeExtensionTools(
       return {
         kind: 'ask',
         reason: `确认软删除扩展 ${extensionId} 吗？删除后将从扩展市场隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。`,
+      }
+    }
+    if (exec.name === 'arkme_extension_set_enabled') {
+      const enabled = args.enabled === true
+      return {
+        kind: 'ask',
+        reason: enabled
+          ? `确认启用已安装扩展 ${extensionId} 吗？如果当前运行时无法热加载，会明确提示重启 DSH。`
+          : `确认关闭已安装扩展 ${extensionId} 吗？扩展和版本会保留，稍后可重新启用。`,
       }
     }
     const version = clean(typeof args.version === 'string' ? args.version : '').slice(0, 40) || '最新兼容版本'

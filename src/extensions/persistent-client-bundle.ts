@@ -26,23 +26,25 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
   }
   const unavailable = (name: string) => (): never => { throw new Error(`${name} is unavailable in persistent Arkme extensions`) }
   const jsonValue = (value: unknown): unknown => value === undefined ? null : JSON.parse(JSON.stringify(value)) as unknown
-  const callHost = async (method: string, args: unknown = null): Promise<unknown> => {
+  const callOperation = async (operation: string, params: Record<string, unknown>): Promise<unknown> => {
     const response = await fetch(spec.apiPath, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operation: spec.operation ?? 'extensions.persistent.invoke',
-        params: {
-          ...(spec.identityKey === 'packageName' ? { packageName: spec.extensionId } : { extensionId: spec.extensionId }),
-          method,
-          args: jsonValue(args),
-        },
-      }),
+      body: JSON.stringify({ operation, params }),
     })
     const envelope = await response.json() as { ok?: boolean; value?: unknown; error?: { message?: string } }
     if (!response.ok || envelope.ok !== true) throw new Error(envelope.error?.message ?? `Arkme Host returned HTTP ${String(response.status)}`)
     return envelope.value
   }
+  const callHost = async (method: string, args: unknown = null): Promise<unknown> => await callOperation(
+    spec.operation ?? 'extensions.persistent.invoke',
+    {
+      ...(spec.identityKey === 'packageName' ? { packageName: spec.extensionId } : { extensionId: spec.extensionId }),
+      method,
+      args: jsonValue(args),
+    },
+  )
   const guardedService = (service: object, name: string): unknown => new Proxy(service, {
     get(target, property) {
       const member = Reflect.get(target, property, target) as unknown
@@ -85,6 +87,12 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
   return {
     name: `arkme-extension-client:${spec.extensionId}`,
     async apply(ctx: any) {
+      if (spec.identityKey !== 'packageName') {
+        const state = await callOperation('extensions.enabled-state', { extensionId: spec.extensionId }) as {
+          installed?: boolean; enabled?: boolean
+        }
+        if (state.installed !== true || state.enabled !== true) return
+      }
       const styles = new Styles()
       const traps = {
         setTimeout: unavailable('setTimeout'), setInterval: unavailable('setInterval'),

@@ -39,7 +39,9 @@ import type {
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
 } from '../types.js'
-import type { ArkmeExtensionPublishResult } from '../extensions/types.js'
+import type {
+  ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+} from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 
 export type {
@@ -107,6 +109,11 @@ export type {
 export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
   ArkmeMyExtensionState, ArkmeMyExtensionWarning,
 } from '../extensions/owned-types.js'
+export type {
+  ArkmeExtensionEnabledResult,
+  ArkmeExtensionEnabledState,
+  ArkmeInstalledExtensionView,
+} from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
@@ -166,6 +173,26 @@ export class ArkmeSdk {
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
     return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
+  }
+
+  /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
+  async installedExtensions(signal?: AbortSignal): Promise<ArkmeInstalledExtensionView[]> {
+    return await this.call<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, signal)
+  }
+
+  async extensionEnabledState(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionEnabledState> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionEnabledState>('extensions.enabled-state', { extensionId }, signal)
+  }
+
+  /** Change desired activation without uninstalling the verified extension artifact. */
+  async setExtensionEnabled(
+    extensionId: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionEnabledResult> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled }, signal)
   }
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {

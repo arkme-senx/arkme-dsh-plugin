@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,7 +13,7 @@ const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'arkme-persistent-bundle-'))
+  const root = mkdtempSync(join(tmpdir(), 'arkme persistent bundle '))
   directories.push(root)
   const artifact = packArkmeExtension({
     name: '永久扩展', description: '测试', version: '1.0.0', arkmeProviderContract: 1,
@@ -48,6 +48,55 @@ describe('persistent extension profile bundle', () => {
     expect(readFileSync(join(result.bundleDirectory, 'cordis.patch.yml'), 'utf8')).toContain(manifest.name)
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'index.js'), 'utf8')).toContain('applyPersistentArkmeHostExtension')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.invoke')
+    expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.enabled-state')
+    expect(JSON.parse(readFileSync(join(result.bundleDirectory, 'activation.json'), 'utf8'))).toEqual({
+      schema_version: 1, extension_id: 'ext_test', enabled: true,
+    })
+  })
+
+  it('keeps an installed dependency while toggling its public Profile bundle layer', async () => {
+    const { root } = fixture()
+    const profileDirectory = join(root, 'profiles', 'web')
+    mkdirSync(profileDirectory, { recursive: true })
+    const manifestPath = join(profileDirectory, 'package.json')
+    writeFileSync(manifestPath, JSON.stringify({
+      dependencies: { '@arkme-local/ext-0123456789abcdef': 'link:../../bundle' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@arkme-local/ext-0123456789abcdef'] } },
+    }))
+    const installer = new ArkmeExtensionProfileInstaller({
+      dshHome: root, profileName: 'web', execPath: process.execPath, dshBinPath: '/dsh/bin', run: vi.fn(),
+    })
+
+    await installer.setEnabled('@arkme-local/ext-0123456789abcdef', false)
+    let manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      dependencies: Record<string, string>; dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.dependencies).toHaveProperty('@arkme-local/ext-0123456789abcdef')
+    expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base'])
+
+    await installer.setEnabled('@arkme-local/ext-0123456789abcdef', true)
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as typeof manifest
+    expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', '@arkme-local/ext-0123456789abcdef'])
+  })
+
+  it('serializes concurrent Profile switches so one extension cannot overwrite another', async () => {
+    const { root } = fixture()
+    const profileDirectory = join(root, 'profiles', 'web')
+    mkdirSync(profileDirectory, { recursive: true })
+    const first = '@arkme-local/ext-1111111111111111'
+    const second = '@arkme-local/ext-2222222222222222'
+    const manifestPath = join(profileDirectory, 'package.json')
+    writeFileSync(manifestPath, JSON.stringify({
+      dependencies: { [first]: 'link:../../first', [second]: 'link:../../second' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', first, second] } },
+    }))
+    const installer = new ArkmeExtensionProfileInstaller({
+      dshHome: root, profileName: 'web', execPath: process.execPath, dshBinPath: '/dsh/bin', run: vi.fn(),
+    })
+
+    await Promise.all([installer.setEnabled(first, false), installer.setEnabled(second, false)])
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh: { profile: { bundles: string[] } } }
+    expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base'])
   })
 
   it('uses the official DSH profile command for add and remove', async () => {

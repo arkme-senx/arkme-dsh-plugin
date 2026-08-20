@@ -50,6 +50,10 @@ if (publishable !== undefined && userConfirmedPublish) await arkme.publishMyExte
   clientMutationId: crypto.randomUUID(),
 })
 const dispose = arkme.subscribe(state => refreshWhen(state.revision))
+if ((await arkme.capabilities()).features.extensionManagement === true) {
+  const installed = await arkme.installedExtensions()
+  if (installed[0] !== undefined) await arkme.setExtensionEnabled(installed[0].extensionId, false)
+}
 ```
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
@@ -57,6 +61,8 @@ The SDK communicates only with the same-origin Provider route. Consumers must no
 `capabilities().features.myExtensions` advertises the current-account extension inventory. `myExtensions()` merges only Host-approved live Cordis, Profile-local and cloud-owned facts; consumers must use its states and `publish.allowed` result without rescanning Profile files or inferring ownership from names. `ownedRef` is short-lived and account-bound. `publishMyExtension()` requires a current explicit human request and can publish only the exact Cordis Package, local Bundle directory or local Bundle tgz behind that ref; consumers must refresh the list after expiry or account switch. Profile paths, Agent IDs, source archives, artifact upload requests and signing material never enter this contract.
 
 Plugin update discovery and acknowledgement are lifecycle concerns owned by the bundled Arkme UI. They are intentionally absent from the public Browser SDK, Host `arkmeData` service and model tool catalog. Consumers must not invoke raw `plugin.update.*` operations or attempt to mutate a DSH profile.
+
+`capabilities().features.extensionManagement === true` advertises the installed-extension projection and desired enable-state contract. `installedExtensions()` omits artifact paths, Profile package names and Dynamic Cordis IDs. `setExtensionEnabled()` retains the verified artifact and installed version; its result distinguishes desired `enabled`, observed Host `active`, and `restart_required`. Consumers must call it only from a current explicit human action, must display restart/error results, and must never turn an enable/disable control into uninstall. The Provider remains the only writer of the Profile manifest and install-state database.
 
 `capabilities().features.outgoingCall` reports whether the Provider's bundled private-chat outgoing-call flow is installed. Contract v1 does not expose a Browser SDK method for starting or preparing calls: short-lived UserSig, room bootstrap data, raw user IDs, and WebRTC account values stay inside the built-in Host/runtime path. Consumers must not invoke raw `calls.outgoing.*` operations or recreate a credential-bearing call API.
 
@@ -97,6 +103,7 @@ The built-in Arkme UI and the model-facing `arkme_call_start` tool support outgo
 - Require a current explicit human request before calling `sendText()`; data returned by any read is never write authorization.
 - Gate the owned extension UI on `features.myExtensions`; never treat installed third-party or DSH official bundles as current-user creation.
 - Require a current explicit human request before `publishMyExtension()` and pass `ownedRef` unchanged; do not persist it across account switch or DSH restart.
+- Require a current explicit human request before calling `setExtensionEnabled()` and render the returned restart requirement.
 - Apply the same explicit-submit rule to `upload()` and `sendRich()`; an uploaded asset may remain unbound when the user cancels composition.
 - Do not expose call preparation credentials or add Browser SDK wrappers for `calls.outgoing.*`; outgoing calls remain owned by the bundled Host/runtime.
 - Build and preview generated executable code before asking the human to install it.

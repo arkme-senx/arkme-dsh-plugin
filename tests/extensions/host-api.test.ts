@@ -148,4 +148,19 @@ describe('extension center Host BFF', () => {
     expect(uninstall).toHaveBeenCalledWith({ extensionId: 'ext-1', sessionId: 'session-1' })
     expect(restart).toHaveBeenCalledWith('ext-1')
   })
+
+  it('routes desired enabled state through the same Host task owner', async () => {
+    const setEnabled = vi.fn(async () => ({
+      extension_id: 'ext-1', installed: true, enabled: false, active: false, restart_required: true,
+    }))
+    const tasks = { setEnabled }
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.enabled.set',
+      { extensionId: 'ext-1', enabled: false },
+      undefined, tasks as never,
+    )).resolves.toMatchObject({ enabled: false, restart_required: true })
+    expect(setEnabled).toHaveBeenCalledWith({
+      agent: undefined, extensionId: 'ext-1', enabled: false,
+    })
+  })
 })

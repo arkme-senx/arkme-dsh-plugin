@@ -82,7 +82,7 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean {
 function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
   const value = params[key]
   if (typeof value !== 'boolean') {
-    throw new ArkmePluginError('arrangement-reminder-enabled-invalid', '安排提醒开关参数无效', false, 400)
+    throw new ArkmePluginError('boolean-param-required', `${key}必须是布尔值`, false, 400)
   }
   return value
 }
@@ -282,7 +282,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -706,6 +706,14 @@ export async function dispatchArkmeHostOperation(
       visibility: extensionVisibilityParam(params),
       ...(stringParam(params, 'changelog').trim() === '' ? {} : { changelog: stringParam(params, 'changelog') }),
       clientMutationId: stringParam(params, 'clientMutationId'),
+    })
+    case 'extensions.enabled-state': return requireExtensionManager(extensionManager).enabledState(
+      stringParam(params, 'extensionId'),
+    )
+    case 'extensions.enabled.set': return await requireExtensionManager(extensionManager).setEnabled({
+      agent: undefined,
+      extensionId: stringParam(params, 'extensionId'),
+      enabled: requiredBooleanParam(params, 'enabled'),
     })
     case 'extensions.updates': return await requireExtensionManager(extensionManager).updates()
     case 'extensions.install.preview': return await requireExtensionManager(extensionManager).previewInstall(

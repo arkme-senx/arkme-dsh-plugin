@@ -3,7 +3,12 @@ import { registerArkmeExtensionTools } from '../../src/tools/extensions/index.js
 
 describe('Arkme extension tools', () => {
   it('registers the exact MVP surface only for business profiles and asks before writes', async () => {
-    const definitions: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> = []
+    const definitions: Array<{
+      name: string
+      description?: string
+      parameters?: Record<string, unknown>
+      execute?: (args: Record<string, unknown>, exec: Record<string, unknown>) => Promise<unknown>
+    }> = []
     let guard: ((exec: { name: string; arguments: Record<string, unknown> }, next: () => Promise<{ kind: string }>) => Promise<unknown>) | undefined
     const context = {
       tools: { register: vi.fn(definition => { definitions.push(definition) }) },
@@ -13,11 +18,15 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-native', version: '1.0.0', execution_model: 'dsh-native',
       package_name: '@example/native', manifest: { permissions: [] }, revoked: false,
     }))
-    registerArkmeExtensionTools(context as never, { previewInstall } as never, {} as never, 'business')
+    const setEnabled = vi.fn(async () => ({
+      extension_id: 'ext-1', installed: true, enabled: false, active: false,
+      restart_required: true, message: '已关闭',
+    }))
+    registerArkmeExtensionTools(context as never, { previewInstall, setEnabled } as never, {} as never, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect',
-      'arkme_extension_apply', 'arkme_extension_list_mine',
+      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+      'arkme_extension_list_mine', 'arkme_extension_set_enabled',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
     expect(listMine?.description).toContain('current Arkme user')
@@ -40,6 +49,14 @@ describe('Arkme extension tools', () => {
       required: ['extension_id'],
     })
     expect(deleteTool?.description).toContain('explicitly asks to delete it')
+    const enabledTool = definitions.find(item => item.name === 'arkme_extension_set_enabled')
+    await expect(enabledTool?.execute?.(
+      { extension_id: 'ext-1', enabled: false },
+      { agent: { id: 'session-1' } },
+    )).resolves.toContain('"enabled": false')
+    expect(setEnabled).toHaveBeenCalledWith({
+      agent: { id: 'session-1' }, extensionId: 'ext-1', enabled: false,
+    })
     await expect(guard!(
       { name: 'arkme_extension_publish', arguments: {
         owned_ref: 'owned-ref', name: '天气', version: '1.0.0', visibility: 'public',
@@ -68,6 +85,13 @@ describe('Arkme extension tools', () => {
       reason: '确认下载、验签并在当前 DSH 会话应用扩展 ext-native@1.0.0 吗？该扩展是原生 DSH Bundle，将以 DSH 插件进程权限运行。',
     })
     expect(previewInstall).toHaveBeenCalledWith('ext-native', '1.0.0')
+    await expect(guard!(
+      { name: 'arkme_extension_set_enabled', arguments: { extension_id: 'ext-1', enabled: false } },
+      async () => ({ kind: 'allow' }),
+    )).resolves.toEqual({
+      kind: 'ask',
+      reason: '确认关闭已安装扩展 ext-1 吗？扩展和版本会保留，稍后可重新启用。',
+    })
   })
 
   it('does not expose extension writes in atomic or disabled profiles', () => {

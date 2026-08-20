@@ -1,8 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
-  ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter, extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
-  extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, installedExtensionCatalogItem,
+  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle,
+  extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
+  extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateVersionLabel,
+  extensionVersionLabel, installedExtensionCatalogItem,
   extensionNativeInstallWarning, formatExtensionBytes, MyExtensionCard,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
@@ -58,6 +60,29 @@ describe('Arkme extension market UI', () => {
     expect(html).not.toContain('◇')
   })
 
+  it('uses a dark primary action and the shared accessible switch proportions', () => {
+    expect(ARKME_EXTENSION_PRIMARY_ACTION_BG).toContain('#292929')
+    const html = renderToStaticMarkup(<ArkmeExtensionToggle
+      item={{
+        extensionId: 'ext-1', installedVersion: '1.0.0',
+        manifest: {
+          format: 'arkme-cordis-extension', format_version: 1, name: '扩展', description: '', version: '1.0.0',
+          runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: false },
+          permissions: [], entrypoints: { host: 'host.js' },
+        },
+        enabled: true, active: true, permissionSnapshot: [], updateChannel: 'stable',
+        installedAtMillis: 1, lastCheckedAtMillis: 1,
+      }}
+      busy={false}
+      onChange={() => {}}
+    />)
+    expect(html).toContain('role="switch"')
+    expect(html).toContain('aria-checked="true"')
+    expect(html).toContain('width:40px')
+    expect(html).toContain('height:22px')
+    expect(html).toContain('translateX(18px)')
+  })
+
   it('maps real download bytes into the install progress stage', () => {
     expect(extensionInstallPercent({ phase: 'downloading', downloadedBytes: 25, totalBytes: 100 })).toBe(25)
     expect(extensionInstallPercent({ phase: 'downloading', downloadedBytes: 100, totalBytes: 100 })).toBe(75)
@@ -71,9 +96,25 @@ describe('Arkme extension market UI', () => {
     expect(extensionCatalogAction({ latest_stable_version: '1.0.0' }, undefined, true))
       .toEqual({ label: '安装', disabled: false })
     expect(extensionCatalogAction({ latest_stable_version: '1.0.0' }, '1.0.0'))
-      .toEqual({ label: '卸载', disabled: false })
+      .toEqual({ label: '已安装', disabled: true })
     expect(extensionCatalogAction({ latest_stable_version: '1.1.0' }, '1.0.0'))
       .toEqual({ label: '更新', disabled: false })
+  })
+
+  it('keeps installed and latest versions visible independently from update status', () => {
+    expect(extensionVersionLabel({ latest_stable_version: '1.2.3' })).toBe('v1.2.3')
+    expect(extensionVersionLabel({ version: '2.0.0', latest_stable_version: '1.2.3' })).toBe('v2.0.0')
+    expect(extensionUpdateVersionLabel({
+      extension_id: 'ext-1', installed_version: '1.0.0', latest_version: '1.1.0',
+      update_available: true, revoked: false,
+    })).toBe('v1.0.0 → v1.1.0')
+    expect(extensionUpdateVersionLabel({
+      extension_id: 'ext-1', installed_version: '1.1.0', latest_version: '1.1.0',
+      update_available: false, revoked: false,
+    })).toBe('v1.1.0 · 已是最新')
+    expect(extensionUpdateVersionLabel({
+      extension_id: 'ext-1', installed_version: '1.1.0', update_available: false, revoked: false,
+    })).toBe('当前 v1.1.0 · 暂无法确认最新版本')
   })
 
   it('starts list installation from the exact item without requiring detail navigation', () => {
@@ -103,7 +144,7 @@ describe('Arkme extension market UI', () => {
 
   it('projects installed extensions into the same catalog card contract', () => {
     expect(installedExtensionCatalogItem({
-      extensionId: 'ext-1', installedVersion: '1.0.0', artifactSha256: 'sha', artifactPath: '/tmp/ext',
+      extensionId: 'ext-1', installedVersion: '1.0.0',
       manifest: {
         format: 'arkme-cordis-extension', format_version: 1, name: '统一卡片', description: '同一种展示与点击入口',
         version: '1.0.0', runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: false },

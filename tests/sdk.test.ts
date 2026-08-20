@@ -18,6 +18,29 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('exposes installed extensions and desired enable state without raw Profile paths', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'extensions.installed-list') return success([])
+        if (request.operation === 'extensions.enabled.set') return success({
+          extension_id: 'ext-1', installed: true, enabled: false, active: false,
+          restart_required: true, message: '已关闭',
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.installedExtensions()).resolves.toEqual([])
+    await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({ enabled: false })
+    expect(calls).toEqual([
+      { operation: 'extensions.installed-list' },
+      { operation: 'extensions.enabled.set', params: { extensionId: 'ext-1', enabled: false } },
+    ])
+  })
+
   it('binds the default browser fetch to the global receiver', async () => {
     const originalFetch = globalThis.fetch
     const receiverFetch = vi.fn(function (this: unknown) {
@@ -50,6 +73,7 @@ describe('Arkme SDK', () => {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
+              extensionManagement: true,
             },
             limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
           })
@@ -77,7 +101,7 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true },
+      features: { outgoingCall: true, extensionManagement: true },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
     await expect(sdk.profile({ refresh: true })).resolves.toMatchObject({

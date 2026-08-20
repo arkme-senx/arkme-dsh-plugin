@@ -5,12 +5,18 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { sha256Hex, unpackArkmeExtension } from './artifact.js'
 import { verifyExtensionResolutionSignature } from './signature.js'
 import {
-  ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION, type ArkmePersistentInstallation,
+  ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION, readPersistentExtensionActivation, type ArkmePersistentInstallation,
 } from './persistent-bundle.js'
 
 type PersistentHandler = (args: unknown) => unknown | Promise<unknown>
 const persistentHandlers = new Map<string, Map<string, PersistentHandler>>()
-const persistentFibers = new Map<string, Fiber>()
+interface PersistentRuntimeRegistration {
+  ctx: Context
+  installationUrl: URL
+  fiber?: Fiber
+  handlers?: Map<string, PersistentHandler>
+}
+const persistentRegistrations = new Map<string, PersistentRuntimeRegistration>()
 const VM_TIMEOUT_MS = 5_000
 
 function readInstallation(url: URL): ArkmePersistentInstallation {
@@ -127,8 +133,11 @@ function guardPlugin(plugin: Plugin): Plugin {
   return { ...plugin, apply: (ctx: Context, config?: unknown) => objectPlugin.apply(guardedContext(ctx), config) }
 }
 
-export async function applyPersistentArkmeHostExtension(ctx: Context, installationUrl: URL): Promise<void> {
-  const installation = readInstallation(installationUrl)
+async function mountPersistentArkmeHostExtension(
+  installation: ArkmePersistentInstallation,
+  registration: PersistentRuntimeRegistration,
+): Promise<boolean> {
+  if (registration.fiber !== undefined) return true
   const bytes = new Uint8Array(readFileSync(installation.artifact_path))
   if (sha256Hex(bytes) !== installation.artifact_sha256) throw new Error('persistent extension artifact checksum mismatch')
   const unpacked = unpackArkmeExtension(bytes)
@@ -145,9 +154,10 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
     signing_key_id: installation.signing_key_id,
     signature: installation.signature,
   }, new Map([[installation.signing_key_id, installation.trusted_public_key]]))
-  if (unpacked.hostCode === undefined) return
+  if (unpacked.hostCode === undefined) return false
   const handlers = new Map<string, PersistentHandler>()
   persistentHandlers.set(installation.extension_id, handlers)
+  registration.handlers = handlers
   const handle = (methodValue: unknown, fnValue: unknown): (() => void) => {
     const method = typeof methodValue === 'string' ? methodValue.trim() : ''
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(method) || typeof fnValue !== 'function') {
@@ -157,27 +167,65 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
     handlers.set(method, fn)
     return () => { if (handlers.get(method) === fn) handlers.delete(method) }
   }
-  ctx.effect(() => () => {
+  try {
+    const evaluated = await evaluateHost(unpacked.hostCode, installation.extension_id, handle)
+    if (!pluginValue(evaluated)) throw new Error('persistent extension host.js did not return a Cordis plugin')
+    const fiber = registration.ctx.plugin(guardPlugin(evaluated))
+    await fiber
+    registration.fiber = fiber
+    return true
+  } catch (error) {
     if (persistentHandlers.get(installation.extension_id) === handlers) persistentHandlers.delete(installation.extension_id)
-  }, `arkme-extension:${installation.extension_id}:handlers`)
-  const evaluated = await evaluateHost(unpacked.hostCode, installation.extension_id, handle)
-  if (!pluginValue(evaluated)) throw new Error('persistent extension host.js did not return a Cordis plugin')
-  const fiber = ctx.plugin(guardPlugin(evaluated))
-  await fiber
-  persistentFibers.set(installation.extension_id, fiber)
+    delete registration.handlers
+    throw error
+  }
+}
+
+export async function applyPersistentArkmeHostExtension(ctx: Context, installationUrl: URL): Promise<void> {
+  const installation = readInstallation(installationUrl)
+  const previous = persistentRegistrations.get(installation.extension_id)
+  if (previous?.ctx === ctx && previous.installationUrl.href === installationUrl.href) return
+  if (previous !== undefined) {
+    await deactivatePersistentArkmeExtension(installation.extension_id)
+  }
+  const registration: PersistentRuntimeRegistration = { ctx, installationUrl }
+  persistentRegistrations.set(installation.extension_id, registration)
   ctx.effect(() => () => {
-    if (persistentFibers.get(installation.extension_id) === fiber) persistentFibers.delete(installation.extension_id)
-  }, `arkme-extension:${installation.extension_id}:active-state`)
+    if (persistentRegistrations.get(installation.extension_id) !== registration) return
+    persistentRegistrations.delete(installation.extension_id)
+    persistentHandlers.delete(installation.extension_id)
+  }, `arkme-extension:${installation.extension_id}:registration`)
+  ctx.effect(() => () => {
+    if (persistentHandlers.get(installation.extension_id) === registration.handlers) {
+      persistentHandlers.delete(installation.extension_id)
+    }
+  }, `arkme-extension:${installation.extension_id}:handlers`)
+  const activation = readPersistentExtensionActivation(installationUrl)
+  if (activation.extension_id !== installation.extension_id) {
+    throw new Error('Arkme persistent extension activation identity mismatch')
+  }
+  if (!activation.enabled) return
+  await mountPersistentArkmeHostExtension(installation, registration)
 }
 
 export function persistentArkmeExtensionActive(extensionId: string): boolean {
-  return persistentFibers.has(extensionId)
+  return persistentRegistrations.get(extensionId)?.fiber !== undefined
+}
+
+/** Re-mount a verified Host half when its wrapper is already present in the current DSH process. */
+export async function activatePersistentArkmeExtension(extensionId: string): Promise<boolean> {
+  const registration = persistentRegistrations.get(extensionId)
+  if (registration === undefined) return false
+  return await mountPersistentArkmeHostExtension(readInstallation(registration.installationUrl), registration)
 }
 
 export async function deactivatePersistentArkmeExtension(extensionId: string): Promise<void> {
-  const fiber = persistentFibers.get(extensionId)
-  if (fiber === undefined) return
-  persistentFibers.delete(extensionId)
+  const registration = persistentRegistrations.get(extensionId)
+  if (registration === undefined || registration.fiber === undefined) return
+  const fiber = registration.fiber
+  delete registration.fiber
+  persistentHandlers.delete(extensionId)
+  delete registration.handlers
   await fiber.dispose()
 }
 
