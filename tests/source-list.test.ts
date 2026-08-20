@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
-import { arkmeSourceTimeLabel, sortArkmeSources } from '../src/client/source-list.js'
+import {
+  arkmeSelfDirectorySources, arkmeSourceTimeLabel, isArkmeSelfWorkspaceSource, sortArkmeSources,
+} from '../src/client/source-list.js'
 
 function source(
   sourceRef: string,
@@ -21,6 +23,21 @@ function source(
 }
 
 describe('Arkme send-to-self source list', () => {
+  it('keeps the aggregate selected in the left navigation while excluding it from category rows', () => {
+    const aggregate = { ...source('aggregate', '发给自己', 0, 0), kind: 'send_to_self' as const }
+    const defaultCategory = { ...source('default', '默认分类', 0, 0), kind: 'default_category' as const }
+    const topic = source('topic', '工作', 0, 0)
+    const chat = { ...source('chat', '联系人', 0, 0), kind: 'private_chat' as const }
+
+    expect(isArkmeSelfWorkspaceSource(undefined)).toBe(true)
+    expect(isArkmeSelfWorkspaceSource(aggregate)).toBe(true)
+    expect(isArkmeSelfWorkspaceSource(defaultCategory)).toBe(true)
+    expect(isArkmeSelfWorkspaceSource(topic)).toBe(true)
+    expect(isArkmeSelfWorkspaceSource(chat)).toBe(false)
+    expect(arkmeSelfDirectorySources([aggregate, defaultCategory, topic]).map(item => item.displayName))
+      .toEqual(['默认分类', '工作'])
+  })
+
   it('globally sorts parents and children for card modes without mutating its input', () => {
     const sources = [
       source('parent', 'Beta', 20, 5),

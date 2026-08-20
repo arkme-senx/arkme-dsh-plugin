@@ -21,7 +21,10 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
-import { arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
+import {
+  arkmeSelfDirectorySources, arkmeSourceTimeLabel, isArkmeSelfWorkspaceSource,
+  sortArkmeSources, type ArkmeSourceSort,
+} from './source-list.js'
 import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
 import {
   ARKO_CONVERSATION_PREVIEW_FALLBACK,
@@ -340,10 +343,6 @@ function timeLabel(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)
 }
 
-function isSendToSelfSource(source: ArkmeSourceItem | undefined): boolean {
-  return source?.kind === 'default_category' || source?.kind === 'topic'
-}
-
 export interface ArkmeTopicTreeRowProps {
   row: ArkmeSourceTreeRow
   selected: boolean
@@ -591,9 +590,9 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   const createdHighlightTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const createdHighlightFramesRef = useRef<number[]>([])
   const auth = authState.auth
-  const [directory, setDirectory] = useState<ArkmeSourceDirectory>(initialCache?.directory ?? 'send_to_self')
+  const [directory, setDirectory] = useState<ArkmeSourceDirectory>('root')
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
-    initialCache?.sources[initialCache.directory] ?? [],
+    initialCache?.sources.root ?? [],
   )
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('default')
@@ -626,14 +625,18 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   const arkoLatestPreview = arkoPreviewSnapshot.userId === auth?.userId
     ? arkoPreviewSnapshot.latestPreview
     : undefined
-  const sourceTree = useMemo(() => buildArkmeSourceTree(sources), [sources])
+  const directorySources = useMemo(
+    () => arkmeSelfDirectorySources(sources),
+    [sources],
+  )
+  const sourceTree = useMemo(() => buildArkmeSourceTree(directorySources), [directorySources])
   const visibleSourceRows = useMemo(
     () => flattenVisibleArkmeSourceTree(sourceTree, collapsedSourceRefs),
     [collapsedSourceRefs, sourceTree],
   )
   const cardSources = useMemo(
-    () => sourceSort === 'default' ? [] : sortArkmeSources(sources, sourceSort),
-    [sourceSort, sources],
+    () => sourceSort === 'default' ? [] : sortArkmeSources(directorySources, sourceSort),
+    [directorySources, sourceSort],
   )
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
@@ -650,22 +653,25 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   const persistCache = useCallback((patch: {
     directory?: ArkmeSourceDirectory
     sources?: Partial<Record<ArkmeSourceDirectory, ArkmeSourceItem[]>>
-    selectedSourceRef?: string
+    selectedSourceRef?: string | null
   }) => {
     const userId = authenticatedUserIdRef.current
     if (userId === undefined) return
     const current = cacheRef.current?.userId === userId
       ? cacheRef.current
-      : { version: 1, userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0 } satisfies ArkmeNavigationCache
-    const next: ArkmeNavigationCache = {
+      : { version: 1, userId, directory: 'root', sources: {}, updatedAtMillis: 0 } satisfies ArkmeNavigationCache
+    const nextWithSelection: ArkmeNavigationCache = {
       ...current,
       directory: patch.directory ?? current.directory,
       sources: { ...current.sources, ...patch.sources },
       updatedAtMillis: Date.now(),
       ...(patch.selectedSourceRef === undefined
         ? (current.selectedSourceRef === undefined ? {} : { selectedSourceRef: current.selectedSourceRef })
-        : { selectedSourceRef: patch.selectedSourceRef }),
+        : patch.selectedSourceRef === null ? {} : { selectedSourceRef: patch.selectedSourceRef }),
     }
+    const next = patch.selectedSourceRef === null
+      ? (({ selectedSourceRef: _selectedSourceRef, ...cache }) => cache)(nextWithSelection)
+      : nextWithSelection
     cacheRef.current = next
     writeNavigationCache(next)
   }, [])
@@ -678,7 +684,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
         cacheRef.current = undefined
         clearLastNavigationCache()
         arkmeChatDirectory.activateAccount(undefined)
-        setDirectory('send_to_self'); setSources([])
+        setDirectory('root'); setSources([])
         return
       }
     arkmeChatDirectory.activateAccount(snapshot.userId)
@@ -686,12 +692,12 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     avatarCacheUserIdRef.current = snapshot.userId
     authenticatedUserIdRef.current = snapshot.userId
     const cached = readNavigationCache(snapshot.userId) ?? {
-      version: 1, userId: snapshot.userId, directory: 'send_to_self', sources: {}, updatedAtMillis: 0,
+      version: 1, userId: snapshot.userId, directory: 'root', sources: {}, updatedAtMillis: 0,
     } satisfies ArkmeNavigationCache
     cacheRef.current = cached
     writeNavigationCache(cached)
-    setDirectory(cached.directory)
-    setSources(cached.sources[cached.directory] ?? [])
+    setDirectory('root')
+    setSources(cached.sources.root ?? [])
   }, [])
 
   const loadDirectory = useCallback(async (
@@ -733,7 +739,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko' || uiSnapshot.mode === 'search'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
-        ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'default_category') : undefined)
+        ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
       if (restored !== undefined) arkmeUi.selectSource(restored)
       persistCache({
         directory: next,
@@ -814,10 +820,10 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   }, [authenticated, chatDirectory, directory, persistCache, ui.mode])
   useEffect(() => {
     if (!authenticated || directory !== 'send_to_self') return
-    const defaultCategory = sources.find(source => source.kind === 'default_category')
-    if (defaultCategory !== undefined && !isSendToSelfSource(ui.selectedSource)) {
-      arkmeUi.selectSource(defaultCategory)
-      persistCache({ directory, selectedSourceRef: defaultCategory.sourceRef })
+    const aggregateSource = sources.find(source => source.kind === 'send_to_self')
+    if (aggregateSource !== undefined && !isArkmeSelfWorkspaceSource(ui.selectedSource)) {
+      arkmeUi.selectSource(aggregateSource)
+      persistCache({ directory, selectedSourceRef: aggregateSource.sourceRef })
       onActivateSurface?.()
     }
   }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
@@ -1022,20 +1028,23 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
           </span>
         </button>}
         <button
-          type="button" role="treeitem" aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
-          style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
+          type="button" role="treeitem"
+          aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}
+          style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={() => {
-            changeDirectory('send_to_self')
-            if (ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)) onActivateSurface?.()
+            activateNativeEntry()
+            arkmeUi.focusSendToSelf()
+            persistCache({ directory: 'root', selectedSourceRef: null })
+            onActivateSurface?.()
           }}
         >
           <SelfAvatar />
           <span style={styles.chatContent}>
             <span style={styles.chatTop}>
               <span style={styles.entryName}>发给自己</span>
-              <ArkmeTopicTagBadge label="私密" selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)} />
+              <ArkmeTopicTagBadge label="私密" selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)} />
             </span>
-            <span style={styles.chatBottom}><span style={styles.preview}>默认分类与主题</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
         </button>
         <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />

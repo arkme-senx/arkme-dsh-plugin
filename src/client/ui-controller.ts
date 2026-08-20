@@ -52,12 +52,15 @@ export class ArkmeUiController {
     this.publish({ ...this.state, open: false, surfaceOpen: false })
   }
 
-  authChanged(authenticated = false): void {
+  authChanged(authenticated = false, resetSelection = false): void {
     if (authenticated) {
+      const { selectedSource: _selectedSource, ...stateWithoutSelection } = this.state
+      const state = resetSelection ? stateWithoutSelection : this.state
       this.publish({
-        ...this.state,
+        ...state,
         open: true,
         surfaceOpen: true,
+        mode: state.mode === 'login' ? 'source' : state.mode,
         authRevision: this.state.authRevision + 1,
       })
       return

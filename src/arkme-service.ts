@@ -799,7 +799,8 @@ function decodeOpaqueJson(value: string): unknown {
 }
 
 function isSourceKind(value: unknown): value is ArkmeSourceKind {
-  return value === 'default_category' || value === 'topic' || value === 'private_chat' || value === 'group_chat'
+  return value === 'send_to_self' || value === 'default_category' || value === 'topic'
+    || value === 'private_chat' || value === 'group_chat'
 }
 
 function textPreview(raw: Record<string, unknown>): string {
@@ -2525,6 +2526,13 @@ export class ArkmeService {
         ...(defaultLatestPreview === '' ? {} : { latestPreview: defaultLatestPreview }),
         ...(defaultRecordCount === undefined ? {} : { recordCount: defaultRecordCount }),
       }
+      const aggregateSource: ArkmeSourceItem = {
+        sourceRef: await this.sealSourceRef(session.userId, 'send_to_self', 'all', '发给自己'),
+        kind: 'send_to_self',
+        displayName: '发给自己',
+        activeAtMillis: 0,
+        unreadCount: 0,
+      }
       const topicDescriptors: Array<{
         topicUid: string
         parentTopicUid?: string
@@ -2591,7 +2599,7 @@ export class ArkmeService {
           recordCount: topic.recordCount,
         }
       })
-      return { directory, items: [defaultCategory, ...topics], hasMore: false }
+      return { directory, items: [aggregateSource, defaultCategory, ...topics], hasMore: false }
     }
     if (directory !== 'root') throw new ArkmePluginError('source-directory-invalid', 'Arkme 数据源目录无效', false)
     const pageCursor = options.cursor === undefined || options.cursor.trim() === ''
@@ -3529,6 +3537,39 @@ export class ArkmeService {
     const session = await this.requireSession()
     const source = await this.openSourceRef(sourceRef, session.userId)
     const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
+    if (source.kind === 'send_to_self') {
+      const data = await this.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/home/feed/query',
+        {
+          limit,
+          source_kinds: [1, 2],
+          ...(options.cursor?.sendAtMillis === undefined ? {} : { cursor_send_at: options.cursor.sendAtMillis }),
+          ...(options.cursor?.itemUid === undefined ? {} : { cursor_record_uid: options.cursor.itemUid }),
+        },
+        session,
+        options.signal,
+      )
+      const rawRecords = listValue(data.items)
+      const media = await this.hydrateRecordMediaPage(rawRecords, session, options.signal)
+      const items = rawRecords.map(raw => {
+        const recordUid = this.recordUid(raw)
+        const displayItems = media.displayItemsByRecordUid.get(recordUid)
+        return this.recordTimelineItemFromRaw(raw, session.userId, {
+          ...(displayItems === undefined ? {} : { displayItems }),
+          mediaUnavailable: media.unavailableRecordUids.has(recordUid),
+        })
+      }).filter(item => item.itemUid !== '')
+      const nextSendAt = numberValue(data.next_cursor_send_at)
+      const nextUid = stringValue(data.next_cursor_record_uid).trim()
+      return {
+        source: await this.sourceItem(source),
+        items,
+        hasMore: data.has_more === true,
+        ...(nextSendAt > 0 && nextUid !== '' ? {
+          nextCursor: { sendAtMillis: nextSendAt, itemUid: nextUid },
+        } : {}),
+      }
+    }
     if (source.kind === 'default_category') {
       const page = await this.list(limit, options.cursor?.sendAtMillis !== undefined && options.cursor.itemUid !== undefined
         ? { sendAtMillis: options.cursor.sendAtMillis, recordUid: options.cursor.itemUid }
@@ -3925,7 +3966,7 @@ export class ArkmeService {
       throw new ArkmePluginError('source-text-invalid', '发送内容为空或超过长度限制', false)
     }
     const recordUid = options.recordUid?.trim() || crypto.randomUUID()
-    if (source.kind === 'default_category') {
+    if (source.kind === 'send_to_self' || source.kind === 'default_category') {
       const result = await this.createTextForConversation(recordUid, text)
       return {
         sourceRef,
@@ -4201,7 +4242,7 @@ export class ArkmeService {
       ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
       send_at: Date.now(),
     }
-    if (source.kind === 'default_category') {
+    if (source.kind === 'send_to_self' || source.kind === 'default_category') {
       const result = await this.authenticatedPost<Record<string, unknown>>('/api/v1/records/create', commonBody, session)
       return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
     }

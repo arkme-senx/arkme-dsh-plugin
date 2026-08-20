@@ -377,7 +377,7 @@ export interface ArkmeIdMutationResult {
   revision: number
 }
 
-export type ArkmeSourceKind = 'default_category' | 'topic' | 'private_chat' | 'group_chat'
+export type ArkmeSourceKind = 'send_to_self' | 'default_category' | 'topic' | 'private_chat' | 'group_chat'
 export type ArkmeSourceDirectory = 'root' | 'send_to_self'
 
 export type ArkmeGroupAvatarFallback =

@@ -12,6 +12,17 @@ function compareNames(left: ArkmeSourceItem, right: ArkmeSourceItem): number {
   return nameCollator.compare(left.displayName, right.displayName)
 }
 
+/** The left "发给自己" entry owns the aggregate and every personal subview beneath it. */
+export function isArkmeSelfWorkspaceSource(source: ArkmeSourceItem | undefined): boolean {
+  return source === undefined || source.kind === 'send_to_self'
+    || source.kind === 'default_category' || source.kind === 'topic'
+}
+
+/** The aggregate is a timeline target, not a category row inside the directory popover. */
+export function arkmeSelfDirectorySources(sources: readonly ArkmeSourceItem[]): ArkmeSourceItem[] {
+  return sources.filter(source => source.kind !== 'send_to_self')
+}
+
 /** Sort a flat source snapshot without mutating the provider-owned order. */
 export function sortArkmeSources(
   sources: readonly ArkmeSourceItem[],

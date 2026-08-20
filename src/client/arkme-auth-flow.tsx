@@ -176,7 +176,9 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
   const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth, phoneBindingGate)
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot, acceptOptions: { forcePhoneCheck?: boolean } = {}) => {
-    const previousStatus = arkmeAuthStore.getSnapshot().auth?.status
+    const previous = arkmeAuthStore.getSnapshot().auth
+    const accountChanged = snapshot.status === 'authenticated'
+      && (previous?.status !== 'authenticated' || previous.userId !== snapshot.userId)
     arkmeAuthStore.setAuth(snapshot)
     if (snapshot.status === 'binding-required') {
       checkedUserIdRef.current = snapshot.userId
@@ -193,7 +195,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       return
     }
     bindingNotifiedUserIdRef.current = undefined
-    if (snapshot.status === 'authenticated' && previousStatus !== 'authenticated') arkmeUi.authChanged(true)
+    if (accountChanged) arkmeUi.authChanged(true, true)
     if (acceptOptions.forcePhoneCheck === true || snapshot.status !== 'authenticated'
       || checkedUserIdRef.current !== snapshot.userId) {
       checkedUserIdRef.current = snapshot.status === 'authenticated' ? snapshot.userId : undefined
