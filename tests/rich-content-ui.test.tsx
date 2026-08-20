@@ -1,27 +1,38 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeImagePreviewDragPosition, arkmeNextImagePreviewScale } from '../src/client/ArkmeRichContent.js'
+import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewDragTop, arkmeNextImagePreviewMode } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
 import { arkmeClipboardImageFiles } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
-  it('keeps the preview scrollable at 1x so portrait images preserve their natural height', () => {
+  it('contains the whole image initially and exposes fixed-width zoom without horizontal overflow', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
     expect(html).toContain('data-arkme-image-preview-viewport="true"')
-    expect(html).toContain('data-arkme-image-preview-scale="1"')
-    expect(html).toContain('overflow:auto')
+    expect(html).toContain('data-arkme-image-preview-mode="contained"')
+    expect(html).toContain('overflow-x:hidden')
+    expect(html).toContain('overflow-y:hidden')
     expect(html).toContain('overscroll-behavior:contain')
-    expect(html).toContain('width:100%;min-height:100%')
-    expect(html).toContain('width:100%;height:auto')
-    expect(html).toContain('title="双击放大图片"')
-    expect(arkmeNextImagePreviewScale(1)).toBe(2)
-    expect(arkmeNextImagePreviewScale(2)).toBe(1)
+    expect(html).toContain('width:100%;height:100%;overflow:hidden')
+    expect(html).toContain('width:100%;height:100%;object-fit:contain')
+    expect(html).toContain('title="双击铺满宽度"')
+    expect(arkmeNextImagePreviewMode('contained')).toBe('width')
+    expect(arkmeNextImagePreviewMode('width')).toBe('contained')
   })
 
-  it('moves a scrollable image viewport opposite to the pointer drag at any scale', () => {
-    expect(arkmeImagePreviewDragPosition({ clientX: 400, clientY: 500, scrollLeft: 80, scrollTop: 120 }, 340, 300))
-      .toEqual({ left: 140, top: 320 })
+  it('moves only the vertical viewport opposite to pointer drag and anchors width zoom at the double-click point', () => {
+    expect(arkmeImagePreviewDragTop({ clientY: 500, scrollTop: 120 }, 300)).toBe(320)
+    expect(arkmeImagePreviewAnchoredTop(0.75, 2400, 300)).toBe(1500)
+    expect(arkmeImagePreviewAnchoredTop(-1, 2400, 300)).toBe(0)
+  })
+
+  it('matches the client contained scale for a portrait image without cropping', () => {
+    expect(arkmeContainedImageRect(960, 720, 720, 3000)).toEqual({
+      left: 393.6,
+      top: 0,
+      width: 172.79999999999998,
+      height: 720,
+    })
   })
 
   it('renders image, video, audio, file, and long-article content through local media refs', () => {
