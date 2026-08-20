@@ -169,6 +169,9 @@ function fakeService(): ArkmeCoreToolPorts & {
       source: { sourceRef, kind: 'private_chat' as const, displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
       items: [], hasMore: false,
     })),
+    reportMessage: vi.fn(async (messageRef: string, _reportType: 1 | 2 | 3 | 4) => ({
+      messageRef, reportUid: 'report-1', status: 1,
+    })),
     sendSourceText: vi.fn(async (sourceRef: string, _text: string, options?: { recordUid?: string }) => ({
       sourceRef, itemUid: options?.recordUid ?? 'record-1', status: 1, localState: 'synced' as const,
     })),
@@ -563,6 +566,26 @@ describe('Arkme conversation tools', () => {
       recordUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
       relationUid: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }))
+  })
+
+  it('reports only an opaque message reference with a stable retry identity', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_message_report')!
+    const callId = 'report-call-1'
+
+    const output = await tool.execute(
+      { message_ref: 'opaque-message-1', category: 'illegal', reason: '用户明确说明' },
+      { callId, signal: new AbortController().signal } as never,
+    )
+
+    expect(output).toContain('"accepted": true')
+    expect(output).not.toContain('report-1')
+    expect(output).not.toContain('opaque-message-1')
+    expect(service.reportMessage).toHaveBeenCalledWith('opaque-message-1', 2, {
+      reason: '用户明确说明',
+      requestUid: stableUidForToolCall('message-report', callId),
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it('generates a group polish rule without writing and enables only with its confirmation reference', async () => {

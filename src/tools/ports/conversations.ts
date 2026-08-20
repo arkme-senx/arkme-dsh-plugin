@@ -1,6 +1,6 @@
 import type {
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
-  ArkmeGroupAiPolishSnapshot, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
+  ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
   ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
 } from '../../types.js'
 
@@ -40,6 +40,12 @@ export interface ArkmeConversationToolPort {
       signal?: AbortSignal
     },
   ): Promise<ArkmeDirectTextSendResult>
+  /** Report one concrete group-chat message selected from readSource output. */
+  reportMessage(
+    messageRef: string,
+    reportType: 1 | 2 | 3 | 4,
+    options?: { reason?: string; requestUid?: string; signal?: AbortSignal },
+  ): Promise<ArkmeMessageReportResult>
   inspectGroupAiPolishByName(
     groupName: string,
     options?: { signal?: AbortSignal },

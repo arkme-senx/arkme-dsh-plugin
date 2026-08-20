@@ -29,7 +29,7 @@
         updateChannel: stable
         updateRegistryUrl: https://registry.npmjs.org
         updateCheckIntervalHours: 12
-        updateAllowLocalInstall: false
+        updateAllowLocalInstall: true
         richMediaRenderEnabled: true
         richMediaSendEnabled: true
         maxUploadBytes: 104857600

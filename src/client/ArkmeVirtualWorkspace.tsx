@@ -884,7 +884,10 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     persistCache({ directory: next })
   }
   const selectSource = (source: ArkmeSourceItem) => {
-    arkmeUi.selectSource(source)
+    const optimisticRead = (source.kind === 'private_chat' || source.kind === 'group_chat')
+      && source.unreadCount > 0
+      && arkmeChatDirectory.markReadOptimistic(source, source.sourceKey, source.latestSequence ?? 0, directory === 'root' ? sources : [])
+    arkmeUi.selectSource(optimisticRead ? { ...source, unreadCount: 0 } : source)
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
   }

@@ -53,7 +53,7 @@ DSH_HOME=<arkme-dsh-home> dsh web --port 3081
 
 Web App 每次首次进入或从后台重新变为可见时都会请求插件 Host 检查 npm Registry，不受上次成功结果的 12 小时缓存限制；Host 只对 60 秒内的重复进入做突发限流，并继续每 12 小时为长期运行实例执行后台检查。更新检查不依赖 Arkme 登录，也不会发送账号、Token、设备 ID 或业务数据。发现新版本后，侧边栏 Arkme 行会直接出现紧凑“更新”按钮；设置页账号行标题显示当前安装版本，例如 `Arkme v0.1.2`。离线或检查失败时保留最后一次成功结果，不会把失败误报成“已是最新版”。
 
-Registry 安装的插件会提供“立即更新并重启”：当前 DSH 启动一个独立 updater 后退出，updater 调用 DSH 官方插件 CLI、保留完整 Node `execArgv` 与应用参数重启并执行健康检查；新版本启动失败时自动恢复旧版本。本地 `link:`/`file:` 开发安装不会被覆盖，只显示下面的固定兜底命令：
+Registry 和本地 `link:`/`file:` 开发安装都会提供“立即更新并重启”：当前 DSH 启动一个独立 updater 后退出，updater 调用 DSH 官方插件 CLI、保留完整 Node `execArgv` 与应用参数重启并执行健康检查；新版本启动失败时自动恢复旧版本。开发安装点击更新后只把 Profile 依赖切换到 Registry 新版本，不修改本地 checkout。固定兜底命令为：
 
 ```sh
 dsh plugin --profile web up @senguoyun/dsh-arkme --latest
@@ -74,6 +74,8 @@ dsh plugin --profile web up @senguoyun/dsh-arkme --latest
 验签成功后，Arkme 会从不可变 `.arkext` 生成一个位于当前 DSH Profile 下的本地 Bundle，并通过官方 `dsh plugin --profile web add link:<bundle>` 写入 `dependencies` 与 `dsh.profile.bundles`。独立助手随后重启 DSH，并以原生插件列表中的 Loader 状态和 Arkme 持久运行态完成健康检查；启动失败会自动恢复旧 Bundle。成功重启后扩展由 Profile/Loader 加载，不再占用 Dynamic Cordis 列表。卸载执行相反事务，确认新进程不再加载后再清理 Bundle 与制品。
 
 Arkme 不修改 DSH，也不选择或打包 pnpm。执行 Profile 变更前，它优先使用 Profile 的 `packageManager`；旧 Profile 缺失时，只从 pnpm 生成的 `node_modules/.modules.yaml` 安装元数据回填精确版本，再确认用户 PATH 中的 pnpm 能按该声明解析。校验失败发生在依赖修改或 DSH 停止之前。扩展 Bundle 仍由 Arkme 完成摘要、平台签名和运行时兼容性校验。
+
+本地扩展 Bundle 的安装、卸载和回滚不会解析新的 Registry 版本，因此 Arkme 只为这些固定命令传入 `--config.minimum-release-age=0`，避免刚更新的 Profile 依赖阻断无关的本地扩展操作；pnpm 仍执行其余 lockfile 供应链校验。Registry 插件更新不使用该参数。
 
 ## 私聊主动呼叫
 

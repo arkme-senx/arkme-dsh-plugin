@@ -53,9 +53,9 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.6 更新",
-      "summary": "修复每次进入 App 的更新检查与自动升级，并解除扩展安装的对话限制。",
-      "publishedAt": "2026-08-19T12:57:17.000Z",
+      "title": "Arkme 插件 0.1.8 更新",
+      "summary": "新增桌面启动认证门禁和本地开发版本更新入口，并修复新版本策略误阻断扩展操作。",
+      "publishedAt": "2026-08-20T03:04:20.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },

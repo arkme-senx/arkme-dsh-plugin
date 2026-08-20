@@ -28,7 +28,7 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_publish',
-    description: 'Publish one exact, already-generated Dynamic Cordis Package to the Arkme extension center. Use only after the current human explicitly asks to publish. This tool does not generate or modify code. MVP permissions are always an empty list; do not infer, invent, or retry permission names. If artifact validation fails, use the exact returned validation message to correct the Dynamic Cordis Package first; do not retry the unchanged package.',
+    description: 'Publish one exact, already-generated Dynamic Cordis Package to the Arkme extension center. This publishing flow requires DSH >= 0.1.0-rc.7; if the current DSH is older, ask the user to upgrade DSH before generating or uploading and do not attempt publication. Use only after the current human explicitly asks to publish. This tool does not generate or modify code. MVP permissions are always an empty list; do not infer, invent, or retry permission names. If artifact validation fails, use the exact returned validation message to correct the Dynamic Cordis Package first; do not retry the unchanged package.',
     parameters: {
       plugin_id: { type: 'string', required: true, description: 'Exact Dynamic Cordis plugin_id from DSH.' },
       package_id: { type: 'string', required: true, description: 'Exact immutable Dynamic Cordis package_id to publish.' },

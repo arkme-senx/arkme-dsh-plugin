@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
+function installDesktopGateMarker(): () => void {
+  const previousWindow = globalThis.window
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { arkmeDesktop: Object.freeze({ startupAuthGate: true }) },
+  })
+  return () => {
+    if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
+    else Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
+  }
+}
+
 describe('official DSH client adapter', () => {
   it('keeps the native conversation mounted while the Footer owns a floating Arkme surface', () => {
     const registered: Array<{ name: string; id?: string; inject?: () => unknown }> = []
@@ -49,5 +61,29 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
     expect(registered.map(item => item.name)).not.toContain('main.surface')
     expect(registered.map(item => item.name)).not.toContain('shell.overlay')
+  })
+
+  it('registers the startup authentication overlay only in the Arkme desktop shell', () => {
+    const restoreWindow = installDesktopGateMarker()
+    const registered: Array<{ name: string; id?: string }> = []
+    const inject = vi.fn((_key: string, register: () => unknown) => {
+      register()
+      return () => {}
+    })
+    const register = vi.fn((options: { name: string; id?: string }) => {
+      registered.push(options)
+      return vi.fn()
+    })
+
+    try {
+      apply({ slots: { inject, register }, effect: vi.fn() } as never)
+    } finally {
+      restoreWindow()
+    }
+
+    expect(registered).toContainEqual(expect.objectContaining({
+      name: 'shell.overlay',
+      id: 'arkme-startup-auth-gate',
+    }))
   })
 })

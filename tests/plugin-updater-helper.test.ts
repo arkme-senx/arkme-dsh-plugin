@@ -110,7 +110,7 @@ describe('companion plugin updater', () => {
     expect(spawnUpdater).toHaveBeenCalledOnce()
   })
 
-  it('blocks local link installs instead of overwriting a checkout', async () => {
+  it('shows in-app update for a local link without modifying the checkout', async () => {
     const fixture = await runtimeFixture('link:/tmp/plugin-checkout')
     const manager = new ArkmePluginUpdateManager({
       enabled: true,
@@ -132,8 +132,8 @@ describe('companion plugin updater', () => {
     })
 
     const status = await manager.check({ manual: true })
-    expect(status).toMatchObject({ canInstallInApp: false, installBlockedReason: 'local-install' })
-    await expect(manager.install()).rejects.toMatchObject({ code: 'plugin-update-install-unavailable' })
+    expect(status).toMatchObject({ canInstallInApp: true })
+    expect(status).not.toHaveProperty('installBlockedReason')
   })
 
   it('does not stop DSH when the Profile package manager preflight fails', async () => {
@@ -166,7 +166,7 @@ describe('companion plugin updater', () => {
     expect(requestShutdown).not.toHaveBeenCalled()
   })
 
-  it('allows the isolated preview to opt into replacing a local link for update testing', async () => {
+  it('allows an explicit local override to hide in-app update', async () => {
     const fixture = await runtimeFixture('link:/tmp/plugin-checkout')
     const manager = new ArkmePluginUpdateManager({
       enabled: true,
@@ -184,14 +184,42 @@ describe('companion plugin updater', () => {
         dshBinPath: fixture.dshBinPath,
         helperPath: fixture.helperPath,
         restartArgv: [fixture.dshBinPath, 'web'],
-        allowLocalInstall: true,
+        allowLocalInstall: false,
         spawnUpdater: async () => undefined,
         requestShutdown: () => undefined,
       },
     })
 
     expect(await manager.check({ manual: true })).toMatchObject({
-      installedVersion: '0.1.2', latestVersion: '0.1.3', canInstallInApp: true,
+      installedVersion: '0.1.2', latestVersion: '0.1.3', canInstallInApp: false,
+      installBlockedReason: 'local-install',
+    })
+  })
+
+  it('still blocks Git and URL profile sources', async () => {
+    const fixture = await runtimeFixture('git+https://example.com/plugin.git')
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      registryUrl: 'https://registry.npmjs.org',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.2',
+      fetchImpl: async () => response('0.1.3'),
+      installRuntime: {
+        dshHome: fixture.root,
+        profileName: 'web',
+        healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        execArgv: [],
+        dshBinPath: fixture.dshBinPath,
+        helperPath: fixture.helperPath,
+        restartArgv: [fixture.dshBinPath, 'web'],
+        allowLocalInstall: true,
+      },
+    })
+
+    expect(await manager.check({ manual: true })).toMatchObject({
+      canInstallInApp: false, installBlockedReason: 'local-install',
     })
   })
 

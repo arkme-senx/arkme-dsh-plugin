@@ -4,6 +4,7 @@ import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { basename, dirname, join } from 'node:path'
 
 const EXACT_PNPM = /^pnpm@(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z.-]+)?$/
+const LOCAL_EXTENSION_MINIMUM_RELEASE_AGE = '--config.minimum-release-age=0'
 
 export interface ArkmeProfilePackageManagerResolution {
   declaration: string
@@ -15,6 +16,10 @@ export interface ArkmeProfilePackageManagerResolution {
 export interface ArkmeProfilePackageManagerOptions {
   environment?: NodeJS.ProcessEnv
   probeVersion?: (profileDirectory: string, environment: NodeJS.ProcessEnv) => string
+}
+
+export function localExtensionPnpmArgs(args: readonly string[]): string[] {
+  return [LOCAL_EXTENSION_MINIMUM_RELEASE_AGE, ...args]
 }
 
 function profileDirectory(dshHome: string, profileName: string): string {

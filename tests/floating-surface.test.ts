@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
+import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
   aiPolishStatus, arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
@@ -59,6 +60,32 @@ describe('Arkme floating conversation frame', () => {
       expiresAtMillis: 1,
     }, 'login', 'wechat', true, '', false)).toBe(false)
     expect(arkmeShouldBeginWechat({ status: 'logged-out', environment: 'prod' }, 'login', 'phone', true, '', false)).toBe(false)
+  })
+
+  it('allows a fresh WeChat QR request after logout or session expiry', () => {
+    const transition = Reflect.get(authFlowModule, 'arkmeWechatRequestStartedAfterAuthStatus') as unknown
+    expect(transition).toBeTypeOf('function')
+    if (typeof transition !== 'function') return
+
+    const requestStartedAfterAuthStatus = transition as (
+      current: boolean,
+      status: 'logged-out' | 'expired' | 'pending' | 'authenticated' | undefined,
+    ) => boolean
+    const loggedOutRequestStarted = requestStartedAfterAuthStatus(true, 'logged-out')
+    const expiredRequestStarted = requestStartedAfterAuthStatus(true, 'expired')
+
+    expect(loggedOutRequestStarted).toBe(false)
+    expect(expiredRequestStarted).toBe(false)
+    expect(requestStartedAfterAuthStatus(true, 'pending')).toBe(true)
+    expect(requestStartedAfterAuthStatus(true, 'authenticated')).toBe(true)
+    expect(arkmeShouldBeginWechat(
+      { status: 'logged-out', environment: 'prod' },
+      'login',
+      'wechat',
+      true,
+      '',
+      loggedOutRequestStarted,
+    )).toBe(true)
   })
 
   it('uses the client-compatible group polish status labels without changing ordinary messages', () => {
