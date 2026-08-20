@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
-  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle,
+  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCatalogAction, extensionDirectInstallTarget,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateVersionLabel,
   extensionVersionLabel, installedExtensionCatalogItem,
@@ -81,6 +81,18 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('width:40px')
     expect(html).toContain('height:22px')
     expect(html).toContain('translateX(18px)')
+  })
+
+  it('renders owner-private visibility as a title badge instead of an action', () => {
+    const html = renderToStaticMarkup(<ExtensionCard
+      item={{ extension_id: 'ext-private', name: '私有扩展', description: '', visibility: 'private' }}
+      visibilityBadge="仅自己"
+      onClick={() => {}}
+    />)
+    expect(html).toContain('私有扩展')
+    expect(html).toContain('仅自己')
+    expect(html.indexOf('私有扩展')).toBeLessThan(html.indexOf('仅自己'))
+    expect(html).not.toContain('>仅自己</button>')
   })
 
   it('maps real download bytes into the install progress stage', () => {

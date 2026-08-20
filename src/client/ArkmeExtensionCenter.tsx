@@ -9,6 +9,9 @@ import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeExtensionPublishDialog, type ArkmeExtensionPublishFormValue } from './ArkmeExtensionPublishDialog.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
+import {
+  extensionOwnerVisibilityBadge, extensionTabSelection, mergeExtensionDiscoverItems,
+} from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
@@ -255,12 +258,13 @@ export function ArkmeExtensionToggle({ item, busy, onChange }: {
   </button>
 }
 
-function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume }: {
+export function ExtensionCard({ item, installed, actionLabel, status, statusColor, visibilityBadge, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume }: {
   item: ArkmeExtensionCatalogItem
   installed?: ArkmeInstalledExtensionView | undefined
   actionLabel?: string | undefined
   status?: string | undefined
   statusColor?: string | undefined
+  visibilityBadge?: string | undefined
   installTask?: ArkmeExtensionInstallTaskSnapshot | undefined
   actionBusy?: boolean
   onClick(): void
@@ -283,7 +287,10 @@ function ExtensionCard({ item, installed, actionLabel, status, statusColor, inst
     <button type="button" style={styles.cardPrimary} onClick={onClick}>
       <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} />
       <span style={styles.cardBody}>
-        <span style={styles.name}>{item.name}</span>
+        <span style={styles.titleRow}>
+          <span style={styles.name}>{item.name}</span>
+          {visibilityBadge !== undefined && <span style={styles.stateBadge}>{visibilityBadge}</span>}
+        </span>
         <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
         {metadata !== '' && <span style={styles.meta}>{metadata}</span>}
         {item.rating_summary !== undefined && <span style={styles.meta}>★ {extensionRatingLabel(item.rating_summary)}</span>}
@@ -508,6 +515,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
   const [publishedItems, setPublishedItems] = useState<ArkmeExtensionCatalogItem[]>([])
+  const [discoverOwnerWarning, setDiscoverOwnerWarning] = useState('')
   const [myExtensions, setMyExtensions] = useState<ArkmeMyExtensionItem[]>([])
   const [myExtensionWarnings, setMyExtensionWarnings] = useState<ArkmeMyExtensionPage['warnings']>([])
   const [installed, setInstalled] = useState<ArkmeInstalledExtensionView[]>([])
@@ -567,10 +575,12 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: 50 }, controller.signal),
           callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal),
           callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
-            .catch(() => ({ items: [], total: 0 })),
+            .then(value => ({ value, failed: false as const }))
+            .catch(() => ({ value: { items: [], total: 0 }, failed: true as const })),
         ])
         if (sequence === requestSequence.current) {
-          setDiscoverItems(page.items); setInstalled(local); setPublishedItems(owned.items)
+          setDiscoverItems(page.items); setInstalled(local); setPublishedItems(owned.value.items)
+          setDiscoverOwnerWarning(owned.failed ? '你的私有扩展暂未加载，请稍后刷新。' : '')
         }
       } else if (target === 'mine') {
         const [page, local] = await Promise.all([
@@ -624,17 +634,24 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   }, [])
 
   const switchTab = (target: Tab) => {
-    if (target === tab) return
-    const mode = extensionTabLoadMode(loadedTabs, target)
-    setTab(target); setError(''); setDetail(undefined); setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined)
-    void load(target, mode)
+    const selection = extensionTabSelection(tab, target, loadedTabs)
+    if (selection.changed) {
+      setTab(target); setError(''); setDetail(undefined); setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined)
+    }
+    void load(target, selection.mode)
   }
 
   const inspect = async (extensionId: string) => {
     setDetailBusy(true); setError(''); setInstallError(''); setInstallTask(undefined)
     try {
       let listed = [...publishedItems, ...discoverItems].find(item => item.extension_id === extensionId)
+      const ownedListed = publishedItems.find(item => item.extension_id === extensionId)
       const local = installed.find(item => item.extensionId === extensionId)
+      if (tab === 'discover' && ownedListed?.visibility === 'private') {
+        const preview = await callArkme<ArkmeExtensionInstallPreview>('extensions.install.preview', { extensionId })
+        setDetail({ ...ownedListed, version: preview.version, manifest: preview.manifest })
+        return
+      }
       if (tab === 'mine' && listed !== undefined
         && listed.latest_stable_version === undefined && listed.version === undefined) {
         setDetail(listed)
@@ -870,7 +887,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   }
 
   const updateCount = updates.filter(item => item.update_available || item.revoked).length
-  const visibleItems = discoverItems
+  const visibleItems = mergeExtensionDiscoverItems(discoverItems, publishedItems)
   const iconRefFor = (extensionId: string): string | undefined => discoverItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? publishedItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? myExtensions.find(item => item.published?.extensionId === extensionId)?.published?.iconRef
@@ -933,6 +950,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
       {restartNotice !== '' && <div style={styles.restartNotice} role="status">{restartNotice}</div>}
+      {tab === 'discover' && discoverOwnerWarning !== ''
+        && <div style={styles.restartNotice} role="status">{discoverOwnerWarning}</div>}
       {tab === 'mine' && myExtensionWarningText(myExtensionWarnings) !== ''
         && <div style={styles.restartNotice} role="status">{myExtensionWarningText(myExtensionWarnings)}</div>}
       {busy && <LoadingState />}
@@ -1010,6 +1029,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           return <ExtensionCard
             key={item.extension_id}
             item={item}
+            visibilityBadge={extensionOwnerVisibilityBadge(item)}
             {...(local === undefined || action.label === '更新' ? { actionLabel: action.label } : {})}
             {...(local === undefined ? {} : { installed: local })}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
