@@ -2,7 +2,15 @@
 
 Arkme 的 DeepSeek Harness 集成插件。
 
-## 安装与启动
+## npm 安装
+
+插件已发布至 npm：[`@senguoyun/dsh-arkme`](https://www.npmjs.com/package/@senguoyun/dsh-arkme)。
+
+```sh
+npm install @senguoyun/dsh-arkme
+```
+
+安装到 DSH Web Profile 并启动：
 
 ```sh
 DSH_HOME=<arkme-dsh-home> dsh plugin --profile web add @senguoyun/dsh-arkme
