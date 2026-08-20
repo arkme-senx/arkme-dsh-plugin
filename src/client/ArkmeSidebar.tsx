@@ -544,21 +544,27 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   }, [authenticated, source?.kind, source?.sourceRef, ui.authRevision])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
-    if (source === undefined || source.unreadCount <= 0 || nextItems.length === 0
+    if (source === undefined || nextItems.length === 0
       || (source.kind !== 'private_chat' && source.kind !== 'group_chat')) return
     const visibleLatest = nextItems.reduce((latest, item) => Math.max(latest, item.sequence ?? 0), 0)
     const readSequence = Math.max(source.latestSequence ?? 0, visibleLatest)
     const readAckKey = `${source.sourceRef}:${String(readSequence)}`
     if (readSequence <= 0 || lastReadAckRef.current === readAckKey) return
+    const hasReadIntent = source.unreadCount > 0
+      || arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? readSequence)
+    if (!hasReadIntent) return
     lastReadAckRef.current = readAckKey
     await new Promise<void>(resolve => { requestAnimationFrame(() => { resolve() }) })
     try {
-      await callArkme<ArkmeSourceReadResult>('source.mark-read', {
+      const result = await callArkme<ArkmeSourceReadResult>('source.mark-read', {
         sourceRef: source.sourceRef,
         readSequence,
       })
+      arkmeChatDirectory.updateReadAck(source.sourceRef, source.sourceKey, result.effectiveReadSequence, result.unreadCount)
     } catch {
       if (lastReadAckRef.current === readAckKey) lastReadAckRef.current = ''
+      arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, readSequence)
+      void arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
     }
   }, [source])
 
@@ -635,6 +641,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     const generation = timelineGenerationRef.current
     const hasCachedTimeline = conversationCacheRef.current.getTimeline(source.sourceRef) !== undefined
     void loadTimeline().catch(caught => {
+      arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)
       if (generation === timelineGenerationRef.current && !hasCachedTimeline) setError(errorMessage(caught))
     })
   }, [authenticated, source?.sourceRef])

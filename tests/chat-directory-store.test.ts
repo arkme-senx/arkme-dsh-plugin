@@ -187,6 +187,133 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.totalUnreadCount()).toBe(1)
   })
 
+  it('clears unread badges immediately for an optimistic read intent and confirms it with the server ack', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+
+    expect(store.markReadOptimistic(source, 'chat:private-1', 8)).toBe(true)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.totalUnreadCount()).toBe(0)
+    expect(store.hasOptimisticRead('source-1', 'chat:private-1', 8)).toBe(true)
+
+    store.updateReadAck('source-1', 'chat:private-1', 8, 0)
+    expect(store.hasOptimisticRead('source-1', 'chat:private-1', 8)).toBe(false)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+  })
+
+  it('clears unread badges immediately even before the root directory baseline is published', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const cachedSource = {
+      sourceRef: 'cached-source-1', sourceKey: 'chat:cached-private-1', kind: 'private_chat' as const, displayName: '缓存联系人',
+      activeAtMillis: 20, unreadCount: 3, latestSequence: 12,
+    }
+    const otherCachedSource = {
+      sourceRef: 'cached-source-2', sourceKey: 'chat:cached-private-2', kind: 'private_chat' as const, displayName: '另一个缓存联系人',
+      activeAtMillis: 19, unreadCount: 4, latestSequence: 10,
+    }
+
+    expect(store.markReadOptimistic(cachedSource, 'chat:cached-private-1', 12, [cachedSource, otherCachedSource])).toBe(true)
+    expect(store.getSnapshot().sources).toHaveLength(2)
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      sourceRef: 'cached-source-1',
+      unreadCount: 0,
+      latestSequence: 12,
+    })
+    expect(store.getSnapshot().sources[1]).toMatchObject({
+      sourceRef: 'cached-source-2',
+      unreadCount: 4,
+      latestSequence: 10,
+    })
+    expect(store.totalUnreadCount()).toBe(4)
+
+    store.publish([{ ...cachedSource, unreadCount: 3 }, otherCachedSource])
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 12 })
+    expect(store.getSnapshot().sources[1]).toMatchObject({ unreadCount: 4, latestSequence: 10 })
+  })
+
+  it('applies server ack unread count when confirmation arrives before the root baseline', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const cachedSource = {
+      sourceRef: 'cached-source-1', sourceKey: 'chat:cached-private-1', kind: 'private_chat' as const, displayName: '缓存联系人',
+      activeAtMillis: 20, unreadCount: 3, latestSequence: 12,
+    }
+
+    store.markReadOptimistic(cachedSource, 'chat:cached-private-1', 12, [cachedSource])
+    store.updateReadAck('cached-source-1', 'chat:cached-private-1', 12, 1)
+
+    expect(store.hasOptimisticRead('cached-source-1', 'chat:cached-private-1', 12)).toBe(false)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, latestSequence: 12 })
+    expect(store.totalUnreadCount()).toBe(1)
+
+    store.publish([{ ...cachedSource, unreadCount: 3 }])
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, latestSequence: 12 })
+  })
+
+  it('keeps stale projections from reviving an optimistically cleared unread badge', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.markReadOptimistic(source, 'chat:private-1', 8)
+
+    store.upsert({ ...source, activeAtMillis: 11, unreadCount: 2, latestSequence: 8 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.totalUnreadCount()).toBe(0)
+  })
+
+  it('lets newer realtime projections show unread even while an older optimistic read is pending', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.markReadOptimistic(source, 'chat:private-1', 8)
+
+    store.upsert({ ...source, latestPreview: '新消息', activeAtMillis: 12, unreadCount: 1, latestSequence: 9 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ latestPreview: '新消息', unreadCount: 1, latestSequence: 9 })
+    expect(store.totalUnreadCount()).toBe(1)
+  })
+
+  it('removes only the optimistic watermark when the mark-read request fails before confirmation', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
+      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.markReadOptimistic(source, 'chat:private-1', 8)
+
+    expect(store.rejectOptimisticRead('source-1', 'chat:private-1', 8)).toBe(true)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 2, latestSequence: 8 })
+    expect(store.totalUnreadCount()).toBe(2)
+  })
+
+  it('does not restore stale source fields when rejecting an optimistic read after a newer projection arrived', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = {
+      sourceRef: 'source-1', sourceKey: 'chat:private-1', kind: 'private_chat' as const, displayName: '联系人',
+      latestPreview: '旧消息', activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+    }
+    store.publish([source])
+    store.markReadOptimistic(source, 'chat:private-1', 8)
+    store.upsert({ ...source, latestPreview: '当前投影', activeAtMillis: 11, unreadCount: 2, latestSequence: 8 })
+
+    expect(store.rejectOptimisticRead('source-1', 'chat:private-1', 8)).toBe(true)
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      latestPreview: '当前投影',
+      activeAtMillis: 11,
+      unreadCount: 2,
+      latestSequence: 8,
+    })
+  })
+
   it('does not let lower-sequence projections clear newer unread state', () => {
     const store = new ArkmeChatDirectoryStore()
     const source = {
