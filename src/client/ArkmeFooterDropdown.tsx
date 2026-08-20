@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ArkmeChatClientEvent } from '../types.js'
 import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
@@ -21,7 +22,9 @@ const styles: Record<string, CSSProperties> = {
 }
 
 /** Footer action plus an inline Arkme directory that participates in sidebar layout. */
-export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
+export type ArkmeFooterDropdownProps = ArkmeFooterActionProps & PropsRenderSlots<'arkme.directory.entry'>
+
+export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
@@ -117,6 +120,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
       <ArkmeNavigation
         currentSessionId={currentSession}
         onActivateSurface={() => { props.activate(currentSession) }}
+        renderSlot={props.renderSlot}
       />
     </div>}
     <ArkmeFooterAction
