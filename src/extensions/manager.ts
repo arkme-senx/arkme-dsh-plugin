@@ -95,6 +95,25 @@ function bundleInstallResolution(value: ArkmeExtensionInstallResolution): boolea
     && typeof value.source_sha256 === 'string'
 }
 
+function completedPublishSession(
+  session: import('./types.js').ArkmeBundlePublishSession,
+  fallbackVersion: string,
+): ArkmeExtensionPublishResult | undefined {
+  return session.status === 'published'
+    ? { extension_id: session.extension_id, version: session.version ?? fallbackVersion, status: 'published' }
+    : undefined
+}
+
+function requireBundleUploadSlots(session: import('./types.js').ArkmeBundlePublishSession): {
+  bundle: NonNullable<typeof session.bundle_upload>
+  source: NonNullable<typeof session.source_upload>
+} {
+  if (session.bundle_upload === undefined || session.source_upload === undefined) {
+    throw new ArkmePluginError('extension-publish-contract-invalid', '扩展市场没有返回完整的 Bundle/source 上传槽', false, 502)
+  }
+  return { bundle: session.bundle_upload, source: session.source_upload }
+}
+
 interface PendingProfileChange {
   extensionId: string
   packageName: string
@@ -168,6 +187,7 @@ export class ArkmeExtensionManager {
     agent: unknown
     pluginId: string
     packageId: string
+    packageName?: string
     extensionId?: string
     name: string
     description: string
@@ -179,7 +199,7 @@ export class ArkmeExtensionManager {
   }): Promise<ArkmeExtensionPublishResult> {
     const inspected = this.inspectPackage(input.agent, input.pluginId, input.packageId)
     const source = materializeCordisBundle({
-      packageName: `@arkme-generated/${bundleSha256(`cordis\0${input.pluginId}`).slice(0, 24)}`,
+      packageName: input.packageName ?? `@arkme-generated/${bundleSha256(`cordis\0${input.pluginId}`).slice(0, 24)}`,
       name: input.name.trim() || inspected.name,
       description: input.description.trim() || inspected.purpose,
       version: input.version,
@@ -198,9 +218,12 @@ export class ArkmeExtensionManager {
       bundle: source.bundle,
       source: source.source,
     }, input.signal)
+    const completed = completedPublishSession(session, source.bundle.version)
+    if (completed !== undefined) return completed
+    const slots = requireBundleUploadSlots(session)
     try {
-      await this.client.uploadBundle(session.bundle_upload, source.bundle, input.signal)
-      await this.client.uploadSource(session.source_upload, source.source, input.signal)
+      await this.client.uploadBundle(slots.bundle, source.bundle, input.signal)
+      await this.client.uploadSource(slots.source, source.source, input.signal)
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error
@@ -234,9 +257,12 @@ export class ArkmeExtensionManager {
       bundle: input.source.bundle,
       source: input.source.source,
     }, input.signal)
+    const completed = completedPublishSession(session, input.source.bundle.version)
+    if (completed !== undefined) return completed
+    const slots = requireBundleUploadSlots(session)
     try {
-      await this.client.uploadBundle(session.bundle_upload, input.source.bundle, input.signal)
-      await this.client.uploadSource(session.source_upload, input.source.source, input.signal)
+      await this.client.uploadBundle(slots.bundle, input.source.bundle, input.signal)
+      await this.client.uploadSource(slots.source, input.source.source, input.signal)
       return await this.client.completePublishSession(session.publish_session_id, input.signal)
     } catch (error) {
       if (input.signal?.aborted === true) throw error

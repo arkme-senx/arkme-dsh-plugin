@@ -142,7 +142,9 @@ describe('owned extension inventory', () => {
 
     expect(result.status).toBe('published')
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({
-      agent, pluginId: 'weather-1', packageId: 'pkg-1', idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      agent, pluginId: 'weather-1', packageId: 'pkg-1',
+      packageName: '@arkme-generated/03ff558573117308370085b8',
+      idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
     expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-new')
     store.close()

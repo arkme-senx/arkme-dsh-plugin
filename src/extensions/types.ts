@@ -76,8 +76,8 @@ export interface ArkmeBundlePublishSession {
   version?: string
   status?: string
   idempotent_replay?: boolean
-  bundle_upload: ArkmeExtensionUploadSlot
-  source_upload: ArkmeExtensionUploadSlot
+  bundle_upload?: ArkmeExtensionUploadSlot
+  source_upload?: ArkmeExtensionUploadSlot
 }
 
 export interface ArkmeExtensionPublishResult {

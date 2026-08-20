@@ -47,6 +47,22 @@ export function bundleSha256(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
+export function arkmeSandboxEntryId(packageName: string): string {
+  return `arkme-${bundleSha256(packageName).slice(0, 16)}-runtime`
+}
+
+export function renderArkmeSandboxHostEntry(packageName: string): string {
+  const entryId = arkmeSandboxEntryId(packageName)
+  return [
+    `import { applyArkmeBundleHostExtension } from '@senguoyun/dsh-arkme/bundle-runtime'`,
+    `export const name = ${JSON.stringify(entryId)}`,
+    `export async function apply(ctx) {`,
+    `  await applyArkmeBundleHostExtension(ctx, new URL('../arkme/source.json', import.meta.url), ${JSON.stringify(packageName)})`,
+    `}`,
+    '',
+  ].join('\n')
+}
+
 function assertArchiveSize(bytes: number, label: string): void {
   if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > ARKME_BUNDLE_MAX_BYTES) {
     throw new ArkmeBundleArtifactError('bundle-size-invalid', `${label}必须在 1 到 100 MiB 之间`)
@@ -219,6 +235,9 @@ function validateManifest(manifest: BundleManifest, files: ReadonlyMap<string, B
     || !files.has('package/arkme/source.json')) {
     throw new ArkmeBundleArtifactError('bundle-sandbox-marker-invalid', 'Arkme sandbox Bundle marker 无效')
   }
+  if (files.get('package/lib/index.js')?.toString('utf8') !== renderArkmeSandboxHostEntry(manifest.name)) {
+    throw new ArkmeBundleArtifactError('bundle-sandbox-entry-invalid', 'Arkme sandbox Bundle Host 入口无效')
+  }
   return 'arkme-sandboxed'
 }
 
@@ -325,11 +344,6 @@ export function packBundleFiles(files: ReadonlyMap<string, Buffer>): ArkmeBundle
 export function packLocalBundleDirectory(directory: string): ArkmeBundlePublishSource {
   const packageJSON = readFileSync(join(directory, 'package.json'))
   const manifest = readManifest(packageJSON)
-  validateManifest(manifest, new Map([['package/package.json', packageJSON],
-    ...(typeof manifest.dsh?.bundle?.patch === 'string'
-      ? [[`package/${manifest.dsh.bundle.patch.replace(/^\.\//, '')}`, Buffer.from('placeholder')]] as Array<[string, Buffer]>
-      : []),
-  ]))
   return packBundleFiles(collectPackageFiles(directory, manifest))
 }
 

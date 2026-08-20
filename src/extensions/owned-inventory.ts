@@ -36,6 +36,7 @@ interface PublishInput {
   agent: unknown
   pluginId: string
   packageId: string
+  packageName: string
   extensionId?: string
   name: string
   description: string
@@ -204,6 +205,7 @@ export class ArkmeOwnedExtensionInventory {
       agent,
       pluginId: target.pluginId,
       packageId: target.packageId,
+      packageName: `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`,
       ...(extensionId === undefined ? {} : { extensionId }),
       name: input.name,
       description: input.description,

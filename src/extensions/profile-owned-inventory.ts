@@ -54,7 +54,7 @@ export function scanOwnedProfileExtensions(input: {
   const items: OwnedProfileExtension[] = []
   let invalidEntries = 0
   for (const [packageName, rawSpec] of Object.entries(dependencies)) {
-    if (packageName.startsWith('@deepseek-ai/')) continue
+    if (packageName.startsWith('@deepseek-ai/') || packageName === '@senguoyun/dsh-arkme') continue
     if (typeof rawSpec !== 'string' || (!rawSpec.startsWith('link:') && !rawSpec.startsWith('file:'))) continue
     try {
       const localSource = resolveLocalSource(input.profileDirectory, rawSpec)

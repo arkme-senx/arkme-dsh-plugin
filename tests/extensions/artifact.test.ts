@@ -161,6 +161,34 @@ describe('extension signature and runtime bridge', () => {
     store.close()
   })
 
+  it('returns an already-published Bundle session without attempting another upload', async () => {
+    const requests: string[] = []
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 })) as typeof fetch
+    const client = new ExtensionPublishClient(async <T>(path: string): Promise<T> => {
+      requests.push(path)
+      return {
+        publish_session_id: 'pub-existing', extension_id: 'ext-existing', version: '1.0.0',
+        status: 'published', idempotent_replay: true,
+      } as T
+    }, fetchImpl)
+    const directory = temporaryDirectory()
+    const store = new ArkmeExtensionInstallStore(directory)
+    const manager = new ArkmeExtensionManager(client, store, {
+      inspectPackage: (_agent, pluginId, packageId) => ({
+        pluginId, packageId, name: '插件', purpose: '用途', code: { host: 'return { apply() {} }' },
+      }),
+      define: () => { throw new Error('not used') }, run: async () => { throw new Error('not used') },
+    }, { artifactDirectory: join(directory, 'artifacts'), trustedSigningKeys: '{}' })
+
+    await expect(manager.publish({
+      agent: {}, pluginId: 'plug-1', packageId: 'pkg-1', name: '插件', description: '用途',
+      version: '1.0.0', visibility: 'private', idempotencyKey: 'bundle-existing-publish',
+    })).resolves.toMatchObject({ extension_id: 'ext-existing', version: '1.0.0', status: 'published' })
+    expect(requests).toEqual(['/api/v1/extensions/publish-session/create'])
+    expect(fetchImpl).not.toHaveBeenCalled()
+    store.close()
+  })
+
   it('soft deletes an exact owned extension through the authenticated registry client', async () => {
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
     const client = new ExtensionPublishClient(async <T>(path: string, body: Record<string, unknown>): Promise<T> => {

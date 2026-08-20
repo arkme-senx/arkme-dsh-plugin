@@ -32,12 +32,14 @@ describe('Profile-owned extension inventory', () => {
     const profile = join(root, 'profiles', 'web')
     const local = join(root, 'My Local Weather')
     const officialLocal = join(root, 'DSH Official Local')
+    const arkmeOfficialLocal = join(root, 'Arkme Official Local')
     const tarballSource = join(root, 'Tarball Source')
     const wrapper = join(profile, 'arkme-extensions', 'third-party', '1.0.0')
     writeBundle(local, 'local-weather')
     writeBundle(tarballSource, 'local-tarball')
     writeFileSync(join(root, 'local-plugin.tgz'), packLocalBundleDirectory(tarballSource).bundle.bytes)
     writeBundle(officialLocal, '@deepseek-ai/dsh-official-local')
+    writeBundle(arkmeOfficialLocal, '@senguoyun/dsh-arkme')
     writeBundle(wrapper, '@arkme-local/ext-aaaaaaaaaaaaaaaa')
     writeJson(join(wrapper, 'installation.json'), { extension_id: 'ext-third-party' })
     writeJson(join(profile, 'package.json'), {
@@ -45,6 +47,7 @@ describe('Profile-owned extension inventory', () => {
       dependencies: {
         'local-weather': 'link:../../My Local Weather',
         '@deepseek-ai/dsh-official-local': 'link:../../DSH Official Local',
+        '@senguoyun/dsh-arkme': 'link:../../Arkme Official Local',
         'remote-extension': '^1.0.0',
         'local-tarball': 'file:../../local-plugin.tgz',
         '@arkme-local/ext-aaaaaaaaaaaaaaaa': 'link:arkme-extensions/third-party/1.0.0',
@@ -69,6 +72,7 @@ describe('Profile-owned extension inventory', () => {
       name: 'local-tarball', active: false, publishable: true,
     }])
     expect(result.items.map(item => item.packageName)).not.toContain('@deepseek-ai/dsh-base')
+    expect(result.items.map(item => item.packageName)).not.toContain('@senguoyun/dsh-arkme')
     expect(result.invalidEntries).toBe(0)
     expect(store.owner('profile', 'web\0local-weather')).toBe(7)
     expect(store.owner('profile', 'web\0local-tarball')).toBe(7)

@@ -1,9 +1,10 @@
 import { Buffer } from 'node:buffer'
 import {
   ARKME_BUNDLE_CONTRACT_VERSION,
-  bundleSha256,
+  arkmeSandboxEntryId,
   canonicalBundleJson,
   packBundleFiles,
+  renderArkmeSandboxHostEntry,
   type ArkmeBundlePublishSource,
 } from './bundle-artifact.js'
 import { renderArkmeBundleClientBundle } from './persistent-client-bundle.js'
@@ -19,7 +20,7 @@ export interface CordisBundleMaterializeInput {
 
 export function materializeCordisBundle(input: CordisBundleMaterializeInput): ArkmeBundlePublishSource {
   if (input.hostCode === undefined && input.clientCode === undefined) throw new Error('Cordis Bundle 至少需要 Host 或 Client 代码')
-  const entryId = `arkme-${bundleSha256(input.packageName).slice(0, 16)}-runtime`
+  const entryId = arkmeSandboxEntryId(input.packageName)
   const source = {
     format: 'arkme-cordis-source',
     formatVersion: 1,
@@ -54,14 +55,7 @@ export function materializeCordisBundle(input: CordisBundleMaterializeInput): Ar
       '',
     ].join('\n'), 'utf8')],
     ['package/arkme/source.json', Buffer.from(canonicalBundleJson(source), 'utf8')],
-    ['package/lib/index.js', Buffer.from([
-      `import { applyArkmeBundleHostExtension } from '@senguoyun/dsh-arkme/bundle-runtime'`,
-      `export const name = ${JSON.stringify(entryId)}`,
-      `export async function apply(ctx) {`,
-      `  await applyArkmeBundleHostExtension(ctx, new URL('../arkme/source.json', import.meta.url), ${JSON.stringify(input.packageName)})`,
-      `}`,
-      '',
-    ].join('\n'), 'utf8')],
+    ['package/lib/index.js', Buffer.from(renderArkmeSandboxHostEntry(input.packageName), 'utf8')],
   ])
   if (input.clientCode !== undefined) {
     files.set('package/lib/client.js', Buffer.from(renderArkmeBundleClientBundle(input.packageName, {

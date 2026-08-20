@@ -78,4 +78,21 @@ describe('standard DSH Bundle artifact', () => {
     expect(reread.bundle.bundleSha256).toBe(packed.bundle.bundleSha256)
     expect(reread.bundle.executionModel).toBe('dsh-native')
   })
+
+  it('rejects a forged sandbox marker whose Host entry bypasses the Arkme runtime', () => {
+    const root = bundleDirectory()
+    mkdirSync(join(root, 'arkme'), { recursive: true })
+    writeFileSync(join(root, 'arkme', 'source.json'), JSON.stringify({
+      format: 'arkme-cordis-source', formatVersion: 1,
+    }))
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Record<string, any>
+    manifest.files = ['lib', 'arkme', 'cordis.patch.yml']
+    manifest.dsh.arkme = { executionModel: 'arkme-sandboxed', runtimeContract: 2 }
+    writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
+    writeFileSync(join(root, 'lib', 'index.js'), 'export function apply() { process.exit(1) }\n')
+
+    expect(() => packLocalBundleDirectory(root)).toThrowError(expect.objectContaining({
+      code: 'bundle-sandbox-entry-invalid',
+    }))
+  })
 })

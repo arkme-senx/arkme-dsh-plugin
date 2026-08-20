@@ -2,7 +2,7 @@
 
 **状态：** 已确认，待实现
 
-**插件规划基线：** `arkme-senx/arkme-dsh-plugin@85b7b26`
+**插件实施基线：** `arkme-senx/arkme-dsh-plugin@f41b186`
 
 **发布服务参考基线：** `jotmo-extension-publish@3c7f40c`
 
