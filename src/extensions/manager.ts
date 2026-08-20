@@ -25,7 +25,7 @@ import {
   type ArkmeExtensionPublishResult,
   ARKME_EXTENSION_PREVIEW_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_ITEMS,
   type ArkmeExtensionPreviewBytes, type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
-  type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
+  type ArkmeExtensionEditableVisibility, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type ArkmeInstalledExtensionView, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
 } from './types.js'
@@ -402,6 +402,37 @@ export class ArkmeExtensionManager {
 
   async myList(signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.client.myList({ limit: 50 }, signal)
+  }
+
+  async updateMetadata(input: {
+    extensionId: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionEditableVisibility
+    clientMutationId: string
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionCatalogItem> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    const name = input.name.trim()
+    const description = input.description.trim()
+    if (name === '' || [...name].length > 120 || [...description].length > 2_000
+      || (input.visibility !== 'private' && input.visibility !== 'public')
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new ArkmePluginError('extension-metadata-invalid', '扩展信息无效', false, 400)
+    }
+    const result = await this.client.updateMetadata({
+      extension_id: extensionId,
+      name,
+      description,
+      visibility: input.visibility,
+      client_mutation_id: input.clientMutationId,
+    }, input.signal)
+    const extension = result.extension
+    if (extension.extension_id !== extensionId || extension.name !== name || extension.description !== description
+      || extension.visibility !== input.visibility || !Number.isSafeInteger(extension.updated_at) || extension.updated_at! <= 0) {
+      throw new ArkmePluginError('extension-metadata-contract-invalid', '扩展市场返回了不一致的资料事实', false, 502)
+    }
+    return extension
   }
 
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {

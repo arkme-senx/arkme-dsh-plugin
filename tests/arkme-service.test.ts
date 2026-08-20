@@ -626,6 +626,7 @@ describe('ArkmeService', () => {
         myExtensions: true,
         extensionPublish: true,
         extensionManagement: true,
+        extensionMetadataEdit: true,
         extensionIcons: true,
         extensionPreviews: true,
       },

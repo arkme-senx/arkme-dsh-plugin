@@ -1821,6 +1821,7 @@ export class ArkmeService {
         openPrivateChat: true,
         groupSettings: true,
         extensionManagement: true,
+        extensionMetadataEdit: true,
         extensionIcons: true,
         extensionPreviews: true,
         worldFeed: true,

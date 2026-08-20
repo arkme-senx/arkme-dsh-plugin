@@ -6,6 +6,7 @@ export const ARKME_EXTENSION_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
 export const ARKME_EXTENSION_PREVIEW_MAX_ITEMS = 20
 
 export type ArkmeExtensionVisibility = 'private' | 'unlisted' | 'public'
+export type ArkmeExtensionEditableVisibility = 'private' | 'public'
 export type ArkmeExtensionChannel = 'stable' | 'beta'
 
 export interface ArkmeExtensionRatingSummary {
@@ -45,11 +46,12 @@ export interface ArkmeExtensionCatalogItem {
   owner_name?: string
   owner_arkme_id?: string
   visibility: ArkmeExtensionVisibility
+  status?: 'active' | 'suspended' | 'deleted'
   latest_stable_version?: string
   version?: string
   channel?: ArkmeExtensionChannel
   manifest?: ArkmeExtensionManifest
-  updated_at?: string
+  updated_at?: number
   installed_version?: string
   update_available?: boolean
   package_name?: string
@@ -59,6 +61,17 @@ export interface ArkmeExtensionCatalogItem {
   preview_images?: ArkmeExtensionPreviewItem[]
   preview_revision?: number
   rating_summary?: ArkmeExtensionRatingSummary
+}
+
+export interface ArkmeExtensionMetadataUpdateInput {
+  name: string
+  description: string
+  visibility: ArkmeExtensionEditableVisibility
+  clientMutationId: string
+}
+
+export interface ArkmeExtensionMetadataUpdateResult {
+  extension: ArkmeExtensionCatalogItem
 }
 
 export interface ArkmeExtensionCatalogPage {

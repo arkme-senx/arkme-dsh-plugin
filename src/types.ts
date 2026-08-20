@@ -406,6 +406,8 @@ export interface ArkmeProviderCapabilities {
     groupSettings: true
     /** Installed-extension inspection and desired enable/disable state are available. */
     extensionManagement?: true
+    /** Owner-authorized extension name, description, and private/public visibility editing is available. */
+    extensionMetadataEdit?: true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
     /** Extension-level preview gallery SDK and Tool mutations are available. */

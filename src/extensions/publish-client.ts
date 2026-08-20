@@ -6,6 +6,7 @@ import { ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENS
   type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionPreviewResolution, type ArkmeExtensionPreviewUploadSession,
   type ArkmeExtensionInstallResolution, type ArkmeExtensionPublishResult,
+  type ArkmeExtensionEditableVisibility, type ArkmeExtensionMetadataUpdateResult,
   type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession,
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionReviewWireCreateResult, type ArkmeExtensionReviewWirePage,
@@ -239,6 +240,20 @@ export class ExtensionPublishClient {
 
   async myList(input: { cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/v1/extensions/my-list', input, signal)
+  }
+
+  async updateMetadata(input: {
+    extension_id: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionEditableVisibility
+    client_mutation_id: string
+  }, signal?: AbortSignal): Promise<ArkmeExtensionMetadataUpdateResult> {
+    try {
+      return await this.post('/api/v1/extensions/metadata/update', input, signal)
+    } catch (error) {
+      throw extensionMetadataError(error)
+    }
   }
 
   async listReviews(
@@ -655,6 +670,31 @@ export class ExtensionPublishClient {
       signal?.removeEventListener('abort', abort)
     }
   }
+}
+
+function extensionMetadataError(error: unknown): unknown {
+  if (!(error instanceof ArkmePluginError)) return error
+  const mapped: Record<string, { code: string; message: string; retryable: boolean; httpStatus: number }> = {
+    'arkme-code-40021': { code: 'extension-metadata-invalid', message: '扩展信息无效', retryable: false, httpStatus: 400 },
+    'arkme-code-40321': { code: 'extension-metadata-owner-forbidden', message: '当前账号不能编辑该扩展', retryable: false, httpStatus: 403 },
+    'arkme-code-40421': { code: 'extension-not-found', message: '扩展不存在', retryable: false, httpStatus: 404 },
+    'arkme-code-40921': { code: 'extension-metadata-idempotency-conflict', message: '扩展信息保存请求冲突', retryable: false, httpStatus: 409 },
+    'arkme-code-50321': { code: 'extension-metadata-update-failed', message: '扩展信息暂时无法保存', retryable: true, httpStatus: 503 },
+  }
+  const known = mapped[error.code]
+  if (known !== undefined) {
+    return new ArkmePluginError(known.code, known.message, known.retryable, known.httpStatus, { cause: error })
+  }
+  if (error.code === 'arkme-http-error' && error.upstreamStatus === 404) {
+    return new ArkmePluginError(
+      'extension-metadata-update-unsupported',
+      '当前扩展服务尚未支持资料编辑',
+      false,
+      404,
+      { cause: error },
+    )
+  }
+  return error
 }
 
 function safeSignedHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
