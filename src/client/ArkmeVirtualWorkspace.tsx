@@ -70,7 +70,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 20, cursor: 'pointer',
   },
   sortControl: {
-    position: 'relative', height: 22, flex: 'none', display: 'inline-flex', alignItems: 'center',
+    position: 'relative', zIndex: 40, height: 22, flex: 'none', display: 'inline-flex', alignItems: 'center',
     color: 'var(--dsw-alias-label-secondary, #6f747b)', transform: 'translateY(2px)',
   },
   sortTrigger: {

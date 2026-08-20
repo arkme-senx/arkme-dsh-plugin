@@ -49,6 +49,7 @@ describe('topic create UI', () => {
     expect(control).toContain('font-weight:400')
     expect(control).toContain('line-height:22px')
     expect(control).toContain('transform:translateY(2px)')
+    expect(control).toContain('z-index:40')
     expect(control).toContain('默认')
     expect(menu).toContain('role="menu"')
     expect(menu).toContain('width:80px')
