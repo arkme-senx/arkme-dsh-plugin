@@ -14,6 +14,7 @@ import {
   applyEditedMyExtension, nextExtensionEditMutation, saveExtensionEdit, type ExtensionEditMutation,
 } from './extension-edit-flow.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
+import { ArkmeExtensionShareSection } from './ArkmeExtensionShareSection.js'
 import { extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -336,12 +337,13 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
   </div>
 }
 
-export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish, onEdit, onToggle }: {
+export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish, onEdit, onOpen, onToggle }: {
   item: ArkmeMyExtensionItem
   installed?: ArkmeInstalledExtensionView | undefined
   toggleBusy?: boolean | undefined
   onPublish?(): void
   onEdit?(): void
+	onOpen?(): void
   onToggle?(enabled: boolean): void
 }) {
   const action = myExtensionPrimaryAction(item)
@@ -361,6 +363,7 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
       {version !== '' && <span style={styles.meta}>{version}</span>}
     </span>
     <span style={styles.actionGroup}>
+		{item.published !== undefined && <button type="button" style={styles.restartLater} onClick={onOpen}>详情</button>}
       {action !== undefined && <button
         type="button"
         style={{ ...styles.installSmall, ...((action.kind === 'publish' ? onPublish : onEdit) === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
@@ -553,6 +556,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [editItem, setEditItem] = useState<ArkmeMyExtensionItem>()
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState('')
+	const [shareBusy, setShareBusy] = useState(false)
+	const [shareNotice, setShareNotice] = useState('')
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
@@ -932,6 +937,35 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
     }
   }
 
+	const copyShareLink = async () => {
+		if (detail?.share === undefined) return
+		try {
+			await navigator.clipboard.writeText(detail.share.url)
+			setShareNotice('分享链接已复制。')
+		} catch {
+			setShareNotice('复制失败，请稍后重试。')
+		}
+	}
+
+	const rotateShareLink = async () => {
+		if (detail?.share === undefined || shareBusy) return
+		if (typeof window !== 'undefined' && !window.confirm('轮换后旧分享链接会立即失效，确认继续吗？')) return
+		setShareBusy(true); setShareNotice('')
+		try {
+			const share = await extensionSdk.rotateExtensionShare(detail.extension_id, crypto.randomUUID())
+			setDetail(current => current?.extension_id === detail.extension_id ? { ...current, share } : current)
+			setPublishedItems(current => current.map(item => item.extension_id === detail.extension_id ? { ...item, share } : item))
+			setMyExtensions(current => current.map(item => item.published?.extensionId === detail.extension_id
+				? { ...item, published: { ...item.published, share } }
+				: item))
+			setShareNotice('分享链接已轮换，旧链接已经失效。')
+		} catch (caught) {
+			setShareNotice(caught instanceof Error ? caught.message : String(caught))
+		} finally {
+			setShareBusy(false)
+		}
+	}
+
   const updateCount = updates.filter(item => item.update_available || item.revoked).length
   const visibleItems = mergeExtensionDiscoverItems(discoverItems, publishedItems)
   const iconRefFor = (extensionId: string): string | undefined => discoverItems.find(item => item.extension_id === extensionId)?.icon_ref
@@ -947,6 +981,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       : extensionCatalogAction(detail, detailInstalled?.installedVersion, tab === 'mine')
   const detailAction = detailInstallAction.label
   const detailTask = installTask?.extensionId === detail?.extension_id ? installTask : undefined
+	const detailOwned = detail !== undefined && myExtensions.some(item => item.published?.extensionId === detail.extension_id)
   const detailStatus = detail === undefined
     ? undefined
     : detailInstalled !== undefined
@@ -1053,7 +1088,16 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
         {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
         <section style={styles.detailSection}><div style={styles.detailLabel}>扩展说明</div><div style={styles.detailValue}>{detail.description || '这个扩展还没有填写说明。'}</div></section>
-        <ArkmeExtensionManifestDetails manifest={detail.manifest} />
+		<ArkmeExtensionShareSection
+			{...(detail.source === undefined ? {} : { source: detail.source })}
+			{...(detail.share === undefined ? {} : { share: detail.share })}
+			canRotate={detailOwned}
+			busy={shareBusy}
+			notice={shareNotice}
+			onCopy={() => { void copyShareLink() }}
+			onRotate={() => { void rotateShareLink() }}
+		/>
+		<ArkmeExtensionManifestDetails manifest={detail.manifest} />
         {detail.visibility === 'public' && <ArkmeExtensionReviews
           extensionId={detail.extension_id}
           canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
@@ -1112,6 +1156,22 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
               editMutation.current = undefined; setEditError('')
               setEditItem(item)
             }}
+			onOpen={() => {
+				const published = item.published
+				if (published === undefined) return
+				setDetail({
+					extension_id: published.extensionId,
+					name: item.name,
+					description: item.description,
+					visibility: published.visibility,
+					...(published.version === undefined ? {} : { version: published.version, latest_stable_version: published.version }),
+					...(published.iconRef === undefined ? {} : { icon_ref: published.iconRef }),
+					...(published.previewImages === undefined ? {} : { preview_images: published.previewImages }),
+					...(published.previewRevision === undefined ? {} : { preview_revision: published.previewRevision }),
+					...(published.source === undefined ? {} : { source: published.source }),
+					...(published.share === undefined ? {} : { share: published.share }),
+				})
+			}}
           />
         })}
         {myExtensions.length === 0 && <EmptyState tab="mine" />}

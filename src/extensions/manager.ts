@@ -10,6 +10,7 @@ import { bundleSha256, inspectBundleArtifact } from './bundle-artifact.js'
 import { arkmeBundleActive, deactivateArkmeBundle } from './bundle-runtime.js'
 import { ArkmeExtensionInstallStore } from './install-store.js'
 import { ExtensionPublishClient } from './publish-client.js'
+import { normalizeGitHubRepositoryURL } from './source.js'
 import { materializePersistentExtensionBundle, writePersistentExtensionActivation } from './persistent-bundle.js'
 import type { ArkmeExtensionProfileInstaller } from './profile-installer.js'
 import {
@@ -23,6 +24,7 @@ import {
   ARKME_EXTENSION_ICON_MAX_BYTES, type ArkmeExtensionIconBytes, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
   type ArkmeExtensionPublishResult,
+	type ArkmeExtensionShare,
   ARKME_EXTENSION_PREVIEW_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_ITEMS,
   type ArkmeExtensionPreviewBytes, type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionEditableVisibility, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
@@ -282,9 +284,14 @@ export class ArkmeExtensionManager {
     version: string
     visibility: ArkmeExtensionVisibility
     changelog?: string
+		githubRepositoryUrl?: string
     idempotencyKey: string
     signal?: AbortSignal
   }): Promise<ArkmeExtensionPublishResult> {
+		let githubRepositoryUrl: string | undefined
+		try { githubRepositoryUrl = normalizeGitHubRepositoryURL(input.githubRepositoryUrl) } catch (error) {
+			throw new ArkmePluginError('extension-source-invalid', 'GitHub 仓库地址无效', false, 400, { cause: error })
+		}
     const inspected = this.inspectPackage(input.agent, input.pluginId, input.packageId)
     const source = materializeCordisBundle({
       packageName: input.packageName ?? `@arkme-generated/${bundleSha256(`cordis\0${input.pluginId}`).slice(0, 24)}`,
@@ -305,6 +312,7 @@ export class ArkmeExtensionManager {
       idempotency_key: input.idempotencyKey,
       bundle: source.bundle,
       source: source.source,
+		...(githubRepositoryUrl === undefined ? {} : { listingSource: { type: 'github_repository' as const, url: githubRepositoryUrl } }),
     }, input.signal)
     const completed = completedPublishSession(session, source.bundle.version)
     if (completed !== undefined) return completed
@@ -330,9 +338,14 @@ export class ArkmeExtensionManager {
     description: string
     visibility: ArkmeExtensionVisibility
     changelog?: string
+		githubRepositoryUrl?: string
     idempotencyKey: string
     signal?: AbortSignal
   }): Promise<ArkmeExtensionPublishResult> {
+		let githubRepositoryUrl: string | undefined
+		try { githubRepositoryUrl = normalizeGitHubRepositoryURL(input.githubRepositoryUrl) } catch (error) {
+			throw new ArkmePluginError('extension-source-invalid', 'GitHub 仓库地址无效', false, 400, { cause: error })
+		}
     const session = await this.client.createBundlePublishSession({
       ...(input.extensionId === undefined || input.extensionId.trim() === ''
         ? {}
@@ -344,6 +357,7 @@ export class ArkmeExtensionManager {
       idempotency_key: input.idempotencyKey,
       bundle: input.source.bundle,
       source: input.source.source,
+		...(githubRepositoryUrl === undefined ? {} : { listingSource: { type: 'github_repository' as const, url: githubRepositoryUrl } }),
     }, input.signal)
     const completed = completedPublishSession(session, input.source.bundle.version)
     if (completed !== undefined) return completed
@@ -434,6 +448,27 @@ export class ArkmeExtensionManager {
     }
     return extension
   }
+
+	async rotateShareLink(input: {
+		extensionId: string
+		clientMutationId: string
+		signal?: AbortSignal
+	}): Promise<ArkmeExtensionShare> {
+		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.extensionId.trim())
+			|| !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+			throw new ArkmePluginError('extension-share-invalid', '扩展分享参数无效', false, 400)
+		}
+		const share = await this.client.rotateShareLink(input.extensionId.trim(), input.clientMutationId, input.signal)
+		let url: URL
+		try { url = new URL(share.url) } catch (error) {
+			throw new ArkmePluginError('extension-share-contract-invalid', '扩展市场返回了无效分享链接', false, 502, { cause: error })
+		}
+		if (!/^extshare_[0-9a-f]{32}$/.test(share.ref) || url.protocol !== 'https:' || !url.pathname.endsWith(`/${share.ref}`)
+			|| url.username !== '' || url.password !== '') {
+			throw new ArkmePluginError('extension-share-contract-invalid', '扩展市场返回了无效分享链接', false, 502)
+		}
+		return share
+	}
 
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.client.deleteExtension(requiredId(extensionId, 'extension_id'), signal)

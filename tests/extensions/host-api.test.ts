@@ -148,6 +148,23 @@ describe('extension center Host BFF', () => {
     )).resolves.toMatchObject({ name: '新名称', visibility: 'public' })
   })
 
+	it('routes share rotation through the authenticated Host manager', async () => {
+		const rotateShareLink = vi.fn(async () => ({
+			ref: 'extshare_0123456789abcdef0123456789abcdef',
+			url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef',
+		}))
+		await expect(dispatchArkmeHostOperation(
+			{} as never,
+			'extensions.share.rotate',
+			{ extensionId: 'ext-owned', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432' },
+			undefined,
+			{ rotateShareLink } as never,
+		)).resolves.toMatchObject({ ref: 'extshare_0123456789abcdef0123456789abcdef' })
+		expect(rotateShareLink).toHaveBeenCalledWith({
+			extensionId: 'ext-owned', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+		})
+	})
+
   it('routes my-extension list and publish through the unified Host owner', async () => {
     const list = vi.fn(async () => ({ items: [], warnings: [] }))
     const publish = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))

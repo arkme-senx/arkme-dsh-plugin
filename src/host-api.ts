@@ -290,7 +290,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -720,6 +720,10 @@ export async function dispatchArkmeHostOperation(
       visibility: extensionEditableVisibilityParam(params),
       clientMutationId: stringParam(params, 'clientMutationId'),
     })
+	case 'extensions.share.rotate': return await requireExtensionManager(extensionManager).rotateShareLink({
+		extensionId: stringParam(params, 'extensionId'),
+		clientMutationId: stringParam(params, 'clientMutationId'),
+	})
     case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
       stringParam(params, 'extensionId'),
     )
@@ -734,6 +738,7 @@ export async function dispatchArkmeHostOperation(
       version: stringParam(params, 'version'),
       visibility: extensionVisibilityParam(params),
       ...(stringParam(params, 'changelog').trim() === '' ? {} : { changelog: stringParam(params, 'changelog') }),
+		...(stringParam(params, 'githubRepositoryUrl').trim() === '' ? {} : { githubRepositoryUrl: stringParam(params, 'githubRepositoryUrl') }),
       clientMutationId: stringParam(params, 'clientMutationId'),
     })
     case 'extensions.enabled-state': return requireExtensionManager(extensionManager).enabledState(

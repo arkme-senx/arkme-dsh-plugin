@@ -49,8 +49,11 @@ import type {
   ArkmeExtensionReviewItem,
   ArkmeExtensionReviewPage,
   ArkmeExtensionRatingSummary,
+	ArkmeExtensionShare,
+	ArkmeExtensionSource,
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
+import { normalizeGitHubRepositoryURL } from '../extensions/source.js'
 
 export type {
   ArkmeArrangementDetail,
@@ -134,6 +137,9 @@ export type {
   ArkmeExtensionReviewCreateResult,
   ArkmeExtensionReviewItem,
   ArkmeExtensionReviewPage,
+	ArkmeExtensionPublishResult,
+	ArkmeExtensionShare,
+	ArkmeExtensionSource,
 } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
@@ -363,6 +369,10 @@ export class ArkmeSdk {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
       throw new TypeError('Arkme extension client mutation id must be a UUID')
     }
+		let githubRepositoryUrl: string | undefined
+		try { githubRepositoryUrl = normalizeGitHubRepositoryURL(input.githubRepositoryUrl) } catch {
+			throw new TypeError('Arkme extension GitHub repository URL is invalid')
+		}
     return this.call<ArkmeExtensionPublishResult>('extensions.mine.publish', {
       ownedRef: input.ownedRef,
       name: input.name,
@@ -370,6 +380,7 @@ export class ArkmeSdk {
       version: input.version,
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog }),
+		...(githubRepositoryUrl === undefined ? {} : { githubRepositoryUrl }),
       clientMutationId: input.clientMutationId,
     }, signal)
   }
@@ -393,6 +404,15 @@ export class ArkmeSdk {
       clientMutationId: input.clientMutationId,
     }, signal)
   }
+
+	async rotateExtensionShare(extensionId: string, clientMutationId: string, signal?: AbortSignal): Promise<ArkmeExtensionShare> {
+		if (extensionId.trim() === '' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientMutationId)) {
+			throw new TypeError('Arkme extension share rotation input is invalid')
+		}
+		return await this.call<ArkmeExtensionShare>('extensions.share.rotate', {
+			extensionId: extensionId.trim(), clientMutationId,
+		}, signal)
+	}
 
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
   async readImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {

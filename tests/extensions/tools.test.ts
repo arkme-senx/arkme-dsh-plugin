@@ -75,9 +75,13 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-native', version: '1.0.0', state: 'active', installed: true, active: true,
       approval_required: false, restart_required: false, message: '已激活',
     }))
+    const rotateShareLink = vi.fn(async () => ({
+      ref: 'extshare_0123456789abcdef0123456789abcdef',
+      url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef',
+    }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
-      previewInstall, setEnabled, updateMetadata, setIcon, addPreview, deletePreview, reorderPreviews,
+      previewInstall, setEnabled, updateMetadata, rotateShareLink, setIcon, addPreview, deletePreview, reorderPreviews,
       delete: deleteExtension, apply: applyExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, {} as never, { readImage }, 'business')
@@ -86,6 +90,7 @@ describe('Arkme extension tools', () => {
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
+		'arkme_extension_share',
       'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
@@ -94,6 +99,7 @@ describe('Arkme extension tools', () => {
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')
+		expect(publish?.parameters).toHaveProperty('properties.items.items.properties.github_repository_url')
     expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
     expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('1 to 10')
@@ -148,6 +154,19 @@ describe('Arkme extension tools', () => {
     expect(updateMetadata).toHaveBeenCalledWith(expect.objectContaining({
       extensionId: 'ext-1', name: '新名称', description: '', visibility: 'private',
       clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    }))
+    const shareTool = definitions.find(item => item.name === 'arkme_extension_share')
+    const shareAgent = confirmationAgent('session-share', '轮换分享链接')
+    await expect(shareTool?.execute?.(
+      { extension_id: 'ext-1' }, toolExec(shareAgent, 'call-share-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(rotateShareLink).not.toHaveBeenCalled()
+    addNaturalConfirmation(shareAgent, '确认轮换')
+    await expect(shareTool?.execute?.(
+      { extension_id: 'ext-1' }, toolExec(shareAgent, 'call-share-confirm'),
+    )).resolves.toContain('extshare_0123456789abcdef0123456789abcdef')
+    expect(rotateShareLink).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-1', clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }))
     const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
     expect(iconTool?.parameters).toHaveProperty('properties.workspace_path')

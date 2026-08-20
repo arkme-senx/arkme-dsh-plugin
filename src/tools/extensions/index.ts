@@ -247,6 +247,7 @@ export function registerArkmeExtensionTools(
             version: { type: 'string', required: true, description: 'Semantic version such as 1.0.0.' },
             visibility: { type: 'string', enum: ['private', 'unlisted', 'public'], required: true },
             changelog: { type: 'string', description: 'What changed in this immutable version.' },
+			github_repository_url: { type: 'string', description: 'Optional canonical GitHub repository root. Only eligible internal accounts may use it.' },
           },
         },
       },
@@ -267,6 +268,7 @@ export function registerArkmeExtensionTools(
         version: item.version,
         visibility: item.visibility as ArkmeExtensionVisibility,
         ...(clean(item.changelog) === '' ? {} : { changelog: clean(item.changelog) }),
+		...(clean(item.github_repository_url) === '' ? {} : { githubRepositoryUrl: clean(item.github_repository_url) }),
       })), exec.signal)
       return JSON.stringify(result, undefined, 2)
     },
@@ -467,6 +469,31 @@ export function registerArkmeExtensionTools(
             message: '扩展信息已更新',
           }
         },
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'arkme_extension_share',
+    description: 'Rotate the read-only share link for one exact extension owned by the current Arkme user. Use only after the human explicitly asks to invalidate the previous link. The new link can display public or private extension metadata but never grants install, comment, execution, or management authority.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id whose share link should be rotated.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_share',
+        arguments: args,
+        question: `是否确认轮换扩展 ${extensionId} 的分享链接？旧链接会立即失效，新链接仍然只允许查看网页。`,
+        execute: async () => await manager.rotateShareLink({
+          extensionId: args.extension_id,
+          clientMutationId: mutationUuid('arkme-extension-share-rotate', exec.callId),
+          signal: exec.signal,
+        }),
       })
       return JSON.stringify(result, undefined, 2)
     },

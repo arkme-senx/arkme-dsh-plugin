@@ -1,4 +1,4 @@
-import type { ArkmeExtensionPreviewItem, ArkmeExtensionVisibility } from './types.js'
+import type { ArkmeExtensionPreviewItem, ArkmeExtensionShare, ArkmeExtensionSource, ArkmeExtensionVisibility } from './types.js'
 
 export type ArkmeMyExtensionState = 'cordis' | 'persisted' | 'published'
 export type ArkmeMyExtensionWarning = 'cloud-unavailable' | 'cordis-unavailable' | 'profile-entry-invalid'
@@ -18,6 +18,8 @@ export interface ArkmeMyExtensionItem {
     iconRef?: string
     previewImages?: ArkmeExtensionPreviewItem[]
     previewRevision?: number
+		source?: ArkmeExtensionSource
+		share?: ArkmeExtensionShare
   }
   publish: { allowed: boolean; mode?: 'new' | 'version'; reason?: string }
 }
@@ -34,6 +36,7 @@ export interface ArkmeMyExtensionPublishInput {
   version: string
   visibility: ArkmeExtensionVisibility
   changelog?: string
+	githubRepositoryUrl?: string
   clientMutationId: string
 }
 

@@ -250,6 +250,9 @@ describe('Arkme SDK', () => {
             extension_id: 'ext-1', name: '新名称', description: '', visibility: 'public', updated_at: 2,
           })
         }
+		if (request.operation === 'extensions.share.rotate') {
+			return success({ ref: 'extshare_0123456789abcdef0123456789abcdef', url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef' })
+		}
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -257,22 +260,30 @@ describe('Arkme SDK', () => {
     await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toEqual({ items: [], warnings: [] })
     await expect(sdk.publishMyExtension({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
-      visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+		visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
+		clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
     })).resolves.toMatchObject({ status: 'published' })
     await expect(sdk.updateExtensionMetadata('ext-1', {
       name: '新名称', description: '', visibility: 'public',
       clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
     })).resolves.toMatchObject({ name: '新名称', visibility: 'public' })
+		await expect(sdk.rotateExtensionShare('ext-1', '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8')).resolves.toMatchObject({
+			ref: 'extshare_0123456789abcdef0123456789abcdef',
+		})
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
       { operation: 'extensions.mine.publish', params: {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
-        visibility: 'private', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+			visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
+			clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
       } },
       { operation: 'extensions.metadata.update', params: {
         extensionId: 'ext-1', name: '新名称', description: '', visibility: 'public',
         clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
       } },
+		{ operation: 'extensions.share.rotate', params: {
+			extensionId: 'ext-1', clientMutationId: '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8',
+		} },
     ])
     expect(() => sdk.publishMyExtension({
       ownedRef: '', name: '天气', description: '天气卡片', version: '1.0.0',

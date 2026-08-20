@@ -16,6 +16,18 @@ export interface ArkmeExtensionRatingSummary {
   histogram: [number, number, number, number, number]
 }
 
+export interface ArkmeExtensionSource {
+	type: 'github_repository'
+	url: string
+	label: string
+	verification: 'publisher_attested'
+}
+
+export interface ArkmeExtensionShare {
+	ref: string
+	url: string
+}
+
 export interface ArkmeExtensionManifest {
   format: typeof ARKME_EXTENSION_FORMAT
   format_version: typeof ARKME_EXTENSION_FORMAT_VERSION
@@ -61,6 +73,8 @@ export interface ArkmeExtensionCatalogItem {
   preview_images?: ArkmeExtensionPreviewItem[]
   preview_revision?: number
   rating_summary?: ArkmeExtensionRatingSummary
+	source?: ArkmeExtensionSource
+	share?: ArkmeExtensionShare
 }
 
 export interface ArkmeExtensionMetadataUpdateInput {
@@ -208,6 +222,8 @@ export interface ArkmeExtensionPublishResult {
   source_sha256?: string
   validation_error_code?: string
   validation_error_message?: string
+	source?: ArkmeExtensionSource
+	share?: ArkmeExtensionShare
 }
 
 export interface ArkmeExtensionDeleteResult {

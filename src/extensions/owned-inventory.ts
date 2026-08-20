@@ -43,6 +43,7 @@ interface PublishInput {
   version: string
   visibility: ArkmeExtensionVisibility
   changelog?: string
+	githubRepositoryUrl?: string
   idempotencyKey: string
   signal?: AbortSignal
 }
@@ -54,6 +55,7 @@ interface PublishBundleInput {
   description: string
   visibility: ArkmeExtensionVisibility
   changelog?: string
+	githubRepositoryUrl?: string
   idempotencyKey: string
   signal?: AbortSignal
 }
@@ -256,6 +258,7 @@ export class ArkmeOwnedExtensionInventory {
       version: input.version,
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
+		...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
       idempotencyKey: createHash('sha256')
         .update(`my-extension-publish\0${String(userId)}\0${target.sourceKey}\0${input.version}\0${input.clientMutationId}`)
         .digest('hex'),
@@ -294,6 +297,7 @@ export class ArkmeOwnedExtensionInventory {
       description: input.description,
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
+		...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
       idempotencyKey: createHash('sha256')
         .update(`my-extension-bundle-publish\0${String(userId)}\0${target.sourceKey}\0${input.version}\0${input.clientMutationId}`)
         .digest('hex'),
@@ -358,6 +362,8 @@ export class ArkmeOwnedExtensionInventory {
           ...(row.published.icon_ref === undefined ? {} : { iconRef: row.published.icon_ref }),
           ...(row.published.preview_images === undefined ? {} : { previewImages: row.published.preview_images }),
           ...(row.published.preview_revision === undefined ? {} : { previewRevision: row.published.preview_revision }),
+			...(row.published.source === undefined ? {} : { source: row.published.source }),
+			...(row.published.share === undefined ? {} : { share: row.published.share }),
         },
       }),
 	  publish: row.published !== undefined

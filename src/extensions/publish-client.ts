@@ -11,6 +11,7 @@ import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   type ArkmeBundlePublishSession, type ArkmeExtensionPublishSession,
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionReviewWireCreateResult, type ArkmeExtensionReviewWirePage,
+	type ArkmeExtensionShare,
   type ArkmeInstalledExtension,
   type ArkmeExtensionManifest,
 } from './types.js'
@@ -107,6 +108,7 @@ export class ExtensionPublishClient {
     idempotency_key: string
     bundle: ArkmeBundleArtifact
     source: ArkmeBundlePublishSource['source']
+	listingSource?: { type: 'github_repository'; url: string }
   }, signal?: AbortSignal): Promise<ArkmeBundlePublishSession> {
     if (input.bundle.bytes.byteLength <= 0 || input.bundle.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES
       || input.source.bytes.byteLength <= 0 || input.source.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES) {
@@ -128,6 +130,7 @@ export class ExtensionPublishClient {
       package_json_sha256: input.bundle.packageJsonSha256,
       source_size: input.source.bytes.byteLength,
       source_sha256: input.source.sourceSha256,
+		...(input.listingSource === undefined ? {} : { source: input.listingSource }),
       idempotency_key: input.idempotency_key,
     }, signal)
   }
@@ -257,6 +260,13 @@ export class ExtensionPublishClient {
       publish_session_id: publishSessionId,
     }, signal)
   }
+
+	async rotateShareLink(extensionId: string, clientMutationId: string, signal?: AbortSignal): Promise<ArkmeExtensionShare> {
+		return await this.post('/api/v1/extensions/share/rotate', {
+			extension_id: extensionId,
+			client_mutation_id: clientMutationId,
+		}, signal)
+	}
 
   async list(input: { query?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/public/v1/extensions/list', input, signal)

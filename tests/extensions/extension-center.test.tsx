@@ -301,7 +301,7 @@ describe('Arkme extension market UI', () => {
       publish: { allowed: true, mode: 'version' },
     }
 
-    const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} onEdit={() => {}} />)
+		const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} onEdit={() => {}} onOpen={() => {}} />)
 
     expect(html).toContain('天气助手')
     expect(html).toContain('Cordis 临时')
@@ -309,6 +309,7 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('已发布')
     expect(html).not.toContain('发布新版本')
     expect(html).toContain('>编辑</button>')
+		expect(html).toContain('>详情</button>')
     expect(html.indexOf('天气助手')).toBeLessThan(html.indexOf('Cordis 临时'))
     expect(html.indexOf('Cordis 临时')).toBeLessThan(html.indexOf('天气卡片'))
     expect(html).toContain('border-radius:999px')
@@ -350,6 +351,8 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('value="天气助手"')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
     expect(html).toContain('accept="image/*"')
+		expect(html).toContain('GitHub 仓库（可选）')
+		expect(html).toContain('placeholder="https://github.com/owner/repository"')
   })
 
   it('keeps preview image management out of the extension edit dialog', () => {

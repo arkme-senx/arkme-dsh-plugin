@@ -9,6 +9,7 @@ export interface ArkmeExtensionPublishFormValue {
   version: string
   visibility: ArkmeExtensionEditableVisibility
   changelog?: string
+	githubRepositoryUrl?: string
   iconFile?: File
 }
 
@@ -24,6 +25,7 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
   const [version, setVersion] = useState(nextVersion(item.published?.version))
   const [visibility, setVisibility] = useState<ArkmeExtensionEditableVisibility>(item.published?.visibility === 'public' ? 'public' : 'private')
   const [changelog, setChangelog] = useState('')
+	const [githubRepositoryUrl, setGitHubRepositoryUrl] = useState('')
   const [iconFile, setIconFile] = useState<File>()
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -34,6 +36,7 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
       version: version.trim(),
       visibility,
       ...(changelog.trim() === '' ? {} : { changelog: changelog.trim() }),
+		...(githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: githubRepositoryUrl.trim() }),
       ...(iconFile === undefined ? {} : { iconFile }),
     })
   }
@@ -48,6 +51,14 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
           <option value="private">仅自己</option><option value="public">公开</option>
         </select></label>
         <label style={styles.label}>更新说明<textarea style={styles.textarea} value={changelog} maxLength={2000} disabled={busy} onChange={event => { setChangelog(event.target.value) }} /></label>
+		<label style={styles.label}>GitHub 仓库（可选）<input
+			style={styles.input}
+			type="url"
+			placeholder="https://github.com/owner/repository"
+			value={githubRepositoryUrl}
+			disabled={busy}
+			onChange={event => { setGitHubRepositoryUrl(event.target.value) }}
+		/></label>
         <ArkmeExtensionAvatarField
           {...(item.published?.extensionId === undefined ? {} : { extensionId: item.published.extensionId })}
           {...(item.published?.iconRef === undefined ? {} : { iconRef: item.published.iconRef })}

@@ -48,3 +48,14 @@ symlink escapes and SVG external or executable content are rejected.
 | Host owner | signed PUT and real-byte verification | owner/revision validation | signed GET, SHA-256 verification and bounded cache | available |
 
 The gallery is extension-owned, independent from versions, limited to 20 PNG/JPEG/WebP images, 320-4096 pixels on both axes and 5 MiB per image. Index zero is the cover. PNG/JPEG/WebP or restricted SVG files can be supplied only by unique relative paths inside the current Agent workspace; the Host rejects traversal and symlink escapes and normalizes SVG to PNG before upload. Prepare captures attachment authorization or workspace paths plus ordered content fingerprints; the user only needs to reply “确认”. Confirm re-reads every source and aborts if target or bytes changed, while a different prepare cannot replace an unconfirmed operation. Browser and model results never contain workspace paths, object keys or signed storage transport.
+
+## GitHub source and read-only sharing
+
+| Surface | GitHub source publication | Share link | Evidence |
+| --- | --- | --- | --- |
+| DSH Tool | `arkme_extension_publish` accepts an optional repository-root URL and keeps the fixed `github_repository` type inside the Host | `arkme_extension_share` rotates an owned link only after the normal DSH write confirmation | Tool schema and manager tests |
+| Public SDK | `publishMyExtension()` accepts `githubRepositoryUrl` and normalizes it without exposing eligibility credentials | `rotateExtensionShare()` returns only `{ref,url}` | SDK consumer tests and emitted declarations |
+| Built-in UI | the publish dialog has one optional GitHub URL field and no type selector | published public/private items open a detail view with copy and owner-only rotation controls | server-render and full UI tests |
+| Host owner | `ArkmeExtensionManager` validates/normalizes input once, then delegates eligibility to the registry | the same manager validates the registry link before UI, Tool or SDK receives it | manager and authenticated Host-route tests |
+
+Source metadata is an extension-level listing fact and never enters Bundle/source bytes, digests or signatures. Share links display public or private metadata through the Web page only; they do not authorize install, comments, execution or writes. The browser and model never receive internal eligibility tokens, object keys or signed artifact transport.
