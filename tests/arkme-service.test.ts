@@ -153,6 +153,12 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
+function jwtWithExpiry(exp: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ exp })).toString('base64url')
+  return `${header}.${payload}.signature`
+}
+
 function userInfo(userId: number, phone = '13800138000'): Record<string, unknown> {
   return {
     user_id: userId,
@@ -213,6 +219,40 @@ describe('ArkmeService', () => {
     service.dispose()
     expect(contactDispose).toHaveBeenCalledTimes(2)
     expect(unmarkedDispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('resolves the current Arkme access token for managed model calls without copying it elsewhere', async () => {
+    const sessions = new MemorySessionStore()
+    const accessToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 120)
+    sessions.session = { userId: 10001, accessToken, refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      throw new Error('a fresh managed access credential must not call the network')
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    const credential = await service.resolveManagedAccessCredential()
+
+    expect(credential.reveal()).toBe(accessToken)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a managed access credential before it enters the final minute', async () => {
+    const sessions = new MemorySessionStore()
+    const expiringToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 30)
+    const renewedToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 3600)
+    sessions.session = { userId: 10001, accessToken: expiringToken, refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://auth.test/api/public/v1/auth/new-short')
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer refresh')
+      return json({ code: 200, data: { access_token: renewedToken } })
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    const credential = await service.resolveManagedAccessCredential()
+
+    expect(credential.reveal()).toBe(renewedToken)
+    expect(sessions.session?.accessToken).toBe(renewedToken)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('resolves extension authors with safe real and default avatar projections', async () => {
