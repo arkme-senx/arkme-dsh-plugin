@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
-
-const ACCEPTED_ICON_TYPES = ['image/png', 'image/jpeg', 'image/webp']
-const MAX_ICON_BYTES = 2 * 1024 * 1024
+import { ArkmeExtensionAvatarCropDialog } from './ArkmeExtensionAvatarCropDialog.js'
+import { extensionAvatarSourceError } from './extension-avatar-crop.js'
 
 export function ArkmeExtensionAvatarField({ extensionId, iconRef, selectedFile, disabled, onSelect }: {
   extensionId?: string
@@ -15,6 +14,7 @@ export function ArkmeExtensionAvatarField({ extensionId, iconRef, selectedFile, 
   const [previewUrl, setPreviewUrl] = useState('')
   const [active, setActive] = useState(false)
   const [error, setError] = useState('')
+  const [sourceFile, setSourceFile] = useState<File>()
   useEffect(() => {
     if (selectedFile === undefined || typeof URL.createObjectURL !== 'function') {
       setPreviewUrl('')
@@ -46,29 +46,35 @@ export function ArkmeExtensionAvatarField({ extensionId, iconRef, selectedFile, 
     <span style={styles.copy}>
       <span style={styles.title}>扩展头像</span>
       <span style={styles.description}>{selectedFile === undefined
-        ? '默认使用扩展图标，点此可选择自定义头像'
-        : '已选择自定义头像，点此可重新更换'}</span>
+        ? '支持常见图片，选择后可手动裁剪并自动压缩'
+        : '已完成裁剪，点此可重新选择'}</span>
       {selectedFile !== undefined && <span style={styles.fileName}>{selectedFile.name}</span>}
       {error !== '' && <span role="alert" style={styles.error}>{error}</span>}
     </span>
     <input
       ref={input}
       type="file"
-      accept="image/png,image/jpeg,image/webp"
+      accept="image/*"
       disabled={disabled}
       style={{ display: 'none' }}
       onChange={event => {
         const file = event.target.files?.[0]
         event.target.value = ''
         if (file === undefined) return
-        if (!ACCEPTED_ICON_TYPES.includes(file.type.toLowerCase()) || file.size <= 0 || file.size > MAX_ICON_BYTES) {
-          setError('头像仅支持 PNG/JPEG/WebP，且必须小于 2 MiB')
+        const nextError = extensionAvatarSourceError(file)
+        if (nextError !== undefined) {
+          setError(nextError)
           return
         }
         setError('')
-        onSelect(file)
+        setSourceFile(file)
       }}
     />
+    {sourceFile !== undefined && <ArkmeExtensionAvatarCropDialog
+      sourceFile={sourceFile}
+      onCancel={() => { setSourceFile(undefined) }}
+      onConfirm={file => { setSourceFile(undefined); onSelect(file) }}
+    />}
   </div>
 }
 

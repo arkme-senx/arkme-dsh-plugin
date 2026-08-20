@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
+import { ArkmeExtensionAvatarCropDialog } from '../../src/client/ArkmeExtensionAvatarCropDialog.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 
 const published = {
@@ -14,6 +15,21 @@ const published = {
 }
 
 describe('extension metadata dialogs', () => {
+  it('renders an explicit square crop step with zoom and confirmation controls', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionAvatarCropDialog
+      sourceFile={new File([new Uint8Array([1])], 'source.heic', { type: 'image/heic' })}
+      onCancel={() => {}}
+      onConfirm={() => {}}
+    />)
+    expect(html).toContain('裁剪扩展头像')
+    expect(html).toContain('aria-label="头像缩放"')
+    expect(html).toContain('type="range"')
+    expect(html).toContain('width:280px')
+    expect(html).toContain('height:280px')
+    expect(html).toContain('>取消</button>')
+    expect(html).toContain('>确认裁剪</button>')
+  })
+
   it('renders a Bot-style avatar editor with metadata fields only', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionEditDialog
       item={published}
@@ -27,9 +43,10 @@ describe('extension metadata dialogs', () => {
     expect(html).toContain('aria-label="更换扩展头像"')
     expect(html).toContain('width:64px')
     expect(html).toContain('border-radius:50%')
-    expect(html).toContain('accept="image/png,image/jpeg,image/webp"')
+    expect(html).toContain('accept="image/*"')
     expect(html).toContain('display:none')
     expect(html).toContain('>扩展头像<')
+    expect(html).toContain('选择后可手动裁剪')
     expect(html).toContain('>保存</button>')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
     expect(html).not.toContain('<option value="unlisted"')
@@ -63,6 +80,7 @@ describe('extension metadata dialogs', () => {
       onSubmit={() => {}}
     />)
     expect(html).toContain('aria-label="更换扩展头像"')
+    expect(html).toContain('accept="image/*"')
     expect(html).toContain('display:none')
     expect(html).toContain('>版本<')
     expect(html).toContain('更新说明')
