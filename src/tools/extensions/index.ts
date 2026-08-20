@@ -8,9 +8,24 @@ import type { ArkmeExtensionManager } from '../../extensions/manager.js'
 import type { ArkmeOwnedExtensionInventory } from '../../extensions/owned-inventory.js'
 import type { ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeImageBytes } from '../../types.js'
-import { readWorkspaceExtensionIcon } from '../../extensions/workspace-icon.js'
-import { selectLatestUserPreviewAttachments } from '../../extensions/session-preview-attachments.js'
-import { addPreviewAttachmentBatch } from './preview-attachment-batch.js'
+import {
+  readWorkspaceExtensionIcon,
+  validateExtensionPreviewImage,
+} from '../../extensions/workspace-icon.js'
+import {
+  selectLatestUserPreviewAttachments,
+  type SelectedPreviewAttachment,
+} from '../../extensions/session-preview-attachments.js'
+import { resolvePreviewAttachments } from './preview-attachment-batch.js'
+import {
+  addResolvedPreviewBatch,
+  preflightResolvedPreviewBatch,
+  previewImageDigest,
+  previewImageFingerprint,
+  type ResolvedPreviewImage,
+} from './preview-batch.js'
+import { resolvePreviewWorkspaceImages } from './preview-workspace-batch.js'
+import { ArkmeImageMutationConversation } from './image-conversation.js'
 import { ArkmeExtensionPublishConversation } from './publish-conversation.js'
 
 const EXTENSION_TOOL_NAMES = [
@@ -23,6 +38,18 @@ const EXTENSION_TOOL_NAMES = [
 export interface ArkmeExtensionImageSource {
   readImage(imageRef: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<ArkmeImageBytes>
 }
+
+type IconMutationDraft = {
+  extensionId: string
+  source: { kind: 'image-ref'; imageRef: string } | { kind: 'workspace'; workspacePath: string }
+}
+
+type PreviewMutationSource =
+  | { kind: 'image-ref'; imageRef: string }
+  | { kind: 'attachments'; attachments: SelectedPreviewAttachment[] }
+  | { kind: 'workspace'; workspacePaths: string[] }
+
+type PreviewMutationDraft = { extensionId: string; source: PreviewMutationSource }
 
 export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   'When the user asks to create a new Dynamic Cordis extension for publication, inspect the currently visible tool catalog '
@@ -37,7 +64,13 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   + 'human message. Never call action=confirm in the prepare turn. After the exact later reply, call the same tool with action=confirm '
   + 'and no items; do not claim publication for the prepare result. When the user asks to create or replace an extension icon and an '
   + 'image already exists inside this current Agent workspace, call arkme_extension_icon_set with its relative workspace_path; safe SVG '
-  + 'is accepted and normalized by the Host. Do not search for image upload routes, signed storage URLs, conversion CLIs, or old plugin '
+  + 'is accepted and normalized by the Host. For extension preview galleries, arkme_extension_preview_add accepts workspace_paths for one '
+  + 'or more PNG, JPEG, WebP, or safe SVG files generated inside this current Agent workspace, as well as direct user-message attachments. '
+  + 'For icon replacement or preview addition, first call the matching Tool with action=prepare and the exact source. Show its question in '
+  + 'ordinary conversation, ask the human to reply with expectedReply exactly, and wait for a later direct human message. Only then call '
+  + 'the same Tool with action=confirm and omit all source fields. Never confirm in the prepare turn and never rely on a tools/pre-execute '
+  + 'approval card for these image writes. Do not search for image upload '
+  + 'routes, signed storage URLs, conversion CLIs, or old plugin '
   + 'worktrees. If neither a workspace image nor an authorized image_ref exists and no current tool can create one, state the missing '
   + 'image input immediately instead of searching unrelated repositories.'
 
@@ -55,6 +88,26 @@ function mutationUuid(namespace: string, callId: unknown): string {
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`
 }
 
+function previewSourceCount(source: PreviewMutationSource): number {
+  if (source.kind === 'workspace') return source.workspacePaths.length
+  if (source.kind === 'attachments') return source.attachments.length
+  return 1
+}
+
+function previewSourceIdentity(source: PreviewMutationSource): string {
+  if (source.kind === 'workspace') return `workspace\0${source.workspacePaths.join('\0')}`
+  if (source.kind === 'attachments') {
+    return `attachments\0${source.attachments.map(item => String(item.ref.attachmentId)).join('\0')}`
+  }
+  return `image-ref\0${source.imageRef}`
+}
+
+function previewSourceLabel(source: PreviewMutationSource): string {
+  if (source.kind === 'workspace') return '当前 Agent 工作区文件'
+  if (source.kind === 'attachments') return '已选择的用户消息附件'
+  return '当前账号可读取的 Arkme 图片'
+}
+
 export function registerArkmeExtensionTools(
   ctx: Context,
   manager: ArkmeExtensionManager,
@@ -70,6 +123,109 @@ export function registerArkmeExtensionTools(
       ...input,
       ...(signal === undefined ? {} : { signal }),
     }),
+  })
+
+  const iconConversation = new ArkmeImageMutationConversation<IconMutationDraft, ArkmeImageBytes, unknown>({
+    expectedReply: () => '确认',
+    question: draft => `是否确认使用刚才选择或生成的图片替换扩展 ${draft.extensionId} 的头像？`,
+    async preflight(agent, draft, signal) {
+      const image = draft.source.kind === 'workspace'
+        ? await readWorkspaceExtensionIcon(agent, draft.source.workspacePath, signal)
+        : await imageSource.readImage(draft.source.imageRef, {
+            maxBytes: 2 * 1024 * 1024,
+            ...(signal === undefined ? {} : { signal }),
+          })
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
+        throw new Error('extension icons accept PNG, JPEG, or WebP only')
+      }
+      const digest = previewImageDigest(image.data)
+      const sourceIdentity = draft.source.kind === 'workspace'
+        ? `workspace\0${draft.source.workspacePath}`
+        : `image-ref\0${draft.source.imageRef}`
+      return {
+        fingerprint: createHash('sha256')
+          .update(`arkme-extension-icon-confirmation\0${draft.extensionId}\0${sourceIdentity}\0${digest}`)
+          .digest('hex'),
+        prepared: image,
+      }
+    },
+    async apply(draft, image, signal) {
+      const digest = previewImageDigest(image.data)
+      return await manager.setIcon({
+        extensionId: draft.extensionId,
+        mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
+        data: image.data,
+        idempotencyKey: createHash('sha256')
+          .update(`arkme-extension-icon\0${draft.extensionId}\0${digest}`)
+          .digest('hex'),
+        ...(signal === undefined ? {} : { signal }),
+      })
+    },
+  })
+
+  async function resolvePreviewDraft(
+    agent: Agent,
+    draft: PreviewMutationDraft,
+    signal?: AbortSignal,
+  ): Promise<ResolvedPreviewImage[]> {
+    if (draft.source.kind === 'workspace') {
+      return await resolvePreviewWorkspaceImages({
+        workspacePaths: draft.source.workspacePaths,
+        agent,
+        ...(signal === undefined ? {} : { signal }),
+      })
+    }
+    if (draft.source.kind === 'attachments') {
+      const attachments = ctx.get('attachments')
+      if (attachments === undefined) throw new Error('cannot add preview attachments: no attachment service is mounted')
+      return await resolvePreviewAttachments({
+        attachments: draft.source.attachments,
+        store: attachments,
+        ...(signal === undefined ? {} : { signal }),
+      })
+    }
+    const image = await validateExtensionPreviewImage(
+      await imageSource.readImage(draft.source.imageRef, {
+        maxBytes: 5 * 1024 * 1024,
+        ...(signal === undefined ? {} : { signal }),
+      }),
+      signal,
+    )
+    return [{
+      index: 1,
+      mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
+      data: image.data,
+      digest: previewImageDigest(image.data),
+    }]
+  }
+
+  const previewConversation = new ArkmeImageMutationConversation<PreviewMutationDraft, ResolvedPreviewImage[], unknown>({
+    expectedReply: () => '确认',
+    question: draft => `是否确认把来自${previewSourceLabel(draft.source)}的 ${String(previewSourceCount(draft.source))} 张图片追加到扩展 ${draft.extensionId} 的预览画廊？`,
+    async preflight(agent, draft, signal) {
+      const images = await resolvePreviewDraft(agent, draft, signal)
+      await preflightResolvedPreviewBatch({
+        extensionId: draft.extensionId,
+        images,
+        manager,
+        ...(signal === undefined ? {} : { signal }),
+      })
+      const sourceIdentity = previewSourceIdentity(draft.source)
+      return {
+        fingerprint: createHash('sha256')
+          .update(`${previewImageFingerprint(draft.extensionId, images)}\0${sourceIdentity}`)
+          .digest('hex'),
+        prepared: images,
+      }
+    },
+    async apply(draft, images, signal) {
+      return await addResolvedPreviewBatch({
+        extensionId: draft.extensionId,
+        images,
+        manager,
+        ...(signal === undefined ? {} : { signal }),
+      })
+    },
   })
 
   ctx.systemPrompt.section({
@@ -219,35 +375,34 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_icon_set',
-    description: 'Set or replace the icon of one extension owned by the current Arkme user. Provide exactly one source: image_ref from an Arkme profile/source result, or workspace_path for a PNG, JPEG, WebP, or safe SVG generated inside this current Agent workspace. The Host validates, normalizes, and uploads the bytes without exposing signed storage URLs. Use only after an explicit current human request.',
+    description: 'Prepare or confirm a conversational icon replacement for one extension owned by the current Arkme user. action=prepare requires extension_id and exactly one source: image_ref from an Arkme profile/source result, or workspace_path for a PNG, JPEG, WebP, or safe SVG generated inside this current Agent workspace. It validates and fingerprints the image without writing. Show its question in ordinary conversation and wait for the later direct human expectedReply. Then call action=confirm with no source fields; the Host revalidates the exact target and bytes before upload and does not use an ACK card.',
     parameters: {
-      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
-      image_ref: { type: 'string', description: 'Opaque Arkme image_ref returned by profile or source tools. Mutually exclusive with workspace_path.' },
-      workspace_path: { type: 'string', description: 'Relative path to a PNG, JPEG, WebP, or safe SVG inside the current Agent session workspace. Mutually exclusive with image_ref.' },
+      action: { type: 'string', enum: ['prepare', 'confirm'], required: true, description: 'Prepare validates and asks; confirm applies only after the later exact human reply.' },
+      extension_id: { type: 'string', description: 'Exact owned extension_id. Required only for action=prepare.' },
+      image_ref: { type: 'string', description: 'Opaque Arkme image_ref returned by profile or source tools. Only for action=prepare; mutually exclusive with workspace_path.' },
+      workspace_path: { type: 'string', description: 'Relative path to a PNG, JPEG, WebP, or safe SVG inside the current Agent session workspace. Only for action=prepare; mutually exclusive with image_ref.' },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const agent = requireAgent(exec) as Agent
+      if (args.action === 'confirm') {
+        if (clean(args.extension_id) !== '' || clean(args.image_ref) !== '' || clean(args.workspace_path) !== '') {
+          throw new Error('确认替换头像时不能重新提交扩展或图片参数')
+        }
+        return JSON.stringify(await iconConversation.confirm(agent, exec.signal), undefined, 2)
+      }
+      const extensionId = clean(args.extension_id)
       const imageRef = clean(args.image_ref)
       const workspacePath = typeof args.workspace_path === 'string' ? args.workspace_path : ''
+      if (extensionId === '') throw new Error('action=prepare requires extension_id')
       if ((imageRef === '') === (workspacePath === '')) {
         throw new Error('provide exactly one of image_ref or workspace_path')
       }
-      const image = imageRef === ''
-        ? await readWorkspaceExtensionIcon(agent, workspacePath, exec.signal)
-        : await imageSource.readImage(imageRef, { maxBytes: 2 * 1024 * 1024, signal: exec.signal })
-      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) throw new Error('extension icons accept PNG, JPEG, or WebP only')
-      const sourceIdentity = imageRef === '' ? workspacePath : imageRef
-      const result = await manager.setIcon({
-        extensionId: args.extension_id,
-        mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
-        data: image.data,
-        idempotencyKey: createHash('sha256')
-          .update(`arkme-extension-icon\0${String(exec.callId)}\0${args.extension_id}\0${sourceIdentity}`)
-          .digest('hex'),
-        signal: exec.signal,
-      })
-      return JSON.stringify(result, undefined, 2)
+      const draft: IconMutationDraft = {
+        extensionId,
+        source: imageRef === '' ? { kind: 'workspace', workspacePath } : { kind: 'image-ref', imageRef },
+      }
+      return JSON.stringify(await iconConversation.prepare(agent, draft, exec.signal), undefined, 2)
     },
   }))
 
@@ -284,46 +439,52 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_preview_add',
-    description: 'Add images to the ordered preview gallery of an extension owned by the current Arkme user. Omit image_ref to use all image attachments in the latest direct user message, or pass 1-based attachment_indices to select some of them. image_ref remains available for one Arkme profile/source image. The Host reads and uploads bytes without exposing local paths or signed storage transport. Use only after an explicit current human request.',
+    description: 'Prepare or confirm adding images to an owned extension preview gallery. action=prepare requires extension_id and exactly one source mode: workspace_paths for Agent-workspace PNG/JPEG/WebP/safe SVG files; image_ref for one Arkme profile/source image; or latest direct user-message attachments by omitting both and optionally selecting attachment_indices. It validates ownership, capacity, dimensions and content fingerprints without writing. Show its question in ordinary conversation and wait for the later direct human expectedReply. Then call action=confirm with no source fields; the Host revalidates the captured source and bytes before upload and does not use an ACK card.',
     parameters: {
-      extension_id: { type: 'string', required: true, description: 'Exact owned extension_id.' },
-      image_ref: { type: 'string', description: 'Optional opaque Arkme image_ref returned by profile or source tools. Mutually exclusive with attachment_indices.' },
+      action: { type: 'string', enum: ['prepare', 'confirm'], required: true, description: 'Prepare validates and asks; confirm applies only after the later exact human reply.' },
+      extension_id: { type: 'string', description: 'Exact owned extension_id. Required only for action=prepare.' },
+      image_ref: { type: 'string', description: 'Optional opaque Arkme image_ref returned by profile or source tools. Only for action=prepare; mutually exclusive with attachment_indices and workspace_paths.' },
       attachment_indices: {
         type: 'array', items: { type: 'integer' },
-        description: 'Optional unique 1-based image positions from the latest direct user message. Omit image_ref and this field to add every image in that message.',
+        description: 'Optional unique 1-based image positions from the latest direct user message. Only for action=prepare; mutually exclusive with image_ref and workspace_paths. Omit all source fields to add every image in that message.',
+      },
+      workspace_paths: {
+        type: 'array', items: { type: 'string' },
+        description: 'One to 20 unique relative paths to PNG, JPEG, WebP, or safe SVG files inside the current Agent session workspace. Only for action=prepare; mutually exclusive with image_ref and attachment_indices.',
       },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const agent = requireAgent(exec) as Agent
+      if (args.action === 'confirm') {
+        if (clean(args.extension_id) !== '' || clean(args.image_ref) !== ''
+          || args.attachment_indices !== undefined || args.workspace_paths !== undefined) {
+          throw new Error('确认添加预览图时不能重新提交扩展或图片参数')
+        }
+        return JSON.stringify(await previewConversation.confirm(agent, exec.signal), undefined, 2)
+      }
+      const extensionId = clean(args.extension_id)
+      if (extensionId === '') throw new Error('action=prepare requires extension_id')
       const imageRef = clean(args.image_ref)
       const attachmentIndices = Array.isArray(args.attachment_indices) ? args.attachment_indices : undefined
-      if (imageRef !== '' && attachmentIndices !== undefined) throw new Error('image_ref and attachment_indices are mutually exclusive')
-      if (imageRef === '') {
+      const workspacePaths = Array.isArray(args.workspace_paths) ? args.workspace_paths : undefined
+      const sourceCount = Number(imageRef !== '') + Number(attachmentIndices !== undefined) + Number(workspacePaths !== undefined)
+      if (sourceCount > 1) throw new Error('provide exactly one preview image source: image_ref, attachment_indices, or workspace_paths')
+      let source: PreviewMutationSource
+      if (workspacePaths !== undefined) {
+        if (workspacePaths.some(path => typeof path !== 'string')) {
+          throw new Error('workspace_paths must contain 1 to 20 unique relative image paths')
+        }
+        source = { kind: 'workspace', workspacePaths: workspacePaths as string[] }
+      } else if (imageRef === '') {
         const attachments = ctx.get('attachments')
         if (attachments === undefined) throw new Error('cannot add preview attachments: no attachment service is mounted')
         const selected = selectLatestUserPreviewAttachments(agent, attachmentIndices)
-        const result = await addPreviewAttachmentBatch({
-          extensionId: args.extension_id, attachments: selected, store: attachments, manager,
-          ...(exec.signal === undefined ? {} : { signal: exec.signal }),
-        })
-        return JSON.stringify(result, undefined, 2)
+        source = { kind: 'attachments', attachments: selected }
+      } else {
+        source = { kind: 'image-ref', imageRef }
       }
-      const image = await imageSource.readImage(imageRef, { maxBytes: 5 * 1024 * 1024, signal: exec.signal })
-      if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)) {
-        throw new Error('extension previews accept PNG, JPEG, or WebP only')
-      }
-      const digest = createHash('sha256')
-        .update(`arkme-extension-preview\0${String(exec.callId)}\0${args.extension_id}\0${imageRef}`)
-        .digest('hex')
-      const result = await manager.addPreview({
-        extensionId: args.extension_id,
-        mediaType: image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp',
-        data: image.data,
-        idempotencyKey: `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`,
-        signal: exec.signal,
-      })
-      return JSON.stringify(result, undefined, 2)
+      return JSON.stringify(await previewConversation.prepare(agent, { extensionId, source }, exec.signal), undefined, 2)
     },
   }))
 
@@ -376,7 +537,7 @@ export function registerArkmeExtensionTools(
     if (!EXTENSION_TOOL_NAMES.includes(exec.name as typeof EXTENSION_TOOL_NAMES[number])) return await next()
     if (![
       'arkme_extension_delete', 'arkme_extension_apply', 'arkme_extension_set_enabled',
-      'arkme_extension_icon_set', 'arkme_extension_edit', 'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
+      'arkme_extension_edit', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ].includes(exec.name)) return await next()
     const decision = await next()
     if (decision.kind !== 'allow') return decision
@@ -397,35 +558,12 @@ export function registerArkmeExtensionTools(
           : `确认关闭已安装扩展 ${extensionId} 吗？扩展和版本会保留，稍后可重新启用。`,
       }
     }
-    if (exec.name === 'arkme_extension_icon_set') {
-      return {
-        kind: 'ask',
-        reason: `确认使用当前账号可读取的图片替换扩展 ${extensionId} 的头像吗？`,
-      }
-    }
     if (exec.name === 'arkme_extension_edit') {
       const name = clean(typeof args.name === 'string' ? args.name : '').slice(0, 120)
       const visibility = args.visibility === 'public' ? '公开' : '仅自己'
       return {
         kind: 'ask',
         reason: `确认把扩展 ${extensionId} 的资料更新为“${name}”，可见范围：${visibility}吗？`,
-      }
-    }
-    if (exec.name === 'arkme_extension_preview_add') {
-      const imageRef = clean(typeof args.image_ref === 'string' ? args.image_ref : '')
-      if (imageRef === '') {
-        const agent = exec.agent as Agent | undefined
-        if (agent === undefined) throw new Error('该扩展操作必须在一个真实 DSH Agent 会话中执行')
-        const indices = Array.isArray(args.attachment_indices) ? args.attachment_indices as number[] : undefined
-        const selected = selectLatestUserPreviewAttachments(agent, indices)
-        return {
-          kind: 'ask',
-          reason: `确认把当前消息选择的 ${String(selected.length)} 张图片添加到扩展 ${extensionId} 的预览图集吗？`,
-        }
-      }
-      return {
-        kind: 'ask',
-        reason: `确认把当前账号可读取的图片添加到扩展 ${extensionId} 的预览图集吗？`,
       }
     }
     if (exec.name === 'arkme_extension_preview_delete') {

@@ -21,7 +21,7 @@ dependency merely because it remains installed.
 
 | Surface | Enable/disable | Version and button presentation | Extension icon management |
 | --- | --- | --- | --- |
-| DSH Tool | `arkme_extension_set_enabled` with explicit confirmation | N/A: no model-facing behavior is added | `arkme_extension_icon_set` accepts exactly one authorized Arkme `image_ref` or current-session-relative `workspace_path` and requires confirmation |
+| DSH Tool | `arkme_extension_set_enabled` with explicit confirmation | N/A: no model-facing behavior is added | `arkme_extension_icon_set` uses `prepare → later direct human reply → confirm` for exactly one authorized Arkme `image_ref` or current-session-relative `workspace_path`; it does not use an ACK card |
 | Public SDK | typed installed-list and enable/disable methods | N/A: display-only formatting belongs to the built-in UI | `setExtensionIcon()` uploads a local `Blob`; `extensionIconUrl()` returns only a same-origin URL |
 | Built-in UI | switch in every installed projection, with busy/error/restart states | dark install/update buttons and explicit installed/latest versions | publish, replace, list and detail surfaces share the current `icon_ref` with a generic fallback |
 | Host owner | `ArkmeExtensionManager.setEnabled()` owns persistence, Cordis disposal/activation, Profile projection and errors | existing catalog/update projections | owns file/image-ref validation, workspace confinement and normalization, signed PUT/GET transport, digest verification and bounded cache invalidation |
@@ -42,9 +42,9 @@ symlink escapes and SVG external or executable content are rejected.
 
 | Surface | Add | Delete/reorder | Read | MVP status |
 | --- | --- | --- | --- | --- |
-| DSH Tool | `arkme_extension_preview_add` accepts an Arkme `image_ref` | exact refs plus current revision, all writes require confirmation | owned list/inspect returns ordered safe refs | available |
+| DSH Tool | `arkme_extension_preview_add` accepts an Arkme `image_ref`, captured latest direct-user attachments, or current-session `workspace_paths`; add uses a fingerprint-bound `prepare → later direct human reply → confirm` flow while delete/reorder retain DSH approval | exact refs plus current revision | owned list/inspect returns ordered safe refs | available |
 | Public SDK | `addExtensionPreview()` accepts a local `Blob` | CAS methods require `preview_revision` | `extensionPreviewUrl()` is same-origin | available |
 | Built-in UI | local multi-file picker in Edit | staged delete and accessible drag/button reorder | detail gallery through the same-origin route | available |
 | Host owner | signed PUT and real-byte verification | owner/revision validation | signed GET, SHA-256 verification and bounded cache | available |
 
-The gallery is extension-owned, independent from versions, limited to 20 PNG/JPEG/WebP images and 5 MiB per image. Index zero is the cover. Browser and model results never contain object keys or signed storage transport.
+The gallery is extension-owned, independent from versions, limited to 20 PNG/JPEG/WebP images, 320-4096 pixels on both axes and 5 MiB per image. Index zero is the cover. PNG/JPEG/WebP or restricted SVG files can be supplied only by unique relative paths inside the current Agent workspace; the Host rejects traversal and symlink escapes and normalizes SVG to PNG before upload. Prepare captures attachment authorization or workspace paths plus ordered content fingerprints; the user only needs to reply “确认”. Confirm re-reads every source and aborts if target or bytes changed, while a different prepare cannot replace an unconfirmed operation. Browser and model results never contain workspace paths, object keys or signed storage transport.

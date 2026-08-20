@@ -7,8 +7,38 @@ import type { ArkmeImageBytes } from '../types.js'
 const MAX_ICON_BYTES = 2 * 1024 * 1024
 const MAX_ICON_PIXELS = 16 * 1024 * 1024
 const MAX_ICON_EDGE = 1024
+const MAX_PREVIEW_BYTES = 5 * 1024 * 1024
+const MAX_PREVIEW_PIXELS = 40 * 1024 * 1024
+const MAX_PREVIEW_EDGE = 4096
 
 type SupportedIconMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
+
+interface WorkspaceImagePolicy {
+  maxBytes: number
+  maxPixels: number
+  maxEdge: number
+  minEdge: number
+  outputLabel: string
+  sizeLabel: string
+}
+
+const ICON_POLICY: WorkspaceImagePolicy = {
+  maxBytes: MAX_ICON_BYTES,
+  maxPixels: MAX_ICON_PIXELS,
+  maxEdge: MAX_ICON_EDGE,
+  minEdge: 1,
+  outputLabel: 'icon',
+  sizeLabel: '2 MiB',
+}
+
+const PREVIEW_POLICY: WorkspaceImagePolicy = {
+  maxBytes: MAX_PREVIEW_BYTES,
+  maxPixels: MAX_PREVIEW_PIXELS,
+  maxEdge: MAX_PREVIEW_EDGE,
+  minEdge: 320,
+  outputLabel: 'preview image',
+  sizeLabel: '5 MiB',
+}
 
 function invalidWorkspaceImage(message: string): Error {
   return new Error(`cannot use the workspace image: ${message}`)
@@ -75,21 +105,22 @@ function assertSafeSvg(data: Uint8Array): void {
   }
 }
 
-async function normalizeIcon(
+async function normalizeImage(
   data: Uint8Array,
   inputType: ReturnType<typeof sniffMediaType>,
+  policy: WorkspaceImagePolicy,
   signal?: AbortSignal,
 ): Promise<ArkmeImageBytes> {
   signal?.throwIfAborted()
   if (inputType === 'image/svg+xml') assertSafeSvg(data)
   const pipeline = sharp(data, {
     failOn: 'warning',
-    limitInputPixels: MAX_ICON_PIXELS,
+    limitInputPixels: policy.maxPixels,
     sequentialRead: true,
     ...(inputType === 'image/svg+xml' ? { density: 144 } : {}),
   }).rotate().resize({
-    width: MAX_ICON_EDGE,
-    height: MAX_ICON_EDGE,
+    width: policy.maxEdge,
+    height: policy.maxEdge,
     fit: 'inside',
     withoutEnlargement: true,
   }).timeout({ seconds: 10 })
@@ -106,16 +137,24 @@ async function normalizeIcon(
     mediaType = 'image/webp'
   }
   signal?.throwIfAborted()
-  if (output.byteLength <= 0 || output.byteLength > MAX_ICON_BYTES) {
-    throw invalidWorkspaceImage('the normalized icon must be smaller than 2 MiB')
+  if (output.byteLength <= 0 || output.byteLength > policy.maxBytes) {
+    throw invalidWorkspaceImage(`the normalized ${policy.outputLabel} must be smaller than ${policy.sizeLabel}`)
+  }
+  const metadata = await sharp(output, { failOn: 'warning', limitInputPixels: policy.maxPixels }).metadata()
+  if (metadata.width === undefined || metadata.height === undefined
+    || metadata.width < policy.minEdge || metadata.height < policy.minEdge
+    || metadata.width > policy.maxEdge || metadata.height > policy.maxEdge) {
+    throw invalidWorkspaceImage(
+      `the normalized ${policy.outputLabel} must be ${String(policy.minEdge)}-${String(policy.maxEdge)} pixels on both axes`,
+    )
   }
   return { mediaType, bytes: output.byteLength, data: new Uint8Array(output) }
 }
 
-/** Read one Agent-workspace image without allowing paths or symlinks to escape the session workspace. */
-export async function readWorkspaceExtensionIcon(
+async function readWorkspaceExtensionImage(
   agent: Agent,
   workspacePathValue: string,
+  policy: WorkspaceImagePolicy,
   signal?: AbortSignal,
 ): Promise<ArkmeImageBytes> {
   signal?.throwIfAborted()
@@ -126,11 +165,52 @@ export async function readWorkspaceExtensionIcon(
   if (!pathIsInside(root, candidate)) throw invalidWorkspaceImage('the resolved file is outside the current Agent workspace')
   const info = await stat(candidate)
   if (!info.isFile()) throw invalidWorkspaceImage('workspace_path must identify a regular file')
-  if (info.size <= 0 || info.size > MAX_ICON_BYTES) throw invalidWorkspaceImage('the source image must be smaller than 2 MiB')
+  if (info.size <= 0 || info.size > policy.maxBytes) {
+    throw invalidWorkspaceImage(`the source image must be smaller than ${policy.sizeLabel}`)
+  }
   const data = new Uint8Array(await readFile(candidate))
   signal?.throwIfAborted()
-  if (data.byteLength !== info.size || data.byteLength > MAX_ICON_BYTES) {
+  if (data.byteLength !== info.size || data.byteLength > policy.maxBytes) {
     throw invalidWorkspaceImage('the source image changed while it was being read')
   }
-  return await normalizeIcon(data, sniffMediaType(data), signal)
+  return await normalizeImage(data, sniffMediaType(data), policy, signal)
+}
+
+/** Read one Agent-workspace icon without allowing paths or symlinks to escape the session workspace. */
+export async function readWorkspaceExtensionIcon(
+  agent: Agent,
+  workspacePathValue: string,
+  signal?: AbortSignal,
+): Promise<ArkmeImageBytes> {
+  return await readWorkspaceExtensionImage(agent, workspacePathValue, ICON_POLICY, signal)
+}
+
+/** Read one Agent-generated preview without exposing arbitrary host paths to the model. */
+export async function readWorkspaceExtensionPreview(
+  agent: Agent,
+  workspacePathValue: string,
+  signal?: AbortSignal,
+): Promise<ArkmeImageBytes> {
+  return await readWorkspaceExtensionImage(agent, workspacePathValue, PREVIEW_POLICY, signal)
+}
+
+/** Validate an already-authorized raster against the same preview contract before any remote write. */
+export async function validateExtensionPreviewImage(
+  image: ArkmeImageBytes,
+  signal?: AbortSignal,
+): Promise<ArkmeImageBytes> {
+  signal?.throwIfAborted()
+  if (image.bytes !== image.data.byteLength || image.bytes <= 0 || image.bytes > MAX_PREVIEW_BYTES
+    || !['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)
+    || sniffMediaType(image.data) !== image.mediaType) {
+    throw invalidWorkspaceImage('the preview must be a matching PNG, JPEG, or WebP smaller than 5 MiB')
+  }
+  const metadata = await sharp(image.data, { failOn: 'warning', limitInputPixels: MAX_PREVIEW_PIXELS }).metadata()
+  signal?.throwIfAborted()
+  if (metadata.width === undefined || metadata.height === undefined
+    || metadata.width < 320 || metadata.height < 320
+    || metadata.width > MAX_PREVIEW_EDGE || metadata.height > MAX_PREVIEW_EDGE) {
+    throw invalidWorkspaceImage('the preview must be 320-4096 pixels on both axes')
+  }
+  return image
 }

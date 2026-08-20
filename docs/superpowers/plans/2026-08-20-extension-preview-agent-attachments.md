@@ -1,5 +1,7 @@
 # Extension Preview Agent Attachments Implementation Plan
 
+> 后续合同说明：本计划记录初版附件入口的执行过程。当前 Tool 还支持当前 Agent workspace 的唯一相对 `workspace_paths`，并以 Host 维护的两阶段对话确认取代预执行 ACK。准备阶段保存附件授权或路径和内容指纹；后续用户精确确认后重读校验，再只上传尚未存在的内容寻址图片。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let `arkme_extension_preview_add` upload one or more images selected in the latest direct user message without requiring `image_ref`, while retaining the existing `image_ref` compatibility path and all security/confirmation rules.
