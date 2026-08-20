@@ -3605,8 +3605,7 @@ export class ArkmeService {
       const record = objectValue(item.record)
       const payload = objectValue(record.payload)
       const recordStatus = numberValue(record.status)
-      // Chat timeline tombstones only invalidate client caches; they are not readable messages
-      // and must never be converted into reportable Agent data.
+      // Only fully hydrated records are readable messages and eligible for an Agent-facing report reference.
       if (recordStatus !== 1) continue
       const uid = stringValue(relation.record_uid ?? payload.record_uid).trim()
       if (uid === '') continue

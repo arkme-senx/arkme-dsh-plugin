@@ -1498,7 +1498,7 @@ describe('ArkmeService', () => {
             record: { status: 1, payload: { text_content: '我的回复' } },
           },
           {
-            relation: { rel_uid: 'chat-relation-hidden', record_uid: 'chat-record-hidden', sender_user_id: 20002, attach_at: 179, seq: 6 },
+            relation: { rel_uid: 'chat-relation-unavailable', record_uid: 'chat-record-unavailable', sender_user_id: 20002, attach_at: 179, seq: 6 },
             record: {},
           },
         ],
@@ -1569,7 +1569,7 @@ describe('ArkmeService', () => {
     const groupRef = sources.items[1]!.sourceRef
     const groupTimeline = await service.readSource(groupRef)
     expect(groupTimeline.items).toHaveLength(2)
-    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-hidden')).toBeUndefined()
+    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toBeUndefined()
     expect(groupTimeline.items[0]?.messageRef).toMatch(/^arkme-message-v1\./)
     expect(groupTimeline.items[1]?.messageRef).toBeUndefined()
     await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
