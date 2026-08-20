@@ -123,10 +123,43 @@ function profileCommand(plan: ArkmeExtensionProfileRestartPlan, args: string[]):
   }).status === 0
 }
 
-async function rollback(plan: ArkmeExtensionProfileRestartPlan): Promise<void> {
+export interface ExtensionProfileRestartOperations {
+  start: typeof start
+  isHealthy: typeof healthy
+  profileCommand: typeof profileCommand
+  removePath: (path: string) => Promise<void>
+}
+
+const defaultOperations: ExtensionProfileRestartOperations = {
+  start,
+  isHealthy: healthy,
+  profileCommand,
+  removePath: async path => await rm(path, { recursive: true, force: true }),
+}
+
+function operations(overrides: Partial<ExtensionProfileRestartOperations>): ExtensionProfileRestartOperations {
+  return { ...defaultOperations, ...overrides }
+}
+
+async function cleanup(
+  plan: ArkmeExtensionProfileRestartPlan,
+  helper: ExtensionProfileRestartOperations,
+): Promise<void> {
+  for (const path of plan.cleanupPaths ?? []) {
+    const fromHome = relative(resolve(plan.dshHome), resolve(path))
+    if (fromHome === '' || fromHome.startsWith('..')) continue
+    await helper.removePath(resolve(path))
+  }
+}
+
+async function rollback(
+  plan: ArkmeExtensionProfileRestartPlan,
+  restart: boolean,
+  helper: ExtensionProfileRestartOperations,
+): Promise<void> {
   const restored = plan.previousBundlePath === undefined
-    ? profileCommand(plan, ['remove', plan.packageName])
-    : profileCommand(plan, ['add', `link:${plan.previousBundlePath}`])
+    ? helper.profileCommand(plan, ['remove', plan.packageName])
+    : helper.profileCommand(plan, ['add', `link:${plan.previousBundlePath}`])
   if (!restored) throw new Error('extension profile rollback failed')
   const store = new ArkmeExtensionInstallStore(plan.installStoreDirectory)
   try {
@@ -135,33 +168,75 @@ async function rollback(plan: ArkmeExtensionProfileRestartPlan): Promise<void> {
   } finally {
     store.close()
   }
-  start(plan)
+  if (restart) helper.start(plan)
 }
 
 export async function runExtensionProfileRestart(planPath: string): Promise<void> {
   const plan = parseExtensionProfileRestartPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
   await unlink(planPath).catch(() => undefined)
   await waitForExit(plan.parentPid)
-  const child = start(plan)
-  if (await healthy(plan)) {
-    for (const path of plan.cleanupPaths ?? []) {
-      const fromHome = relative(resolve(plan.dshHome), resolve(path))
-      if (fromHome === '' || fromHome.startsWith('..')) continue
-      await rm(resolve(path), { recursive: true, force: true })
-    }
+  const child = defaultOperations.start(plan)
+  if (await defaultOperations.isHealthy(plan)) {
+    await cleanup(plan, defaultOperations)
     return
   }
   child.kill('SIGTERM')
   if (child.pid !== undefined) await waitForExit(child.pid).catch(() => undefined)
-  await rollback(plan)
+  await rollback(plan, true, defaultOperations)
+}
+
+export async function finalizeManagedExtensionProfileRestart(
+  planPath: string,
+  replacementUrl: string,
+  overrides: Partial<ExtensionProfileRestartOperations> = {},
+): Promise<void> {
+  const stored = JSON.parse(await readFile(planPath, 'utf8')) as unknown
+  if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) {
+    throw new Error('extension restart plan must be an object')
+  }
+  const original = parseExtensionProfileRestartPlan(stored)
+  const replacement = new URL(replacementUrl)
+  if (replacement.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(replacement.hostname)) {
+    throw new Error('managed restart replacement URL must be loopback HTTP')
+  }
+  const health = new URL(original.healthUrl)
+  health.protocol = replacement.protocol
+  health.hostname = replacement.hostname
+  health.port = replacement.port
+  const plan = parseExtensionProfileRestartPlan({ ...stored, healthUrl: health.toString() })
+  const helper = operations(overrides)
+  if (!await helper.isHealthy(plan)) throw new Error('restarted extension profile did not become healthy')
+  await cleanup(plan, helper)
+  await unlink(planPath)
+}
+
+export async function rollbackManagedExtensionProfileRestart(
+  planPath: string,
+  overrides: Partial<ExtensionProfileRestartOperations> = {},
+): Promise<void> {
+  const plan = parseExtensionProfileRestartPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
+  await rollback(plan, false, operations(overrides))
+  await unlink(planPath)
 }
 
 async function main(): Promise<void> {
-  const planPath = process.argv[2]
+  const mode = process.argv[2]
+  const managed = mode === '--managed-finalize' || mode === '--managed-rollback'
+  const planPath = managed ? process.argv[3] : mode
   if (planPath === undefined) throw new Error('extension restart plan path is required')
   const parsed = parseExtensionProfileRestartPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
   const log = openSync(parsed.logPath, 'a', 0o600)
   closeSync(log)
+  if (mode === '--managed-finalize') {
+    const healthUrl = process.argv[4]
+    if (healthUrl === undefined) throw new Error('managed restart health URL is required')
+    await finalizeManagedExtensionProfileRestart(planPath, healthUrl)
+    return
+  }
+  if (mode === '--managed-rollback') {
+    await rollbackManagedExtensionProfileRestart(planPath)
+    return
+  }
   await runExtensionProfileRestart(planPath)
 }
 

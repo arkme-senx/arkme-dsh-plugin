@@ -20,7 +20,10 @@ import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
 import { ArkmeExtensionManager } from './extensions/manager.js'
 import { ExtensionPublishClient } from './extensions/publish-client.js'
-import { ArkmeExtensionProfileInstaller } from './extensions/profile-installer.js'
+import {
+  ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
+  ArkmeExtensionProfileInstaller,
+} from './extensions/profile-installer.js'
 import type { DynamicCordisRunnerLike } from './extensions/types.js'
 import { ArkmeStateStore } from './state-store.js'
 import { registerArkmeExtensionTools } from './tools/extensions/index.js'
@@ -179,6 +182,13 @@ export function apply(ctx: Context, config: Config): void {
     restartArgv: [...process.execArgv, ...process.argv.slice(1)],
     helperPath: fileURLToPath(new URL('../lib/extension-profile-restart-helper.js', import.meta.url)),
     installStoreDirectory: extensionDirectory,
+    ...(process.env.ARKME_DESKTOP_MANAGED_RESTART === '1'
+      && process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH !== undefined
+      ? {
+          supervisedExitCode: ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
+          supervisedPlanPath: process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH,
+        }
+      : {}),
   })
   const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const extensionClient = new ExtensionPublishClient(

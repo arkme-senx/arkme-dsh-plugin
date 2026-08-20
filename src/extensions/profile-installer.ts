@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync } from 'node:fs'
-import { chmod, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { localExtensionPnpmArgs, prepareProfilePackageManager } from '../profile-package-manager.js'
@@ -9,6 +9,7 @@ import type { ArkmeExtensionProfileRestartPlan } from './profile-restart-helper.
 import type { ArkmeInstalledExtension } from './types.js'
 
 const execFileAsync = promisify(execFile)
+export const ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE = 75
 
 export function profilePluginCommandErrorDetail(error: unknown): string {
   const child = error as { stdout?: unknown; stderr?: unknown }
@@ -33,6 +34,9 @@ export interface ArkmeExtensionProfileInstallerOptions {
   run?: (args: readonly string[]) => Promise<void>
   restart?: (plan: ArkmeExtensionProfileRestartPlan) => Promise<void>
   requestShutdown?: () => void
+  supervisedExitCode?: number
+  supervisedPlanPath?: string
+  requestProcessExit?: (code: number) => void
 }
 
 export class ArkmeExtensionProfileInstaller {
@@ -85,6 +89,25 @@ export class ArkmeExtensionProfileInstaller {
       ...(input.previousInstalled === undefined ? {} : { previousInstalled: input.previousInstalled }),
       healthUrl: this.options.healthUrl,
       logPath: join(this.options.stateDirectory, 'extension-profile-restart.log'),
+    }
+    if (this.options.supervisedExitCode !== undefined) {
+      if (!Number.isSafeInteger(this.options.supervisedExitCode)
+        || this.options.supervisedExitCode < 1 || this.options.supervisedExitCode > 255) {
+        throw new Error('受监督重启退出码无效')
+      }
+      if (this.options.supervisedPlanPath === undefined) {
+        throw new Error('受监督重启计划路径缺失')
+      }
+      await mkdir(dirname(this.options.supervisedPlanPath), { recursive: true, mode: 0o700 })
+      await writeFile(this.options.supervisedPlanPath, `${JSON.stringify(plan, undefined, 2)}\n`, {
+        flag: 'wx',
+        mode: 0o600,
+      })
+      await chmod(this.options.supervisedPlanPath, 0o600)
+      const exitProcess = this.options.requestProcessExit ?? ((code: number) => process.exit(code))
+      const timer = setTimeout(() => exitProcess(this.options.supervisedExitCode as number), 800)
+      timer.unref?.()
+      return
     }
     if (this.options.restart !== undefined) await this.options.restart(plan)
     else {

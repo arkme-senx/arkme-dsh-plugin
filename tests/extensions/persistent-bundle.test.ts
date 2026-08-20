@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +8,7 @@ import {
   ArkmeExtensionProfileInstaller,
   profilePluginCommandErrorDetail,
 } from '../../src/extensions/profile-installer.js'
+import type { ArkmeInstalledExtension } from '../../src/extensions/types.js'
 
 const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -76,5 +77,71 @@ describe('persistent extension profile bundle', () => {
       'real policy reason',
       'dsh: pnpm failed in profile directory /tmp/profile',
     ].join('\n'))
+  })
+
+  it('hands a supervised restart back to the desktop process instead of spawning a replacement', async () => {
+    vi.useFakeTimers()
+    try {
+      const { root } = fixture()
+      const standaloneRestart = vi.fn(async () => undefined)
+      const standaloneShutdown = vi.fn()
+      const requestProcessExit = vi.fn()
+      const supervisedPlanPath = join(root, 'custom-managed-state', 'desktop-managed-extension-restart.json')
+      const previousInstalled = {
+        extensionId: 'ext-test', installedVersion: '0.9.0', artifactSha256: 'a'.repeat(64),
+        artifactPath: join(root, 'old.arkext'),
+        manifest: {
+          format: 'arkme-cordis-extension', format_version: 1, name: 'old', description: '', version: '0.9.0',
+          runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: false },
+          permissions: [], entrypoints: { host: 'host.js' },
+        },
+        enabled: true, active: true, permissionSnapshot: [], updateChannel: 'stable',
+        installedAtMillis: 1, lastCheckedAtMillis: 1,
+      } satisfies ArkmeInstalledExtension
+      const installer = new ArkmeExtensionProfileInstaller({
+        dshHome: root,
+        profileName: 'web',
+        execPath: process.execPath,
+        dshBinPath: '/dsh/bin',
+        stateDirectory: root,
+        healthUrl: 'http://127.0.0.1:41234/arkme-self/api',
+        restartArgv: ['dsh', 'web'],
+        helperPath: '/extension-profile-restart-helper.js',
+        installStoreDirectory: root,
+        restart: standaloneRestart,
+        requestShutdown: standaloneShutdown,
+        supervisedExitCode: 75,
+        supervisedPlanPath,
+        requestProcessExit,
+      })
+
+      await installer.restart({
+        extensionId: 'ext-test',
+        packageName: '@arkme-local/ext-0123456789abcdef',
+        targetBundlePath: join(root, 'new-bundle'),
+        previousBundlePath: join(root, 'old-bundle'),
+        cleanupPaths: [join(root, 'old-bundle'), join(root, 'old.arkext')],
+        previousInstalled,
+        expectActive: true,
+      })
+      await vi.advanceTimersByTimeAsync(800)
+
+      expect(standaloneRestart).not.toHaveBeenCalled()
+      expect(standaloneShutdown).not.toHaveBeenCalled()
+      expect(requestProcessExit).toHaveBeenCalledWith(75)
+      expect(statSync(supervisedPlanPath).mode & 0o777).toBe(0o600)
+      expect(JSON.parse(readFileSync(supervisedPlanPath, 'utf8'))).toMatchObject({
+        extensionId: 'ext-test',
+        packageName: '@arkme-local/ext-0123456789abcdef',
+        expectActive: true,
+        installStoreDirectory: root,
+        targetBundlePath: join(root, 'new-bundle'),
+        previousBundlePath: join(root, 'old-bundle'),
+        cleanupPaths: [join(root, 'old-bundle'), join(root, 'old.arkext')],
+        previousInstalled,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

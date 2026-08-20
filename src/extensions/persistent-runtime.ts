@@ -11,6 +11,7 @@ import {
 type PersistentHandler = (args: unknown) => unknown | Promise<unknown>
 const persistentHandlers = new Map<string, Map<string, PersistentHandler>>()
 const persistentFibers = new Map<string, Fiber>()
+const persistentClientActivations = new Map<string, object>()
 const VM_TIMEOUT_MS = 5_000
 
 function readInstallation(url: URL): ArkmePersistentInstallation {
@@ -145,7 +146,16 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
     signing_key_id: installation.signing_key_id,
     signature: installation.signature,
   }, new Map([[installation.signing_key_id, installation.trusted_public_key]]))
-  if (unpacked.hostCode === undefined) return
+  if (unpacked.hostCode === undefined) {
+    const activation = {}
+    ctx.effect(() => () => {
+      if (persistentClientActivations.get(installation.extension_id) === activation) {
+        persistentClientActivations.delete(installation.extension_id)
+      }
+    }, `arkme-extension:${installation.extension_id}:client-active-state`)
+    persistentClientActivations.set(installation.extension_id, activation)
+    return
+  }
   const handlers = new Map<string, PersistentHandler>()
   persistentHandlers.set(installation.extension_id, handlers)
   const handle = (methodValue: unknown, fnValue: unknown): (() => void) => {
@@ -171,10 +181,11 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
 }
 
 export function persistentArkmeExtensionActive(extensionId: string): boolean {
-  return persistentFibers.has(extensionId)
+  return persistentFibers.has(extensionId) || persistentClientActivations.has(extensionId)
 }
 
 export async function deactivatePersistentArkmeExtension(extensionId: string): Promise<void> {
+  persistentClientActivations.delete(extensionId)
   const fiber = persistentFibers.get(extensionId)
   if (fiber === undefined) return
   persistentFibers.delete(extensionId)
