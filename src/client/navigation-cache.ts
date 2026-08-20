@@ -30,7 +30,8 @@ function isDirectory(value: unknown): value is ArkmeSourceDirectory {
 }
 
 function isKind(value: unknown): value is ArkmeSourceKind {
-  return value === 'default_category' || value === 'topic' || value === 'private_chat' || value === 'group_chat'
+  return value === 'send_to_self' || value === 'default_category' || value === 'topic'
+    || value === 'private_chat' || value === 'group_chat'
 }
 
 function groupAvatarSlot(value: unknown): ArkmeGroupAvatarSlot | undefined {

@@ -67,7 +67,8 @@ describe('ArkmeUiController', () => {
     controller.showLoginSurface()
     expect(controller.getSnapshot()).toMatchObject({ open: false, surfaceOpen: true, mode: 'login' })
     controller.authChanged(true)
-    expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
+    expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'source' })
+    expect(controller.getSnapshot().selectedSource).toBeUndefined()
     expect(controller.getSnapshot().authRevision).toBe(1)
     controller.chatChanged()
     expect(controller.getSnapshot().chatRevision).toBe(1)
@@ -86,6 +87,19 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'search',
     })
+  })
+
+  it('clears the previous account selection when authentication changes accounts', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1', kind: 'topic' as const, displayName: '旧账号主题', activeAtMillis: 1, unreadCount: 0,
+    }
+    controller.selectSource(source)
+
+    controller.authChanged(true, true)
+
+    expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'source' })
+    expect(controller.getSnapshot().selectedSource).toBeUndefined()
   })
 
   it('publishes an updated selected source when its mute state changes', () => {

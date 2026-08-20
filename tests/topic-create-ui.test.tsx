@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
+import {
+  ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT, ArkmeTopicDirectoryPopover, filterArkmeTopicSources,
+  reconcileArkmeTopicSelection,
+} from '../src/client/ArkmeTopicDirectoryPopover.js'
+import {
+  arkmeAggregateSourceForUser, arkmeSourceComposerPlaceholder, arkmeSourceDestinationLabel,
+} from '../src/client/ArkmeSidebar.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   ArkmeSourceSortControl, ArkmeSourceSortMenu, ArkmeTopicCard, ArkmeTopicCreateFooter,
@@ -42,6 +49,7 @@ describe('topic create UI', () => {
     expect(control).toContain('font-weight:400')
     expect(control).toContain('line-height:22px')
     expect(control).toContain('transform:translateY(2px)')
+    expect(control).toContain('z-index:40')
     expect(control).toContain('默认')
     expect(menu).toContain('role="menu"')
     expect(menu).toContain('width:80px')
@@ -151,6 +159,76 @@ describe('topic create UI', () => {
     expect(footer).toContain('background:transparent')
     expect(footer).toContain('padding:10px 12px 22px')
     expect(footer).not.toContain('box-shadow')
+  })
+
+  it('renders the directory trigger next to the floating surface close action', () => {
+    const markup = renderToStaticMarkup(<ArkmeTopicDirectoryPopover
+      userId={10001} selectedSource={undefined} onSelect={() => {}}
+      onSelectionInvalidated={() => {}} onSelfSourcesResolution={() => {}} retryRevision={0}
+    />)
+
+    expect(markup).toContain('aria-label="打开分类目录"')
+    expect(markup).toContain('title="分类目录"')
+    expect(markup).toContain('margin-left:auto')
+    expect(markup).not.toContain('position:absolute')
+    expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).toContain('100vh')
+    expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).not.toContain('100%')
+    expect(markup).not.toContain('选择发送目标')
+  })
+
+  it('keeps matching topic ancestors while filtering the directory', () => {
+    const sources: ArkmeSourceItem[] = [
+      { ...topicRow.source, sourceRef: 'root', displayName: '工作' },
+      { ...topicRow.source, sourceRef: 'child', parentSourceRef: 'root', displayName: 'DSH 插件' },
+      { ...topicRow.source, sourceRef: 'other', displayName: '生活' },
+    ]
+
+    expect(filterArkmeTopicSources(sources, 'dsh').map(source => source.sourceRef)).toEqual(['root', 'child'])
+    expect(filterArkmeTopicSources(sources, '  ').map(source => source.sourceRef)).toEqual(['root', 'child', 'other'])
+  })
+
+  it('keeps send-to-self, default category, and topics as distinct destinations', () => {
+    const aggregate: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'aggregate', kind: 'send_to_self', displayName: '发给自己',
+    }
+    const defaultCategory: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'default', kind: 'default_category', displayName: '默认分类',
+    }
+
+    expect(arkmeSourceDestinationLabel(aggregate)).toBe('发给自己')
+    expect(arkmeSourceComposerPlaceholder(aggregate)).toBe('发送给自己…')
+    expect(arkmeSourceDestinationLabel(defaultCategory)).toBe('默认分类')
+    expect(arkmeSourceComposerPlaceholder(defaultCategory)).toBe('发送到「默认分类」…')
+    expect(arkmeSourceDestinationLabel(undefined)).toBe('发给自己')
+    expect(arkmeSourceComposerPlaceholder(undefined)).toBe('发送给自己…')
+    expect(arkmeSourceDestinationLabel(topicRow.source)).toBe('工作')
+    expect(arkmeSourceComposerPlaceholder(topicRow.source)).toBe('发送到「工作」…')
+  })
+
+  it('never reuses a resolved aggregate source across accounts', () => {
+    const aggregate: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'aggregate-a', kind: 'send_to_self', displayName: '发给自己',
+    }
+    const defaultCategory: ArkmeSourceItem = {
+      ...topicRow.source, sourceRef: 'default-a', kind: 'default_category', displayName: '默认分类',
+    }
+    const state = {
+      userId: 10001,
+      resolution: { status: 'ready' as const, aggregateSource: aggregate, defaultCategorySource: defaultCategory },
+    }
+
+    expect(arkmeAggregateSourceForUser(10001, state)).toBe(aggregate)
+    expect(arkmeAggregateSourceForUser(10002, state)).toBeUndefined()
+    expect(arkmeAggregateSourceForUser(undefined, state)).toBeUndefined()
+  })
+
+  it('refreshes selected topic metadata and invalidates a missing topic', () => {
+    const selected = { ...topicRow.source, displayName: '旧名称', unreadCount: 3 }
+    const refreshed = { ...selected, displayName: '新名称', unreadCount: 0 }
+
+    expect(reconcileArkmeTopicSelection(selected, [refreshed])).toEqual({ status: 'selected', source: refreshed })
+    expect(reconcileArkmeTopicSelection(selected, [])).toEqual({ status: 'invalid' })
+    expect(reconcileArkmeTopicSelection(undefined, [refreshed])).toEqual({ status: 'aggregate' })
   })
 
   it('expands every ancestor before revealing a newly created topic', () => {

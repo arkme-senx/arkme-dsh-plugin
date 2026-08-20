@@ -7,7 +7,7 @@ import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
-  ArkmeRelatedRecordingPageState, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
+  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeUploadedAsset, ArkmeForwardRecordPreviewItem,
 } from '../types.js'
@@ -24,6 +24,9 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
+import {
+  ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution,
+} from './ArkmeTopicDirectoryPopover.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
@@ -37,6 +40,7 @@ import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
   RelatedRecordingsPanel, shouldShowRelatedRecordingsEntry,
 } from './related-recordings.js'
+import { isArkmeSelfWorkspaceSource } from './source-list.js'
 
 export interface ArkmeSurfaceProps {
   floating?: boolean
@@ -243,6 +247,29 @@ function timeLabel(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
 }
 
+export function arkmeSourceDestinationLabel(source: ArkmeSourceItem | undefined): string {
+  return source?.displayName ?? '发给自己'
+}
+
+export function arkmeSourceComposerPlaceholder(source: ArkmeSourceItem | undefined): string {
+  return source === undefined || source.kind === 'send_to_self'
+    ? '发送给自己…'
+    : `发送到「${source.displayName}」…`
+}
+
+export interface ArkmeAccountSelfSourcesResolution {
+  userId: number
+  resolution: ArkmeSelfSourcesResolution
+}
+
+export function arkmeAggregateSourceForUser(
+  userId: number | undefined,
+  state: ArkmeAccountSelfSourcesResolution | undefined,
+): ArkmeSourceItem | undefined {
+  if (userId === undefined || state?.userId !== userId || state.resolution.status !== 'ready') return undefined
+  return state.resolution.aggregateSource
+}
+
 function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[]): ArkmeTimelineItem[] {
   const map = new Map(current.map(item => [item.itemUid, item]))
   for (const item of incoming) {
@@ -390,7 +417,17 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     arkmeInterwovenInvalidation.getSnapshot,
     arkmeInterwovenInvalidation.getSnapshot,
   )
-  const source = ui.mode === 'source' ? ui.selectedSource : undefined
+  const auth = authStoreSnapshot.auth ?? initialAuth
+  const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
+  const selectedSource = ui.mode === 'source' ? ui.selectedSource : undefined
+  const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
+  const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
+  const activeSelfSourcesResolution = selfSourcesResolution === undefined
+    || selfSourcesResolution.userId !== authenticatedUserId
+    ? undefined
+    : selfSourcesResolution.resolution
+  const aggregateSource = arkmeAggregateSourceForUser(authenticatedUserId, selfSourcesResolution)
+  const source = ui.mode === 'source' ? selectedSource ?? aggregateSource : undefined
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -398,7 +435,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const addMenuTriggerRef = useRef<HTMLButtonElement>(null)
-  const auth = authStoreSnapshot.auth ?? initialAuth
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
   const [timelineStateSourceRef, setTimelineStateSourceRef] = useState('')
   const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
@@ -532,7 +568,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       return
     }
     bindingNotifiedUserIdRef.current = undefined
-    if (accountChanged) arkmeUi.authChanged(true)
+    if (accountChanged) arkmeUi.authChanged(true, true)
   }, [])
 
   useEffect(() => {
@@ -1128,6 +1164,13 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
+  const acceptSelfSourcesResolution = useCallback((
+    userId: number,
+    resolution: ArkmeSelfSourcesResolution,
+  ) => {
+    setSelfSourcesResolution({ userId, resolution })
+  }, [])
+  const invalidateTopicSelection = useCallback(() => { arkmeUi.focusSendToSelf() }, [])
 
   const loadMomentDetail = async (moment: ArkmeInterwovenMention, force = false) => {
     if (source === undefined || source.kind !== 'private_chat') return
@@ -1192,7 +1235,11 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     [chatDirectory, detailState],
   )
   const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
-  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音' : ui.mode === 'search' ? '搜索' : ui.mode === 'arko' ? 'Arko' : source?.displayName ?? 'Arkme'
+  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
+    : ui.mode === 'search' ? '搜索'
+    : ui.mode === 'arko' ? 'Arko'
+    : ui.mode === 'source' ? arkmeSourceDestinationLabel(selectedSource)
+    : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
 
   return (
@@ -1208,6 +1255,16 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
             </div>
             {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon /></span>}
           </div>
+          {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
+            && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
+              key={auth.userId}
+              userId={auth.userId}
+              selectedSource={selectedSource}
+              onSelect={activateSource}
+              onSelectionInvalidated={invalidateTopicSelection}
+              onSelfSourcesResolution={acceptSelfSourcesResolution}
+              retryRevision={selfSourcesRetryRevision}
+            />}
           {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}
@@ -1255,7 +1312,15 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'search' ? <div style={styles.body}><ArkmeSearchSurface /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
-          : source === undefined ? <div style={styles.body} /> : <>
+          : source === undefined ? <div style={styles.body}>
+            {activeSelfSourcesResolution?.status === 'error'
+              ? <div role="alert" style={styles.loading}>
+                <div style={styles.error}>{activeSelfSourcesResolution.message}</div>
+                <button type="button" style={{ ...styles.retry, marginTop: 8, fontSize: 12 }}
+                  onClick={() => { setSelfSourcesRetryRevision(value => value + 1) }}>重试</button>
+              </div>
+              : <div role="status" style={styles.loading}>正在加载发给自己的内容…</div>}
+          </div> : <>
           <div ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
@@ -1359,7 +1424,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               }}
             />)}</div>}
             {uploadStatus !== '' && <div style={styles.uploadStatus} role="status">{uploadStatus}</div>}
-            <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={`发送到${source.displayName}…`} aria-label={`发送到${source.displayName}`} disabled={busy}
+            <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
               onChange={event => { setDraft(event.target.value) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)

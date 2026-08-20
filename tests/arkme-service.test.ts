@@ -1188,7 +1188,7 @@ describe('ArkmeService', () => {
     expect(state.cached.get(10001)?.[0]).toMatchObject({ recordUid: 'record-1', textContent: 'hello' })
   })
 
-  it('lists, reads, and writes default-category and topic sources through one contract', async () => {
+  it('lists and reads the send-to-self aggregate separately from default-category and topic sources', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -1219,6 +1219,22 @@ describe('ArkmeService', () => {
         }],
         has_more: true,
       } })
+      if (url.endsWith('/api/v1/home/feed/query')) return json({ code: 0, data: {
+        items: [{
+          record_uid: 'aggregate-default', source_kind: 1, send_at: 110,
+          record_core: {
+            record_uid: 'aggregate-default', owner_user_id: 10001, creator_user_id: 10001,
+            title: '', text_content: '未分类内容', template_kind: 1, status: 1, version: 1, send_at: 110,
+          },
+        }, {
+          record_uid: 'aggregate-topic', source_kind: 2, source_uid: 'topic-1', send_at: 109,
+          record_core: {
+            record_uid: 'aggregate-topic', owner_user_id: 10001, creator_user_id: 10001,
+            title: '', text_content: '主题聚合内容', template_kind: 1, status: 1, version: 1, send_at: 109,
+          },
+        }],
+        has_more: true, next_cursor_send_at: 108, next_cursor_record_uid: 'aggregate-next',
+      } })
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
@@ -1229,16 +1245,32 @@ describe('ArkmeService', () => {
 
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
-      ['default_category', '默认分类', 7], ['topic', '工作', 2], ['topic', '周报', 1],
+      ['send_to_self', '发给自己', undefined], ['default_category', '默认分类', 7],
+      ['topic', '工作', 2], ['topic', '周报', 1],
     ])
-    expect(sources.items[0]).toMatchObject({
+    expect(sources.items[1]).toMatchObject({
       activeAtMillis: 101,
       latestPreview: '默认分类最近内容',
     })
-    expect(sources.items[1]?.sourceRef).not.toContain('topic-1')
-    expect(sources.items[2]?.parentSourceRef).toBe(sources.items[1]?.sourceRef)
-    expect(sources.items[2]?.parentSourceRef).not.toContain('topic-1')
-    const topicRef = sources.items[1]!.sourceRef
+    expect(sources.items[2]?.sourceRef).not.toContain('topic-1')
+    expect(sources.items[3]?.parentSourceRef).toBe(sources.items[2]?.sourceRef)
+    expect(sources.items[3]?.parentSourceRef).not.toContain('topic-1')
+    const aggregateRef = sources.items[0]!.sourceRef
+    await expect(service.readSource(aggregateRef, {
+      cursor: { sendAtMillis: 111, itemUid: 'aggregate-cursor' },
+    })).resolves.toMatchObject({
+      source: { kind: 'send_to_self', displayName: '发给自己' },
+      items: [
+        { itemUid: 'aggregate-default', textContent: '未分类内容', isMe: true },
+        { itemUid: 'aggregate-topic', textContent: '主题聚合内容', isMe: true },
+      ],
+      hasMore: true,
+      nextCursor: { sendAtMillis: 108, itemUid: 'aggregate-next' },
+    })
+    expect(calls.find(call => call.url.endsWith('/api/v1/home/feed/query'))?.body).toEqual({
+      limit: 30, source_kinds: [1, 2], cursor_send_at: 111, cursor_record_uid: 'aggregate-cursor',
+    })
+    const topicRef = sources.items[2]!.sourceRef
     await expect(service.readSource(topicRef)).resolves.toMatchObject({
       source: { kind: 'topic', displayName: '工作' },
       items: [{ textContent: '主题内容', isMe: true }],
@@ -1413,9 +1445,10 @@ describe('ArkmeService', () => {
       })
 
       const sources = await service.listSources('send_to_self')
-      expect(sources.items).toHaveLength(1)
-      expect(sources.items[0]).toMatchObject({ kind: 'default_category', displayName: '默认分类' })
-      expect(sources.items[0]?.recordCount).toBe(cachedSummary?.recordCount)
+      expect(sources.items).toHaveLength(2)
+      expect(sources.items[0]).toMatchObject({ kind: 'send_to_self', displayName: '发给自己' })
+      expect(sources.items[1]).toMatchObject({ kind: 'default_category', displayName: '默认分类' })
+      expect(sources.items[1]?.recordCount).toBe(cachedSummary?.recordCount)
     }
   })
 
@@ -1447,7 +1480,11 @@ describe('ArkmeService', () => {
     })
 
     await expect(service.listSources('send_to_self')).resolves.toMatchObject({
-      items: [{ kind: 'default_category' }, { kind: 'topic', displayName: '工作' }],
+      items: [
+        { kind: 'send_to_self', displayName: '发给自己' },
+        { kind: 'default_category' },
+        { kind: 'topic', displayName: '工作' },
+      ],
       hasMore: false,
     })
   })
