@@ -26,7 +26,7 @@ describe('extension publish conversation confirmation', () => {
 		})
 		const prepared = await conversation.prepare(agent as never, [{
 			...draft('owned-github', 'GitHub 扩展'),
-			githubRepositoryUrl: 'https://github.com/example/weather',
+			githubRepositoryUrl: 'https://www.github.com/Example/Weather.git/',
 		}])
 		expect(prepared.question).toContain('https://github.com/example/weather')
 		expect(prepared.question).toContain('内测资格')

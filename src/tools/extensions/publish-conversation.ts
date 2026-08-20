@@ -3,6 +3,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ArkmeExtensionPublishResult, ArkmeExtensionVisibility } from '../../extensions/types.js'
 import type { ArkmeMyExtensionPublishInput, ArkmePreparedExtensionPublish } from '../../extensions/owned-types.js'
 import { hasLaterDirectUserMessage, lastSessionSeq } from '../shared/conversational-confirmation.js'
+import { normalizeGitHubRepositoryURL } from '../../extensions/source.js'
 
 const DEFAULT_CONFIRMATION_TTL_MILLIS = 10 * 60_000
 const MAX_PUBLISH_BATCH_SIZE = 10
@@ -164,7 +165,7 @@ function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: str
   if (ownedRef === '' || name === '' || version === '') throw new Error('发布扩展、名称和版本不能为空')
   if (!['private', 'unlisted', 'public'].includes(draft.visibility)) throw new Error('扩展可见范围无效')
   const changelog = draft.changelog?.trim() ?? ''
-	const githubRepositoryUrl = draft.githubRepositoryUrl?.trim() ?? ''
+	const githubRepositoryUrl = normalizeGitHubRepositoryURL(draft.githubRepositoryUrl)
   return {
     ownedRef,
     name,
@@ -172,7 +173,7 @@ function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: str
     version,
     visibility: draft.visibility,
     ...(changelog === '' ? {} : { changelog }),
-		...(githubRepositoryUrl === '' ? {} : { githubRepositoryUrl }),
+		...(githubRepositoryUrl === undefined ? {} : { githubRepositoryUrl }),
     clientMutationId,
   }
 }

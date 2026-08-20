@@ -165,7 +165,7 @@ describe('Bundle v2 publish client', () => {
 	it.each([
 		['arkme-code-40431', 'extension-share-not-found', false],
 		['arkme-code-40932', 'extension-share-rotate-conflict', false],
-		['arkme-code-50332', 'extension-share-unavailable', true],
+		['arkme-code-50332', 'extension-share-update-failed', true],
 	])('maps share rotation error %s to %s', async (upstreamCode, expectedCode, retryable) => {
 		const client = new ExtensionPublishClient(async (): Promise<never> => {
 			throw new ArkmePluginError(upstreamCode, 'registry rejected', retryable, retryable ? 503 : 409)

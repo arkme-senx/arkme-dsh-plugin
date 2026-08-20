@@ -786,7 +786,7 @@ function extensionShareError(error: unknown): unknown {
 	const mapped: Record<string, { code: string; message: string; retryable: boolean; httpStatus: number }> = {
 		'arkme-code-40431': { code: 'extension-share-not-found', message: '扩展分享链接不存在或已失效', retryable: false, httpStatus: 404 },
 		'arkme-code-40932': { code: 'extension-share-rotate-conflict', message: '扩展分享链接轮换冲突', retryable: false, httpStatus: 409 },
-		'arkme-code-50332': { code: 'extension-share-unavailable', message: '扩展分享服务暂时不可用', retryable: true, httpStatus: 503 },
+		'arkme-code-50332': { code: 'extension-share-update-failed', message: '扩展分享服务暂时不可用', retryable: true, httpStatus: 503 },
 	}
 	const known = mapped[error.code]
 	return known === undefined
