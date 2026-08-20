@@ -315,6 +315,7 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
   onToggle?(enabled: boolean): void
 }) {
   const action = myExtensionPrimaryAction(item)
+  const version = displayVersion(item.published?.version ?? item.persisted?.version)
   return <div
     style={styles.card}
     onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
@@ -327,7 +328,7 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
         <span style={styles.stateBadges}>{myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}</span>
       </span>
       <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
-      <span style={styles.meta}>{[item.halves.host ? 'Host' : '', item.halves.client ? 'Client' : ''].filter(Boolean).join(' + ')}</span>
+      {version !== '' && <span style={styles.meta}>{version}</span>}
     </span>
     <span style={styles.actionGroup}>
       {action !== undefined && <button
