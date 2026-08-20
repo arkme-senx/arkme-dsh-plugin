@@ -64,7 +64,8 @@
     }
   },
   "scripts": {
-    "build": "pnpm run build:types && pnpm run bundle",
+    "build": "pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
     "bundle": "tsdown",
     "typecheck": "tsc --project tsconfig.json --noEmit",
