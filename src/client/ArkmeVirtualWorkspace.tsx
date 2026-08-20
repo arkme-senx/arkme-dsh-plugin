@@ -616,6 +616,9 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   )
   const [error, setError] = useState('')
   const [extensionCenterOpen, setExtensionCenterOpen] = useState(false)
+  const [activeDirectoryEntryId, setActiveDirectoryEntryId] = useState<string>()
+  const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
+  const activateNativeEntry = useCallback(() => { setActiveDirectoryEntryId(undefined) }, [])
   const authenticated = auth?.status === 'authenticated'
   const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
     ? arkoProfileSnapshot.profile
@@ -746,6 +749,12 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
 
   useEffect(() => { reconcileAuth(auth) }, [auth, reconcileAuth])
   useEffect(() => {
+    if (!ui.open) activateNativeEntry()
+  }, [activateNativeEntry, ui.open])
+  useEffect(() => {
+    activateNativeEntry()
+  }, [activateNativeEntry, auth?.userId, currentSessionId, directory, ui.mode, ui.selectedSource?.sourceRef])
+  useEffect(() => {
     if (authenticated) void loadDirectory(directory)
     else { directoryRequestAbortRef.current?.abort(); setSources([]) }
     return () => { directoryRequestAbortRef.current?.abort() }
@@ -870,11 +879,12 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   }, [directory, pendingRevealSourceRef, stopCreatedHighlightAnimation, visibleSourceRows])
   useEffect(() => () => { stopCreatedHighlightAnimation() }, [stopCreatedHighlightAnimation])
 
-  const showLogin = () => { arkmeUi.showLogin(); onActivateSurface?.() }
-  const showRecordings = () => { arkmeUi.showRecordings(); onActivateSurface?.() }
-  const showSearch = () => { arkmeUi.showSearch(); onActivateSurface?.() }
-  const showArko = () => { arkmeUi.showArko(); onActivateSurface?.() }
+  const showLogin = () => { activateNativeEntry(); arkmeUi.showLogin(); onActivateSurface?.() }
+  const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
+  const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
+  const showArko = () => { activateNativeEntry(); arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
+    activateNativeEntry()
     directoryRequestAbortRef.current?.abort()
     stopCreatedHighlightAnimation()
     setPendingRevealSourceRef(undefined)
@@ -884,6 +894,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     persistCache({ directory: next })
   }
   const selectSource = (source: ArkmeSourceItem) => {
+    activateNativeEntry()
     const optimisticRead = (source.kind === 'private_chat' || source.kind === 'group_chat')
       && source.unreadCount > 0
       && arkmeChatDirectory.markReadOptimistic(source, source.sourceKey, source.latestSequence ?? 0, directory === 'root' ? sources : [])
@@ -942,6 +953,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     }
   }
   const joinedDSHBetaCommunity = async (source: ArkmeSourceItem): Promise<void> => {
+    activateNativeEntry()
     const sharedSources = arkmeChatDirectory.getSnapshot().sources
     const currentSources = sharedSources.length > 0 ? sharedSources : sources
     const nextSources = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
@@ -994,14 +1006,14 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       {directory === 'root' && <>
         {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
         <ArkmeArkoRow
-          selected={ui.mode === 'arko'}
+          selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
           {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })}
           onClick={showArko}
         />
         {authenticated && <button
           type="button" role="treeitem" aria-selected={false} style={styles.chatRow}
-          onClick={() => { setExtensionCenterOpen(true) }}
+          onClick={() => { activateNativeEntry(); setExtensionCenterOpen(true) }}
         >
           <span style={styles.extensionAvatar} aria-hidden><ArkmeExtensionIcon size={22} /></span>
           <span style={styles.chatContent}>
@@ -1010,8 +1022,8 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
           </span>
         </button>}
         <button
-          type="button" role="treeitem" aria-selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
-          style={{ ...styles.chatRow, ...(ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
+          type="button" role="treeitem" aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)}
+          style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isSendToSelfSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
           onClick={() => {
             changeDirectory('send_to_self')
             if (ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)) onActivateSurface?.()
@@ -1021,20 +1033,22 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
           <span style={styles.chatContent}>
             <span style={styles.chatTop}>
               <span style={styles.entryName}>发给自己</span>
-              <ArkmeTopicTagBadge label="私密" selected={ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)} />
+              <ArkmeTopicTagBadge label="私密" selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isSendToSelfSource(ui.selectedSource)} />
             </span>
             <span style={styles.chatBottom}><span style={styles.preview}>默认分类与主题</span></span>
           </span>
         </button>
-        <ArkmeRecordingsRow selected={ui.mode === 'recordings'} onClick={showRecordings} />
-        <ArkmeSearchRow selected={ui.mode === 'search'} onClick={showSearch} />
+        <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />
+        <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
           wide: !!wide,
           authenticated,
+          ...(activeDirectoryEntryId === undefined ? {} : { activeEntryId: activeDirectoryEntryId }),
+          activateEntry: activateDirectoryEntry,
           renderRow: renderArkmeDirectoryRow,
         })}
         {sources.map(source => {
-          const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
+          const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
@@ -1061,7 +1075,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
 
       {directory === 'send_to_self' && !cardMode && visibleSourceRows.map(row => {
         const source = row.source
-        const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
+        const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
         return <ArkmeTopicTreeRow
           key={source.sourceRef} row={row} selected={selected}
           hovered={hoveredSourceRef === source.sourceRef}
@@ -1079,7 +1093,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       })}
 
       {directory === 'send_to_self' && cardMode && cardSources.map(source => {
-        const selected = ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
+        const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
         return <ArkmeTopicCard
           key={source.sourceRef} source={source} selected={selected}
           hovered={hoveredSourceRef === source.sourceRef}

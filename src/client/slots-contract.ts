@@ -36,6 +36,10 @@ export interface ArkmeDirectoryEntryOwnerProps {
   wide: boolean
   /** Whether the Arkme account is authenticated. */
   authenticated: boolean
+  /** Consumer entry currently selected by the Arkme directory owner. */
+  activeEntryId?: string
+  /** Select one consumer entry, or clear it before native navigation. */
+  activateEntry(entryId?: string): void
   /** Render one row with Arkme-owned structure, tokens and accessibility. */
   renderRow(props: ArkmeDirectoryRowProps): ReactNode
 }

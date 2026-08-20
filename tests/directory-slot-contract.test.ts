@@ -16,4 +16,17 @@ describe('Arkme directory slot contract', () => {
     expect(contract).not.toContain('onActivateSurface')
     expect(workspace).toContain('renderRow: renderArkmeDirectoryRow')
   })
+
+  it('keeps consumer directory entries mutually exclusive with native navigation', () => {
+    const contract = readFileSync(resolve(clientRoot, 'slots-contract.ts'), 'utf8')
+    const workspace = readFileSync(resolve(clientRoot, 'ArkmeVirtualWorkspace.tsx'), 'utf8')
+
+    expect(contract).toContain('activeEntryId?: string')
+    expect(contract).toContain('activateEntry(entryId?: string): void')
+    expect(workspace).toContain('activeEntryId: activeDirectoryEntryId')
+    expect(workspace).toContain('activateEntry: activateDirectoryEntry')
+    expect(workspace).toContain('activateNativeEntry(); arkmeUi.showRecordings()')
+    expect(workspace).toContain('activateNativeEntry(); arkmeUi.showSearch()')
+    expect(workspace).toContain('activateNativeEntry(); arkmeUi.showArko()')
+  })
 })
