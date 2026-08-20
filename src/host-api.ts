@@ -4,7 +4,8 @@ import { ArkmePluginError, ArkmeService } from './arkme-service.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
-  ArkmeAiVideoJobStatus, ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
+  ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent,
+  ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
@@ -74,6 +75,26 @@ function numberParam(params: Record<string, unknown>, key: string, fallback: num
 
 function booleanParam(params: Record<string, unknown>, key: string): boolean {
   return params[key] === true
+}
+
+function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
+  const value = params[key]
+  if (typeof value !== 'boolean') {
+    throw new ArkmePluginError('arrangement-reminder-enabled-invalid', '安排提醒开关参数无效', false, 400)
+  }
+  return value
+}
+
+function arrangementListStatusParam(params: Record<string, unknown>): ArkmeArrangementListStatus {
+  const status = stringParam(params, 'status')
+  return status === 'identified' || status === 'following' || status === 'completed' ? status : 'all'
+}
+
+function arrangementMutationIntentParam(params: Record<string, unknown>): ArkmeArrangementMutationIntent {
+  const intent = stringParam(params, 'intent')
+  if (intent === 'start-follow' || intent === 'cancel-follow' || intent === 'complete'
+    || intent === 'cancel-complete' || intent === 'delete') return intent
+  throw new ArkmePluginError('arrangement-intent-invalid', '安排操作类型无效', false, 400)
 }
 
 function stringListParam(params: Record<string, unknown>, key: string): string[] {
@@ -424,6 +445,37 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'arrangements.list': return await service.listArrangements({
+      status: arrangementListStatusParam(params),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+    })
+    case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
+    case 'arrangements.mutate': return await service.mutateArrangement(
+      stringParam(params, 'arrangementRef'),
+      arrangementMutationIntentParam(params),
+    )
+    case 'arrangements.reminder-enabled': return await service.setArrangementReminderEnabled(
+      stringParam(params, 'arrangementRef'),
+      requiredBooleanParam(params, 'enabled'),
+    )
+    case 'arrangements.reminders.summary': return await service.arrangementReminderSummary()
+    case 'arrangements.reminders.list': return await service.listArrangementReminders({
+      unreadOnly: booleanParam(params, 'unreadOnly'),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+    })
+    case 'arrangements.reminders.mark-read': {
+      const eventRefs = [...new Set(stringListParam(params, 'eventRefs')
+        .map(value => value.trim())
+        .filter(value => value !== ''))]
+      if (eventRefs.length === 0 || eventRefs.length > 50) {
+        throw new ArkmePluginError('arrangement-reminder-refs-invalid', '请选择 1 至 50 条安排提醒', false)
+      }
+      return await service.markArrangementRemindersRead(eventRefs)
+    }
+    case 'arrangements.reminders.mark-all-read': return await service.markAllArrangementRemindersRead()
+    case 'arrangements.reminders.clear': return await service.clearArrangementReminders()
     case 'world.feed': return await service.listWorldFeed({
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),

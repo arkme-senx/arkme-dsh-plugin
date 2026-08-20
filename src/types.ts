@@ -176,6 +176,92 @@ export interface ArkmeWorldInteractionCreateResult {
   interaction: ArkmeWorldInteractionItem
 }
 
+export type ArkmeArrangementStatus = 'identified' | 'following' | 'completed' | 'unknown'
+export type ArkmeArrangementListStatus = Exclude<ArkmeArrangementStatus, 'unknown'> | 'all'
+
+/** Browser-safe Arrangement projection. Stable owner UIDs stay inside the Provider. */
+export interface ArkmeArrangementItem {
+  arrangementRef: string
+  title: string
+  description: string
+  status: ArkmeArrangementStatus
+  reminderEnabled: boolean
+  reminderState: string
+  createdAtMillis: number
+  updatedAtMillis: number
+  dueAtMillis?: number
+  remindAtMillis?: number
+}
+
+export interface ArkmeArrangementPage {
+  items: ArkmeArrangementItem[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export type ArkmeArrangementDetail = ArkmeArrangementItem
+
+/** Reminder-event identity is intentionally separate from Arrangement identity. */
+export interface ArkmeArrangementReminderEvent {
+  eventRef: string
+  arrangementRef: string
+  title: string
+  description: string
+  eventKind: string
+  eventAtMillis: number
+  dueAtMillis?: number
+  remindAtMillis?: number
+  read: boolean
+  readAtMillis?: number
+  reminderState: string
+  createdAtMillis: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeArrangementReminderPage {
+  items: ArkmeArrangementReminderEvent[]
+  total: number
+  hasMore: boolean
+  nextOffset?: number
+}
+
+export interface ArkmeArrangementReminderSummary {
+  unreadCount: number
+  latestUnread?: ArkmeArrangementReminderEvent
+  latestEvent?: ArkmeArrangementReminderEvent
+  nextReminder?: ArkmeArrangementReminderEvent
+}
+
+export type ArkmeArrangementMutationIntent =
+  | 'start-follow'
+  | 'cancel-follow'
+  | 'complete'
+  | 'cancel-complete'
+  | 'delete'
+
+export type ArkmeArrangementMutationOutcome = 'confirmed' | 'reconciled' | 'unknown'
+
+export interface ArkmeArrangementMutationResult {
+  arrangementRef: string
+  intent: ArkmeArrangementMutationIntent
+  outcome: ArkmeArrangementMutationOutcome
+  item?: ArkmeArrangementItem
+  deleted?: boolean
+}
+
+export interface ArkmeArrangementReminderToggleResult {
+  arrangementRef: string
+  enabled: boolean
+  outcome: ArkmeArrangementMutationOutcome
+  item?: ArkmeArrangementItem
+}
+
+export interface ArkmeArrangementReminderWriteResult {
+  outcome: ArkmeArrangementMutationOutcome
+  updatedCount?: number
+}
+
 export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
 export interface ArkmeWorldPublishResult {
@@ -323,6 +409,8 @@ export interface ArkmeProviderCapabilities {
     worldFeed?: true
     /** Optional additive capability for reading and writing World comments and replies. */
     worldInteractions?: true
+    /** Optional additive capability for the independent Arrangement consumer. */
+    arrangements?: true
   }
   limits: {
     maxTextLength: number
@@ -1342,6 +1430,15 @@ export type ArkmePluginOperation =
   | 'world.interactions.list'
   | 'world.interactions.create-text'
   | 'world.image.read'
+  | 'arrangements.list'
+  | 'arrangements.detail'
+  | 'arrangements.mutate'
+  | 'arrangements.reminder-enabled'
+  | 'arrangements.reminders.summary'
+  | 'arrangements.reminders.list'
+  | 'arrangements.reminders.mark-read'
+  | 'arrangements.reminders.mark-all-read'
+  | 'arrangements.reminders.clear'
   | 'sources.list'
   | 'source.timeline'
   | 'source.mark-read'
