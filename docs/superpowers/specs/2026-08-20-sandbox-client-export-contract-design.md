@@ -1,6 +1,6 @@
 # Arkme Sandboxed Client Export 合同修正设计
 
-**状态：** 已确认，待书面复核
+**状态：** 已确认，实施中
 
 **插件实施基线：** `arkme-dsh-plugin@cdf1b3b`
 
@@ -189,4 +189,3 @@ v1 不属于这次直接切换：v1 artifact-only 与带 source 的发布、reso
 - 插件可回滚到旧生成器，但不得在新 validator 下继续发布 Client Bundle。
 - 测试数据已经清理，无需恢复旧错误 v2 对象。
 - v1 数据和安装链始终不参与回滚。
-
