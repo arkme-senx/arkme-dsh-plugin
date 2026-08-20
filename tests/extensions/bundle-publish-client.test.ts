@@ -139,4 +139,38 @@ describe('Bundle v2 publish client', () => {
       code: 'arkme-code-40901', retryable: false,
     })
   })
+
+	it.each([
+		['arkme-code-40031', 'extension-source-invalid', false],
+		['arkme-code-40331', 'extension-source-publisher-forbidden', false],
+		['arkme-code-50331', 'extension-source-eligibility-unavailable', true],
+		['arkme-code-40931', 'extension-source-conflict', false],
+	])('maps source publication error %s to %s', async (upstreamCode, expectedCode, retryable) => {
+		const root = fixture()
+		try {
+			const source = packLocalBundleDirectory(root)
+			const client = new ExtensionPublishClient(async (): Promise<never> => {
+				throw new ArkmePluginError(upstreamCode, 'registry rejected', retryable, retryable ? 503 : 409)
+			})
+			await expect(client.createBundlePublishSession({
+				name: '来源测试', description: '', visibility: 'private', idempotency_key: 'source-error-test',
+				bundle: source.bundle, source: source.source,
+				listingSource: { type: 'github_repository', url: 'https://github.com/example/client-test' },
+			})).rejects.toMatchObject({ code: expectedCode, retryable })
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
+	})
+
+	it.each([
+		['arkme-code-40431', 'extension-share-not-found', false],
+		['arkme-code-40932', 'extension-share-rotate-conflict', false],
+		['arkme-code-50332', 'extension-share-unavailable', true],
+	])('maps share rotation error %s to %s', async (upstreamCode, expectedCode, retryable) => {
+		const client = new ExtensionPublishClient(async (): Promise<never> => {
+			throw new ArkmePluginError(upstreamCode, 'registry rejected', retryable, retryable ? 503 : 409)
+		})
+		await expect(client.rotateShareLink('ext-1', '9f445b4f-55aa-45c1-9250-25161832d432'))
+			.rejects.toMatchObject({ code: expectedCode, retryable })
+	})
 })

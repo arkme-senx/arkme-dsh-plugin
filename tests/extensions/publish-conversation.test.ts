@@ -13,6 +13,35 @@ function draft(ownedRef: string, name: string): Omit<ArkmeMyExtensionPublishInpu
 }
 
 describe('extension publish conversation confirmation', () => {
+	it('preserves the GitHub source through prepare, confirmation and publish', async () => {
+		const events: Array<Record<string, unknown>> = [
+			{ seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '发布 GitHub 扩展' }], source: { kind: 'user' } } },
+		]
+		const agent = { id: 'session-github', session: { get events() { return events } } }
+		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({ input, sourceFingerprint: 'fingerprint' }))
+		const publish = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({ extension_id: 'ext-github', version: input.version, status: 'published' as const }))
+		const conversation = new ArkmeExtensionPublishConversation({
+			preflight, publish, now: () => 1_000,
+			createMutationId: () => '00000000-0000-4000-8000-000000000001',
+		})
+		const prepared = await conversation.prepare(agent as never, [{
+			...draft('owned-github', 'GitHub 扩展'),
+			githubRepositoryUrl: 'https://github.com/example/weather',
+		}])
+		expect(prepared.question).toContain('https://github.com/example/weather')
+		expect(prepared.question).toContain('内测资格')
+		expect(preflight).toHaveBeenCalledWith(expect.objectContaining({
+			githubRepositoryUrl: 'https://github.com/example/weather',
+		}), undefined)
+		events.push({
+			seq: 1, type: 'user/message',
+			data: { content: [{ type: 'text', text: prepared.expectedReply }], source: { kind: 'user' } },
+		})
+		await conversation.confirm(agent as never)
+		expect(publish).toHaveBeenCalledWith(expect.objectContaining({
+			githubRepositoryUrl: 'https://github.com/example/weather',
+		}), undefined)
+	})
   it('publishes one prepared batch only after a later direct user confirmation', async () => {
     const events: Array<Record<string, unknown>> = [
       { seq: 0, type: 'turn/start', data: { turn: 1 } },

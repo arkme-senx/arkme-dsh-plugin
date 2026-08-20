@@ -164,6 +164,7 @@ function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: str
   if (ownedRef === '' || name === '' || version === '') throw new Error('发布扩展、名称和版本不能为空')
   if (!['private', 'unlisted', 'public'].includes(draft.visibility)) throw new Error('扩展可见范围无效')
   const changelog = draft.changelog?.trim() ?? ''
+	const githubRepositoryUrl = draft.githubRepositoryUrl?.trim() ?? ''
   return {
     ownedRef,
     name,
@@ -171,6 +172,7 @@ function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: str
     version,
     visibility: draft.visibility,
     ...(changelog === '' ? {} : { changelog }),
+		...(githubRepositoryUrl === '' ? {} : { githubRepositoryUrl }),
     clientMutationId,
   }
 }
@@ -178,11 +180,17 @@ function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: str
 function publishQuestion(inputs: ArkmeMyExtensionPublishInput[]): string {
   if (inputs.length === 1) {
     const item = inputs[0]!
-    return `是否确认发布“${item.name}” ${item.version}，可见范围为${visibilityLabel(item.visibility)}？`
+		return `是否确认发布“${item.name}” ${item.version}，可见范围为${visibilityLabel(item.visibility)}${sourceConfirmation(item)}？`
   }
   return `是否确认一次发布以下 ${String(inputs.length)} 个扩展？\n${inputs
-    .map(item => `- ${item.name} ${item.version}，${visibilityLabel(item.visibility)}`)
+		.map(item => `- ${item.name} ${item.version}，${visibilityLabel(item.visibility)}${sourceConfirmation(item)}`)
     .join('\n')}`
+}
+
+function sourceConfirmation(input: ArkmeMyExtensionPublishInput): string {
+	return input.githubRepositoryUrl === undefined
+		? ''
+		: `，GitHub 来源：${input.githubRepositoryUrl}（仅当前内测资格账号可发布）`
 }
 
 function visibilityLabel(visibility: ArkmeExtensionVisibility): string {

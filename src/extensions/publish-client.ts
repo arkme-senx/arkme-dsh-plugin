@@ -114,25 +114,29 @@ export class ExtensionPublishClient {
       || input.source.bytes.byteLength <= 0 || input.source.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES) {
       throw new ArkmePluginError('extension-bundle-size-invalid', '扩展 Bundle 或源码大小无效', false, 400)
     }
-    return await this.post('/api/v1/extensions/publish-session/create', {
-      artifact_contract_version: ARKME_BUNDLE_CONTRACT_VERSION,
-      artifact_kind: ARKME_BUNDLE_ARTIFACT_KIND,
-      ...(input.extension_id === undefined ? {} : { extension_id: input.extension_id }),
-      name: input.name,
-      description: input.description,
-      package_name: input.bundle.packageName,
-      version: input.bundle.version,
-      execution_model: input.bundle.executionModel,
-      visibility: input.visibility,
-      ...(input.changelog === undefined ? {} : { changelog: input.changelog }),
-      bundle_size: input.bundle.bytes.byteLength,
-      bundle_sha256: input.bundle.bundleSha256,
-      package_json_sha256: input.bundle.packageJsonSha256,
-      source_size: input.source.bytes.byteLength,
-      source_sha256: input.source.sourceSha256,
-		...(input.listingSource === undefined ? {} : { source: input.listingSource }),
-      idempotency_key: input.idempotency_key,
-    }, signal)
+		try {
+			return await this.post('/api/v1/extensions/publish-session/create', {
+				artifact_contract_version: ARKME_BUNDLE_CONTRACT_VERSION,
+				artifact_kind: ARKME_BUNDLE_ARTIFACT_KIND,
+				...(input.extension_id === undefined ? {} : { extension_id: input.extension_id }),
+				name: input.name,
+				description: input.description,
+				package_name: input.bundle.packageName,
+				version: input.bundle.version,
+				execution_model: input.bundle.executionModel,
+				visibility: input.visibility,
+				...(input.changelog === undefined ? {} : { changelog: input.changelog }),
+				bundle_size: input.bundle.bytes.byteLength,
+				bundle_sha256: input.bundle.bundleSha256,
+				package_json_sha256: input.bundle.packageJsonSha256,
+				source_size: input.source.bytes.byteLength,
+				source_sha256: input.source.sourceSha256,
+				...(input.listingSource === undefined ? {} : { source: input.listingSource }),
+				idempotency_key: input.idempotency_key,
+			}, signal)
+		} catch (error) {
+			throw extensionSourceError(error)
+		}
   }
 
   async uploadBundle(slot: ArkmeExtensionUploadSlot, bundle: ArkmeBundleArtifact, signal?: AbortSignal): Promise<void> {
@@ -262,10 +266,14 @@ export class ExtensionPublishClient {
   }
 
 	async rotateShareLink(extensionId: string, clientMutationId: string, signal?: AbortSignal): Promise<ArkmeExtensionShare> {
-		return await this.post('/api/v1/extensions/share/rotate', {
-			extension_id: extensionId,
-			client_mutation_id: clientMutationId,
-		}, signal)
+		try {
+			return await this.post('/api/v1/extensions/share/rotate', {
+				extension_id: extensionId,
+				client_mutation_id: clientMutationId,
+			}, signal)
+		} catch (error) {
+			throw extensionShareError(error)
+		}
 	}
 
   async list(input: { query?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
@@ -757,6 +765,33 @@ function extensionMetadataError(error: unknown): unknown {
     )
   }
   return error
+}
+
+function extensionSourceError(error: unknown): unknown {
+	if (!(error instanceof ArkmePluginError)) return error
+	const mapped: Record<string, { code: string; message: string; retryable: boolean; httpStatus: number }> = {
+		'arkme-code-40031': { code: 'extension-source-invalid', message: 'GitHub 来源参数无效', retryable: false, httpStatus: 400 },
+		'arkme-code-40331': { code: 'extension-source-publisher-forbidden', message: '当前账号不能发布 GitHub 来源扩展', retryable: false, httpStatus: 403 },
+		'arkme-code-50331': { code: 'extension-source-eligibility-unavailable', message: 'GitHub 来源发布资格暂时无法校验', retryable: true, httpStatus: 503 },
+		'arkme-code-40931': { code: 'extension-source-conflict', message: 'GitHub 来源与已发布扩展冲突', retryable: false, httpStatus: 409 },
+	}
+	const known = mapped[error.code]
+	return known === undefined
+		? error
+		: new ArkmePluginError(known.code, known.message, known.retryable, known.httpStatus, { cause: error })
+}
+
+function extensionShareError(error: unknown): unknown {
+	if (!(error instanceof ArkmePluginError)) return error
+	const mapped: Record<string, { code: string; message: string; retryable: boolean; httpStatus: number }> = {
+		'arkme-code-40431': { code: 'extension-share-not-found', message: '扩展分享链接不存在或已失效', retryable: false, httpStatus: 404 },
+		'arkme-code-40932': { code: 'extension-share-rotate-conflict', message: '扩展分享链接轮换冲突', retryable: false, httpStatus: 409 },
+		'arkme-code-50332': { code: 'extension-share-unavailable', message: '扩展分享服务暂时不可用', retryable: true, httpStatus: 503 },
+	}
+	const known = mapped[error.code]
+	return known === undefined
+		? error
+		: new ArkmePluginError(known.code, known.message, known.retryable, known.httpStatus, { cause: error })
 }
 
 function safeSignedHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
