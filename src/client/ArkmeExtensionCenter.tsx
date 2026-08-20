@@ -7,6 +7,7 @@ import type {
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
+import { ArkmeExtensionPreviewGallery } from './ArkmeExtensionPreviewGallery.js'
 import { ArkmeExtensionPublishDialog, type ArkmeExtensionPublishFormValue } from './ArkmeExtensionPublishDialog.js'
 import { ArkmeExtensionEditDialog, type ArkmeExtensionEditFormValue } from './ArkmeExtensionEditDialog.js'
 import {
@@ -1004,6 +1005,12 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
               />}
             </span>)}
         </div>
+        <ArkmeExtensionPreviewGallery
+          key={detail.extension_id}
+          extensionId={detail.extension_id}
+          extensionName={detail.name}
+          previews={detail.preview_images ?? []}
+        />
         <section style={styles.detailSection}><div style={styles.detailLabel}>作者</div><div style={styles.detailValue}>{extensionAuthorLabel(detail)}</div></section>
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
         {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
@@ -1155,3 +1162,5 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   if (typeof document === 'undefined') return dialog
   return createPortal(dialog, document.body)
 }
+
+export { ArkmeExtensionPreviewGallery, arkmeExtensionPreviewUrl, extensionPreviewSelection } from './ArkmeExtensionPreviewGallery.js'

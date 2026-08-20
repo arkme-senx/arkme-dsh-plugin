@@ -39,7 +39,7 @@ the model-facing Tool can only supply an account-authorized Arkme `image_ref`.
 | --- | --- | --- | --- | --- |
 | DSH Tool | `arkme_extension_preview_add` accepts an Arkme `image_ref` | exact refs plus current revision, all writes require confirmation | owned list/inspect returns ordered safe refs | available |
 | Public SDK | `addExtensionPreview()` accepts a local `Blob` | CAS methods require `preview_revision` | `extensionPreviewUrl()` is same-origin | available |
-| Built-in UI | not connected | not connected | not rendered | intentionally out of scope |
+| Built-in UI | not connected | not connected | detail gallery through the same-origin route | read available |
 | Host owner | signed PUT and real-byte verification | owner/revision validation | signed GET, SHA-256 verification and bounded cache | available |
 
 The gallery is extension-owned, independent from versions, limited to 20 PNG/JPEG/WebP images and 5 MiB per image. Index zero is the cover. Browser and model results never contain object keys or signed storage transport.

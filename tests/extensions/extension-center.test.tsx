@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ComponentType } from 'react'
 import { describe, expect, it } from 'vitest'
+import * as extensionCenterModule from '../../src/client/ArkmeExtensionCenter.js'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionDirectInstallTarget,
@@ -10,6 +12,17 @@ import {
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 import type { ArkmeMyExtensionItem } from '../../src/extensions/owned-types.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
+import type { ArkmeExtensionPreviewItem } from '../../src/extensions/types.js'
+
+const previewModule = extensionCenterModule as unknown as {
+  ArkmeExtensionPreviewGallery?: ComponentType<{
+    extensionId: string
+    extensionName: string
+    previews: ArkmeExtensionPreviewItem[]
+  }>
+  arkmeExtensionPreviewUrl?: (extensionId: string, previewRef: string) => string
+  extensionPreviewSelection?: (currentRef: string | undefined, previews: ArkmeExtensionPreviewItem[]) => string | undefined
+}
 
 describe('Arkme extension market UI', () => {
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
@@ -58,6 +71,61 @@ describe('Arkme extension market UI', () => {
     expect(html.match(/<rect/g)).toHaveLength(3)
     expect(html).toContain('M17.25 14v6.5M14 17.25h6.5')
     expect(html).not.toContain('◇')
+  })
+
+  it('renders an ordered same-origin preview gallery without exposing storage transport', () => {
+    const Gallery = previewModule.ArkmeExtensionPreviewGallery
+    const previews: ArkmeExtensionPreviewItem[] = [
+      {
+        preview_ref: `preview_v1_${'a'.repeat(64)}`, content_type: 'image/png', preview_size: 1024,
+        width: 1280, height: 720, created_at: 1,
+      },
+      {
+        preview_ref: `preview_v1_${'b'.repeat(64)}`, content_type: 'image/webp', preview_size: 2048,
+        width: 800, height: 600, created_at: 2,
+      },
+    ]
+    const html = Gallery === undefined ? '' : renderToStaticMarkup(<Gallery
+      extensionId="ext-preview"
+      extensionName="预览扩展"
+      previews={previews}
+    />)
+
+    expect(html).toContain('aria-label="扩展预览图"')
+    expect(html).toContain('alt="预览扩展的第 1 张预览图"')
+    expect(html).toContain('aria-label="查看第 1 张预览图"')
+    expect(html).toContain('aria-label="查看第 2 张预览图"')
+    expect(html).toContain('aria-pressed="true"')
+    expect(html).toContain(`/arkme-self/api/extension-preview?extension_id=ext-preview&amp;preview_ref=preview_v1_${'a'.repeat(64)}`)
+    expect(html).toContain(`/arkme-self/api/extension-preview?extension_id=ext-preview&amp;preview_ref=preview_v1_${'b'.repeat(64)}`)
+    expect(html).not.toContain('https://')
+  })
+
+  it('hides an empty preview gallery and keeps selection inside the current ordered refs', () => {
+    const Gallery = previewModule.ArkmeExtensionPreviewGallery
+    const previews: ArkmeExtensionPreviewItem[] = [
+      {
+        preview_ref: `preview_v1_${'a'.repeat(64)}`, content_type: 'image/png', preview_size: 1024,
+        width: 1280, height: 720, created_at: 1,
+      },
+      {
+        preview_ref: `preview_v1_${'b'.repeat(64)}`, content_type: 'image/webp', preview_size: 2048,
+        width: 800, height: 600, created_at: 2,
+      },
+    ]
+    const empty = Gallery === undefined ? '' : renderToStaticMarkup(<Gallery
+      extensionId="ext-preview"
+      extensionName="预览扩展"
+      previews={[]}
+    />)
+
+    expect(empty).toBe('')
+    expect(previewModule.extensionPreviewSelection?.(previews[1]!.preview_ref, previews)).toBe(previews[1]!.preview_ref)
+    expect(previewModule.extensionPreviewSelection?.('preview_v1_missing', previews)).toBe(previews[0]!.preview_ref)
+    expect(previewModule.extensionPreviewSelection?.(undefined, [])).toBeUndefined()
+    expect(previewModule.arkmeExtensionPreviewUrl?.('ext/a', previews[0]!.preview_ref)).toBe(
+      `/arkme-self/api/extension-preview?extension_id=ext%2Fa&preview_ref=preview_v1_${'a'.repeat(64)}`,
+    )
   })
 
   it('uses a dark primary action and the shared accessible switch proportions', () => {
