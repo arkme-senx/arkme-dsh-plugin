@@ -408,6 +408,8 @@ export interface ArkmeProviderCapabilities {
     extensionManagement?: true
     /** Extension-level icon upload and same-origin rendering are available. */
     extensionIcons?: true
+    /** Extension-level preview gallery SDK and Tool mutations are available. */
+    extensionPreviews?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
@@ -1492,6 +1494,8 @@ export type ArkmePluginOperation =
   | 'extensions.installed-list'
   | 'extensions.enabled-state'
   | 'extensions.enabled.set'
+  | 'extensions.preview.delete'
+  | 'extensions.preview.reorder'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'

@@ -18,6 +18,50 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('manages extension previews through same-origin Host operations', async () => {
+    const previewRef = `preview_v1_${'a'.repeat(64)}`
+    const secondRef = `preview_v1_${'b'.repeat(64)}`
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/extension-preview/upload')) {
+        expect(init?.method).toBe('POST')
+        expect(new Headers(init?.headers).has('authorization')).toBe(false)
+        return success({
+          extension_id: 'ext-1', applied_preview_ref: previewRef,
+          preview_images: [{ preview_ref: previewRef, content_type: 'image/png', preview_size: 4, width: 640, height: 480, created_at: 1 }],
+          preview_revision: 1,
+        })
+      }
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      if (request.operation === 'extensions.preview.delete') return success({
+        extension_id: 'ext-1', preview_images: [], preview_revision: 2,
+      })
+      if (request.operation === 'extensions.preview.reorder') return success({
+        extension_id: 'ext-1',
+        preview_images: [
+          { preview_ref: secondRef, content_type: 'image/png', preview_size: 5, width: 800, height: 600, created_at: 2 },
+          { preview_ref: previewRef, content_type: 'image/png', preview_size: 4, width: 640, height: 480, created_at: 1 },
+        ],
+        preview_revision: 3,
+      })
+      throw new Error(`unexpected ${request.operation}`)
+    })
+    const sdk = createArkmeSdk({ fetchImpl: fetchImpl as typeof fetch })
+    await expect(sdk.addExtensionPreview(
+      'ext-1', new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' }),
+      { clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432' },
+    )).resolves.toMatchObject({ applied_preview_ref: previewRef, preview_revision: 1 })
+    await expect(sdk.deleteExtensionPreview('ext-1', previewRef, 1)).resolves.toMatchObject({ preview_revision: 2 })
+    await expect(sdk.reorderExtensionPreviews('ext-1', [secondRef, previewRef], 2)).resolves.toMatchObject({ preview_revision: 3 })
+    expect(sdk.extensionPreviewUrl('ext-1', previewRef))
+      .toBe(`/arkme-self/api/extension-preview?extension_id=ext-1&preview_ref=${previewRef}`)
+    expect(calls).toEqual([
+      { operation: 'extensions.preview.delete', params: { extensionId: 'ext-1', previewRef, expectedRevision: 1 } },
+      { operation: 'extensions.preview.reorder', params: { extensionId: 'ext-1', orderedPreviewRefs: [secondRef, previewRef], expectedRevision: 2 } },
+    ])
+  })
+
   it('uploads owned extension icons through same-origin Host without signed URLs', async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('/arkme-self/api/extension-icon/upload')

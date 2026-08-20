@@ -1770,6 +1770,7 @@ export class ArkmeService {
         groupSettings: true,
         extensionManagement: true,
         extensionIcons: true,
+        extensionPreviews: true,
         worldFeed: true,
         worldInteractions: true,
         arrangements: true,

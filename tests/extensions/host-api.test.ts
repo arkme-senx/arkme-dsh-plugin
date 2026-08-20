@@ -1,7 +1,43 @@
+import { createServer } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchArkmeHostOperation } from '../../src/host-api.js'
+import { createArkmeHostApi, dispatchArkmeHostOperation } from '../../src/host-api.js'
 
 describe('extension center Host BFF', () => {
+  it('requires same-origin requests for preview delete and reorder', async () => {
+    const deletePreview = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 2 }))
+    const reorderPreviews = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 3 }))
+    let handler: ReturnType<typeof createArkmeHostApi>
+    const server = createServer((req, res) => { void handler(req, res) })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('missing test port')
+      const origin = `http://127.0.0.1:${String(address.port)}`
+      handler = createArkmeHostApi({} as never, {
+        expectedPort: address.port, allowNonLoopback: false,
+        extensionManager: () => ({ deletePreview, reorderPreviews }) as never,
+      })
+      const body = JSON.stringify({
+        operation: 'extensions.preview.delete',
+        params: { extensionId: 'ext-1', previewRef: `preview_v1_${'a'.repeat(64)}`, expectedRevision: 1 },
+      })
+      const missingOrigin = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+      })
+      expect(missingOrigin.status).toBe(403)
+      expect(deletePreview).not.toHaveBeenCalled()
+      const allowed = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body,
+      })
+      expect(allowed.status).toBe(200)
+      expect(deletePreview).toHaveBeenCalledWith({
+        extensionId: 'ext-1', previewRef: `preview_v1_${'a'.repeat(64)}`, expectedRevision: 1,
+      })
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
+
   it('fails loud when Dynamic Cordis is absent', async () => {
     await expect(dispatchArkmeHostOperation(
       {} as never,

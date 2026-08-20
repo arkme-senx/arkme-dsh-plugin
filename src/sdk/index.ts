@@ -42,6 +42,7 @@ import type {
 import type {
   ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 
@@ -115,6 +116,9 @@ export type {
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult,
+  ArkmeExtensionPreviewGallery,
+  ArkmeExtensionPreviewItem,
+  ArkmeExtensionPreviewMediaType,
   ArkmeInstalledExtensionView,
 } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
@@ -238,6 +242,78 @@ export class ArkmeSdk {
     }
     if (!body.ok) throw new ArkmeClientError(body.error)
     return body.value
+  }
+
+  extensionPreviewUrl(extensionId: string, previewRef: string): string {
+    if (extensionId.trim() === '' || !/^preview_v1_[a-f0-9]{64}$/.test(previewRef.trim())) {
+      throw new TypeError('Arkme extension preview identity is invalid')
+    }
+    return `${this.route}/extension-preview?extension_id=${encodeURIComponent(extensionId.trim())}&preview_ref=${encodeURIComponent(previewRef.trim())}`
+  }
+
+  async addExtensionPreview(
+    extensionId: string,
+    file: Blob,
+    options: { clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    const mediaType = file.type.toLowerCase() as ArkmeExtensionPreviewMediaType
+    if (extensionId.trim() === '' || !['image/png', 'image/jpeg', 'image/webp'].includes(mediaType)) {
+      throw new TypeError('Arkme extension preview must be PNG, JPEG, or WebP')
+    }
+    if (file.size <= 0 || file.size > 5 * 1024 * 1024) throw new TypeError('Arkme extension preview must be smaller than 5 MiB')
+    const mutationId = options.clientMutationId ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mutationId)) {
+      throw new TypeError('Arkme extension preview mutation id must be a UUID')
+    }
+    const response = await this.fetchImpl(`${this.route}/extension-preview/upload`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': mediaType,
+        'X-Arkme-Extension-Id': extensionId.trim(),
+        'X-Arkme-Idempotency-Key': mutationId,
+      },
+      body: file,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    let body: ArkmePluginResponse<ArkmeExtensionPreviewGallery>
+    try { body = await response.json() as ArkmePluginResponse<ArkmeExtensionPreviewGallery> } catch {
+      throw new ArkmeClientError({ code: 'local-response-invalid', message: 'Arkme 插件返回了无效响应', retryable: true })
+    }
+    if (!body.ok) throw new ArkmeClientError(body.error)
+    return body.value
+  }
+
+  async deleteExtensionPreview(
+    extensionId: string,
+    previewRef: string,
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    if (extensionId.trim() === '' || !/^preview_v1_[a-f0-9]{64}$/.test(previewRef.trim())
+      || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new TypeError('Arkme extension preview delete parameters are invalid')
+    }
+    return await this.call<ArkmeExtensionPreviewGallery>('extensions.preview.delete', {
+      extensionId: extensionId.trim(), previewRef: previewRef.trim(), expectedRevision,
+    }, signal)
+  }
+
+  async reorderExtensionPreviews(
+    extensionId: string,
+    orderedPreviewRefs: string[],
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionPreviewGallery> {
+    const refs = orderedPreviewRefs.map(value => value.trim())
+    if (extensionId.trim() === '' || refs.length <= 0 || refs.length > 20
+      || refs.some(value => !/^preview_v1_[a-f0-9]{64}$/.test(value)) || new Set(refs).size !== refs.length
+      || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new TypeError('Arkme extension preview reorder parameters are invalid')
+    }
+    return await this.call<ArkmeExtensionPreviewGallery>('extensions.preview.reorder', {
+      extensionId: extensionId.trim(), orderedPreviewRefs: refs, expectedRevision,
+    }, signal)
   }
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {

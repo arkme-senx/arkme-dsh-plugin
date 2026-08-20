@@ -290,7 +290,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -722,6 +722,16 @@ export async function dispatchArkmeHostOperation(
       agent: undefined,
       extensionId: stringParam(params, 'extensionId'),
       enabled: requiredBooleanParam(params, 'enabled'),
+    })
+    case 'extensions.preview.delete': return await requireExtensionManager(extensionManager).deletePreview({
+      extensionId: stringParam(params, 'extensionId'),
+      previewRef: stringParam(params, 'previewRef'),
+      expectedRevision: numberParam(params, 'expectedRevision', -1),
+    })
+    case 'extensions.preview.reorder': return await requireExtensionManager(extensionManager).reorderPreviews({
+      extensionId: stringParam(params, 'extensionId'),
+      orderedPreviewRefs: stringListParam(params, 'orderedPreviewRefs'),
+      expectedRevision: numberParam(params, 'expectedRevision', -1),
     })
     case 'extensions.updates': return await requireExtensionManager(extensionManager).updates()
     case 'extensions.install.preview': return await requireExtensionManager(extensionManager).previewInstall(

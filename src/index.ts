@@ -20,6 +20,7 @@ import { ArkmeService } from './arkme-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
 import { createArkmeExtensionIconReadHandler, createArkmeExtensionIconUploadHandler } from './extensions/icon-routes.js'
+import { createArkmeExtensionPreviewReadHandler, createArkmeExtensionPreviewUploadHandler } from './extensions/preview-routes.js'
 import { ArkmeExtensionManager } from './extensions/manager.js'
 import { ExtensionPublishClient } from './extensions/publish-client.js'
 import { ArkmeExtensionProfileInstaller } from './extensions/profile-installer.js'
@@ -275,6 +276,8 @@ export function apply(ctx: Context, config: Config): void {
   }
   const extensionIconUploadHandler = createArkmeExtensionIconUploadHandler(extensionIconOptions)
   const extensionIconReadHandler = createArkmeExtensionIconReadHandler(extensionIconOptions)
+  const extensionPreviewUploadHandler = createArkmeExtensionPreviewUploadHandler(extensionIconOptions)
+  const extensionPreviewReadHandler = createArkmeExtensionPreviewReadHandler(extensionIconOptions)
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -317,6 +320,16 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/extension-icon`,
     handler: extensionIconReadHandler,
   }), 'dsh-arkme: extension icon read route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-preview/upload`,
+    handler: extensionPreviewUploadHandler,
+  }), 'dsh-arkme: extension preview upload route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/extension-preview`,
+    handler: extensionPreviewReadHandler,
+  }), 'dsh-arkme: extension preview read route')
   ctx.effect(() => {
     const disposeRoute = ctx.webServer.register({
       kind: 'exact',
