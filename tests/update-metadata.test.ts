@@ -15,9 +15,9 @@ describe('published update metadata', () => {
       notice: {
         schemaVersion: 1,
         level: 'normal',
-        title: 'Arkme 插件 0.1.6 更新',
-        summary: '修复每次进入 App 的更新检查与自动升级，并解除扩展安装的对话限制。',
-        publishedAt: '2026-08-19T12:57:17.000Z',
+        title: 'Arkme 插件 0.1.7 更新',
+        summary: '修复聊天已读回执后的红点残留，并增强 Arkme 对 Profile pnpm 的兼容。',
+        publishedAt: '2026-08-20T02:34:21.000Z',
         releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
       },
     })
