@@ -13,7 +13,7 @@ const expectedPublicMethods = [
   'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
-  'dispose', 'requestStats', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
   'searchContact', 'addContact',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'startRecordingDoubaoBackfill', 'recordingDay',

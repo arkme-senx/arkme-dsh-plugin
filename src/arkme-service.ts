@@ -9,6 +9,7 @@ import type {
   ArkmeExtensionReviewPage,
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
+import { managedAccessTokenExpiresWithin } from './managed-ai/credential.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
 import {
@@ -347,6 +348,15 @@ export class ArkmeService {
 
   chatRealtimeState(): ArkmeChatRealtimeState {
     return this.realtime.chatRealtimeState()
+  }
+
+  /** Resolve the current Host-owned Arkme bearer used by the managed DSH model route. */
+  async resolveManagedAccessCredential(): Promise<SecretValue> {
+    let session = await this.runtime.requireSession()
+    if (managedAccessTokenExpiresWithin(session.accessToken, 60_000)) {
+      session = await this.runtime.refreshAccessToken(session)
+    }
+    return new SecretValue(session.accessToken)
   }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
