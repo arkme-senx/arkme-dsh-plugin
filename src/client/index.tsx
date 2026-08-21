@@ -10,6 +10,7 @@ import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuth
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
 
 export const inject = ['slots']
 
@@ -59,6 +60,10 @@ export function apply(ctx: ClientContext): void {
     if (authenticated) openArkme(openedFromSession)
     else openLogin(openedFromSession)
   }
+	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
+		const shareRef = consumeExtensionShareDeepLink(window.location, window.history)
+		if (shareRef !== undefined) arkmeUi.openExtensionShare(shareRef)
+	}
 
   ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
   ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
@@ -108,6 +113,8 @@ export { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 export { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 export { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
+export { ArkmeSharedExtensionDetail } from './ArkmeSharedExtensionDetail.js'
+export { consumeExtensionShareDeepLink, extensionShareRefFromHash } from './extension-share-deeplink.js'
 export {
   ArkmeExtensionReviewComposerDialog,
   ArkmeExtensionReviews,

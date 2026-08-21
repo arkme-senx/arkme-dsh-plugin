@@ -28,6 +28,25 @@ export interface ArkmeExtensionShare {
 	url: string
 }
 
+export interface ArkmeSharedExtensionPreview {
+	preview_ref: string
+	width: number
+	height: number
+}
+
+/** Link-capability projection. It intentionally contains no extension_id or install facts. */
+export interface ArkmeSharedExtensionDetail {
+	name: string
+	description: string
+	visibility: 'private' | 'public'
+	share_scope: 'link_readonly'
+	latest_stable_version: string
+	icon_ref?: string
+	preview_images: ArkmeSharedExtensionPreview[]
+	rating_summary: ArkmeExtensionRatingSummary
+	source?: ArkmeExtensionSource
+}
+
 export interface ArkmeExtensionManifest {
   format: typeof ARKME_EXTENSION_FORMAT
   format_version: typeof ARKME_EXTENSION_FORMAT_VERSION

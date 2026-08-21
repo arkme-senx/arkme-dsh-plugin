@@ -46,4 +46,40 @@ describe('extension share Host owner', () => {
 		})).rejects.toMatchObject({ code: 'extension-share-invalid' })
 		expect(post).not.toHaveBeenCalled()
 	})
+
+	it('reads and validates one link-scoped read-only share without exposing an extension id', async () => {
+		const post = vi.fn(async () => ({
+			extension: {
+				name: 'Weather', description: 'Open source weather', visibility: 'private',
+				share_scope: 'link_readonly', latest_stable_version: '1.0.0',
+				preview_images: [], rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
+				source: {
+					type: 'github_repository', url: 'https://github.com/example/weather',
+					label: '开源来源 · GitHub', verification: 'publisher_attested',
+				},
+			},
+		}))
+		const manager = managerWith(post)
+		const detail = await manager.readSharedDetail('extshare_0123456789abcdef0123456789abcdef')
+		expect(detail).toMatchObject({ name: 'Weather', visibility: 'private', share_scope: 'link_readonly' })
+		expect(detail).not.toHaveProperty('extension_id')
+		expect(post).toHaveBeenCalledWith(
+			'/api/public/v1/extensions/share/detail',
+			{ share_ref: 'extshare_0123456789abcdef0123456789abcdef' },
+			undefined,
+		)
+	})
+
+	it('rejects malformed refs and non-read-only share responses', async () => {
+		const post = vi.fn(async () => ({ extension: {
+			name: 'Weather', description: '', visibility: 'private', share_scope: 'install',
+			latest_stable_version: '1.0.0', preview_images: [],
+			rating_summary: { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] },
+		} }))
+		const manager = managerWith(post)
+		await expect(manager.readSharedDetail('bad')).rejects.toMatchObject({ code: 'extension-share-invalid' })
+		expect(post).not.toHaveBeenCalled()
+		await expect(manager.readSharedDetail('extshare_0123456789abcdef0123456789abcdef'))
+			.rejects.toMatchObject({ code: 'extension-share-contract-invalid' })
+	})
 })

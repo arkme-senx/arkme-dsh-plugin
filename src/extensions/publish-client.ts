@@ -12,6 +12,7 @@ import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionReviewWireCreateResult, type ArkmeExtensionReviewWirePage,
 	type ArkmeExtensionShare,
+	type ArkmeSharedExtensionDetail,
   type ArkmeInstalledExtension,
   type ArkmeExtensionManifest,
 } from './types.js'
@@ -274,6 +275,10 @@ export class ExtensionPublishClient {
 		} catch (error) {
 			throw extensionShareError(error)
 		}
+	}
+
+	async sharedDetail(shareRef: string, signal?: AbortSignal): Promise<{ extension: ArkmeSharedExtensionDetail }> {
+		return await this.post('/api/public/v1/extensions/share/detail', { share_ref: shareRef }, signal)
 	}
 
   async list(input: { query?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {

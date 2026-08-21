@@ -56,6 +56,7 @@ import type {
   ArkmeExtensionReviewPage,
   ArkmeExtensionRatingSummary,
 	ArkmeExtensionShare,
+	ArkmeSharedExtensionDetail,
 	ArkmeExtensionSource,
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
@@ -156,6 +157,7 @@ export type {
   ArkmeExtensionReviewPage,
 	ArkmeExtensionPublishResult,
 	ArkmeExtensionShare,
+	ArkmeSharedExtensionDetail,
 	ArkmeExtensionSource,
 } from '../extensions/types.js'
 export { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
@@ -436,6 +438,14 @@ export class ArkmeSdk {
 		return await this.call<ArkmeExtensionShare>('extensions.share.rotate', {
 			extensionId: extensionId.trim(), clientMutationId,
 		}, signal)
+	}
+
+	async extensionShareDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeSharedExtensionDetail> {
+		const normalized = shareRef.trim()
+		if (!/^extshare_[0-9a-f]{32}$/.test(normalized)) {
+			throw new TypeError('Arkme extension share reference is invalid')
+		}
+		return await this.call<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef: normalized }, signal)
 	}
 
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */

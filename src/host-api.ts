@@ -750,6 +750,9 @@ export async function dispatchArkmeHostOperation(
 		extensionId: stringParam(params, 'extensionId'),
 		clientMutationId: stringParam(params, 'clientMutationId'),
 	})
+	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
+		stringParam(params, 'shareRef'),
+	)
     case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
       stringParam(params, 'extensionId'),
     )

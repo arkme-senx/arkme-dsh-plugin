@@ -301,6 +301,13 @@ describe('Arkme SDK', () => {
 		if (request.operation === 'extensions.share.rotate') {
 			return success({ ref: 'extshare_0123456789abcdef0123456789abcdef', url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef' })
 		}
+		if (request.operation === 'extensions.share.detail') {
+			return success({
+				name: '天气', description: '天气扩展', visibility: 'private', share_scope: 'link_readonly',
+				latest_stable_version: '1.0.0', preview_images: [],
+				rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
+			})
+		}
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -318,6 +325,9 @@ describe('Arkme SDK', () => {
 		await expect(sdk.rotateExtensionShare('ext-1', '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8')).resolves.toMatchObject({
 			ref: 'extshare_0123456789abcdef0123456789abcdef',
 		})
+		await expect(sdk.extensionShareDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
+			name: '天气', share_scope: 'link_readonly',
+		})
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
       { operation: 'extensions.mine.publish', params: {
@@ -331,6 +341,9 @@ describe('Arkme SDK', () => {
       } },
 		{ operation: 'extensions.share.rotate', params: {
 			extensionId: 'ext-1', clientMutationId: '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8',
+		} },
+		{ operation: 'extensions.share.detail', params: {
+			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
 		} },
     ])
     expect(() => sdk.publishMyExtension({

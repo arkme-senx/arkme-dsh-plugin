@@ -85,9 +85,15 @@ describe('Arkme extension tools', () => {
       ref: 'extshare_0123456789abcdef0123456789abcdef',
       url: 'https://jiwo.cc/app/share/extension/extshare_0123456789abcdef0123456789abcdef',
     }))
+		const readSharedDetail = vi.fn(async () => ({
+			name: '天气', description: '天气扩展', visibility: 'private', share_scope: 'link_readonly',
+			latest_stable_version: '1.0.0', preview_images: [],
+			rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
+		}))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
-      previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, setIcon, addPreview, deletePreview, reorderPreviews,
+      previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail,
+      setIcon, addPreview, deletePreview, reorderPreviews,
       delete: deleteExtension, apply: applyExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, {} as never, { readImage }, 'business')
@@ -96,7 +102,7 @@ describe('Arkme extension tools', () => {
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
-		'arkme_extension_share',
+		'arkme_extension_share', 'arkme_extension_share_read',
       'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
@@ -178,6 +184,15 @@ describe('Arkme extension tools', () => {
     expect(rotateShareLink).toHaveBeenCalledWith(expect.objectContaining({
       extensionId: 'ext-1', clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }))
+		const shareReadTool = definitions.find(item => item.name === 'arkme_extension_share_read')
+		await expect(shareReadTool?.execute?.(
+			{ share_ref: 'extshare_0123456789abcdef0123456789abcdef' },
+			{ signal: new AbortController().signal },
+		)).resolves.toContain('"share_scope": "link_readonly"')
+		expect(readSharedDetail).toHaveBeenCalledWith(
+			'extshare_0123456789abcdef0123456789abcdef',
+			expect.any(AbortSignal),
+		)
     const iconTool = definitions.find(item => item.name === 'arkme_extension_icon_set')
     expect(iconTool?.parameters).toHaveProperty('properties.workspace_path')
     expect(iconTool?.parameters).toHaveProperty('required', ['action'])

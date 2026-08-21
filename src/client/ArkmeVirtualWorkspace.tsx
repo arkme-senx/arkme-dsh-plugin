@@ -669,6 +669,12 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
 
+	useEffect(() => {
+		if (!authenticated || ui.extensionShareRef === undefined) return
+		activateNativeEntry()
+		setExtensionCenterOpen(true)
+	}, [activateNativeEntry, authenticated, ui.extensionShareRef])
+
   const stopCreatedHighlightAnimation = useCallback(() => {
     createdHighlightTimeoutsRef.current.forEach(timer => { clearTimeout(timer) })
     createdHighlightTimeoutsRef.current = []
@@ -1012,7 +1018,9 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     {extensionCenterOpen && <ArkmeExtensionCenter
       currentSessionId={currentSessionId}
       {...(auth?.userId === undefined ? {} : { currentUserId: auth.userId })}
-      onClose={() => { setExtensionCenterOpen(false) }}
+		{...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
+		onShareExit={() => { arkmeUi.dismissExtensionShare() }}
+		onClose={() => { setExtensionCenterOpen(false); arkmeUi.dismissExtensionShare() }}
     />}
     {directory === 'send_to_self' && <header style={styles.header}>
       <button

@@ -527,6 +527,8 @@ export type {
   ArkmeExtensionReviewCreateResult,
   ArkmeExtensionReviewItem,
   ArkmeExtensionReviewPage,
+	ArkmeSharedExtensionDetail,
+	ArkmeSharedExtensionPreview,
 } from './extensions/types.js'
 export type {
   ArkmeOutgoingCallFailureCode,

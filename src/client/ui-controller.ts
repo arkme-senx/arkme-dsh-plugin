@@ -18,6 +18,7 @@ export interface ArkmeUiState {
   mode: 'login' | 'source' | 'recordings' | 'calendar' | 'search' | 'arko'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
+  extensionShareRef?: string
 }
 
 export class ArkmeUiController {
@@ -49,7 +50,8 @@ export class ArkmeUiController {
   }
 
   close(): void {
-    this.publish({ ...this.state, open: false, surfaceOpen: false })
+    const { extensionShareRef: _extensionShareRef, ...rest } = this.state
+    this.publish({ ...rest, open: false, surfaceOpen: false })
   }
 
   authChanged(authenticated = false, resetSelection = false): void {
@@ -114,6 +116,16 @@ export class ArkmeUiController {
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'arko' })
   }
 
+  openExtensionShare(shareRef: string): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'source', extensionShareRef: shareRef })
+  }
+
+  dismissExtensionShare(): void {
+    const { extensionShareRef: _extensionShareRef, ...rest } = this.state
+    this.publish(rest)
+  }
+
   selectSource(source: ArkmeSourceItem): void {
     this.publish({ ...this.state, open: true, mode: 'source', selectedSource: source })
   }
@@ -125,6 +137,7 @@ export class ArkmeUiController {
       && next.mode === this.state.mode
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
+      && next.extensionShareRef === this.state.extensionShareRef
       && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next
     for (const listener of this.listeners) listener()

@@ -28,6 +28,7 @@ import {
   type ArkmeExtensionIconResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
   type ArkmeExtensionPublishResult,
 	type ArkmeExtensionShare,
+	type ArkmeExtensionRatingSummary, type ArkmeExtensionSource, type ArkmeSharedExtensionDetail,
   ARKME_EXTENSION_PREVIEW_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_ITEMS,
   type ArkmeExtensionPreviewBytes, type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionEditableVisibility, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
@@ -171,6 +172,80 @@ function requiredPreviewRef(value: string): string {
     throw new ArkmePluginError('extension-preview-ref-invalid', '扩展预览图引用无效', false, 400)
   }
   return normalized
+}
+
+function requiredShareRef(value: string): string {
+	const normalized = value.trim()
+	if (!/^extshare_[0-9a-f]{32}$/.test(normalized)) {
+		throw new ArkmePluginError('extension-share-invalid', '扩展分享参数无效', false, 400)
+	}
+	return normalized
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+	return value !== null && typeof value === 'object' && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined
+}
+
+function sharedRatingSummary(value: unknown): ArkmeExtensionRatingSummary | undefined {
+	const summary = objectValue(value)
+	const histogram = summary?.histogram
+	if (typeof summary?.average !== 'number' || !Number.isFinite(summary.average)
+		|| summary.average < 0 || summary.average > 5
+		|| typeof summary.count !== 'number' || !Number.isSafeInteger(summary.count) || summary.count < 0
+		|| !Array.isArray(histogram) || histogram.length !== 5
+		|| !histogram.every(item => typeof item === 'number' && Number.isSafeInteger(item) && item >= 0)
+		|| histogram.reduce((total, item) => total + item, 0) !== summary.count
+		|| (summary.count === 0 ? summary.average !== 0 : summary.average <= 0)) return undefined
+	return { average: summary.average, count: summary.count, histogram: histogram as [number, number, number, number, number] }
+}
+
+function sharedSource(value: unknown): ArkmeExtensionSource | undefined {
+	if (value === undefined || value === null) return undefined
+	const source = objectValue(value)
+	if (source?.type !== 'github_repository' || source.verification !== 'publisher_attested'
+		|| source.label !== '开源来源 · GitHub' || typeof source.url !== 'string') return undefined
+	let normalized: string | undefined
+	try { normalized = normalizeGitHubRepositoryURL(source.url) } catch { return undefined }
+	return normalized === source.url
+		? { type: 'github_repository', url: normalized, label: '开源来源 · GitHub', verification: 'publisher_attested' }
+		: undefined
+}
+
+function assertSharedExtensionDetail(value: unknown): ArkmeSharedExtensionDetail {
+	const item = objectValue(value)
+	const previews = item?.preview_images
+	const rating = sharedRatingSummary(item?.rating_summary)
+	if (typeof item?.name !== 'string' || item.name.trim() === '' || [...item.name].length > 120
+		|| typeof item.description !== 'string' || [...item.description].length > 2_000
+		|| (item.visibility !== 'private' && item.visibility !== 'public')
+		|| item.share_scope !== 'link_readonly'
+		|| typeof item.latest_stable_version !== 'string' || semverParts(item.latest_stable_version) === undefined
+		|| (item.icon_ref !== undefined && (typeof item.icon_ref !== 'string' || !/^icon_v1_[a-f0-9]{64}$/.test(item.icon_ref)))
+		|| !Array.isArray(previews) || previews.length > ARKME_EXTENSION_PREVIEW_MAX_ITEMS || rating === undefined) {
+		throw new ArkmePluginError('extension-share-contract-invalid', '扩展市场返回了无效只读分享详情', false, 502)
+	}
+	const safePreviews = previews.map((value) => {
+		const preview = objectValue(value)
+		if (typeof preview?.preview_ref !== 'string' || !/^preview_v1_[a-f0-9]{64}$/.test(preview.preview_ref)
+			|| typeof preview.width !== 'number' || !Number.isSafeInteger(preview.width) || preview.width < 320 || preview.width > 4096
+			|| typeof preview.height !== 'number' || !Number.isSafeInteger(preview.height) || preview.height < 320 || preview.height > 4096) {
+			throw new ArkmePluginError('extension-share-contract-invalid', '扩展市场返回了无效只读分享详情', false, 502)
+		}
+		return { preview_ref: preview.preview_ref, width: preview.width, height: preview.height }
+	})
+	const source = sharedSource(item.source)
+	if (item.source !== undefined && source === undefined) {
+		throw new ArkmePluginError('extension-share-contract-invalid', '扩展市场返回了无效只读分享详情', false, 502)
+	}
+	return {
+		name: item.name.trim(), description: item.description, visibility: item.visibility,
+		share_scope: 'link_readonly', latest_stable_version: item.latest_stable_version,
+		...(typeof item.icon_ref === 'string' ? { icon_ref: item.icon_ref } : {}),
+		preview_images: safePreviews, rating_summary: rating,
+		...(source === undefined ? {} : { source }),
+	}
 }
 
 function assertPreviewGallery(value: ArkmeExtensionPreviewGallery, extensionId: string): ArkmeExtensionPreviewGallery {
@@ -476,6 +551,11 @@ export class ArkmeExtensionManager {
 			throw new ArkmePluginError('extension-share-contract-invalid', '扩展市场返回了无效分享链接', false, 502)
 		}
 		return share
+	}
+
+	async readSharedDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeSharedExtensionDetail> {
+		const response = await this.client.sharedDetail(requiredShareRef(shareRef), signal)
+		return assertSharedExtensionDetail(response.extension)
 	}
 
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {

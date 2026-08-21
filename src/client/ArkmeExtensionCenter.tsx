@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
   ArkmeExtensionEnabledResult, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution, ArkmeInstalledExtensionView,
+  ArkmeSharedExtensionDetail,
 } from '../extensions/types.js'
 import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
@@ -16,6 +17,7 @@ import {
 } from './extension-edit-flow.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
 import { ArkmeExtensionShareDialog, ArkmeExtensionSourceLink } from './ArkmeExtensionShare.js'
+import { ArkmeSharedExtensionDetail as SharedExtensionDetailView } from './ArkmeSharedExtensionDetail.js'
 import { extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -582,9 +584,11 @@ export function extensionEnableUnavailable(
   return enabled && item?.unavailable !== undefined
 }
 
-export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose }: {
+export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef, onShareExit, onClose }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
+  shareRef?: string | undefined
+  onShareExit?(): void
   onClose(): void
 }) {
   const [tab, setTab] = useState<Tab>('discover')
@@ -596,7 +600,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [installed, setInstalled] = useState<ArkmeInstalledExtensionView[]>([])
   const [updates, setUpdates] = useState<ArkmeExtensionUpdateResolution[]>([])
   const [detail, setDetail] = useState<ArkmeExtensionCatalogItem>()
-  const [loadingTab, setLoadingTab] = useState<Tab | undefined>('discover')
+  const [loadingTab, setLoadingTab] = useState<Tab | undefined>(shareRef === undefined ? 'discover' : undefined)
   const [detailBusy, setDetailBusy] = useState(false)
   const [installTask, setInstallTask] = useState<ArkmeExtensionInstallTaskSnapshot>()
   const [actionBusyExtensionId, setActionBusyExtensionId] = useState<string>()
@@ -613,6 +617,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [editError, setEditError] = useState('')
   const [shareDialogExtensionId, setShareDialogExtensionId] = useState<string>()
   const [shareNotice, setShareNotice] = useState('')
+  const [sharedDetail, setSharedDetail] = useState<ArkmeSharedExtensionDetail>()
+  const [sharedDetailBusy, setSharedDetailBusy] = useState(false)
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
@@ -724,11 +730,26 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   }
 
   useEffect(() => {
+    if (shareRef !== undefined) return
     void load('discover', 'initial')
     return () => { requestController.current?.abort() }
-  }, [])
+  }, [shareRef])
+
+  useEffect(() => {
+    if (shareRef === undefined) return
+    const controller = new AbortController()
+    setSharedDetail(undefined); setSharedDetailBusy(true); setDetail(undefined); setError('')
+    void callArkme<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef }, controller.signal)
+      .then(value => { setSharedDetail(value) })
+      .catch(caught => {
+        if ((caught as Error).name !== 'AbortError') setError(caught instanceof Error ? caught.message : String(caught))
+      })
+      .finally(() => { if (!controller.signal.aborted) setSharedDetailBusy(false) })
+    return () => { controller.abort() }
+  }, [shareRef])
 
   const switchTab = (target: Tab) => {
+    if (shareRef !== undefined) { setSharedDetail(undefined); onShareExit?.() }
     const selection = extensionTabSelection(tab, target, loadedTabs)
     if (selection.changed) {
       setTab(target); setError(''); setDetail(undefined); setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined)
@@ -1046,7 +1067,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const iconRefFor = (extensionId: string): string | undefined => discoverItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? publishedItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? myExtensions.find(item => item.published?.extensionId === extensionId)?.published?.iconRef
-  const busy = loadingTab === tab || detailBusy
+  const busy = loadingTab === tab || detailBusy || sharedDetailBusy
   const detailInstalled = detail === undefined ? undefined : installed.find(item => item.extensionId === detail.extension_id)
   const detailUpdate = detail === undefined ? undefined : updates.find(item => item.extension_id === detail.extension_id)
   const detailInstallAction = detail === undefined
@@ -1124,7 +1145,12 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
       {tab === 'mine' && myExtensionWarningText(myExtensionWarnings) !== ''
         && <div style={styles.restartNotice} role="status">{myExtensionWarningText(myExtensionWarnings)}</div>}
       {busy && <LoadingState />}
-      {!busy && error === '' && detail !== undefined && <div style={styles.detail}>
+      {!busy && error === '' && sharedDetail !== undefined && shareRef !== undefined && <SharedExtensionDetailView
+        shareRef={shareRef}
+        extension={sharedDetail}
+        onBack={() => { setSharedDetail(undefined); onShareExit?.() }}
+      />}
+      {!busy && error === '' && sharedDetail === undefined && detail !== undefined && <div style={styles.detail}>
         <button type="button" style={styles.detailBack} onClick={() => {
           setDetail(undefined); setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined)
           setShareDialogExtensionId(undefined); setShareNotice('')
@@ -1194,7 +1220,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
             onClick={() => { setUninstallConfirmExtensionId(detail.extension_id) }}
           >卸载扩展</button>)}
       </div>}
-      {!busy && error === '' && detail === undefined && tab === 'discover' && <>
+      {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'discover' && <>
         {visibleItems.map(item => {
           const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
           const action = extensionCatalogAction(item, local?.installedVersion)
@@ -1216,7 +1242,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         })}
         {visibleItems.length === 0 && <EmptyState tab={tab} />}
       </>}
-      {!busy && error === '' && detail === undefined && tab === 'mine' && <>
+      {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'mine' && <>
         {myExtensions.map(item => {
           const extensionId = item.published?.extensionId
           const local = extensionId === undefined ? undefined : installed.find(candidate => candidate.extensionId === extensionId)
@@ -1253,7 +1279,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         })}
         {myExtensions.length === 0 && <EmptyState tab="mine" />}
       </>}
-      {!busy && error === '' && tab === 'installed' && <>
+      {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'installed' && <>
         {installed.map(item => <ExtensionCard
           key={item.extensionId}
           item={installedExtensionCatalogItem(item, iconRefFor(item.extensionId))}
@@ -1264,7 +1290,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         />)}
         {installed.length === 0 && <EmptyState tab="installed" />}
       </>}
-      {!busy && error === '' && tab === 'updates' && <>
+      {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'updates' && <>
         {updates.map(item => {
           const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
           const catalogItem = local === undefined
