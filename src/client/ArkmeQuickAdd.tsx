@@ -16,17 +16,17 @@ const style: Record<string, CSSProperties> = {
     cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
   },
   menu: {
-    position: 'absolute', zIndex: 90, top: 36, right: 0, width: 232, padding: '6px 10px',
+    position: 'absolute', zIndex: 90, top: 36, right: 0, width: 176, padding: '6px 10px',
     boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 12,
     background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow, color: arkmeTheme.text,
   },
   menuItem: {
-    width: '100%', minHeight: 48, display: 'flex', alignItems: 'center', gap: 12,
-    padding: '0 6px', border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left',
-    cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px', fontWeight: 500,
+    width: '100%', minHeight: 46, display: 'flex', alignItems: 'center', gap: 10,
+    padding: '0 12px', border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left',
+    cursor: 'pointer', font: 'inherit', fontSize: 16, lineHeight: '22px', fontWeight: 500,
   },
   menuIcon: { width: 23, height: 23, flex: 'none' },
-  divider: { height: 1, margin: '0 0', background: arkmeTheme.borderSoft },
+  divider: { height: 1, margin: '0 10px', background: arkmeTheme.borderSoft },
   overlay: {
     position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 16,
     boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
