@@ -7,12 +7,13 @@ import {
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
-  ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger, ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
+  actionableExtensionUpdates, ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger,
+  ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionLifecycleRow, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
   extensionAuthorProfileDeepLink, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
-  extensionVersionLabel, installedExtensionCatalogItem,
+  extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
   extensionNativeInstallWarning, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
@@ -717,6 +718,71 @@ describe('Arkme extension market UI', () => {
     })).toMatchObject({
       extension_id: 'ext-1', name: '统一卡片', description: '同一种展示与点击入口',
     })
+  })
+
+  it('keeps the update collection aligned with the actual update badge', () => {
+    expect(actionableExtensionUpdates([
+      { extension_id: 'current', installed_version: '1.0.0', latest_version: '1.0.0', update_available: false, revoked: false },
+      { extension_id: 'update', installed_version: '1.0.0', latest_version: '1.1.0', update_available: true, revoked: false },
+      { extension_id: 'revoked', installed_version: '1.0.0', update_available: false, revoked: true },
+    ])).toEqual([
+      { extension_id: 'update', installed_version: '1.0.0', latest_version: '1.1.0', update_available: true, revoked: false },
+    ])
+  })
+
+  it('merges authoritative catalog identity into an installed extension row', () => {
+    const installed = {
+      extensionId: 'ext-1', installedVersion: '1.0.0',
+      manifest: {
+        format: 'arkme-cordis-extension' as const, format_version: 1 as const, name: '本地名称', description: '本地说明',
+        version: '1.0.0', runtime: { dsh: '*', arkme_provider_contract: 1 as const }, halves: { host: true, client: false },
+        permissions: [], entrypoints: { host: 'host.js' },
+      },
+      enabled: true, active: true, permissionSnapshot: [], updateChannel: 'stable' as const,
+      installedAtMillis: 1, lastCheckedAtMillis: 1,
+    }
+    expect(mergeInstalledExtensionCatalogItem(installed, {
+      extension_id: 'ext-1', name: '远端名称', description: '远端说明', visibility: 'public',
+      owner_user_id: 42, owner_name: '作者', owner_arkme_id: 'author', owner_avatar_ref: 'avatar-ref',
+      icon_ref: `icon_v1_${'a'.repeat(64)}`,
+    })).toMatchObject({
+      extension_id: 'ext-1', name: '远端名称', description: '远端说明', version: '1.0.0',
+      owner_user_id: 42, owner_name: '作者', owner_avatar_ref: 'avatar-ref',
+      icon_ref: `icon_v1_${'a'.repeat(64)}`,
+    })
+  })
+
+  it('renders lifecycle rows as dividers with the correct single action', () => {
+    const installed = {
+      extensionId: 'ext-1', installedVersion: '1.0.0',
+      manifest: {
+        format: 'arkme-cordis-extension' as const, format_version: 1 as const, name: '扩展', description: '', version: '1.0.0',
+        runtime: { dsh: '*', arkme_provider_contract: 1 as const }, halves: { host: true, client: false },
+        permissions: [], entrypoints: { host: 'host.js' },
+      },
+      enabled: true, active: true, permissionSnapshot: [], updateChannel: 'stable' as const,
+      installedAtMillis: 1, lastCheckedAtMillis: 1,
+    }
+    const item = {
+      extension_id: 'ext-1', name: '扩展', description: '', visibility: 'public' as const,
+      owner_user_id: 42, owner_name: '作者', owner_arkme_id: 'author',
+    }
+    const installedHtml = renderToStaticMarkup(<ArkmeExtensionLifecycleRow
+      item={item} installed={installed} kind="installed" onOpen={() => {}} onToggle={() => {}}
+    />)
+    expect(installedHtml).toContain('data-extension-lifecycle-row="installed"')
+    expect(installedHtml).toContain('border-bottom:1px solid')
+    expect(installedHtml).toContain('role="switch"')
+    expect(installedHtml).toContain('作者')
+    expect(installedHtml).not.toContain('>更新</button>')
+
+    const updateHtml = renderToStaticMarkup(<ArkmeExtensionLifecycleRow
+      item={item} installed={installed} kind="update" onOpen={() => {}} onUpdate={() => {}}
+    />)
+    expect(updateHtml).toContain('data-extension-lifecycle-row="update"')
+    expect(updateHtml).toContain('background:#17191c')
+    expect(updateHtml).toContain('>更新</button>')
+    expect(updateHtml).not.toContain('role="switch"')
   })
 
   it('does not render the former heavy install progress bar', () => {

@@ -277,6 +277,28 @@ const styles: Record<string, CSSProperties> = {
     width: 18, height: 18, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
     borderRadius: '50%', background: colors.subtle, color: colors.secondary,
   },
+  lifecycleList: {
+    width: '100%', maxWidth: 1440, margin: '0 auto', borderTop: `1px solid ${colors.border}`,
+  },
+  lifecycleRow: {
+    width: '100%', minWidth: 0, minHeight: 78, display: 'flex', alignItems: 'center', gap: 14,
+    padding: '14px 8px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+    background: 'transparent', color: colors.text,
+  },
+  lifecyclePrimary: {
+    minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 12, padding: 0,
+    border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', font: 'inherit', cursor: 'pointer',
+  },
+  lifecycleCopy: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  lifecycleTitle: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.text, fontSize: 14, lineHeight: '21px', fontWeight: 650,
+  },
+  lifecycleAuthor: {
+    minWidth: 0, display: 'flex', alignItems: 'center', marginTop: 7,
+    color: colors.secondary, fontSize: 11, lineHeight: '17px',
+  },
+  lifecycleActions: { flex: 'none', display: 'flex', alignItems: 'center', gap: 10 },
   authorButton: {
     display: 'inline-flex', alignItems: 'center', gap: 8, padding: 0, border: 0,
     background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12, cursor: 'pointer',
@@ -1142,6 +1164,63 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
   </div>
 }
 
+function extensionHasAuthorIdentity(item: ArkmeExtensionCatalogItem): boolean {
+  return item.source?.type === 'github_repository'
+    || item.owner_user_id !== undefined
+    || (item.owner_name?.trim() ?? '') !== ''
+    || (item.owner_arkme_id?.trim() ?? '') !== ''
+}
+
+export function ArkmeExtensionLifecycleRow({
+  item,
+  installed,
+  kind,
+  actionBusy = false,
+  installTask,
+  onOpen,
+  onUpdate,
+  onToggle,
+  onPause,
+  onResume,
+}: {
+  item: ArkmeExtensionCatalogItem
+  installed: ArkmeInstalledExtensionView
+  kind: 'installed' | 'update'
+  actionBusy?: boolean | undefined
+  installTask?: ArkmeExtensionInstallTaskSnapshot | undefined
+  onOpen(): void
+  onUpdate?: (() => void) | undefined
+  onToggle?: ((enabled: boolean) => void) | undefined
+  onPause?: (() => void) | undefined
+  onResume?: (() => void) | undefined
+}) {
+  const processing = (installTask !== undefined && !installTask.done) || actionBusy
+  return <article style={styles.lifecycleRow} data-extension-lifecycle-row={kind}>
+    {kind === 'installed' && onToggle !== undefined && <ArkmeExtensionToggle
+      item={installed}
+      busy={actionBusy}
+      onChange={onToggle}
+    />}
+    <button type="button" style={styles.lifecyclePrimary} onClick={onOpen} aria-label={`查看扩展：${item.name}`}>
+      <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} size={38} />
+      <span style={styles.lifecycleCopy}>
+        <span style={styles.lifecycleTitle}>{item.name}</span>
+        {extensionHasAuthorIdentity(item) && <span style={styles.lifecycleAuthor}>
+          <ArkmeExtensionAuthorIdentity item={item} size={20} />
+        </span>}
+      </span>
+    </button>
+    {kind === 'update' && <span style={styles.lifecycleActions}>
+      {processing ? <InstallLoadingButton task={installTask} onPause={onPause} onResume={onResume} /> : <button
+        type="button"
+        style={{ ...styles.installSmall, height: 32, padding: '0 16px', background: '#17191c', color: '#fff' }}
+        disabled={onUpdate === undefined}
+        onClick={onUpdate}
+      >更新</button>}
+    </span>}
+  </article>
+}
+
 export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish, onEdit, onOpen, onToggle }: {
   item: ArkmeMyExtensionItem
   installed?: ArkmeInstalledExtensionView | undefined
@@ -1268,6 +1347,12 @@ export function extensionUpdateCardStatus(item: ArkmeExtensionUpdateResolution):
   return item.revocation_reason?.trim() || '当前版本已撤销'
 }
 
+export function actionableExtensionUpdates(
+  items: readonly ArkmeExtensionUpdateResolution[],
+): ArkmeExtensionUpdateResolution[] {
+  return items.filter(item => item.update_available && !item.revoked)
+}
+
 export function extensionDirectInstallTarget(
   item: Pick<ArkmeExtensionCatalogItem, 'extension_id' | 'latest_stable_version' | 'version'>,
 ): { extensionId: string; version?: string } {
@@ -1332,6 +1417,25 @@ export function installedExtensionCatalogItem(item: ArkmeInstalledExtensionView,
   }
 }
 
+export function mergeInstalledExtensionCatalogItem(
+  item: ArkmeInstalledExtensionView,
+  remote?: ArkmeExtensionCatalogItem,
+  iconRef?: string,
+): ArkmeExtensionCatalogItem {
+  const local = installedExtensionCatalogItem(item, iconRef)
+  if (remote === undefined) return local
+  return {
+    ...local,
+    ...remote,
+    extension_id: item.extensionId,
+    name: remote.name.trim() === '' ? local.name : remote.name,
+    description: remote.description.trim() === '' ? local.description : remote.description,
+    version: item.installedVersion,
+    manifest: item.manifest,
+    ...(remote.icon_ref === undefined && iconRef !== undefined ? { icon_ref: iconRef } : {}),
+  }
+}
+
 function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
   if (!item.enabled) return '已关闭'
   return item.active ? '已启用' : '已启用，尚未加载'
@@ -1365,6 +1469,7 @@ export function ArkmeExtensionCenter({
   const [myExtensionWarnings, setMyExtensionWarnings] = useState<ArkmeMyExtensionPage['warnings']>([])
   const [installed, setInstalled] = useState<ArkmeInstalledExtensionView[]>([])
   const [updates, setUpdates] = useState<ArkmeExtensionUpdateResolution[]>([])
+  const [lifecycleCatalogItems, setLifecycleCatalogItems] = useState<Record<string, ArkmeExtensionCatalogItem>>({})
   const [detail, setDetail] = useState<ArkmeExtensionCatalogItem>()
   const [detailRequestedExtensionId, setDetailRequestedExtensionId] = useState<string>()
   const [loadingTab, setLoadingTab] = useState<Tab | undefined>(shareRef === undefined ? 'discover' : undefined)
@@ -1454,6 +1559,23 @@ export function ArkmeExtensionCenter({
     } else if (pending?.active === true) {
       try { window.sessionStorage.removeItem(PENDING_EXTENSION_RESTART_KEY) } catch { /* Best-effort UI marker cleanup. */ }
     }
+  }
+
+  const loadLifecycleCatalogItems = async (
+    extensionIds: readonly string[],
+    owned: readonly ArkmeExtensionCatalogItem[],
+    signal: AbortSignal,
+  ): Promise<Record<string, ArkmeExtensionCatalogItem>> => {
+    const uniqueIds = [...new Set(extensionIds)]
+    const resolved = await Promise.all(uniqueIds.map(async extensionId => {
+      try {
+        return await callArkme<ArkmeExtensionCatalogItem>('extensions.catalog.detail', { extensionId }, signal)
+      } catch (caught) {
+        if ((caught as Error).name === 'AbortError') throw caught
+        return owned.find(item => item.extension_id === extensionId)
+      }
+    }))
+    return Object.fromEntries(resolved.flatMap(item => item === undefined ? [] : [[item.extension_id, item]]))
   }
 
   const reloadAfterRestart = async (previous: string | undefined): Promise<void> => {
@@ -1556,27 +1678,28 @@ export function ArkmeExtensionCenter({
           setMyExtensions(page.items); setMyExtensionWarnings(page.warnings); acceptInstalled(local)
         }
       } else if (target === 'installed') {
-        const [local, catalog, owned] = await Promise.all([
+        const [local, owned] = await Promise.all([
           callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal),
-          callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: 50 }, controller.signal)
-            .catch(() => ({ items: [], total: 0 })),
           callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
             .catch(() => ({ items: [], total: 0 })),
         ])
+        const catalogItems = await loadLifecycleCatalogItems(local.map(item => item.extensionId), owned.items, controller.signal)
         if (sequence === requestSequence.current) {
-          acceptInstalled(local); setDiscoverItems(catalog.items); setPublishedItems(owned.items)
+          acceptInstalled(local); setLifecycleCatalogItems(catalogItems); setPublishedItems(owned.items)
         }
       } else {
-        const [local, available, catalog, owned] = await Promise.all([
+        const [local, available, owned] = await Promise.all([
           callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal),
           callArkme<ArkmeExtensionUpdateResolution[]>('extensions.updates', undefined, controller.signal),
-          callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: 50 }, controller.signal)
-            .catch(() => ({ items: [], total: 0 })),
           callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
             .catch(() => ({ items: [], total: 0 })),
         ])
+        const actionable = actionableExtensionUpdates(available)
+        const catalogItems = await loadLifecycleCatalogItems(
+          actionable.map(item => item.extension_id), owned.items, controller.signal,
+        )
         if (sequence === requestSequence.current) {
-          acceptInstalled(local); setUpdates(available); setDiscoverItems(catalog.items); setPublishedItems(owned.items)
+          acceptInstalled(local); setUpdates(available); setLifecycleCatalogItems(catalogItems); setPublishedItems(owned.items)
         }
       }
       if (sequence === requestSequence.current) setLoadedTabs(current => new Set(current).add(target))
@@ -2042,7 +2165,7 @@ export function ArkmeExtensionCenter({
     }
   }
 
-  const updateCount = updates.filter(item => item.update_available || item.revoked).length
+  const updateCount = actionableExtensionUpdates(updates).length
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const matchesQuery = (name: string, description: string) => normalizedQuery === ''
     || name.toLocaleLowerCase().includes(normalizedQuery)
@@ -2050,7 +2173,7 @@ export function ArkmeExtensionCenter({
   const visibleItems = mergeExtensionDiscoverItems(discoverItems, publishedItems)
     .filter(item => matchesQuery(item.name, item.description))
   const visibleInstalled = installed.filter(item => matchesQuery(item.manifest.name, item.manifest.description))
-  const visibleUpdates = updates.filter(item => {
+  const visibleUpdates = actionableExtensionUpdates(updates).filter(item => {
     const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
     return matchesQuery(local?.manifest.name ?? item.extension_id, local?.manifest.description ?? '')
   })
@@ -2390,48 +2513,49 @@ export function ArkmeExtensionCenter({
         {myExtensions.length === 0 && <EmptyState tab="mine" />}
       </>}
       {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'installed' && <>
-        {visibleInstalled.map(item => <ExtensionCard
-          key={item.extensionId}
-          item={installedExtensionCatalogItem(item, iconRefFor(item.extensionId))}
-          installed={item}
-          presentation={displayMode === 'page' ? 'community' : 'list'}
-          status={item.active ? '已加载' : '已安装，尚未加载'}
-          statusColor={item.active ? colors.accent : colors.warning}
-          actionBusy={actionBusyExtensionId === item.extensionId}
-          onClick={() => { void inspect(item.extensionId) }}
-          onToggle={enabled => { void toggleEnabled(item.extensionId, enabled) }}
-        />)}
+        <div style={styles.lifecycleList} data-extension-lifecycle-list="installed">
+          {visibleInstalled.map(item => <ArkmeExtensionLifecycleRow
+            key={item.extensionId}
+            item={mergeInstalledExtensionCatalogItem(
+              item, lifecycleCatalogItems[item.extensionId], iconRefFor(item.extensionId),
+            )}
+            installed={item}
+            kind="installed"
+            actionBusy={actionBusyExtensionId === item.extensionId}
+            onOpen={() => { void inspect(item.extensionId) }}
+            onToggle={enabled => { void toggleEnabled(item.extensionId, enabled) }}
+          />)}
+        </div>
         {visibleInstalled.length === 0 && <EmptyState tab="installed" />}
       </>}
       {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'updates' && <>
+        <div style={styles.lifecycleList} data-extension-lifecycle-list="updates">
         {visibleUpdates.map(item => {
           const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
-          const catalogItem = local === undefined
-            ? { extension_id: item.extension_id, name: item.extension_id, description: '', visibility: 'private' as const }
-            : installedExtensionCatalogItem(local, iconRefFor(item.extension_id))
+          if (local === undefined) return null
+          const catalogItem = mergeInstalledExtensionCatalogItem(
+            local, lifecycleCatalogItems[item.extension_id], iconRefFor(item.extension_id),
+          )
           const canAct = installTask === undefined || installTask.done
-          const updateStatus = extensionUpdateCardStatus(item)
-          return <ExtensionCard
+          return <ArkmeExtensionLifecycleRow
             key={item.extension_id}
             item={catalogItem}
-            presentation={displayMode === 'page' ? 'community' : 'list'}
-            {...(local === undefined ? {} : { installed: local })}
-            {...(item.update_available && !item.revoked ? { actionLabel: '更新' } : {})}
-            {...(updateStatus === undefined ? {} : { status: updateStatus, statusColor: colors.danger })}
+            installed={local}
+            kind="update"
             actionBusy={actionBusyExtensionId === item.extension_id}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
-            onClick={() => { void inspect(item.extension_id) }}
-            {...(!canAct || !item.update_available || item.revoked ? {} : { onAction: () => {
+            onOpen={() => { void inspect(item.extension_id) }}
+            {...(!canAct || !item.update_available || item.revoked ? {} : { onUpdate: () => {
               void startInstall({
                 extensionId: item.extension_id,
                 ...(item.latest_version === undefined ? {} : { version: item.latest_version }),
               })
             } })}
-            {...(local === undefined ? {} : { onToggle: (enabled: boolean) => { void toggleEnabled(item.extension_id, enabled) } })}
             onPause={() => { void controlInstall('extensions.install.pause') }}
             onResume={() => { void controlInstall('extensions.install.resume') }}
           />
         })}
+        </div>
         {visibleUpdates.length === 0 && <EmptyState tab="updates" />}
       </>}
     </main>
