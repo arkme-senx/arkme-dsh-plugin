@@ -13,6 +13,10 @@ describe('outgoing call UI', () => {
     expect(html).toContain('/arkme-self/api/call/call-linear-strong.svg')
     expect(html).toContain('width:24px')
     expect(html).toContain('height:24px')
+    expect(html).toContain('--dsw-alias-label-secondary')
+    expect(html).toContain('mask-image:url(&quot;/arkme-self/api/call/call-linear-strong.svg&quot;)')
+    expect(html).toContain('background-color:currentColor')
+    expect(html).not.toContain('<img')
   })
 
   it('uses the confirmed default, compact, and fullscreen modal dimensions', () => {

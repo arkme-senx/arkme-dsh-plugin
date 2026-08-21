@@ -319,6 +319,26 @@ export interface ArkmeSearchAssetItem {
   durationMillis?: number
 }
 
+/** Browser-safe image projection used by the desktop search image library. */
+export interface ArkmeImageSearchItem {
+  itemKey: string
+  mediaRef: string
+  recordUid: string
+  sendAtMillis: number
+  fileName: string
+  mimeType: string
+  size: number
+  recordTitle: string
+  sourceTitle?: string
+}
+
+export interface ArkmeImageSearchResult {
+  items: ArkmeImageSearchItem[]
+  hasMore: boolean
+  nextCursor?: string
+  queryGuard: ArkmeSearchQueryGuard
+}
+
 export interface ArkmeSearchRecordItem {
   recordUid: string
   sourceKind: number
@@ -393,6 +413,8 @@ export interface ArkmeProviderCapabilities {
     revisionPolling: true
     userProfile: true
     imageRead: true
+    /** Authorized image-library listing with opaque, account-bound media references is available. */
+    imageLibrary?: true
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
@@ -1447,6 +1469,7 @@ export type ArkmePluginOperation =
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
+  | 'images.list'
   | 'world.feed'
   | 'world.interactions.list'
   | 'world.interactions.create-text'

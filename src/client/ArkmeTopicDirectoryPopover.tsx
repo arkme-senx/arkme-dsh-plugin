@@ -60,12 +60,12 @@ const colors = {
   secondary: arkmeTheme.secondary,
   caption: arkmeTheme.caption,
   border: arkmeTheme.borderSoft,
-  surface: arkmeTheme.base,
+  surface: arkmeTheme.menu,
+  input: arkmeTheme.input,
 }
 
 export const ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT = 'min(550px, calc(100vh - 112px))'
-export const ARKME_TOPIC_DIRECTORY_SEARCH_BACKGROUND = arkmeTheme.input
-export const ARKME_TOPIC_DIRECTORY_ACTIVE_BACKGROUND = arkmeTheme.accentSoft
+export const ARKME_TOPIC_DIRECTORY_SEARCH_BG = arkmeTheme.input
 
 const styles: Record<string, CSSProperties> = {
   trigger: {
@@ -75,7 +75,7 @@ const styles: Record<string, CSSProperties> = {
   },
   triggerActive: {
     color: arkmeTheme.accent,
-    background: ARKME_TOPIC_DIRECTORY_ACTIVE_BACKGROUND,
+    background: arkmeTheme.accentSoft,
   },
   popover: {
     position: 'absolute', zIndex: 12, top: 48, right: 48,
@@ -99,7 +99,7 @@ const styles: Record<string, CSSProperties> = {
   search: {
     height: 34, display: 'flex', alignItems: 'center', gap: 8,
     margin: '0 14px 10px', padding: '0 10px', boxSizing: 'border-box', borderRadius: 9,
-    background: ARKME_TOPIC_DIRECTORY_SEARCH_BACKGROUND, color: colors.caption,
+    background: ARKME_TOPIC_DIRECTORY_SEARCH_BG, color: colors.caption,
   },
   searchInput: {
     width: '100%', minWidth: 0, border: 0, outline: 0, padding: 0,

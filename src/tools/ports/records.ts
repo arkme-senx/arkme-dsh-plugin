@@ -1,5 +1,5 @@
 import type {
-  ArkmeCachedQueryResult, ArkmeConversationWriteResult, ArkmeRecordSearchResult,
+  ArkmeCachedQueryResult, ArkmeConversationWriteResult, ArkmeImageSearchResult, ArkmeRecordSearchResult,
   ArkmeRecordingSearchResult, ArkmeSearchSceneKind,
 } from '../../types.js'
 
@@ -23,6 +23,11 @@ export interface ArkmeRecordToolPort {
     cursor?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult>
+  searchImages(options: {
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeImageSearchResult>
   searchRecordings(options: {
     query: string
     limit: number

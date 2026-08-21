@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeAiVideoListItem, ArkmeAiVideoListResult, ArkmeFileAssetDisplayItem,
+  ArkmeImageSearchItem, ArkmeImageSearchResult,
   ArkmeRecordSearchResult, ArkmeSearchHistoryResult, ArkmeSearchRecordItem,
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 const assetRoot = '/arkme-self/api/call'
+const mediaRoute = '/arkme-self/api/media'
 const colors = {
   text: arkmeTheme.text, secondary: arkmeTheme.secondary,
   tertiary: arkmeTheme.tertiary, border: arkmeTheme.border, panel: arkmeTheme.base,
@@ -40,6 +42,9 @@ const styles: Record<string, CSSProperties> = {
   quickBody: { paddingBottom: 40 },
   summary: { display: 'inline-block', margin: '12px 2px 4px', padding: '2px 8px', borderRadius: 4, background: colors.subtle, color: colors.secondary, fontSize: 10 }, month: { margin: '16px 2px 8px', fontSize: 13, fontWeight: 600 },
   mediaGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 3 }, mediaButton: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 4, background: arkmeTheme.subtle, cursor: 'pointer' }, mediaImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' }, play: { position: 'absolute', inset: 0, margin: 'auto', width: 38, height: 38, padding: 9, borderRadius: 999, background: 'rgba(0,0,0,.52)', boxSizing: 'border-box' }, duration: { position: 'absolute', right: 4, bottom: 4, padding: '1px 4px', borderRadius: 4, background: 'rgba(0,0,0,.58)', color: arkmeTheme.foreground, fontSize: 9 },
+  imageSection: { marginTop: 12 }, imageSectionTitle: { margin: '0 0 6px 2px', color: colors.tertiary, fontSize: 12, lineHeight: '18px', fontWeight: 400 }, imageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 0, background: arkmeTheme.subtle, cursor: 'pointer' },
+  loadMoreSentinel: { minHeight: 44, display: 'grid', placeItems: 'center', marginTop: 8, color: colors.secondary, fontSize: 13 },
+  retryLoadMore: { display: 'block', minWidth: 96, padding: '7px 16px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 13 },
   audioRow: { padding: '12px 8px', borderBottom: `1px solid ${colors.border}` }, audio: { width: '100%', height: 34, marginTop: 8 },
   fileRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 8px', borderBottom: `1px solid ${colors.border}`, color: colors.text, textDecoration: 'none' }, fileIcon: { width: 38, height: 38, flex: 'none' }, fileText: { minWidth: 0, flex: 1 },
   linkCard: { display: 'block', marginTop: 10, padding: 12, border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, textDecoration: 'none', overflow: 'hidden' },
@@ -47,13 +52,24 @@ const styles: Record<string, CSSProperties> = {
   modal: { position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 28, background: 'var(--dsw-alias-bg-mask-3, rgba(0,0,0,.55))' }, detail: { width: 'min(700px, 92vw)', maxHeight: '86vh', overflowY: 'auto', padding: 24, boxSizing: 'border-box', borderRadius: 14, background: colors.panel }, preview: { width: 'min(960px, 92vw)', maxHeight: '90vh', padding: 12, borderRadius: 14, background: '#111' }, previewMedia: { maxWidth: '100%', maxHeight: '78vh', display: 'block', margin: '0 auto', borderRadius: 8 }, closeText: { display: 'block', margin: '12px 0 0 auto', border: 0, borderRadius: 8, padding: '7px 12px', background: colors.subtle, color: colors.text, cursor: 'pointer' },
 }
 
-const quickEntries: Array<{ key: QuickKey; label: string }> = [{ key: 'ai_video', label: 'AI 视频' }]
-type QuickKey = 'ai_video'
-type Preview = { kind: 'image' | 'video'; url: string; name: string }
+const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = [
+  { key: 'image', label: '图片', tabLabel: '图片库' },
+  { key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' },
+]
+type QuickKey = 'image' | 'ai_video'
+type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
 
 function errorMessage(error: unknown): string { return error instanceof ArkmeClientError ? error.body.message : error instanceof Error ? error.message : String(error) }
 function dateTimeLabel(value: number): string { return Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '' }
 function displayUrl(item: ArkmeFileAssetDisplayItem | undefined): string { return item?.previewUrl || item?.downloadUrl || '' }
+function mediaUrl(mediaRef: string): string { return `${mediaRoute}?ref=${encodeURIComponent(mediaRef)}` }
+function imageMonthLabel(value: number): string {
+  const date = new Date(value)
+  if (!Number.isFinite(value) || value <= 0 || Number.isNaN(date.valueOf())) return '更早'
+  const now = new Date()
+  if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()) return '这个月'
+  return `${String(date.getFullYear())}年${String(date.getMonth() + 1).padStart(2, '0')}月`
+}
 function RecordRow({ item, onClick }: { item: ArkmeSearchRecordItem; onClick(): void }) {
   return <button type="button" style={styles.row} onClick={onClick}><p style={styles.title}>{item.title || item.nickname || '快记'}</p><p style={styles.text}>{item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')}</p><span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateTimeLabel(item.sendAtMillis)}</span></button>
 }
@@ -68,6 +84,10 @@ export function ArkmeSearchSurface() {
   const [history, setHistory] = useState<string[]>([])
   const [records, setRecords] = useState<ArkmeRecordSearchResult>()
   const [quick, setQuick] = useState<QuickKey>()
+  const [images, setImages] = useState<ArkmeImageSearchItem[]>()
+  const [imageCursor, setImageCursor] = useState('')
+  const [imageHasMore, setImageHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [videos, setVideos] = useState<ArkmeAiVideoListItem[]>()
   const [assets, setAssets] = useState<Map<string, ArkmeFileAssetDisplayItem>>(() => new Map())
   const [resolvedAssetUids, setResolvedAssetUids] = useState<Set<string>>(() => new Set())
@@ -76,6 +96,9 @@ export function ArkmeSearchSurface() {
   const [loading, setLoading] = useState(false)
   const [recordError, setRecordError] = useState('')
   const requestId = useRef(0)
+  const quickRequestAbort = useRef<AbortController>()
+  const imageLoadMoreSentinel = useRef<HTMLDivElement>(null)
+  const imageLoadMoreInFlight = useRef(false)
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
   const resetResults = useCallback(() => { requestId.current += 1; setRecords(undefined); setRecordError(''); setLoading(false) }, [])
@@ -99,15 +122,61 @@ export function ArkmeSearchSurface() {
   useEffect(() => { if (query.trim() === '') { resetResults(); return }; const timer = window.setTimeout(() => { void runSearch(query) }, 300); return () => window.clearTimeout(timer) }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
+    quickRequestAbort.current?.abort()
+    quickRequestAbort.current = undefined
+    const hasCachedPage = value === 'image' ? images !== undefined : videos !== undefined
     const id = ++requestId.current
-    setQuick(value); setQuery(''); setLoading(true); setRecords(undefined); setVideos(undefined); setRecordError('')
+    setQuick(value); setQuery(''); setRecords(undefined); setRecordError('')
+    if (hasCachedPage) { setLoading(false); return }
+    const controller = new AbortController()
+    quickRequestAbort.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 20_000)
+    setLoading(true)
     try {
-      const result = await callArkme<ArkmeAiVideoListResult>('ai-video.list', { limit: 30 }); if (id === requestId.current) setVideos(result.items)
-    } catch (caught) { if (id === requestId.current) setRecordError(errorMessage(caught)) }
-    finally { if (id === requestId.current) setLoading(false) }
-  }, [])
+      if (value === 'image') {
+        const result = await callArkme<ArkmeImageSearchResult>('images.list', { limit: 50 }, controller.signal)
+        if (id === requestId.current) { setImages(result.items); setImageCursor(result.nextCursor ?? ''); setImageHasMore(result.hasMore) }
+      } else {
+        const result = await callArkme<ArkmeAiVideoListResult>('ai-video.list', { limit: 30 }, controller.signal)
+        if (id === requestId.current) setVideos(result.items)
+      }
+    } catch (caught) { if (id === requestId.current) setRecordError(controller.signal.aborted ? '加载超时，请重试' : errorMessage(caught)) }
+    finally {
+      window.clearTimeout(timeout)
+      if (quickRequestAbort.current === controller) quickRequestAbort.current = undefined
+      if (id === requestId.current) setLoading(false)
+    }
+  }, [images, videos])
 
-  const leaveQuick = useCallback(() => { requestId.current += 1; setQuick(undefined); setQuery(''); setRecords(undefined); setVideos(undefined); setRecordError(''); setLoading(false) }, [])
+  const loadMoreImages = useCallback(async () => {
+    if (imageLoadMoreInFlight.current || !imageHasMore || imageCursor === '') return
+    imageLoadMoreInFlight.current = true
+    setLoadingMore(true); setRecordError('')
+    try {
+      const result = await callArkme<ArkmeImageSearchResult>('images.list', { limit: 50, cursor: imageCursor })
+      setImages(current => {
+        const byKey = new Map((current ?? []).map(item => [item.itemKey, item]))
+        for (const item of result.items) byKey.set(item.itemKey, item)
+        return [...byKey.values()]
+      })
+      setImageCursor(result.nextCursor ?? '')
+      setImageHasMore(result.hasMore)
+    } catch (caught) { setRecordError(errorMessage(caught)) }
+    finally { imageLoadMoreInFlight.current = false; setLoadingMore(false) }
+  }, [imageCursor, imageHasMore])
+
+  useEffect(() => {
+    const target = imageLoadMoreSentinel.current
+    if (quick !== 'image' || target === null || !imageHasMore || imageCursor === '' || recordError !== '') return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) void loadMoreImages()
+    }, { rootMargin: '240px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [imageCursor, imageHasMore, loadMoreImages, quick, recordError])
+
+  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; requestId.current += 1; setQuick(undefined); setQuery(''); setRecords(undefined); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setRecordError(''); setLoading(false); setLoadingMore(false) }, [])
+  useEffect(() => () => { quickRequestAbort.current?.abort() }, [])
   useEffect(() => {
     const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined).map(fileAssetUid => ({ fileAssetUid }))
     const uids = [...new Set(videoAssets.map(item => item.fileAssetUid))].filter(uid => !resolvedAssetUids.has(uid))
@@ -119,7 +188,18 @@ export function ArkmeSearchSurface() {
 
   const quickBody = useMemo<ReactNode>(() => {
     if (quick === undefined) return null
-    if (loading || recordError !== '') return <Status loading={loading} error={recordError} />
+    if (loading || (recordError !== '' && quick !== 'image')) return <Status loading={loading} error={recordError} />
+    if (quick === 'image') {
+      const items = images ?? []
+      const loadMoreSentinel = imageHasMore && <div ref={imageLoadMoreSentinel} style={styles.loadMoreSentinel}>{recordError !== '' ? <button type="button" style={styles.retryLoadMore} onClick={() => { void loadMoreImages() }}>重试加载</button> : loadingMore ? '正在加载…' : null}</div>
+      if (items.length === 0) return <><Status loading={false} error={recordError} empty={recordError === ''} />{loadMoreSentinel}</>
+      const sections = new Map<string, ArkmeImageSearchItem[]>()
+      for (const item of items) {
+        const label = imageMonthLabel(item.sendAtMillis)
+        sections.set(label, [...(sections.get(label) ?? []), item])
+      }
+      return <>{[...sections].map(([label, sectionItems]) => <section key={label} style={styles.imageSection}><h3 style={styles.imageSectionTitle}>{label}</h3><div style={styles.mediaGrid}>{sectionItems.map(item => <button key={item.itemKey} type="button" style={styles.imageTile} title={item.recordTitle} onClick={() => setPreview({ kind: 'image', url: mediaUrl(item.mediaRef), name: item.fileName, subtitle: [item.sourceTitle, dateTimeLabel(item.sendAtMillis)].filter(Boolean).join(' · ') })}><img src={mediaUrl(item.mediaRef)} alt={item.fileName} loading="lazy" style={styles.mediaImage} /></button>)}</div></section>)}{recordError !== '' && <div style={styles.error}>{recordError}</div>}{loadMoreSentinel}</>
+    }
     const items = videos ?? []
     if (items.length === 0) return <Status loading={false} empty />
     return <div style={styles.aiGrid}>{items.map(item => {
@@ -127,7 +207,7 @@ export function ArkmeSearchSurface() {
         const video = item.videoAssetUid === undefined ? '' : displayUrl(assets.get(item.videoAssetUid))
         return <article key={item.jobId} style={styles.aiCard}><button type="button" style={styles.aiCover} disabled={item.status !== 'succeeded' || video === ''} onClick={() => setPreview({ kind: 'video', url: video, name: item.title })}>{cover !== '' && <img src={cover} alt="" style={styles.mediaImage} />}{item.status === 'succeeded' ? <img src={`${assetRoot}/video_play_white.svg`} alt="" style={styles.play} /> : <span style={{ color: '#fff', fontSize: 12 }}>{item.status === 'failed' ? '生成失败' : `生成中 ${String(item.progress)}%`}</span>}</button><div style={styles.aiBody}><p style={styles.title}>{item.title}</p><span style={styles.meta}>{dateTimeLabel(item.sourceStartedAtMillis || item.createdAtMillis)}</span></div></article>
       })}</div>
-  }, [assets, loading, quick, recordError, videos])
+  }, [assets, imageHasMore, images, loading, loadingMore, loadMoreImages, quick, recordError, videos])
 
   const hasQuery = query.trim() !== ''
   const recordItems = records?.items ?? []
@@ -144,11 +224,20 @@ export function ArkmeSearchSurface() {
         <div style={styles.scroll}>{loading ? <Status loading /> : recordItems.length === 0 && recordError === '' ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</div>
       </>}
     </div> : <div style={styles.quickShell}>
-      <header style={styles.quickHeader}><div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><img src={`${assetRoot}/image_search_grey.svg`} alt="" style={styles.quickSearchIcon} /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div><div style={styles.tabs}><button type="button" style={{ ...styles.tab, ...styles.tabActive }}>{hasQuery ? '搜索快记' : 'AI 视频'}<span style={styles.indicator} /></button></div></header>
+      <header style={styles.quickHeader}>
+        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><img src={`${assetRoot}/image_search_grey.svg`} alt="" style={styles.quickSearchIcon} /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div>
+        <div style={styles.tabs}>{hasQuery
+          ? <button type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
+          : quickEntries.map(entry => {
+            const active = quick === entry.key
+            return <button key={entry.key} type="button" style={{ ...styles.tab, ...(active ? styles.tabActive : {}) }} onClick={() => { if (!active) void loadQuick(entry.key) }}>{entry.tabLabel}{active && <span style={styles.indicator} />}</button>
+          })}
+        </div>
+      </header>
       <main style={styles.quickBody}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</> : quickBody}</main>
     </div>}
 
     {selectedRecord !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setSelectedRecord(undefined)}><article style={styles.detail} onClick={event => event.stopPropagation()}><h3 style={styles.title}>{selectedRecord.title || selectedRecord.nickname || '快记'}</h3>{selectedRecord.textContent !== '' && <p style={{ ...styles.text, display: 'block', color: colors.text, whiteSpace: 'pre-wrap' }}>{selectedRecord.textContent}</p>}<span style={styles.meta}>{selectedRecord.sourceTitle === undefined ? '' : `${selectedRecord.sourceTitle} · `}{dateTimeLabel(selectedRecord.sendAtMillis)}</span><button type="button" style={styles.closeText} onClick={() => setSelectedRecord(undefined)}>返回搜索结果</button></article></div>}
-    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
+    {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>
 }

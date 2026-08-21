@@ -26,7 +26,9 @@ import { arkmeTheme } from './arkme-theme.js'
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
 export const ARKME_EXTENSION_BRAND_GREEN = '#09B83E'
-export const ARKME_EXTENSION_PRIMARY_ACTION_BG = 'var(--dsw-alias-label-primary, #292929)'
+export const ARKME_EXTENSION_PRIMARY_ACTION_BG = arkmeTheme.primaryAction
+export const ARKME_EXTENSION_PRIMARY_ACTION_FG = arkmeTheme.onPrimaryAction
+export const ARKME_EXTENSION_RESTART_SURFACE = arkmeTheme.menu
 
 export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: string): 'initial' | 'refresh' {
   return loadedTabs.has(target) ? 'refresh' : 'initial'
@@ -110,7 +112,8 @@ const styles: Record<string, CSSProperties> = {
   },
   installSmall: {
     height: 28, flex: 'none', alignSelf: 'center', padding: '0 12px', border: 0, borderRadius: 8,
-    background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: '#fff', font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+    background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: ARKME_EXTENSION_PRIMARY_ACTION_FG,
+    font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
   iconSmall: {
     height: 28, display: 'inline-flex', alignItems: 'center', flex: 'none', padding: '0 10px',
@@ -175,7 +178,7 @@ const styles: Record<string, CSSProperties> = {
   detailConfirmActions: { display: 'flex', gap: 8, marginTop: 9 },
   primaryButton: {
     height: 34, flex: 'none', padding: '0 17px', border: 0, borderRadius: 9, background: ARKME_EXTENSION_PRIMARY_ACTION_BG,
-    color: '#fff', font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    color: ARKME_EXTENSION_PRIMARY_ACTION_FG, font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
   },
   loadingButton: {
     width: 28, height: 28, flex: 'none', alignSelf: 'center', display: 'grid', placeItems: 'center',
@@ -187,15 +190,47 @@ const styles: Record<string, CSSProperties> = {
   },
   restartDialog: {
     width: 'min(380px, 100%)', padding: 20, boxSizing: 'border-box', borderRadius: 14,
-    border: `1px solid ${colors.border}`, background: colors.surface, boxShadow: '0 18px 50px rgba(20,24,31,.20)',
+    border: `1px solid ${colors.border}`, background: ARKME_EXTENSION_RESTART_SURFACE,
+    color: colors.text, boxShadow: '0 18px 50px rgba(20,24,31,.20)',
   },
   restartTitle: { margin: 0, color: colors.text, fontSize: 16, lineHeight: '24px', fontWeight: 600 },
   restartDescription: { margin: '8px 0 0', color: colors.secondary, fontSize: 12, lineHeight: '19px' },
   restartActions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 },
   restartLater: {
     height: 34, padding: '0 15px', border: `1px solid ${colors.border}`, borderRadius: 9,
-    background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 12, cursor: 'pointer',
+    background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 12,
+    cursor: 'pointer', appearance: 'none',
   },
+  restartPrimary: {
+    height: 34, padding: '0 17px', border: 0, borderRadius: 9,
+    background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: ARKME_EXTENSION_PRIMARY_ACTION_FG,
+    font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer', appearance: 'none',
+  },
+}
+
+export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onRestart }: {
+  kind: 'apply' | 'remove'
+  restarting: boolean
+  onLater(): void
+  onRestart(): void
+}) {
+  const disabledStyle: CSSProperties = restarting ? { opacity: .62, cursor: 'default' } : {}
+  return <div style={styles.restartOverlay}>
+    <section style={styles.restartDialog} role="alertdialog" aria-modal="true" aria-labelledby="arkme-extension-restart-title">
+      <h3 id="arkme-extension-restart-title" style={styles.restartTitle}>需要重启 DSH</h3>
+      <p style={styles.restartDescription}>
+        {kind === 'remove'
+          ? '扩展已卸载，重启后会从当前页面完全移除。'
+          : '扩展已安装到插件列表，重启后立即生效。'}
+      </p>
+      <div style={styles.restartActions}>
+        <button type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>稍后</button>
+        <button type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
+          {restarting ? '正在重启…' : '立即重启'}
+        </button>
+      </div>
+    </section>
+  </div>
 }
 
 const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
@@ -1205,22 +1240,12 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
         {updates.length === 0 && <EmptyState tab="updates" />}
       </>}
     </main>
-    {restartPrompt !== undefined && <div style={styles.restartOverlay}>
-      <section style={styles.restartDialog} role="alertdialog" aria-modal="true" aria-labelledby="arkme-extension-restart-title">
-        <h3 id="arkme-extension-restart-title" style={styles.restartTitle}>需要重启 DSH</h3>
-        <p style={styles.restartDescription}>
-          {restartPrompt.kind === 'remove'
-            ? '扩展已卸载，重启后会从当前页面完全移除。'
-            : '扩展已安装到插件列表，重启后立即生效。'}
-        </p>
-        <div style={styles.restartActions}>
-          <button type="button" style={styles.restartLater} disabled={restarting} onClick={() => { setRestartPrompt(undefined) }}>稍后</button>
-          <button type="button" style={styles.primaryButton} disabled={restarting} onClick={() => { void restartNow() }}>
-            {restarting ? '正在重启…' : '立即重启'}
-          </button>
-        </div>
-      </section>
-    </div>}
+    {restartPrompt !== undefined && <ArkmeExtensionRestartDialog
+      kind={restartPrompt.kind}
+      restarting={restarting}
+      onLater={() => { setRestartPrompt(undefined) }}
+      onRestart={() => { void restartNow() }}
+    />}
     {shareDialogExtensionId !== undefined && detail?.extension_id === shareDialogExtensionId && detail.share !== undefined
       && <ArkmeExtensionShareDialog
         url={detail.share.url}

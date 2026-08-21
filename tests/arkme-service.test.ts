@@ -3030,6 +3030,102 @@ describe('ArkmeService', () => {
     ])
   })
 
+  it('builds an image-only safe projection after draining a video-only scene page', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requestBodies: Record<string, unknown>[] = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/search/records/scene/query')) {
+        requestBodies.push(body)
+        if (body.cursor === undefined) return json({ code: 0, data: {
+          items: [{
+            record_uid: 'video-record', send_at: 200,
+            record_core: { content_payload: { media_refs: [{ file_asset_uid: 'video-asset', file_kind: 3, mime_type: 'video/mp4' }] } },
+          }],
+          has_more: true, next_cursor: 'image-page', query_guard: { state: 'ok' },
+        } })
+        return json({ code: 0, data: {
+          items: [{
+            record_uid: 'image-record', send_at: 100, record_core: {
+              title: '桌面截图',
+              content_payload: { media_refs: [
+                // Production scene search may omit both MIME and file_kind.
+                { file_asset_uid: 'image-asset', file_name: '截图.png', size: 2048 },
+                { file_asset_uid: 'video-cover', file_kind: 3, mime_type: 'video/mp4', file_name: '片段.mp4' },
+                { file_asset_uid: 'ambiguous-video', file_name: '视频封面.jpg' },
+              ] },
+            },
+          }],
+          has_more: false, query_guard: { state: 'ok' },
+        } })
+      }
+      if (url.endsWith('/api/v1/files/assets/query')) {
+        requestBodies.push(body)
+        return json({ code: 0, data: { items: [{
+          file_asset_uid: 'image-asset', file_name: '截图.png', mime_type: 'image/png', status: 'ready',
+          preview_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/private/signed-image.png?x-oss-signature=test',
+        }, {
+          file_asset_uid: 'ambiguous-video', file_name: '视频封面.jpg', mime_type: 'video/mp4', status: 'ready',
+          preview_url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/private/video-cover.jpg?x-oss-signature=test',
+        }] } })
+      }
+      if (url.includes('/private/signed-image.png')) {
+        return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/png', 'Content-Length': '8' },
+        })
+      }
+      throw new Error(`unexpected request ${url}`)
+    })
+
+    const result = await service.searchImages({ limit: 10 })
+
+    expect(result).toMatchObject({
+      items: [{
+        itemKey: expect.any(String), mediaRef: expect.stringMatching(/^arkme-media-v1\./),
+        recordUid: 'image-record', fileName: '截图.png', mimeType: 'image/png', recordTitle: '桌面截图',
+      }],
+      hasMore: false,
+    })
+    expect(JSON.stringify(result)).not.toContain('x-oss-signature')
+    expect(JSON.stringify(result)).not.toContain('image-asset')
+    expect(JSON.stringify(result)).not.toContain('video-cover')
+    expect(JSON.stringify(result)).not.toContain('ambiguous-video')
+    await expect(service.readImage(result.items[0]!.mediaRef)).resolves.toMatchObject({
+      mediaType: 'image/png', bytes: 8,
+    })
+    expect(requestBodies).toEqual([
+      { scene_kind: 3, limit: 10, search_scope: 'global' },
+      { scene_kind: 3, limit: 10, search_scope: 'global', cursor: 'image-page' },
+      { file_asset_uids: ['image-asset', 'ambiguous-video'] },
+    ])
+  })
+
+  it('keeps a continuation cursor after the bounded image-scene drain finds only videos', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let pageCount = 0
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (!url.endsWith('/api/v1/search/records/scene/query')) throw new Error(`unexpected request ${url}`)
+      pageCount += 1
+      return json({ code: 0, data: {
+        items: [{
+          record_uid: `video-record-${String(pageCount)}`, send_at: pageCount,
+          record_core: { content_payload: { media_refs: [{ file_asset_uid: `video-${String(pageCount)}`, file_kind: 3, mime_type: 'video/mp4' }] } },
+        }],
+        has_more: true, next_cursor: `page-${String(pageCount)}`, query_guard: { state: 'ok' },
+      } })
+    })
+
+    await expect(service.searchImages({ limit: 10 })).resolves.toMatchObject({
+      items: [], hasMore: true, nextCursor: 'page-8',
+    })
+    expect(pageCount).toBe(8)
+  })
+
   it('asks Arko through the AgentDirect Intelligent session and projects the SSE tail', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -3963,7 +4059,11 @@ describe('ArkmeService', () => {
     })
     expect(page.items[0]?.contentBlocks).toHaveLength(2)
     const mediaRef = page.items[0]?.contentBlocks?.[0]?.mediaRef ?? ''
+    const audioMediaRef = page.items[0]?.contentBlocks?.[1]?.mediaRef ?? ''
     expect(mediaRef).toMatch(/^arkme-media-v1\./)
+    const repeatedPage = await service.readSource(sourceRef)
+    expect(repeatedPage.items[0]?.contentBlocks?.[0]?.mediaRef).toBe(mediaRef)
+    expect(repeatedPage.items[0]?.contentBlocks?.[1]?.mediaRef).not.toBe(audioMediaRef)
     expect(JSON.stringify(page)).not.toContain('x-oss-signature=secret')
     expect(JSON.stringify(page)).not.toContain('jotmo_mobile_background_sound')
     expect(JSON.stringify(page)).not.toContain('asset-background')

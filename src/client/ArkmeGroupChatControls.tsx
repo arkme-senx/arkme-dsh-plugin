@@ -26,6 +26,8 @@ const colors = {
   primary: arkmeTheme.info,
 }
 
+export const ARKME_GROUP_HEADER_ICON_COLOR = arkmeTheme.secondary
+
 const asset = (value: string) => `data:image/svg+xml;base64,${value}`
 // These are the production desktop-client assets, embedded so the published plugin remains self-contained.
 const icons = {
@@ -40,9 +42,13 @@ const styles: Record<string, CSSProperties> = {
   headerActions: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 },
   headerButton: {
     width: 32, height: 32, padding: 4, border: 0, borderRadius: 4, background: 'transparent',
-    display: 'grid', placeItems: 'center', cursor: 'pointer',
+    color: ARKME_GROUP_HEADER_ICON_COLOR, display: 'grid', placeItems: 'center', cursor: 'pointer',
   },
-  icon: { width: 20, height: 20, display: 'block', filter: 'brightness(0)', opacity: .84 },
+  icon: {
+    width: 20, height: 20, display: 'block', backgroundColor: 'currentColor', opacity: .84,
+    maskRepeat: 'no-repeat', maskPosition: 'center', maskSize: 'contain',
+    WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center', WebkitMaskSize: 'contain',
+  },
   drawer: {
     position: 'absolute', top: 56, right: 0, bottom: 0, zIndex: 8, width: 262, maxWidth: '86%',
     display: 'flex', flexDirection: 'column', background: colors.panel,
@@ -149,7 +155,10 @@ function memberCardSubtitle(member: ArkmeGroupMemberItem): string {
 }
 
 function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
-  return <img src={src} alt="" draggable={false} style={{ ...styles.icon, width: size, height: size }} />
+  return <span aria-hidden style={{
+    ...styles.icon, width: size, height: size,
+    maskImage: `url("${src}")`, WebkitMaskImage: `url("${src}")`,
+  }} />
 }
 
 function MoreIcon() {

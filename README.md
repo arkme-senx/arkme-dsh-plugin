@@ -5,6 +5,10 @@ Arkme 的 DeepSeek Harness 集成插件，为 DSH 提供账号、记录、聊天
 - npm：[`@senguoyun/dsh-arkme`](https://www.npmjs.com/package/@senguoyun/dsh-arkme)
 - 源码：[`arkme-senx/arkme-dsh-plugin`](https://github.com/arkme-senx/arkme-dsh-plugin)
 
+## 功能
+
+- 内置搜索页支持快记搜索、搜索历史、纯图片库和已生成 AI 视频快速入口；图片库采用桌面端多列视图并排除普通视频。
+
 ## 安装
 
 将插件安装到 DSH Web Profile：

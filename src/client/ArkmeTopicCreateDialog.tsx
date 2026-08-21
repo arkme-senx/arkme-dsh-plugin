@@ -14,17 +14,18 @@ export const ARKME_TOPIC_CREATE_ACTION_COLOR = '#09B83E'
 const colors = {
   text: arkmeTheme.text,
   secondary: arkmeTheme.secondary,
-  border: arkmeTheme.border,
-  action: arkmeTheme.accent,
-  actionText: 'var(--dsw-alias-label-primary-foreground, #ffffff)',
-  surface: arkmeTheme.layer2,
+  caption: arkmeTheme.caption,
+  border: arkmeTheme.borderSoft,
+  action: ARKME_TOPIC_CREATE_ACTION_COLOR,
+  surface: arkmeTheme.menu,
   input: arkmeTheme.input,
+  actionForeground: arkmeTheme.foreground,
 }
 
 const styles: Record<string, CSSProperties> = {
   backdrop: {
     position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: 16, boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, 0.24))',
+    padding: 16, boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
     backdropFilter: 'var(--dsw-mask-blur, blur(2px))', WebkitBackdropFilter: 'var(--dsw-mask-blur, blur(2px))',
   },
   dialog: {
@@ -54,9 +55,10 @@ const styles: Record<string, CSSProperties> = {
     font: 'inherit', fontSize: 14, fontWeight: 500,
   },
   cancel: { border: `1px solid ${colors.border}`, background: 'transparent', color: colors.text },
-  confirm: { border: 0, background: colors.action, color: colors.actionText },
+  confirm: { border: 0, background: colors.action, color: colors.actionForeground },
   confirmDisabled: {
-    opacity: 0.4, cursor: 'not-allowed',
+    background: arkmeTheme.accentSoft,
+    color: arkmeTheme.tertiary, cursor: 'default',
   },
 }
 

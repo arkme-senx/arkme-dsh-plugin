@@ -2,14 +2,17 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import type {
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPageState,
 } from '../types.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 const colors = {
-  panel: 'var(--dsw-alias-bg-base, #ffffff)',
-  text: 'var(--dsw-alias-label-primary, #17191c)',
-  secondary: 'var(--dsw-alias-label-secondary, #68707c)',
-  border: 'var(--dsw-alias-border-l2, #e2e5e9)',
-  subtle: 'var(--dsw-alias-bg-subtle, #f6f7f9)',
+  panel: arkmeTheme.menu,
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  border: arkmeTheme.border,
+  subtle: arkmeTheme.subtle,
 }
+
+export const ARKME_RELATED_RECORDING_TRANSCRIPT_BG = arkmeTheme.subtle
 
 const styles: Record<string, CSSProperties> = {
   panel: {
@@ -40,10 +43,10 @@ const styles: Record<string, CSSProperties> = {
   cardTitle: { flex: 1, fontSize: 14, lineHeight: '20px', fontWeight: 600 },
   time: { flex: 'none', color: colors.secondary, fontSize: 11 },
   summary: { margin: '8px 0 0', color: colors.secondary, fontSize: 13, lineHeight: '20px', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
-  participants: { marginTop: 10, color: '#969ca5', fontSize: 11 },
+  participants: { marginTop: 10, color: arkmeTheme.tertiary, fontSize: 11 },
   status: { display: 'inline-block', marginTop: 9, padding: '3px 7px', borderRadius: 999, background: colors.subtle, color: colors.secondary, fontSize: 11 },
   more: { display: 'block', margin: '6px auto 0', border: `1px solid ${colors.border}`, borderRadius: 10, padding: '8px 16px', background: colors.panel, color: colors.text, cursor: 'pointer' },
-  backdrop: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(20,22,26,.44)' },
+  backdrop: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 24, background: 'var(--dsw-alias-bg-mask-1, rgba(20,22,26,.44))' },
   modal: { width: 'min(720px, calc(100vw - 48px))', maxHeight: 'min(720px, calc(100vh - 80px))', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 18, background: colors.panel, boxShadow: '0 24px 80px rgba(0,0,0,.24)' },
   modalHeader: { display: 'flex', alignItems: 'center', gap: 12, padding: '20px 24px', borderBottom: `1px solid ${colors.border}` },
   modalTitle: { margin: 0, flex: 1, fontSize: 20, lineHeight: '28px' },
@@ -54,7 +57,7 @@ const styles: Record<string, CSSProperties> = {
   actions: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginTop: 20 },
   secondaryButton: { border: `1px solid ${colors.border}`, borderRadius: 10, padding: '8px 14px', background: colors.panel, color: colors.text, cursor: 'pointer' },
   actionLabel: { color: colors.secondary, fontSize: 12 },
-  transcript: { margin: '14px 0 0', padding: 16, borderRadius: 12, background: colors.subtle, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: '22px' },
+  transcript: { margin: '14px 0 0', padding: 16, borderRadius: 12, background: ARKME_RELATED_RECORDING_TRANSCRIPT_BG, color: colors.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: '22px' },
 }
 
 export interface RelatedRecordingGroup {

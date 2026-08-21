@@ -112,6 +112,8 @@ import type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmeImageBytes,
+  ArkmeImageSearchItem,
+  ArkmeImageSearchResult,
   ArkmeInterwovenBootstrap,
   ArkmeInterwovenDetail,
   ArkmeLongArticleDetail,
@@ -231,7 +233,7 @@ export class ArkmeService {
       recordItem: raw => this.recordItem(raw),
     })
     this.record = new RecordService(this.runtime, this.media, this.source)
-    this.search = new SearchService(this.runtime, this.record)
+    this.search = new SearchService(this.runtime, this.record, this.media)
     this.bot = new BotService(this.runtime, this.source)
     this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker)
     this.world = new WorldService(
@@ -387,6 +389,7 @@ export class ArkmeService {
         revisionPolling: true,
         userProfile: true,
         imageRead: true,
+        imageLibrary: true,
         sourceDirectory: true,
         sourceTimeline: true,
         sourceTextSend: true,
@@ -1091,6 +1094,18 @@ export class ArkmeService {
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult> {
     return await this.search.searchScene(options)
+  }
+
+  /**
+   * Build the desktop image library from the owner's mixed image/video scene.
+   * Signed storage URLs stay inside the Provider and are replaced by account-bound media refs.
+   */
+  async searchImages(options: {
+    limit: number
+    cursor?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeImageSearchResult> {
+    return await this.search.searchImages(options)
   }
 
   async searchRecordings(options: {

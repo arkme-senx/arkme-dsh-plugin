@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 export interface ArkmePrivateCallMenuProps {
   sourceRef: string
@@ -11,9 +12,14 @@ const styles: Record<string, CSSProperties> = {
   root: { position: 'relative', flex: 'none' },
   trigger: {
     width: 24, height: 24, padding: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: 0, borderRadius: 6, background: 'transparent', cursor: 'pointer', appearance: 'none',
+    border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.secondary,
+    cursor: 'pointer', appearance: 'none',
   },
-  triggerIcon: { width: 20, height: 20, display: 'block' },
+  triggerIcon: {
+    width: 20, height: 20, display: 'block', backgroundColor: 'currentColor',
+    maskRepeat: 'no-repeat', maskPosition: 'center', maskSize: 'contain',
+    WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center', WebkitMaskSize: 'contain',
+  },
   menu: {
     position: 'absolute', zIndex: 20, top: 32, left: 0, width: 132, padding: 4, margin: 0,
     listStyle: 'none', border: '1px solid var(--dsw-alias-border-l1, #e2e5e9)', borderRadius: 12,
@@ -67,6 +73,7 @@ export function ArkmePrivateCallMenu({
     setOpen(false)
     outgoingCallUi.request({ sourceRef, displayName, mediaType })
   }
+  const callIconUrl = `${assetBasePath}/call-linear-strong.svg`
 
   return <div ref={root} style={styles.root}>
     <button
@@ -78,7 +85,10 @@ export function ArkmePrivateCallMenu({
       style={styles.trigger}
       onClick={() => { setOpen(value => !value) }}
     >
-      <img src={`${assetBasePath}/call-linear-strong.svg`} alt="" draggable={false} style={styles.triggerIcon} />
+      <span aria-hidden style={{
+        ...styles.triggerIcon,
+        maskImage: `url("${callIconUrl}")`, WebkitMaskImage: `url("${callIconUrl}")`,
+      }} />
     </button>
     {open && <ul role="menu" aria-label="选择通话方式" style={styles.menu}>
       <li role="none"><button type="button" role="menuitem" style={styles.item} onClick={() => { start('audio') }}>

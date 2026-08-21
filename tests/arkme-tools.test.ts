@@ -78,6 +78,14 @@ function fakeService(): ArkmeCoreToolPorts & {
       }],
       sourceAggregates: [], hasMore: false, queryGuard: { state: 'ok' },
     })),
+    searchImages: vi.fn(async () => ({
+      items: [{
+        itemKey: 'image-key-1', mediaRef: 'arkme-media-v1.image-1', recordUid: 'record-image-1',
+        sendAtMillis: 123, fileName: '照片.png', mimeType: 'image/png', size: 1024,
+        recordTitle: '旅行', sourceTitle: '默认分类',
+      }],
+      hasMore: true, nextCursor: 'next-images', queryGuard: { state: 'ok' as const },
+    })),
     searchRecordings: vi.fn(async () => ({
       items: [{ sessionId: 'recording-1', dateStamp: 123, startAtMillis: 456, snippet: '录音复盘', score: 1 }],
       hasMore: false, queryGuard: { state: 'complete' },
@@ -273,6 +281,20 @@ describe('Arkme conversation tools', () => {
 
     await tool.execute({ query: '复盘', cursor: 'next-records' }, { signal } as never)
     expect(service.searchRemote).toHaveBeenLastCalledWith({ query: '复盘', limit: 10, cursor: 'next-records', signal })
+  })
+
+  it('lists authorized image references without exposing storage URLs', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_images_list')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute({ limit: 8, cursor: 'image-cursor' }, { signal } as never) as string
+
+    expect(service.searchImages).toHaveBeenCalledWith({ limit: 8, cursor: 'image-cursor', signal })
+    expect(output).toContain('"image_ref": "arkme-media-v1.image-1"')
+    expect(output).toContain('"nextCursor": "next-images"')
+    expect(output).not.toContain('mediaRef')
+    expect(output).not.toContain('https://')
   })
 
   it('writes with a stable call-derived uid without echoing the saved text', async () => {

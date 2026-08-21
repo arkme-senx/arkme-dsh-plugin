@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 export function arkmeExtensionIconUrl(extensionId: string, iconRef: string): string {
   return `/arkme-self/api/extension-icon?extension_id=${encodeURIComponent(extensionId)}&icon_ref=${encodeURIComponent(iconRef)}`
@@ -17,8 +18,8 @@ export function ArkmeExtensionAvatar({ extensionId, iconRef, size = 32, fallback
   const style: CSSProperties = {
     width: size, height: size, display: 'grid', placeItems: 'center', overflow: 'hidden',
     borderRadius: Math.max(8, Math.round(size * .28)),
-    background: 'var(--dsw-alias-fill-secondary, #f4f5f6)',
-    color: fallbackColor ?? 'var(--dsw-alias-label-secondary, #717780)',
+    background: arkmeTheme.subtle,
+    color: fallbackColor ?? arkmeTheme.secondary,
   }
   return <span style={style} aria-hidden>
     {valid && !failed
