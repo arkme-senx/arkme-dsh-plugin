@@ -119,6 +119,22 @@ describe('extension center Host BFF', () => {
     expect(persistentClientState).toHaveBeenCalledWith('ext-1', '1.0.0')
   })
 
+  it('routes user-triggered extension audit through the Host manager', async () => {
+    const auditExtension = vi.fn(async () => ({
+      extension_id: 'ext-1', trigger: 'market_detail', verdict: 'review', risk_level: 'medium',
+      summary: '需要复核', reasons: ['声明较宽'], recommendations: [], source_reviewed: false,
+      source_scope: 'public_detail_only', audited_at_millis: 1,
+    }))
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.audit.check',
+      { extensionId: 'ext-1' },
+      undefined,
+      { auditExtension } as never,
+    )).resolves.toMatchObject({ extension_id: 'ext-1', verdict: 'review' })
+    expect(auditExtension).toHaveBeenCalledWith({ extensionId: 'ext-1', trigger: 'market_detail' })
+  })
+
   it('resolves extension authors in the Host for public and owned details', async () => {
     const service = {
       extensionAuthors: vi.fn(async () => new Map([[77, { displayName: '发布者', arkmeId: 'publisher' }]])),

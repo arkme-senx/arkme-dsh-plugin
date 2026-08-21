@@ -15,6 +15,7 @@ import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
 	type ArkmeSharedExtensionDetail,
   type ArkmeInstalledExtension,
   type ArkmeExtensionManifest,
+  type ArkmeExtensionAuditResult, type ArkmeExtensionAuditTrigger,
 } from './types.js'
 import { assertExtensionArtifactSize } from './artifact.js'
 import {
@@ -311,6 +312,17 @@ export class ExtensionPublishClient {
 
   async versions(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/public/v1/extensions/version-list', { extension_id: extensionId }, signal)
+  }
+
+  async auditExtension(
+    extensionId: string,
+    trigger: ArkmeExtensionAuditTrigger,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionAuditResult> {
+    return await this.post('/api/v1/extensions/audit/check', {
+      extension_id: extensionId,
+      trigger,
+    }, signal)
   }
 
   async myList(input: { cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {

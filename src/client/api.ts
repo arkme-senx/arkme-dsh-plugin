@@ -30,6 +30,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.interwoven-detail'
   | 'extensions.catalog.list'
   | 'extensions.catalog.detail'
+  | 'extensions.audit.check'
   | 'extensions.my-list'
   | 'extensions.delete'
   | 'extensions.installed-list'

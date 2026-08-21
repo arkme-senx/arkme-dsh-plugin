@@ -90,16 +90,22 @@ describe('Arkme extension tools', () => {
 			latest_stable_version: '1.0.0', preview_images: [],
 			rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
 		}))
+    const auditExtension = vi.fn(async () => ({
+      extension_id: 'ext-1', trigger: 'tool', verdict: 'pass', risk_level: 'low',
+      summary: '未发现明显风险', reasons: [], recommendations: [], source_reviewed: false,
+      source_scope: 'public_detail_only', audited_at_millis: 1,
+    }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
       previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail,
       setIcon, addPreview, deletePreview, reorderPreviews,
       delete: deleteExtension, apply: applyExtension,
+      auditExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, {} as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
 		'arkme_extension_share', 'arkme_extension_share_read',
@@ -129,7 +135,16 @@ describe('Arkme extension tools', () => {
     expect(sections[0]?.text()).toContain('workspace_path')
     expect(sections[0]?.text()).toContain('workspace_paths')
     expect(sections[0]?.text()).toContain('ordinary conversation')
+    expect(sections[0]?.text()).toContain('arkme_extension_audit')
     expect(sections[0]?.text()).toContain('Do not search for image upload routes')
+    const auditTool = definitions.find(item => item.name === 'arkme_extension_audit')
+    await expect(auditTool?.execute?.(
+      { extension_id: 'ext-1' },
+      toolExec(confirmationAgent('session-audit', '审核扩展'), 'call-audit'),
+    )).resolves.toContain('<data_from_arkme_extension_audit>')
+    expect(auditExtension).toHaveBeenCalledWith({
+      extensionId: 'ext-1', trigger: 'tool', signal: expect.any(AbortSignal),
+    })
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',

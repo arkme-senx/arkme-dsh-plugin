@@ -4,7 +4,7 @@ import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlas
 import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
   ArkmeExtensionEnabledResult, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution, ArkmeInstalledExtensionView,
-  ArkmeSharedExtensionDetail,
+  ArkmeSharedExtensionDetail, ArkmeExtensionAuditResult,
 } from '../extensions/types.js'
 import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
@@ -206,6 +206,14 @@ const styles: Record<string, CSSProperties> = {
   detailSection: { padding: '12px 0', borderTop: `1px solid ${colors.border}` },
   detailLabel: { color: colors.caption, fontSize: 10, lineHeight: '16px' },
   detailValue: { marginTop: 3, color: colors.secondary, fontSize: 12, lineHeight: '18px', wordBreak: 'break-word' },
+  auditPanel: {
+    margin: '0 0 12px', padding: '10px 11px', border: `1px solid ${colors.border}`, borderRadius: 10,
+    background: colors.subtle, color: colors.secondary, fontSize: 11, lineHeight: '17px',
+  },
+  auditPanelDanger: { background: arkmeTheme.dangerSoft, color: colors.danger },
+  auditTitle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: colors.text, fontSize: 12, fontWeight: 650, lineHeight: '18px' },
+  auditMeta: { marginTop: 4, color: colors.caption, fontSize: 10, lineHeight: '15px' },
+  auditList: { margin: '7px 0 0', paddingLeft: 17 },
   detailHint: { marginTop: 12, padding: '10px 11px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 11, lineHeight: '17px' },
   detailDanger: {
     height: 32, marginTop: 14, padding: '0 14px', border: `1px solid ${colors.border}`, borderRadius: 9,
@@ -216,6 +224,10 @@ const styles: Record<string, CSSProperties> = {
   primaryButton: {
     height: 34, flex: 'none', padding: '0 17px', border: 0, borderRadius: 9, background: ARKME_EXTENSION_PRIMARY_ACTION_BG,
     color: ARKME_EXTENSION_PRIMARY_ACTION_FG, font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+  },
+  secondaryButton: {
+    height: 34, flex: 'none', padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 9,
+    background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
   },
   loadingButton: {
     width: 28, height: 28, flex: 'none', alignSelf: 'center', display: 'grid', placeItems: 'center',
@@ -324,6 +336,39 @@ export function ArkmeExtensionManifestDetails({ manifest }: { manifest: unknown 
       {safeRuntime.dsh.trim() !== '' && <Chip>{safeRuntime.dsh}</Chip>}
       {permissions.map(permission => <Chip key={permission}>{permission}</Chip>)}
     </Chips>
+  </section>
+}
+
+function auditVerdictLabel(result: ArkmeExtensionAuditResult): string {
+  if (result.verdict === 'pass') return 'AI 审核通过'
+  if (result.verdict === 'reject') return 'AI 审核建议拒绝'
+  return 'AI 审核建议复核'
+}
+
+function auditRiskLabel(result: ArkmeExtensionAuditResult): string {
+  const risk = result.risk_level === 'critical' ? '严重'
+    : result.risk_level === 'high' ? '高'
+    : result.risk_level === 'medium' ? '中'
+    : '低'
+  return `${risk}风险`
+}
+
+function ArkmeExtensionAuditPanel({ result }: { result: ArkmeExtensionAuditResult }) {
+  const dangerous = result.verdict === 'reject' || result.risk_level === 'critical' || result.risk_level === 'high'
+  const details = result.reasons.length > 0 ? result.reasons : result.recommendations
+  return <section style={{ ...styles.auditPanel, ...(dangerous ? styles.auditPanelDanger : {}) }} aria-live="polite">
+    <div style={styles.auditTitle}>
+      <span>{auditVerdictLabel(result)}</span>
+      <span>{auditRiskLabel(result)}</span>
+    </div>
+    <div style={styles.auditMeta}>
+      {result.source_reviewed ? '已审核已发布源码快照' : '基于公开详情与版本事实审核'}
+      {result.model === undefined ? '' : ` · ${result.model.name ?? result.model.model}`}
+    </div>
+    <div style={{ marginTop: 7 }}>{result.summary}</div>
+    {details.length > 0 && <ul style={styles.auditList}>
+      {details.map((item, index) => <li key={`${String(index)}-${item}`}>{item}</li>)}
+    </ul>}
   </section>
 }
 
@@ -656,6 +701,9 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   const [shareNotice, setShareNotice] = useState('')
   const [sharedDetail, setSharedDetail] = useState<ArkmeSharedExtensionDetail>()
   const [sharedDetailBusy, setSharedDetailBusy] = useState(false)
+  const [auditBusyExtensionId, setAuditBusyExtensionId] = useState<string>()
+  const [auditResult, setAuditResult] = useState<ArkmeExtensionAuditResult>()
+  const [auditError, setAuditError] = useState('')
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
@@ -706,7 +754,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     const controller = new AbortController()
     requestController.current = controller
     if (mode === 'initial') setLoadingTab(target)
-    setError(''); setDetail(undefined); setInstallError('')
+    setError(''); setDetail(undefined); setInstallError(''); setAuditResult(undefined); setAuditError('')
     try {
       if (target === 'discover') {
         const [page, local, owned] = await Promise.all([
@@ -790,12 +838,13 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     const selection = extensionTabSelection(tab, target, loadedTabs)
     if (selection.changed) {
       setTab(target); setError(''); setDetail(undefined); setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined)
+      setAuditResult(undefined); setAuditError('')
     }
     void load(target, selection.mode)
   }
 
   const inspect = async (extensionId: string) => {
-    setDetailBusy(true); setError(''); setInstallError(''); setInstallTask(undefined)
+    setDetailBusy(true); setError(''); setInstallError(''); setInstallTask(undefined); setAuditResult(undefined); setAuditError('')
     try {
       let listed = [...publishedItems, ...discoverItems].find(item => item.extension_id === extensionId)
       const ownedListed = publishedItems.find(item => item.extension_id === extensionId)
@@ -847,6 +896,18 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     }
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
     finally { setDetailBusy(false) }
+  }
+
+  const runAudit = async (extensionId: string) => {
+    setAuditBusyExtensionId(extensionId); setAuditError(''); setAuditResult(undefined)
+    try {
+      const result = await callArkme<ArkmeExtensionAuditResult>('extensions.audit.check', { extensionId })
+      setAuditResult(result)
+    } catch (caught) {
+      setAuditError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setAuditBusyExtensionId(current => current === extensionId ? undefined : current)
+    }
   }
 
   const startInstall = async (target: { extensionId: string; version?: string }) => {
@@ -1222,7 +1283,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
       {!busy && error === '' && sharedDetail === undefined && detail !== undefined && <div style={styles.detail}>
         <button type="button" style={styles.detailBack} onClick={() => {
           setDetail(undefined); setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined)
-          setShareDialogExtensionId(undefined); setShareNotice('')
+          setShareDialogExtensionId(undefined); setShareNotice(''); setAuditResult(undefined); setAuditError('')
         }}><BackIcon size={14} />返回列表</button>
         <div style={styles.detailHero}>
           <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={46} fallbackColor={colors.accent} />
@@ -1230,6 +1291,12 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
             <div style={styles.name}>{detail.name}</div>
             {detailStatus !== undefined && <div style={{ ...styles.meta, color: detailStatus.color }}>{detailStatus.label}</div>}
           </div>
+          <button
+            type="button"
+            style={{ ...styles.secondaryButton, ...(auditBusyExtensionId === detail.extension_id ? { opacity: .62, cursor: 'default' } : {}) }}
+            disabled={auditBusyExtensionId === detail.extension_id}
+            onClick={() => { void runAudit(detail.extension_id) }}
+          >{auditBusyExtensionId === detail.extension_id ? '审核中…' : 'AI 审核'}</button>
           {(detailInstalled !== undefined || !detailInstallAction.disabled) && ((detailTask !== undefined && !detailTask.done)
             || (actionBusyExtensionId === detail.extension_id && !detailInstallAction.disabled)
             ? <InstallLoadingButton
@@ -1255,6 +1322,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
               />}
             </span>)}
         </div>
+        {auditError !== '' && <section style={{ ...styles.auditPanel, ...styles.auditPanelDanger }} role="alert">{auditError}</section>}
+        {auditResult !== undefined && <ArkmeExtensionAuditPanel result={auditResult} />}
         <ArkmeExtensionPreviewGallery
           key={detail.extension_id}
           extensionId={detail.extension_id}

@@ -113,6 +113,29 @@ export interface ArkmeExtensionCatalogPage {
   next_cursor?: string
 }
 
+export type ArkmeExtensionAuditTrigger = 'market_detail' | 'tool'
+export type ArkmeExtensionAuditVerdict = 'pass' | 'review' | 'reject'
+export type ArkmeExtensionAuditRiskLevel = 'low' | 'medium' | 'high' | 'critical'
+
+export interface ArkmeExtensionAuditResult {
+  extension_id: string
+  version?: string
+  trigger: ArkmeExtensionAuditTrigger
+  verdict: ArkmeExtensionAuditVerdict
+  risk_level: ArkmeExtensionAuditRiskLevel
+  summary: string
+  reasons: string[]
+  recommendations: string[]
+  source_reviewed: boolean
+  source_scope: 'public_detail_only' | 'public_source_reference' | 'published_source_snapshot'
+  model?: {
+    provider: string
+    model: string
+    name?: string
+  }
+  audited_at_millis: number
+}
+
 /** Browser/SDK-safe extension review projection. Record UIDs remain inside the Host. */
 export interface ArkmeExtensionReviewAvatarFallback {
   kind: 'phone_default'

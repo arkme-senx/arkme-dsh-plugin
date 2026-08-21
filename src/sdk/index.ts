@@ -48,6 +48,7 @@ import type {
 import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionAuditResult,
   ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
   ArkmeExtensionReviewCreateInput,
@@ -139,6 +140,7 @@ export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublis
 } from '../extensions/owned-types.js'
 export type {
   ArkmeExtensionCatalogItem,
+  ArkmeExtensionAuditResult,
   ArkmeExtensionEnabledResult,
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
@@ -360,6 +362,12 @@ export class ArkmeSdk {
     return await this.call<ArkmeExtensionPreviewGallery>('extensions.preview.reorder', {
       extensionId: extensionId.trim(), orderedPreviewRefs: refs, expectedRevision,
     }, signal)
+  }
+
+  /** Run a user-triggered AI audit for one marketplace extension without installing it. */
+  async auditExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionAuditResult> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionAuditResult>('extensions.audit.check', { extensionId: extensionId.trim() }, signal)
   }
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {

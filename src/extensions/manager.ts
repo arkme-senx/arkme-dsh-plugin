@@ -36,6 +36,7 @@ import {
   type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type ArkmeInstalledExtensionView, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
   ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE, type ArkmeExtensionUnavailableView,
+  type ArkmeExtensionAuditResult, type ArkmeExtensionAuditTrigger,
 } from './types.js'
 
 interface AgentLike { id?: unknown }
@@ -504,6 +505,15 @@ export class ArkmeExtensionManager {
       revoked: resolution.revoked,
       ...(resolution.revocation_reason === undefined ? {} : { revocation_reason: resolution.revocation_reason }),
     }
+  }
+
+  async auditExtension(input: {
+    extensionId: string
+    trigger: ArkmeExtensionAuditTrigger
+    signal?: AbortSignal
+  }): Promise<ArkmeExtensionAuditResult> {
+    const extensionId = requiredId(input.extensionId, 'extension_id')
+    return await this.client.auditExtension(extensionId, input.trigger, input.signal)
   }
 
   async myList(signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
