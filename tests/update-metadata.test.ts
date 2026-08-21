@@ -15,9 +15,9 @@ describe('published update metadata', () => {
       notice: {
         schemaVersion: 1,
         level: 'normal',
-        title: 'Arkme 插件 0.1.11 更新',
-        summary: '新增 Arkme Tool 对话式确认，并支持扩展外部来源标记与只读分享链接。',
-        publishedAt: '2026-08-20T18:02:35.000Z',
+        title: 'Arkme 插件 0.1.12 更新',
+        summary: '升级生产 UI 与暗色模式，新增记录日历、桌面通知、图片库和扩展 AI 审核，并修复扩展运行版本问题。',
+        publishedAt: '2026-08-21T09:23:32.000Z',
         releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
       },
     })
