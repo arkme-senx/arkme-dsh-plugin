@@ -7,8 +7,9 @@ import {
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
-  ArkmeExtensionAuthorIdentity, ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
+  ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorTrigger, ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
+  extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
@@ -257,6 +258,48 @@ describe('Arkme extension market UI', () => {
     expect(html).not.toContain('octocat')
     expect(html).not.toContain('avatars.githubusercontent.com')
     expect(html).not.toContain('data-extension-source-badge="github"')
+  })
+
+  it('opens a GitHub author directly instead of toggling the author card', () => {
+    const item = {
+      extension_id: 'github/weather', name: '天气助手', description: '快速查看天气', visibility: 'public' as const,
+      source: { type: 'github_repository' as const, url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' as const },
+      source_author: { name: 'octocat', profile_url: 'https://github.com/octocat' },
+    }
+    const html = renderToStaticMarkup(<ArkmeExtensionAuthorTrigger item={item} expanded onToggle={() => {}} />)
+
+    expect(extensionGithubProfileUrl(item)).toBe('https://github.com/octocat')
+    expect(html).toContain('data-extension-author-direct-link="github"')
+    expect(html).toContain('href="https://github.com/octocat"')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noreferrer"')
+    expect(html).toContain('aria-label="在 GitHub 查看作者"')
+    expect(html).not.toContain('aria-expanded')
+    expect(html).not.toContain('<button')
+  })
+
+  it('derives the GitHub author link from the repository owner and keeps Arkme authors interactive', () => {
+    const githubItem = {
+      extension_id: 'github/weather', name: '天气助手', description: '', visibility: 'public' as const,
+      source: { type: 'github_repository' as const, url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' as const },
+    }
+    expect(extensionGithubProfileUrl(githubItem)).toBe('https://github.com/octocat')
+
+    const authorHtml = renderToStaticMarkup(<ArkmeExtensionAuthorTrigger
+      item={{ extension_id: 'arkme/weather', name: '天气助手', description: '', visibility: 'public', owner_user_id: 7, owner_name: 'Lucis' }}
+      expanded
+      onToggle={() => {}}
+    />)
+    expect(authorHtml).toContain('<button')
+    expect(authorHtml).toContain('aria-expanded="true"')
+    expect(authorHtml).not.toContain('data-extension-author-direct-link="github"')
+
+    const unavailableHtml = renderToStaticMarkup(<ArkmeExtensionAuthorTrigger item={{
+      extension_id: 'github/invalid', name: '无效来源', description: '', visibility: 'public',
+      source: { type: 'github_repository', url: 'https://example.com/not-github', label: 'GitHub', verification: 'publisher_attested' },
+    }} />)
+    expect(unavailableHtml).toContain('data-extension-author-identity="github-static"')
+    expect(unavailableHtml).not.toContain('href=')
   })
 
   it('keeps lifecycle actions out of the dense marketplace tile after installation', () => {

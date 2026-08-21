@@ -872,7 +872,7 @@ function safeGithubProfileUrl(value: unknown): string | undefined {
   } catch { return undefined }
 }
 
-function extensionGithubProfileUrl(item: ArkmeExtensionCatalogItem): string | undefined {
+export function extensionGithubProfileUrl(item: ArkmeExtensionCatalogItem): string | undefined {
   const projected = safeGithubProfileUrl(item.source_author?.profile_url)
   if (projected !== undefined) return projected
   if (item.source?.type !== 'github_repository') return undefined
@@ -939,6 +939,45 @@ export function ArkmeExtensionAuthorIdentity({ item, size = 18, presentation = '
         </span>}
     <span style={presentation === 'community' ? styles.communityIdentityName : undefined}>{author.name}</span>
   </span>
+}
+
+export function ArkmeExtensionAuthorTrigger({
+  item,
+  size = 28,
+  presentation = 'detail',
+  expanded = false,
+  style,
+  onToggle,
+}: {
+  item: ArkmeExtensionCatalogItem
+  size?: number
+  presentation?: 'community' | 'detail'
+  expanded?: boolean
+  style?: CSSProperties
+  onToggle?: (() => void) | undefined
+}) {
+  const identity = <ArkmeExtensionAuthorIdentity item={item} size={size} presentation={presentation} />
+  if (extensionCommunityAuthor(item).github) {
+    const href = extensionGithubProfileUrl(item)
+    if (href === undefined) return <span
+      style={{ ...styles.authorButton, ...style, cursor: 'default' }}
+      data-extension-author-identity="github-static"
+    >{identity}</span>
+    return <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="在 GitHub 查看作者"
+      data-extension-author-direct-link="github"
+      style={{ ...styles.authorButton, ...style, textDecoration: 'none' }}
+    >{identity}</a>
+  }
+  return <button
+    type="button"
+    style={{ ...styles.authorButton, ...style }}
+    aria-expanded={expanded}
+    onClick={onToggle}
+  >{identity}</button>
 }
 
 export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume, presentation = 'list' }: {
@@ -2148,12 +2187,10 @@ export function ArkmeExtensionCenter({
         <section style={styles.detailSection}>
           <div style={styles.detailLabel}>作者</div>
           <div style={styles.detailValue}>
-            <button type="button" style={styles.authorButton} aria-expanded={authorCardOpen} onClick={() => {
+            <ArkmeExtensionAuthorTrigger item={detail} expanded={authorCardOpen} onToggle={() => {
               setAuthorCardOpen(value => !value); setAuthorActionError('')
-            }}>
-              <ArkmeExtensionAuthorIdentity item={detail} size={28} presentation="detail" />
-            </button>
-            {authorCardOpen && <div style={styles.authorCard}>
+            }} />
+            {authorCardOpen && !extensionCommunityAuthor(detail).github && <div style={styles.authorCard}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 {extensionCommunityAuthor(detail).github
                   ? <GitHubIdentityAvatar size={42} />
@@ -2387,11 +2424,9 @@ export function ArkmeExtensionCenter({
                         <h3 style={styles.detailName}>{detail.name}</h3>
                       </div>
                       <ArkmeExtensionDetailMetrics item={detail} />
-                      <button type="button" style={{ ...styles.authorButton, marginTop: 10 }} aria-expanded={authorCardOpen} onClick={() => {
+                      <ArkmeExtensionAuthorTrigger item={detail} expanded={authorCardOpen} style={{ marginTop: 10 }} onToggle={() => {
                         setAuthorCardOpen(value => !value); setAuthorActionError('')
-                      }}>
-                        <ArkmeExtensionAuthorIdentity item={detail} size={28} presentation="detail" />
-                      </button>
+                      }} />
                     </div>
                   </div>
                   <div style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
@@ -2420,7 +2455,7 @@ export function ArkmeExtensionCenter({
                     </div>}
                   </div>
                 </div>
-                {authorCardOpen && <div style={styles.authorCard}>
+                {authorCardOpen && !extensionCommunityAuthor(detail).github && <div style={styles.authorCard}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     {extensionCommunityAuthor(detail).github
                       ? <GitHubIdentityAvatar size={42} />
