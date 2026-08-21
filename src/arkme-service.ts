@@ -811,7 +811,7 @@ export class ArkmeService {
 
   async listGroupMemberCandidates(
     sourceRef: string,
-    options: { query?: string; limit?: number; signal?: AbortSignal } = {},
+    options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupMemberCandidateList> {
     return await this.group.listGroupMemberCandidates(sourceRef, options)
   }

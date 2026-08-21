@@ -8,17 +8,19 @@ const candidates = defineArkmeCoreToolModule({
   create(ports) {
     return defineTool({
       name: 'arkme_group_member_candidates',
-      description: 'List people from the signed-in user\'s Arkme private chats who can be added or invited to one group. Use an unchanged group source_ref from arkme_sources_list. Candidate references are account-bound and must be passed unchanged to arkme_group_member_add.',
+      description: 'List people from the signed-in user\'s Arkme private chats and, when requested, members of other group chats who can be added or invited to one group. Use unchanged group source_ref values from arkme_sources_list. Candidate references are account-bound and must be passed unchanged to arkme_group_member_add.',
       parameters: {
         group_source_ref: { type: 'string', required: true, description: 'Account-bound group_chat source_ref returned by arkme_sources_list.' },
         query: { type: 'string', description: 'Optional display-name filter.' },
         limit: { type: 'integer', description: 'Maximum candidates, 1-50. Defaults to 20.' },
+        group_source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional group_chat source_ref values to expand into member candidates.' },
       },
       output: TEXT_OUTPUT,
       async execute(args, exec) {
         return taggedJSON('Arkme 群成员候选', await ports.listGroupMemberCandidates(args.group_source_ref, {
           ...(args.query === undefined ? {} : { query: args.query }),
           ...(args.limit === undefined ? {} : { limit: args.limit }),
+          ...(args.group_source_refs === undefined ? {} : { groupSourceRefs: args.group_source_refs }),
           signal: exec.signal,
         }))
       },

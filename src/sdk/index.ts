@@ -692,13 +692,14 @@ export class ArkmeSdk {
 
   async listGroupMemberCandidates(
     sourceRef: string,
-    options: { query?: string; limit?: number; signal?: AbortSignal } = {},
+    options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupMemberCandidateList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
     return await this.call<ArkmeGroupMemberCandidateList>('group.member-candidates', {
       sourceRef,
       ...(options.query === undefined ? {} : { query: options.query }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.groupSourceRefs === undefined ? {} : { groupSourceRefs: options.groupSourceRefs.map(value => value.trim()).filter(value => value !== '') }),
     }, options.signal)
   }
 

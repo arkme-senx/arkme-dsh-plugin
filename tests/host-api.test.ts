@@ -40,6 +40,9 @@ describe('group member Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'group.member-candidates', {
       sourceRef: 'group-ref', query: '林', limit: 12.8, userId: 999,
     })
+    await dispatchArkmeHostOperation(service as never, 'group.member-candidates', {
+      sourceRef: 'group-ref', groupSourceRefs: ['peer-group-ref'], userId: 999,
+    })
     await dispatchArkmeHostOperation(service as never, 'group.members.add', {
       sourceRef: 'group-ref', candidateRefs: ['candidate-1'], userId: 999,
     })
@@ -49,6 +52,7 @@ describe('group member Host API dispatch', () => {
     await dispatchArkmeHostOperation(service as never, 'group.bots', { sourceRef: 'group-ref', userId: 999 })
     await dispatchArkmeHostOperation(service as never, 'group.bot.add', { sourceRef: 'group-ref', botRef: 'bot-ref', userId: 999 })
     expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { query: '林', limit: 12.8 })
+    expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { limit: 20, groupSourceRefs: ['peer-group-ref'] })
     expect(service.addGroupMembers).toHaveBeenCalledWith('group-ref', ['candidate-1'])
     expect(service.groupInvitePreview).toHaveBeenCalledWith('group-ref')
     expect(service.listGroupBots).toHaveBeenCalledWith('group-ref')

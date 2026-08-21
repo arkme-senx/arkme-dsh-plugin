@@ -3,7 +3,7 @@ import type { ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList } from '.
 export interface ArkmeGroupToolPort {
   listGroupMemberCandidates(
     sourceRef: string,
-    options?: { query?: string; limit?: number; signal?: AbortSignal },
+    options?: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal },
   ): Promise<ArkmeGroupMemberCandidateList>
   addGroupMembers(
     sourceRef: string,

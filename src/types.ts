@@ -990,8 +990,18 @@ export interface ArkmeGroupMemberCandidate {
   candidateRef: string
   displayName: string
   avatarRef?: string
-  origin: 'private_chat'
-  relation: 'contact' | 'stranger'
+  origin: 'private_chat' | 'group_chat'
+  relation: 'contact' | 'stranger' | 'group'
+  disabled?: boolean
+  alreadyMember?: boolean
+  statusText?: string
+}
+
+export interface ArkmeGroupMemberCandidateGroup {
+  group: ArkmeSourceItem
+  items: ArkmeGroupMemberCandidate[]
+  total: number
+  error?: string
 }
 
 export interface ArkmeGroupBotCandidate {
@@ -1021,6 +1031,7 @@ export interface ArkmeGroupMemberCandidateList {
   hasMore: boolean
   mode: 'direct_add' | 'approval_invite'
   groups: ArkmeSourceItem[]
+  groupCandidates: ArkmeGroupMemberCandidateGroup[]
   contactCount: number
   strangerCount: number
 }

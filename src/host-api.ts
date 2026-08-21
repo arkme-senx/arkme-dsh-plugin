@@ -624,6 +624,7 @@ export async function dispatchArkmeHostOperation(
       {
         ...(stringParam(params, 'query') === '' ? {} : { query: stringParam(params, 'query') }),
         limit: numberParam(params, 'limit', 20),
+        ...(stringListParam(params, 'groupSourceRefs').length === 0 ? {} : { groupSourceRefs: stringListParam(params, 'groupSourceRefs') }),
       },
     )
     case 'group.invite-preview': return await service.groupInvitePreview(

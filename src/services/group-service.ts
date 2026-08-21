@@ -5,6 +5,7 @@ import type {
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidate,
+  ArkmeGroupMemberCandidateGroup,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupInvitePreview,
   ArkmeGroupMemberItem,
@@ -16,7 +17,7 @@ import type {
   ArkmeSourceItem,
 } from '../types.js'
 import { ProfileService } from './profile-service.js'
-import { SourceService } from './source-service.js'
+import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 function numberValue(value: unknown): number {
@@ -33,7 +34,8 @@ interface GroupMemberCandidatePayload {
   groupChatSessionUid: string
   targetUserId: number
   displayName: string
-  privateChatSessionUid: string
+  privateChatSessionUid?: string
+  origin: 'private_chat' | 'group_chat'
 }
 
 export interface GroupInviteTextSender {
@@ -46,6 +48,14 @@ export interface GroupInviteTextSender {
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
   ): Promise<void>
+}
+
+interface RawMemberCandidate {
+  targetUserId: number
+  displayName: string
+  privateChatSessionUid?: string
+  relation: 'contact' | 'stranger' | 'group'
+  origin: 'private_chat' | 'group_chat'
 }
 
 function chatMessageDnd(value: unknown): boolean | undefined {
@@ -98,13 +108,15 @@ export class GroupService {
 
   async listGroupMemberCandidates(
     sourceRef: string,
-    options: { query?: string; limit?: number; signal?: AbortSignal } = {},
+    options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupMemberCandidateList> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持向群聊添加成员', false)
     const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 20)))
     const query = options.query?.trim().toLocaleLowerCase() ?? ''
+    const requestedGroupSourceRefs = [...new Set((options.groupSourceRefs ?? [])
+      .map(value => value.trim()).filter(value => value !== ''))].slice(0, 20)
     const [membersData, directoryData, inviteData] = await Promise.all([
       this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/members/list', { chat_session_uid: source.ownerRef, active_only: true }, session, options.signal,
@@ -134,9 +146,8 @@ export class GroupService {
       const topicId = numberValue(item.rm_subject_id ?? item.shared_topic_id)
       if (topicId > 0 && typeof item.is_contact === 'boolean') contactByTopicId.set(topicId, item.is_contact)
     }
-    const existing = new Set(listValue(objectValue(membersData).items).map(item => numberValue(objectValue(item).user_id)))
-    existing.add(session.userId)
-    const rawCandidates = new Map<number, { displayName: string; privateChatSessionUid: string; relation: 'contact' | 'stranger' }>()
+    const existingMemberUserIds = new Set(listValue(objectValue(membersData).items).map(item => numberValue(objectValue(item).user_id)))
+    const rawCandidates = new Map<number, RawMemberCandidate>()
     for (const raw of privateBundles) {
       const bundle = objectValue(raw)
       const chatSession = objectValue(bundle.session)
@@ -153,24 +164,13 @@ export class GroupService {
       const contactState = numberValue(supplement.contact_state)
       const relation = contactByTopicId.get(privateTopicId) === true || contactState === 1 || contactState === 3
         ? 'contact' as const : 'stranger' as const
-      if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || existing.has(targetUserId)
+      if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || targetUserId === session.userId
         || privateChatSessionUid === '' || displayName === '' || (query !== '' && !displayName.toLocaleLowerCase().includes(query))) continue
-      rawCandidates.set(targetUserId, { displayName, privateChatSessionUid, relation })
+      rawCandidates.set(targetUserId, { targetUserId, displayName, privateChatSessionUid, relation, origin: 'private_chat' })
     }
     const selected = [...rawCandidates.entries()].slice(0, limit)
-    const profiles = await this.profile.publicProfileSummariesByUserIds(selected.map(([userId]) => userId), session, options.signal)
-      .catch(() => new Map())
-    const items: ArkmeGroupMemberCandidate[] = await Promise.all(selected.map(async ([targetUserId, candidate]) => ({
-      candidateRef: await this.sealCandidateRef({
-        version: 1, userId: session.userId, groupChatSessionUid: source.ownerRef, targetUserId,
-        displayName: candidate.displayName, privateChatSessionUid: candidate.privateChatSessionUid,
-      }),
-      displayName: candidate.displayName,
-      ...(profiles.get(targetUserId)?.avatarUrl === undefined
-        ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, targetUserId) }),
-      origin: 'private_chat' as const,
-      relation: candidate.relation,
-    })))
+    const sourceByGroupUid = new Map<string, ArkmeSourceItem>()
+    const groupSessionUidByIndex = new Map<number, string>()
     const groups: ArkmeSourceItem[] = []
     for (const raw of directoryBundles) {
       const bundle = objectValue(raw)
@@ -179,16 +179,110 @@ export class GroupService {
       const groupSessionUid = stringValue(chatSession.chat_session_uid).trim()
       if (groupSessionUid === '' || groupSessionUid === source.ownerRef) continue
       const displayName = stringValue(chatSession.title ?? chatSession.subject_title ?? objectValue(bundle.participant_summary).display_name).trim()
-      groups.push({
+      const groupItem: ArkmeSourceItem = {
         sourceRef: await this.source.sealSourceRef(session.userId, 'group_chat', groupSessionUid, displayName || '群聊'),
+        sourceKey: await this.source.chatDirectorySourceKey(session.userId, groupSessionUid),
         kind: 'group_chat', displayName: displayName || '群聊', activeAtMillis: numberValue(chatSession.updated_at), unreadCount: 0,
-      })
+      }
+      const groupIndex = groups.push(groupItem) - 1
+      groupSessionUidByIndex.set(groupIndex, groupSessionUid)
+      sourceByGroupUid.set(groupSessionUid, groupItem)
+      this.source.setChatSource(session.userId, groupSessionUid, groupItem)
     }
+    try {
+      await this.source.hydrateSourceAvatars(groups, new Map(), groupSessionUidByIndex, session, options.signal)
+    } catch {
+      // Group rows stay usable if avatar decoration is temporarily unavailable.
+    }
+    const requestedGroupSources: ArkmeSourceRefPayload[] = []
+    for (const groupSourceRef of requestedGroupSourceRefs) {
+      const groupSource = await this.source.openSourceRef(groupSourceRef, session.userId)
+      if (groupSource.kind !== 'group_chat' || groupSource.ownerRef === source.ownerRef) continue
+      requestedGroupSources.push(groupSource)
+    }
+    const groupRawByUid = new Map<string, { group: ArkmeSourceItem; raws: RawMemberCandidate[]; total: number; error?: string }>()
+    const groupTargetUserIds = new Set<number>()
+    for (const groupSource of requestedGroupSources) {
+      const group = sourceByGroupUid.get(groupSource.ownerRef) ?? await this.source.sourceItem(groupSource)
+      try {
+        const groupMembersData = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/members/list',
+          { chat_session_uid: groupSource.ownerRef, active_only: true },
+          session,
+          options.signal,
+        )
+        const raws: RawMemberCandidate[] = []
+        const seenUserIds = new Set<number>()
+        for (const rawMember of listValue(groupMembersData.items)) {
+          const member = objectValue(rawMember)
+          const targetUserId = numberValue(member.user_id)
+          if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || targetUserId === session.userId || seenUserIds.has(targetUserId)) continue
+          if (chatMemberStatus(member.status) !== 'active') continue
+          const privateCandidate = rawCandidates.get(targetUserId)
+          if (privateCandidate !== undefined) {
+            if (query === '' || privateCandidate.displayName.toLocaleLowerCase().includes(query)) {
+              raws.push(privateCandidate)
+              groupTargetUserIds.add(targetUserId)
+              seenUserIds.add(targetUserId)
+            }
+            continue
+          }
+          const profileName = stringValue(member.profile_display_name).trim()
+          const displayName = [
+            stringValue(member.remark).trim(),
+            stringValue(member.display_name_snapshot).trim(),
+            profileName === `用户 ${String(targetUserId)}` ? '' : profileName,
+            stringValue(objectValue(member.user_info).nick_name).trim(),
+            String(targetUserId),
+          ].find(value => value !== '' && value !== '成员' && value !== '群成员') ?? '群成员'
+          if (query !== '' && !displayName.toLocaleLowerCase().includes(query)) continue
+          raws.push({ targetUserId, displayName, relation: 'group', origin: 'group_chat' })
+          groupTargetUserIds.add(targetUserId)
+          seenUserIds.add(targetUserId)
+        }
+        groupRawByUid.set(groupSource.ownerRef, { group, raws: raws.slice(0, limit), total: raws.length })
+      } catch (error) {
+        groupRawByUid.set(groupSource.ownerRef, {
+          group, raws: [], total: 0,
+          error: error instanceof Error && error.message.trim() !== '' ? error.message : '群成员加载失败，请重试',
+        })
+      }
+    }
+    const profiles = await this.profile.publicProfileSummariesByUserIds(
+      [...new Set([...selected.map(([userId]) => userId), ...groupTargetUserIds])],
+      session,
+      options.signal,
+    ).catch(() => new Map())
     const preview = objectValue(objectValue(inviteData).preview)
+    const approvalRequired = numberValue(preview.join_mode) === 2
+    const candidateItem = async (targetUserId: number, candidate: RawMemberCandidate): Promise<ArkmeGroupMemberCandidate> => {
+      const alreadyMember = existingMemberUserIds.has(targetUserId)
+      const cannotInvite = approvalRequired && candidate.privateChatSessionUid === undefined
+      return {
+        candidateRef: await this.sealCandidateRef({
+          version: 1, userId: session.userId, groupChatSessionUid: source.ownerRef, targetUserId, origin: candidate.origin,
+          displayName: candidate.displayName, ...(candidate.privateChatSessionUid === undefined ? {} : { privateChatSessionUid: candidate.privateChatSessionUid }),
+        }),
+        displayName: candidate.displayName,
+        ...(profiles.get(targetUserId)?.avatarUrl === undefined
+          ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, targetUserId) }),
+        origin: candidate.origin,
+        relation: candidate.relation,
+        ...(alreadyMember ? { disabled: true, alreadyMember: true } : {}),
+        ...(!alreadyMember && cannotInvite ? { disabled: true, statusText: '无法邀请' } : {}),
+      }
+    }
+    const items: ArkmeGroupMemberCandidate[] = await Promise.all(selected.map(async ([targetUserId, candidate]) => candidateItem(targetUserId, candidate)))
+    const groupCandidates: ArkmeGroupMemberCandidateGroup[] = await Promise.all([...groupRawByUid.values()].map(async value => ({
+      group: value.group,
+      items: await Promise.all(value.raws.map(raw => candidateItem(raw.targetUserId, raw))),
+      total: value.total,
+      ...(value.error === undefined ? {} : { error: value.error }),
+    })))
     return {
       source: await this.source.sourceItem(source), items, total: rawCandidates.size,
       hasMore: rawCandidates.size > items.length,
-      mode: numberValue(preview.join_mode) === 2 ? 'approval_invite' : 'direct_add', groups,
+      mode: numberValue(preview.join_mode) === 2 ? 'approval_invite' : 'direct_add', groups, groupCandidates,
       contactCount: [...rawCandidates.values()].filter(item => item.relation === 'contact').length,
       strangerCount: [...rawCandidates.values()].filter(item => item.relation === 'stranger').length,
     }
@@ -218,6 +312,7 @@ export class GroupService {
       try {
         candidate = await this.openCandidateRef(candidateRef, session.userId, source.ownerRef)
         if (approvalRequired) {
+          if (candidate.privateChatSessionUid === undefined) throw new ArkmePluginError('group-candidate-invite-unavailable', '该对象暂时无法发送群聊邀请', false)
           if (this.inviteSender === undefined || inviteLink === '') throw new ArkmePluginError('group-invite-unavailable', '该群需要发送邀请，但邀请链接暂不可用', true)
           const privateSourceRef = await this.source.sealSourceRef(
             session.userId, 'private_chat', candidate.privateChatSessionUid, candidate.displayName,
@@ -281,11 +376,13 @@ export class GroupService {
     const result: GroupMemberCandidatePayload = {
       version: 1, userId: numberValue(raw.userId), groupChatSessionUid: stringValue(raw.groupChatSessionUid).trim(),
       targetUserId: numberValue(raw.targetUserId),
-      displayName: stringValue(raw.displayName).trim(), privateChatSessionUid: stringValue(raw.privateChatSessionUid).trim(),
+      displayName: stringValue(raw.displayName).trim(),
+      ...(stringValue(raw.privateChatSessionUid).trim() === '' ? {} : { privateChatSessionUid: stringValue(raw.privateChatSessionUid).trim() }),
+      origin: raw.origin === 'group_chat' ? 'group_chat' : 'private_chat',
     }
     if (raw.version !== 1 || result.userId !== expectedUserId || result.groupChatSessionUid !== expectedGroupChatSessionUid
       || !Number.isSafeInteger(result.targetUserId)
-      || result.targetUserId <= 0 || result.targetUserId === expectedUserId || result.displayName === '' || result.privateChatSessionUid === '') {
+      || result.targetUserId <= 0 || result.targetUserId === expectedUserId || result.displayName === '') {
       throw new ArkmePluginError('group-candidate-ref-invalid', '群成员候选引用与当前账号不匹配', false, 403)
     }
     return result

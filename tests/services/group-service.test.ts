@@ -80,6 +80,51 @@ describe('GroupService', () => {
     })
   })
 
+  it('expands another group into addable member candidates', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    const { source, service } = fixture(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      calls.push({ path, body })
+      const data = path.endsWith('/members/list') && body.chat_session_uid === 'group-1'
+        ? { items: [{ user_id: 42, status: 1 }, { user_id: 7, status: 1, display_name_snapshot: '已在群内' }] }
+        : path.endsWith('/members/list') && body.chat_session_uid === 'group-2'
+          ? { items: [
+              { user_id: 7, status: 1, display_name_snapshot: '已在群内' },
+              { user_id: 9, status: 1, display_name_snapshot: '阿九' },
+              { user_id: 42, status: 1, display_name_snapshot: '我' },
+            ] }
+          : path.endsWith('/chats/list')
+            ? { items: [{
+                session: { chat_session_uid: 'group-2', session_kind: 2, title: '前端重构', updated_at: 123 },
+              }] }
+            : path.endsWith('/invite-preview')
+              ? { preview: { join_mode: 1 } }
+              : path.endsWith('/members/add')
+                ? { item: { outcome: 'created' } }
+                : { items: [] }
+      return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+    })
+    const targetRef = await source.sealSourceRef(42, 'group_chat', 'group-1', '研发群')
+    const peerRef = await source.sealSourceRef(42, 'group_chat', 'group-2', '前端重构')
+    const candidates = await service.listGroupMemberCandidates(targetRef, { groupSourceRefs: [peerRef] })
+    expect(candidates.groups).toMatchObject([{ displayName: '前端重构' }])
+    expect(candidates.groupCandidates).toMatchObject([{
+      group: { displayName: '前端重构' },
+      total: 2,
+      items: [
+        { displayName: '已在群内', origin: 'group_chat', relation: 'group', disabled: true, alreadyMember: true },
+        { displayName: '阿九', origin: 'group_chat', relation: 'group' },
+      ],
+    }])
+    const addable = candidates.groupCandidates[0]!.items.find(item => item.displayName === '阿九')!
+    const result = await service.addGroupMembers(targetRef, [addable.candidateRef])
+    expect(result).toMatchObject({ succeededCount: 1, failedCount: 0, results: [{ status: 'added' }] })
+    expect(calls.find(call => call.path.endsWith('/members/add'))?.body).toMatchObject({
+      chat_session_uid: 'group-1', target_user_id: 9, display_name_snapshot: '阿九',
+    })
+  })
+
   it('sends an approval invite through the candidate private chat', async () => {
     const sent: string[] = []
     const { source, service } = fixture(async (input) => {
