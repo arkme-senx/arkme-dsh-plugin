@@ -310,7 +310,11 @@ export class ArkmeService {
   private async refreshChatSessionProjectionBatch(
     pending: Array<[string, number]>,
   ): Promise<Array<[string, number]>> {
-    return await this.realtime.refreshChatSessionProjectionBatch(pending)
+    const failed = await this.realtime.refreshChatSessionProjectionBatch(pending.map(([uid, latestSequence]) => [uid, {
+      latestSequence,
+      notificationHints: [],
+    }]))
+    return failed.map(([uid, projection]) => [uid, projection.latestSequence])
   }
 
   attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {

@@ -44,7 +44,9 @@ describe('Arkme Chat realtime', () => {
       observed.push(notice.state.revision)
       causes.push(notice.cause)
     })
-    await vi.waitFor(() => { expect(runtime.state()).toMatchObject({ connected: true, revision: 1 }) })
+    await vi.waitFor(() => {
+      expect(runtime.state()).toMatchObject({ connected: true, revision: 1, connectionGeneration: 1 })
+    })
 
     const encoder = new TextEncoder()
     stream.enqueue(encoder.encode(`data:\n\ndata: ${JSON.stringify(chatHint)}\n\n`))
@@ -91,7 +93,9 @@ describe('Arkme Chat realtime', () => {
     })
 
     const stop = runtime.start()
-    await vi.waitFor(() => { expect(runtime.state().connected).toBe(true) })
+    await vi.waitFor(() => {
+      expect(runtime.state()).toMatchObject({ connected: true, connectionGeneration: 1 })
+    })
     expect(refreshSession).toHaveBeenCalledOnce()
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(fetchImpl.mock.calls.map(call => new Headers(call[1]?.headers).get('Authorization'))).toEqual([
@@ -209,4 +213,142 @@ describe('Arkme Chat realtime', () => {
       vi.useRealTimers()
     }
   })
+
+  it('increments the connection generation after a broken stream reconnects', async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+    const diagnostics: string[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        streams.push(controller)
+        init?.signal?.addEventListener('abort', () => {
+          try { controller.error(new DOMException('aborted', 'AbortError')) } catch { /* already closed */ }
+        }, { once: true })
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.example.test',
+      readSession: async () => ({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' }),
+      fetchImpl,
+      retryBaseMs: 5,
+      inactivityTimeoutMs: 10_000,
+      leaseDurationMs: 10_000,
+      random: () => 0.5,
+      diagnostic: event => { diagnostics.push(event) },
+    })
+    const stop = runtime.start()
+    await vi.waitFor(() => {
+      expect(runtime.state()).toMatchObject({ connected: true, connectionGeneration: 1 })
+    })
+
+    streams[0]!.close()
+
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(runtime.state()).toMatchObject({ connected: true, connectionGeneration: 2 })
+    })
+    expect(diagnostics).toContain('reconnect_attempt')
+    expect(diagnostics).toContain('sse_disconnected')
+    stop()
+  })
+
+  it('manual reconnect bypasses the network backoff', async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        streams.push(controller)
+        init?.signal?.addEventListener('abort', () => {
+          try { controller.error(new DOMException('aborted', 'AbortError')) } catch { /* already closed */ }
+        }, { once: true })
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.example.test',
+      readSession: async () => ({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' }),
+      fetchImpl,
+      retryBaseMs: 5_000,
+      inactivityTimeoutMs: 10_000,
+      leaseDurationMs: 10_000,
+    })
+    const stop = runtime.start()
+    await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledTimes(1) })
+
+    runtime.reconnect()
+
+    await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledTimes(2) }, { timeout: 500 })
+    expect(runtime.state().connectionGeneration).toBe(2)
+    stop()
+  })
+
+  it('applies the lower jitter bound to retry delays', async () => {
+    vi.useFakeTimers()
+    try {
+      let attempt = 0
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        attempt += 1
+        if (attempt === 1) throw new Error('offline')
+        return new Response(new ReadableStream<Uint8Array>(), {
+          status: 200, headers: { 'Content-Type': 'text/event-stream' },
+        })
+      })
+      const runtime = new ArkmeChatRealtimeRuntime({
+        imBaseUrl: 'https://im.example.test',
+        readSession: async () => ({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' }),
+        fetchImpl,
+        retryBaseMs: 100,
+        random: () => 0,
+        inactivityTimeoutMs: 10_000,
+        leaseDurationMs: 10_000,
+      })
+      const stop = runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(79)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['connect-timeout', 'inactivity-timeout', 'lease-rotation'] as const)(
+    'reconnects after %s',
+    async failureMode => {
+      vi.useFakeTimers()
+      try {
+        const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+          if (failureMode === 'connect-timeout') {
+            return await new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => {
+                reject(new DOMException('aborted', 'AbortError'))
+              }, { once: true })
+            })
+          }
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              init?.signal?.addEventListener('abort', () => {
+                try { controller.error(new DOMException('aborted', 'AbortError')) } catch { /* already closed */ }
+              }, { once: true })
+            },
+          }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+        })
+        const runtime = new ArkmeChatRealtimeRuntime({
+          imBaseUrl: 'https://im.example.test',
+          readSession: async () => ({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' }),
+          fetchImpl,
+          retryBaseMs: 10,
+          random: () => 0.5,
+          connectTimeoutMs: failureMode === 'connect-timeout' ? 20 : 1_000,
+          inactivityTimeoutMs: failureMode === 'inactivity-timeout' ? 20 : 1_000,
+          leaseDurationMs: failureMode === 'lease-rotation' ? 20 : 1_000,
+        })
+        const stop = runtime.start()
+        await vi.advanceTimersByTimeAsync(31)
+        expect(fetchImpl.mock.calls.length).toBeGreaterThanOrEqual(2)
+        stop()
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
 })

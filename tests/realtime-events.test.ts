@@ -29,7 +29,9 @@ describe('Arkme local realtime events', () => {
         listener = next
         return unsubscribe
       },
-      chatRealtimeInitialEvent: () => ({ type: 'reconcile', revision: 1, connected: true }),
+      chatRealtimeInitialEvent: () => ({
+        type: 'reconcile', revision: 1, connected: true, connectionGeneration: 1,
+      }),
     } as unknown as ArkmeService
     const events = new ArkmeRealtimeEvents(service, { expectedPort: 3084, allowNonLoopback: false })
     const response = new FakeResponse()

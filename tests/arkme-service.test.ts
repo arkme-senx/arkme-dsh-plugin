@@ -2050,12 +2050,14 @@ describe('ArkmeService', () => {
     const internal = service as unknown as {
       handleChatRealtimeNotice(notice: {
         cause: 'reconcile'
-        state: { revision: number; connected: boolean }
+        state: { revision: number; connected: boolean; connectionGeneration: number }
       }): void
     }
 
     expect(service.chatRealtimeInitialEvent()).toMatchObject({ type: 'reconcile', refresh: 'if-stale' })
-    internal.handleChatRealtimeNotice({ cause: 'reconcile', state: { revision: 1, connected: true } })
+    internal.handleChatRealtimeNotice({
+      cause: 'reconcile', state: { revision: 1, connected: true, connectionGeneration: 1 },
+    })
     expect(events).toEqual([expect.objectContaining({ type: 'reconcile', refresh: 'none', connected: true })])
   })
 

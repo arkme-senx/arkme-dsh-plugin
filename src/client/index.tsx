@@ -2,17 +2,46 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import './composer-draft-auth-binding.js'
+import { callArkme } from './api.js'
 import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
+import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
 
 export const inject = ['slots']
+
+async function resolveNotificationSource(
+  activation: { sourceRef: string; sourceKey?: string },
+  signal: AbortSignal,
+): Promise<ArkmeSourceItem | undefined> {
+  const matches = (source: ArkmeSourceItem) => source.sourceRef === activation.sourceRef
+    || (activation.sourceKey !== undefined && source.sourceKey === activation.sourceKey)
+  const cached = arkmeChatDirectory.getSnapshot().sources.find(matches)
+  if (cached !== undefined) return cached
+  let cursor: string | undefined
+  for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+    const page = await callArkme<ArkmeSourceList>('sources.list', {
+      directory: 'root',
+      limit: 50,
+      refresh: true,
+      ...(cursor === undefined ? {} : { cursor }),
+    }, signal)
+    const source = page.items.find(matches)
+    if (source !== undefined) return source
+    if (!page.hasMore || page.nextCursor === undefined) return undefined
+    cursor = page.nextCursor
+  }
+  return undefined
+}
 
 /** Register Arkme only through official additive DSH slots. */
 export function apply(ctx: ClientContext): void {
@@ -67,6 +96,32 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
   ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
+  ctx.effect(() => {
+    let disposed = false
+    let activationGeneration = 0
+    let controller: AbortController | undefined
+    const stop = arkmeDesktopNotifications.onActivated(activation => {
+      const generation = ++activationGeneration
+      controller?.abort()
+      const request = new AbortController()
+      controller = request
+      void resolveNotificationSource(activation, request.signal).then(source => {
+        if (disposed || generation !== activationGeneration || source === undefined) return
+        arkmeChatDirectory.upsert(source)
+        arkmeUi.selectSource(source)
+        arkmeNotificationActivation.publish(source)
+        openArkme(undefined)
+      }).catch(error => {
+        if (!request.signal.aborted) console.warn('dsh-arkme: notification_source_resolve_failed', error)
+      })
+    })
+    return () => {
+      disposed = true
+      activationGeneration += 1
+      controller?.abort()
+      stop()
+    }
+  }, 'dsh-arkme: activate message notification sources')
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',

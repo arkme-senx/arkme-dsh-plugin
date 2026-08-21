@@ -893,7 +893,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)
       if (generation === timelineGenerationRef.current && !hasCachedTimeline) setError(errorMessage(caught))
     })
-  }, [authenticated, source?.sourceRef])
+  }, [authenticated, source?.sourceRef, ui.chatRevision])
   useEffect(() => {
     if (!authenticated || source === undefined || timelineStateSourceRef !== source.sourceRef) return
     if (conversationCacheRef.current.getTimeline(source.sourceRef) === undefined) return
