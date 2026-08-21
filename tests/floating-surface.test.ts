@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
+import { ArkmeConversationSurface } from '../src/client/ArkmeConversationSurface.js'
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
   aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader,
@@ -11,23 +11,18 @@ import {
 } from '../src/client/ArkmeSidebar.js'
 import type { ArkmeTimelineItem, ArkmeUserProfile } from '../src/types.js'
 
-describe('Arkme floating conversation frame', () => {
-  it('keeps a uniform floating inset inside a wide DSH conversation column', () => {
-    expect(calculateArkmeFloatingFrame({ left: 280, top: 0, width: 1232, height: 674 })).toEqual({
-      left: 296,
-      top: 16,
-      width: 1200,
-      height: 642,
-    })
-  })
-
-  it('keeps compact margins when the DSH conversation column is narrow', () => {
-    expect(calculateArkmeFloatingFrame({ left: 64, top: 0, width: 640, height: 480 })).toEqual({
-      left: 80,
-      top: 16,
-      width: 608,
-      height: 448,
-    })
+describe('Arkme persistent conversation frame', () => {
+  it('renders inline without the former floating portal geometry', () => {
+    const markup = renderToStaticMarkup(createElement(ArkmeConversationSurface, {
+      close: () => {},
+      initialAuth: { status: 'authenticated', environment: 'prod', userId: 1 },
+      openedFromSession: undefined,
+      useSessions: (selector: (state: { current: string }) => unknown) => selector({ current: 'session-1' }),
+      renderSlot: () => null,
+    } as never))
+    expect(markup).toContain('data-arkme-owned="persistent-conversation-compat"')
+    expect(markup).not.toContain('position:fixed')
+    expect(markup).not.toContain('workspace-card')
   })
 
   it('maps the host auth snapshot directly to login or content', () => {

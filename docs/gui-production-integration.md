@@ -4,25 +4,26 @@ This branch implements the selected Arkme desktop visual direction in the produc
 
 ## Modification boundary
 
-- The entry remains the official DSH `sidebar.footer.action` slot registered by the Arkme client bundle.
-- The complete transparent Arkme wordmark occupies the top-left `sidebar.brand.mark` slot and the adjacent `sidebar.brand.name` slot intentionally renders nothing. The square `conversation.hero.brand.mark` slot keeps the compact Arkme mark because DSH owns the adjacent `探索未至之境` headline and exposes no title slot.
+- Arkme is the permanent product shell while the plugin is enabled. It registers the public DSH `sidebar`, `conversation`, and `details` slots during client initialization; registration does not depend on an open/closed UI state.
+- The official DSH `ui-layout` plugin remains the `root` owner. Arkme shadows only its visible child seats: the sidebar becomes the compact Arkme feature rail, conversation becomes the Arkme directory plus content surface, and details is claimed empty and kept closed.
+- Login, loading, error, existing-account, and first-user states render inside the same permanent Arkme shell. Escape, Session navigation, refresh, and notification activation never reveal the official DSH sidebar or conversation.
 - The product navigation and all new visual styles render below nodes marked with `data-arkme-owned`.
-- No global stylesheet, DSH package import, DSH source patch, or write to a DSH repository is used.
-- The existing floating surface still measures the host conversation region at runtime. That compatibility adapter is pre-existing plugin code; this branch does not patch the measured DSH element.
-- DSH top chrome, native sidebar dimensions, native session list, and native conversation components remain owned by DSH and are intentionally unchanged.
+- No global stylesheet, DSH private-source import, DSH source patch, or write to a DSH repository is used.
+- Arkme no longer queries the host DOM, measures the host conversation region, or portals a floating card over DSH. The permanent conversation owner renders inline at full width and height.
+- DSH continues to own root geometry, theme presentation, Sessions, Workspaces, Agents, Tools, and Host transports. Those runtime capabilities remain mounted but their official sidebar/conversation presentation is not visible.
 
 ## Supported visual routes
 
 | Route | Layout inside the Arkme surface | Production owner | Status |
 | --- | --- | --- | --- |
-| Conversations | Feature rail + conversation directory + content | Existing Arkme source directory and timeline | Implemented |
+| Conversations | Permanent feature rail + conversation directory + content | Existing Arkme source directory and timeline | Implemented |
 | Recordings | Feature rail + full-width recording page | Existing recording calendar/day API | Implemented with the updated Demo's date browser, selected-day list, day timeline, and content tabs |
 | Search | Feature rail + full-width search page | Existing record search and AI video API | Implemented with the existing search actions and history |
 | Calendar | Feature rail + floating month calendar + day-content panel | Baseline calendar bucket/day APIs | Implemented with real counts, date switching, paging, loading, empty, and error states |
 | Marketplace | Feature rail + full-width marketplace page | Existing Arkme marketplace | Implemented as the real search/install/uninstall marketplace |
 | Tasks | Not rendered | No stable task-list/session contract in the plugin | Deferred; no mock implementation |
 
-The conversation directory is mounted only in conversation mode. It is unmounted for recordings, search, calendar, and plugins so its asynchronous source restoration cannot force a utility page back to the conversation layout.
+The feature rail remains mounted for every route. The conversation directory is mounted only in conversation mode and is unmounted for recordings, search, calendar, and plugins so its asynchronous source restoration cannot force a utility page back to the conversation layout.
 
 The conversation route keeps the existing production composer for this iteration. Its add-content `+` is moved to the far-left edge of the toolbar, while the remaining redesign is limited to the surrounding three-column shell, directory density, header alignment, message typography and bubbles, member drawer alignment, and list metadata placement.
 
@@ -41,6 +42,6 @@ The plugin page keeps the production extension operations. The embedded discover
 
 The final acceptance artifact must be an immutable `.tgz` built from this worktree and installed into a fresh profile of an unmodified supported DSH runtime. A standalone Vite preview is not acceptance evidence.
 
-Final acceptance used the rebased `@senguoyun/dsh-arkme@0.1.11` package as an immutable `.tgz` installed through the official DSH plugin command into a fresh isolated DSH home. The runtime was a clean `@deepseek-ai/dsh@0.1.0-rc.8` install with no runtime-level Arkme dependency; no DSH checkout was created or modified.
+Final acceptance used the unchanged-version `@senguoyun/dsh-arkme@0.1.11` package as an immutable `.tgz` installed through the official DSH plugin command into a fresh isolated DSH home. The runtime was a clean `@deepseek-ai/dsh@0.1.1-rc.1` install; no DSH checkout was created or modified.
 
-Typecheck, production build, and the complete test suite passed. The suite result is 152 test files passed and 3 skipped, with 837 tests passed and 3 skipped. Saved Demo/production comparisons remain in `qa/`; final host-integration checks were performed at `http://127.0.0.1:5193/`.
+Typecheck, production build, and the complete test suite passed. The suite result is 157 test files passed and 3 skipped, with 861 tests passed and 3 skipped. Browser acceptance verified cold load, authenticated conversation rendering, route switching, and refresh: the permanent Arkme sidebar/workspace remained the visible winners, the sidebar settled at the official 56px compact width, and neither `DSH Local Build` nor `探索未至之境` appeared.

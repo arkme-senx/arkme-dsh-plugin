@@ -10,8 +10,9 @@ import type { Icon } from '@phosphor-icons/react/lib'
 import { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
 import { arkmeUi } from './ui-controller.js'
 
-interface ArkmeProductNavigationProps {
+export interface ArkmeProductNavigationProps {
   compact: boolean
+  hosted?: boolean
   currentSessionId?: string | undefined
 }
 
@@ -56,6 +57,9 @@ const styles: Record<string, CSSProperties> = {
     borderRight: 0,
     borderBottom: '1px solid #e7e7e9',
   },
+  hostedRail: {
+    width: '100%', minWidth: 0, padding: '16px 4px 12px', borderRight: 0,
+  },
   button: {
     position: 'relative',
     minHeight: 57,
@@ -75,6 +79,7 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: 'none',
   },
   compactButton: { minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
+  hostedButton: { minHeight: 52, padding: '6px 2px', borderRadius: 13 },
   activeButton: { background: '#f1f2f6', color: '#151722' },
   activeMarker: {
     position: 'absolute',
@@ -85,11 +90,12 @@ const styles: Record<string, CSSProperties> = {
     background: '#151722',
   },
   compactMarker: { left: '50%', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
+  hostedMarker: { left: -5 },
   label: { fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap' },
 }
 
 /** Arkme-owned navigation rendered wholly inside the plugin surface. */
-export function ArkmeProductNavigation({ compact, currentSessionId }: ArkmeProductNavigationProps) {
+export function ArkmeProductNavigation({ compact, hosted = false, currentSessionId }: ArkmeProductNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const activeId = ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
@@ -115,7 +121,7 @@ export function ArkmeProductNavigation({ compact, currentSessionId }: ArkmeProdu
   return <nav
       data-arkme-owned="product-navigation"
       aria-label="Arkme 功能导航"
-      style={{ ...styles.rail, ...(compact ? styles.compactRail : {}) }}
+      style={{ ...styles.rail, ...(compact ? styles.compactRail : {}), ...(hosted ? styles.hostedRail : {}) }}
     >
       {items.map(item => {
         const ItemIcon = item.icon
@@ -124,10 +130,19 @@ export function ArkmeProductNavigation({ compact, currentSessionId }: ArkmeProdu
           key={item.id}
           type="button"
           aria-current={active ? 'page' : undefined}
-          style={{ ...styles.button, ...(compact ? styles.compactButton : {}), ...(active ? styles.activeButton : {}) }}
+          style={{
+            ...styles.button,
+            ...(compact ? styles.compactButton : {}),
+            ...(hosted ? styles.hostedButton : {}),
+            ...(active ? styles.activeButton : {}),
+          }}
           onClick={() => { activate(item.id) }}
         >
-          {active && <span aria-hidden style={{ ...styles.activeMarker, ...(compact ? styles.compactMarker : {}) }} />}
+          {active && <span aria-hidden style={{
+            ...styles.activeMarker,
+            ...(compact ? styles.compactMarker : {}),
+            ...(hosted ? styles.hostedMarker : {}),
+          }} />}
           <ItemIcon size={22} weight="regular" aria-hidden />
           <span style={styles.label}>{item.label}</span>
         </button>

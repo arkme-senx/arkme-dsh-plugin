@@ -36,6 +36,14 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('margin-left:auto')
   })
 
+  it('fits the permanent DSH sidebar seat without rendering official sidebar chrome', () => {
+    const markup = renderToStaticMarkup(<ArkmeProductNavigation hosted compact={false} currentSessionId="session-1" />)
+    expect(markup).toContain('width:100%')
+    expect(markup).toContain('min-height:52px')
+    expect(markup).toContain('aria-label="Arkme 功能导航"')
+    expect(markup).not.toContain('DSH')
+  })
+
   it('composes the desktop client as navigation, directory, and main content inside one plugin surface', () => {
     arkmeUi.showConversations()
     const markup = renderToStaticMarkup(<ArkmeSurface
@@ -61,6 +69,18 @@ describe('Arkme product navigation', () => {
     />)
     expect(arkoMarkup).toContain('data-arkme-owned="directory-pane"')
     expect(arkoMarkup).toContain('aria-label="Arkme 会话列表"')
+  })
+
+  it('lets the permanent conversation owner render directory and content without duplicating the product rail', () => {
+    arkmeUi.showConversations()
+    const markup = renderToStaticMarkup(<ArkmeSurface
+      productNavigation={false}
+      initialAuth={{ status: 'authenticated', environment: 'prod', userId: 1 }}
+      currentSessionId="session-1"
+    />)
+    expect(markup).not.toContain('data-arkme-owned="product-navigation"')
+    expect(markup).toContain('data-arkme-owned="directory-pane"')
+    expect(markup).toContain('role="region"')
   })
 
   it('keeps the conversation visible under the calendar overlay and removes it from standalone utility pages', () => {
