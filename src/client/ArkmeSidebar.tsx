@@ -27,7 +27,7 @@ import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichConten
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
-import { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
+import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
   appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
   truncateArkmeSourceBreadcrumbTrail,
@@ -1535,7 +1535,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface />
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface /></div>
-          : ui.mode === 'extensions' ? <ArkmeExtensionCenter
+          : ui.mode === 'extensions' ? <ArkmeMarketplace
             displayMode="page"
             {...(currentSessionId === undefined ? {} : { currentSessionId })}
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}

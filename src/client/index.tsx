@@ -192,7 +192,12 @@ export { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 export { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 export { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
-export { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
+// Keep the legacy export as a compatibility alias for existing consumers while
+// the primary module and public terminology move to Marketplace.
+export {
+  ArkmeMarketplace,
+  ArkmeMarketplace as ArkmeExtensionCenter,
+} from './ArkmeMarketplace.js'
 export { ArkmeSharedExtensionDetail } from './ArkmeSharedExtensionDetail.js'
 export { consumeExtensionShareDeepLink, extensionShareRefFromHash } from './extension-share-deeplink.js'
 export {

@@ -19,7 +19,7 @@ This branch implements the selected Arkme desktop visual direction in the produc
 | Recordings | Feature rail + full-width recording page | Existing recording calendar/day API | Implemented with the updated Demo's date browser, selected-day list, day timeline, and content tabs |
 | Search | Feature rail + full-width search page | Existing record search and AI video API | Implemented with the existing search actions and history |
 | Calendar | Feature rail + floating month calendar + day-content panel | Baseline calendar bucket/day APIs | Implemented with real counts, date switching, paging, loading, empty, and error states |
-| Plugins | Feature rail + full-width plugin page | Existing Arkme extension center | Implemented as the real search/install/uninstall center |
+| Marketplace | Feature rail + full-width marketplace page | Existing Arkme marketplace | Implemented as the real search/install/uninstall marketplace |
 | Tasks | Not rendered | No stable task-list/session contract in the plugin | Deferred; no mock implementation |
 
 The conversation directory is mounted only in conversation mode. It is unmounted for recordings, search, calendar, and plugins so its asynchronous source restoration cannot force a utility page back to the conversation layout.

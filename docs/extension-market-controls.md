@@ -1,6 +1,6 @@
 # Extension market controls
 
-The extension center separates three different lifecycle operations:
+The marketplace separates three different lifecycle operations:
 
 - install/update writes a verified extension into the current DSH Profile;
 - enable/disable changes whether an installed extension should run;

@@ -1450,7 +1450,7 @@ export function extensionEnableUnavailable(
   return enabled && item?.unavailable !== undefined
 }
 
-export function ArkmeExtensionCenter({
+export function ArkmeMarketplace({
   currentSessionId, currentUserId, shareRef, onShareExit, onClose,
   displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
 }: {
@@ -2268,11 +2268,11 @@ export function ArkmeExtensionCenter({
   <section
     style={displayMode === 'page' ? styles.pageDialog : styles.dialog}
     {...(displayMode === 'dialog' ? { role: 'dialog', 'aria-modal': true } : { role: 'region' })}
-    aria-labelledby="arkme-extension-center-title"
+    aria-labelledby="arkme-marketplace-title"
   >
   <div style={styles.shell} aria-label="Arkme 市集">
     {displayMode === 'dialog' && <header style={styles.header}>
-      <h2 id="arkme-extension-center-title" style={styles.title}>市集</h2>
+      <h2 id="arkme-marketplace-title" style={styles.title}>市集</h2>
       {detail?.share !== undefined && <button
         type="button"
         style={{ ...styles.iconButton, position: 'relative' }}
@@ -2288,7 +2288,7 @@ export function ArkmeExtensionCenter({
       ><CloseIcon /></button>
     </header>}
     {displayMode === 'page' && <header style={styles.marketPageHeader} data-market-header-layer="primary">
-      <h2 id="arkme-extension-center-title" style={styles.marketPageTitle}>市集</h2>
+      <h2 id="arkme-marketplace-title" style={styles.marketPageTitle}>市集</h2>
       {renderTabNavigation(true)}
     </header>}
     {displayMode === 'dialog' && renderTabNavigation(false)}

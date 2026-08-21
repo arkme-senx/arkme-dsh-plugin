@@ -1,12 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentType } from 'react'
 import { describe, expect, it } from 'vitest'
-import * as extensionCenterModule from '../../src/client/ArkmeExtensionCenter.js'
+import * as marketplaceModule from '../../src/client/ArkmeMarketplace.js'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT, ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH,
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
-  ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
+  ARKME_EXTENSION_RESTART_SURFACE, ArkmeMarketplace, ArkmeExtensionRestartDialog,
   actionableExtensionUpdates, ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger,
   ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionLifecycleRow, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
@@ -15,14 +15,14 @@ import {
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
   extensionNativeInstallWarning, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
-} from '../../src/client/ArkmeExtensionCenter.js'
+} from '../../src/client/ArkmeMarketplace.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
 import type { ArkmeMyExtensionItem } from '../../src/extensions/owned-types.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
 import type { ArkmeExtensionPreviewItem } from '../../src/extensions/types.js'
 
-const previewModule = extensionCenterModule as unknown as {
+const previewModule = marketplaceModule as unknown as {
   ArkmeExtensionPreviewGallery?: ComponentType<{
     extensionId: string
     extensionName: string
@@ -33,7 +33,7 @@ const previewModule = extensionCenterModule as unknown as {
   ArkmeExtensionManifestDetails?: ComponentType<{ manifest: unknown }>
 }
 
-describe('Arkme extension market UI', () => {
+describe('Arkme marketplace UI', () => {
   it('treats missing manifest permissions as no declared permissions', () => {
     const ManifestDetails = previewModule.ArkmeExtensionManifestDetails
     expect(ManifestDetails).toBeTypeOf('function')
@@ -58,7 +58,7 @@ describe('Arkme extension market UI', () => {
   })
 
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
-    const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
+    const html = renderToStaticMarkup(<ArkmeMarketplace onClose={() => {}} />)
 
     expect(html).toContain('aria-label="Arkme 市集"')
     expect(html).toContain('role="dialog"')
@@ -98,7 +98,7 @@ describe('Arkme extension market UI', () => {
   })
 
   it('renders the marketplace as a page with separate visible category and sort entries', () => {
-    const html = renderToStaticMarkup(<ArkmeExtensionCenter displayMode="page" />)
+    const html = renderToStaticMarkup(<ArkmeMarketplace displayMode="page" />)
     expect(html).toContain('role="region"')
     expect(html).not.toContain('aria-modal="true"')
     expect(html.match(/data-market-header-layer=/g)).toHaveLength(2)
@@ -787,7 +787,7 @@ describe('Arkme extension market UI', () => {
   })
 
   it('does not render the former heavy install progress bar', () => {
-    const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
+    const html = renderToStaticMarkup(<ArkmeMarketplace onClose={() => {}} />)
     expect(html).not.toContain('aria-label="扩展安装进度"')
   })
 
