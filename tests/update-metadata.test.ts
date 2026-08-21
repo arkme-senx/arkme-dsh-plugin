@@ -11,9 +11,9 @@ describe('published update metadata', () => {
     }
 
     expect(manifest.name).toBe('@senguoyun/dsh-arkme')
-    expect(manifest.version).toBe('0.1.16')
+    expect(manifest.version).toBe('0.1.13')
     expect(manifest.publishConfig).toBeUndefined()
-    expect(manifest.arkme?.updateNotice?.releaseNotesUrl).toBe('https://arkme.ai/releases/dsh-arkme/0.1.16')
+    expect(manifest.arkme?.updateNotice?.releaseNotesUrl).toBe('https://arkme.ai/releases/dsh-arkme/0.1.13')
     expect(JSON.stringify(manifest)).not.toContain('registry.npmjs.org')
     expect(JSON.stringify(manifest)).not.toContain('npmjs.com')
   })
