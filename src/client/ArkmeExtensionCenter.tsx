@@ -26,7 +26,8 @@ import { arkmeTheme } from './arkme-theme.js'
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
 export const ARKME_EXTENSION_BRAND_GREEN = '#09B83E'
-export const ARKME_EXTENSION_PRIMARY_ACTION_BG = 'var(--dsw-alias-label-primary, #292929)'
+export const ARKME_EXTENSION_PRIMARY_ACTION_BG = arkmeTheme.primaryAction
+export const ARKME_EXTENSION_PRIMARY_ACTION_FG = arkmeTheme.onPrimaryAction
 
 export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: string): 'initial' | 'refresh' {
   return loadedTabs.has(target) ? 'refresh' : 'initial'
@@ -110,7 +111,8 @@ const styles: Record<string, CSSProperties> = {
   },
   installSmall: {
     height: 28, flex: 'none', alignSelf: 'center', padding: '0 12px', border: 0, borderRadius: 8,
-    background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: '#fff', font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+    background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: ARKME_EXTENSION_PRIMARY_ACTION_FG,
+    font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
   iconSmall: {
     height: 28, display: 'inline-flex', alignItems: 'center', flex: 'none', padding: '0 10px',
@@ -175,7 +177,7 @@ const styles: Record<string, CSSProperties> = {
   detailConfirmActions: { display: 'flex', gap: 8, marginTop: 9 },
   primaryButton: {
     height: 34, flex: 'none', padding: '0 17px', border: 0, borderRadius: 9, background: ARKME_EXTENSION_PRIMARY_ACTION_BG,
-    color: '#fff', font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    color: ARKME_EXTENSION_PRIMARY_ACTION_FG, font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
   },
   loadingButton: {
     width: 28, height: 28, flex: 'none', alignSelf: 'center', display: 'grid', placeItems: 'center',

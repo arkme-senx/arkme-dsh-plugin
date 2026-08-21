@@ -3,7 +3,8 @@ import type { ComponentType } from 'react'
 import { describe, expect, it } from 'vitest'
 import * as extensionCenterModule from '../../src/client/ArkmeExtensionCenter.js'
 import {
-  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ArkmeExtensionCenter, ArkmeExtensionToggle, ExtensionCard,
+  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
+  ArkmeExtensionCenter, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionDirectInstallTarget,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
@@ -153,8 +154,9 @@ describe('Arkme extension market UI', () => {
     )
   })
 
-  it('uses a dark primary action and the shared accessible switch proportions', () => {
-    expect(ARKME_EXTENSION_PRIMARY_ACTION_BG).toContain('#292929')
+  it('uses the client semantic primary action pair and the shared accessible switch proportions', () => {
+    expect(ARKME_EXTENSION_PRIMARY_ACTION_BG).toContain('--dsw-alias-button-primary-fill')
+    expect(ARKME_EXTENSION_PRIMARY_ACTION_FG).toContain('--dsw-alias-label-primary-inverted')
     const html = renderToStaticMarkup(<ArkmeExtensionToggle
       item={{
         extensionId: 'ext-1', installedVersion: '1.0.0',
@@ -174,6 +176,27 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('width:40px')
     expect(html).toContain('height:22px')
     expect(html).toContain('translateX(18px)')
+  })
+
+  it('keeps fallback extension icons and install actions theme-aware', () => {
+    const html = renderToStaticMarkup(<ExtensionCard
+      item={{
+        extension_id: 'ext-no-icon', name: '无图标扩展', description: '', visibility: 'public', version: '1.0.0',
+        manifest: {
+          format: 'arkme-cordis-extension', format_version: 1, name: '无图标扩展', description: '', version: '1.0.0',
+          runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: false },
+          permissions: [], entrypoints: { host: 'host.js' },
+        },
+      }}
+      actionLabel="安装"
+      onClick={() => {}}
+      onAction={() => {}}
+    />)
+
+    expect(html).toContain('--dsw-alias-bg-module-platform')
+    expect(html).toContain('--dsw-alias-button-primary-fill')
+    expect(html).toContain('--dsw-alias-label-primary-inverted')
+    expect(html).not.toContain('--dsw-alias-fill-secondary')
   })
 
   it('renders only the version in catalog card metadata', () => {

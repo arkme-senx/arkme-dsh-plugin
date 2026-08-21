@@ -20,6 +20,7 @@ import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
+import { arkmeTheme } from './arkme-theme.js'
 
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
@@ -55,14 +56,16 @@ export function reconcileArkmeTopicSelection(
 }
 
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #242629)',
-  secondary: 'var(--dsw-alias-label-secondary, #8a9099)',
-  caption: 'var(--dsw-alias-label-caption, #b0b5bc)',
-  border: 'var(--dsw-alias-border-l1, #eceef0)',
-  surface: 'var(--dsw-alias-bg-base, rgba(255,255,255,.97))',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  caption: arkmeTheme.caption,
+  border: arkmeTheme.borderSoft,
+  surface: arkmeTheme.menu,
+  input: arkmeTheme.input,
 }
 
 export const ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT = 'min(550px, calc(100vh - 112px))'
+export const ARKME_TOPIC_DIRECTORY_SEARCH_BG = arkmeTheme.input
 
 const styles: Record<string, CSSProperties> = {
   trigger: {
@@ -71,8 +74,8 @@ const styles: Record<string, CSSProperties> = {
     background: 'transparent', color: colors.secondary, cursor: 'pointer',
   },
   triggerActive: {
-    color: 'var(--dsw-alias-state-success, #176d3d)',
-    background: 'var(--dsw-alias-fill-secondary, rgba(23,109,61,.08))',
+    color: arkmeTheme.accent,
+    background: arkmeTheme.accentSoft,
   },
   popover: {
     position: 'absolute', zIndex: 12, top: 48, right: 48,
@@ -96,7 +99,7 @@ const styles: Record<string, CSSProperties> = {
   search: {
     height: 34, display: 'flex', alignItems: 'center', gap: 8,
     margin: '0 14px 10px', padding: '0 10px', boxSizing: 'border-box', borderRadius: 9,
-    background: 'var(--dsw-alias-fill-secondary, #f3f4f5)', color: colors.caption,
+    background: ARKME_TOPIC_DIRECTORY_SEARCH_BG, color: colors.caption,
   },
   searchInput: {
     width: '100%', minWidth: 0, border: 0, outline: 0, padding: 0,

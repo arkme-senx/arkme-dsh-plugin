@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import { arkmeTheme } from './arkme-theme.js'
 
 export interface ArkmeTopicCreateDialogProps {
   mode: 'topic' | 'child'
@@ -11,18 +12,20 @@ export interface ArkmeTopicCreateDialogProps {
 export const ARKME_TOPIC_CREATE_ACTION_COLOR = '#09B83E'
 
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #242629)',
-  secondary: 'var(--dsw-alias-label-secondary, #6f747b)',
-  caption: 'var(--dsw-alias-label-caption, #a3a8ae)',
-  border: 'var(--dsw-alias-border-l1, #dfe2e5)',
+  text: arkmeTheme.text,
+  secondary: arkmeTheme.secondary,
+  caption: arkmeTheme.caption,
+  border: arkmeTheme.borderSoft,
   action: ARKME_TOPIC_CREATE_ACTION_COLOR,
-  surface: 'var(--dsw-specific-dialog-fill, #fff)',
+  surface: arkmeTheme.menu,
+  input: arkmeTheme.input,
+  actionForeground: arkmeTheme.foreground,
 }
 
 const styles: Record<string, CSSProperties> = {
   backdrop: {
     position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: 16, boxSizing: 'border-box', background: 'rgba(19, 22, 26, 0.34)',
+    padding: 16, boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
   },
   dialog: {
     width: 420, maxWidth: 'calc(100vw - 32px)', padding: 16, boxSizing: 'border-box', borderRadius: 12,
@@ -40,20 +43,20 @@ const styles: Record<string, CSSProperties> = {
   label: { color: colors.secondary, fontSize: 13, lineHeight: '18px' },
   input: {
     width: '100%', height: 40, padding: '0 12px', boxSizing: 'border-box', border: `1px solid ${colors.border}`,
-    borderRadius: 8, outline: 0, background: 'transparent', color: colors.text, font: 'inherit',
+    borderRadius: 8, outline: 0, background: colors.input, color: colors.text, font: 'inherit',
     fontSize: 14, lineHeight: '20px',
   },
-  error: { margin: '10px 0 0', color: '#c2413b', fontSize: 12, lineHeight: '18px' },
+  error: { margin: '10px 0 0', color: arkmeTheme.danger, fontSize: 12, lineHeight: '18px' },
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20 },
   button: {
     minWidth: 65, height: 36, padding: '0 14px', borderRadius: 8, cursor: 'pointer',
     font: 'inherit', fontSize: 14, fontWeight: 500,
   },
   cancel: { border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text },
-  confirm: { border: 0, background: colors.action, color: colors.surface },
+  confirm: { border: 0, background: colors.action, color: colors.actionForeground },
   confirmDisabled: {
-    background: 'var(--dsw-alias-brand-disabled, #a7dfbd)',
-    color: 'rgba(255, 255, 255, 0.72)', cursor: 'default',
+    background: arkmeTheme.accentSoft,
+    color: arkmeTheme.tertiary, cursor: 'default',
   },
 }
 

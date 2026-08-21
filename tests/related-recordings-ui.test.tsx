@@ -4,6 +4,7 @@ import {
   groupRelatedRecordings,
   isCurrentRelatedRecordingRequest,
   mergeRelatedRecordingItems,
+  ARKME_RELATED_RECORDING_TRANSCRIPT_BG,
   RelatedRecordingDetail,
   RelatedRecordingsPanel,
   shouldShowRelatedRecordingsEntry,
@@ -87,6 +88,9 @@ describe('related recordings UI', () => {
     const incoming = renderToStaticMarkup(<RelatedRecordingDetail item={recording('incoming-1', true)} onClose={() => undefined} />)
     expect(incoming).toContain('对方共享 · 只读')
     expect(incoming).not.toContain('共享给对方')
+    expect(owner).toContain('--dsw-specific-menu')
+    expect(ARKME_RELATED_RECORDING_TRANSCRIPT_BG).toContain('--dsw-alias-bg-module-platform')
+    expect(ARKME_RELATED_RECORDING_TRANSCRIPT_BG).not.toContain('--dsw-alias-bg-subtle')
   })
 
   it('deduplicates overlapping pages and rejects stale contact responses', () => {

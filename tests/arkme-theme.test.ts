@@ -7,7 +7,8 @@ describe('Arkme theme contract', () => {
       arkmeTheme.base, arkmeTheme.layer1, arkmeTheme.layer2, arkmeTheme.layer3,
       arkmeTheme.sidebar, arkmeTheme.input, arkmeTheme.menu,
       arkmeTheme.messageOther, arkmeTheme.subtle,
-      arkmeTheme.elevated, arkmeTheme.hover, arkmeTheme.active,
+      arkmeTheme.elevated, arkmeTheme.primaryAction, arkmeTheme.onPrimaryAction,
+      arkmeTheme.hover, arkmeTheme.active,
       arkmeTheme.text, arkmeTheme.secondary, arkmeTheme.tertiary, arkmeTheme.caption,
       arkmeTheme.border, arkmeTheme.borderSoft, arkmeTheme.accentSoft,
       arkmeTheme.infoSoft, arkmeTheme.dangerSoft, arkmeTheme.warningSoft,
@@ -16,6 +17,8 @@ describe('Arkme theme contract', () => {
     expect(themeSensitive.every(value => value.startsWith('var(--dsw-'))).toBe(true)
     expect(arkmeTheme.messageOwn).toContain('--arkme-chat-self-bubble')
     expect(arkmeTheme.messageOwn).toContain('--dsw-specific-bubble')
+    expect(arkmeTheme.primaryAction).toContain('--dsw-alias-button-primary-fill')
+    expect(arkmeTheme.onPrimaryAction).toContain('--dsw-alias-label-primary-inverted')
   })
 
   it('keeps DSH as the only theme owner', () => {

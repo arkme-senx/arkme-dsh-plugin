@@ -4,7 +4,8 @@ import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
 import {
-  ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT, ArkmeTopicDirectoryPopover, filterArkmeTopicSources,
+  ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT, ARKME_TOPIC_DIRECTORY_SEARCH_BG,
+  ArkmeTopicDirectoryPopover, filterArkmeTopicSources,
   reconcileArkmeTopicSelection,
 } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import {
@@ -117,7 +118,11 @@ describe('topic create UI', () => {
     expect(root).toContain('确认')
     expect(root).toContain('font-weight:500')
     expect(`${child}${root}`).not.toContain('话题磁铁')
-    expect(`${child}${root}`).toContain('#a7dfbd')
+    expect(`${child}${root}`).toContain('--dsw-specific-menu')
+    expect(`${child}${root}`).toContain('--dsw-specific-input-major')
+    expect(`${child}${root}`).toContain('--dsw-alias-state-success-tertiary')
+    expect(`${child}${root}`).not.toContain('--dsw-specific-dialog-fill')
+    expect(`${child}${root}`).not.toContain('--dsw-alias-brand-disabled')
     expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#09B83E')
   })
 
@@ -177,6 +182,9 @@ describe('topic create UI', () => {
     expect(markup).not.toContain('position:absolute')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).toContain('100vh')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).not.toContain('100%')
+    expect(ARKME_TOPIC_DIRECTORY_SEARCH_BG).toContain('--dsw-specific-input-major')
+    expect(markup).not.toContain('--dsw-alias-state-success,')
+    expect(markup).not.toContain('--dsw-alias-fill-secondary')
     expect(markup).not.toContain('选择发送目标')
   })
 

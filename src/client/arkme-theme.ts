@@ -15,6 +15,8 @@ export const arkmeTheme = {
   messageOther: 'var(--dsw-specific-bubble, var(--dsw-alias-bg-layer-2, #f0f2f5))',
   subtle: 'var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))',
   elevated: 'var(--dsw-alias-button-elevated-fill, var(--dsw-alias-bg-layer-2, #ffffff))',
+  primaryAction: 'var(--dsw-alias-button-primary-fill, #17191c)',
+  onPrimaryAction: 'var(--dsw-alias-label-primary-inverted, #ffffff)',
   hover: 'var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06))',
   active: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
   text: 'var(--dsw-alias-label-primary, #17191c)',
