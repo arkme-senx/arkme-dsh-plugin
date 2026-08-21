@@ -28,16 +28,18 @@ describe('contact add QR interoperability', () => {
 describe('contact add dialog layout', () => {
   it('reserves the result-state height without adding a dialog scrollbar', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
-    expect(source).toContain("height: 'min(580px, calc(100% - 4px))'")
+    expect(source).toContain("height: 'min(620px, calc(100% - 4px))'")
     expect(source).toContain("contactDialogBody: { flex: 1, minHeight: 0, overflow: 'hidden' }")
     expect(source).not.toContain("contactDialogBody: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }")
   })
 
-  it('keeps loading feedback inside the reserved result area', () => {
+  it('keeps loading feedback and the contact card in separate reserved areas', () => {
     const source = readFileSync(new URL('../src/client/ArkmeContactAddSurface.tsx', import.meta.url), 'utf8')
-    expect(source).toContain("resultArea: { position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }")
+    expect(source).toContain("resultArea: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }")
+    expect(source).toContain('data-arkme-contact-status-area')
+    expect(source).toContain('data-arkme-contact-candidate-area')
     expect(source).toContain('data-arkme-contact-state-area')
-    expect(source).toContain('position: \'absolute\', inset: 0')
-    expect(source).not.toContain('{busy && <div style={styles.notice}')
+    expect(source).toContain('{busy && <div style={styles.notice}')
+    expect(source).not.toContain('busyOverlay')
   })
 })

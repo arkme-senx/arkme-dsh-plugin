@@ -19,12 +19,9 @@ const styles: Record<string, CSSProperties> = {
   scan: { width: '100%', minHeight: 66, marginTop: 18, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 15, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 16, textAlign: 'left' },
   compactScan: { minHeight: 52, marginTop: 12, padding: '0 15px', borderRadius: 12, gap: 11, fontSize: 14 },
   arrow: { marginLeft: 'auto', color: arkmeTheme.tertiary, fontSize: 26 },
-  resultArea: { position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' },
-  busyOverlay: {
-    position: 'absolute', inset: 0, zIndex: 2, display: 'flex', alignItems: 'flex-start',
-    background: 'rgba(255, 255, 255, .88)',
-  },
-  busyMessage: { width: '100%', marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
+  resultArea: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  statusArea: { height: 53, minHeight: 53, overflow: 'hidden' },
+  candidateArea: { flex: '1 1 auto', minHeight: 0, overflow: 'hidden' },
   notice: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   error: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 13 },
   card: { marginTop: 20, padding: 20, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base },
@@ -279,15 +276,19 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       <span>识别二维码图片添加好友</span><span style={styles.arrow}>›</span>
     </button>
     <div style={styles.resultArea} data-arkme-contact-state-area>
-      {error !== '' && !scannerOpen && <div style={styles.error} role="alert">{error}</div>}
-      {notice !== '' && <div style={styles.notice} role="status">{notice}</div>}
-      {candidate !== undefined && <section style={styles.card} aria-label="联系人搜索结果">
-        <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={`${candidate.displayName}的头像`} /><div style={styles.identityText}>
-          <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : `即我号：${candidate.arkmeId} · `}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
-        </div></div>
-        {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
-      </section>}
-      {busy && <div style={styles.busyOverlay}><div style={styles.busyMessage} role="status">正在处理…</div></div>}
+      <div style={styles.statusArea} data-arkme-contact-status-area>
+        {busy && <div style={styles.notice} role="status">正在处理…</div>}
+        {!busy && error !== '' && !scannerOpen && <div style={styles.error} role="alert">{error}</div>}
+        {!busy && notice !== '' && <div style={styles.notice} role="status">{notice}</div>}
+      </div>
+      <div style={styles.candidateArea} data-arkme-contact-candidate-area>
+        {candidate !== undefined && <section style={styles.card} aria-label="联系人搜索结果">
+          <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={`${candidate.displayName}的头像`} /><div style={styles.identityText}>
+            <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : `即我号：${candidate.arkmeId} · `}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
+          </div></div>
+          {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
+        </section>}
+      </div>
     </div>
     {profile !== null && <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }}><div><p style={styles.profileName}>{profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile.arkmeId || '尚未设置'}
       {profile.arkmeId !== '' && <button type="button" style={styles.copy} title="复制即我号" aria-label="复制即我号" onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
