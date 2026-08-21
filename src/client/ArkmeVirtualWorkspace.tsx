@@ -13,7 +13,6 @@ import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeSendToSelfIcon } from './ArkmeSendToSelfIcon.js'
 import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN } from './ArkmeExtensionCenter.js'
-import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -1155,23 +1154,6 @@ export function ArkmeNavigation({
           {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })}
           onClick={showArko}
         />}
-        {authenticated && !embeddedProductShell && <button
-          type="button" role="treeitem"
-          aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'extensions'}
-          style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'extensions' ? styles.chatRowActive : {}) }}
-          onClick={() => {
-            activateNativeEntry()
-            arkmeUi.showExtensions()
-            persistCache({ directory: 'root', selectedSourceRef: null })
-            onActivateSurface?.()
-          }}
-        >
-          <span style={styles.extensionAvatar} aria-hidden><ArkmeExtensionIcon size={22} /></span>
-          <span style={styles.chatContent}>
-            <span style={styles.chatTop}><span style={styles.chatName}>市集</span></span>
-            <span style={styles.chatBottom}><span style={styles.preview}>发现、安装和更新 Arkme 扩展</span></span>
-          </span>
-        </button>}
         {showSelfInSearch && <button
           type="button" role="treeitem"
           aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}

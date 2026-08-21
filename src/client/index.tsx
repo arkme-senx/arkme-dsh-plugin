@@ -20,7 +20,7 @@ import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
 
-export const inject = ['slots', 'layout']
+export const inject = ['slots']
 
 async function resolveNotificationSource(
   activation: { sourceRef: string; sourceKey?: string },
@@ -147,7 +147,6 @@ export function apply(ctx: ClientContext): void {
     },
     inject: () => ({
       toggle: toggleArkme,
-      expandSidebar: () => { ctx.layout.toggleSidebar() },
       activate: activateSurface,
       closeSurface,
       surfaceSession: () => openedFromSession,
