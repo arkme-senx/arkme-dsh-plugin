@@ -1420,7 +1420,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
     && (ui.mode === 'recordings' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions'
-      || ui.mode === 'settings' || ui.mode === 'contact-add')
+      || ui.mode === 'settings')
 
   return (
     <div

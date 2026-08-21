@@ -29,4 +29,18 @@ describe('Arkme quick-add UI', () => {
     expect(bot).toBeGreaterThan(group)
     expect(markup.match(/-webkit-mask-image:url\(data:image\/svg\+xml;base64,/g)).toHaveLength(3)
   })
+
+  it('uses the compact neutral styling from the refactored desktop UI', () => {
+    const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
+      onContactAdd={vi.fn()}
+      onCreateGroup={vi.fn()}
+      onAddBot={vi.fn()}
+    />)
+    expect(markup).toContain('width:176px')
+    expect(markup).toContain('border-radius:18px')
+    expect(markup).toContain('font-size:13px')
+    expect(markup).toContain('font-weight:550')
+    expect(markup).toContain('background:rgba(255,255,255,.98)')
+    expect(markup).not.toMatch(/green|#07c160|#16a34a/i)
+  })
 })
