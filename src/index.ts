@@ -24,6 +24,10 @@ import { createArkmeExtensionPreviewReadHandler, createArkmeExtensionPreviewUplo
 import { ArkmeExtensionManager } from './extensions/manager.js'
 import { ExtensionPublishClient } from './extensions/publish-client.js'
 import {
+  ArkmeExtensionShareDiscoveryRelay,
+  DEFAULT_EXTENSION_SHARE_DISCOVERY_PORT,
+} from './extensions/share-discovery-relay.js'
+import {
   ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
   ArkmeExtensionProfileInstaller,
 } from './extensions/profile-installer.js'
@@ -53,6 +57,8 @@ export interface Config {
   extensionPublishBaseUrl: string
   extensionArtifactDirectory: string
   extensionTrustedSigningKeys: string
+  extensionShareDiscoveryEnabled: boolean
+  extensionShareDiscoveryPort: number
   routePath: string
   requestTimeoutMs: number
   maxTextLength: number
@@ -93,6 +99,8 @@ export const Config: Schema<Config> = Schema.object({
   extensionPublishBaseUrl: Schema.string().default(''),
   extensionArtifactDirectory: Schema.string().default(''),
   extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
+  extensionShareDiscoveryEnabled: Schema.boolean().default(true),
+  extensionShareDiscoveryPort: Schema.number().min(1).max(65535).default(DEFAULT_EXTENSION_SHARE_DISCOVERY_PORT),
   routePath: Schema.string().default('/arkme-self/api'),
   requestTimeoutMs: Schema.number().min(1000).max(120000).default(30000),
   maxTextLength: Schema.number().min(1).max(100000).default(20000),
@@ -179,6 +187,12 @@ export function apply(ctx: Context, config: Config): void {
       healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
     },
+  })
+  const extensionShareDiscovery = new ArkmeExtensionShareDiscoveryRelay({
+    actualPort: ctx.webServer.port,
+    discoveryPort: config.extensionShareDiscoveryPort ?? DEFAULT_EXTENSION_SHARE_DISCOVERY_PORT,
+    enabled: config.extensionShareDiscoveryEnabled !== false,
+    logger: ctx.logger,
   })
   const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionProfileDirectory = join(dshHome, 'profiles', 'web')
@@ -309,6 +323,10 @@ export function apply(ctx: Context, config: Config): void {
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
+  ctx.effect(async () => {
+    await extensionShareDiscovery.start()
+    return async () => { await extensionShareDiscovery.dispose() }
+  }, 'dsh-arkme: extension share discovery relay')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: config.routePath,
