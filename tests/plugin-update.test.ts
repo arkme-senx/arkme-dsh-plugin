@@ -5,37 +5,41 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   ArkmePluginUpdateManager,
-  parseRegistryPackageMetadata,
   readInstalledPluginVersion,
-  validateUpdateRegistryOrigin,
+  validatePluginUpdateServiceOrigin,
 } from '../src/plugin-update.js'
+const artifactUrl = 'https://releases.jotmo.test/arkme-releases/plugin/0.1.4/dsh-arkme-0.1.4.tgz'
 
-function registryResponse(version: string, notice?: Record<string, unknown>): Response {
-  return new Response(JSON.stringify({
-    name: '@senguoyun/dsh-arkme',
+function updateResponse(version = '0.1.4'): Response {
+  const payload = {
     version,
-    ...(notice === undefined ? {} : { arkme: { updateNotice: notice } }),
-  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    releaseNotes: '自有服务器分发的插件更新',
+    downloadUrl: version === '0.1.4'
+      ? artifactUrl
+      : `https://releases.jotmo.test/arkme-releases/plugin/${version}/dsh-arkme-${version}.tgz`,
+  }
+  return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
 async function manager(options: {
   now?: () => number
   fetchImpl?: typeof fetch
-  channel?: 'stable' | 'next'
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-update-'))
   return {
     root,
     value: new ArkmePluginUpdateManager({
       enabled: true,
-      channel: options.channel ?? 'stable',
-      registryUrl: 'https://registry.npmjs.org',
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
       intervalMs: 12 * 60 * 60_000,
       stateDirectory: root,
       installedVersion: '0.1.3',
       requestTimeoutMs: 1_000,
       now: options.now,
-      fetchImpl: options.fetchImpl ?? (async () => registryResponse('0.1.4')),
+      fetchImpl: options.fetchImpl ?? (async () => updateResponse()),
     }),
   }
 }
@@ -46,45 +50,25 @@ describe('plugin update metadata', () => {
     expect(readInstalledPluginVersion()).toBe(manifest.version)
   })
 
-  it('validates registry origins and sanitizes remote notice metadata', () => {
-    expect(validateUpdateRegistryOrigin('https://registry.npmjs.org')).toBe('https://registry.npmjs.org')
-    expect(() => validateUpdateRegistryOrigin('https://user:pass@example.com/path')).toThrow(/HTTPS origin/)
-    expect(parseRegistryPackageMetadata({
-      name: '@senguoyun/dsh-arkme',
-      version: '0.1.4',
-      arkme: { updateNotice: {
-        schemaVersion: 1,
-        level: 'critical',
-        title: '安全更新',
-        summary: '<script>alert(1)</script>',
-        releaseNotesUrl: 'javascript:alert(1)',
-        command: 'rm -rf /',
-      } },
-    })).toEqual({
-      version: '0.1.4',
-      notice: {
-        schemaVersion: 1,
-        level: 'critical',
-        title: '安全更新',
-        summary: '<script>alert(1)</script>',
-      },
-    })
+  it('validates private update service origins', () => {
+    expect(validatePluginUpdateServiceOrigin('https://api.jotmo.cc')).toBe('https://api.jotmo.cc')
+    expect(() => validatePluginUpdateServiceOrigin('https://user:pass@example.com/path')).toThrow(/HTTPS origin/)
+    expect(() => validatePluginUpdateServiceOrigin('https://registry.npmjs.org')).toThrow(/npm registry/)
   })
 })
 
 describe('ArkmePluginUpdateManager', () => {
-  it('detects a newer stable version and projects only the fixed local command', async () => {
+  it('checks the Jotmo private update endpoint with app/dsh/current version query params', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      expect(String(input)).toBe('https://registry.npmjs.org/%40senguoyun%2Fdsh-arkme/latest')
+      const url = new URL(String(input))
+      expect(url.origin).toBe('https://api.jotmo.cc')
+      expect(url.pathname).toBe('/api/public/v1/arkme/plugin-update/latest')
+      expect(url.searchParams.get('app_version')).toBe('1.2.0')
+      expect(url.searchParams.get('dsh_version')).toBe('0.1.0-rc.8')
+      expect(url.searchParams.get('current_version')).toBe('0.1.3')
       expect(init?.headers).toEqual({ Accept: 'application/json' })
-      return registryResponse('0.1.4', {
-        schemaVersion: 1,
-        level: 'important',
-        title: '新增能力',
-        summary: '请尽快更新',
-        releaseNotesUrl: 'https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.4',
-        command: 'malicious command',
-      })
+      expect(String(input)).not.toContain('registry.npmjs.org')
+      return updateResponse()
     })
     const { value } = await manager({ fetchImpl })
 
@@ -92,15 +76,15 @@ describe('ArkmePluginUpdateManager', () => {
       installedVersion: '0.1.3',
       latestVersion: '0.1.4',
       availability: 'available',
-      level: 'important',
-      updateCommand: 'dsh plugin --profile web up @senguoyun/dsh-arkme --latest',
+      level: 'normal',
+      updateCommand: 'Arkme 应用内更新',
       restartRequired: true,
       stale: false,
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it('deduplicates concurrent checks into one Registry request', async () => {
+  it('deduplicates concurrent checks into one private update request', async () => {
     let resolveResponse!: (response: Response) => void
     const fetchImpl = vi.fn(async () => await new Promise<Response>(resolve => { resolveResponse = resolve }))
     const { value } = await manager({ fetchImpl })
@@ -108,10 +92,20 @@ describe('ArkmePluginUpdateManager', () => {
     const first = value.check({ manual: true })
     const second = value.check({ manual: true })
     await vi.waitFor(() => { expect(fetchImpl).toHaveBeenCalledOnce() })
-    resolveResponse(registryResponse('0.1.4'))
+    resolveResponse(updateResponse())
     const [a, b] = await Promise.all([first, second])
     expect(a.latestVersion).toBe('0.1.4')
     expect(b.latestVersion).toBe('0.1.4')
+  })
+
+  it('treats a 404 private update response as no compatible newer version', async () => {
+    const { value } = await manager({ fetchImpl: async () => new Response('', { status: 404 }) })
+
+    await expect(value.check({ manual: true })).resolves.toMatchObject({
+      availability: 'current',
+      latestVersion: '0.1.3',
+      checkFailed: false,
+    })
   })
 
   it('keeps the last known update when a later check fails', async () => {
@@ -119,7 +113,7 @@ describe('ArkmePluginUpdateManager', () => {
     let healthy = true
     const { value, root } = await manager({
       now: () => now,
-      fetchImpl: async () => healthy ? registryResponse('0.1.4') : new Response('bad gateway', { status: 503 }),
+      fetchImpl: async () => healthy ? updateResponse() : new Response('bad gateway', { status: 503 }),
     })
     expect((await value.check({ manual: true })).availability).toBe('available')
 
@@ -132,38 +126,26 @@ describe('ArkmePluginUpdateManager', () => {
     expect(state.lastKnownLatestVersion).toBe('0.1.4')
   })
 
-  it('distinguishes current and ahead installs and rate-limits manual checks', async () => {
+  it('always refreshes when a user explicitly checks for updates', async () => {
     let now = 1_000_000
-    let latest = '0.1.3'
-    const fetchImpl = vi.fn(async () => registryResponse(latest))
+    const fetchImpl = vi.fn(async () => new Response('', { status: 404 }))
     const { value } = await manager({ now: () => now, fetchImpl })
 
     expect((await value.check({ manual: true })).availability).toBe('current')
     expect((await value.check({ manual: true })).availability).toBe('current')
-    expect(fetchImpl).toHaveBeenCalledOnce()
-    now += 61_000
-    latest = '0.1.2'
-    expect((await value.check({ manual: true })).availability).toBe('ahead')
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
-  it('supports local acknowledgement but never snoozes critical updates', async () => {
-    const { value } = await manager({
-      fetchImpl: async () => registryResponse('0.1.4', { schemaVersion: 1, level: 'critical' }),
-    })
+  it('supports local acknowledgement for direct download updates', async () => {
+    const update = {
+      version: '0.1.4',
+      releaseNotes: '紧急插件更新',
+      downloadUrl: artifactUrl,
+    }
+    const { value } = await manager({ fetchImpl: async () => new Response(JSON.stringify(update), { status: 200 }) })
     await value.check({ manual: true })
     const acknowledged = await value.acknowledge(24)
     expect(acknowledged.acknowledged).toBe(true)
-    expect(acknowledged.snoozedUntilMillis).toBeUndefined()
-  })
-
-  it('uses the next dist-tag without accepting a remote update command', async () => {
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
-      expect(String(input)).toContain('/next')
-      return registryResponse('0.2.0-beta.1')
-    })
-    const { value } = await manager({ channel: 'next', fetchImpl })
-    const status = await value.check({ manual: true })
-    expect(status.updateCommand).toBe('dsh plugin --profile web up @senguoyun/dsh-arkme@next --latest')
+    expect(acknowledged.snoozedUntilMillis).toBeTypeOf('number')
   })
 })

@@ -9,8 +9,14 @@ import { Palette } from '@phosphor-icons/react/dist/icons/Palette'
 import { ShieldCheck } from '@phosphor-icons/react/dist/icons/ShieldCheck'
 import { SignOut } from '@phosphor-icons/react/dist/icons/SignOut'
 import { UserCircle } from '@phosphor-icons/react/dist/icons/UserCircle'
-import type { ArkmeAuthSnapshot, ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
+import type {
+  ArkmeAuthSnapshot,
+  ArkmePluginUpdateStatus,
+  ArkmeUserProfile,
+  ArkmeUserProfileSnapshot,
+} from '../types.js'
 import { callArkme } from './api.js'
+import { arkmeAppUpdateStore, type ArkmeAppUpdateSnapshot } from './app-update-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
@@ -61,10 +67,89 @@ function SettingRow({
   return <div style={rowStyle}>{body}</div>
 }
 
+export interface ArkmeUpdateCenterRow {
+  key: 'app' | 'plugin'
+  label: string
+  current: string
+  latest: string
+  button: '检查更新' | '检查中…' | '下载更新包' | '打开所在文件夹' | '立即更新' | '更新中…' | '当前不可用'
+  action: 'check' | 'download' | 'open' | 'install' | 'busy'
+  feedback?: string
+  downloadedFilePath?: string
+}
+
+function versionLabel(version: string | undefined): string {
+  return `v${version?.trim() || '…'}`
+}
+
+export function updateVersionText(current: string, latest: string): string {
+  return current === latest ? `当前 ${current} · 已是最新版本` : `当前 ${current} → 最新 ${latest}`
+}
+
+export function buildArkmeUpdateCenterRows(input: {
+  app?: Pick<ArkmeAppUpdateSnapshot, 'status' | 'currentVersion' | 'noUpdateAvailable' | 'latestVersion' | 'error' | 'downloadedBytes' | 'totalBytes' | 'downloadedFilePath'>
+  appError?: string
+  plugin?: Pick<ArkmePluginUpdateStatus, 'availability' | 'installedVersion' | 'latestVersion' | 'checking' | 'checkFailed'>
+  pluginBusy?: boolean
+  pluginError?: string
+}): ArkmeUpdateCenterRow[] {
+  const appStatus = input.app?.status
+  const appUnavailable = input.app === undefined && input.appError?.trim() !== undefined && input.appError.trim() !== ''
+  const appAvailable = appStatus === 'available'
+  const appBusy = appStatus === 'checking' || appStatus === 'downloading'
+  const appFeedback = input.appError?.trim()
+    ? `检查失败：${input.appError.trim()}`
+    : appStatus === 'checking'
+      ? '正在检查更新…'
+      : appStatus === 'current'
+        ? input.app?.noUpdateAvailable === true ? '已检查 · 暂无可用版本' : '已检查 · 当前已是最新版本'
+        : appStatus === 'available'
+          ? '发现新版本，可以下载更新包'
+          : appStatus === 'downloading'
+            ? '正在下载更新包'
+            : appStatus === 'downloaded'
+              ? '下载完成，可打开所在文件夹定位安装包'
+              : appStatus === 'failed'
+                ? `检查失败：${input.app?.error || '请稍后重试'}`
+                : undefined
+  const pluginAvailable = input.plugin?.availability === 'available'
+  const pluginBusy = input.pluginBusy === true || input.plugin?.checking === true
+  const pluginFeedback = pluginBusy
+    ? '正在检查更新…'
+    : input.pluginError?.trim()
+      ? `检查失败：${input.pluginError.trim()}`
+      : input.plugin?.checkFailed === true
+        ? '检查失败：请稍后重试'
+        : input.plugin?.availability === 'current'
+          ? '已检查 · 当前已是最新版本'
+          : input.plugin?.availability === 'available'
+            ? '发现新版本，可以立即更新'
+            : undefined
+  return [{
+    key: 'app',
+    label: 'APP',
+    current: versionLabel(input.app?.currentVersion),
+    latest: versionLabel(input.app?.latestVersion ?? input.app?.currentVersion),
+    button: appUnavailable ? '当前不可用' : appBusy ? (appStatus === 'checking' ? '检查中…' : '更新中…') : appStatus === 'downloaded' ? '打开所在文件夹' : appAvailable ? '下载更新包' : '检查更新',
+    action: appUnavailable || appBusy ? 'busy' : appStatus === 'downloaded' ? 'open' : appAvailable ? 'download' : 'check',
+    ...(appFeedback === undefined ? {} : { feedback: appFeedback }),
+    ...(input.app?.downloadedFilePath === undefined ? {} : { downloadedFilePath: input.app.downloadedFilePath }),
+  }, {
+    key: 'plugin',
+    label: '核心插件',
+    current: versionLabel(input.plugin?.installedVersion),
+    latest: versionLabel(input.plugin?.latestVersion ?? input.plugin?.installedVersion),
+    button: pluginBusy ? '检查中…' : pluginAvailable ? '立即更新' : '检查更新',
+    action: pluginBusy ? 'busy' : pluginAvailable ? 'install' : 'check',
+    ...(pluginFeedback === undefined ? {} : { feedback: pluginFeedback }),
+  }]
+}
+
 export function ArkmeSettingsSurface() {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot, arkmePluginUpdateStore.getSnapshot)
+  const appUpdateState = useSyncExternalStore(arkmeAppUpdateStore.subscribe, arkmeAppUpdateStore.getSnapshot, arkmeAppUpdateStore.getSnapshot)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -107,6 +192,27 @@ export function ArkmeSettingsSurface() {
   const contact = profile?.contact.phoneMasked ?? profile?.contact.emailMasked ?? '已通过 Arkme 登录'
   const notificationLabel = notificationPermission === 'granted' ? '已开启' : notificationPermission === 'denied' ? '已阻止' : '未开启'
   const version = updateState.status?.installedVersion ?? '…'
+  const pluginInstallBusy = updateState.install !== undefined
+    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
+  const updateRows = buildArkmeUpdateCenterRows({
+    ...(appUpdateState.status === undefined ? {} : { app: appUpdateState.status }),
+    ...(appUpdateState.error === '' ? {} : { appError: appUpdateState.error }),
+    ...(updateState.status === undefined ? {} : { plugin: updateState.status }),
+    pluginBusy: updateState.busy || pluginInstallBusy,
+    ...(updateState.error === '' ? {} : { pluginError: updateState.error }),
+  })
+
+  const runUpdateAction = (row: ArkmeUpdateCenterRow) => {
+    if (row.action === 'busy') return
+    if (row.key === 'plugin') {
+      if (row.action === 'install') void arkmePluginUpdateStore.install()
+      else void arkmePluginUpdateStore.refresh(true)
+      return
+    }
+    if (row.action === 'download') void arkmeAppUpdateStore.download()
+    else if (row.action === 'open') void arkmeAppUpdateStore.showDownloadedFile()
+    else void arkmeAppUpdateStore.refresh(true)
+  }
 
   return <div style={styles.page} aria-label="Arkme 设置">
     <div style={styles.content}>
@@ -141,6 +247,22 @@ export function ArkmeSettingsSurface() {
         <div style={styles.group}>
           <SettingRow icon={<ShieldCheck size={18} aria-hidden />} title="执行前确认" description="敏感操作会在 DSH 对话中再次请求确认" trailing="已开启" />
           <SettingRow border icon={<GearSix size={18} aria-hidden />} title="可读取内容" description="对话、快记与录音仅在当前账户授权范围内读取" />
+        </div>
+      </section>
+
+      <section id="arkme-settings-update" style={styles.section}>
+        <h2 style={styles.sectionTitle}>更新</h2>
+        <div style={styles.group}>
+          {updateRows.map((row, index) => <SettingRow
+            key={row.key}
+            border={index > 0}
+            icon={<GearSix size={18} aria-hidden />}
+            title={row.label}
+            description={`${updateVersionText(row.current, row.latest)} · ${row.feedback ?? '尚未检查'}`
+              + (row.downloadedFilePath === undefined ? '' : ` · ${row.downloadedFilePath}`)}
+            trailing={row.button}
+            {...(row.action === 'busy' ? {} : { onClick: () => { runUpdateAction(row) } })}
+          />)}
         </div>
       </section>
 

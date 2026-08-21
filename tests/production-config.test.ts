@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS } from '../src/index.js'
+import {
+  ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS,
+  resolveArkmeAppVersion,
+} from '../src/index.js'
 
 describe('production plugin configuration', () => {
-  it('routes each owner API to its production service', () => {
+  it('routes each owner API and the update service to production infrastructure', () => {
     const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 
     expect(patch).toContain('environment: prod')
@@ -33,10 +36,20 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('allowProduction: true')
     expect(patch).toContain('updateCheckEnabled: true')
     expect(patch).toContain('updateChannel: stable')
-    expect(patch).toContain('updateRegistryUrl: https://registry.npmjs.org')
+    expect(patch).toContain('updateServiceBaseUrl: https://api.jotmo.cc')
+    expect(patch).toContain('updateArtifactBaseUrl: https://d.jiwo.cc')
+    expect(patch).not.toContain('updateTrustedPublicKey:')
+    expect(patch).not.toContain('updateRegistryUrl:')
+    expect(patch).not.toContain('registry.npmjs.org')
     expect(patch).toContain('updateCheckIntervalHours: 12')
     expect(patch).toContain('updateAllowLocalInstall: true')
     expect(patch).not.toContain('environment: test')
-    expect(patch).not.toContain('.senguo.me')
+    expect(patch).not.toContain('senguo.me')
+  })
+
+  it('falls back to the desktop-injected APP version for private plugin updates', () => {
+    expect(resolveArkmeAppVersion('', { ARKME_APP_VERSION: '1.2.3' })).toBe('1.2.3')
+    expect(resolveArkmeAppVersion('2.0.0', { ARKME_APP_VERSION: '1.2.3' })).toBe('2.0.0')
+    expect(resolveArkmeAppVersion('', {})).toBeUndefined()
   })
 })

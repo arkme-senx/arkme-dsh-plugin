@@ -6,11 +6,13 @@ import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import './composer-draft-auth-binding.js'
 import { callArkme } from './api.js'
 import { ArkmeHeroBrandMark, ArkmeSidebarBrandMark, ArkmeSidebarBrandName } from './ArkmeBrand.js'
+import { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
 import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeAppUpdateStore } from './app-update-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
@@ -97,6 +99,7 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
   ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
+  ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update status')
   ctx.effect(() => {
     let disposed = false
     let activationGeneration = 0
@@ -157,6 +160,13 @@ export function apply(ctx: ClientContext): void {
     label: 'Arkme',
   }, ArkmeSettingsRow))
 
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'arkme-app-update-dialog',
+    order: 90,
+    label: 'Arkme APP 更新提示',
+  }, ArkmeAppUpdateDialog))
+
   if (startupAuthGateEnabled()) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay',
@@ -172,6 +182,7 @@ export { ArkmeHeroBrandMark, ArkmeSidebarBrandMark, ArkmeSidebarBrandName } from
 export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
+export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
@@ -198,6 +209,7 @@ export { ArkmeDirectoryRow, ArkmeNavigation, renderArkmeDirectoryRow } from './A
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'
 export { ArkmePluginUpdateStore, arkmePluginUpdateStore } from './plugin-update-store.js'
+export { ArkmeAppUpdateStore, arkmeAppUpdateStore } from './app-update-store.js'
 export {
   isOfficialConversationTarget, isOfficialNewSessionTarget,
   watchOfficialConversationSelection, watchOfficialNewSession,

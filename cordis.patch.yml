@@ -29,7 +29,9 @@
         allowProduction: true
         updateCheckEnabled: true
         updateChannel: stable
-        updateRegistryUrl: https://registry.npmjs.org
+        updateServiceBaseUrl: https://api.jotmo.cc
+        updateArtifactBaseUrl: https://d.jiwo.cc
+        appVersion: ''
         updateCheckIntervalHours: 12
         updateAllowLocalInstall: true
         richMediaRenderEnabled: true
