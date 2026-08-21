@@ -54,6 +54,7 @@ import {
 } from './services/related-recording-service.js'
 import { SearchService } from './services/search-service.js'
 import {
+  ArkmePluginError,
   ServiceRuntime,
   type ArkmeRemoteRequestOptions,
   type ArkmeServiceConfig,
@@ -178,6 +179,7 @@ import type {
   ArkmeWechatPhonePage,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
+  ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
@@ -185,6 +187,26 @@ import type {
   ArkmeWorldRecordList,
 } from './types.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+
+function worldVoiceprintInviteMessage(input: {
+  peerDisplayName: string
+  inviteUrl: string
+  textPreview?: string
+}): string {
+  const intro = input.textPreview === undefined
+    ? '我想邀请你开启声纹。'
+    : `我看到你在世界里发的「${input.textPreview}」，想邀请你开启声纹。`
+  return `${intro}\n以后看到你的世界动态时，可以直接听到你的声音。\n${input.inviteUrl}`
+}
+
+function voiceprintInviteRateLimitMessage(error: unknown): string | undefined {
+  if (!(error instanceof ArkmePluginError)) return undefined
+  if (error.upstreamStatus !== 429 && error.httpStatus !== 429 && !/\bHTTP\s*429\b/.test(error.message)) return undefined
+  const seconds = error.retryAfterMillis === undefined ? 0 : Math.ceil(error.retryAfterMillis / 1000)
+  return seconds > 0
+    ? `提醒发送太频繁了，请 ${String(seconds)} 秒后再试。`
+    : '提醒发送太频繁了，稍后再试。'
+}
 
 export { MAX_ARKME_IMAGE_BYTES } from './services/media-service.js'
 export {
@@ -450,6 +472,7 @@ export class ArkmeService {
         worldFeed: true,
         worldInteractions: true,
         worldVoiceprintPlayback: true,
+        worldVoiceprintInvite: true,
         arrangements: true,
         myExtensions: true,
       extensionPublish: true,
@@ -1332,6 +1355,55 @@ export class ArkmeService {
     signal?: AbortSignal
   }): Promise<ArkmeWorldVoiceprintPlaybackChunk> {
     return await this.world.generateWorldVoiceprintPlayback(input)
+  }
+
+  async inviteWorldVoiceprint(
+    recordRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintInviteResult> {
+    try {
+      const intent = await this.world.createWorldVoiceprintInviteIntent(recordRef, signal)
+      const privateChat = await this.chat.openPrivateChatFromUser(intent.peerUserId, {
+        displayName: intent.peerDisplayName,
+        ...(signal === undefined ? {} : { signal }),
+      })
+      const sent = await this.chat.sendSourceText(
+        privateChat.source.sourceRef,
+        worldVoiceprintInviteMessage(intent),
+        signal === undefined ? {} : { signal },
+      )
+      if (sent.localState !== 'synced') {
+        throw new ArkmePluginError(
+          'world-voiceprint-invite-send-pending',
+          sent.error ?? '声纹邀请已进入发送队列，请稍后在私聊中确认',
+          true,
+        )
+      }
+      return {
+        sent: true,
+        peerDisplayName: intent.peerDisplayName,
+        messageItemUid: sent.itemUid,
+        expiresAtMillis: intent.expiresAtMillis,
+      }
+    } catch (error) {
+      const message = voiceprintInviteRateLimitMessage(error)
+      if (message !== undefined) {
+        throw new ArkmePluginError(
+          'world-voiceprint-invite-rate-limited',
+          message,
+          true,
+          429,
+          {
+            cause: error,
+            upstreamStatus: 429,
+            ...(!(error instanceof ArkmePluginError) || error.retryAfterMillis === undefined
+              ? {}
+              : { retryAfterMillis: error.retryAfterMillis }),
+          },
+        )
+      }
+      throw error
+    }
   }
 
   /** Read the authenticated comment/reply tree behind one account-bound World reference. */

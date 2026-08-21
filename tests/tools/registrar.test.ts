@@ -1,11 +1,14 @@
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore, { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type {
   ImageAttachmentLimits, ImageAttachmentRef, SaveImageAttachment, StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import { CallId } from '@deepseek-ai/dsh-llm'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeToolPorts } from '../../src/tools/index.js'
 import type { ArkmeToolProfile } from '../../src/tools/index.js'
 import { promptForArkmeToolProfile, registerArkmeTools } from '../../src/tools/index.js'
@@ -62,9 +65,13 @@ async function setup() {
   return ctx
 }
 
-async function mountArkmeTools(ctx: Context, profile: ArkmeToolProfile) {
+async function mountArkmeTools(
+  ctx: Context,
+  profile: ArkmeToolProfile,
+  runtimePorts: ArkmeToolPorts = ports,
+) {
   return await ctx.plugin(Object.assign(
-    (toolCtx: Context) => { registerArkmeTools(toolCtx, ports, profile) },
+    (toolCtx: Context) => { registerArkmeTools(toolCtx, runtimePorts, profile) },
     { inject: ['tools', 'systemPrompt'] },
   ))
 }
@@ -100,6 +107,8 @@ describe('registerArkmeTools', () => {
       'arkme_group_bot_add',
       'arkme_group_bot_remove',
       'arkme_world_recent',
+      'arkme_world_mine',
+      'arkme_world_voiceprint_invite',
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
@@ -152,6 +161,49 @@ describe('registerArkmeTools', () => {
     expect((await disabled.systemPrompt.assemble()).sections.some(
       section => section.name === 'tool:arkme-conversational-confirmation',
     )).toBe(false)
+  })
+
+  it('requires a later direct confirmation before sending a World voiceprint invite', async () => {
+    const ctx = await setup()
+    const inviteWorldVoiceprint = vi.fn(async () => ({
+      sent: true as const,
+      peerDisplayName: '小林',
+      messageItemUid: 'message-1',
+      expiresAtMillis: 1_900_000_000_000,
+    }))
+    await mountArkmeTools(ctx, 'business', {
+      ...ports,
+      inviteWorldVoiceprint,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '提醒这条动态的作者开启声纹' }], source: { kind: 'user' } } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_world_voiceprint_invite', arguments: '{}' } },
+    ]
+    const agent = {
+      id: SessionId('session-world-voiceprint-invite'),
+      session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { record_ref: 'arkme-world-record-v1.opaque' }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('prepare'), name: 'arkme_world_voiceprint_invite', arguments: args, agent, signal,
+    })
+    expect(prepared.isError).toBe(false)
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(inviteWorldVoiceprint).not.toHaveBeenCalled()
+
+    events.push(
+      { seq: 3, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
+      { seq: 4, type: 'turn/start', data: { turn: 2 } },
+      { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '确认，就提醒他吧' }], source: { kind: 'user' } } },
+    )
+    const confirmed = await ctx.tools.execute({
+      callId: CallId('confirmed'), name: 'arkme_world_voiceprint_invite', arguments: args, agent, signal,
+    })
+    expect(confirmed.isError).toBe(false)
+    expect(inviteWorldVoiceprint).toHaveBeenCalledWith('arkme-world-record-v1.opaque', signal)
   })
 
   it('adds and withdraws attachment-phase tools with the dependency fiber', async () => {

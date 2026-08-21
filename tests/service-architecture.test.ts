@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
@@ -42,7 +43,7 @@ const expectedPublicMethods = [
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed',
-  'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback',
+  'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback', 'inviteWorldVoiceprint',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldTextForConversation', 'createText', 'createTextForConversation', 'pendingWrites',
   'retryPending', 'extensionPost',

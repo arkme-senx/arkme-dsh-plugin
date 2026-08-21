@@ -35,6 +35,8 @@ function fakeService() {
     groupInvitePreview: vi.fn(async () => ({ inviteLink: 'https://example.test/invite' })),
     listGroupBots: vi.fn(async () => ({ items: [] })),
     addGroupBot: vi.fn(async () => ({ installed: true })),
+    listMyWorldFeed: vi.fn(async (input: unknown) => input),
+    inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
   }
 }
 
@@ -293,6 +295,30 @@ describe('outgoing call Host API dispatch', () => {
 
     expect(service.aiVideoList).toHaveBeenCalledWith({ limit: 20, statuses: ['succeeded'], cursor: 'next-videos' })
     expect(service.queryFileAssets).toHaveBeenCalledWith(['video-1', 'cover-1'])
+  })
+
+  it('dispatches World voiceprint invites without forwarding browser-owned fields', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'world.voiceprint.invite', {
+      recordRef: ' world-ref ',
+      peerUserId: 999,
+      inviteToken: 'must-not-forward',
+    })
+
+    expect(service.inviteWorldVoiceprint).toHaveBeenCalledWith('world-ref')
+  })
+
+  it('dispatches a bounded current-account World page', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'world.mine', {
+      limit: 999,
+      offset: -4,
+      userId: 999,
+    })
+
+    expect(service.listMyWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
   })
 })
 

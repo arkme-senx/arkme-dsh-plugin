@@ -25,6 +25,8 @@ interface ArkmeWorldRecordRefEntry {
   viewerUserId: number
   recordUid: string
   ownerUserId?: number
+  authorName?: string
+  textPreview?: string
   expiresAtMillis: number
 }
 
@@ -32,6 +34,16 @@ const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_IMAGE_REFS = 2048
 const ARKME_WORLD_RECORD_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_RECORD_REFS = 4096
+const ARKME_VOICEPRINT_PLAY_SCOPE = 2
+const ARKME_VOICEPRINT_INVITE_TOKEN_MAX_LENGTH = 2048
+
+export interface ArkmeWorldVoiceprintInviteIntent {
+  peerUserId: number
+  peerDisplayName: string
+  inviteUrl: string
+  expiresAtMillis: number
+  textPreview?: string
+}
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -44,6 +56,31 @@ function safeFailureMessage(error: unknown): string {
   if (error instanceof ArkmePluginError) return error.message
   if (error instanceof Error && error.message.trim() !== '') return error.message
   return '未知错误'
+}
+
+function optionalTrimmedText(value: string | undefined, limit: number): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim()
+  if (normalized === undefined || normalized === '') return undefined
+  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit).trimEnd()}...`
+}
+
+function buildVoiceprintInviteShareUrl(environment: 'test' | 'prod', token: string): string {
+  const base = environment === 'prod' ? 'https://jiwo.cc' : 'https://jotmo-app.senguo.me'
+  const url = new URL('/app/voiceprint/invite', base)
+  url.hash = `t=${encodeURIComponent(token)}`
+  return url.toString()
+}
+
+function validVoiceprintInviteToken(token: string): boolean {
+  if (token === '' || token.length > ARKME_VOICEPRINT_INVITE_TOKEN_MAX_LENGTH) return false
+  let byteLength = 0
+  for (const char of token) {
+    const codePoint = char.codePointAt(0) ?? 0
+    if (codePoint <= 0x1f || codePoint === 0x7f) return false
+    byteLength += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4
+    if (byteLength > ARKME_VOICEPRINT_INVITE_TOKEN_MAX_LENGTH) return false
+  }
+  return true
 }
 
 function worldVisibility(checkStatus: number): ArkmeWorldVisibility {
@@ -255,6 +292,41 @@ export class WorldService {
       chunkCount,
       chunkStartRune,
       chunkEndRune,
+    }
+  }
+
+  async createWorldVoiceprintInviteIntent(
+    recordRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintInviteIntent> {
+    const session = await this.runtime.requireSession()
+    const entry = this.openWorldRecordRef(recordRef, session.userId)
+    const peerUserId = entry.ownerUserId ?? 0
+    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+      throw new ArkmePluginError('world-voiceprint-invite-target-missing', '无法确认这条世界动态的作者，请刷新后重试', false)
+    }
+    if (peerUserId === session.userId) {
+      throw new ArkmePluginError('world-voiceprint-invite-self-invalid', '这是你自己的动态，不需要提醒自己开启声纹', false, 409)
+    }
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/voiceprint/invites/create',
+      { scope: ARKME_VOICEPRINT_PLAY_SCOPE },
+      session,
+      signal,
+      { lane: 'write', bypassCache: true },
+    )
+    const token = stringValue(data.invite_token).trim()
+    const expiresAtMillis = Math.trunc(numberValue(data.expires_at))
+    const scope = Math.trunc(numberValue(data.scope))
+    if (!validVoiceprintInviteToken(token) || expiresAtMillis <= 0 || scope !== ARKME_VOICEPRINT_PLAY_SCOPE) {
+      throw new ArkmePluginError('world-voiceprint-invite-contract-invalid', '声纹邀请响应不完整，请稍后重试', true, 502)
+    }
+    return {
+      peerUserId,
+      peerDisplayName: optionalTrimmedText(entry.authorName, 64) ?? '这位用户',
+      inviteUrl: buildVoiceprintInviteShareUrl(this.runtime.config.environment, token),
+      expiresAtMillis,
+      ...(entry.textPreview === undefined ? {} : { textPreview: entry.textPreview }),
     }
   }
 
@@ -497,7 +569,14 @@ export class WorldService {
       ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
       : undefined
     return {
-      recordRef: await this.worldRecordRef(viewerUserId, recordUid, ownerUserId),
+      recordRef: await this.worldRecordRef(viewerUserId, recordUid, {
+        ownerUserId,
+        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        ...(() => {
+          const textPreview = optionalTrimmedText(headline || textContent, 80)
+          return textPreview === undefined ? {} : { textPreview }
+        })(),
+      }),
       authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
@@ -589,7 +668,14 @@ export class WorldService {
       ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
       : undefined
     return {
-      interactionRef: await this.worldRecordRef(viewerUserId, recordUid),
+      interactionRef: await this.worldRecordRef(viewerUserId, recordUid, {
+        ownerUserId,
+        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        ...(() => {
+          const textPreview = optionalTrimmedText(textContent, 80)
+          return textPreview === undefined ? {} : { textPreview }
+        })(),
+      }),
       parentRef: await this.worldRecordRef(viewerUserId, parentRecordUid),
       authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
       ...(avatarRef === undefined ? {} : { avatarRef }),
@@ -603,7 +689,11 @@ export class WorldService {
     }
   }
 
-  private async worldRecordRef(viewerUserId: number, recordUid: string, ownerUserId?: number): Promise<string> {
+  private async worldRecordRef(
+    viewerUserId: number,
+    recordUid: string,
+    metadata: { ownerUserId?: number; authorName?: string; textPreview?: string } = {},
+  ): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`world-record-v1:${String(viewerUserId)}:${recordUid}`)
       .digest('base64url')
@@ -611,11 +701,15 @@ export class WorldService {
     const now = Date.now()
     this.pruneWorldRecordRefs(now)
     const previous = this.worldRecordRefs.get(recordRef)
-    const resolvedOwnerUserId = ownerUserId ?? previous?.ownerUserId
+    const resolvedOwnerUserId = metadata.ownerUserId ?? previous?.ownerUserId
+    const authorName = optionalTrimmedText(metadata.authorName, 64) ?? previous?.authorName
+    const textPreview = optionalTrimmedText(metadata.textPreview, 80) ?? previous?.textPreview
     this.worldRecordRefs.set(recordRef, {
       viewerUserId,
       recordUid,
       ...(resolvedOwnerUserId === undefined || resolvedOwnerUserId <= 0 ? {} : { ownerUserId: resolvedOwnerUserId }),
+      ...(authorName === undefined ? {} : { authorName }),
+      ...(textPreview === undefined ? {} : { textPreview }),
       expiresAtMillis: now + ARKME_WORLD_RECORD_REF_TTL_MILLIS,
     })
     return recordRef

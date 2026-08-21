@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeWorldContent, ArkmeWorldSurface, type ArkmeWorldViewState } from '../src/client/ArkmeWorldSurface.js'
+import { ArkmeWorldContent, ArkmeWorldSurface, voiceprintInvitePromptTitle, type ArkmeWorldViewState } from '../src/client/ArkmeWorldSurface.js'
 import type { ArkmeWorldFeedItem } from '../src/types.js'
 
 const noop = () => {}
@@ -28,11 +28,11 @@ const item: ArkmeWorldFeedItem = {
   extendCount: 2,
 }
 
-function render(state: ArkmeWorldViewState) {
+function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = new Set(['world_1'])) {
   return renderToStaticMarkup(<ArkmeWorldContent
     state={state}
     scope="all"
-    voiceprintPlayableRefs={new Set(['world_1'])}
+    voiceprintPlayableRefs={playableRefs}
     voiceprintRecordRef={undefined}
     {...actions}
   />)
@@ -66,11 +66,21 @@ describe('Arkme native World surface', () => {
     expect(success).toContain('陈一涵')
     expect(success).toContain('一段世界标题')
     expect(success).toContain('世界正文')
-    expect(success).toContain('查看 2 条互动')
-    expect(success).toContain('用发布者的声音朗读')
+    expect(success).toContain('评论：2')
+    expect(success).toContain('aria-label="播放陈一涵的声纹"')
+    expect(success).not.toContain('用发布者的声音朗读')
+    expect(success).not.toContain('查看 2 条互动')
+
+    const unavailable = render({ status: 'success', items: [item] }, new Set())
+    expect(unavailable).toContain('aria-label="邀请陈一涵开启声纹"')
 
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')
     expect(refreshFailure).toContain('世界正文')
+  })
+
+  it('derives the voiceprint invite confirmation from the world content', () => {
+    expect(voiceprintInvitePromptTitle(item)).toBe('是否邀请陈一涵朗读「一段世界标题」？')
+    expect(voiceprintInvitePromptTitle({ ...item, headline: '', textContent: '今天真的很需要休息一下，明天再重新开始' })).toContain('今天真的很需要休息一下')
   })
 })

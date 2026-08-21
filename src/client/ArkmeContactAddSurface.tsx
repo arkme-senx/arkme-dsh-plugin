@@ -19,10 +19,13 @@ const styles: Record<string, CSSProperties> = {
   scan: { width: '100%', minHeight: 66, marginTop: 18, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 15, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 16, textAlign: 'left' },
   compactScan: { height: 52, minHeight: 52, flex: 'none', marginTop: 12, padding: '0 15px', borderRadius: 12, gap: 11, fontSize: 14 },
   arrow: { marginLeft: 'auto', color: arkmeTheme.tertiary, fontSize: 26 },
-  resultArea: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  resultArea: { flex: '1 1 auto', minHeight: 0, display: 'grid', overflow: 'hidden' },
   compactResultArea: { height: 297, minHeight: 297, flex: 'none' },
-  statusArea: { height: 53, minHeight: 53, flex: 'none', overflow: 'hidden' },
-  candidateArea: { flex: '1 1 auto', minHeight: 0, overflow: 'hidden' },
+  statusArea: { position: 'relative', gridRow: 1, minHeight: 0, overflow: 'hidden' },
+  statusFeedback: { position: 'absolute', inset: '14px 0 0', height: 39, margin: 0, padding: '11px 13px', boxSizing: 'border-box', borderRadius: 10, fontSize: 13 },
+  statusNotice: { background: arkmeTheme.subtle, color: arkmeTheme.secondary },
+  statusError: { background: arkmeTheme.dangerSoft, color: arkmeTheme.danger },
+  candidateArea: { gridRow: 2, minHeight: 0, overflow: 'hidden' },
   notice: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   error: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 13 },
   card: { marginTop: 20, padding: 20, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base },
@@ -39,6 +42,7 @@ const styles: Record<string, CSSProperties> = {
   copy: { width: 28, height: 28, padding: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
   qr: { width: 112, height: 112, padding: 12, boxSizing: 'border-box', borderRadius: 16, background: '#fff' },
   compactQr: { width: 92, height: 92, padding: 9, borderRadius: 12 },
+  qrPlaceholder: { display: 'grid', placeItems: 'center', color: arkmeTheme.tertiary, background: arkmeTheme.subtle, fontSize: 11, textAlign: 'center' },
   scannerBackdrop: { position: 'fixed', inset: 0, zIndex: 1000, padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0, 0, 0, .72)' },
   scannerDialog: { width: 'min(460px, 100%)', padding: 18, boxSizing: 'border-box', borderRadius: 18, background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '0 18px 60px rgba(0,0,0,.35)' },
   scannerHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
@@ -258,6 +262,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
   }
 
   const closeScanner = () => { setScannerOpen(false); setCameraActive(false); stopCamera() }
+  const statusVisible = busy || (!scannerOpen && error !== '') || notice !== ''
 
   const scanDroppedFiles = (files: FileList | File[]) => {
     if (busy) return
@@ -276,11 +281,15 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M8 8h3v3H8zm5 0h3v3h-3zm-5 5h3v3H8zm6 1h2v2h-2z" fill="currentColor" /></svg>
       <span>识别二维码图片添加好友</span><span style={styles.arrow}>›</span>
     </button>
-    <div style={{ ...styles.resultArea, ...(compact ? styles.compactResultArea : {}) }} data-arkme-contact-state-area>
+    <div style={{
+      ...styles.resultArea,
+      ...(compact ? styles.compactResultArea : {}),
+      gridTemplateRows: statusVisible ? '53px minmax(0, 1fr)' : '0 minmax(0, 1fr)',
+    }} data-arkme-contact-state-area>
       <div style={styles.statusArea} data-arkme-contact-status-area>
-        {busy && <div style={styles.notice} role="status">正在处理…</div>}
-        {!busy && error !== '' && !scannerOpen && <div style={styles.error} role="alert">{error}</div>}
-        {!busy && notice !== '' && <div style={styles.notice} role="status">{notice}</div>}
+        {busy && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }} role="status" data-arkme-contact-status-feedback>正在处理…</div>}
+        {!busy && error !== '' && !scannerOpen && <div style={{ ...styles.statusFeedback, ...styles.statusError }} role="alert" data-arkme-contact-status-feedback>{error}</div>}
+        {!busy && notice !== '' && <div style={{ ...styles.statusFeedback, ...styles.statusNotice }} role="status" data-arkme-contact-status-feedback>{notice}</div>}
       </div>
       <div style={styles.candidateArea} data-arkme-contact-candidate-area>
         {candidate !== undefined && <section style={styles.card} aria-label="联系人搜索结果">
@@ -291,9 +300,12 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
         </section>}
       </div>
     </div>
-    {profile !== null && <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }}><div><p style={styles.profileName}>{profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile.arkmeId || '尚未设置'}
-      {profile.arkmeId !== '' && <button type="button" style={styles.copy} title="复制即我号" aria-label="复制即我号" onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
-    </p></div>{qr !== undefined && <img src={qr} alt="我的好友二维码" title={shareUrl} style={{ ...styles.qr, ...(compact ? styles.compactQr : {}) }} />}</footer>}
+    <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }} data-arkme-contact-profile-footer><div><p style={styles.profileName}>{profile === null ? '正在加载个人信息…' : profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile === null ? '正在加载…' : profile.arkmeId || '尚未设置'}
+      {profile?.arkmeId !== undefined && profile.arkmeId !== '' && <button type="button" style={styles.copy} title="复制即我号" aria-label="复制即我号" onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
+    </p></div>{qr !== undefined
+      ? <img src={qr} alt="我的好友二维码" title={shareUrl} style={{ ...styles.qr, ...(compact ? styles.compactQr : {}) }} />
+      : <div style={{ ...styles.qr, ...styles.qrPlaceholder, ...(compact ? styles.compactQr : {}) }} role="status" aria-label="好友二维码加载中">二维码加载中…</div>}
+    </footer>
     {scannerOpen && <div style={styles.scannerBackdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeScanner() }}><section style={styles.scannerDialog} role="dialog" aria-modal="true" aria-label="识别联系人二维码"
       onPaste={event => { scanDroppedFiles(Array.from(event.clipboardData.items).flatMap(item => { const file = item.kind === 'file' ? item.getAsFile() : null; return file === null ? [] : [file] })) }}
       onDragOver={event => { event.preventDefault() }} onDrop={event => { event.preventDefault(); scanDroppedFiles(event.dataTransfer.files) }}>
