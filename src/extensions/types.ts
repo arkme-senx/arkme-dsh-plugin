@@ -8,6 +8,16 @@ export const ARKME_EXTENSION_PREVIEW_MAX_ITEMS = 20
 export type ArkmeExtensionVisibility = 'private' | 'unlisted' | 'public'
 export type ArkmeExtensionEditableVisibility = 'private' | 'public'
 export type ArkmeExtensionChannel = 'stable' | 'beta'
+export type ArkmeNativeCapability =
+  | 'runtime_dependencies'
+  | 'optional_dependencies'
+  | 'bundled_dependencies'
+  | 'peer_dependencies'
+  | 'lifecycle_scripts'
+  | 'bin'
+  | 'native_addon'
+  | 'profile_patch_override'
+  | 'external_package_reference'
 
 export interface ArkmeExtensionRatingSummary {
   average: number
@@ -86,6 +96,10 @@ export interface ArkmeExtensionCatalogItem {
   installed_version?: string
   update_available?: boolean
   package_name?: string
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
+  execution_model?: 'arkme-sandboxed' | 'dsh-native'
+  native_capabilities?: ArkmeNativeCapability[]
   icon_ref?: string
   preview_cover_ref?: string
   preview_count?: number
@@ -255,13 +269,14 @@ export interface ArkmeExtensionPublishResult {
   version: string
   status: 'uploading' | 'validating' | 'published' | 'rejected' | 'expired'
   artifact_sha256?: string
-  artifact_contract_version?: 2
-  artifact_kind?: 'dsh-bundle-tgz'
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   package_name?: string
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_sha256?: string
   package_json_sha256?: string
   source_sha256?: string
+  native_capabilities?: ArkmeNativeCapability[]
   validation_error_code?: string
   validation_error_message?: string
 	source?: ArkmeExtensionSource
@@ -386,8 +401,8 @@ export interface ArkmeExtensionInstallResolution {
   published_at: number
   revoked: boolean
   revocation_reason?: string
-  artifact_contract_version?: 2
-  artifact_kind?: 'dsh-bundle-tgz'
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   package_name?: string
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_url?: string
@@ -397,12 +412,18 @@ export interface ArkmeExtensionInstallResolution {
   bundle_sha256?: string
   package_json_sha256?: string
   source_sha256?: string
+  native_capabilities?: ArkmeNativeCapability[]
   requires_native_confirmation?: boolean
+  audit_status?: 'approved' | 'warning' | 'rejected'
+  audit_risk_level?: ArkmeExtensionAuditRiskLevel
+  audit_reason?: string
 }
 
 export interface ArkmeExtensionInstallPreview {
   extension_id: string
   version: string
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   artifact_size?: number
   manifest: ArkmeExtensionManifest
   revoked: boolean
@@ -411,6 +432,10 @@ export interface ArkmeExtensionInstallPreview {
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_size?: number
   requires_native_confirmation?: boolean
+  native_capabilities?: ArkmeNativeCapability[]
+  audit_status?: 'approved' | 'warning' | 'rejected'
+  audit_risk_level?: ArkmeExtensionAuditRiskLevel
+  audit_reason?: string
 }
 
 export interface ArkmeInstalledExtension {
@@ -426,6 +451,8 @@ export interface ArkmeInstalledExtension {
   profilePackageName?: string
   profileBundlePath?: string
   executionModel?: 'arkme-sandboxed' | 'dsh-native'
+  artifactContractVersion?: 2 | 3
+  nativeCapabilities?: ArkmeNativeCapability[]
   packageJsonSha256?: string
   sourceSha256?: string
   permissionSnapshot: string[]
@@ -450,6 +477,8 @@ export type ArkmeInstalledExtensionView = Pick<
   | 'manifest'
   | 'enabled'
   | 'active'
+  | 'artifactContractVersion'
+  | 'nativeCapabilities'
   | 'permissionSnapshot'
   | 'updateChannel'
   | 'installedAtMillis'

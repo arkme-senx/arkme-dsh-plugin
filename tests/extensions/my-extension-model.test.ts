@@ -16,13 +16,13 @@ describe('my-extension view model', () => {
   })
 
   it('offers publication only when the Host owner marked an exact Cordis Package publishable', () => {
-    expect(myExtensionPrimaryAction({ ...base, states: ['cordis'], publish: { allowed: true, mode: 'new' } }))
+    expect(myExtensionPrimaryAction({ ...base, states: ['cordis'], publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' } }))
       .toEqual({ kind: 'publish', label: '发布' })
     expect(myExtensionPrimaryAction({ ...base, states: ['persisted'], publish: { allowed: false } }))
       .toBeUndefined()
     expect(myExtensionPrimaryAction({ ...base, states: ['published'], publish: { allowed: false } }))
       .toEqual({ kind: 'edit', label: '编辑' })
-    expect(myExtensionPrimaryAction({ ...base, states: ['cordis', 'published'], publish: { allowed: true, mode: 'version' } }))
+    expect(myExtensionPrimaryAction({ ...base, states: ['cordis', 'published'], publish: { allowed: true, mode: 'version', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' } }))
       .toEqual({ kind: 'edit', label: '编辑' })
   })
 

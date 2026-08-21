@@ -57,8 +57,9 @@ import type {
   ArkmeWorldInteractionPage,
 } from '../types.js'
 import type {
-  ArkmeExtensionCatalogItem, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
-  ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionIconResult, ArkmeExtensionInstallPreview, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeNativeCapability,
   ArkmeExtensionAuditResult,
   ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
@@ -163,21 +164,25 @@ export type {
   ArkmeSelfSummary,
 } from '../types.js'
 export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+  ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute, ArkmeMyExtensionPublishState,
   ArkmeMyExtensionState, ArkmeMyExtensionWarning,
 } from '../extensions/owned-types.js'
 export type {
   ArkmeExtensionCatalogItem,
+  ArkmeExtensionCatalogPage,
   ArkmeExtensionAuditResult,
   ArkmeExtensionEnabledResult,
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult,
+  ArkmeExtensionInstallPreview,
   ArkmeExtensionUnavailableView,
   ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery,
   ArkmeExtensionPreviewItem,
   ArkmeExtensionPreviewMediaType,
   ArkmeInstalledExtensionView,
+  ArkmeNativeCapability,
   ArkmeExtensionRatingSummary,
   ArkmeExtensionReviewAvatarFallback,
   ArkmeExtensionReviewCreateInput,
@@ -260,6 +265,26 @@ export class ArkmeSdk {
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */
   async installedExtensions(signal?: AbortSignal): Promise<ArkmeInstalledExtensionView[]> {
     return await this.call<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, signal)
+  }
+
+  /** Search the market through the same Host owner used by Arkme UI and Tools. */
+  async searchExtensions(query = '', limit = 20, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 50) throw new TypeError('Arkme extension search limit must be 1-50')
+    return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', { query: query.trim(), limit }, signal)
+  }
+
+  async extensionDetail(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionCatalogItem>('extensions.catalog.detail', { extensionId: extensionId.trim() }, signal)
+  }
+
+  /** Query V1/V2/V3 install authority before asking the user to approve installation. */
+  async extensionInstallPreview(extensionId: string, version?: string, signal?: AbortSignal): Promise<ArkmeExtensionInstallPreview> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionInstallPreview>('extensions.install.preview', {
+      extensionId: extensionId.trim(),
+      ...(version === undefined || version.trim() === '' ? {} : { version: version.trim() }),
+    }, signal)
   }
 
   async extensionEnabledState(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionEnabledState> {
@@ -473,7 +498,7 @@ export class ArkmeSdk {
     }, signal)
   }
 
-  /** List current-account Cordis, Profile-local and cloud-published extensions through one Host owner. */
+  /** List current-account sources with their Host-derived dynamic-cordis-v2 or profile-native-v3 publication route. */
   async myExtensions(options: { currentSessionId?: string; signal?: AbortSignal } = {}): Promise<ArkmeMyExtensionPage> {
     return await this.call<ArkmeMyExtensionPage>('extensions.mine.list', {
       ...(options.currentSessionId === undefined || options.currentSessionId.trim() === ''
@@ -482,7 +507,7 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  /** Publish one exact live Cordis Package after the caller has obtained explicit current-user intent. */
+  /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */
   publishMyExtension(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
     if (input.ownedRef.trim() === '') throw new TypeError('Arkme extension reference must not be empty')
     if (input.name.trim() === '' || input.name.trim().length > 120) throw new TypeError('Arkme extension name is invalid')

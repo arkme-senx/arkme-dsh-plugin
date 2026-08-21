@@ -12,9 +12,30 @@ function draft(ownedRef: string, name: string): Omit<ArkmeMyExtensionPublishInpu
   }
 }
 
+function preparedV2(input: ArkmeMyExtensionPublishInput, sourceFingerprint = 'fingerprint') {
+  return {
+    input,
+    sourceFingerprint,
+    publishRoute: 'dynamic-cordis-v2' as const,
+    artifactContractVersion: 2 as const,
+    artifactKind: 'dsh-bundle-tgz' as const,
+  }
+}
+
+function preparedV3(input: ArkmeMyExtensionPublishInput, sourceFingerprint = 'native-fingerprint') {
+  return {
+    input,
+    sourceFingerprint,
+    publishRoute: 'profile-native-v3' as const,
+    artifactContractVersion: 3 as const,
+    artifactKind: 'dsh-native-package-tgz' as const,
+    nativeCapabilities: ['runtime_dependencies'] as const,
+  }
+}
+
 describe('extension publish conversation confirmation', () => {
 	it('rejects malformed and duplicate existing extension targets before preflight', async () => {
-		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({ input, sourceFingerprint: 'fingerprint' }))
+		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => preparedV2(input))
 		const conversation = new ArkmeExtensionPublishConversation({ preflight, publish: vi.fn() })
 		const agent = { id: 'session-target-validation', session: { events: [] } }
 
@@ -30,10 +51,10 @@ describe('extension publish conversation confirmation', () => {
 
 	it('uses effective lineage for confirmation, deduplication and confirm-time revalidation', async () => {
 		const duplicateConversation = new ArkmeExtensionPublishConversation({
-			preflight: async input => ({
-				input: input.ownedRef === 'owned-implicit' ? { ...input, extensionId: 'ext-existing' } : input,
-				sourceFingerprint: `fingerprint:${input.ownedRef}`,
-			}),
+			preflight: async input => preparedV2(
+				input.ownedRef === 'owned-implicit' ? { ...input, extensionId: 'ext-existing' } : input,
+				`fingerprint:${input.ownedRef}`,
+			),
 			publish: vi.fn(),
 		})
 		const agent = { id: 'session-effective-target', session: { events: [] } }
@@ -49,10 +70,9 @@ describe('extension publish conversation confirmation', () => {
 		const current = { id: 'session-target-change', session: { get events() { return events } } }
 		const publish = vi.fn()
 		const conversation = new ArkmeExtensionPublishConversation({
-			preflight: async input => ({
-				input: effectiveExtensionId === undefined ? { ...input, extensionId: undefined } : { ...input, extensionId: effectiveExtensionId },
-				sourceFingerprint: 'fingerprint',
-			}),
+			preflight: async input => preparedV2(
+				effectiveExtensionId === undefined ? { ...input, extensionId: undefined } : { ...input, extensionId: effectiveExtensionId },
+			),
 			publish,
 			now: () => 1_000,
 		})
@@ -75,7 +95,7 @@ describe('extension publish conversation confirmation', () => {
 			{ seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '发布 GitHub 扩展' }], source: { kind: 'user' } } },
 		]
 		const agent = { id: 'session-github', session: { get events() { return events } } }
-		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({ input, sourceFingerprint: 'fingerprint' }))
+		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => preparedV2(input))
 		const publish = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({ extension_id: 'ext-github', version: input.version, status: 'published' as const }))
 		const conversation = new ArkmeExtensionPublishConversation({
 			preflight, publish, now: () => 1_000,
@@ -86,7 +106,8 @@ describe('extension publish conversation confirmation', () => {
 			githubRepositoryUrl: 'https://www.github.com/Example/Weather.git/',
 		}])
 		expect(prepared.question).toContain('https://github.com/example/weather')
-		expect(prepared.question).toContain('内测资格')
+		expect(prepared.question).toContain('V2 沙箱 Bundle')
+		expect(prepared.question).toContain('V2 来源账号资格仍需服务端校验')
 		expect(preflight).toHaveBeenCalledWith(expect.objectContaining({
 			githubRepositoryUrl: 'https://github.com/example/weather',
 		}), undefined)
@@ -113,7 +134,7 @@ describe('extension publish conversation confirmation', () => {
     }))
     let mutation = 0
     const conversation = new ArkmeExtensionPublishConversation({
-      preflight: async input => ({ input, sourceFingerprint: `fingerprint:${input.ownedRef}` }),
+      preflight: async input => preparedV2(input, `fingerprint:${input.ownedRef}`),
       publish,
       now: () => 1_000,
       createMutationId: () => `00000000-0000-4000-8000-${String(++mutation).padStart(12, '0')}`,
@@ -127,10 +148,10 @@ describe('extension publish conversation confirmation', () => {
     expect(prepared).toEqual({
       status: 'confirmation_required',
       count: 2,
-      question: '是否确认一次发布以下 2 个扩展？\n- 天气助手 1.0.0，仅自己\n- 日程助手 1.0.0，仅自己',
+      question: '是否确认一次发布以下 2 个扩展？\n- 天气助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）\n- 日程助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）',
       items: [
-        { ownedRef: 'owned-weather', name: '天气助手', version: '1.0.0', visibility: 'private' },
-        { ownedRef: 'owned-calendar', name: '日程助手', version: '1.0.0', visibility: 'private' },
+        { ownedRef: 'owned-weather', name: '天气助手', version: '1.0.0', visibility: 'private', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+        { ownedRef: 'owned-calendar', name: '日程助手', version: '1.0.0', visibility: 'private', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       ],
       expiresAtMillis: 601_000,
     })
@@ -152,8 +173,8 @@ describe('extension publish conversation confirmation', () => {
       published: 2,
       failed: 0,
       items: [
-        { ownedRef: 'owned-weather', name: '天气助手', version: '1.0.0', status: 'published', extensionId: 'ext-owned-weather' },
-        { ownedRef: 'owned-calendar', name: '日程助手', version: '1.0.0', status: 'published', extensionId: 'ext-owned-calendar' },
+        { ownedRef: 'owned-weather', name: '天气助手', version: '1.0.0', status: 'published', extensionId: 'ext-owned-weather', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+        { ownedRef: 'owned-calendar', name: '日程助手', version: '1.0.0', status: 'published', extensionId: 'ext-owned-calendar', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       ],
     })
     expect(publish).toHaveBeenCalledTimes(2)
@@ -167,7 +188,7 @@ describe('extension publish conversation confirmation', () => {
     let fingerprint = 'fingerprint-before'
     const publish = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' as const }))
     const conversation = new ArkmeExtensionPublishConversation({
-      preflight: async input => ({ input, sourceFingerprint: fingerprint }),
+      preflight: async input => preparedV2(input, fingerprint),
       publish,
       now: () => 1_000,
       createMutationId: () => '00000000-0000-4000-8000-000000000001',
@@ -192,7 +213,7 @@ describe('extension publish conversation confirmation', () => {
     const publish = vi.fn()
     let mutation = 0
     const conversation = new ArkmeExtensionPublishConversation({
-      preflight: async input => ({ input, sourceFingerprint: `fingerprint:${input.ownedRef}` }),
+      preflight: async input => preparedV2(input, `fingerprint:${input.ownedRef}`),
       publish,
       createMutationId: () => `00000000-0000-4000-8000-${String(++mutation).padStart(12, '0')}`,
     })
@@ -224,7 +245,7 @@ describe('extension publish conversation confirmation', () => {
     const agent = { id: 'session-partial', session: { get events() { return events } } }
     let mutation = 0
     const conversation = new ArkmeExtensionPublishConversation({
-      preflight: async input => ({ input, sourceFingerprint: `fingerprint:${input.ownedRef}` }),
+      preflight: async input => preparedV2(input, `fingerprint:${input.ownedRef}`),
       publish: async input => {
         if (input.ownedRef === 'owned-failed') throw new Error('Bundle 校验失败')
         return { extension_id: 'ext-success', version: input.version, status: 'published' }
@@ -244,8 +265,8 @@ describe('extension publish conversation confirmation', () => {
     await expect(conversation.confirm(agent as never)).resolves.toEqual({
       status: 'completed_with_failures', published: 1, failed: 1,
       items: [
-        { ownedRef: 'owned-success', name: '成功扩展', version: '1.0.0', status: 'published', extensionId: 'ext-success' },
-        { ownedRef: 'owned-failed', name: '失败扩展', version: '1.0.0', status: 'failed', message: 'Bundle 校验失败' },
+        { ownedRef: 'owned-success', name: '成功扩展', version: '1.0.0', status: 'published', extensionId: 'ext-success', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+        { ownedRef: 'owned-failed', name: '失败扩展', version: '1.0.0', status: 'failed', message: 'Bundle 校验失败', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       ],
     })
   })
@@ -256,7 +277,7 @@ describe('extension publish conversation confirmation', () => {
     ]
     const agent = { id: 'session-validating', session: { get events() { return events } } }
     const conversation = new ArkmeExtensionPublishConversation({
-      preflight: async input => ({ input, sourceFingerprint: 'fingerprint' }),
+      preflight: async input => preparedV2(input),
       publish: async input => ({ extension_id: 'ext-validating', version: input.version, status: 'validating' }),
       now: () => 1_000,
       createMutationId: () => '00000000-0000-4000-8000-000000000001',
@@ -272,7 +293,36 @@ describe('extension publish conversation confirmation', () => {
       items: [{
         ownedRef: 'owned-validating', name: '校验中扩展', version: '1.0.0', status: 'failed',
         message: '扩展发布尚未完成，当前状态：validating',
+        publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz',
       }],
     })
+  })
+
+  it('makes V2 and V3 routes explicit in one mixed prepare batch', async () => {
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '准备发布两个来源' }], source: { kind: 'user' } } },
+    ]
+    const agent = { id: 'session-mixed-routes', session: { get events() { return events } } }
+    const conversation = new ArkmeExtensionPublishConversation({
+      preflight: async input => input.ownedRef === 'owned-native'
+        ? preparedV3(input)
+        : preparedV2(input),
+      publish: vi.fn(),
+      now: () => 1_000,
+      createMutationId: () => '00000000-0000-4000-8000-000000000001',
+    })
+
+    const prepared = await conversation.prepare(agent as never, [
+      draft('owned-cordis', 'Cordis 扩展'),
+      { ...draft('owned-native', '原生扩展'), githubRepositoryUrl: 'https://github.com/example/native' },
+    ])
+
+    expect(prepared.question).toContain('发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）')
+    expect(prepared.question).toContain('发布方式：V3 原生 DSH Package（原生能力：runtime_dependencies）')
+    expect(prepared.question).toContain('GitHub 来源：https://github.com/example/native')
+    expect(prepared.items).toMatchObject([
+      { publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+      { publishRoute: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz', nativeCapabilities: ['runtime_dependencies'] },
+    ])
   })
 })

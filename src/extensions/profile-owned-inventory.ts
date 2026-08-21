@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { ArkmeOwnedExtensionStore } from './owned-store.js'
-import { ArkmeBundleArtifactError, packLocalBundleDirectory, readLocalBundleTarball } from './bundle-artifact.js'
+import {
+  ArkmeBundleArtifactError, packLocalNativeBundleDirectoryV3, readNativeBundleTarballV3,
+} from './bundle-artifact.js'
 import type { ArkmeOwnedProfileTarget } from './owned-refs.js'
 
 export interface OwnedProfileExtension {
@@ -16,6 +18,7 @@ export interface OwnedProfileExtension {
   extensionId?: string
   publishable: boolean
   publishReason?: string
+  artifactContractVersion?: 3
   target?: ArkmeOwnedProfileTarget
 }
 
@@ -55,14 +58,16 @@ export function scanOwnedProfileExtensions(input: {
   let invalidEntries = 0
   for (const [packageName, rawSpec] of Object.entries(dependencies)) {
     if (packageName.startsWith('@deepseek-ai/') || packageName === '@senguoyun/dsh-arkme') continue
-    if (typeof rawSpec !== 'string' || (!rawSpec.startsWith('link:') && !rawSpec.startsWith('file:'))) continue
+    if (typeof rawSpec !== 'string') continue
     try {
-      const localSource = resolveLocalSource(input.profileDirectory, rawSpec)
+      const localSource = rawSpec.startsWith('link:') || rawSpec.startsWith('file:')
+        ? resolveLocalSource(input.profileDirectory, rawSpec)
+        : resolveInstalledSource(input.profileDirectory, packageName)
       if (localSource === undefined) continue
-      const manifest = localSource.kind === 'profile-directory'
+      const manifest = localSource.kind === 'profile-directory' || localSource.kind === 'profile-installed'
         ? readJson(join(localSource.path, 'package.json')) as PackageManifest | undefined
         : undefined
-      if (localSource.kind === 'profile-directory') {
+      if (localSource.kind === 'profile-directory' || localSource.kind === 'profile-installed') {
         if (manifest?.name !== packageName || typeof manifest.dsh?.bundle?.patch !== 'string') throw new Error('manifest invalid')
         const patchPath = realpathSync(join(localSource.path, manifest.dsh.bundle.patch))
         if (!isInside(localSource.path, patchPath) || !statSync(patchPath).isFile()) throw new Error('patch invalid')
@@ -82,9 +87,9 @@ export function scanOwnedProfileExtensions(input: {
       let version = typeof manifest?.version === 'string' && manifest.version.trim() !== '' ? manifest.version : undefined
       if (publishable) {
         try {
-          const source = localSource.kind === 'profile-directory'
-            ? packLocalBundleDirectory(localSource.path)
-            : readLocalBundleTarball(localSource.path)
+          const source = localSource.kind === 'profile-tarball'
+            ? readNativeBundleTarballV3(localSource.path)
+            : packLocalNativeBundleDirectoryV3(localSource.path)
           if (source.bundle.packageName !== packageName) throw new Error('package name mismatch')
           version = source.bundle.version
         } catch (error) {
@@ -100,8 +105,9 @@ export function scanOwnedProfileExtensions(input: {
 	    ...(version === undefined ? {} : { version }),
         name: packageName,
 	    description: typeof manifest?.description === 'string' ? manifest.description : '',
-        active: bundles.has(packageName),
+	    active: bundles.has(packageName),
 	    halves: { host: true, client: manifest?.dsh?.client !== undefined },
+	    artifactContractVersion: 3,
 	    publishable,
 	    ...(publishReason === undefined ? {} : { publishReason }),
 	    ...(publishable ? {
@@ -137,6 +143,15 @@ function resolveLocalSource(
 	throw new Error('local spec is not a directory')
   }
   return { kind: 'profile-directory', path: realpathSync(target) }
+}
+
+function resolveInstalledSource(
+  profileDirectory: string,
+  packageName: string,
+): { kind: 'profile-installed'; path: string } | undefined {
+  const target = join(profileDirectory, 'node_modules', ...packageName.split('/'))
+  if (!existsSync(target) || !statSync(target).isDirectory()) return undefined
+  return { kind: 'profile-installed', path: realpathSync(target) }
 }
 
 function extensionIdFromInstallation(packageDirectory: string): string | undefined {

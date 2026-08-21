@@ -288,7 +288,7 @@ export function apply(ctx: Context, config: Config): void {
       runner,
       agents,
       publish: async input => await manager.publish(input),
-      publishBundle: async input => await manager.publishBundleSource(input),
+      publishBundle: async input => await manager.publishNativeBundleSource(input),
     })
     ownedExtensionInventory = inventory
     const tasks = new ArkmeExtensionInstallTasks(

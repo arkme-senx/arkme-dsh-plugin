@@ -487,7 +487,10 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
     <span style={styles.cardBody}>
       <span style={styles.titleRow}>
         <span style={styles.name}>{item.name}</span>
-        <span style={styles.stateBadges}>{myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}</span>
+        <span style={styles.stateBadges}>
+          {myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}
+          {item.persisted?.artifactContractVersion === 3 && <span style={styles.stateBadge}>V3 原生</span>}
+        </span>
       </span>
       <span style={styles.description}>{item.description || '这个扩展还没有填写说明。'}</span>
       {version !== '' && <span style={styles.meta}>{version}</span>}
@@ -611,10 +614,23 @@ export function extensionInstallOwnerId(
 }
 
 export function extensionNativeInstallWarning(
-  preview: Pick<ArkmeExtensionInstallPreview, 'execution_model' | 'package_name'>,
+  preview: Pick<ArkmeExtensionInstallPreview,
+    'execution_model' | 'package_name' | 'artifact_contract_version' | 'native_capabilities'
+    | 'audit_status' | 'audit_risk_level' | 'audit_reason'>,
 ): string | undefined {
   if (preview.execution_model !== 'dsh-native') return undefined
-  return `扩展 ${preview.package_name ?? '（未知 package）'} 是原生 DSH Bundle，将以 DSH 插件进程权限运行。确认继续安装吗？`
+  const labels: Record<string, string> = {
+    runtime_dependencies: '运行依赖', optional_dependencies: '可选依赖', bundled_dependencies: '捆绑依赖',
+    peer_dependencies: '外部 Peer', lifecycle_scripts: '安装脚本', bin: '命令行程序', native_addon: '原生模块',
+    profile_patch_override: '修改现有 Profile 配置', external_package_reference: '加载其他依赖包',
+  }
+  const capabilities = (preview.native_capabilities ?? []).map(item => labels[item] ?? item)
+  const detail = capabilities.length === 0 ? '' : ` 检测到：${capabilities.join('、')}。`
+  const contract = preview.artifact_contract_version === 3 ? 'V3 原生 DSH Package' : '原生 DSH Bundle'
+  const auditWarning = preview.audit_status === 'warning'
+    ? ` AI 风险审核提示（${preview.audit_risk_level ?? '未知等级'}）：${preview.audit_reason?.trim() || '该原生插件需要额外复核'}。`
+    : ''
+  return `扩展 ${preview.package_name ?? '（未知 package）'} 是${contract}，将以 DSH 插件进程权限运行。${detail}${auditWarning}确认继续安装吗？`
 }
 
 export function extensionAuthorLabel(

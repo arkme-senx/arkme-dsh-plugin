@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmePluginError } from '../../src/arkme-service.js'
-import { packLocalBundleDirectory } from '../../src/extensions/bundle-artifact.js'
+import { packLocalBundleDirectory, packLocalNativeBundleDirectoryV3 } from '../../src/extensions/bundle-artifact.js'
 import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -46,6 +46,25 @@ describe('Bundle v2 publish client', () => {
       extension_id: 'ext-v2', name: '贪吃蛇游戏3', description: '说明', version: '1.0.0',
     })
     expect(detail).not.toHaveProperty('manifest')
+  })
+
+  it('projects the V3 contract and native capabilities from detail queries', async () => {
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({
+      extension: {
+        extension_id: 'ext-v3', name: 'Native V3', description: '说明', visibility: 'public',
+        latest_stable_version: '2.0.0',
+      },
+      latest_version: {
+        version: '2.0.0', artifact_contract_version: 3, artifact_kind: 'dsh-native-package-tgz',
+        execution_model: 'dsh-native', native_capabilities: ['bin', 'runtime_dependencies'],
+      },
+    } as T))
+
+    await expect(client.detail('ext-v3')).resolves.toMatchObject({
+      extension_id: 'ext-v3', version: '2.0.0', artifact_contract_version: 3,
+      artifact_kind: 'dsh-native-package-tgz', execution_model: 'dsh-native',
+      native_capabilities: ['bin', 'runtime_dependencies'],
+    })
   })
 
   it('creates one dual-upload session and uses the signed content types', async () => {
@@ -100,6 +119,52 @@ describe('Bundle v2 publish client', () => {
       })
       expect(uploads).toEqual([
         { url: 'https://objects.test/bundle', contentType: 'application/vnd.dsh.bundle+gzip' },
+        { url: 'https://objects.test/source', contentType: 'application/vnd.arkme.extension-source+gzip' },
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('creates a distinct native V3 session and media type', async () => {
+    const root = fixture()
+    try {
+      const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Record<string, unknown>
+      manifest.scripts = { prepare: 'npm run build' }
+      manifest.dependencies = { 'left-pad': '1.3.0' }
+      writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
+      const source = packLocalNativeBundleDirectoryV3(root)
+      const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+      const post = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
+        requests.push({ path, body })
+        return {
+          publish_session_id: 'pub-v3', extension_id: 'ext-v3', status: 'uploading',
+          bundle_upload: { url: 'https://objects.test/native', method: 'PUT', headers: {}, expires_at: 'soon' },
+          source_upload: { url: 'https://objects.test/source', method: 'PUT', headers: {}, expires_at: 'soon' },
+        } as T
+      }
+      const uploads: Array<{ url: string; contentType: string }> = []
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        uploads.push({ url: String(input), contentType: new Headers(init?.headers).get('Content-Type') ?? '' })
+        return new Response('', { status: 200 })
+      }) as typeof fetch
+      const client = new ExtensionPublishClient(post, fetchImpl)
+
+      const session = await client.createNativeBundlePublishSession({
+        name: 'V3 客户端测试', description: '', visibility: 'private', idempotency_key: 'bundle-client-v3-test-1',
+        bundle: source.bundle, source: source.source,
+      })
+      await client.uploadNativeBundle(session.bundle_upload!, source.bundle)
+      await client.uploadSource(session.source_upload!, source.source)
+
+      expect(requests[0]).toMatchObject({ body: {
+        artifact_contract_version: 3,
+        artifact_kind: 'dsh-native-package-tgz',
+        execution_model: 'dsh-native',
+        package_name: '@example/client-test',
+      } })
+      expect(uploads).toEqual([
+        { url: 'https://objects.test/native', contentType: 'application/vnd.dsh.native-package+gzip' },
         { url: 'https://objects.test/source', contentType: 'application/vnd.arkme.extension-source+gzip' },
       ])
     } finally {

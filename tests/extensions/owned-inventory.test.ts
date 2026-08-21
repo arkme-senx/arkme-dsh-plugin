@@ -106,7 +106,12 @@ describe('owned extension inventory', () => {
     })
 
     await expect(inventory.list({ currentSessionId: 'session-1' })).resolves.toMatchObject({
-      items: [{ states: ['cordis'] }], warnings: ['cloud-unavailable'],
+      items: [{
+        states: ['cordis'],
+        publish: {
+          allowed: true, route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz',
+        },
+      }], warnings: ['cloud-unavailable'],
     })
     store.close()
   })
@@ -134,6 +139,9 @@ describe('owned extension inventory', () => {
       publish,
     })
     const page = await inventory.list({ currentSessionId: 'session-1' })
+    expect(page.items[0]?.publish).toMatchObject({
+      allowed: true, route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz',
+    })
 
     const result = await inventory.publishCordis({
       ownedRef: page.items[0]!.ownedRef, name: '天气助手', description: '天气', version: '1.0.0',
@@ -187,6 +195,9 @@ describe('owned extension inventory', () => {
     const changed = await inventory.preparePublish(input)
 
     expect(first.input).toEqual(input)
+    expect(first).toMatchObject({
+      publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz',
+    })
     expect(first.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/)
     expect(replay.sourceFingerprint).toBe(first.sourceFingerprint)
     expect(changed.sourceFingerprint).not.toBe(first.sourceFingerprint)
@@ -225,9 +236,19 @@ describe('owned extension inventory', () => {
 
     const page = await inventory.list()
     expect(page.items).toMatchObject([{
-      name: packageName, states: ['persisted'], publish: { allowed: true, mode: 'new' },
+      name: packageName, states: ['persisted'], publish: {
+        allowed: true, mode: 'new', route: 'profile-native-v3',
+        artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz',
+      },
     }])
     expect(JSON.stringify(page)).not.toContain(local)
+
+    await expect(inventory.preparePublish({
+      ownedRef: page.items[0]!.ownedRef, name: '本地天气', description: '', version: '1.0.0',
+      visibility: 'private', clientMutationId: '4df2bb67-dd68-4b6c-8cbf-e3380da55043',
+    })).resolves.toMatchObject({
+      publishRoute: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz',
+    })
 
     const result = await inventory.publish({
       ownedRef: page.items[0]!.ownedRef, name: '本地天气', description: '', version: '1.0.0',

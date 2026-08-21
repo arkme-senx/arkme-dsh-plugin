@@ -27,7 +27,7 @@ function writeBundle(directory: string, name: string, version = '1.0.0'): void {
 }
 
 describe('Profile-owned extension inventory', () => {
-  it('admits local bundles while excluding DSH official, remote, and third-party Arkme wrappers', () => {
+  it('admits local and installed registry bundles while excluding DSH official and third-party Arkme wrappers', () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme profile with spaces '))
     const profile = join(root, 'profiles', 'web')
     const local = join(root, 'My Local Weather')
@@ -35,12 +35,14 @@ describe('Profile-owned extension inventory', () => {
     const arkmeOfficialLocal = join(root, 'Arkme Official Local')
     const tarballSource = join(root, 'Tarball Source')
     const wrapper = join(profile, 'arkme-extensions', 'third-party', '1.0.0')
+    const remoteInstalled = join(profile, 'node_modules', 'remote-extension')
     writeBundle(local, 'local-weather')
     writeBundle(tarballSource, 'local-tarball')
     writeFileSync(join(root, 'local-plugin.tgz'), packLocalBundleDirectory(tarballSource).bundle.bytes)
     writeBundle(officialLocal, '@deepseek-ai/dsh-official-local')
     writeBundle(arkmeOfficialLocal, '@senguoyun/dsh-arkme')
     writeBundle(wrapper, '@arkme-local/ext-aaaaaaaaaaaaaaaa')
+    writeBundle(remoteInstalled, 'remote-extension', '2.3.4')
     writeJson(join(wrapper, 'installation.json'), { extension_id: 'ext-third-party' })
     writeJson(join(profile, 'package.json'), {
       name: 'dsh-profile-web',
@@ -68,6 +70,9 @@ describe('Profile-owned extension inventory', () => {
       name: 'local-weather', description: 'local-weather description', active: true,
       halves: { host: true, client: false }, publishable: true,
     }, {
+      sourceKey: 'web\0remote-extension', packageName: 'remote-extension', version: '2.3.4',
+      name: 'remote-extension', active: false, publishable: true, artifactContractVersion: 3,
+    }, {
       sourceKey: 'web\0local-tarball', packageName: 'local-tarball', version: '1.0.0',
       name: 'local-tarball', active: false, publishable: true,
     }])
@@ -75,6 +80,7 @@ describe('Profile-owned extension inventory', () => {
     expect(result.items.map(item => item.packageName)).not.toContain('@senguoyun/dsh-arkme')
     expect(result.invalidEntries).toBe(0)
     expect(store.owner('profile', 'web\0local-weather')).toBe(7)
+    expect(store.owner('profile', 'web\0remote-extension')).toBe(7)
     expect(store.owner('profile', 'web\0local-tarball')).toBe(7)
     store.close()
   })
@@ -101,4 +107,23 @@ describe('Profile-owned extension inventory', () => {
     }])
     store.close()
   })
+
+  it.skipIf((process.env.ARKME_NATIVE_V3_PROFILE?.trim() ?? '') === '')(
+    'discovers an actually installed registry or tgz Bundle as a V3 source',
+    () => {
+      const profile = process.env.ARKME_NATIVE_V3_PROFILE!.trim()
+      const state = mkdtempSync(join(tmpdir(), 'arkme-native-v3-external-inventory-'))
+      const store = new ArkmeOwnedExtensionStore(state)
+
+      const result = scanOwnedProfileExtensions({
+        profileDirectory: profile, profileName: 'web', userId: 7, cloudOwnedExtensionIds: new Set(), store,
+      })
+
+      expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({
+        packageName: '@limuyang2/dsh-agent-team', version: '0.1.3', publishable: true,
+        artifactContractVersion: 3,
+      })]))
+      store.close()
+    },
+  )
 })

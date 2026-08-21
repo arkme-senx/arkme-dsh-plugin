@@ -20,7 +20,9 @@ import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
 import { assertExtensionArtifactSize } from './artifact.js'
 import {
   ARKME_BUNDLE_ARTIFACT_KIND, ARKME_BUNDLE_CONTRACT_VERSION, ARKME_BUNDLE_MAX_BYTES,
+  ARKME_NATIVE_BUNDLE_ARTIFACT_KIND, ARKME_NATIVE_BUNDLE_CONTRACT_VERSION,
   type ArkmeBundleArtifact, type ArkmeBundlePublishSource,
+  type ArkmeNativeBundleArtifact, type ArkmeNativeBundlePublishSource,
 } from './bundle-artifact.js'
 import type { ArkmeExtensionUploadSlot } from './types.js'
 
@@ -141,8 +143,52 @@ export class ExtensionPublishClient {
 		}
   }
 
+  async createNativeBundlePublishSession(input: {
+    extension_id?: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionVisibility
+    changelog?: string
+    idempotency_key: string
+    bundle: ArkmeNativeBundleArtifact
+    source: ArkmeNativeBundlePublishSource['source']
+    listingSource?: { type: 'github_repository'; url: string }
+  }, signal?: AbortSignal): Promise<ArkmeBundlePublishSession> {
+    if (input.bundle.bytes.byteLength <= 0 || input.bundle.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES
+      || input.source.bytes.byteLength <= 0 || input.source.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES) {
+      throw new ArkmePluginError('extension-bundle-size-invalid', '扩展 Bundle 或源码大小无效', false, 400)
+    }
+    try {
+      return await this.post('/api/v1/extensions/publish-session/create', {
+        artifact_contract_version: ARKME_NATIVE_BUNDLE_CONTRACT_VERSION,
+        artifact_kind: ARKME_NATIVE_BUNDLE_ARTIFACT_KIND,
+        ...(input.extension_id === undefined ? {} : { extension_id: input.extension_id }),
+        name: input.name,
+        description: input.description,
+        package_name: input.bundle.packageName,
+        version: input.bundle.version,
+        execution_model: 'dsh-native',
+        visibility: input.visibility,
+        ...(input.changelog === undefined ? {} : { changelog: input.changelog }),
+        bundle_size: input.bundle.bytes.byteLength,
+        bundle_sha256: input.bundle.bundleSha256,
+        package_json_sha256: input.bundle.packageJsonSha256,
+        source_size: input.source.bytes.byteLength,
+        source_sha256: input.source.sourceSha256,
+        ...(input.listingSource === undefined ? {} : { source: input.listingSource }),
+        idempotency_key: input.idempotency_key,
+      }, signal)
+    } catch (error) {
+      throw extensionSourceError(error)
+    }
+  }
+
   async uploadBundle(slot: ArkmeExtensionUploadSlot, bundle: ArkmeBundleArtifact, signal?: AbortSignal): Promise<void> {
     await this.uploadBytes(slot, bundle.bytes, 'application/vnd.dsh.bundle+gzip', 'Bundle', signal)
+  }
+
+  async uploadNativeBundle(slot: ArkmeExtensionUploadSlot, bundle: ArkmeNativeBundleArtifact, signal?: AbortSignal): Promise<void> {
+    await this.uploadBytes(slot, bundle.bytes, 'application/vnd.dsh.native-package+gzip', '原生 DSH Bundle', signal)
   }
 
   async uploadSource(
@@ -289,7 +335,14 @@ export class ExtensionPublishClient {
   async detail(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
     const response = await this.post<ArkmeExtensionCatalogItem | {
       extension: ArkmeExtensionCatalogItem
-      latest_version?: string | { version?: string; manifest?: ArkmeExtensionCatalogItem['manifest'] }
+      latest_version?: string | {
+        version?: string
+        manifest?: ArkmeExtensionCatalogItem['manifest']
+        artifact_contract_version?: 2 | 3
+        artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
+        execution_model?: 'arkme-sandboxed' | 'dsh-native'
+        native_capabilities?: import('./types.js').ArkmeNativeCapability[]
+      }
     }>('/api/public/v1/extensions/detail', { extension_id: extensionId }, signal)
     if (!('extension' in response)) return catalogItemWithSafeManifest(response)
     const latest = response.latest_version
@@ -305,6 +358,10 @@ export class ExtensionPublishClient {
             latest_stable_version: latest.version,
             version: latest.version,
             ...(latestManifest === undefined ? {} : { manifest: latestManifest }),
+            ...(latest.artifact_contract_version === undefined ? {} : { artifact_contract_version: latest.artifact_contract_version }),
+            ...(latest.artifact_kind === undefined ? {} : { artifact_kind: latest.artifact_kind }),
+            ...(latest.execution_model === undefined ? {} : { execution_model: latest.execution_model }),
+            ...(latest.native_capabilities === undefined ? {} : { native_capabilities: [...latest.native_capabilities] }),
           }
         : {}),
     }

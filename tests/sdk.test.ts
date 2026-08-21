@@ -181,6 +181,39 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('queries V3 market detail and native install capabilities through the public SDK', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'extensions.catalog.list') return success({ items: [], total: 0 })
+        if (request.operation === 'extensions.catalog.detail') return success({
+          extension_id: 'ext-v3', name: 'Native V3', description: '', visibility: 'public',
+          artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
+        })
+        if (request.operation === 'extensions.install.preview') return success({
+          extension_id: 'ext-v3', version: '1.0.0', artifact_contract_version: 3,
+          artifact_kind: 'dsh-native-package-tgz', execution_model: 'dsh-native',
+          native_capabilities: ['bin', 'runtime_dependencies'], requires_native_confirmation: true,
+          manifest: {}, revoked: false,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.searchExtensions('native', 10)).resolves.toMatchObject({ total: 0 })
+    await expect(sdk.extensionDetail('ext-v3')).resolves.toMatchObject({ artifact_contract_version: 3 })
+    await expect(sdk.extensionInstallPreview('ext-v3', '1.0.0')).resolves.toMatchObject({
+      artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
+    })
+    expect(calls).toEqual([
+      { operation: 'extensions.catalog.list', params: { query: 'native', limit: 10 } },
+      { operation: 'extensions.catalog.detail', params: { extensionId: 'ext-v3' } },
+      { operation: 'extensions.install.preview', params: { extensionId: 'ext-v3', version: '1.0.0' } },
+    ])
+  })
+
   it('binds the default browser fetch to the global receiver', async () => {
     const originalFetch = globalThis.fetch
     const receiverFetch = vi.fn(function (this: unknown) {
@@ -372,7 +405,18 @@ describe('Arkme SDK', () => {
       fetchImpl: async (_input, init) => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
-        if (request.operation === 'extensions.mine.list') return success({ items: [], warnings: [] })
+        if (request.operation === 'extensions.mine.list') return success({ items: [
+          {
+            ownedRef: 'owned-cordis', name: 'Cordis', description: '', states: ['cordis'],
+            halves: { host: true, client: false },
+            publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+          },
+          {
+            ownedRef: 'owned-native', name: 'Native', description: '', states: ['persisted'],
+            halves: { host: true, client: false },
+            publish: { allowed: true, mode: 'new', route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' },
+          },
+        ], warnings: [] })
         if (request.operation === 'extensions.mine.publish') {
           return success({ extension_id: 'ext-1', version: '1.0.0', status: 'published' })
         }
@@ -395,7 +439,10 @@ describe('Arkme SDK', () => {
       },
     })
 
-    await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toEqual({ items: [], warnings: [] })
+    await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toMatchObject({ items: [
+      { publish: { route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' } },
+      { publish: { route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' } },
+    ], warnings: [] })
     await expect(sdk.publishMyExtension({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
 		visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',

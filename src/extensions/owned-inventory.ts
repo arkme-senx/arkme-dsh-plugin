@@ -4,13 +4,16 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensi
   ArkmeExtensionVisibility, DynamicCordisInventoryPackageLike, DynamicCordisInventoryRowLike,
   DynamicCordisRunnerLike,
 } from './types.js'
-import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+import type { ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute,
+  ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
   ArkmeMyExtensionState, ArkmeMyExtensionWarning, ArkmePreparedExtensionPublish,
 } from './owned-types.js'
 import type { ArkmeOwnedExtensionRefs } from './owned-refs.js'
 import type { ArkmeOwnedExtensionStore } from './owned-store.js'
 import { scanOwnedProfileExtensions } from './profile-owned-inventory.js'
-import { packLocalBundleDirectory, readLocalBundleTarball, type ArkmeBundlePublishSource } from './bundle-artifact.js'
+import {
+  packLocalNativeBundleDirectoryV3, readNativeBundleTarballV3, type ArkmeNativeBundlePublishSource,
+} from './bundle-artifact.js'
 import type { ArkmeOwnedExtensionTarget } from './owned-refs.js'
 
 interface MutableOwnedItem {
@@ -19,7 +22,7 @@ interface MutableOwnedItem {
   description: string
   halves: { host: boolean; client: boolean }
   cordis?: { row: DynamicCordisInventoryRowLike; packageId: string; sourceKey: string }
-  persisted?: { packageName: string; version?: string; active: boolean; publishable: boolean; publishReason?: string; target?: ArkmeOwnedExtensionTarget }
+  persisted?: { packageName: string; version?: string; active: boolean; artifactContractVersion?: 3; publishable: boolean; publishReason?: string; target?: ArkmeOwnedExtensionTarget }
   published?: ArkmeExtensionCatalogItem
 }
 
@@ -49,7 +52,7 @@ interface PublishInput {
 }
 
 interface PublishBundleInput {
-  source: ArkmeBundlePublishSource
+  source: ArkmeNativeBundlePublishSource
   extensionId?: string
   name: string
   description: string
@@ -127,6 +130,7 @@ export class ArkmeOwnedExtensionInventory {
         active: local.active,
 	    publishable: local.publishable,
 	    ...(local.publishReason === undefined ? {} : { publishReason: local.publishReason }),
+	    ...(local.artifactContractVersion === undefined ? {} : { artifactContractVersion: local.artifactContractVersion }),
 	    ...(local.target === undefined ? {} : { target: local.target }),
       }
       row.halves = mergeHalves(row.halves, local.halves)
@@ -194,26 +198,39 @@ export class ArkmeOwnedExtensionInventory {
           ...(inspected.code.client === undefined ? {} : { client: inspected.code.client.replace(/\r\n?/g, '\n') }),
         },
       })).digest('hex')
-      return { input: preparedInput, sourceFingerprint }
+      return {
+        input: preparedInput,
+        sourceFingerprint,
+        publishRoute: 'dynamic-cordis-v2',
+        artifactContractVersion: 2,
+        artifactKind: 'dsh-bundle-tgz',
+      }
     }
     if (this.options.store.owner('profile', target.sourceKey) !== userId
       || this.options.store.specDigest('profile', target.sourceKey) !== target.specDigest) {
       throw new ArkmePluginError('extension-owner-mismatch', '该本地扩展不属于当前 Arkme 账号', false, 403)
     }
-    const source = target.kind === 'profile-directory'
-      ? packLocalBundleDirectory(target.sourcePath)
-      : readLocalBundleTarball(target.sourcePath)
+    const source = target.kind === 'profile-tarball'
+      ? readNativeBundleTarballV3(target.sourcePath)
+      : packLocalNativeBundleDirectoryV3(target.sourcePath)
     if (source.bundle.packageName !== target.packageName) {
       throw new ArkmePluginError('extension-profile-stale', '本地 Bundle package identity 已变化，请刷新列表', false, 409)
     }
     if (source.bundle.version !== input.version) {
       throw new ArkmePluginError('extension-version-mismatch', '发布版本必须与 Bundle package.json.version 一致', false, 409)
     }
+    if (input.visibility !== 'private' && (input.githubRepositoryUrl?.trim() ?? '') === '') {
+      throw new ArkmePluginError('extension-source-invalid', '公开发布原生 DSH V3 Package 必须提供 GitHub 仓库地址', false, 400)
+    }
     return {
       input: preparedInput,
       sourceFingerprint: createHash('sha256')
         .update(`${source.bundle.bundleSha256}\0${source.source.sourceSha256}`)
         .digest('hex'),
+      publishRoute: 'profile-native-v3',
+      artifactContractVersion: 3,
+      artifactKind: 'dsh-native-package-tgz',
+      nativeCapabilities: [...source.bundle.nativeCapabilities],
     }
   }
 
@@ -285,9 +302,9 @@ export class ArkmeOwnedExtensionInventory {
       || this.options.store.specDigest('profile', target.sourceKey) !== target.specDigest) {
       throw new ArkmePluginError('extension-owner-mismatch', '该本地扩展不属于当前 Arkme 账号', false, 403)
     }
-    const source = target.kind === 'profile-directory'
-      ? packLocalBundleDirectory(target.sourcePath)
-      : readLocalBundleTarball(target.sourcePath)
+    const source = target.kind === 'profile-tarball'
+      ? readNativeBundleTarballV3(target.sourcePath)
+      : packLocalNativeBundleDirectoryV3(target.sourcePath)
     if (source.bundle.packageName !== target.packageName) {
       throw new ArkmePluginError('extension-profile-stale', '本地 Bundle package identity 已变化，请刷新列表', false, 409)
     }
@@ -422,8 +439,9 @@ export class ArkmeOwnedExtensionInventory {
       ...(row.persisted === undefined ? {} : {
         persisted: {
           packageName: row.persisted.packageName,
-          ...(row.persisted.version === undefined ? {} : { version: row.persisted.version }),
-          active: row.persisted.active,
+	          ...(row.persisted.version === undefined ? {} : { version: row.persisted.version }),
+	          active: row.persisted.active,
+	          ...(row.persisted.artifactContractVersion === undefined ? {} : { artifactContractVersion: row.persisted.artifactContractVersion }),
         },
       }),
       ...(row.published === undefined ? {} : {
@@ -443,7 +461,11 @@ export class ArkmeOwnedExtensionInventory {
 	  publish: row.published !== undefined
 	    ? { allowed: false, reason: '该扩展已发布' }
 	    : target !== undefined
-	      ? { allowed: true, mode: 'new' }
+	      ? {
+	          allowed: true,
+	          mode: 'new',
+	          ...publishContractForTarget(target),
+	        }
 	      : { allowed: false, reason: row.persisted?.publishReason ?? '当前没有可读取的发布源' },
     }
   }
@@ -459,6 +481,16 @@ export class ArkmeOwnedExtensionInventory {
   private cordisSourceKey(agentId: string, pluginId: string): string {
     return `${this.options.hostInstanceId}\0${agentId}\0${pluginId}`
   }
+}
+
+function publishContractForTarget(target: ArkmeOwnedExtensionTarget): {
+  route: ArkmeExtensionPublishRoute
+  artifactContractVersion: 2 | 3
+  artifactKind: ArkmeExtensionPublishArtifactKind
+} {
+  return target.kind === 'cordis'
+    ? { route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' }
+    : { route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' }
 }
 
 export function selectPublishPackage(input: Pick<DynamicCordisInventoryRowLike, 'packages' | 'currentPackageId'>): string | undefined {

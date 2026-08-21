@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { ArkmeExtensionManifest, ArkmeInstalledExtension } from './types.js'
+import type { ArkmeExtensionManifest, ArkmeInstalledExtension, ArkmeNativeCapability } from './types.js'
 
 interface ExtensionRow {
   extension_id: string
@@ -16,6 +16,8 @@ interface ExtensionRow {
   profile_package_name: string | null
   profile_bundle_path: string | null
   execution_model: 'arkme-sandboxed' | 'dsh-native' | null
+  artifact_contract_version: 2 | 3 | null
+  native_capabilities_json: string
   package_json_sha256: string | null
   source_sha256: string | null
   permission_snapshot_json: string
@@ -50,6 +52,8 @@ export class ArkmeExtensionInstallStore {
         profile_package_name TEXT,
         profile_bundle_path TEXT,
         execution_model TEXT,
+        artifact_contract_version INTEGER,
+        native_capabilities_json TEXT NOT NULL DEFAULT '[]',
         package_json_sha256 TEXT,
         source_sha256 TEXT,
         permission_snapshot_json TEXT NOT NULL DEFAULT '[]',
@@ -64,6 +68,8 @@ export class ArkmeExtensionInstallStore {
     if (!columns.has('profile_package_name')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN profile_package_name TEXT')
     if (!columns.has('profile_bundle_path')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN profile_bundle_path TEXT')
     if (!columns.has('execution_model')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN execution_model TEXT')
+    if (!columns.has('artifact_contract_version')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN artifact_contract_version INTEGER')
+    if (!columns.has('native_capabilities_json')) this.database.exec("ALTER TABLE installed_extensions ADD COLUMN native_capabilities_json TEXT NOT NULL DEFAULT '[]'")
     if (!columns.has('package_json_sha256')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN package_json_sha256 TEXT')
     if (!columns.has('source_sha256')) this.database.exec('ALTER TABLE installed_extensions ADD COLUMN source_sha256 TEXT')
     // Dynamic Cordis runs are process-owned. Never restore a stale active claim after DSH restarts.
@@ -75,7 +81,8 @@ export class ArkmeExtensionInstallStore {
     const rows = this.database.prepare(`
       SELECT extension_id, installed_version, artifact_sha256, artifact_path, manifest_json,
              enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path,
-             execution_model, package_json_sha256, source_sha256, permission_snapshot_json,
+             execution_model, artifact_contract_version, native_capabilities_json,
+             package_json_sha256, source_sha256, permission_snapshot_json,
              update_channel, installed_at_millis, last_checked_at_millis, last_error
       FROM installed_extensions ORDER BY installed_at_millis DESC, extension_id ASC
     `).all() as unknown as ExtensionRow[]
@@ -86,7 +93,8 @@ export class ArkmeExtensionInstallStore {
     const row = this.database.prepare(`
       SELECT extension_id, installed_version, artifact_sha256, artifact_path, manifest_json,
              enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path,
-             execution_model, package_json_sha256, source_sha256, permission_snapshot_json,
+             execution_model, artifact_contract_version, native_capabilities_json,
+             package_json_sha256, source_sha256, permission_snapshot_json,
              update_channel, installed_at_millis, last_checked_at_millis, last_error
       FROM installed_extensions WHERE extension_id = ?
     `).get(extensionId) as unknown as ExtensionRow | undefined
@@ -98,9 +106,9 @@ export class ArkmeExtensionInstallStore {
       INSERT INTO installed_extensions (
         extension_id, installed_version, artifact_sha256, artifact_path, manifest_json,
         enabled, active, dynamic_plugin_id, dynamic_package_id, profile_package_name, profile_bundle_path,
-        execution_model, package_json_sha256, source_sha256,
+        execution_model, artifact_contract_version, native_capabilities_json, package_json_sha256, source_sha256,
         permission_snapshot_json, update_channel, installed_at_millis, last_checked_at_millis, last_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(extension_id) DO UPDATE SET
         installed_version = excluded.installed_version,
         artifact_sha256 = excluded.artifact_sha256,
@@ -113,6 +121,8 @@ export class ArkmeExtensionInstallStore {
         profile_package_name = excluded.profile_package_name,
         profile_bundle_path = excluded.profile_bundle_path,
         execution_model = excluded.execution_model,
+        artifact_contract_version = excluded.artifact_contract_version,
+        native_capabilities_json = excluded.native_capabilities_json,
         package_json_sha256 = excluded.package_json_sha256,
         source_sha256 = excluded.source_sha256,
         permission_snapshot_json = excluded.permission_snapshot_json,
@@ -125,7 +135,8 @@ export class ArkmeExtensionInstallStore {
       JSON.stringify(item.manifest), item.enabled ? 1 : 0, item.active ? 1 : 0,
       item.dynamicPluginId ?? null, item.dynamicPackageId ?? null,
       item.profilePackageName ?? null, item.profileBundlePath ?? null,
-      item.executionModel ?? null, item.packageJsonSha256 ?? null, item.sourceSha256 ?? null,
+      item.executionModel ?? null, item.artifactContractVersion ?? null, JSON.stringify(item.nativeCapabilities ?? []),
+      item.packageJsonSha256 ?? null, item.sourceSha256 ?? null,
       JSON.stringify(item.permissionSnapshot), item.updateChannel, item.installedAtMillis,
       item.lastCheckedAtMillis, item.lastError ?? null,
     )
@@ -157,6 +168,7 @@ export class ArkmeExtensionInstallStore {
   private fromRow(row: ExtensionRow): ArkmeInstalledExtension {
     const manifest = JSON.parse(row.manifest_json) as ArkmeExtensionManifest
     const permissionSnapshot = JSON.parse(row.permission_snapshot_json) as unknown
+    const nativeCapabilities = JSON.parse(row.native_capabilities_json) as unknown
     return {
       extensionId: row.extension_id,
       installedVersion: row.installed_version,
@@ -170,6 +182,10 @@ export class ArkmeExtensionInstallStore {
       ...(row.profile_package_name === null ? {} : { profilePackageName: row.profile_package_name }),
       ...(row.profile_bundle_path === null ? {} : { profileBundlePath: row.profile_bundle_path }),
       ...(row.execution_model === null ? {} : { executionModel: row.execution_model }),
+      ...(row.artifact_contract_version === null ? {} : { artifactContractVersion: row.artifact_contract_version }),
+      nativeCapabilities: Array.isArray(nativeCapabilities)
+        ? nativeCapabilities.filter((value): value is ArkmeNativeCapability => typeof value === 'string')
+        : [],
       ...(row.package_json_sha256 === null ? {} : { packageJsonSha256: row.package_json_sha256 }),
       ...(row.source_sha256 === null ? {} : { sourceSha256: row.source_sha256 }),
       permissionSnapshot: Array.isArray(permissionSnapshot)

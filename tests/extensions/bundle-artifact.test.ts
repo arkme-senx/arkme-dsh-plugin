@@ -7,9 +7,12 @@ import {
   arkmeSandboxEntryId,
   canonicalBundleJson,
   inspectBundleArtifact,
+  inspectNativeBundleArtifactV3,
   packBundleFiles,
   packLocalBundleDirectory,
+  packLocalNativeBundleDirectoryV3,
   readLocalBundleTarball,
+  readNativeBundleTarballV3,
   renderArkmeSandboxHostEntry,
 } from '../../src/extensions/bundle-artifact.js'
 
@@ -112,6 +115,46 @@ describe('standard DSH Bundle artifact', () => {
     expect(() => packLocalBundleDirectory(root)).toThrowError(expect.objectContaining({
       code: 'bundle-scripts-forbidden',
     }))
+  })
+
+  it('packages a native V3 Bundle with DSH install authority and glob files', () => {
+    const root = bundleDirectory({ prepare: 'npm run build' })
+    mkdirSync(join(root, 'native'), { recursive: true })
+    writeFileSync(join(root, 'native', 'addon.node'), 'native')
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Record<string, any>
+    manifest.files = ['lib/**/*.js', 'native/**', 'cordis.patch.yml']
+    manifest.dependencies = { 'left-pad': '1.3.0' }
+    manifest.optionalDependencies = { optional: '2.0.0' }
+    manifest.peerDependencies = { zod: '^4.0.0' }
+    manifest.bin = { weather: './bin/weather.js' }
+    writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
+    writeFileSync(join(root, 'cordis.patch.yml'), [
+      '- id: compaction-basic',
+      '  disabled: true',
+      '- insert:',
+      '    - id: native-weather',
+      "      name: '@example/weather-bundle'",
+      '',
+    ].join('\n'))
+
+    const source = packLocalNativeBundleDirectoryV3(root)
+    const inspected = inspectNativeBundleArtifactV3(source.bundle.bytes)
+
+    expect(inspected.nativeCapabilities).toEqual([
+      'bin', 'lifecycle_scripts', 'native_addon', 'optional_dependencies', 'peer_dependencies',
+      'profile_patch_override', 'runtime_dependencies',
+    ])
+    expect(inspected.files.has('package/lib/index.js')).toBe(true)
+    expect(inspected.files.has('package/native/addon.node')).toBe(true)
+    expect(inspected.files.has('package/.env')).toBe(false)
+    expect(() => inspectBundleArtifact(source.bundle.bytes)).toThrowError(expect.objectContaining({
+      code: 'bundle-scripts-forbidden',
+    }))
+
+    const tarballPath = join(root, 'weather-v3.tgz')
+    writeFileSync(tarballPath, source.bundle.bytes)
+    const reread = readNativeBundleTarballV3(tarballPath)
+    expect(Buffer.from(reread.bundle.bytes).equals(Buffer.from(source.bundle.bytes))).toBe(true)
   })
 
   it('reuses a validated local tgz without changing its bytes', () => {

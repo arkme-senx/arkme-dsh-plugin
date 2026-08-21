@@ -9,7 +9,7 @@ export interface ArkmeOwnedCordisTarget {
 }
 
 export interface ArkmeOwnedProfileTarget {
-  kind: 'profile-directory' | 'profile-tarball'
+  kind: 'profile-directory' | 'profile-tarball' | 'profile-installed'
   sourceKey: string
   packageName: string
   sourcePath: string

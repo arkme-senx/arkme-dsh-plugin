@@ -74,7 +74,7 @@ describe('extension metadata dialogs', () => {
       item={{
         ownedRef: 'owned-new', name: '新扩展', description: '', states: ['cordis'],
         halves: { host: true, client: false }, cordis: { packageCount: 1, active: true },
-        publish: { allowed: true, mode: 'new' },
+        publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       }}
       busy={false}
       error=""

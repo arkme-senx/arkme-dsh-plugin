@@ -326,6 +326,11 @@ describe('Arkme extension market UI', () => {
   it('discloses native DSH process authority before installation', () => {
     expect(extensionNativeInstallWarning({ execution_model: 'dsh-native', package_name: '@example/native' }))
       .toBe('扩展 @example/native 是原生 DSH Bundle，将以 DSH 插件进程权限运行。确认继续安装吗？')
+    expect(extensionNativeInstallWarning({
+      execution_model: 'dsh-native', package_name: '@example/native', artifact_contract_version: 3,
+      native_capabilities: ['runtime_dependencies'], audit_status: 'warning', audit_risk_level: 'high',
+      audit_reason: '读取令牌并访问网络',
+    })).toBe('扩展 @example/native 是V3 原生 DSH Package，将以 DSH 插件进程权限运行。 检测到：运行依赖。 AI 风险审核提示（high）：读取令牌并访问网络。确认继续安装吗？')
     expect(extensionNativeInstallWarning({ execution_model: 'arkme-sandboxed' })).toBeUndefined()
   })
 
@@ -363,7 +368,7 @@ describe('Arkme extension market UI', () => {
       cordis: { packageCount: 1, active: true },
       persisted: { packageName: 'local-weather', version: '1.0.0', active: true },
       published: { extensionId: 'ext-1', version: '1.0.0', visibility: 'private', iconRef: `icon_v1_${'a'.repeat(64)}` },
-      publish: { allowed: true, mode: 'version' },
+      publish: { allowed: true, mode: 'version', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
     }
 
 		const html = renderToStaticMarkup(<MyExtensionCard item={item} onPublish={() => {}} onEdit={() => {}} onOpen={() => {}} />)
@@ -391,7 +396,7 @@ describe('Arkme extension market UI', () => {
     const html = renderToStaticMarkup(<MyExtensionCard item={{
       ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['cordis'],
       halves: { host: true, client: false }, cordis: { packageCount: 1, active: true },
-      publish: { allowed: true, mode: 'new' },
+      publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
     }} onPublish={() => {}} />)
 
     expect(html).toContain('>发布</button>')
@@ -403,7 +408,7 @@ describe('Arkme extension market UI', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionPublishDialog
       item={{
         ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['cordis'],
-        halves: { host: true, client: false }, publish: { allowed: true, mode: 'new' },
+        halves: { host: true, client: false }, publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       }}
       busy={false}
       error=""
