@@ -16,6 +16,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_bot_openclaw_connect',
   'arkme_extension_review_create',
   'arkme_group_member_add',
+  'arkme_contact_add',
 ])
 
 function validateMaterializedTool(module: ArkmeToolModule, definition: ToolDefinition): ToolDefinition {
@@ -52,6 +53,12 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_group_member_add') {
     const count = Array.isArray(args.candidate_refs) ? args.candidate_refs.length : 0
     return `是否确认向这个群聊添加或邀请 ${String(count)} 位成员？成员加入后将可以看到群内后续消息。`
+  }
+  if (name === 'arkme_contact_add') {
+    const remark = cleanArgument(args.remark, 100)
+    return remark === ''
+      ? '是否确认添加刚才搜索到的这个联系人并打开会话？'
+      : `是否确认添加刚才搜索到的这个联系人、备注为“${remark}”并打开会话？`
   }
   if (name === 'arkme_bot_openclaw_connect') {
     return '是否确认连接这个 Bot 到本机 OpenClaw？这会读取该 Bot 凭据、安装固定版本 Channel、创建独立 Agent；如有待应用配置，还会重启指定 profile 的 Gateway 并短暂影响其中全部 Agent。同一 Bot 已在别处在线时可能发生接管。'

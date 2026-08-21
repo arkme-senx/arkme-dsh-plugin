@@ -79,6 +79,8 @@ describe('registerArkmeTools', () => {
       'arkme_records_recent',
       'arkme_user_profile',
       'arkme_id_set',
+      'arkme_contact_search',
+      'arkme_contact_add',
       'arkme_arko_profile',
       'arkme_arko_session',
       'arkme_arko_ask',

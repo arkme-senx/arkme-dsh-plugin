@@ -12,6 +12,7 @@ const expectedPublicMethods = [
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'dispose', 'requestStats', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'searchContact', 'addContact',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
@@ -52,6 +53,7 @@ const expectedServiceFiles = [
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
+  'contact-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {

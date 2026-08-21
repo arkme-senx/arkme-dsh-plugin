@@ -15,6 +15,8 @@ import type {
   ArkmeCalendarRecordCursor,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
+  ArkmeContactAddResult,
+  ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
@@ -91,6 +93,9 @@ export type {
   ArkmeCalendarRecordItem,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
+  ArkmeContactAddResult,
+  ArkmeContactIdentifierKind,
+  ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeContentKind,
   ArkmeCreateTextResult,
@@ -396,6 +401,33 @@ export class ArkmeSdk {
       undefined,
       options.signal,
     )
+  }
+
+  /** Search by an exact phone number or Arkme ID without exposing internal account identifiers. */
+  async searchContact(identifier: string, signal?: AbortSignal): Promise<ArkmeContactSearchResult> {
+    const value = identifier.trim()
+    if (value === '' || value.length > 64) throw new TypeError('Arkme contact identifier is invalid')
+    return await this.call<ArkmeContactSearchResult>('contacts.search', { identifier: value }, signal)
+  }
+
+  /** Add the exact candidate returned by searchContact and open its idempotent private/pending chat. */
+  async addContact(
+    contactRef: string,
+    options: { remark?: string; requestUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeContactAddResult> {
+    const ref = contactRef.trim()
+    if (!/^arkme-contact-v1\.[0-9a-f-]{36}$/i.test(ref)) throw new TypeError('Arkme contact reference is invalid')
+    const remark = options.remark?.trim() ?? ''
+    if (Array.from(remark).length > 100) throw new TypeError('Arkme contact remark is too long')
+    const requestUid = options.requestUid ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestUid)) {
+      throw new TypeError('Arkme contact request id must be a UUID')
+    }
+    return await this.call<ArkmeContactAddResult>('contacts.add', {
+      contactRef: ref,
+      ...(remark === '' ? {} : { remark }),
+      requestUid,
+    }, options.signal)
   }
 
   /** List current-account Cordis, Profile-local and cloud-published extensions through one Host owner. */

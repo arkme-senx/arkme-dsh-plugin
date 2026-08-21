@@ -37,6 +37,7 @@ import {
 import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
+import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 
 export interface ArkmeNavigationProps {
   wide?: boolean
@@ -138,6 +139,13 @@ const styles: Record<string, CSSProperties> = {
   avatar: {
     width: 38, height: 38, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
+  },
+  contactAddIcon: {
+    width: 32, height: 32, background: 'currentColor',
+    WebkitMaskImage: `url(data:image/svg+xml;base64,${arkmeUserAddIconBase64})`,
+    maskImage: `url(data:image/svg+xml;base64,${arkmeUserAddIconBase64})`,
+    WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+    WebkitMaskSize: 'contain', maskSize: 'contain',
   },
   extensionAvatar: {
     width: 38, height: 38, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 11,
@@ -323,6 +331,19 @@ export function ArkmeSearchRow({ selected, onClick }: { selected: boolean; onCli
     <span style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.chatName}>搜索</span></span>
       <span style={styles.chatBottom}><span style={styles.preview}>快记、主题、录音与 AI 视频</span></span>
+    </span>
+  </button>
+}
+
+export function ArkmeContactAddRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button" role="treeitem" aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><span style={styles.contactAddIcon} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.chatName}>添加联系人</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>通过手机号或即我号搜索</span></span>
     </span>
   </button>
 }
@@ -792,7 +813,7 @@ export function ArkmeNavigation({
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
       const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
         || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'search' || uiSnapshot.mode === 'extensions'
-        || uiSnapshot.mode === 'settings'
+        || uiSnapshot.mode === 'settings' || uiSnapshot.mode === 'contact-add'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
@@ -865,7 +886,8 @@ export function ArkmeNavigation({
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
     const restored = ui.mode === 'recordings' || ui.mode === 'arko'
-      || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'settings'
+      || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions'
+      || ui.mode === 'settings' || ui.mode === 'contact-add'
       ? undefined
       : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)
@@ -959,6 +981,7 @@ export function ArkmeNavigation({
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
   const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
   const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
+  const showContactAdd = () => { activateNativeEntry(); arkmeUi.showContactAdd(); onActivateSurface?.() }
   const showArko = () => { activateNativeEntry(); arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
     activateNativeEntry()
@@ -1138,6 +1161,7 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
         </button>}
+        {!embeddedProductShell && <ArkmeContactAddRow selected={activeDirectoryEntryId === undefined && ui.mode === 'contact-add'} onClick={showContactAdd} />}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}

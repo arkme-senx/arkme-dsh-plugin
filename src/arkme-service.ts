@@ -28,6 +28,7 @@ import { BotService, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { CalendarService } from './services/calendar-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
 import { ChatService } from './services/chat-service.js'
+import { ContactService } from './services/contact-service.js'
 import { CommunityService } from './services/community-service.js'
 import {
   ExtensionReviewService,
@@ -68,6 +69,7 @@ import type {
   ArkmeGroupBotList,
   ArkmeGroupBotMutationResult,
 } from './tools/ports/bots.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE } from './types.js'
 import type {
   ArkmeAiVideoJob,
   ArkmeAiVideoJobStatus,
@@ -100,6 +102,8 @@ import type {
   ArkmeChatClientEvent,
   ArkmeChatRealtimeState,
   ArkmeClientConfig,
+  ArkmeContactAddResult,
+  ArkmeContactSearchResult,
   ArkmeConversationWriteResult,
   ArkmeCreateTextResult,
   ArkmeDirectTextSendResult,
@@ -211,6 +215,7 @@ export class ArkmeService {
   private readonly interwoven: InterwovenService
   private readonly aiPolish: GroupAiPolishService
   private readonly chat: ChatService
+  private readonly contact: ContactService
 
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -280,6 +285,7 @@ export class ArkmeService {
       this.aiPolish,
       this.realtime,
     )
+    this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
     this.auth = new AuthService(this.runtime, this.profile, {
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
@@ -294,6 +300,7 @@ export class ArkmeService {
     this.interwoven.dispose()
     this.world.dispose()
     this.arrangement.dispose()
+    this.contact.dispose()
   }
 
   startChatRealtime(): () => void {
@@ -390,6 +397,7 @@ export class ArkmeService {
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',
       callAssetBasePath: `${this.config.routePath}/call`,
+      shareWebsite: this.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE,
     }
   }
 
@@ -422,6 +430,7 @@ export class ArkmeService {
         groupMemberAdd: true,
         userCard: true,
         openPrivateChat: true,
+        contactAdd: true,
         groupSettings: true,
         extensionManagement: true,
         extensionMetadataEdit: true,
@@ -497,6 +506,7 @@ export class ArkmeService {
   }
 
   dispose(): void {
+    this.contact.dispose()
     this.realtime.dispose()
     this.arko.dispose()
     this.auth.dispose()
@@ -518,6 +528,20 @@ export class ArkmeService {
 
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
     return await this.profile.cachedProfile()
+  }
+
+  async searchContact(
+    identifier: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeContactSearchResult> {
+    return await this.contact.search(identifier, options)
+  }
+
+  async addContact(
+    contactRef: string,
+    options: { remark?: string; requestUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeContactAddResult> {
+    return await this.contact.add(contactRef, options)
   }
 
   async extensionAuthors(

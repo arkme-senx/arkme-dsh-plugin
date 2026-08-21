@@ -14,6 +14,8 @@ function fakeService() {
     searchRecordings: vi.fn(async (input: unknown) => input),
     calendarBuckets: vi.fn(async (input: unknown) => input),
     calendarRecords: vi.fn(async (input: unknown) => input),
+    searchContact: vi.fn(async (identifier: string) => ({ identifier })),
+    addContact: vi.fn(async (_contactRef: string, options: unknown) => options),
     aiVideoList: vi.fn(async (input: unknown) => input),
     queryFileAssets: vi.fn(async (input: unknown) => input),
     arkoRunStatus: vi.fn(async () => ({ status: 'running' })),
@@ -61,6 +63,16 @@ describe('group member Host API dispatch', () => {
 })
 
 describe('outgoing call Host API dispatch', () => {
+  it('dispatches contact search/add without forwarding browser-owned account fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'contacts.search', { identifier: 'lin-lin', userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'contacts.add', {
+      contactRef: 'contact-ref', remark: '同事', requestUid: 'request-uid', targetUserId: 999,
+    })
+    expect(service.searchContact).toHaveBeenCalledWith('lin-lin')
+    expect(service.addContact).toHaveBeenCalledWith('contact-ref', { remark: '同事', requestUid: 'request-uid' })
+  })
+
   it('rejects an unknown outgoing media type before calling the service', async () => {
     const service = fakeService()
 

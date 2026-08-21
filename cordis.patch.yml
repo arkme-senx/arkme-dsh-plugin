@@ -15,6 +15,7 @@
         intelligentBaseUrl: https://intelligent.jotmo.cc
         audioBaseUrl: https://audio.jotmo.cc
         extensionPublishBaseUrl: https://extension-publish.jotmo.cc
+        shareWebsite: https://jiwo.cc
         extensionArtifactDirectory: ''
         extensionTrustedSigningKeys: '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
         routePath: /arkme-self/api

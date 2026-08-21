@@ -35,6 +35,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://bot.jotmo.cc', '')
     .replaceAll('https://im.jotmo.cc', '')
     .replaceAll('https://webrtc.jiwo.cc', '')
+    .replaceAll('https://jiwo.cc', '')
     .replaceAll('https://world.jotmo.cc', '')
     .replaceAll('https://relation.jotmo.cc', '')
     .replaceAll('https://intelligent.jotmo.cc', '')
@@ -66,7 +67,11 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
   const allowedFiles = new Set([
     join(root, 'src/tools/business/account/set-id.ts'),
     join(root, 'src/tools/business/conversation/send-direct-text.ts'),
+    join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
+    join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
+    join(root, 'src/services/contact-service.ts'),
   ])
   if (!allowedFiles.has(file)) return content
   return content

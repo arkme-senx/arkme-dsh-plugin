@@ -744,6 +744,7 @@ describe('ArkmeService', () => {
       environment: 'test',
       testLoginEnabled: true,
       callAssetBasePath: '/arkme-self/api/call',
+      shareWebsite: 'https://app.arkme.ai',
     })
   })
 

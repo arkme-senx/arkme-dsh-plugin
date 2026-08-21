@@ -15,7 +15,7 @@ export interface ArkmeUiState {
   surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'world' | 'search' | 'extensions' | 'arko' | 'settings'
+  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'world' | 'search' | 'extensions' | 'contact-add' | 'arko' | 'settings'
   settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
@@ -134,6 +134,11 @@ export class ArkmeUiController {
       mode: 'source',
       ...(this.lastConversationSource === undefined ? {} : { selectedSource: this.lastConversationSource }),
     })
+  }
+
+  showContactAdd(): void {
+    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'contact-add' })
   }
 
   showArko(): void {

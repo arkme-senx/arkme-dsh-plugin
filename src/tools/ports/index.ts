@@ -3,6 +3,7 @@ import type { ArkmeArkoToolPort } from './arko.js'
 import type { ArkmeBotToolPort } from './bots.js'
 import type { ArkmeCalendarToolPort } from './calendar.js'
 import type { ArkmeConversationToolPort } from './conversations.js'
+import type { ArkmeContactToolPort } from './contacts.js'
 import type { ArkmeMediaToolPort } from './media.js'
 import type { ArkmeOutgoingCallToolPort } from './outgoing-call.js'
 import type { ArkmeOpenClawToolPort } from './openclaw.js'
@@ -23,6 +24,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeProfileToolPort,
   ArkmeRecordingToolPort,
   ArkmeConversationToolPort,
+  ArkmeContactToolPort,
   ArkmeOutgoingCallToolPort,
   ArkmeOpenClawToolPort,
   ArkmeWorldToolPort,
@@ -35,6 +37,7 @@ export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {
 
 export type {
   ArkmeAiVideoToolPort, ArkmeArkoToolPort, ArkmeBotToolPort, ArkmeCalendarToolPort, ArkmeConversationToolPort, ArkmeMediaToolPort, ArkmeProfileToolPort,
+  ArkmeContactToolPort,
   ArkmeOpenClawToolPort, ArkmeOutgoingCallToolPort, ArkmeRecordingToolPort, ArkmeRecordToolPort,
   ArkmeWorldToolPort, ArkmeWechatToolPort,
   ArkmeExtensionReviewToolPort,

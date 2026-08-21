@@ -25,6 +25,8 @@ import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
+import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import {
   appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
   truncateArkmeSourceBreadcrumbTrail,
@@ -1384,12 +1386,14 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '插件'
     : ui.mode === 'settings' ? '设置'
+    : ui.mode === 'contact-add' ? '添加联系人'
     : ui.mode === 'arko' ? 'Arko'
     : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'recordings' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'settings')
+    && (ui.mode === 'recordings' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions'
+      || ui.mode === 'settings' || ui.mode === 'contact-add')
 
   return (
     <div
@@ -1510,6 +1514,8 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
             onClose={() => { arkmeUi.showConversations() }}
           /></div>
           : ui.mode === 'settings' ? <div style={styles.utilityBody}><ArkmeSettingsSurface /></div>
+          : ui.mode === 'contact-add' ? <div style={styles.utilityBody}><ArkmeContactAddSurface
+             shareWebsite={authStoreSnapshot.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE} onSourceActivated={activateSource} /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'

@@ -1,6 +1,7 @@
 export type ArkmeEnvironment = 'test' | 'prod'
 
 export const ARKME_PROVIDER_CONTRACT_VERSION = 1 as const
+export const ARKME_DEFAULT_SHARE_WEBSITE = 'https://app.arkme.ai'
 
 export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
@@ -25,6 +26,27 @@ export interface ArkmeClientConfig {
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
   callAssetBasePath: string
+  shareWebsite: string
+}
+
+export type ArkmeContactIdentifierKind = 'phone' | 'arkme_id'
+
+/** Browser/model-safe projection returned by contact lookup. */
+export interface ArkmeContactSearchResult {
+  contactRef: string
+  identifierKind: ArkmeContactIdentifierKind
+  displayName: string
+  arkmeId?: string
+  avatarRef?: string
+  registered: boolean
+  inviteBySms: boolean
+  canAdd: boolean
+  isSelf: boolean
+}
+
+export interface ArkmeContactAddResult {
+  state: 'ready' | 'pending'
+  source: ArkmeSourceItem
 }
 
 export interface ArkmeRecordCursor {
@@ -503,6 +525,8 @@ export interface ArkmeProviderCapabilities {
     groupMemberAdd?: true
     userCard: true
     openPrivateChat: true
+    /** Search accounts and idempotently add/open a contact conversation. */
+    contactAdd?: true
     groupSettings: true
     /** Installed-extension inspection and desired enable/disable state are available. */
     extensionManagement?: true
@@ -1628,6 +1652,8 @@ export type ArkmePluginOperation =
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.logout'
+  | 'contacts.search'
+  | 'contacts.add'
   | 'records.summary'
   | 'records.cache'
   | 'records.refresh'

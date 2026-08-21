@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -50,6 +52,22 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('快记、主题、录音与 AI 视频')
     expect(markup).toContain('/arkme-self/api/call/image_search.svg')
     expect(markup).not.toContain('⌕')
+  })
+
+  it('renders the contact-add row as a native directory entry', () => {
+    const markup = renderToStaticMarkup(<navigation.ArkmeContactAddRow selected onClick={vi.fn()} />)
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('添加联系人')
+    expect(markup).toContain('通过手机号或即我号搜索')
+    expect(markup).toContain('mask-image:url(')
+    expect(markup).not.toContain('<circle')
+  })
+
+  it('uses the exact contact-add icon migrated from the Jiwo client', () => {
+    const icon = readFileSync(new URL('../assets/icons/user-add-linear.svg', import.meta.url))
+    expect(createHash('sha256').update(icon).digest('hex'))
+      .toBe('3ce1f950f6a3999ecb66f5bf72f1c7e1300f07f2cd5ce426078184cff89f83ff')
   })
 })
 

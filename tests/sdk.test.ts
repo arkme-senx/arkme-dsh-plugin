@@ -32,6 +32,34 @@ describe('Arkme SDK', () => {
     expect(calls).toEqual([{ operation: 'images.list', params: { limit: 24, cursor: 'next-images' } }])
   })
 
+  it('searches and adds contacts through opaque same-origin contracts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'contacts.search') return success({
+          contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432', identifierKind: 'arkme_id',
+          displayName: '林林', registered: true, inviteBySms: false, canAdd: true, isSelf: false,
+        })
+        if (request.operation === 'contacts.add') return success({
+          state: 'ready', source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '林林', activeAtMillis: 1, unreadCount: 0 },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    const candidate = await sdk.searchContact('lin-lin')
+    await expect(sdk.addContact(candidate.contactRef, {
+      remark: '同事', requestUid: '9f445b4f-55aa-45c1-9250-25161832d433',
+    })).resolves.toMatchObject({ state: 'ready' })
+    expect(calls).toEqual([
+      { operation: 'contacts.search', params: { identifier: 'lin-lin' } },
+      { operation: 'contacts.add', params: {
+        contactRef: candidate.contactRef, remark: '同事', requestUid: '9f445b4f-55aa-45c1-9250-25161832d433',
+      } },
+    ])
+  })
+
   it('manages extension previews through same-origin Host operations', async () => {
     const previewRef = `preview_v1_${'a'.repeat(64)}`
     const secondRef = `preview_v1_${'b'.repeat(64)}`

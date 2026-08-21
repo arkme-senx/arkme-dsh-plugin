@@ -39,7 +39,7 @@ import { ArkmeStateStore } from './state-store.js'
 import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
-import type { ArkmeEnvironment } from './types.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
 
 export interface Config {
   environment: ArkmeEnvironment
@@ -79,6 +79,7 @@ export interface Config {
   updateCheckIntervalHours: number
   updateAllowLocalInstall: boolean
   openclawProfile: string
+  shareWebsite: string
 }
 
 export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
@@ -121,6 +122,7 @@ export const Config: Schema<Config> = Schema.object({
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
   openclawProfile: Schema.string().default('dev'),
+  shareWebsite: Schema.string().default(ARKME_DEFAULT_SHARE_WEBSITE),
 })
 
 export const name = 'dsh-arkme'
@@ -427,6 +429,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
+    ['shareWebsite', config.shareWebsite],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {

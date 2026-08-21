@@ -109,6 +109,17 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('opens contact add without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    controller.selectSource({
+      sourceRef: 'source-1', kind: 'private_chat', displayName: '联系人', activeAtMillis: 1, unreadCount: 0,
+    })
+    controller.showContactAdd()
+    expect(controller.getSnapshot()).toEqual({
+      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'contact-add',
+    })
+  })
+
   it('clears the previous account selection when authentication changes accounts', () => {
     const controller = new ArkmeUiController()
     const source = {

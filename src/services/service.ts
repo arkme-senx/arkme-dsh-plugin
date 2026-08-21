@@ -69,6 +69,7 @@ export interface ArkmeServiceConfig {
   geetestCaptchaId: string
   relatedRecordingsEnabled?: boolean
   interwovenMomentsEnabled: boolean
+  shareWebsite?: string
   richMediaRenderEnabled?: boolean
   richMediaSendEnabled?: boolean
   maxUploadBytes?: number
