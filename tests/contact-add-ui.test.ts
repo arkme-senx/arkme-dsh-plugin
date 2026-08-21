@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   buildArkmePersonalShareUrl,
@@ -21,5 +22,14 @@ describe('contact add QR interoperability', () => {
     expect(extractArkmeContactIdentifierFromQr('http://jiwo.cc/Lin-ccc', 'https://jiwo.cc')).toBe('')
     expect(extractArkmeContactIdentifierFromQr('https://jiwo.cc:444/Lin-ccc', 'https://jiwo.cc')).toBe('')
     expect(extractArkmeContactIdentifierFromQr('https://app.arkme.ai/Lin-ccc', 'https://jiwo.cc')).toBe('')
+  })
+})
+
+describe('contact add dialog layout', () => {
+  it('reserves the result-state height without adding a dialog scrollbar', () => {
+    const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+    expect(source).toContain("height: 'min(580px, calc(100% - 4px))'")
+    expect(source).toContain("contactDialogBody: { flex: 1, minHeight: 0, overflow: 'hidden' }")
+    expect(source).not.toContain("contactDialogBody: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }")
   })
 })
