@@ -473,6 +473,7 @@ describe('ArkmeRecordingSurface layout', () => {
     const focusTrackShell = matchStyle(markup, /<div style="([^"]*margin-top:[^"]+)"><div style="[^"]+" role="slider"/)
 
     expect(markup).toContain('aria-label="全天录音分布"')
+    expect(markup).toContain('data-arkme-recording-wheel-scope="overview"')
     expect(markup).toContain('aria-label="24小时录音概览"')
     expect(markup).toContain('aria-label="当前录音片段分布，拖动浏览，点击定位"')
     expect(markup).toContain('aria-label="拖动全天缩略导航"')

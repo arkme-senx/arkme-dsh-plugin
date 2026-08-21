@@ -706,6 +706,7 @@ export function RecordingSignalOverview({ items, dayStartMillis, positionSeconds
   const [visibleSpanMillis, setVisibleSpanMillis] = useState(initialViewport.span)
   const [draggingFocus, setDraggingFocus] = useState(false)
   const [speakerLegendExpanded, setSpeakerLegendExpanded] = useState(false)
+  const focusTrackRef = useRef<HTMLDivElement>(null)
   const focusDragRef = useRef<{ pointerId: number; startX: number; startView: number; moved: boolean }>()
   const speakerDistributions = recordingSpeakerDistributions(items)
   const viewEndMillis = viewStartMillis + visibleSpanMillis
@@ -786,10 +787,10 @@ export function RecordingSignalOverview({ items, dayStartMillis, positionSeconds
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
-  const handleFocusWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+  const handleOverviewWheel = (event: ReactWheelEvent<HTMLElement>) => {
     if (!canPlay) return
     event.preventDefault()
-    const bounds = event.currentTarget.getBoundingClientRect()
+    const bounds = focusTrackRef.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()
     const anchorRatio = bounds.width <= 0 ? .5 : Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
     const anchorMillis = viewStartMillis + visibleSpanMillis * anchorRatio
     setViewport(visibleSpanMillis * Math.exp(event.deltaY * .001), anchorRatio, anchorMillis)
@@ -808,7 +809,7 @@ export function RecordingSignalOverview({ items, dayStartMillis, positionSeconds
     }
   }
 
-  return <section style={{ ...styles.overview, padding: expanded ? '14px 16px 12px' : '12px 16px 25px' }} aria-label="全天录音分布" data-arkme-recording-overview="client-parity" data-arkme-recording-expanded={expanded ? 'true' : 'false'} data-arkme-recording-visible-millis={Math.round(visibleSpanMillis)}>
+  return <section style={{ ...styles.overview, padding: expanded ? '14px 16px 12px' : '12px 16px 25px' }} aria-label="全天录音分布" data-arkme-recording-overview="client-parity" data-arkme-recording-wheel-scope="overview" data-arkme-recording-expanded={expanded ? 'true' : 'false'} data-arkme-recording-visible-millis={Math.round(visibleSpanMillis)} onWheel={handleOverviewWheel}>
     {expanded && <div style={styles.overviewNavigation}>
       <div style={styles.dayTrackColumn}>
         <div style={styles.dayTrack} aria-label="24小时录音概览">{items.map(item => {
@@ -829,6 +830,7 @@ export function RecordingSignalOverview({ items, dayStartMillis, positionSeconds
     </div>}
     <div style={{ ...styles.focusTrackShell, marginTop: expanded ? 15 : 28 }}>
       <div
+        ref={focusTrackRef}
         style={{ ...styles.focusTrack, cursor: draggingFocus ? 'grabbing' : 'grab' }}
         role="slider"
         tabIndex={canPlay ? 0 : -1}
@@ -842,7 +844,6 @@ export function RecordingSignalOverview({ items, dayStartMillis, positionSeconds
         onPointerMove={handleFocusPointerMove}
         onPointerUp={handleFocusPointerEnd}
         onPointerCancel={handleFocusPointerEnd}
-        onWheel={handleFocusWheel}
         onKeyDown={handleFocusKeyDown}
       >{items.map(item => {
         const segmentStart = Math.max(viewStartMillis, item.startAtMillis)
