@@ -43,6 +43,8 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('aria-selected="true"')
     expect(markup).toContain('全天候录音')
     expect(markup).toContain('转写、日总结与时间轴')
+    expect(markup).toContain('data-arkme-recording-icon="client-audio-analysis"')
+    expect(markup).toContain('arkme-audio-analysis-gradient')
   })
 
   it('renders a search row that advertises AI video together with existing search scopes', () => {
@@ -68,6 +70,15 @@ describe('recording navigation entry', () => {
     const icon = readFileSync(new URL('../assets/icons/user-add-linear.svg', import.meta.url))
     expect(createHash('sha256').update(icon).digest('hex'))
       .toBe('3ce1f950f6a3999ecb66f5bf72f1c7e1300f07f2cd5ce426078184cff89f83ff')
+  })
+
+  it('renders a call row that keeps recordings and AI summaries together', () => {
+    const markup = renderToStaticMarkup(<navigation.ArkmeCallsRow selected onClick={vi.fn()} />)
+
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('>通话<')
+    expect(markup).toContain('通话记录、录音与 AI 摘要')
   })
 })
 

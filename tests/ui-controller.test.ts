@@ -134,6 +134,19 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('opens calls without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    controller.selectSource({
+      sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 1, unreadCount: 0,
+    })
+
+    controller.showCalls()
+
+    expect(controller.getSnapshot()).toEqual({
+      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'calls',
+    })
+  })
+
   it('clears the previous account selection when authentication changes accounts', () => {
     const controller = new ArkmeUiController()
     const source = {

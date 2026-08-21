@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
+import { ARKME_PERSONAL_TEST_EDITION_STORAGE_KEY } from '../src/client/personal-test-edition.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 function installDesktopGateMarker(): () => void {
@@ -15,6 +16,42 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
+  it('opens the profile-local personal test landing before retained Arkme content', () => {
+    const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => key === ARKME_PERSONAL_TEST_EDITION_STORAGE_KEY
+          ? JSON.stringify({ version: 1, owner: '汤慧玲', defaultSurface: 'calls' })
+          : null,
+      },
+    })
+    const registered: Array<{ name: string; inject?: () => unknown }> = []
+    const inject = vi.fn((_key: string, register: () => unknown) => {
+      register()
+      return () => {}
+    })
+    const register = vi.fn((options: { name: string; inject?: () => unknown }) => {
+      registered.push(options)
+      return vi.fn()
+    })
+
+    try {
+      arkmeUi.showLoginSurface()
+      apply({ slots: { inject, register }, effect: vi.fn() } as never)
+      const footer = registered.find(item => item.name === 'sidebar.footer.action')!
+      const face = footer.inject?.() as { toggle(sessionId: string | undefined, authenticated: boolean): void }
+
+      face.toggle('personal-test-session', true)
+
+      expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'calls' })
+    } finally {
+      if (previousLocalStorage === undefined) delete (globalThis as { localStorage?: Storage }).localStorage
+      else Object.defineProperty(globalThis, 'localStorage', previousLocalStorage)
+      arkmeUi.close()
+    }
+  })
+
   it('keeps the native conversation mounted while the Footer owns a floating Arkme surface', () => {
     const registered: Array<{ name: string; id?: string; inject?: () => unknown }> = []
     const inject = vi.fn((_key: string, register: () => unknown) => {
