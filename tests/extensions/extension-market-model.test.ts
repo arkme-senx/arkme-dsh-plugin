@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  appendExtensionDiscoverPage,
   extensionTabSelection,
   mergeExtensionDiscoverItems,
 } from '../../src/client/extension-market-model.js'
@@ -44,6 +45,20 @@ describe('extension market discovery projection', () => {
       { extension_id: 'ext-a', name: 'A', description: '', visibility: 'private', latest_stable_version: '1.0.0', updated_at: 8 },
     ])
     expect(result).toEqual([])
+  })
+
+  it('appends a cursor page in server order without duplicating extensions', () => {
+    const first = [
+      { extension_id: 'ext-a', name: 'A', description: '', visibility: 'public' as const },
+      { extension_id: 'ext-b', name: 'B', description: '', visibility: 'public' as const },
+    ]
+    const next = [
+      { extension_id: 'ext-b', name: 'B duplicate', description: '', visibility: 'public' as const },
+      { extension_id: 'ext-c', name: 'C', description: '', visibility: 'public' as const },
+    ]
+
+    expect(appendExtensionDiscoverPage(first, next).map(item => item.extension_id))
+      .toEqual(['ext-a', 'ext-b', 'ext-c'])
   })
 
   it('refreshes an active tab without changing selection', () => {

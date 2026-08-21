@@ -12,7 +12,7 @@ import type { ArkmeCaptchaResult } from './types.js'
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
-import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from './extensions/types.js'
+import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort } from './extensions/types.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
 import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 
@@ -73,6 +73,13 @@ function stringParam(params: Record<string, unknown>, key: string): string {
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
+  const value = stringParam(params, 'sort')
+  if (value === '') return undefined
+  if (value === 'rating' || value === 'comments' || value === 'opens' || value === 'created_at') return value
+  throw new ArkmePluginError('extension-catalog-sort-invalid', '市集排序参数无效', false, 400)
 }
 
 function booleanParam(params: Record<string, unknown>, key: string): boolean {
@@ -142,6 +149,8 @@ async function enrichExtensionAuthors(
       ...item,
       owner_name: author.displayName,
       ...(author.arkmeId === undefined ? {} : { owner_arkme_id: author.arkmeId }),
+      ...(author.avatarRef === undefined ? {} : { owner_avatar_ref: author.avatarRef }),
+      ...(author.avatarFallback === undefined ? {} : { owner_avatar_fallback: author.avatarFallback }),
     }
   })
 }
@@ -763,10 +772,28 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
-    case 'extensions.catalog.list': return await requireExtensionManager(extensionManager).search(
-      stringParam(params, 'query'),
-      numberParam(params, 'limit', 20),
+    case 'extensions.catalog.list': {
+      const sort = extensionCatalogSortParam(params)
+      return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).searchCatalog({
+        query: stringParam(params, 'query'),
+        cursor: stringParam(params, 'cursor'),
+        limit: numberParam(params, 'limit', 20),
+        ...(sort === undefined ? {} : { sort }),
+      }))
+    }
+    case 'extensions.classification.tree': return await requireExtensionManager(extensionManager).classificationTree(
+      numberParam(params, 'limit', 30),
     )
+    case 'extensions.classification.items': {
+      const sort = extensionCatalogSortParam(params)
+      return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).classificationItems({
+        categoryId: stringParam(params, 'categoryId'),
+        query: stringParam(params, 'query'),
+        cursor: stringParam(params, 'cursor'),
+        limit: numberParam(params, 'limit', 20),
+        ...(sort === undefined ? {} : { sort }),
+      }))
+    }
     case 'extensions.catalog.detail': {
       const item = await requireExtensionManager(extensionManager).inspect(stringParam(params, 'extensionId'))
       return (await enrichExtensionAuthors(service, [item]))[0]
@@ -917,7 +944,7 @@ function requireExtensionInstallTasks(tasks: ArkmeExtensionInstallTasks | undefi
 
 function requireExtensionManager(manager: ArkmeExtensionManager | undefined): ArkmeExtensionManager {
   if (manager === undefined) {
-    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展市场不可用', false, 503)
+    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，市集不可用', false, 503)
   }
   return manager
 }

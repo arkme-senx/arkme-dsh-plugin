@@ -3,14 +3,16 @@ import type { ComponentType } from 'react'
 import { describe, expect, it } from 'vitest'
 import * as extensionCenterModule from '../../src/client/ArkmeExtensionCenter.js'
 import {
-  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
+  ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT, ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH,
+  ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
+  ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
-  ArkmeExtensionToggle, ExtensionCard,
-  extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionDirectInstallTarget,
-  extensionEnableUnavailable,
+  ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
+  extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
+  classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
-  extensionNativeInstallWarning, formatExtensionBytes, MyExtensionCard,
+  extensionNativeInstallWarning, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
@@ -56,14 +58,14 @@ describe('Arkme extension market UI', () => {
   it('uses a large modal with text-only navigation, no search entry, and a guided empty state', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionCenter onClose={() => {}} />)
 
-    expect(html).toContain('aria-label="Arkme 扩展市场"')
+    expect(html).toContain('aria-label="Arkme 市集"')
     expect(html).toContain('role="dialog"')
     expect(html).toContain('aria-modal="true"')
     expect(html).toContain('width:min(860px, calc(100vw - 64px))')
     expect(html).toContain('height:min(680px, calc(100vh - 64px))')
     expect(html).toContain('height:58px')
     expect(html).toContain('padding:0 20px')
-    expect(html).toContain('aria-label="关闭扩展市场"')
+    expect(html).toContain('aria-label="关闭市集"')
     expect(html).toContain('role="tablist"')
     expect(html).toContain('我的扩展')
     expect(html).not.toContain('我的发布')
@@ -91,6 +93,213 @@ describe('Arkme extension market UI', () => {
     expect(extensionTabLoadMode(new Set(), 'discover')).toBe('initial')
     expect(extensionTabLoadMode(new Set(['discover']), 'discover')).toBe('refresh')
     expect(extensionTabLoadMode(new Set(['discover']), 'installed')).toBe('initial')
+  })
+
+  it('renders the marketplace as a page with separate visible category and sort entries', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionCenter displayMode="page" />)
+    expect(html).toContain('role="region"')
+    expect(html).not.toContain('aria-modal="true"')
+    expect(html.match(/data-market-header-layer=/g)).toHaveLength(2)
+    expect(html).toContain('data-market-header-layer="primary"')
+    expect(html).toContain('data-market-header-layer="secondary"')
+    expect(html).toContain('data-market-page-tabs="inline"')
+    expect(html.match(/data-market-page-nav-state="selected"/g)).toHaveLength(1)
+    expect(html.match(/data-market-page-nav-state="idle"/g)).toHaveLength(3)
+    expect(html).toContain('background:var(--dsw-alias-bg-module-platform')
+    expect(html).not.toContain('border-bottom:2px solid var(--dsw-alias-state-success-primary')
+    expect(html.match(/aria-label="市集页面导航"/g)).toHaveLength(1)
+    expect(html).toContain('搜索扩展、功能或作者')
+    expect(html).toContain('aria-label="扩展分类"')
+    expect(html).toContain('分类：全部')
+    expect(html).toContain('aria-label="扩展排序"')
+    expect(html).toContain('排序：最新创建')
+    expect(html.match(/aria-haspopup="listbox"/g)).toHaveLength(2)
+    expect(html).not.toContain('排序接口完成后启用')
+  })
+
+  it('keeps only copy-link and close actions in the detail modal header', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionDetailHeader
+      title="天气助手"
+      copyAvailable
+      copyNotice="链接已复制"
+      onCopy={() => {}}
+      onClose={() => {}}
+    />)
+    expect(html).toContain('id="arkme-extension-detail-title"')
+    expect(html).toContain('天气助手')
+    expect(html).toContain('aria-label="复制扩展链接"')
+    expect(html).toContain('title="复制链接"')
+    expect(html).toContain('aria-label="关闭扩展详情"')
+    expect(html).toContain('role="status"')
+    expect(html).toContain('链接已复制')
+    expect(html).not.toContain('分享')
+
+    const withoutLink = renderToStaticMarkup(<ArkmeExtensionDetailHeader
+      title="无链接扩展"
+      copyAvailable={false}
+      onCopy={() => {}}
+      onClose={() => {}}
+    />)
+    expect(withoutLink).not.toContain('aria-label="复制扩展链接"')
+    expect(withoutLink).toContain('aria-label="关闭扩展详情"')
+  })
+
+  it('removes the preview column when an extension has no valid image', () => {
+    expect(extensionDetailHasPreviews(undefined)).toBe(false)
+    expect(extensionDetailHasPreviews([])).toBe(false)
+    expect(extensionDetailHasPreviews([{ preview_ref: 'invalid' }])).toBe(false)
+    expect(extensionDetailHasPreviews([{ preview_ref: `preview_v1_${'a'.repeat(64)}` }])).toBe(true)
+  })
+
+  it('caps the detail modal at a compact scrollable viewport', () => {
+    expect(ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH).toBe(920)
+    expect(ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT).toBe(680)
+  })
+
+  it('renders detail metrics with the same icon-only labels as marketplace cards', () => {
+    const item = {
+      rating_summary: { average: 4.8, count: 328, histogram: [0, 0, 1, 20, 307] },
+      install_user_count: 12_300,
+      comment_count: 76,
+      open_count: 41_100,
+    }
+    expect(extensionDetailMetricLabels(item)).toEqual(['★ 4.8', '安装 12.3k', '评论 76', '查看 41.1k'])
+
+    const html = renderToStaticMarkup(<ArkmeExtensionDetailMetrics item={item} />)
+    const visibleText = html.replace(/<[^>]+>/g, '')
+    expect(html).toContain('data-extension-detail-metrics="compact"')
+    expect(html).toContain('aria-label="评分 4.8"')
+    expect(html).toContain('aria-label="12300 人已安装"')
+    expect(html).not.toContain('328 人评分')
+    expect(html).toContain('aria-label="76 条评论"')
+    expect(html).toContain('aria-label="查看次数 41100"')
+    expect(html).toContain('column-gap:18px')
+    expect(visibleText).toBe('4.812.3k7641.1k')
+    expect(html).toContain('font-size:11px')
+    expect(html).toContain('font-weight:400')
+    expect(html).toContain('margin-top:9px')
+  })
+
+  it('renders a dense marketplace tile with only icon, name, and a GitHub identity avatar', () => {
+    const html = renderToStaticMarkup(<ExtensionCard
+      presentation="community"
+      item={{
+        extension_id: 'github/weather', name: '天气助手', description: '快速查看天气', visibility: 'public',
+        owner_user_id: 77, owner_name: 'Quaso', owner_arkme_id: 'quaso',
+        owner_avatar_fallback: { kind: 'phone_default', colorIndex: 3, label: 'Q' },
+        source: { type: 'github_repository', url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' },
+        source_author: { name: 'octocat', avatar_url: 'https://avatars.githubusercontent.com/u/1' },
+        rating_summary: { average: 4.8, count: 328, histogram: [0, 0, 1, 20, 307] },
+        install_user_count: 12_300,
+        comment_count: 76,
+        open_count: 41_100,
+      }}
+      actionLabel="安装"
+      onClick={() => {}}
+      onAction={() => {}}
+    />)
+    expect(html).toContain('data-extension-community-card="true"')
+    expect(html).toContain('border:1px solid')
+    expect(html).toContain('min-height:72px')
+    expect(html).toContain('data-extension-title-row="true"')
+    expect(html).toContain('aria-label="查看扩展：天气助手"')
+    expect(html).toContain('title="天气助手"')
+    expect(html).toContain('width:34px')
+    expect(html).toContain('border-radius:6px')
+    expect(html).toContain('margin-top:6px')
+    expect(html).toContain('data-extension-community-identity="github"')
+    expect(html).toContain('data-extension-community-identity-row="github"')
+    expect(html).toContain('aria-label="GitHub 来源"')
+    expect(html).not.toContain('Quaso')
+    expect(html).not.toContain('octocat')
+    expect(html).not.toContain('avatars.githubusercontent.com')
+    expect(html).not.toContain('data-extension-source-badge="github"')
+    expect(html).not.toContain('data-extension-description="true"')
+    expect(html).not.toContain('快速查看天气')
+    expect(html).not.toContain('data-extension-metadata-row="true"')
+    expect(html).not.toContain('aria-label="安装"')
+    expect(html).not.toContain('>安装</button>')
+    expect(html.replace(/<[^>]+>/g, '')).toBe('天气助手GitHub')
+    expect(html).not.toContain('aria-label="评分 4.8"')
+    expect(html).not.toContain('aria-label="12300 人已安装"')
+    expect(html).not.toContain('aria-label="76 条评论"')
+    expect(html).not.toContain('41.1k')
+    expect(html).toContain('padding:10px 12px')
+  })
+
+  it('hides an unavailable install-user metric instead of falling back to rating participants', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionDetailMetrics item={{
+      rating_summary: { average: 4.5, count: 99, histogram: [0, 0, 0, 1, 98] },
+      comment_count: 7,
+      open_count: 20,
+    }} />)
+    expect(html).toContain('aria-label="评分 4.5"')
+    expect(html).not.toContain('人已安装')
+    expect(html).not.toContain('99 人评分')
+  })
+
+  it('keeps lifecycle actions out of the dense marketplace tile after installation', () => {
+    const html = renderToStaticMarkup(<ExtensionCard
+      presentation="community"
+      item={{
+        extension_id: 'ext-installed', name: '已安装扩展', description: '已经安装', visibility: 'public', version: '1.1.0',
+        owner_name: 'Lucis',
+      }}
+      installed={{
+        extensionId: 'ext-installed', installedVersion: '1.0.0',
+        manifest: {
+          format: 'arkme-cordis-extension', format_version: 1, name: '已安装扩展', description: '已经安装', version: '1.0.0',
+          runtime: { dsh: '*', arkme_provider_contract: 1 }, halves: { host: true, client: false },
+          permissions: [], entrypoints: { host: 'host.js' },
+        },
+        enabled: true, active: true, permissionSnapshot: [], updateChannel: 'stable',
+        installedAtMillis: 1, lastCheckedAtMillis: 1,
+      }}
+      actionLabel="更新"
+      onClick={() => {}}
+      onAction={() => {}}
+      onToggle={() => {}}
+    />)
+
+    expect(html).toContain('data-extension-community-identity="author"')
+    expect(html).toContain('data-extension-community-identity-row="author"')
+    expect(html.replace(/<[^>]+>/g, '')).toBe('已安装扩展Lucis')
+    expect(html).not.toContain('role="switch"')
+    expect(html).not.toContain('aria-checked="true"')
+    expect(html).not.toContain('>更新</button>')
+  })
+
+  it('uses a generic GitHub author label and formats compact marketplace counts', () => {
+    expect(extensionCommunityAuthor({
+      extension_id: 'github/weather', name: '天气助手', description: '', visibility: 'public',
+      source: { type: 'github_repository', url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' },
+    })).toEqual({ name: 'GitHub', github: true })
+    expect(extensionCommunityAuthor({
+      extension_id: 'github/owned', name: '已绑定作者的 GitHub 扩展', description: '', visibility: 'public',
+      owner_user_id: 77, owner_name: 'Quaso', owner_arkme_id: 'quaso',
+      source: { type: 'github_repository', url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' },
+    })).toEqual({ name: 'GitHub', github: true })
+    expect(formatCompactCount(999)).toBe('999')
+    expect(formatCompactCount(2_300)).toBe('2.3k')
+    expect(formatCompactCount(2_300_000)).toBe('2.3m')
+    expect(formatMarketplaceDate(Date.UTC(2026, 7, 21))).toBe('2026/08/21')
+  })
+
+  it('never sends unsupported sort parameters before the backend capability is enabled', () => {
+    expect(ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE).toBe(70)
+    expect(marketplaceListParams(' 翻译 ', 'rating', false)).toEqual({ limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE, query: '翻译' })
+    expect(marketplaceListParams('翻译', 'rating', true, 'next-page')).toEqual({
+      limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE, query: '翻译', sort: 'rating', cursor: 'next-page',
+    })
+    expect(classificationStatusHint('building')).toContain('正在更新分类')
+    expect(classificationStatusHint('ready')).toBeUndefined()
+    expect(classificationStatusHint('failed', '分类服务异常')).toBe('分类服务异常')
+  })
+
+  it('loads another cursor page when the compact grid is near the bottom or does not fill the viewport', () => {
+    expect(shouldLoadMoreDiscoverPage({ scrollHeight: 800, scrollTop: 0, clientHeight: 800 })).toBe(true)
+    expect(shouldLoadMoreDiscoverPage({ scrollHeight: 1400, scrollTop: 0, clientHeight: 800 })).toBe(false)
+    expect(shouldLoadMoreDiscoverPage({ scrollHeight: 1400, scrollTop: 380, clientHeight: 800 })).toBe(true)
   })
 
   it('uses an app-grid extension mark instead of the placeholder diamond', () => {

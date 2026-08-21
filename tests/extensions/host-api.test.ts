@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../../src/host-api.js'
 
-describe('extension center Host BFF', () => {
+describe('marketplace Host BFF', () => {
   it('requires same-origin requests for preview delete and reorder', async () => {
     const deletePreview = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 2 }))
     const reorderPreviews = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 3 }))
@@ -89,15 +89,15 @@ describe('extension center Host BFF', () => {
   })
 
   it('keeps remote access in the Host manager and returns the safe projection', async () => {
-    const search = vi.fn(async () => ({ items: [{ extension_id: 'ext-1', name: '扩展' }], total: 1 }))
+    const searchCatalog = vi.fn(async () => ({ items: [{ extension_id: 'ext-1', name: '扩展' }], total: 1 }))
     await expect(dispatchArkmeHostOperation(
       {} as never,
       'extensions.catalog.list',
-      { query: '天气', limit: 10 },
+      { query: '天气', sort: 'rating', cursor: 'next', limit: 10 },
       undefined,
-      { search } as never,
+      { searchCatalog } as never,
     )).resolves.toEqual({ items: [{ extension_id: 'ext-1', name: '扩展' }], total: 1 })
-    expect(search).toHaveBeenCalledWith('天气', 10)
+    expect(searchCatalog).toHaveBeenCalledWith({ query: '天气', sort: 'rating', cursor: 'next', limit: 10 })
   })
 
   it('rejects stale persistent Client calls with a specific unavailable error before invoking Host handlers', async () => {
@@ -135,10 +135,41 @@ describe('extension center Host BFF', () => {
     expect(auditExtension).toHaveBeenCalledWith({ extensionId: 'ext-1', trigger: 'market_detail' })
   })
 
-  it('resolves extension authors in the Host for public and owned details', async () => {
+  it('routes AI category discovery and keeps server-side ordering active', async () => {
+    const classificationTree = vi.fn(async () => ({
+      status: 'ready', categories: [{ category_id: 'cat_tools', name: '工具', extension_count: 1 }],
+      total_extensions: 1, total_categories: 1,
+    }))
+    const classificationItems = vi.fn(async () => ({
+      category_id: 'cat_tools', items: [{ extension_id: 'ext-1', name: '扩展' }], total: 1, limit: 20, offset: 0,
+    }))
+    const manager = { classificationTree, classificationItems }
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.classification.tree', { limit: 50 }, undefined, manager as never,
+    )).resolves.toMatchObject({ status: 'ready', total_categories: 1 })
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.classification.items', {
+        categoryId: 'cat_tools', query: '天气', sort: 'opens', cursor: '20', limit: 20,
+      }, undefined, manager as never,
+    )).resolves.toMatchObject({ category_id: 'cat_tools', total: 1 })
+    expect(classificationTree).toHaveBeenCalledWith(50)
+    expect(classificationItems).toHaveBeenCalledWith({
+      categoryId: 'cat_tools', query: '天气', sort: 'opens', cursor: '20', limit: 20,
+    })
+  })
+
+  it('resolves extension authors in the Host for catalog, public details, and owned details', async () => {
     const service = {
-      extensionAuthors: vi.fn(async () => new Map([[77, { displayName: '发布者', arkmeId: 'publisher' }]])),
+      extensionAuthors: vi.fn(async () => new Map([[77, {
+        displayName: '发布者', arkmeId: 'publisher', avatarRef: 'sealed-avatar-ref',
+        avatarFallback: { kind: 'phone_default' as const, colorIndex: 3, label: '发' },
+      }]])),
     }
+    const searchCatalog = vi.fn(async () => ({
+      items: [{ extension_id: 'ext-1', name: '扩展', description: '', visibility: 'public', owner_user_id: 77 }],
+      total: 1,
+    }))
     const inspect = vi.fn(async () => ({
       extension_id: 'ext-1', name: '扩展', description: '', visibility: 'public', owner_user_id: 77,
     }))
@@ -148,11 +179,24 @@ describe('extension center Host BFF', () => {
     }))
 
     await expect(dispatchArkmeHostOperation(
+      service as never, 'extensions.catalog.list', {}, undefined, { searchCatalog } as never,
+    )).resolves.toMatchObject({ items: [{
+      owner_name: '发布者', owner_arkme_id: 'publisher', owner_avatar_ref: 'sealed-avatar-ref',
+      owner_avatar_fallback: { kind: 'phone_default', colorIndex: 3, label: '发' },
+    }] })
+    await expect(dispatchArkmeHostOperation(
       service as never, 'extensions.catalog.detail', { extensionId: 'ext-1' }, undefined, { inspect } as never,
-    )).resolves.toMatchObject({ owner_name: '发布者', owner_arkme_id: 'publisher' })
+    )).resolves.toMatchObject({
+      owner_name: '发布者', owner_arkme_id: 'publisher', owner_avatar_ref: 'sealed-avatar-ref',
+      owner_avatar_fallback: { kind: 'phone_default', colorIndex: 3, label: '发' },
+    })
     await expect(dispatchArkmeHostOperation(
       service as never, 'extensions.my-list', {}, undefined, { myList } as never,
-    )).resolves.toMatchObject({ items: [{ owner_name: '发布者', owner_arkme_id: 'publisher' }] })
+    )).resolves.toMatchObject({ items: [{
+      owner_name: '发布者', owner_arkme_id: 'publisher', owner_avatar_ref: 'sealed-avatar-ref',
+      owner_avatar_fallback: { kind: 'phone_default', colorIndex: 3, label: '发' },
+    }] })
+    expect(service.extensionAuthors).toHaveBeenCalledTimes(3)
     expect(service.extensionAuthors).toHaveBeenCalledWith([77])
   })
 

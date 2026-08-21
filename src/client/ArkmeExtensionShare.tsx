@@ -66,7 +66,7 @@ const styles: Record<string, CSSProperties> = {
   },
   notice: { marginTop: 10, color: 'var(--dsw-alias-state-business-primary, #8295e8)', fontSize: 11, lineHeight: '17px' },
   sourceLink: {
-    color: 'var(--dsw-alias-state-business-primary, #8295e8)', fontSize: 12, lineHeight: '18px',
+    color: 'var(--dsw-alias-link-primary, #1677ff)', fontSize: 12, lineHeight: '18px',
     fontWeight: 600, textDecoration: 'none', wordBreak: 'break-word',
   },
 }

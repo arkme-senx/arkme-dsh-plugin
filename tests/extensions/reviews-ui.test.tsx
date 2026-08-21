@@ -2,10 +2,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   ArkmeExtensionReviews,
+  ArkmeExtensionInlineReviewComposer,
   ArkmeExtensionReviewComposerDialog,
   ArkmeExtensionReplyListDialog,
   extensionRatingLabel,
   extensionReviewComposerCanSubmit,
+  extensionReviewComposerMode,
+  extensionReviewComposerTargets,
   extensionReviewCreateParams,
   extensionReviewReplyCount,
   extensionReviewTree,
@@ -32,19 +35,23 @@ const page: ArkmeExtensionReviewPage = {
 }
 
 describe('extension reviews UI', () => {
-  it('renders top-level comments with a reply icon and existing reply count', () => {
+  it('renders an inline composer, comments, and replies without opening another dialog', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionReviews extensionId="ext-1" initialPage={page} />)
 
     expect(html).toContain('用户评价')
+    expect(html).toContain('2 条评论')
     expect(html).toContain('5.0 · 1 个评分')
     expect(html).toContain('很好用')
-    expect(html).not.toContain('谢谢反馈')
-    expect(html).toContain('>评论</button>')
-    expect(html).toContain('aria-label="查看小林的评论及 1 条回复"')
+    expect(html).toContain('谢谢反馈')
+    expect(html).toContain('data-extension-review-composer="inline"')
+    expect(html).toContain('placeholder="分享你的使用体验"')
+    expect(html).not.toContain('role="dialog"')
+    expect(html).not.toContain('>评论</button>')
     expect(html).toContain('aria-label="回复小林，已有 1 条回复"')
+    expect(html).toContain('aria-label="回复作者，已有 0 条回复"')
     expect(html).toContain('aria-label="小林头像"')
-    expect(html).toContain('grid-template-columns:38px minmax(0, 1fr)')
-    expect(html).toContain('width:38px;height:38px')
+    expect(html).toContain('grid-template-columns:34px minmax(0, 1fr)')
+    expect(html).toContain('width:34px;height:34px')
     expect(html).not.toContain('@lin')
     const mainColumn = html.indexOf('data-arkme-review-main="true"')
     const author = html.indexOf('小林', mainColumn)
@@ -67,8 +74,34 @@ describe('extension reviews UI', () => {
       extensionId="ext-1" canCreateTopLevelReview={false} initialPage={page}
     />)
 
-    expect(html).not.toContain('>评论</button>')
+    expect(html).not.toContain('data-extension-review-composer="inline"')
     expect(html).toContain('aria-label="回复小林，已有 1 条回复"')
+  })
+
+  it('uses one composer slot and lets reply mode replace the top-level entry', () => {
+    expect(extensionReviewComposerMode(true, false)).toBe('top-level')
+    expect(extensionReviewComposerMode(true, true)).toBe('reply')
+    expect(extensionReviewComposerMode(false, true)).toBe('reply')
+    expect(extensionReviewComposerMode(false, false)).toBe('hidden')
+
+    const html = renderToStaticMarkup(<ArkmeExtensionInlineReviewComposer
+      state={{ parent: page.items[0], textContent: '', rating: 0, clientMutationId: 'reply-1', error: '' }}
+      submitting={false} onChange={() => undefined} onSubmit={() => undefined} onCancel={() => undefined}
+    />)
+    expect(html).toContain('>回复 小林</div>')
+    expect(html).toContain('placeholder="输入回复内容…"')
+    expect(html).not.toContain('placeholder="回复 小林"')
+    expect(html).toContain('grid-template-columns:30px minmax(0, 1fr)')
+    expect(html).toContain('min-height:42px')
+    expect(html).toContain('max-height:160px')
+    expect(html).toContain('resize:vertical')
+    expect(html).toContain('overflow-y:auto')
+    expect(extensionReviewComposerTargets('review-root', {
+      parent: page.items[0], textContent: '', rating: 0, clientMutationId: 'reply-1', error: '',
+    })).toBe(true)
+    expect(extensionReviewComposerTargets('review-reply', {
+      parent: page.items[0], textContent: '', rating: 0, clientMutationId: 'reply-1', error: '',
+    })).toBe(false)
   })
 
   it('uses an owner-specific empty state without inviting a self rating', () => {

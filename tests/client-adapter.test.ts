@@ -17,6 +17,7 @@ function installDesktopGateMarker(): () => void {
 describe('official DSH client adapter', () => {
   it('keeps the native conversation mounted while the Footer owns a floating Arkme surface', () => {
     const registered: Array<{ name: string; id?: string; inject?: () => unknown }> = []
+    const toggleSidebar = vi.fn()
     const inject = vi.fn((_key: string, register: () => unknown) => {
       register()
       return () => {}
@@ -27,6 +28,7 @@ describe('official DSH client adapter', () => {
     })
     apply({
       slots: { inject, register },
+      layout: { toggleSidebar },
       effect: vi.fn(),
     } as never)
 
@@ -38,11 +40,14 @@ describe('official DSH client adapter', () => {
     const footer = registered.find(item => item.name === 'sidebar.footer.action')!
     const face = footer.inject?.() as {
       toggle(sessionId: string | undefined, authenticated: boolean): void
+      expandSidebar(): void
       activate(sessionId: string | undefined): void
       closeSurface(): void
       surfaceSession(): string | undefined
     }
 
+    face.expandSidebar()
+    expect(toggleSidebar).toHaveBeenCalledOnce()
     face.toggle('session-1', true)
     expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'source' })
     expect(face.surfaceSession()).toBe('session-1')
@@ -80,7 +85,7 @@ describe('official DSH client adapter', () => {
     })
 
     try {
-      apply({ slots: { inject, register }, effect: vi.fn() } as never)
+      apply({ slots: { inject, register }, layout: { toggleSidebar: vi.fn() }, effect: vi.fn() } as never)
     } finally {
       restoreWindow()
     }

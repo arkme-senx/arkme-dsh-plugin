@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -62,6 +63,10 @@ export class ArkmeExtensionInstallStore {
         last_checked_at_millis INTEGER NOT NULL DEFAULT 0,
         last_error TEXT
       );
+      CREATE TABLE IF NOT EXISTS extension_install_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `)
     const columns = new Set((this.database.prepare('PRAGMA table_info(installed_extensions)').all() as Array<{ name: string }>)
       .map(column => column.name))
@@ -75,6 +80,23 @@ export class ArkmeExtensionInstallStore {
     // Dynamic Cordis runs are process-owned. Never restore a stale active claim after DSH restarts.
     this.database.exec('UPDATE installed_extensions SET active = 0, dynamic_plugin_id = NULL, dynamic_package_id = NULL')
     this.secureFiles()
+  }
+
+  installationInstanceId(): string {
+    const key = 'installation_instance_id'
+    const existing = this.database.prepare('SELECT value FROM extension_install_metadata WHERE key = ?')
+      .get(key) as { value: string } | undefined
+    if (existing?.value.trim()) return existing.value
+    const candidate = randomUUID()
+    this.database.prepare('INSERT OR IGNORE INTO extension_install_metadata (key, value) VALUES (?, ?)')
+      .run(key, candidate)
+    const persisted = this.database.prepare('SELECT value FROM extension_install_metadata WHERE key = ?')
+      .get(key) as { value: string } | undefined
+    if (persisted === undefined || persisted.value.trim() === '') {
+      throw new Error('failed to persist extension installation instance identity')
+    }
+    this.secureFiles()
+    return persisted.value
   }
 
   list(): ArkmeInstalledExtension[] {

@@ -120,6 +120,8 @@ describe('Arkme extension tools', () => {
     await expect(listInstalledTool?.execute?.({}, toolExec(confirmationAgent('session-list', '查看已安装扩展'), 'call-list')))
       .resolves.toContain('"message": "插件运行失败，已自动停用。"')
     expect(listInstalled).toHaveBeenCalledOnce()
+    const search = definitions.find(item => item.name === 'arkme_extension_search')
+    expect(search?.parameters).toHaveProperty('properties.limit.description', 'Result count, 1-100. Defaults to 20.')
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')

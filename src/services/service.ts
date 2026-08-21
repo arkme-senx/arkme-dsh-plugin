@@ -758,7 +758,7 @@ export class ServiceRuntime {
   ): Promise<T> {
     const baseUrl = this.config.extensionPublishBaseUrl?.trim() ?? ''
     if (baseUrl === '') {
-      throw new ArkmePluginError('extension-service-disabled', '扩展市场服务尚未配置', false, 503)
+      throw new ArkmePluginError('extension-service-disabled', '市集服务尚未配置', false, 503)
     }
     let session = await this.requireSession()
     const requestOptions = (): ArkmeRemoteRequestOptions => ({

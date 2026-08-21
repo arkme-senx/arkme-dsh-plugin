@@ -225,7 +225,7 @@ export class ExtensionReviewService {
         await this.runtime.stateStore.removeExtensionReviewOperation(userId, operation.clientMutationId)
         throw new ArkmePluginError(
           'extension-review-registry-rejected',
-          `评论已写入首页，但扩展市场未接受：${error.message}`,
+          `评论已写入首页，但市集未接受：${error.message}`,
           false,
           error.httpStatus,
           { cause: error },

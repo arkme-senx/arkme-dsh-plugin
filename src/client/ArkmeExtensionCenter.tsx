@@ -2,11 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import type {
-  ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
-  ArkmeExtensionEnabledResult, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution, ArkmeInstalledExtensionView,
-  ArkmeSharedExtensionDetail, ArkmeExtensionAuditResult,
+  ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionClassificationPage,
+  ArkmeExtensionClassificationStatus, ArkmeExtensionClassificationTree,
+  ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
+  ArkmeExtensionDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionPreviewItem, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution,
+  ArkmeInstalledExtensionView, ArkmeSharedExtensionDetail, ArkmeExtensionAuditResult,
 } from '../extensions/types.js'
 import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
+import type { ArkmeOpenPrivateChatResult, ArkmeSourceItem } from '../types.js'
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
@@ -17,15 +20,16 @@ import {
   applyEditedMyExtension, nextExtensionEditMutation, saveExtensionEdit, type ExtensionEditMutation,
 } from './extension-edit-flow.js'
 import { ArkmeExtensionReviews, extensionRatingLabel } from './ArkmeExtensionReviews.js'
-import { ArkmeExtensionShareDialog, ArkmeExtensionSourceLink } from './ArkmeExtensionShare.js'
+import { ArkmeExtensionSourceLink } from './ArkmeExtensionShare.js'
 import { ArkmeSharedExtensionDetail as SharedExtensionDetailView } from './ArkmeSharedExtensionDetail.js'
-import { extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
+import { appendExtensionDiscoverPage, extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
 } from './my-extension-model.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
@@ -33,6 +37,9 @@ export const ARKME_EXTENSION_BRAND_GREEN = '#8295E8'
 export const ARKME_EXTENSION_PRIMARY_ACTION_BG = arkmeTheme.primaryAction
 export const ARKME_EXTENSION_PRIMARY_ACTION_FG = arkmeTheme.onPrimaryAction
 export const ARKME_EXTENSION_RESTART_SURFACE = arkmeTheme.menu
+export const ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH = 920
+export const ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT = 680
+export const ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE = 70
 
 export function extensionTabLoadMode(loadedTabs: ReadonlySet<string>, target: string): 'initial' | 'refresh' {
   return loadedTabs.has(target) ? 'refresh' : 'initial'
@@ -65,6 +72,50 @@ const styles: Record<string, CSSProperties> = {
     border: `1px solid ${colors.border}`, borderRadius: 18, background: colors.surface,
     boxShadow: '0 28px 80px rgba(20, 24, 31, .22), 0 4px 18px rgba(20, 24, 31, .08)',
   },
+  pageBackdrop: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' },
+  pageDialog: {
+    width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
+    background: colors.surface,
+  },
+  detailModalBackdrop: {
+    position: 'fixed', zIndex: 100, inset: 0, display: 'grid', placeItems: 'center', padding: 16,
+    boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(17, 24, 39, .42))',
+    backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)',
+  },
+  detailModal: {
+    width: `min(${ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH}px, calc(100vw - 32px))`,
+    height: `min(${ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT}px, calc(100vh - 32px))`,
+    minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 20,
+    background: colors.surface, color: colors.text,
+    boxShadow: '0 30px 90px rgba(20,24,31,.28), 0 8px 24px rgba(20,24,31,.12)',
+  },
+  detailModalHeader: {
+    minHeight: 56, flex: 'none', display: 'flex', alignItems: 'center', gap: 10,
+    padding: '0 14px 0 20px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+  },
+  detailModalTitle: {
+    minWidth: 0, flex: 1, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.text, fontSize: 16, lineHeight: '24px', fontWeight: 650,
+  },
+  detailModalHeaderAction: {
+    position: 'relative', width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
+    padding: 0, border: 0, borderRadius: 9, background: 'transparent', color: colors.text, cursor: 'pointer',
+  },
+  detailCopyNotice: {
+    position: 'absolute', zIndex: 2, top: 43, right: 0, width: 'max-content', maxWidth: 220,
+    padding: '7px 10px', borderRadius: 8, background: colors.text,
+    color: colors.surface, fontSize: 11, lineHeight: '16px', boxShadow: '0 8px 22px rgba(20,24,31,.18)',
+  },
+  detailModalBody: {
+    minHeight: 0, flex: 1, overflowY: 'auto',
+    padding: '22px clamp(18px, 3vw, 26px) 30px', boxSizing: 'border-box',
+  },
+  detailModalState: {
+    minHeight: 260, display: 'grid', placeItems: 'center', padding: 30, boxSizing: 'border-box',
+    color: colors.secondary, fontSize: 12, textAlign: 'center',
+  },
+  detailModalErrorActions: { display: 'flex', justifyContent: 'center', gap: 8, marginTop: 14 },
   shell: {
     width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column',
     background: colors.surface, color: colors.text, fontFamily: 'var(--dsw-font-family, inherit)',
@@ -132,6 +183,113 @@ const styles: Record<string, CSSProperties> = {
     color: colors.accent, fontSize: 9, fontWeight: 650,
   },
   list: { minHeight: 0, flex: 1, overflowY: 'auto', padding: '8px 22px 22px', boxSizing: 'border-box' },
+  pageHeader: { padding: '28px 32px 16px', flex: 'none', borderBottom: `1px solid ${colors.border}` },
+  marketPageHeader: {
+    height: 64, flex: 'none', display: 'flex', alignItems: 'center', gap: 34, padding: '0 64px 0 32px',
+    boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+  },
+  pageTitleRow: { display: 'flex', alignItems: 'center', gap: 20 },
+  pageTitle: { margin: 0, flex: 1, minWidth: 0, color: colors.text, fontSize: 26, lineHeight: '34px', fontWeight: 650 },
+  marketPageTitle: { margin: 0, flex: 'none', color: colors.text, fontSize: 18, lineHeight: '26px', fontWeight: 650 },
+  marketPageTabs: {
+    height: '100%', minWidth: 0, display: 'flex', alignItems: 'center', gap: 8,
+  },
+  marketPageTab: {
+    minWidth: 0, height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center',
+    justifyContent: 'center', padding: '0 12px', border: 0, borderRadius: 8, outline: 0,
+    background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 12,
+    whiteSpace: 'nowrap', cursor: 'pointer', transition: 'background-color .15s ease, color .15s ease',
+  },
+  marketPageActiveNav: { background: colors.subtle, color: colors.text, fontWeight: 600 },
+  marketPageNavLabel: { display: 'inline-flex', alignItems: 'center', gap: 6 },
+  marketPageNavCount: { background: colors.hover, color: colors.caption },
+  marketplaceToolbar: {
+    flex: 'none', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+    padding: '14px 32px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+  },
+  searchBox: {
+    height: 40, flex: '1 1 360px', minWidth: 220, maxWidth: 680, boxSizing: 'border-box', padding: '0 14px',
+    border: `1px solid ${colors.border}`, borderRadius: 10, outline: 0,
+    background: colors.subtle, color: colors.text, font: 'inherit', fontSize: 13,
+  },
+  discoverControls: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, marginLeft: 'auto' },
+  marketplaceMenuRoot: { position: 'relative', flex: 'none' },
+  marketplaceMenuButton: {
+    height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    minWidth: 118, padding: '0 12px', border: `1px solid ${colors.border}`, borderRadius: 10,
+    background: colors.surface, color: colors.text, font: 'inherit', fontSize: 12, cursor: 'pointer',
+  },
+  marketplaceMenu: {
+    position: 'absolute', zIndex: 20, top: 46, right: 0, width: 190, padding: 6,
+    maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
+    boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 12,
+    background: colors.surface, boxShadow: '0 12px 32px rgba(20, 24, 31, .16)',
+  },
+  marketplaceMenuOption: {
+    width: '100%', minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+    padding: '0 10px', border: 0, borderRadius: 8, background: 'transparent',
+    color: colors.text, textAlign: 'left', font: 'inherit', fontSize: 12, cursor: 'pointer',
+  },
+  marketplaceMenuHint: {
+    margin: '4px 4px 2px', padding: '8px 7px 4px', borderTop: `1px solid ${colors.border}`,
+    color: colors.caption, fontSize: 10, lineHeight: '16px',
+  },
+  communityGrid: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 220px), 1fr))',
+    gap: 10,
+    width: '100%', maxWidth: 1440, margin: '0 auto', boxSizing: 'border-box',
+  },
+  marketplaceLoadingMore: {
+    minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+    color: colors.caption, fontSize: 11,
+  },
+  marketplaceLoadMoreRetry: {
+    minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+    color: colors.caption, fontSize: 11,
+  },
+  marketplaceRetryButton: {
+    height: 28, padding: '0 11px', border: `1px solid ${colors.border}`, borderRadius: 8,
+    background: colors.surface, color: colors.text, font: 'inherit', fontSize: 11, cursor: 'pointer',
+  },
+  communityCard: {
+    position: 'relative', minWidth: 0, minHeight: 72, boxSizing: 'border-box',
+    padding: 0, border: `1px solid ${colors.border}`, borderRadius: 10, background: colors.surface,
+    color: colors.text, textAlign: 'left', transition: 'background-color .15s ease, border-color .15s ease, box-shadow .15s ease',
+  },
+  communityPrimary: {
+    width: '100%', minWidth: 0, minHeight: 72, display: 'flex', alignItems: 'center', gap: 10,
+    padding: '10px 12px', boxSizing: 'border-box',
+    border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', font: 'inherit', cursor: 'pointer',
+  },
+  communityTitleRow: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  communityTitle: {
+    display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 13, lineHeight: '20px', fontWeight: 600,
+  },
+  communityIdentityRow: {
+    minWidth: 0, display: 'flex', alignItems: 'center', gap: 5, marginTop: 6,
+    color: colors.secondary, fontSize: 10, lineHeight: '16px',
+  },
+  communityIdentityName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  communityIdentityAvatar: {
+    width: 18, height: 18, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
+    borderRadius: '50%', background: colors.subtle, color: colors.secondary,
+  },
+  githubSourceBadge: {
+    flex: 'none', display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px',
+    borderRadius: 6, background: colors.subtle, color: colors.caption,
+    fontSize: 10, lineHeight: '20px', fontWeight: 600, whiteSpace: 'nowrap',
+  },
+  authorButton: {
+    display: 'inline-flex', alignItems: 'center', gap: 8, padding: 0, border: 0,
+    background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12, cursor: 'pointer',
+  },
+  authorCard: {
+    width: 'min(320px, 100%)', marginTop: 10, padding: 14, boxSizing: 'border-box',
+    border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.surface,
+    boxShadow: '0 12px 32px rgba(20,24,31,.12)',
+  },
+  authorCardActions: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   card: {
     width: '100%', minWidth: 0, display: 'flex', gap: 10, boxSizing: 'border-box',
     margin: 0, padding: '11px 8px', border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0,
@@ -168,7 +326,7 @@ const styles: Record<string, CSSProperties> = {
   installSmallGrid: { width: 68, height: 34, alignSelf: 'center', justifyContent: 'center', padding: '0 12px', borderRadius: 10, background: '#17191c', color: '#fff' },
   appIcon: {
     width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
-    borderRadius: 9, background: colors.subtle, color: colors.secondary,
+    borderRadius: 6, background: colors.subtle, color: colors.secondary,
   },
   cardBody: { minWidth: 0, flex: 1 },
   titleRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
@@ -196,13 +354,46 @@ const styles: Record<string, CSSProperties> = {
   emptyTitle: { marginTop: 13, color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: '20px' },
   emptyDesc: { maxWidth: 230, marginTop: 4, color: colors.secondary, fontSize: 11, lineHeight: '17px' },
   skeleton: { height: 76, marginBottom: 8, borderRadius: 12, background: colors.subtle, opacity: .72 },
-  detail: { gridColumn: '1 / -1', paddingBottom: 20 },
+  detail: { width: '100%', maxWidth: 860, margin: '0 auto', paddingBottom: 20, boxSizing: 'border-box' },
   detailBack: {
     height: 30, display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 10, padding: '0 6px 0 2px',
     border: 0, borderRadius: 7, background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 11, cursor: 'pointer',
   },
-  detailHero: { display: 'flex', gap: 12, alignItems: 'center', padding: '12px 2px 14px' },
-  detailIcon: { width: 46, height: 46, display: 'grid', placeItems: 'center', borderRadius: 13, background: colors.accentSoft, color: colors.accent },
+  detailLead: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 26,
+    alignItems: 'start', padding: '2px 0 24px',
+  },
+  detailLeadWithoutPreview: { gridTemplateColumns: 'minmax(0, 1fr)' },
+  detailIdentity: { minWidth: 0, padding: '8px 0' },
+  detailIdentityTop: {
+    minWidth: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+    gap: 18, flexWrap: 'wrap',
+  },
+  detailHero: { minWidth: 0, flex: '1 1 320px', display: 'flex', gap: 14, alignItems: 'flex-start' },
+  detailTitleRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  detailName: { margin: 0, color: colors.text, fontSize: 24, lineHeight: '32px', fontWeight: 680, wordBreak: 'break-word' },
+  detailMetrics: {
+    display: 'flex', alignItems: 'center', columnGap: 18, rowGap: 6, flexWrap: 'wrap', marginTop: 9,
+    color: colors.caption, fontSize: 11, lineHeight: '16px',
+  },
+  detailMetric: { display: 'inline-flex', alignItems: 'center', gap: 4, color: colors.caption, fontSize: 11, fontWeight: 400, lineHeight: '16px' },
+  detailPrimaryActions: {
+    flex: 'none', minWidth: 126, display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+    justifyContent: 'flex-start', gap: 9,
+  },
+  detailEnabledControl: {
+    minHeight: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 9,
+    color: colors.secondary, fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap',
+  },
+  detailPreview: { minWidth: 0 },
+  detailColumns: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))',
+    gap: 28, marginTop: 4, padding: '22px 0', borderTop: `1px solid ${colors.border}`,
+  },
+  detailAbout: { minWidth: 0, boxSizing: 'border-box' },
+  detailFacts: { minWidth: 0, boxSizing: 'border-box' },
+  detailSectionTitle: { margin: '0 0 10px', color: colors.text, fontSize: 14, lineHeight: '22px', fontWeight: 650 },
+  detailIcon: { width: 46, height: 46, display: 'grid', placeItems: 'center', borderRadius: 13, background: colors.subtle, color: colors.secondary },
   detailSection: { padding: '12px 0', borderTop: `1px solid ${colors.border}` },
   detailLabel: { color: colors.caption, fontSize: 10, lineHeight: '16px' },
   detailValue: { marginTop: 3, color: colors.secondary, fontSize: 12, lineHeight: '18px', wordBreak: 'break-word' },
@@ -221,6 +412,7 @@ const styles: Record<string, CSSProperties> = {
   },
   detailConfirm: { marginTop: 14, padding: '10px 11px', borderRadius: 10, background: 'rgba(194,65,59,.08)', color: colors.danger, fontSize: 11, lineHeight: '17px' },
   detailConfirmActions: { display: 'flex', gap: 8, marginTop: 9 },
+  detailDangerZone: { marginTop: 14, paddingTop: 12, borderTop: `1px solid ${colors.border}` },
   primaryButton: {
     height: 34, flex: 'none', padding: '0 17px', border: 0, borderRadius: 9, background: ARKME_EXTENSION_PRIMARY_ACTION_BG,
     color: ARKME_EXTENSION_PRIMARY_ACTION_FG, font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
@@ -234,7 +426,7 @@ const styles: Record<string, CSSProperties> = {
     padding: 0, border: 0, borderRadius: 8, background: colors.accentSoft, color: colors.accent, cursor: 'pointer',
   },
   restartOverlay: {
-    position: 'absolute', zIndex: 5, inset: 0, display: 'grid', placeItems: 'center',
+    position: 'fixed', zIndex: 130, inset: 0, display: 'grid', placeItems: 'center',
     padding: 24, boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(17, 24, 39, .18))',
   },
   restartDialog: {
@@ -291,6 +483,126 @@ export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onResta
 const PENDING_EXTENSION_RESTART_KEY = 'arkme.extension.pending-restart'
 
 const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
+type MarketplaceCategory = string
+type MarketplaceSort = 'rating' | 'comments' | 'opens' | 'created_at'
+const MARKET_SORTS: ReadonlyArray<{ value: MarketplaceSort; label: string }> = [
+  { value: 'rating', label: '评分最高' },
+  { value: 'comments', label: '评论最多' },
+  { value: 'opens', label: '打开最多' },
+  { value: 'created_at', label: '最新创建' },
+]
+
+function MarketplaceChevron({ open }: { open: boolean }) {
+  return <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease' }}>
+    <path d="m7 10 5 5 5-5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+}
+
+function MarketplaceMenu<T extends string>({ ariaLabel, triggerLabel, value, options, available = true, hint, unavailableHint, onChange }: {
+  ariaLabel: string
+  triggerLabel: string
+  value: T
+  options: ReadonlyArray<{ value: T; label: string }>
+  available?: boolean
+  hint?: string
+  unavailableHint?: string
+  onChange: (value: T) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOutside, true)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside, true)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  return <div ref={rootRef} style={styles.marketplaceMenuRoot}>
+    <button
+      type="button"
+      style={styles.marketplaceMenuButton}
+      aria-label={ariaLabel}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      onClick={() => { setOpen(current => !current) }}
+    >
+      <span>{triggerLabel}</span>
+      <MarketplaceChevron open={open} />
+    </button>
+    {open && <div role="listbox" aria-label={`${ariaLabel}选项`} style={styles.marketplaceMenu}>
+      {options.map(option => {
+        const selected = option.value === value
+        const disabled = !available && !selected
+        return <button
+          key={option.value}
+          type="button"
+          role="option"
+          aria-selected={selected}
+          disabled={disabled}
+          style={{
+            ...styles.marketplaceMenuOption,
+            ...(selected ? { background: colors.subtle, color: colors.text, fontWeight: 600 } : {}),
+            ...(disabled ? { opacity: .45, cursor: 'not-allowed' } : {}),
+          }}
+          onClick={() => { onChange(option.value); setOpen(false) }}
+        >
+          <span>{option.label}</span>
+          {selected && <span aria-hidden>✓</span>}
+        </button>
+      })}
+      {hint !== undefined && <div role="note" style={styles.marketplaceMenuHint}>{hint}</div>}
+      {!available && unavailableHint !== undefined && <div role="note" style={styles.marketplaceMenuHint}>{unavailableHint}</div>}
+    </div>}
+  </div>
+}
+
+export function marketplaceListParams(
+  searchQuery: string,
+  sort: MarketplaceSort,
+  sortingEnabled: boolean,
+  cursor?: string,
+): { limit: number; query?: string; sort?: MarketplaceSort; cursor?: string } {
+  const query = searchQuery.trim()
+  const normalizedCursor = cursor?.trim() ?? ''
+  return {
+    limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
+    ...(query === '' ? {} : { query }),
+    ...(sortingEnabled ? { sort } : {}),
+    ...(normalizedCursor === '' ? {} : { cursor: normalizedCursor }),
+  }
+}
+
+export function shouldLoadMoreDiscoverPage(
+  target: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'>,
+  threshold = 240,
+): boolean {
+  return target.scrollHeight - target.scrollTop - target.clientHeight <= threshold
+}
+
+export function classificationStatusHint(status: ArkmeExtensionClassificationStatus, message?: string): string | undefined {
+  if (message !== undefined && message.trim() !== '') return message
+  if (status === 'building') return 'AI 正在更新分类，已有分类仍可继续浏览。'
+  if (status === 'failed') return 'AI 分类更新失败，全部扩展仍可继续浏览。'
+  if (status === 'empty') return 'AI 分类暂无数据，全部扩展仍可继续浏览。'
+  if (status === 'unavailable') return 'AI 分类暂不可用，全部扩展仍可继续浏览。'
+  return undefined
+}
+
+export function extensionDetailHasPreviews(
+  previews: readonly Pick<ArkmeExtensionPreviewItem, 'preview_ref'>[] | undefined,
+): boolean {
+  return previews?.some(item => /^preview_v1_[a-f0-9]{64}$/.test(item.preview_ref)) === true
+}
 const EMPTY_COPY: Record<Tab, { title: string; description: string }> = {
   discover: { title: '还没有可发现的扩展', description: '和 DSH 对话生成并发布扩展后，它会出现在这里。' },
   installed: { title: '还没有安装扩展', description: '从发现页选择扩展，或在 DSH 对话中指定 extension_id。' },
@@ -304,6 +616,46 @@ function BackIcon({ size = 18 }: { size?: number }) {
 
 function CloseIcon() {
   return <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+}
+
+function LinkIcon() {
+  return <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none">
+    <path d="M10.2 13.8a4.1 4.1 0 0 0 5.8 0l3-3A4.1 4.1 0 1 0 13.2 5l-1.7 1.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M13.8 10.2a4.1 4.1 0 0 0-5.8 0l-3 3A4.1 4.1 0 1 0 10.8 19l1.7-1.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+}
+
+export function ArkmeExtensionDetailHeader({ title, copyAvailable, copyNotice = '', onCopy, onClose }: {
+  title: string
+  copyAvailable: boolean
+  copyNotice?: string
+  onCopy(): void
+  onClose(): void
+}) {
+  return <header style={styles.detailModalHeader}>
+    <h2 id="arkme-extension-detail-title" style={styles.detailModalTitle}>{title}</h2>
+    {copyAvailable && <button
+      type="button"
+      style={styles.detailModalHeaderAction}
+      aria-label="复制扩展链接"
+      title="复制链接"
+      onClick={onCopy}
+      onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
+      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+    >
+      <LinkIcon />
+      {copyNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{copyNotice}</span>}
+    </button>}
+    <button
+      type="button"
+      style={styles.detailModalHeaderAction}
+      aria-label="关闭扩展详情"
+      title="关闭"
+      onClick={onClose}
+      onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
+      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+    ><CloseIcon /></button>
+  </header>
 }
 
 function Chips({ children }: { children: ReactNode }) { return <div style={styles.chips}>{children}</div> }
@@ -420,7 +772,139 @@ export function ArkmeExtensionToggle({ item, busy, onChange }: {
   </button>
 }
 
-export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, grid = false, onClick, onAction, onToggle, onPause, onResume }: {
+function StarIcon() {
+  return <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>
+}
+
+function CommentIcon() {
+  return <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>
+}
+
+function InstallUsersIcon() {
+  return <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16.5v2A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5v-2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+}
+
+function EyeIcon() {
+  return <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M2.5 12c2.3-4 5.5-6 9.5-6s7.2 2 9.5 6c-2.3 4-5.5 6-9.5 6s-7.2-2-9.5-6Z" stroke="currentColor" strokeWidth="1.7" /><circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.7" /></svg>
+}
+
+export function formatCompactCount(value: number): string {
+  const safe = Number.isFinite(value) && value > 0 ? value : 0
+  if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(safe >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`
+  if (safe >= 1_000) return `${(safe / 1_000).toFixed(safe >= 100_000 ? 0 : 1).replace(/\.0$/, '')}k`
+  return String(Math.trunc(safe))
+}
+
+export function extensionDetailMetricLabels(
+  item: Pick<ArkmeExtensionCatalogItem, 'rating_summary' | 'install_user_count' | 'comment_count' | 'open_count' | 'view_count'>,
+): string[] {
+  const labels: string[] = []
+  if (item.rating_summary !== undefined) {
+    labels.push(`★ ${item.rating_summary.average.toFixed(1)}`)
+  }
+  if (item.install_user_count !== undefined) labels.push(`安装 ${formatCompactCount(item.install_user_count)}`)
+  if (item.comment_count !== undefined) labels.push(`评论 ${formatCompactCount(item.comment_count)}`)
+  const views = item.open_count ?? item.view_count
+  if (views !== undefined) labels.push(`查看 ${formatCompactCount(views)}`)
+  return labels
+}
+
+export function ArkmeExtensionDetailMetrics({ item }: {
+  item: Pick<ArkmeExtensionCatalogItem, 'rating_summary' | 'install_user_count' | 'comment_count' | 'open_count' | 'view_count'>
+}) {
+  const views = item.open_count ?? item.view_count
+  if (item.rating_summary === undefined && item.install_user_count === undefined && item.comment_count === undefined && views === undefined) return null
+  return <div style={styles.detailMetrics} aria-label="扩展统计" data-extension-detail-metrics="compact">
+    {item.rating_summary !== undefined && <span style={styles.detailMetric} aria-label={`评分 ${item.rating_summary.average.toFixed(1)}`}>
+      <StarIcon />{item.rating_summary.average.toFixed(1)}
+    </span>}
+    {item.install_user_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.install_user_count)} 人已安装`}>
+      <InstallUsersIcon />{formatCompactCount(item.install_user_count)}
+    </span>}
+    {item.comment_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.comment_count)} 条评论`}>
+      <CommentIcon />{formatCompactCount(item.comment_count)}
+    </span>}
+    {views !== undefined && <span style={styles.detailMetric} aria-label={`查看次数 ${String(views)}`}>
+      <EyeIcon />{formatCompactCount(views)}
+    </span>}
+  </div>
+}
+
+export function formatMarketplaceDate(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  const millis = value < 10_000_000_000 ? value * 1000 : value
+  const date = new Date(millis)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+}
+
+export function extensionCommunityAuthor(item: ArkmeExtensionCatalogItem): { name: string; github: boolean } {
+  if (item.source?.type === 'github_repository') return { name: 'GitHub', github: true }
+  const ownerName = item.owner_name?.trim() ?? ''
+  const ownerArkmeId = item.owner_arkme_id?.trim() ?? ''
+  if (ownerName !== '' || ownerArkmeId !== '') return { name: extensionAuthorLabel(item), github: false }
+  return { name: extensionAuthorLabel(item), github: false }
+}
+
+function safeGithubAvatarUrl(value: unknown): string | undefined {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (normalized === '') return undefined
+  try {
+    const url = new URL(normalized)
+    return url.protocol === 'https:' && url.hostname === 'avatars.githubusercontent.com' ? url.toString() : undefined
+  } catch { return undefined }
+}
+
+function safeGithubProfileUrl(value: unknown): string | undefined {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (normalized === '') return undefined
+  try {
+    const url = new URL(normalized)
+    return url.protocol === 'https:' && url.hostname === 'github.com' ? url.toString() : undefined
+  } catch { return undefined }
+}
+
+function extensionGithubProfileUrl(item: ArkmeExtensionCatalogItem): string | undefined {
+  const projected = safeGithubProfileUrl(item.source_author?.profile_url)
+  if (projected !== undefined) return projected
+  if (item.source?.type !== 'github_repository') return undefined
+  try {
+    const url = new URL(item.source.url)
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com') return undefined
+    const owner = url.pathname.split('/').filter(Boolean)[0]
+    return owner === undefined || !/^[A-Za-z0-9-]{1,39}$/.test(owner) ? undefined : `https://github.com/${owner}`
+  } catch { return undefined }
+}
+
+function ExtensionAuthorAvatar({ item, size }: { item: ArkmeExtensionCatalogItem; size: number }) {
+  const hasOwnerIdentity = (item.owner_user_id ?? 0) > 0
+    || (item.owner_name?.trim() ?? '') !== ''
+    || (item.owner_arkme_id?.trim() ?? '') !== ''
+  if (hasOwnerIdentity) return <ArkmeUserAvatar
+    {...(item.owner_avatar_ref === undefined ? {} : { avatarRef: item.owner_avatar_ref })}
+    {...(item.owner_avatar_fallback === undefined ? {} : { fallback: item.owner_avatar_fallback })}
+    size={size}
+    label={`${extensionCommunityAuthor(item).name}的头像`}
+  />
+  const githubAvatar = safeGithubAvatarUrl(item.source_author?.avatar_url)
+  if (githubAvatar !== undefined) return <img src={githubAvatar} alt="" style={{ width: size, height: size, flex: 'none', borderRadius: '50%', objectFit: 'cover' }} />
+  return <ArkmeUserAvatar
+    {...(item.owner_avatar_ref === undefined ? {} : { avatarRef: item.owner_avatar_ref })}
+    {...(item.owner_avatar_fallback === undefined ? {} : { fallback: item.owner_avatar_fallback })}
+    size={size}
+    label={`${extensionCommunityAuthor(item).name}的头像`}
+  />
+}
+
+function GitHubIdentityAvatar() {
+  return <span style={styles.communityIdentityAvatar} aria-label="GitHub 来源" data-extension-community-identity="github">
+    <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.866-.014-1.7-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.621.069-.608.069-.608 1.004.071 1.532 1.034 1.532 1.034.892 1.53 2.341 1.088 2.91.832.091-.647.349-1.088.635-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.987 1.029-2.686-.103-.253-.446-1.268.098-2.645 0 0 .84-.269 2.75 1.026A9.555 9.555 0 0112 6.844a9.55 9.55 0 012.504.337c1.909-1.295 2.747-1.026 2.747-1.026.546 1.377.203 2.392.1 2.645.64.699 1.028 1.593 1.028 2.686 0 3.847-2.339 4.695-4.566 4.943.359.31.678.923.678 1.86 0 1.343-.012 2.425-.012 2.755 0 .268.18.58.688.481A10.025 10.025 0 0022 12.021C22 6.484 17.523 2 12 2z" />
+    </svg>
+  </span>
+}
+
+export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume, presentation = 'list' }: {
   item: ArkmeExtensionCatalogItem
   installed?: ArkmeInstalledExtensionView | undefined
   actionLabel?: string | undefined
@@ -434,10 +918,41 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
   onToggle?: ((enabled: boolean) => void) | undefined
   onPause?: (() => void) | undefined
   onResume?: (() => void) | undefined
+  presentation?: 'list' | 'community'
 }) {
   const metadata = extensionCardMetadata(item)
+  if (presentation === 'community') {
+    const author = extensionCommunityAuthor(item)
+    return <article
+      style={styles.communityCard}
+      data-extension-community-card="true"
+      onMouseEnter={event => {
+        event.currentTarget.style.background = colors.hover
+        event.currentTarget.style.boxShadow = '0 6px 18px rgba(20, 24, 31, .07)'
+      }}
+      onMouseLeave={event => {
+        event.currentTarget.style.background = colors.surface
+        event.currentTarget.style.boxShadow = 'none'
+      }}
+    >
+      <button type="button" style={styles.communityPrimary} title={item.name} aria-label={`查看扩展：${item.name}`} onClick={onClick}>
+        <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} size={34} />
+        <span style={styles.communityTitleRow} data-extension-title-row="true">
+          <span style={styles.communityTitle}>{item.name}</span>
+          <span style={styles.communityIdentityRow} data-extension-community-identity-row={author.github ? 'github' : 'author'}>
+            {author.github
+              ? <GitHubIdentityAvatar />
+              : <span style={styles.communityIdentityAvatar} data-extension-community-identity="author">
+                  <ExtensionAuthorAvatar item={item} size={18} />
+                </span>}
+            <span style={styles.communityIdentityName}>{author.github ? 'GitHub' : author.name}</span>
+          </span>
+        </span>
+      </button>
+    </article>
+  }
   return <div
-    style={{ ...styles.card, ...(grid ? styles.cardGrid : {}) }}
+    style={styles.card}
     onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
     onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
   >
@@ -456,7 +971,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
     /> : <span style={styles.actionGroup}>
       {actionLabel !== undefined && <button
         type="button"
-        style={{ ...styles.installSmall, ...(grid ? styles.installSmallGrid : {}), ...(onAction === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
+        style={{ ...styles.installSmall, ...(onAction === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
         disabled={onAction === undefined || actionBusy === true}
         onClick={onAction}
       >{actionLabel}</button>}
@@ -657,17 +1172,6 @@ export function installedExtensionCatalogItem(item: ArkmeInstalledExtensionView,
   }
 }
 
-function extensionVisibilityLabel(visibility: ArkmeExtensionCatalogItem['visibility']): string {
-  if (visibility === 'public') return '公开发布'
-  if (visibility === 'unlisted') return '通过链接可见'
-  return '仅自己可见'
-}
-
-function extensionUpdateLabel(item: ArkmeExtensionUpdateResolution): string {
-  if (item.revoked) return item.revocation_reason?.trim() || '当前版本已撤销'
-  return item.update_available ? '有可用更新' : '已是最新'
-}
-
 function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
   if (!item.enabled) return '已关闭'
   return item.active ? '已启用' : '已启用，尚未加载'
@@ -680,13 +1184,18 @@ export function extensionEnableUnavailable(
   return enabled && item?.unavailable !== undefined
 }
 
-export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef, onShareExit, onClose, embedded = false }: {
+export function ArkmeExtensionCenter({
+  currentSessionId, currentUserId, shareRef, onShareExit, onClose,
+  displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
+}: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
   shareRef?: string | undefined
   onShareExit?(): void
-  onClose(): void
-  embedded?: boolean | undefined
+  onClose?: (() => void) | undefined
+  displayMode?: 'dialog' | 'page'
+  onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
+  sortingEnabled?: boolean
 }) {
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
@@ -697,8 +1206,10 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   const [installed, setInstalled] = useState<ArkmeInstalledExtensionView[]>([])
   const [updates, setUpdates] = useState<ArkmeExtensionUpdateResolution[]>([])
   const [detail, setDetail] = useState<ArkmeExtensionCatalogItem>()
+  const [detailRequestedExtensionId, setDetailRequestedExtensionId] = useState<string>()
   const [loadingTab, setLoadingTab] = useState<Tab | undefined>(shareRef === undefined ? 'discover' : undefined)
   const [detailBusy, setDetailBusy] = useState(false)
+  const [detailError, setDetailError] = useState('')
   const [installTask, setInstallTask] = useState<ArkmeExtensionInstallTaskSnapshot>()
   const [actionBusyExtensionId, setActionBusyExtensionId] = useState<string>()
   const [installError, setInstallError] = useState('')
@@ -713,19 +1224,59 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   const [editItem, setEditItem] = useState<ArkmeMyExtensionItem>()
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState('')
-  const [shareDialogExtensionId, setShareDialogExtensionId] = useState<string>()
   const [shareNotice, setShareNotice] = useState('')
   const [sharedDetail, setSharedDetail] = useState<ArkmeSharedExtensionDetail>()
   const [sharedDetailBusy, setSharedDetailBusy] = useState(false)
   const [auditBusyExtensionId, setAuditBusyExtensionId] = useState<string>()
   const [auditResult, setAuditResult] = useState<ArkmeExtensionAuditResult>()
   const [auditError, setAuditError] = useState('')
+  const [deleteConfirmExtensionId, setDeleteConfirmExtensionId] = useState<string>()
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [category, setCategory] = useState<MarketplaceCategory>('all')
+  const [classificationTree, setClassificationTree] = useState<ArkmeExtensionClassificationTree>({
+    status: 'unavailable', categories: [], total_extensions: 0, total_categories: 0,
+  })
+  const [sort, setSort] = useState<MarketplaceSort>('created_at')
+  const [discoverNextCursor, setDiscoverNextCursor] = useState<string>()
+  const [loadingMoreDiscover, setLoadingMoreDiscover] = useState(false)
+  const [loadMoreDiscoverError, setLoadMoreDiscoverError] = useState('')
+  const [authorCardOpen, setAuthorCardOpen] = useState(false)
+  const [authorActionBusy, setAuthorActionBusy] = useState(false)
+  const [authorActionError, setAuthorActionError] = useState('')
   const requestSequence = useRef(0)
   const requestController = useRef<AbortController>()
+  const loadMoreController = useRef<AbortController>()
+  const loadMoreSequence = useRef(0)
+  const loadingMoreDiscoverRef = useRef(false)
+  const discoverListRef = useRef<HTMLElement>(null)
+  const classificationController = useRef<AbortController>()
   const publishMutation = useRef<ExtensionPublishMutation>()
   const editMutation = useRef<ExtensionEditMutation>()
+  const detailDialogRef = useRef<HTMLElement>(null)
+  const detailReturnFocus = useRef<HTMLElement>()
+
+  const categoryOptions: ReadonlyArray<{ value: MarketplaceCategory; label: string }> = [
+    { value: 'all', label: '全部' },
+    ...classificationTree.categories.map(item => ({
+      value: item.category_id,
+      label: `${item.name} · ${String(item.extension_count)}`,
+    })),
+  ]
+  const selectedCategoryName = category === 'all'
+    ? '全部'
+    : classificationTree.categories.find(item => item.category_id === category)?.name ?? '全部'
+  const classificationHint = classificationStatusHint(classificationTree.status, classificationTree.message)
+
+  const closeDetail = () => {
+    setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setDetailError('')
+    setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
+    setShareNotice(''); setAuthorCardOpen(false); setAuthorActionError('')
+    const target = detailReturnFocus.current
+    detailReturnFocus.current = undefined
+    if (target !== undefined && typeof window !== 'undefined') window.setTimeout(() => { target.focus() }, 0)
+  }
 
   const hostInstance = async (): Promise<string | undefined> => {
     try { return (await callArkme<{ instanceId: string }>('provider.instance')).instanceId }
@@ -761,28 +1312,79 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     setRestarting(false)
     setInstallError('DSH 重启超时，请手动重启后刷新页面。')
   }
+
+  useEffect(() => {
+    classificationController.current?.abort()
+    const controller = new AbortController()
+    classificationController.current = controller
+    void callArkme<ArkmeExtensionClassificationTree>(
+      'extensions.classification.tree',
+      { limit: 50 },
+      controller.signal,
+    ).then(tree => {
+      setClassificationTree(tree)
+      setCategory(current => current === 'all' || tree.categories.some(item => item.category_id === current) ? current : 'all')
+    }).catch(caught => {
+      if ((caught as Error).name !== 'AbortError') {
+        setClassificationTree({
+          status: 'unavailable', categories: [], total_extensions: 0, total_categories: 0,
+          message: caught instanceof Error ? caught.message : 'AI 分类暂不可用。',
+        })
+        setCategory('all')
+      }
+    })
+    return () => { controller.abort() }
+  }, [])
+
   const load = async (
     target: Tab,
     mode: 'initial' | 'refresh' = extensionTabLoadMode(loadedTabs, target),
   ) => {
     const sequence = ++requestSequence.current
     requestController.current?.abort()
+    loadMoreController.current?.abort()
+    loadMoreSequence.current += 1
+    loadingMoreDiscoverRef.current = false
+    setLoadingMoreDiscover(false)
+    setLoadMoreDiscoverError('')
+    if (target === 'discover') setDiscoverNextCursor(undefined)
     const controller = new AbortController()
     requestController.current = controller
     if (mode === 'initial') setLoadingTab(target)
-    setError(''); setDetail(undefined); setInstallError(''); setAuditResult(undefined); setAuditError('')
+    setError(''); setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError(''); setInstallError('')
+    setAuditResult(undefined); setAuditError('')
     try {
       if (target === 'discover') {
-        const [page, local, owned] = await Promise.all([
-          callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: 50 }, controller.signal),
-          callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal),
-          callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
-            .then(value => ({ value, failed: false as const }))
-            .catch(() => ({ value: { items: [], total: 0 }, failed: true as const })),
-        ])
+        void callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal)
+          .then(local => {
+            if (sequence === requestSequence.current) setInstalled(local)
+          })
+          .catch(() => undefined)
+        void callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
+          .then(owned => {
+            if (sequence !== requestSequence.current) return
+            setPublishedItems(owned.items)
+            setDiscoverOwnerWarning('')
+          })
+          .catch(caught => {
+            if ((caught as Error).name !== 'AbortError' && sequence === requestSequence.current) {
+              setDiscoverOwnerWarning('你的私有扩展暂未加载，请稍后刷新。')
+            }
+          })
+        const page = await (category === 'all'
+          ? callArkme<ArkmeExtensionCatalogPage>(
+              'extensions.catalog.list',
+              marketplaceListParams(searchQuery, sort, sortingEnabled),
+              controller.signal,
+            )
+          : callArkme<ArkmeExtensionClassificationPage>(
+              'extensions.classification.items',
+              { categoryId: category, ...marketplaceListParams(searchQuery, sort, sortingEnabled) },
+              controller.signal,
+            ))
         if (sequence === requestSequence.current) {
-          setDiscoverItems(page.items); acceptInstalled(local); setPublishedItems(owned.value.items)
-          setDiscoverOwnerWarning(owned.failed ? '你的私有扩展暂未加载，请稍后刷新。' : '')
+          setDiscoverItems(page.items)
+          setDiscoverNextCursor(page.next_cursor?.trim() || undefined)
         }
       } else if (target === 'mine') {
         const [page, local] = await Promise.all([
@@ -830,11 +1432,66 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     }
   }
 
+  const loadMoreDiscoverPage = async () => {
+    const cursor = discoverNextCursor?.trim() ?? ''
+    if (tab !== 'discover' || cursor === '' || loadingMoreDiscoverRef.current || loadingTab === 'discover') return
+    loadingMoreDiscoverRef.current = true
+    const paginationSequence = ++loadMoreSequence.current
+    const requestAtStart = requestSequence.current
+    loadMoreController.current?.abort()
+    const controller = new AbortController()
+    loadMoreController.current = controller
+    setLoadingMoreDiscover(true)
+    setLoadMoreDiscoverError('')
+    try {
+      const page = category === 'all'
+        ? await callArkme<ArkmeExtensionCatalogPage>(
+            'extensions.catalog.list',
+            marketplaceListParams(searchQuery, sort, sortingEnabled, cursor),
+            controller.signal,
+          )
+        : await callArkme<ArkmeExtensionClassificationPage>(
+            'extensions.classification.items',
+            { categoryId: category, ...marketplaceListParams(searchQuery, sort, sortingEnabled, cursor) },
+            controller.signal,
+          )
+      if (paginationSequence !== loadMoreSequence.current || requestAtStart !== requestSequence.current) return
+      setDiscoverItems(current => appendExtensionDiscoverPage(current, page.items))
+      const nextCursor = page.next_cursor?.trim() ?? ''
+      setDiscoverNextCursor(nextCursor === '' || nextCursor === cursor ? undefined : nextCursor)
+    } catch (caught) {
+      if ((caught as Error).name !== 'AbortError'
+        && paginationSequence === loadMoreSequence.current
+        && requestAtStart === requestSequence.current) {
+        setLoadMoreDiscoverError(caught instanceof Error ? caught.message : '加载更多失败')
+      }
+    } finally {
+      if (paginationSequence === loadMoreSequence.current) {
+        loadingMoreDiscoverRef.current = false
+        setLoadingMoreDiscover(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (displayMode !== 'page' || tab !== 'discover' || discoverNextCursor === undefined
+      || loadingMoreDiscover || loadingTab === 'discover' || loadMoreDiscoverError !== '') return
+    const frame = window.requestAnimationFrame(() => {
+      const target = discoverListRef.current
+      if (target !== null && shouldLoadMoreDiscoverPage(target)) void loadMoreDiscoverPage()
+    })
+    return () => { window.cancelAnimationFrame(frame) }
+  }, [displayMode, tab, discoverNextCursor, discoverItems.length, loadingMoreDiscover, loadingTab, loadMoreDiscoverError])
+
   useEffect(() => {
     if (shareRef !== undefined) return
-    void load('discover', 'initial')
-    return () => { requestController.current?.abort() }
-  }, [shareRef])
+    const timer = window.setTimeout(() => { void load('discover', 'initial') }, searchQuery.trim() === '' ? 0 : 250)
+    return () => {
+      window.clearTimeout(timer)
+      requestController.current?.abort()
+      loadMoreController.current?.abort()
+    }
+  }, [shareRef, searchQuery, sort, category, sortingEnabled])
 
   useEffect(() => {
     if (shareRef === undefined) return
@@ -853,14 +1510,21 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     if (shareRef !== undefined) { setSharedDetail(undefined); onShareExit?.() }
     const selection = extensionTabSelection(tab, target, loadedTabs)
     if (selection.changed) {
-      setTab(target); setError(''); setDetail(undefined); setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined)
+      setTab(target); setError(''); setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError('')
+      setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
       setAuditResult(undefined); setAuditError('')
     }
     void load(target, selection.mode)
   }
 
   const inspect = async (extensionId: string) => {
-    setDetailBusy(true); setError(''); setInstallError(''); setInstallTask(undefined); setAuditResult(undefined); setAuditError('')
+    if (detailRequestedExtensionId === undefined && typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      detailReturnFocus.current = document.activeElement
+    }
+    setDetailRequestedExtensionId(extensionId); setDetail(undefined); setDetailBusy(true); setDetailError('')
+    setInstallError(''); setInstallTask(undefined); setAuthorCardOpen(false); setAuthorActionError('')
+    setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined); setShareNotice('')
+    setAuditResult(undefined); setAuditError('')
     try {
       let listed = [...publishedItems, ...discoverItems].find(item => item.extension_id === extensionId)
       const ownedListed = publishedItems.find(item => item.extension_id === extensionId)
@@ -910,7 +1574,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
         }
       }
     }
-    catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
+    catch (caught) { setDetailError(caught instanceof Error ? caught.message : String(caught)) }
     finally { setDetailBusy(false) }
   }
 
@@ -985,6 +1649,26 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
         setRestartNotice('扩展已从 DSH 插件列表移除，请手动重启 DSH 完成卸载。')
         setRestartPrompt({ extensionId, kind: 'remove' })
       }
+    } catch (caught) {
+      setInstallError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setActionBusyExtensionId(undefined)
+    }
+  }
+
+  const deletePublishedExtension = async (extensionId: string) => {
+    setActionBusyExtensionId(extensionId); setInstallError(''); setRestartNotice('')
+    try {
+      await callArkme<ArkmeExtensionDeleteResult>('extensions.delete', { extensionId })
+      setDiscoverItems(current => current.filter(item => item.extension_id !== extensionId))
+      setPublishedItems(current => current.filter(item => item.extension_id !== extensionId))
+      setMyExtensions(current => current.map(item => {
+        if (item.published?.extensionId !== extensionId) return item
+        const { published: _published, ...rest } = item
+        return { ...rest, states: item.states.filter(state => state !== 'published') }
+      }))
+      closeDetail()
+      setRestartNotice('扩展已从市集删除，本地安装状态不受影响。')
     } catch (caught) {
       setInstallError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -1170,9 +1854,32 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     if (detail?.share === undefined) return
     try {
       await navigator.clipboard.writeText(detail.share.url)
-      setShareNotice('分享链接已复制。')
+      setShareNotice('链接已复制')
     } catch {
-      setShareNotice('复制失败，请稍后重试。')
+      setShareNotice('复制失败，请重试')
+    }
+  }
+
+  useEffect(() => {
+    if (shareNotice === '') return
+    const timer = window.setTimeout(() => { setShareNotice('') }, 1800)
+    return () => { window.clearTimeout(timer) }
+  }, [shareNotice])
+
+  const openAuthorPrivateChat = async () => {
+    if (detail?.owner_user_id === undefined || authorActionBusy) return
+    setAuthorActionBusy(true); setAuthorActionError('')
+    try {
+      const result = await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
+        peerUserId: detail.owner_user_id,
+        displayName: extensionCommunityAuthor(detail).name,
+      })
+      onPrivateChatOpened?.(result.source)
+      setAuthorCardOpen(false)
+    } catch (caught) {
+      setAuthorActionError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setAuthorActionBusy(false)
     }
   }
 
@@ -1191,7 +1898,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   const iconRefFor = (extensionId: string): string | undefined => discoverItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? publishedItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? myExtensions.find(item => item.published?.extensionId === extensionId)?.published?.iconRef
-  const busy = loadingTab === tab || detailBusy || sharedDetailBusy
+  const busy = loadingTab === tab || sharedDetailBusy
+  const detailModalOpen = displayMode === 'page' && (detailRequestedExtensionId !== undefined || detail !== undefined)
   const detailInstalled = detail === undefined ? undefined : installed.find(item => item.extensionId === detail.extension_id)
   const detailUpdate = detail === undefined ? undefined : updates.find(item => item.extension_id === detail.extension_id)
   const detailInstallAction = detail === undefined
@@ -1200,83 +1908,144 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
       ? { label: '更新' as const, disabled: false }
       : extensionCatalogAction(detail, detailInstalled?.installedVersion, tab === 'mine')
   const detailAction = detailInstallAction.label
+  const detailUpdateAvailable = detailUpdate?.update_available === true
+    && !detailUpdate.revoked && detailUpdate.latest_version !== undefined
+  const detailPrimaryActionVisible = detailInstalled === undefined
+    ? !detailInstallAction.disabled
+    : detailUpdateAvailable
+  const detailPrimaryActionLabel = detailUpdateAvailable && detailUpdate?.latest_version !== undefined
+    ? `更新至 ${displayVersion(detailUpdate.latest_version)}`
+    : detailAction
   const detailTask = installTask?.extensionId === detail?.extension_id ? installTask : undefined
-  const detailStatus = detail === undefined
-    ? undefined
-    : detailInstalled !== undefined
-      ? { label: extensionEnabledLabel(detailInstalled), color: detailInstalled.enabled ? detailInstalled.active ? colors.accent : colors.warning : colors.secondary }
-      : tab === 'updates' && detailUpdate !== undefined
-        ? { label: extensionUpdateLabel(detailUpdate), color: detailUpdate.revoked ? colors.danger : detailUpdate.update_available ? colors.accent : colors.secondary }
-        : tab === 'mine'
-          ? { label: extensionVisibilityLabel(detail.visibility), color: colors.secondary }
-          : undefined
-
+  const detailHasPreviews = extensionDetailHasPreviews(detail?.preview_images)
+  const canDeleteDetail = detail !== undefined && tab === 'mine'
+    && myExtensions.some(item => item.published?.extensionId === detail.extension_id)
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (shareDialogExtensionId !== undefined) { setShareDialogExtensionId(undefined); setShareNotice('') }
-      else if (editItem !== undefined && !editBusy) { editMutation.current = undefined; setEditItem(undefined) }
+      if (editItem !== undefined && !editBusy) { editMutation.current = undefined; setEditItem(undefined) }
       else if (publishItem !== undefined && !publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) }
       else if (restartPrompt !== undefined && !restarting) setRestartPrompt(undefined)
-      else if (restartPrompt === undefined) onClose()
+      else if (authorCardOpen) setAuthorCardOpen(false)
+      else if (detailModalOpen) closeDetail()
+      else if (restartPrompt === undefined && displayMode === 'dialog') onClose?.()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting, shareDialogExtensionId])
+  }, [authorCardOpen, detailModalOpen, displayMode, editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting])
 
-  const dialog = <div
-    style={embedded ? styles.embeddedFrame : styles.backdrop}
-    onMouseDown={event => { if (!embedded && event.target === event.currentTarget) onClose() }}
+  useEffect(() => {
+    if (!detailModalOpen || typeof document === 'undefined') return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const timer = window.setTimeout(() => { detailDialogRef.current?.focus() }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [detailModalOpen])
+
+  const renderTabNavigation = (inline: boolean) => <nav
+    style={inline ? styles.marketPageTabs : styles.tabs}
+    role="tablist"
+    aria-label="市集页面导航"
+    {...(inline ? { 'data-market-page-tabs': 'inline' } : {})}
   >
+    {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
+      key={value} type="button" role="tab" aria-selected={tab === value}
+      style={{
+        ...(inline ? styles.marketPageTab : styles.tab),
+        ...(tab === value ? (inline ? styles.marketPageActiveNav : styles.activeTab) : {}),
+      }}
+      {...(inline ? { 'data-market-page-nav-state': tab === value ? 'selected' : 'idle' } : {})}
+      onClick={() => { switchTab(value) }}
+      onMouseEnter={event => {
+        if (inline && tab !== value) event.currentTarget.style.background = colors.hover
+      }}
+      onMouseLeave={event => {
+        if (inline && tab !== value) event.currentTarget.style.background = 'transparent'
+      }}
+    >
+      <span style={inline
+        ? styles.marketPageNavLabel
+        : { ...styles.tabLabel, ...(tab === value ? styles.activeTabLabel : {}) }}>
+        {TAB_LABELS[value]}
+        {value === 'updates' && updateCount > 0 && <span style={{
+          ...styles.count,
+          ...(inline ? styles.marketPageNavCount : {}),
+        }}>{updateCount}</span>}
+      </span>
+    </button>)}
+  </nav>
+
+  const dialog = <div style={displayMode === 'page' ? styles.pageBackdrop : styles.backdrop} onMouseDown={event => {
+    if (displayMode === 'dialog' && event.target === event.currentTarget) onClose?.()
+  }}>
   <section
-    style={embedded ? styles.embeddedDialog : styles.dialog}
-    role={embedded ? 'region' : 'dialog'}
-    aria-modal={embedded ? undefined : true}
+    style={displayMode === 'page' ? styles.pageDialog : styles.dialog}
+    {...(displayMode === 'dialog' ? { role: 'dialog', 'aria-modal': true } : { role: 'region' })}
     aria-labelledby="arkme-extension-center-title"
   >
-  <div style={{ ...styles.shell, ...(embedded ? styles.embeddedShell : {}) }} aria-label="Arkme 扩展市场">
-    <header style={{ ...styles.header, ...(embedded ? styles.embeddedHeader : {}) }}>
-      {embedded ? <>
-        <div style={styles.embeddedHeaderCopy}>
-          <p style={styles.eyebrow}>插件</p>
-          <h1 id="arkme-extension-center-title" style={styles.embeddedTitle}>扩展 Arkme 的能力</h1>
-          <span style={styles.embeddedSubtitle}>安装后直接告诉 Arkme 你想完成什么。</span>
-        </div>
-        <button type="button" style={styles.mineButton} onClick={() => { switchTab(tab === 'installed' ? 'discover' : 'installed') }}>
-          {tab === 'installed' ? '发现插件' : '我的插件'}
-        </button>
-      </> : <>
-      <h2 id="arkme-extension-center-title" style={styles.title}>扩展市场</h2>
+  <div style={styles.shell} aria-label="Arkme 市集">
+    {displayMode === 'dialog' && <header style={styles.header}>
+      <h2 id="arkme-extension-center-title" style={styles.title}>市集</h2>
       {detail?.share !== undefined && <button
         type="button"
-        style={styles.headerShareButton}
-        aria-haspopup="dialog"
-        onClick={() => { setShareNotice(''); setShareDialogExtensionId(detail.extension_id) }}
-      >分享</button>}
+        style={{ ...styles.iconButton, position: 'relative' }}
+        aria-label="复制扩展链接"
+        title="复制链接"
+        onClick={() => { setShareNotice(''); void copyShareLink() }}
+      ><LinkIcon />{shareNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{shareNotice}</span>}</button>}
       <button
-        type="button" style={styles.iconButton} aria-label="关闭扩展市场" title="关闭"
+        type="button" style={styles.iconButton} aria-label="关闭市集" title="关闭"
         onClick={onClose}
         onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-      ><CloseIcon /></button></>}
-    </header>
-    {embedded && <label style={styles.search}>
-      <MagnifyingGlass size={16} aria-hidden />
-      <input style={styles.searchInput} value={query} placeholder="搜索插件" aria-label="搜索插件" onChange={event => { setQuery(event.target.value) }} />
-    </label>}
-    {!embedded && <nav style={styles.tabs} role="tablist" aria-label="扩展市场分类">
-      {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
-        key={value} type="button" role="tab" aria-selected={tab === value}
-        style={{ ...styles.tab, ...(tab === value ? styles.activeTab : {}) }}
-        onClick={() => { switchTab(value) }}
-      >
-        <span style={{ ...styles.tabLabel, ...(tab === value ? styles.activeTabLabel : {}) }}>
-          {TAB_LABELS[value]}
-          {value === 'updates' && updateCount > 0 && <span style={styles.count}>{updateCount}</span>}
-        </span>
-      </button>)}
-    </nav>}
-    <main style={{ ...styles.list, ...(embedded ? styles.embeddedList : {}) }}>
+      ><CloseIcon /></button>
+    </header>}
+    {displayMode === 'page' && <header style={styles.marketPageHeader} data-market-header-layer="primary">
+      <h2 id="arkme-extension-center-title" style={styles.marketPageTitle}>市集</h2>
+      {renderTabNavigation(true)}
+    </header>}
+    {displayMode === 'dialog' && renderTabNavigation(false)}
+    {displayMode === 'page' && tab === 'discover' && <div style={styles.marketplaceToolbar} data-market-header-layer="secondary">
+      <input
+        value={searchQuery}
+        onChange={event => { setSearchQuery(event.target.value) }}
+        style={styles.searchBox}
+        type="search"
+        aria-label="搜索扩展、功能或作者"
+        placeholder="搜索扩展、功能或作者…"
+      />
+      <div style={styles.discoverControls}>
+        <MarketplaceMenu
+          ariaLabel="扩展分类"
+          triggerLabel={`分类：${selectedCategoryName}`}
+          value={category}
+          options={categoryOptions}
+          {...(classificationHint === undefined ? {} : { hint: classificationHint })}
+          onChange={setCategory}
+        />
+        <MarketplaceMenu
+          ariaLabel="扩展排序"
+          triggerLabel={`排序：${MARKET_SORTS.find(option => option.value === sort)?.label ?? '最新创建'}`}
+          value={sort}
+          options={MARKET_SORTS}
+          available={sortingEnabled}
+          unavailableHint="排序接口暂未同步，当前保持最新创建。"
+          onChange={setSort}
+        />
+      </div>
+    </div>}
+    <main
+      ref={displayMode === 'page' ? discoverListRef : undefined}
+      style={{ ...styles.list, ...(displayMode === 'page' ? { padding: '22px 32px 32px' } : {}) }}
+      onScroll={event => {
+        if (displayMode !== 'page' || tab !== 'discover') return
+        const target = event.currentTarget
+        if (shouldLoadMoreDiscoverPage(target)) void loadMoreDiscoverPage()
+      }}
+    >
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
       {installTask !== undefined && !installTask.done && <div style={styles.installStatus} role="status">
@@ -1296,16 +2065,16 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
         extension={sharedDetail}
         onBack={() => { setSharedDetail(undefined); onShareExit?.() }}
       />}
-      {!busy && error === '' && sharedDetail === undefined && detail !== undefined && <div style={styles.detail}>
-        <button type="button" style={styles.detailBack} onClick={() => {
-          setDetail(undefined); setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined)
-          setShareDialogExtensionId(undefined); setShareNotice(''); setAuditResult(undefined); setAuditError('')
-        }}><BackIcon size={14} />返回列表</button>
+      {!busy && error === '' && sharedDetail === undefined && detail !== undefined && displayMode === 'dialog' && <div style={styles.detail}>
+        <button type="button" style={styles.detailBack} onClick={closeDetail}><BackIcon size={14} />返回列表</button>
         <div style={styles.detailHero}>
-          <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={46} fallbackColor={colors.accent} />
+          <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={46} />
           <div style={styles.cardBody}>
-            <div style={styles.name}>{detail.name}</div>
-            {detailStatus !== undefined && <div style={{ ...styles.meta, color: detailStatus.color }}>{detailStatus.label}</div>}
+            <div style={styles.detailTitleRow}>
+              <div style={styles.name}>{detail.name}</div>
+              {extensionCommunityAuthor(detail).github && <span style={styles.githubSourceBadge} data-extension-source-badge="github">GitHub</span>}
+            </div>
+            <ArkmeExtensionDetailMetrics item={detail} />
           </div>
           <button
             type="button"
@@ -1313,30 +2082,33 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
             disabled={auditBusyExtensionId === detail.extension_id}
             onClick={() => { void runAudit(detail.extension_id) }}
           >{auditBusyExtensionId === detail.extension_id ? '审核中…' : 'AI 审核'}</button>
-          {(detailInstalled !== undefined || !detailInstallAction.disabled) && ((detailTask !== undefined && !detailTask.done)
-            || (actionBusyExtensionId === detail.extension_id && !detailInstallAction.disabled)
-            ? <InstallLoadingButton
-                task={detailTask}
-                onPause={() => { void controlInstall('extensions.install.pause') }}
-                onResume={() => { void controlInstall('extensions.install.resume') }}
-              />
-            : <span style={styles.actionGroup}>
-              {!detailInstallAction.disabled && <button
+          {(detailInstalled !== undefined || detailPrimaryActionVisible) && <span style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
+            {detailPrimaryActionVisible && ((detailTask !== undefined && !detailTask.done)
+              || actionBusyExtensionId === detail.extension_id
+              ? <InstallLoadingButton
+                  task={detailTask}
+                  onPause={() => { void controlInstall('extensions.install.pause') }}
+                  onResume={() => { void controlInstall('extensions.install.resume') }}
+                />
+              : <button
                 type="button"
                 style={styles.primaryButton}
                 disabled={actionBusyExtensionId === detail.extension_id}
                 onClick={() => {
-                  if (tab === 'updates' && detailUpdate?.latest_version !== undefined) {
+                  if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
                     void startInstall({ extensionId: detail.extension_id, version: detailUpdate.latest_version })
                   } else void startInstall(extensionDirectInstallTarget(detail))
                 }}
-              >{detailAction}</button>}
-              {detailInstalled !== undefined && <ArkmeExtensionToggle
-                item={detailInstalled}
-                busy={actionBusyExtensionId === detail.extension_id}
-                onChange={enabled => { void toggleEnabled(detail.extension_id, enabled) }}
-              />}
-            </span>)}
+              >{detailPrimaryActionLabel}</button>)}
+            {detailInstalled !== undefined && <span style={styles.detailEnabledControl}>
+              <span>{extensionEnabledLabel(detailInstalled)}</span>
+              <ArkmeExtensionToggle
+                  item={detailInstalled}
+                  busy={actionBusyExtensionId === detail.extension_id}
+                  onChange={enabled => { void toggleEnabled(detail.extension_id, enabled) }}
+                />
+            </span>}
+          </span>}
         </div>
         {auditError !== '' && <section style={{ ...styles.auditPanel, ...styles.auditPanelDanger }} role="alert">{auditError}</section>}
         {auditResult !== undefined && <ArkmeExtensionAuditPanel result={auditResult} />}
@@ -1346,9 +2118,43 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
           extensionName={detail.name}
           previews={detail.preview_images ?? []}
         />
-        <section style={styles.detailSection}><div style={styles.detailLabel}>作者</div><div style={styles.detailValue}>{extensionAuthorLabel(detail)}</div></section>
+        {!extensionCommunityAuthor(detail).github && <section style={styles.detailSection}>
+          <div style={styles.detailLabel}>作者</div>
+          <div style={styles.detailValue}>
+            <button type="button" style={styles.authorButton} aria-expanded={authorCardOpen} onClick={() => {
+              setAuthorCardOpen(value => !value); setAuthorActionError('')
+            }}>
+              <ExtensionAuthorAvatar item={detail} size={28} />
+              <span>{extensionCommunityAuthor(detail).name}</span>
+            </button>
+            {authorCardOpen && <div style={styles.authorCard}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <ExtensionAuthorAvatar item={detail} size={42} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: colors.text, fontWeight: 600 }}>{extensionCommunityAuthor(detail).name}</div>
+                  <div style={{ marginTop: 2, color: colors.caption, fontSize: 11 }}>
+                    {extensionCommunityAuthor(detail).github
+                      ? 'GitHub 作者'
+                      : detail.owner_arkme_id === undefined ? 'Arkme 作者' : `@${detail.owner_arkme_id.replace(/^@+/, '')}`}
+                  </div>
+                </div>
+              </div>
+              {authorActionError !== '' && <div style={{ ...styles.error, marginTop: 10 }}>{authorActionError}</div>}
+              <div style={styles.authorCardActions}>
+                {detail.owner_user_id !== undefined && detail.owner_user_id !== currentUserId && <button
+                  type="button" style={styles.primaryButton} disabled={authorActionBusy} onClick={() => { void openAuthorPrivateChat() }}
+                >{authorActionBusy ? '正在发起…' : '发起私聊'}</button>}
+                {extensionGithubProfileUrl(detail) !== undefined && <a
+                  href={extensionGithubProfileUrl(detail)} target="_blank" rel="noreferrer"
+                  style={{ ...styles.restartLater, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+                >查看 GitHub</a>}
+              </div>
+            </div>}
+          </div>
+        </section>}
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
         {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
+        {detail.created_at !== undefined && formatMarketplaceDate(detail.created_at) !== '' && <section style={styles.detailSection}><div style={styles.detailLabel}>创建时间</div><div style={styles.detailValue}>{formatMarketplaceDate(detail.created_at)}</div></section>}
         <section style={styles.detailSection}><div style={styles.detailLabel}>扩展说明</div><div style={styles.detailValue}>{detail.description || '这个扩展还没有填写说明。'}</div></section>
         {detail.source !== undefined && <section style={styles.detailSection}>
           <div style={styles.detailLabel}>来源</div>
@@ -1374,14 +2180,15 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
             onClick={() => { setUninstallConfirmExtensionId(detail.extension_id) }}
           >卸载扩展</button>)}
       </div>}
-      {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'discover' && <>
+      {!busy && error === '' && sharedDetail === undefined && (displayMode === 'page' || detail === undefined) && tab === 'discover' && <>
+        <div style={displayMode === 'page' ? styles.communityGrid : undefined} data-extension-grid={displayMode === 'page' ? 'compact-auto-fill-directory' : undefined}>
         {visibleItems.map(item => {
           const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
           const action = extensionCatalogAction(item, local?.installedVersion)
           return <ExtensionCard
             key={item.extension_id}
             item={item}
-            grid={embedded}
+            presentation={displayMode === 'page' ? 'community' : 'list'}
             {...(local === undefined || action.label === '更新' ? { actionLabel: action.label } : {})}
             {...(local === undefined ? {} : { installed: local })}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
@@ -1395,9 +2202,17 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
             onResume={() => { void controlInstall('extensions.install.resume') }}
           />
         })}
+        </div>
+        {loadingMoreDiscover && <div role="status" style={styles.marketplaceLoadingMore}>
+          <LoadingIcon />正在加载更多…
+        </div>}
+        {!loadingMoreDiscover && loadMoreDiscoverError !== '' && <div role="alert" style={styles.marketplaceLoadMoreRetry}>
+          <span>加载更多失败</span>
+          <button type="button" style={styles.marketplaceRetryButton} onClick={() => { void loadMoreDiscoverPage() }}>重试</button>
+        </div>}
         {visibleItems.length === 0 && <EmptyState tab={tab} />}
       </>}
-      {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'mine' && <>
+      {!busy && error === '' && sharedDetail === undefined && (displayMode === 'page' || detail === undefined) && tab === 'mine' && <>
         {myExtensions.map(item => {
           const extensionId = item.published?.extensionId
           const local = extensionId === undefined ? undefined : installed.find(candidate => candidate.extensionId === extensionId)
@@ -1417,6 +2232,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
 			onOpen={() => {
 				const published = item.published
 				if (published === undefined) return
+				if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) detailReturnFocus.current = document.activeElement
+				setDetailRequestedExtensionId(published.extensionId); setDetailError(''); setShareNotice('')
 				setDetail({
 					extension_id: published.extensionId,
 					name: item.name,
@@ -1439,7 +2256,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
           key={item.extensionId}
           item={installedExtensionCatalogItem(item, iconRefFor(item.extensionId))}
           installed={item}
-          grid={embedded}
+          presentation={displayMode === 'page' ? 'community' : 'list'}
           status={item.active ? '已加载' : '已安装，尚未加载'}
           statusColor={item.active ? colors.accent : colors.warning}
           actionBusy={actionBusyExtensionId === item.extensionId}
@@ -1459,7 +2276,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
           return <ExtensionCard
             key={item.extension_id}
             item={catalogItem}
-            grid={embedded}
+            presentation={displayMode === 'page' ? 'community' : 'list'}
             {...(local === undefined ? {} : { installed: local })}
             {...(item.update_available && !item.revoked ? { actionLabel: '更新' } : {})}
             {...(updateStatus === undefined ? {} : { status: updateStatus, statusColor: colors.danger })}
@@ -1480,19 +2297,197 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
         {visibleUpdates.length === 0 && <EmptyState tab="updates" />}
       </>}
     </main>
+    {detailModalOpen && <div
+      style={styles.detailModalBackdrop}
+      data-extension-detail-backdrop="true"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget && actionBusyExtensionId === undefined && !detailBusy) closeDetail()
+      }}
+    >
+      <section
+        ref={detailDialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="arkme-extension-detail-title"
+        tabIndex={-1}
+        style={styles.detailModal}
+        data-extension-detail-modal="true"
+        onKeyDown={event => {
+          if (event.key !== 'Tab') return
+          const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+            .filter(element => element.offsetParent !== null)
+          const first = focusable[0]
+          const last = focusable.at(-1)
+          if (first === undefined || last === undefined) { event.preventDefault(); return }
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+        }}
+      >
+        <ArkmeExtensionDetailHeader
+          title={detail?.name ?? '扩展详情'}
+          copyAvailable={detail?.share !== undefined}
+          copyNotice={shareNotice}
+          onCopy={() => { setShareNotice(''); void copyShareLink() }}
+          onClose={closeDetail}
+        />
+        <div style={styles.detailModalBody}>
+          {detailBusy && <div style={styles.detailModalState} aria-label="正在加载扩展详情"><LoadingState /></div>}
+          {!detailBusy && detailError !== '' && <div style={styles.detailModalState} role="alert">
+            <div>
+              <div>{detailError}</div>
+              <div style={styles.detailModalErrorActions}>
+                <button type="button" style={styles.restartLater} onClick={closeDetail}>关闭</button>
+                {detailRequestedExtensionId !== undefined && <button
+                  type="button" style={styles.primaryButton}
+                  onClick={() => { void inspect(detailRequestedExtensionId) }}
+                >重新加载</button>}
+              </div>
+            </div>
+          </div>}
+          {!detailBusy && detailError === '' && detail !== undefined && <div style={styles.detail}>
+            {installError !== '' && <div style={styles.error} role="alert">{installError}</div>}
+            {restartNotice !== '' && <div style={styles.restartNotice} role="status">{restartNotice}</div>}
+            {detailTask !== undefined && !detailTask.done && <div style={styles.installStatus} role="status">{detailTask.message}</div>}
+
+            <div style={{ ...styles.detailLead, ...(detailHasPreviews ? {} : styles.detailLeadWithoutPreview) }} data-detail-has-preview={detailHasPreviews ? 'true' : 'false'}>
+              <div style={styles.detailIdentity}>
+                <div style={styles.detailIdentityTop}>
+                  <div style={styles.detailHero}>
+                    <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={58} />
+                    <div style={styles.cardBody}>
+                      <div style={styles.detailTitleRow}>
+                        <h3 style={styles.detailName}>{detail.name}</h3>
+                        {extensionCommunityAuthor(detail).github && <span style={styles.githubSourceBadge} data-extension-source-badge="github">GitHub</span>}
+                      </div>
+                      <ArkmeExtensionDetailMetrics item={detail} />
+                      {!extensionCommunityAuthor(detail).github && <button type="button" style={{ ...styles.authorButton, marginTop: 10 }} aria-expanded={authorCardOpen} onClick={() => {
+                        setAuthorCardOpen(value => !value); setAuthorActionError('')
+                      }}>
+                        <ExtensionAuthorAvatar item={detail} size={28} />
+                        <span>{extensionCommunityAuthor(detail).name}</span>
+                      </button>}
+                    </div>
+                  </div>
+                  <div style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
+                    {detailPrimaryActionVisible && ((detailTask !== undefined && !detailTask.done)
+                      || actionBusyExtensionId === detail.extension_id
+                      ? <InstallLoadingButton
+                          task={detailTask}
+                          onPause={() => { void controlInstall('extensions.install.pause') }}
+                          onResume={() => { void controlInstall('extensions.install.resume') }}
+                        />
+                      : <button
+                          type="button" style={styles.primaryButton} disabled={actionBusyExtensionId === detail.extension_id}
+                          onClick={() => {
+                            if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
+                              void startInstall({ extensionId: detail.extension_id, version: detailUpdate.latest_version })
+                            } else void startInstall(extensionDirectInstallTarget(detail))
+                          }}
+                        >{detailPrimaryActionLabel}</button>)}
+                    {detailInstalled !== undefined && <div style={styles.detailEnabledControl}>
+                      <span>{extensionEnabledLabel(detailInstalled)}</span>
+                      <ArkmeExtensionToggle
+                          item={detailInstalled}
+                          busy={actionBusyExtensionId === detail.extension_id}
+                          onChange={enabled => { void toggleEnabled(detail.extension_id, enabled) }}
+                        />
+                    </div>}
+                  </div>
+                </div>
+                {!extensionCommunityAuthor(detail).github && authorCardOpen && <div style={styles.authorCard}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <ExtensionAuthorAvatar item={detail} size={42} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: colors.text, fontWeight: 600 }}>{extensionCommunityAuthor(detail).name}</div>
+                      <div style={{ marginTop: 2, color: colors.caption, fontSize: 11 }}>
+                        {extensionCommunityAuthor(detail).github
+                          ? 'GitHub 作者'
+                          : detail.owner_arkme_id === undefined ? 'Arkme 作者' : `@${detail.owner_arkme_id.replace(/^@+/, '')}`}
+                      </div>
+                    </div>
+                  </div>
+                  {authorActionError !== '' && <div style={{ ...styles.error, marginTop: 10 }}>{authorActionError}</div>}
+                  <div style={styles.authorCardActions}>
+                    {detail.owner_user_id !== undefined && detail.owner_user_id !== currentUserId && <button
+                      type="button" style={styles.primaryButton} disabled={authorActionBusy} onClick={() => { void openAuthorPrivateChat() }}
+                    >{authorActionBusy ? '正在发起…' : '发起私聊'}</button>}
+                    {extensionGithubProfileUrl(detail) !== undefined && <a
+                      href={extensionGithubProfileUrl(detail)} target="_blank" rel="noreferrer"
+                      style={{ ...styles.restartLater, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+                    >查看 GitHub</a>}
+                  </div>
+                </div>}
+                {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。</div>}
+              </div>
+              {detailHasPreviews && <div style={styles.detailPreview}>
+                <ArkmeExtensionPreviewGallery
+                  key={detail.extension_id}
+                  extensionId={detail.extension_id}
+                  extensionName={detail.name}
+                  previews={detail.preview_images ?? []}
+                />
+              </div>}
+            </div>
+
+            <div style={styles.detailColumns}>
+              <div style={styles.detailAbout}>
+                <h3 style={styles.detailSectionTitle}>关于</h3>
+                <div style={{ ...styles.detailValue, marginTop: 0, whiteSpace: 'pre-wrap' }}>{detail.description || '这个扩展还没有填写说明。'}</div>
+                <ArkmeExtensionManifestDetails manifest={detail.manifest} />
+              </div>
+              <aside style={styles.detailFacts} aria-label="扩展详细信息">
+                <h3 style={styles.detailSectionTitle}>详情</h3>
+                {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
+                {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
+                {detail.created_at !== undefined && formatMarketplaceDate(detail.created_at) !== '' && <section style={styles.detailSection}><div style={styles.detailLabel}>创建时间</div><div style={styles.detailValue}>{formatMarketplaceDate(detail.created_at)}</div></section>}
+                {detail.source !== undefined && <section style={styles.detailSection}>
+                  <div style={styles.detailLabel}>来源</div>
+                  <div style={styles.detailValue}><ArkmeExtensionSourceLink source={detail.source} /></div>
+                </section>}
+                {(detailInstalled !== undefined || canDeleteDetail) && <div style={styles.detailDangerZone} aria-label="扩展危险操作">
+                  {detailInstalled !== undefined && (uninstallConfirmExtensionId === detail.extension_id
+                    ? <div style={styles.detailConfirm} role="alert">
+                      卸载只删除当前设备中的扩展制品和 Profile 依赖；如果只是暂时不使用，请关闭上方开关。
+                      <div style={styles.detailConfirmActions}>
+                        <button type="button" style={styles.restartLater} onClick={() => { setUninstallConfirmExtensionId(undefined) }}>取消</button>
+                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void uninstall(detail.extension_id) }}>确认卸载</button>
+                      </div>
+                    </div>
+                    : <button
+                      type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
+                      onClick={() => { setDeleteConfirmExtensionId(undefined); setUninstallConfirmExtensionId(detail.extension_id) }}
+                    >卸载本地扩展</button>)}
+                  {canDeleteDetail && (deleteConfirmExtensionId === detail.extension_id
+                    ? <div style={styles.detailConfirm} role="alert">
+                      删除会将这个扩展从市集中移除，但不会自动卸载当前设备中的本地副本。
+                      <div style={styles.detailConfirmActions}>
+                        <button type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>取消</button>
+                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>确认删除</button>
+                      </div>
+                    </div>
+                    : <button
+                      type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
+                      onClick={() => { setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(detail.extension_id) }}
+                    >删除市集扩展</button>)}
+                </div>}
+              </aside>
+            </div>
+
+            {detail.visibility === 'public' && <ArkmeExtensionReviews
+              extensionId={detail.extension_id}
+              canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
+              {...(detail.rating_summary === undefined ? {} : { initialRatingSummary: detail.rating_summary })}
+            />}
+          </div>}
+        </div>
+      </section>
+    </div>}
     {restartPrompt !== undefined && <ArkmeExtensionRestartDialog
       kind={restartPrompt.kind}
       restarting={restarting}
       onLater={() => { setRestartPrompt(undefined) }}
       onRestart={() => { void restartNow() }}
     />}
-    {shareDialogExtensionId !== undefined && detail?.extension_id === shareDialogExtensionId && detail.share !== undefined
-      && <ArkmeExtensionShareDialog
-        url={detail.share.url}
-        notice={shareNotice}
-        onClose={() => { setShareDialogExtensionId(undefined); setShareNotice('') }}
-        onCopy={() => { void copyShareLink() }}
-      />}
     {publishItem !== undefined && <ArkmeExtensionPublishDialog
       item={publishItem}
       busy={publishBusy}
@@ -1511,7 +2506,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   </section>
   </div>
 
-  if (embedded || typeof document === 'undefined') return dialog
+  if (displayMode === 'page' || typeof document === 'undefined') return dialog
   return createPortal(dialog, document.body)
 }
 

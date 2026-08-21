@@ -6,6 +6,7 @@ import { ARKME_ICON_DATA_URL } from './arkme-assets.js'
 
 export interface ArkmeFooterActionInjected {
   toggle(openedFromSession: SessionId | undefined, authenticated: boolean): void
+  expandSidebar(): void
   activate(openedFromSession: SessionId | undefined): void
   closeSurface(): void
   surfaceSession(): SessionId | undefined
@@ -104,8 +105,19 @@ export function ArkmeMark({ size = 18 }: { size?: number }) {
   )
 }
 
+export function activateArkmeFromFooter(
+  wide: boolean,
+  expandSidebar: () => void,
+  toggle: ArkmeFooterActionInjected['toggle'],
+  currentSession: SessionId | undefined,
+  authenticated: boolean,
+): void {
+  if (!wide) expandSidebar()
+  toggle(currentSession, authenticated)
+}
+
 export function ArkmeFooterAction({
-  wide, toggle, useSessions, expanded = false, loggedOut = false, bindingRequired = false,
+  wide, toggle, expandSidebar, useSessions, expanded = false, loggedOut = false, bindingRequired = false,
   authenticated = false, authPending = false,
   unreadCount = 0,
   updateStatus,
@@ -138,7 +150,7 @@ export function ArkmeFooterAction({
       title={wide ? undefined : accessibleLabel}
       onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #eef1f5)' }}
       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-      onClick={() => { toggle(currentSession, authenticated) }}
+      onClick={() => { activateArkmeFromFooter(wide, expandSidebar, toggle, currentSession, authenticated) }}
     >
       <span style={{ position: 'relative', flex: 'none' }}>
         <ArkmeMark />

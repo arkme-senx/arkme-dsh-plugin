@@ -27,6 +27,7 @@ import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichConten
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
+import { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 import {
   appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
   truncateArkmeSourceBreadcrumbTrail,
@@ -38,7 +39,6 @@ import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
-import { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
@@ -1412,7 +1412,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
     : ui.mode === 'world' ? '世界'
     : ui.mode === 'search' ? '搜索'
-    : ui.mode === 'extensions' ? '插件'
+    : ui.mode === 'extensions' ? '市集'
     : ui.mode === 'settings' ? '设置'
     : ui.mode === 'arko' ? 'Arko'
     : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
@@ -1535,11 +1535,14 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface />
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface /></div>
-          : ui.mode === 'extensions' ? <div style={styles.utilityBody}><ArkmeExtensionCenter
-            embedded
-            currentSessionId={currentSessionId}
-            onClose={() => { arkmeUi.showConversations() }}
-          /></div>
+          : ui.mode === 'extensions' ? <ArkmeExtensionCenter
+            displayMode="page"
+            {...(currentSessionId === undefined ? {} : { currentSessionId })}
+            {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
+            {...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
+            onShareExit={() => { arkmeUi.dismissExtensionShare() }}
+            onPrivateChatOpened={activateSource}
+          />
           : ui.mode === 'settings' ? <div style={styles.utilityBody}><ArkmeSettingsSurface /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body}>

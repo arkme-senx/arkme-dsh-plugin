@@ -26,7 +26,7 @@ const items: NavigationItem[] = [
   { id: 'search', label: '搜索', icon: MagnifyingGlass },
   { id: 'calendar', label: '日历', icon: CalendarBlank },
   { id: 'world', label: '世界', icon: GlobeHemisphereWest },
-  { id: 'extensions', label: '插件', icon: PuzzlePiece },
+  { id: 'extensions', label: '市集', icon: PuzzlePiece },
 ]
 
 const styles: Record<string, CSSProperties> = {

@@ -2,7 +2,9 @@ import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
   type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
-  type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
+  type ArkmeExtensionCatalogPage, type ArkmeExtensionCatalogSort,
+  type ArkmeExtensionClassificationPage, type ArkmeExtensionClassificationTree,
+  type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResolution, type ArkmeExtensionIconResult, type ArkmeExtensionIconUploadSession,
   type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionPreviewResolution, type ArkmeExtensionPreviewUploadSession,
@@ -208,7 +210,7 @@ export class ExtensionPublishClient {
     assertExtensionArtifactSize(artifact.bytes.byteLength)
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-upload-url-invalid', '扩展市场返回了无效上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-upload-url-invalid', '市集返回了无效上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -328,8 +330,22 @@ export class ExtensionPublishClient {
 		return await this.post('/api/public/v1/extensions/share/detail', { share_ref: shareRef }, signal)
 	}
 
-  async list(input: { query?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
+  async list(input: { query?: string; sort?: ArkmeExtensionCatalogSort; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/public/v1/extensions/list', input, signal)
+  }
+
+  async classificationTree(limit = 30, signal?: AbortSignal): Promise<ArkmeExtensionClassificationTree> {
+    return await this.post('/api/public/v1/extensions/classification/tree', { limit }, signal)
+  }
+
+  async classificationItems(input: {
+    category_id: string
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+  }, signal?: AbortSignal): Promise<ArkmeExtensionClassificationPage> {
+    return await this.post('/api/public/v1/extensions/classification/items', input, signal)
   }
 
   async detail(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
@@ -365,6 +381,36 @@ export class ExtensionPublishClient {
           }
         : {}),
     }
+  }
+
+  async recordOpen(extensionId: string, signal?: AbortSignal): Promise<{
+    extension_id: string
+    open_count: number
+    idempotent_replay: boolean
+  }> {
+    return await this.post('/api/v1/extensions/open', { extension_id: extensionId }, signal)
+  }
+
+  async setInstallationState(input: {
+    extension_id: string
+    installation_id: string
+    installed: boolean
+  }, signal?: AbortSignal): Promise<{
+    extension_id: string
+    installed: boolean
+    install_user_count: number
+  }> {
+    return await this.post('/api/v1/extensions/installation-state/update', input, signal)
+  }
+
+  async syncInstallationStates(input: {
+    installation_id: string
+    installed_extension_ids: string[]
+  }, signal?: AbortSignal): Promise<{
+    installation_id: string
+    install_user_counts: Record<string, number>
+  }> {
+    return await this.post('/api/v1/extensions/installation-state/sync', input, signal)
   }
 
   async versions(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
@@ -459,7 +505,7 @@ export class ExtensionPublishClient {
     }
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-icon-upload-url-invalid', '扩展市场返回了无效头像上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-icon-upload-url-invalid', '市集返回了无效头像上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -513,7 +559,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(resolution.download_url) } catch (error) {
-      throw new ArkmePluginError('extension-icon-download-url-invalid', '扩展市场返回了无效头像下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-icon-download-url-invalid', '市集返回了无效头像下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -586,7 +632,7 @@ export class ExtensionPublishClient {
     }
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-preview-upload-url-invalid', '扩展市场返回了无效预览图上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-preview-upload-url-invalid', '市集返回了无效预览图上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -661,7 +707,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(resolution.download_url) } catch (error) {
-      throw new ArkmePluginError('extension-preview-download-url-invalid', '扩展市场返回了无效预览图下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-preview-download-url-invalid', '市集返回了无效预览图下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -764,7 +810,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(artifactUrl) } catch (error) {
-      throw new ArkmePluginError('extension-download-url-invalid', '扩展市场返回了无效下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-download-url-invalid', '市集返回了无效下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -875,7 +921,7 @@ function safeSignedHeaders(headers: Readonly<Record<string, string>>): Record<st
     if (!/^[a-z0-9-]{1,64}$/.test(normalized)
       || ['authorization', 'cookie', 'host', 'proxy-authorization'].includes(normalized)
       || /[\r\n]/.test(value)) {
-      throw new ArkmePluginError('extension-signed-header-invalid', '扩展市场返回了不安全的制品请求头', false, 502)
+      throw new ArkmePluginError('extension-signed-header-invalid', '市集返回了不安全的制品请求头', false, 502)
     }
     result[normalized] = value
   }

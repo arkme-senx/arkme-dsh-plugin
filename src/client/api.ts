@@ -29,6 +29,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
   | 'extensions.catalog.list'
+  | 'extensions.classification.tree'
+  | 'extensions.classification.items'
   | 'extensions.catalog.detail'
   | 'extensions.audit.check'
   | 'extensions.my-list'

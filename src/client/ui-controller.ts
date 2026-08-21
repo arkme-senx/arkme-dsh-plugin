@@ -122,7 +122,8 @@ export class ArkmeUiController {
 
   showExtensions(): void {
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'extensions' })
+    const { extensionShareRef: _extensionShareRef, ...withoutShare } = rest
+    this.publish({ ...withoutShare, open: true, surfaceOpen: true, mode: 'extensions' })
   }
 
   showConversations(): void {
@@ -152,7 +153,7 @@ export class ArkmeUiController {
 
   openExtensionShare(shareRef: string): void {
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'source', extensionShareRef: shareRef })
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'extensions', extensionShareRef: shareRef })
   }
 
   dismissExtensionShare(): void {

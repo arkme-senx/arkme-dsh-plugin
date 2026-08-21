@@ -124,6 +124,16 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
   })
 
+  it('opens the marketplace page without retaining a conversation or recording target', () => {
+    const controller = new ArkmeUiController()
+    controller.showRecordingTarget(20260821, 1000)
+    controller.showExtensions()
+
+    expect(controller.getSnapshot()).toEqual({
+      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'extensions',
+    })
+  })
+
   it('clears the previous account selection when authentication changes accounts', () => {
     const controller = new ArkmeUiController()
     const source = {

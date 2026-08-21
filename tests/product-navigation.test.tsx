@@ -16,7 +16,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('>搜索<')
     expect(markup).toContain('>日历<')
     expect(markup).toContain('>世界<')
-    expect(markup).toContain('>插件<')
+    expect(markup).toContain('>市集<')
     expect(markup).toContain('aria-label="账户菜单"')
     expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('aria-current="page"')
@@ -84,7 +84,8 @@ describe('Arkme product navigation', () => {
       initialAuth={{ status: 'authenticated', environment: 'prod', userId: 1 }}
     />)
     expect(pluginMarkup).not.toContain('data-arkme-owned="directory-pane"')
-    expect(pluginMarkup).toContain('>扩展 Arkme 的能力<')
+    expect(pluginMarkup).toContain('aria-label="Arkme 市集"')
+    expect(pluginMarkup).toContain('>市集<')
 
     arkmeUi.showWorld()
     const worldMarkup = renderToStaticMarkup(<ArkmeSurface

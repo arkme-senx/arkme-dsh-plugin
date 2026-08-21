@@ -27,5 +27,6 @@ describe('extension share UI', () => {
 		expect(html).toContain('开源来源 · GitHub')
 		expect(html).toContain('href="https://github.com/example/weather"')
 		expect(html).toContain('rel="noopener noreferrer nofollow"')
+		expect(html).toContain('var(--dsw-alias-link-primary, #1677ff)')
 	})
 })

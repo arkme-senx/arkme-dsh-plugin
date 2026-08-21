@@ -57,7 +57,9 @@ import type {
   ArkmeWorldInteractionPage,
 } from '../types.js'
 import type {
-  ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort,
+  ArkmeExtensionClassificationPage, ArkmeExtensionClassificationTree,
+  ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult, ArkmeExtensionInstallPreview, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
   ArkmeNativeCapability,
   ArkmeExtensionAuditResult,
@@ -496,6 +498,47 @@ export class ArkmeSdk {
       provider: input.provider,
       ...(description === '' ? {} : { description }),
     }, signal)
+  }
+
+  /** Browse public marketplace extensions with server-owned query, ordering and cursor semantics. */
+  async extensionCatalog(options: {
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeExtensionCatalogPage> {
+    return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', {
+      ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
+      ...(options.sort === undefined ? {} : { sort: options.sort }),
+      ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** Read the AI-generated marketplace category tree. */
+  async extensionCategories(options: { limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeExtensionClassificationTree> {
+    return await this.call<ArkmeExtensionClassificationTree>('extensions.classification.tree', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** Browse one AI category while retaining the same server-side ordering contract. */
+  async extensionCategoryItems(categoryId: string, options: {
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeExtensionClassificationPage> {
+    if (categoryId.trim() === '') throw new TypeError('Arkme extension category id must not be empty')
+    return await this.call<ArkmeExtensionClassificationPage>('extensions.classification.items', {
+      categoryId: categoryId.trim(),
+      ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
+      ...(options.sort === undefined ? {} : { sort: options.sort }),
+      ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
   }
 
   /** List current-account sources with their Host-derived dynamic-cordis-v2 or profile-native-v3 publication route. */

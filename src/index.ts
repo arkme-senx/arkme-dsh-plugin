@@ -277,6 +277,7 @@ export function apply(ctx: Context, config: Config): void {
       },
     )
     extensionManager = manager
+    void manager.reconcileInstallationMetrics()
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: ownedExtensionHostInstanceId,
       profileDirectory: extensionProfileDirectory,
@@ -313,7 +314,7 @@ export function apply(ctx: Context, config: Config): void {
       if (extensionInstallTasks === tasks) extensionInstallTasks = undefined
       if (ownedExtensionInventory === inventory) ownedExtensionInventory = undefined
       tasks.dispose()
-    }, 'dsh-arkme: extension center dynamic runner bridge')
+    }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,

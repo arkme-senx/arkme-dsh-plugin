@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeFooterAction, type ArkmeFooterActionProps } from '../src/client/ArkmeFooterAction.js'
+import { activateArkmeFromFooter, ArkmeFooterAction, type ArkmeFooterActionProps } from '../src/client/ArkmeFooterAction.js'
 import type { ArkmePluginUpdateStatus } from '../src/types.js'
 
 const availableUpdate: ArkmePluginUpdateStatus = {
@@ -23,6 +23,7 @@ function renderFooter(patch: Partial<ArkmeFooterActionProps> = {}): string {
   const props = {
     wide: true,
     toggle: () => undefined,
+    expandSidebar: () => undefined,
     activate: () => undefined,
     useSessions: ((selector: (state: { current: string }) => unknown) => selector({ current: 'session-1' })),
     ...patch,
@@ -31,6 +32,17 @@ function renderFooter(patch: Partial<ArkmeFooterActionProps> = {}): string {
 }
 
 describe('ArkmeFooterAction', () => {
+  it('expands the compact host sidebar before opening Arkme', () => {
+    const calls: string[] = []
+    activateArkmeFromFooter(false, () => { calls.push('expand') }, () => { calls.push('toggle') }, 'session-1', true)
+    expect(calls).toEqual(['expand', 'toggle'])
+  })
+
+  it('does not toggle an already-wide host sidebar', () => {
+    const calls: string[] = []
+    activateArkmeFromFooter(true, () => { calls.push('expand') }, () => { calls.push('toggle') }, 'session-1', true)
+    expect(calls).toEqual(['toggle'])
+  })
   it('shows the total Chat unread count on the right', () => {
     const html = renderFooter({ authenticated: true, unreadCount: 12 })
 
