@@ -1193,13 +1193,13 @@ export function ArkmeNavigation({
             </span>
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
-        </button>
-        <ArkmeQuickAddRow
+        </button>}
+        {authenticated && <ArkmeQuickAddRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'contact-add'}
           onContactAdd={showContactAdd}
           onSourceCreated={createdQuickAddSource}
           onBotCreated={createdQuickAddBot}
-        />
+        />}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}

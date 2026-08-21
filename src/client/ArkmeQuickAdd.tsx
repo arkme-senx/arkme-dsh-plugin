@@ -10,58 +10,67 @@ import { arkmeTheme } from './arkme-theme.js'
 type QuickAddDialogKind = 'group' | 'bot'
 
 const style: Record<string, CSSProperties> = {
-  anchor: { position: 'relative' },
+  anchor: { position: 'relative', width: '100%' },
   row: {
-    position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
-    padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${arkmeTheme.borderSoft}`,
-    background: 'transparent', color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer', font: 'inherit',
+    position: 'relative', width: '100%', minHeight: 52, margin: '1px 0', display: 'flex', alignItems: 'center', gap: 10,
+    padding: '7px 10px', boxSizing: 'border-box', border: 0, borderRadius: 13,
+    background: 'transparent', color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
-  rowSelected: { background: arkmeTheme.accentSoft, boxShadow: `inset 3px 0 ${arkmeTheme.accent}` },
+  rowSelected: { background: arkmeTheme.accentSoft },
   rowIconShell: {
-    width: 44, height: 44, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 12,
+    width: 38, height: 38, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
     color: arkmeTheme.text,
   },
-  rowIcon: { width: 24, height: 20 },
+  rowIcon: { width: 22, height: 19 },
   rowContent: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
-  rowTitle: { fontSize: 15, lineHeight: '20px', fontWeight: 500 },
+  rowTitle: { fontSize: 13, lineHeight: '18px', fontWeight: 600 },
   rowSubtitle: {
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: arkmeTheme.secondary, fontSize: 12, lineHeight: '17px',
+    color: arkmeTheme.secondary, fontSize: 11, lineHeight: '16px',
   },
   menu: {
-    position: 'absolute', zIndex: 90, top: 54, left: 12, width: 220, padding: '6px 12px',
+    position: 'absolute', zIndex: 90, top: 53, left: 10, width: 232, padding: '6px 10px',
     boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 12,
-    background: arkmeTheme.sidebar, boxShadow: '0 8px 24px rgba(0, 0, 0, .16)', color: arkmeTheme.text,
+    background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow, color: arkmeTheme.text,
   },
   menuItem: {
-    width: '100%', minHeight: 52, display: 'flex', alignItems: 'center', gap: 12,
-    padding: '0 4px', border: 0, background: 'transparent', color: 'inherit', textAlign: 'left',
-    cursor: 'pointer', font: 'inherit', fontSize: 16, fontWeight: 500,
+    width: '100%', minHeight: 48, display: 'flex', alignItems: 'center', gap: 12,
+    padding: '0 6px', border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left',
+    cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px', fontWeight: 500,
   },
-  menuIcon: { width: 24, height: 24, flex: 'none' },
+  menuIcon: { width: 23, height: 23, flex: 'none' },
   divider: { height: 1, margin: '0 0', background: arkmeTheme.borderSoft },
   overlay: {
-    position: 'fixed', inset: 0, zIndex: 220, display: 'grid', placeItems: 'center', padding: 20,
-    boxSizing: 'border-box', background: 'rgba(0, 0, 0, .28)',
+    position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 16,
+    boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
+    backdropFilter: 'var(--dsw-mask-blur, blur(2px))', WebkitBackdropFilter: 'var(--dsw-mask-blur, blur(2px))',
   },
   dialog: {
-    width: 'min(420px, 100%)', padding: 20, boxSizing: 'border-box', borderRadius: 16,
-    background: arkmeTheme.sidebar, color: arkmeTheme.text, boxShadow: '0 24px 70px rgba(0, 0, 0, .28)',
+    width: 420, maxWidth: 'calc(100vw - 32px)', padding: 16, boxSizing: 'border-box', borderRadius: 12,
+    border: '1px solid var(--dsw-alias-border-inverted, rgba(0, 0, 0, 0.04))',
+    background: arkmeTheme.menu, color: arkmeTheme.text,
+    boxShadow: 'var(--dsw-shadow-lv3, 0 18px 50px rgba(18, 22, 27, 0.24))',
   },
-  heading: { margin: '0 0 16px', fontSize: 18, lineHeight: '26px', fontWeight: 600 },
-  label: { display: 'grid', gap: 6, marginBottom: 12, color: arkmeTheme.secondary, fontSize: 12 },
+  dialogHeader: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 },
+  heading: { flex: 1, margin: 0, fontSize: 18, lineHeight: '25px', fontWeight: 600 },
+  close: {
+    width: 28, height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.text,
+    cursor: 'pointer', font: 'inherit', fontSize: 24, lineHeight: 1,
+  },
+  label: { display: 'grid', gap: 8, marginBottom: 12, color: arkmeTheme.secondary, fontSize: 13, lineHeight: '18px' },
   input: {
-    width: '100%', height: 40, padding: '0 11px', boxSizing: 'border-box',
-    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 9,
-    background: 'transparent', color: arkmeTheme.text, font: 'inherit',
+    width: '100%', height: 40, padding: '0 12px', boxSizing: 'border-box', outline: 0,
+    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 8,
+    background: arkmeTheme.input, color: arkmeTheme.text, font: 'inherit', fontSize: 14,
   },
-  actions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 },
+  actions: { display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20 },
   button: {
-    minWidth: 76, height: 36, padding: '0 14px', border: `1px solid ${arkmeTheme.borderSoft}`,
-    borderRadius: 9, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit',
+    minWidth: 65, height: 36, padding: '0 14px', border: `1px solid ${arkmeTheme.borderSoft}`,
+    borderRadius: 8, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 500,
   },
-  primary: { borderColor: arkmeTheme.accent, background: arkmeTheme.accent, color: '#fff' },
-  error: { margin: '8px 0', color: '#d14343', fontSize: 12 },
+  primary: { borderColor: arkmeTheme.primaryAction, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction },
+  error: { margin: '10px 0 0', color: arkmeTheme.danger, fontSize: 12, lineHeight: '18px' },
   success: { margin: '4px 0 12px', color: arkmeTheme.text, fontSize: 14, lineHeight: '22px' },
 }
 
@@ -231,7 +240,10 @@ function ArkmeQuickAddDialog({ kind, onClose, onSourceCreated, onBotCreated }: {
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}
   >
     <div role="dialog" aria-modal="true" aria-labelledby="arkme-quick-add-title" style={style.dialog}>
-      <h2 id="arkme-quick-add-title" style={style.heading}>{title}</h2>
+      <div style={style.dialogHeader}>
+        <h2 id="arkme-quick-add-title" style={style.heading}>{title}</h2>
+        <button type="button" style={style.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
+      </div>
       {createdBot === undefined ? <>
         <label style={style.label}>{kind === 'group' ? '群聊名称' : 'Bot 名称'}
           <input
