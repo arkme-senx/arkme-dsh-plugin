@@ -66,6 +66,7 @@ export interface ArkmeSurfaceProps {
   initialAuth?: ArkmeAuthSnapshot | undefined
   currentSessionId?: string | undefined
   renderSlot?: ArkmeNavigationProps['renderSlot']
+  productChrome?: boolean
 }
 
 export type ArkmeAuthView = 'login' | 'content'
@@ -497,7 +498,7 @@ function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineItem; onCl
   </aside>
 }
 
-export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, renderSlot }: ArkmeSurfaceProps = {}) {
+export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, renderSlot, productChrome = true }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authStoreSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -1427,19 +1428,20 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
 
   return (
     <div
+      className="arkme-conversation-surface"
       ref={surfaceRef}
       data-arkme-owned="product-surface"
       style={{
         ...styles.surface,
         ...(floating ? styles.floatingSurface : {}),
-        ...(compactNavigation ? styles.compactSurface : {}),
+        ...(productChrome && compactNavigation ? styles.compactSurface : {}),
       }}
     >
-      {authView === 'content' && <ArkmeProductNavigation
+      {productChrome && authView === 'content' && <ArkmeProductNavigation
         compact={compactNavigation}
         currentSessionId={currentSessionId}
       />}
-      {authView === 'content' && (conversationBackdropVisible || ui.mode === 'arko') && <aside
+      {productChrome && authView === 'content' && (conversationBackdropVisible || ui.mode === 'arko') && <aside
         data-arkme-owned="directory-pane"
         style={{ ...styles.directoryPane, ...(compactNavigation ? styles.compactDirectoryPane : {}) }}
         aria-label="Arkme 对话目录"
@@ -1451,8 +1453,8 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
           {...(renderSlot === undefined ? {} : { renderSlot })}
         />
       </aside>}
-      <section ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
-        {!arkoContentVisible && !utilityContentVisible && <header style={styles.header}>
+      <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
+        {!arkoContentVisible && !utilityContentVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeSourceAvatar
               size={34}
@@ -1559,7 +1561,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
           />
           : ui.mode === 'settings' ? <div style={styles.utilityBody}><ArkmeSettingsSurface /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
-          : source === undefined ? <div style={styles.body}>
+          : source === undefined ? <div className="arkme-conversation-body" style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'
               ? <div role="alert" style={styles.loading}>
                 <div style={styles.error}>{activeSelfSourcesResolution.message}</div>
@@ -1568,11 +1570,11 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
               </div>
               : <div role="status" style={styles.loading}>正在加载发给自己的内容…</div>}
           </div> : <>
-          <div ref={bodyRef} style={styles.body}>
+          <div className="arkme-conversation-body" ref={bodyRef} style={styles.body}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {displayRows.length > 0 && <ul style={styles.records}>
+            {displayRows.length > 0 && <ul className="arkme-conversation-records" style={styles.records}>
               {displayRows.map((row, index) => {
                 const previous = index === 0 ? undefined : displayRows[index - 1]
                 const startsDay = previous === undefined
@@ -1656,7 +1658,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
               })}
             </ul>}
           </div>
-          <footer style={styles.composer}><div style={styles.composerInner}>
+          <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
             {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
               <div style={styles.menuDivider} />
@@ -1673,7 +1675,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
             />)}</div>}
             {uploadStatus !== undefined && uploadStatus.key === composerDraftKey
               && <div style={styles.uploadStatus} role="status">{uploadStatus.message}</div>}
-            <textarea ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
+            <textarea className="arkme-conversation-textarea" ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
               onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)

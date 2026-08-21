@@ -1,3 +1,6 @@
+- id: ui-layout
+  disabled: true
+
 - insert:
     - id: arkme-self
       name: '@senguoyun/dsh-arkme'

@@ -34,7 +34,7 @@ export function arkmeSettingsTitle(installedVersion: string | undefined): string
   return `Arkme v${installedVersion?.trim() || '…'}`
 }
 
-export function ArkmeSettingsRow(_props: ArkmeSettingsRowProps) {
+export function ArkmeSettingsRow(_props?: ArkmeSettingsRowProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
