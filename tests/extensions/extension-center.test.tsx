@@ -7,12 +7,12 @@ import {
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
-  ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
+  ArkmeExtensionAuthorIdentity, ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
-  extensionNativeInstallWarning, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
+  extensionNativeInstallWarning, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
 } from '../../src/client/ArkmeExtensionCenter.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
@@ -238,6 +238,27 @@ describe('Arkme extension market UI', () => {
     expect(html).not.toContain('99 人评分')
   })
 
+  it('reuses the GitHub avatar and name identity in extension details instead of a source badge', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionAuthorIdentity
+      presentation="detail"
+      size={28}
+      item={{
+        extension_id: 'github/weather', name: '天气助手', description: '快速查看天气', visibility: 'public',
+        source: { type: 'github_repository', url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' },
+        source_author: { name: 'octocat', avatar_url: 'https://avatars.githubusercontent.com/u/1' },
+      }}
+    />)
+    expect(html).toContain('data-extension-community-identity-row="github"')
+    expect(html).toContain('data-extension-community-identity="github"')
+    expect(html).toContain('aria-label="GitHub 来源"')
+    expect(html).toContain('width:28px')
+    expect(html).toContain('height:28px')
+    expect(html.replace(/<[^>]+>/g, '')).toBe('GitHub')
+    expect(html).not.toContain('octocat')
+    expect(html).not.toContain('avatars.githubusercontent.com')
+    expect(html).not.toContain('data-extension-source-badge="github"')
+  })
+
   it('keeps lifecycle actions out of the dense marketplace tile after installation', () => {
     const html = renderToStaticMarkup(<ExtensionCard
       presentation="community"
@@ -294,6 +315,16 @@ describe('Arkme extension market UI', () => {
     expect(classificationStatusHint('building')).toContain('正在更新分类')
     expect(classificationStatusHint('ready')).toBeUndefined()
     expect(classificationStatusHint('failed', '分类服务异常')).toBe('分类服务异常')
+  })
+
+  it('shows the real catalog total beside the all-category option', () => {
+    expect(marketplaceCategoryOptions({
+      total_extensions: 139,
+      categories: [{ category_id: 'developer-tools', name: '开发工具', extension_count: 21 }],
+    }, 157)).toEqual([
+      { value: 'all', label: '全部 · 157' },
+      { value: 'developer-tools', label: '开发工具 · 21' },
+    ])
   })
 
   it('loads another cursor page when the compact grid is near the bottom or does not fill the viewport', () => {

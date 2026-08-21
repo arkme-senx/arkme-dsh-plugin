@@ -15,7 +15,7 @@ describe('Arkme extension audit owner', () => {
       }))
       const manager = new ArkmeExtensionManager(
         { auditExtension } as never,
-        {} as never,
+        { installationInstanceId: () => 'installation-test' } as never,
         {} as never,
         { artifactDirectory: root, trustedSigningKeys: '{}' },
       )

@@ -275,11 +275,6 @@ const styles: Record<string, CSSProperties> = {
     width: 18, height: 18, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
     borderRadius: '50%', background: colors.subtle, color: colors.secondary,
   },
-  githubSourceBadge: {
-    flex: 'none', display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px',
-    borderRadius: 6, background: colors.subtle, color: colors.caption,
-    fontSize: 10, lineHeight: '20px', fontWeight: 600, whiteSpace: 'nowrap',
-  },
   authorButton: {
     display: 'inline-flex', alignItems: 'center', gap: 8, padding: 0, border: 0,
     background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12, cursor: 'pointer',
@@ -598,6 +593,19 @@ export function classificationStatusHint(status: ArkmeExtensionClassificationSta
   return undefined
 }
 
+export function marketplaceCategoryOptions(
+  tree: Pick<ArkmeExtensionClassificationTree, 'categories' | 'total_extensions'>,
+  catalogTotal = tree.total_extensions,
+): ReadonlyArray<{ value: MarketplaceCategory; label: string }> {
+  return [
+    { value: 'all', label: `全部 · ${String(catalogTotal)}` },
+    ...tree.categories.map(item => ({
+      value: item.category_id,
+      label: `${item.name} · ${String(item.extension_count)}`,
+    })),
+  ]
+}
+
 export function extensionDetailHasPreviews(
   previews: readonly Pick<ArkmeExtensionPreviewItem, 'preview_ref'>[] | undefined,
 ): boolean {
@@ -896,11 +904,40 @@ function ExtensionAuthorAvatar({ item, size }: { item: ArkmeExtensionCatalogItem
   />
 }
 
-function GitHubIdentityAvatar() {
-  return <span style={styles.communityIdentityAvatar} aria-label="GitHub 来源" data-extension-community-identity="github">
-    <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+function GitHubIdentityAvatar({ size = 18 }: { size?: number }) {
+  const iconSize = Math.max(13, Math.round(size * .72))
+  return <span
+    style={{ ...styles.communityIdentityAvatar, width: size, height: size }}
+    aria-label="GitHub 来源"
+    data-extension-community-identity="github"
+  >
+    <svg aria-hidden="true" width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="currentColor">
       <path d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.866-.014-1.7-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.621.069-.608.069-.608 1.004.071 1.532 1.034 1.532 1.034.892 1.53 2.341 1.088 2.91.832.091-.647.349-1.088.635-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.987 1.029-2.686-.103-.253-.446-1.268.098-2.645 0 0 .84-.269 2.75 1.026A9.555 9.555 0 0112 6.844a9.55 9.55 0 012.504.337c1.909-1.295 2.747-1.026 2.747-1.026.546 1.377.203 2.392.1 2.645.64.699 1.028 1.593 1.028 2.686 0 3.847-2.339 4.695-4.566 4.943.359.31.678.923.678 1.86 0 1.343-.012 2.425-.012 2.755 0 .268.18.58.688.481A10.025 10.025 0 0022 12.021C22 6.484 17.523 2 12 2z" />
     </svg>
+  </span>
+}
+
+export function ArkmeExtensionAuthorIdentity({ item, size = 18, presentation = 'community' }: {
+  item: ArkmeExtensionCatalogItem
+  size?: number
+  presentation?: 'community' | 'detail'
+}) {
+  const author = extensionCommunityAuthor(item)
+  return <span
+    style={presentation === 'community'
+      ? styles.communityIdentityRow
+      : { minWidth: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}
+    data-extension-community-identity-row={author.github ? 'github' : 'author'}
+  >
+    {author.github
+      ? <GitHubIdentityAvatar size={size} />
+      : <span
+          style={{ ...styles.communityIdentityAvatar, width: size, height: size }}
+          data-extension-community-identity="author"
+        >
+          <ExtensionAuthorAvatar item={item} size={size} />
+        </span>}
+    <span style={presentation === 'community' ? styles.communityIdentityName : undefined}>{author.name}</span>
   </span>
 }
 
@@ -922,7 +959,6 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
 }) {
   const metadata = extensionCardMetadata(item)
   if (presentation === 'community') {
-    const author = extensionCommunityAuthor(item)
     return <article
       style={styles.communityCard}
       data-extension-community-card="true"
@@ -939,14 +975,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
         <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} size={34} />
         <span style={styles.communityTitleRow} data-extension-title-row="true">
           <span style={styles.communityTitle}>{item.name}</span>
-          <span style={styles.communityIdentityRow} data-extension-community-identity-row={author.github ? 'github' : 'author'}>
-            {author.github
-              ? <GitHubIdentityAvatar />
-              : <span style={styles.communityIdentityAvatar} data-extension-community-identity="author">
-                  <ExtensionAuthorAvatar item={item} size={18} />
-                </span>}
-            <span style={styles.communityIdentityName}>{author.github ? 'GitHub' : author.name}</span>
-          </span>
+          <ArkmeExtensionAuthorIdentity item={item} />
         </span>
       </button>
     </article>
@@ -1239,6 +1268,7 @@ export function ArkmeExtensionCenter({
     status: 'unavailable', categories: [], total_extensions: 0, total_categories: 0,
   })
   const [sort, setSort] = useState<MarketplaceSort>('created_at')
+  const [catalogTotal, setCatalogTotal] = useState<number>()
   const [discoverNextCursor, setDiscoverNextCursor] = useState<string>()
   const [loadingMoreDiscover, setLoadingMoreDiscover] = useState(false)
   const [loadMoreDiscoverError, setLoadMoreDiscoverError] = useState('')
@@ -1257,13 +1287,10 @@ export function ArkmeExtensionCenter({
   const detailDialogRef = useRef<HTMLElement>(null)
   const detailReturnFocus = useRef<HTMLElement>()
 
-  const categoryOptions: ReadonlyArray<{ value: MarketplaceCategory; label: string }> = [
-    { value: 'all', label: '全部' },
-    ...classificationTree.categories.map(item => ({
-      value: item.category_id,
-      label: `${item.name} · ${String(item.extension_count)}`,
-    })),
-  ]
+  const categoryOptions = marketplaceCategoryOptions(
+    classificationTree,
+    catalogTotal ?? classificationTree.total_extensions,
+  )
   const selectedCategoryName = category === 'all'
     ? '全部'
     : classificationTree.categories.find(item => item.category_id === category)?.name ?? '全部'
@@ -1385,6 +1412,7 @@ export function ArkmeExtensionCenter({
         if (sequence === requestSequence.current) {
           setDiscoverItems(page.items)
           setDiscoverNextCursor(page.next_cursor?.trim() || undefined)
+          if (category === 'all') setCatalogTotal(page.total)
         }
       } else if (target === 'mine') {
         const [page, local] = await Promise.all([
@@ -2072,7 +2100,6 @@ export function ArkmeExtensionCenter({
           <div style={styles.cardBody}>
             <div style={styles.detailTitleRow}>
               <div style={styles.name}>{detail.name}</div>
-              {extensionCommunityAuthor(detail).github && <span style={styles.githubSourceBadge} data-extension-source-badge="github">GitHub</span>}
             </div>
             <ArkmeExtensionDetailMetrics item={detail} />
           </div>
@@ -2118,18 +2145,19 @@ export function ArkmeExtensionCenter({
           extensionName={detail.name}
           previews={detail.preview_images ?? []}
         />
-        {!extensionCommunityAuthor(detail).github && <section style={styles.detailSection}>
+        <section style={styles.detailSection}>
           <div style={styles.detailLabel}>作者</div>
           <div style={styles.detailValue}>
             <button type="button" style={styles.authorButton} aria-expanded={authorCardOpen} onClick={() => {
               setAuthorCardOpen(value => !value); setAuthorActionError('')
             }}>
-              <ExtensionAuthorAvatar item={detail} size={28} />
-              <span>{extensionCommunityAuthor(detail).name}</span>
+              <ArkmeExtensionAuthorIdentity item={detail} size={28} presentation="detail" />
             </button>
             {authorCardOpen && <div style={styles.authorCard}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <ExtensionAuthorAvatar item={detail} size={42} />
+                {extensionCommunityAuthor(detail).github
+                  ? <GitHubIdentityAvatar size={42} />
+                  : <ExtensionAuthorAvatar item={detail} size={42} />}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ color: colors.text, fontWeight: 600 }}>{extensionCommunityAuthor(detail).name}</div>
                   <div style={{ marginTop: 2, color: colors.caption, fontSize: 11 }}>
@@ -2151,7 +2179,7 @@ export function ArkmeExtensionCenter({
               </div>
             </div>}
           </div>
-        </section>}
+        </section>
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
         {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
         {detail.created_at !== undefined && formatMarketplaceDate(detail.created_at) !== '' && <section style={styles.detailSection}><div style={styles.detailLabel}>创建时间</div><div style={styles.detailValue}>{formatMarketplaceDate(detail.created_at)}</div></section>}
@@ -2357,15 +2385,13 @@ export function ArkmeExtensionCenter({
                     <div style={styles.cardBody}>
                       <div style={styles.detailTitleRow}>
                         <h3 style={styles.detailName}>{detail.name}</h3>
-                        {extensionCommunityAuthor(detail).github && <span style={styles.githubSourceBadge} data-extension-source-badge="github">GitHub</span>}
                       </div>
                       <ArkmeExtensionDetailMetrics item={detail} />
-                      {!extensionCommunityAuthor(detail).github && <button type="button" style={{ ...styles.authorButton, marginTop: 10 }} aria-expanded={authorCardOpen} onClick={() => {
+                      <button type="button" style={{ ...styles.authorButton, marginTop: 10 }} aria-expanded={authorCardOpen} onClick={() => {
                         setAuthorCardOpen(value => !value); setAuthorActionError('')
                       }}>
-                        <ExtensionAuthorAvatar item={detail} size={28} />
-                        <span>{extensionCommunityAuthor(detail).name}</span>
-                      </button>}
+                        <ArkmeExtensionAuthorIdentity item={detail} size={28} presentation="detail" />
+                      </button>
                     </div>
                   </div>
                   <div style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
@@ -2394,9 +2420,11 @@ export function ArkmeExtensionCenter({
                     </div>}
                   </div>
                 </div>
-                {!extensionCommunityAuthor(detail).github && authorCardOpen && <div style={styles.authorCard}>
+                {authorCardOpen && <div style={styles.authorCard}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <ExtensionAuthorAvatar item={detail} size={42} />
+                    {extensionCommunityAuthor(detail).github
+                      ? <GitHubIdentityAvatar size={42} />
+                      : <ExtensionAuthorAvatar item={detail} size={42} />}
                     <div style={{ minWidth: 0 }}>
                       <div style={{ color: colors.text, fontWeight: 600 }}>{extensionCommunityAuthor(detail).name}</div>
                       <div style={{ marginTop: 2, color: colors.caption, fontSize: 11 }}>
