@@ -11,7 +11,7 @@ const decodeQr = ((jsQRModule as unknown as { default?: typeof import('jsqr').de
   ?? jsQRModule) as unknown as typeof import('jsqr').default
 const styles: Record<string, CSSProperties> = {
   shell: { width: 'min(720px, 100%)', minHeight: '100%', margin: '0 auto', padding: '28px 34px 38px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', color: arkmeTheme.text },
-  compactShell: { width: '100%', minHeight: 450, margin: 0, padding: '20px 22px 22px' },
+  compactShell: { width: '100%', height: '100%', minHeight: 450, margin: 0, padding: '20px 22px 22px' },
   form: { display: 'flex', alignItems: 'center', minHeight: 58, padding: '0 16px 0 20px', borderRadius: 16, background: arkmeTheme.subtle },
   compactForm: { minHeight: 48, padding: '0 10px 0 15px', borderRadius: 12 },
   input: { minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 17 },
@@ -29,7 +29,7 @@ const styles: Record<string, CSSProperties> = {
   remark: { width: '100%', height: 42, marginTop: 18, padding: '0 12px', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.base, color: arkmeTheme.text, font: 'inherit' },
   primary: { width: '100%', minHeight: 44, marginTop: 12, border: 0, borderRadius: 10, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontWeight: 600 },
   footer: { marginTop: 'auto', paddingTop: 30, borderTop: `1px solid ${arkmeTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 },
-  compactFooter: { marginTop: 24, paddingTop: 18 },
+  compactFooter: { marginTop: 'auto', paddingTop: 18 },
   profileName: { margin: 0, fontSize: 18, fontWeight: 600 },
   profileId: { margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 6, color: arkmeTheme.secondary, fontSize: 14 },
   copy: { width: 28, height: 28, padding: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },

@@ -132,7 +132,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'grid', placeItems: 'center', background: 'rgba(19, 22, 26, .24)',
   },
   contactDialog: {
-    width: 'min(620px, 100%)', maxHeight: 'min(610px, calc(100% - 4px))', minHeight: 0,
+    width: 'min(620px, 100%)', height: 'min(510px, calc(100% - 4px))', minHeight: 0,
     display: 'flex', flexDirection: 'column', overflow: 'hidden', border: `1px solid ${colors.border}`,
     borderRadius: 14, background: arkmeTheme.base, boxShadow: '0 22px 64px rgba(20, 23, 31, .22)',
   },
