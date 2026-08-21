@@ -1196,11 +1196,6 @@ export function ArkmeExtensionLifecycleRow({
 }) {
   const processing = (installTask !== undefined && !installTask.done) || actionBusy
   return <article style={styles.lifecycleRow} data-extension-lifecycle-row={kind}>
-    {kind === 'installed' && onToggle !== undefined && <ArkmeExtensionToggle
-      item={installed}
-      busy={actionBusy}
-      onChange={onToggle}
-    />}
     <button type="button" style={styles.lifecyclePrimary} onClick={onOpen} aria-label={`查看扩展：${item.name}`}>
       <ArkmeExtensionAvatar extensionId={item.extension_id} iconRef={item.icon_ref} size={38} />
       <span style={styles.lifecycleCopy}>
@@ -1210,6 +1205,13 @@ export function ArkmeExtensionLifecycleRow({
         </span>}
       </span>
     </button>
+    {kind === 'installed' && onToggle !== undefined && <span style={styles.lifecycleActions}>
+      <ArkmeExtensionToggle
+        item={installed}
+        busy={actionBusy}
+        onChange={onToggle}
+      />
+    </span>}
     {kind === 'update' && <span style={styles.lifecycleActions}>
       {processing ? <InstallLoadingButton task={installTask} onPause={onPause} onResume={onResume} /> : <button
         type="button"

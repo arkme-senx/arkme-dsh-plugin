@@ -775,6 +775,7 @@ describe('Arkme extension market UI', () => {
     expect(installedHtml).toContain('role="switch"')
     expect(installedHtml).toContain('作者')
     expect(installedHtml).not.toContain('>更新</button>')
+    expect(installedHtml.indexOf('aria-label="查看扩展：扩展"')).toBeLessThan(installedHtml.indexOf('role="switch"'))
 
     const updateHtml = renderToStaticMarkup(<ArkmeExtensionLifecycleRow
       item={item} installed={installed} kind="update" onOpen={() => {}} onUpdate={() => {}}
