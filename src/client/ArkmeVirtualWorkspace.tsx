@@ -370,7 +370,7 @@ export function ArkmeArkoRow({
     <span style={styles.chatContent}>
       <span style={styles.chatTop}>
         <span style={styles.entryName}>{displayName}</span>
-        <ArkmeTopicTagBadge label="Agent" selected={selected} />
+        <ArkmeTopicTagBadge label="AI" selected={selected} />
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}>{latestPreview}</span></span>
     </span>

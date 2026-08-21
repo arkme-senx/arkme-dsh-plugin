@@ -72,7 +72,7 @@ describe('recording navigation entry', () => {
 })
 
 describe('Arko navigation entry', () => {
-  it('renders the client Agent avatar, customizable name, and client-style Agent badge', () => {
+  it('renders the client Agent avatar, customizable name, and client-style AI badge', () => {
     const ArkmeArkoRow = navigation.ArkmeArkoRow
     expect(ArkmeArkoRow).toBeDefined()
     if (ArkmeArkoRow === undefined) return
@@ -88,9 +88,9 @@ describe('Arko navigation entry', () => {
     expect(markup).toContain('小可')
     expect(markup).toContain('viewBox="2 1.4 12 12"')
     expect(markup).toContain('fill="#EFA7A2"')
-    expect(markup).toContain('data-arkme-topic-tag="Agent"')
-    expect(markup).toContain('>Agent</span>')
-    expect(markup).not.toContain('>AI</span>')
+    expect(markup).toContain('data-arkme-topic-tag="AI"')
+    expect(markup).toContain('>AI</span>')
+    expect(markup).not.toContain('>Agent</span>')
     expect(markup).toContain('刚刚完成了资料整理')
   })
 
