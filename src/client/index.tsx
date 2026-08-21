@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import './composer-draft-auth-binding.js'
 import { callArkme } from './api.js'
+import { ArkmeHeroBrandMark, ArkmeSidebarBrandMark, ArkmeSidebarBrandName } from './ArkmeBrand.js'
 import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
@@ -123,6 +124,16 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: activate message notification sources')
 
+  // DSH's single brand slots support priority shadowing. A lower priority value
+  // safely replaces the official visuals without touching host source or DOM.
+  ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.inject('sidebar.brand.name', () => (
+    ctx.slots.inject('conversation.hero.brand.mark', function* registerArkmeBrand() {
+      yield ctx.slots.register({ name: 'sidebar.brand.mark', priority: -10 }, ArkmeSidebarBrandMark)
+      yield ctx.slots.register({ name: 'sidebar.brand.name', priority: -10 }, ArkmeSidebarBrandName)
+      yield ctx.slots.register({ name: 'conversation.hero.brand.mark', priority: -10 }, ArkmeHeroBrandMark)
+    })
+  )))
+
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
     id: 'arkme',
@@ -157,6 +168,7 @@ export function apply(ctx: ClientContext): void {
 }
 
 export { ArkmeFooterAction } from './ArkmeFooterAction.js'
+export { ArkmeHeroBrandMark, ArkmeSidebarBrandMark, ArkmeSidebarBrandName } from './ArkmeBrand.js'
 export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
@@ -177,6 +189,7 @@ export {
   extensionReviewTree,
 } from './ArkmeExtensionReviews.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
+export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 export { ArkmeDirectoryRow, ArkmeNavigation, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'

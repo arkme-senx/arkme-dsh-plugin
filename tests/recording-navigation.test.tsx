@@ -28,7 +28,7 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('aria-selected="true"')
     expect(markup).toContain('>世界<')
     expect(markup).toContain('>世界公开动态<')
-    expect(markup).toContain('background:var(--dsw-alias-state-success-tertiary, #def3e8)')
+    expect(markup).toContain('background:#f1f2f6')
   })
 
   it('renders a fixed all-day recording row with its read-only feature preview', () => {

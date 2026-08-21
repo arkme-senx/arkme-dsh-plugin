@@ -118,14 +118,14 @@ describe('Arkme plugin identity', () => {
     ]))
   })
 
-  it('embeds the complete official Arkme application icon', () => {
+  it('embeds the transparent Arkme application mark', () => {
     const source = readFileSync(join(root, 'src/client/arkme-assets.ts'), 'utf8')
     const encoded = source.match(/base64,([^']+)'/)?.[1]
 
     expect(encoded).toBeDefined()
     const image = Buffer.from(encoded ?? '', 'base64')
-    expect(image).toHaveLength(6_597)
+    expect(image).toHaveLength(18_781)
     expect(createHash('sha256').update(image).digest('hex'))
-      .toBe('7c23a11cfe237a7ab09259453ecbf982099f53f1d0df2a187e26daa92d20d664')
+      .toBe('a5cb368d40afb15ca3b59259a2abb30a2f98defdacbd2cecdaf663d549ef44da')
   })
 })

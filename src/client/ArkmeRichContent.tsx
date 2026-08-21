@@ -11,7 +11,7 @@ const mediaGap = 5
 
 const styles: Record<string, CSSProperties> = {
   stack: { width: 'max-content', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 },
-  text: { width: 'max-content', maxWidth: '100%', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
+  text: { width: 'max-content', maxWidth: '100%', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px' },
   collapsedText: { display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: textCollapseMaxLines },
   textFrame: { position: 'relative', width: '100%', maxWidth: '100%' },
   textFade: { position: 'absolute', right: 0, bottom: 22, left: 0, height: 28, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(255,255,255,0), var(--arkme-bubble-fade, rgba(238,243,255,.96)))' },
@@ -32,7 +32,7 @@ const styles: Record<string, CSSProperties> = {
   article: { width: 400, maxWidth: '100%', display: 'flex', flexDirection: 'column', padding: 10, boxSizing: 'border-box', borderRadius: 8, background: 'rgba(127,127,127,.06)', color: 'inherit' },
   articleButton: { border: 0, font: 'inherit', textAlign: 'left', cursor: 'pointer' },
   articleHeading: { display: 'flex', alignItems: 'center', gap: 6 },
-  articleIcon: { width: 16, height: 16, flex: 'none', color: 'var(--dsw-alias-state-success, #08b956)' },
+  articleIcon: { width: 16, height: 16, flex: 'none', color: 'var(--dsw-alias-state-business-primary, #8295e8)' },
   articleTitle: { margin: 0, minWidth: 0, display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflowWrap: 'anywhere', fontSize: 15, lineHeight: '22px', fontWeight: 600 },
   articlePreview: { maxWidth: 'calc(100% - 22px)', margin: '4px 0 0 22px', display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 14, lineHeight: '20px' },
   articleMeta: { margin: '8px 0 0 22px', display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 12, lineHeight: '14px' },

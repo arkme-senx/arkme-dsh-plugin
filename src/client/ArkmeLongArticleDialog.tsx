@@ -14,7 +14,7 @@ const styles: Record<string, CSSProperties> = {
   close: { position: 'absolute', top: 24, right: 28, width: 32, height: 32, border: 0, borderRadius: 8, padding: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #68707c)', cursor: 'pointer', fontSize: 30, lineHeight: '30px' },
   metaRow: { minHeight: 42, display: 'flex', alignItems: 'center', gap: 20, padding: '0 32px 14px', borderBottom: '1px solid var(--dsw-alias-divider, rgba(127,127,127,.14))', color: 'var(--dsw-alias-label-tertiary, #9399a3)', fontSize: 14 },
   meta: { display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' },
-  action: { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, border: 0, padding: '7px 8px', borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-state-success, #08b956)', cursor: 'pointer', font: 'inherit', fontSize: 16, fontWeight: 600 },
+  action: { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, border: 0, padding: '7px 8px', borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-state-business-primary, #8295e8)', cursor: 'pointer', font: 'inherit', fontSize: 16, fontWeight: 600 },
   body: { minHeight: 0, flex: 1, padding: '28px 32px 36px', overflowY: 'auto' },
   bodyInput: { width: '100%', height: '100%', minHeight: 260, resize: 'none', border: 0, outline: 0, padding: 0, boxSizing: 'border-box', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 17, lineHeight: '29px' },
   bodyRead: { margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 17, lineHeight: '29px' },

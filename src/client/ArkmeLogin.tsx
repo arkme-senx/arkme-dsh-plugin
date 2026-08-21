@@ -43,14 +43,14 @@ const loginStyles = `
   .dsh-arkme-login-page {
     --arkme-login-base: var(--dsw-alias-bg-base, #ffffff);
     --arkme-login-surface: var(--dsw-alias-bg-layer-2, #ffffff);
-    --arkme-login-subtle: var(--dsw-alias-bg-module-platform, #f2fbf5);
+    --arkme-login-subtle: var(--dsw-alias-bg-module-platform, #f3f4f8);
     --arkme-login-hover: var(--dsw-alias-interactive-bg-hover, rgba(38,49,72,.06));
-    --arkme-login-text: var(--dsw-alias-label-primary, #17221b);
-    --arkme-login-secondary: var(--dsw-alias-label-secondary, #68766d);
-    --arkme-login-caption: var(--dsw-alias-label-caption, #9aae9f);
-    --arkme-login-border: var(--dsw-alias-border-l2, #dde5de);
-    --arkme-login-accent: var(--dsw-alias-state-success-primary, #09b83e);
-    --arkme-login-accent-soft: var(--dsw-alias-state-success-tertiary, #e8faee);
+    --arkme-login-text: var(--dsw-alias-label-primary, #17191c);
+    --arkme-login-secondary: var(--dsw-alias-label-secondary, #6f747b);
+    --arkme-login-caption: var(--dsw-alias-label-caption, #9ba1a9);
+    --arkme-login-border: var(--dsw-alias-border-l2, #e2e4e7);
+    --arkme-login-accent: var(--dsw-alias-state-business-primary, #8295e8);
+    --arkme-login-accent-soft: var(--dsw-alias-state-business-tertiary, #f1f2f6);
     --arkme-login-danger: var(--dsw-alias-state-error-primary, #b0442e);
     --arkme-login-danger-soft: var(--dsw-alias-interactive-bg-hover-danger, #fff3f0);
     --arkme-login-foreground: var(--dsw-static-neutral-bluish-00, #ffffff);
@@ -101,7 +101,7 @@ const loginStyles = `
     border-radius: 32px;
     padding: 32px 24px;
     background: color-mix(in srgb, var(--arkme-login-surface) 95%, transparent);
-    box-shadow: var(--dsw-shadow-lv3, 0 28px 80px rgba(9,184,62,.08));
+    box-shadow: var(--dsw-shadow-lv3, 0 28px 80px rgba(45,52,75,.08));
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
@@ -151,7 +151,7 @@ const loginStyles = `
     background: var(--arkme-login-surface);
     color: var(--arkme-login-text);
     font-weight: 600;
-    box-shadow: 0 8px 20px rgba(9,184,62,.14);
+    box-shadow: 0 8px 20px rgba(45,52,75,.14);
   }
   .dsh-arkme-login-method { margin-top: 28px; }
   .dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: center; text-align: center; }

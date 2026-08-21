@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import type {
   ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeTopicCreateResult,
@@ -9,6 +10,7 @@ import { ArkmeSourceAvatar, clearArkmeAvatarCache } from './ArkmeAvatar.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
+import { ArkmeSendToSelfIcon } from './ArkmeSendToSelfIcon.js'
 import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN, ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
@@ -39,6 +41,7 @@ import {
 export interface ArkmeNavigationProps {
   wide?: boolean
   currentSessionId?: string | undefined
+  embeddedProductShell?: boolean
   onClose?: () => void
   onActivateSurface?: () => void
   renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
@@ -52,8 +55,8 @@ const colors = {
   secondary: arkmeTheme.secondary,
   caption: arkmeTheme.caption,
   border: arkmeTheme.borderSoft,
-  active: arkmeTheme.accentSoft,
-  accent: arkmeTheme.accent,
+  active: '#f1f2f6',
+  accent: '#9eadff',
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -62,10 +65,11 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', background: colors.panel, color: colors.text,
   },
   header: {
-    position: 'relative', zIndex: 5, flex: 'none', height: 56, display: 'flex', alignItems: 'center', gap: 8,
-    padding: '0 12px 0 14px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+    position: 'relative', zIndex: 5, flex: 'none', minHeight: 64, display: 'flex', alignItems: 'flex-end', gap: 8,
+    padding: '0 16px 6px', boxSizing: 'border-box',
   },
-  headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 500 },
+  headerTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 23, lineHeight: '32px', letterSpacing: '-.035em', fontWeight: 650 },
+  sendToSelfHeaderTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 15, lineHeight: '24px', fontWeight: 400 },
   headerButton: {
     width: 30, height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.text,
@@ -95,31 +99,36 @@ const styles: Record<string, CSSProperties> = {
   },
   sortMenuItemLabel: { minWidth: 0 },
   sortMenuCheck: { position: 'absolute', right: 6, width: 12, height: 12, color: colors.secondary },
-  list: { flex: 1, minHeight: 0, margin: 0, padding: '6px 0 18px', overflowY: 'auto', listStyle: 'none' },
+  searchField: {
+    height: 40, flex: 'none', margin: '12px 16px 8px', padding: '0 11px', display: 'flex', alignItems: 'center', gap: 8,
+    boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
+  },
+  searchInput: { minWidth: 0, width: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12 },
+  list: { flex: 1, minHeight: 0, margin: 0, padding: '0 6px 18px', overflowY: 'auto', listStyle: 'none' },
   topicList: { paddingBottom: 74 },
   topicCardList: { paddingTop: 0 },
   chatRow: {
-    position: 'relative', width: '100%', minHeight: 60, display: 'flex', alignItems: 'center', gap: 10,
-    padding: '8px 12px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`,
-    background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+    position: 'relative', width: '100%', minHeight: 52, margin: '1px 0', display: 'flex', alignItems: 'center', gap: 10,
+    padding: '7px 10px', boxSizing: 'border-box', border: 0, borderRadius: 13,
+    background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
-  chatRowActive: { background: colors.active, boxShadow: `inset 3px 0 ${colors.accent}` },
+  chatRowActive: { background: colors.active },
   chatContent: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
   chatTop: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
   chatName: {
     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    fontSize: 15, lineHeight: '20px', fontWeight: 500,
+    fontSize: 13, lineHeight: '18px', fontWeight: 600,
   },
   entryName: {
     flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    fontSize: 15, lineHeight: '20px', fontWeight: 500,
+    fontSize: 13, lineHeight: '18px', fontWeight: 600,
   },
-  chatTime: { flex: 'none', color: colors.caption, fontSize: 11, lineHeight: '16px' },
-  muteIcon: { flex: 'none', display: 'inline-flex', color: colors.secondary },
+  chatTime: { flex: 'none', color: colors.caption, fontSize: 10, lineHeight: '15px' },
+  muteIcon: { flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
   chatBottom: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   preview: {
     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.secondary, fontSize: 12, lineHeight: '17px',
+    color: colors.secondary, fontSize: 11, lineHeight: '16px',
   },
   unread: {
     minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,
@@ -127,34 +136,26 @@ const styles: Record<string, CSSProperties> = {
     color: arkmeTheme.foreground, fontSize: 10, lineHeight: '17px',
   },
   avatar: {
-    width: 44, height: 44, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
+    width: 38, height: 38, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: '#727982', fontSize: 15, fontWeight: 600,
   },
   extensionAvatar: {
-    width: 44, height: 44, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 12,
-    background: 'rgba(9, 184, 62, .10)', color: ARKME_EXTENSION_BRAND_GREEN,
+    width: 38, height: 38, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 11,
+    background: 'rgba(130, 149, 232, .12)', color: ARKME_EXTENSION_BRAND_GREEN,
   },
   selfAvatar: {
-    width: 44, height: 44, flex: 'none', position: 'relative', borderRadius: 999,
-    background: arkmeTheme.layer2, border: `1px solid ${arkmeTheme.border}`, boxSizing: 'border-box',
-  },
-  selfBubbleBack: {
-    position: 'absolute', left: 15, top: 11, width: 18, height: 14, borderRadius: 7,
-    background: arkmeTheme.accentSoft, boxShadow: `0 0 0 2px ${arkmeTheme.layer2}`,
-  },
-  selfBubbleFront: {
-    position: 'absolute', left: 10, top: 17, width: 18, height: 14, borderRadius: 7,
-    background: arkmeTheme.accent, boxShadow: `0 0 0 2px ${arkmeTheme.layer2}`,
+    width: 38, height: 38, flex: 'none', position: 'relative', borderRadius: 999,
+    display: 'grid', placeItems: 'center', background: 'transparent', color: colors.secondary, boxSizing: 'border-box',
   },
   topicRow: {
-    position: 'relative', width: 'calc(100% - 16px)', minHeight: 38, margin: '1px 8px',
+    position: 'relative', width: 'calc(100% - 8px)', minHeight: 44, margin: '2px 4px',
     display: 'flex', alignItems: 'center', boxSizing: 'border-box', overflow: 'hidden',
-    borderRadius: 7, background: 'transparent', color: 'inherit',
+    borderRadius: 9, background: 'transparent', color: 'inherit',
   },
   topicActive: { background: colors.active, boxShadow: `inset 2px 0 ${colors.accent}` },
   topicGuide: { position: 'absolute', top: 0, bottom: 0, width: 1, background: colors.border, pointerEvents: 'none' },
   topicLead: {
-    position: 'relative', zIndex: 1, width: 30, height: 38, flex: 'none', display: 'inline-flex',
+    position: 'relative', zIndex: 1, width: 24, height: 44, flex: 'none', display: 'inline-flex',
     alignItems: 'center', justifyContent: 'center', padding: 0, border: 0, background: 'transparent',
     color: colors.caption, cursor: 'default', font: 'inherit',
   },
@@ -162,14 +163,14 @@ const styles: Record<string, CSSProperties> = {
   topicChevron: { display: 'inline-block', fontSize: 17, lineHeight: 1, transformOrigin: '50% 50%' },
   topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: colors.caption },
   topicSelect: {
-    position: 'relative', zIndex: 1, minWidth: 0, minHeight: 38, flex: 1, display: 'flex',
-    alignItems: 'center', gap: 10, padding: 0, border: 0, background: 'transparent',
-    color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit',
+    position: 'relative', zIndex: 1, minWidth: 0, minHeight: 44, flex: 1, display: 'flex',
+    alignItems: 'center', gap: 8, padding: '0 2px 0 0', border: 0, background: 'transparent',
+    color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
   },
   topicName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '20px', fontWeight: 400 },
   topicTrailing: {
-    width: 58, height: 22, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-    paddingRight: 10, boxSizing: 'border-box',
+    width: 44, height: 22, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+    paddingRight: 4, boxSizing: 'border-box',
   },
   topicCount: {
     width: 20, flex: 'none', color: colors.caption, fontSize: 12, lineHeight: '22px', textAlign: 'center',
@@ -177,8 +178,8 @@ const styles: Record<string, CSSProperties> = {
   topicHover: { background: arkmeTheme.hover },
   topicCreated: { background: colors.active, boxShadow: 'none' },
   topicCreateMask: {
-    position: 'absolute', zIndex: 3, top: 8, right: 0, width: 58, height: 22,
-    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 12,
+    position: 'absolute', zIndex: 3, top: 8, right: 0, width: 44, height: 22,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 6,
     boxSizing: 'border-box', pointerEvents: 'none',
   },
   topicCreateIcon: {
@@ -237,10 +238,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function SelfAvatar() {
-  return <span style={styles.selfAvatar} aria-hidden>
-    <span style={styles.selfBubbleBack} />
-    <span style={styles.selfBubbleFront} />
-  </span>
+  return <span style={styles.selfAvatar} aria-hidden><ArkmeSendToSelfIcon size={30} /></span>
 }
 
 /** Arkme-owned visual shell for every consumer contributed directory entry. */
@@ -406,16 +404,16 @@ export function ArkmeTopicTreeRow({
     onMouseEnter={() => { onHoverChange(true) }} onMouseLeave={() => { onHoverChange(false) }}
   >
     {Array.from({ length: row.depth }, (_, index) => <span
-      key={index} aria-hidden style={{ ...styles.topicGuide, left: 21 + index * 20 }}
+      key={index} aria-hidden style={{ ...styles.topicGuide, left: 15 + index * 18 }}
     />)}
     {row.hasChildren ? <button
       type="button"
-      style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 6 + row.depth * 20 }}
+      style={{ ...styles.topicLead, ...styles.topicToggle, marginLeft: 2 + row.depth * 18 }}
       aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
       title={row.expanded ? '收起子主题' : '展开子主题'}
       onClick={onToggle}
     ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
-      aria-hidden style={{ ...styles.topicLead, marginLeft: 6 + row.depth * 20 }}
+      aria-hidden style={{ ...styles.topicLead, marginLeft: 2 + row.depth * 18 }}
     ><span style={styles.topicDot} /></span>}
     <button type="button" style={styles.topicSelect} onClick={onSelect}>
       <span style={styles.topicName}>{source.displayName}</span>
@@ -605,10 +603,16 @@ export function ArkmeSourceSortControl({
   </div>
 }
 
-export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActivateSurface, renderSlot }: ArkmeNavigationProps) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
-  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
-  const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
+export function ArkmeNavigation({
+  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, renderSlot,
+}: ArkmeNavigationProps) {
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const authState = useSyncExternalStore(
+    arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot,
+  )
+  const chatDirectory = useSyncExternalStore(
+    arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot,
+  )
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
     arkmeNotificationActivation.getSnapshot,
@@ -648,6 +652,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     arkmeArkoConversationPreviewStore.getSnapshot,
   )
   const [error, setError] = useState('')
+  const [conversationQuery, setConversationQuery] = useState('')
   const [extensionCenterOpen, setExtensionCenterOpen] = useState(false)
   const [activeDirectoryEntryId, setActiveDirectoryEntryId] = useState<string>()
   const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
@@ -674,6 +679,15 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   )
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
+  const normalizedConversationQuery = conversationQuery.trim().toLocaleLowerCase()
+  const rootSources = useMemo(() => normalizedConversationQuery === '' ? sources : sources.filter(source => (
+    source.displayName.toLocaleLowerCase().includes(normalizedConversationQuery)
+    || (source.latestPreview ?? '').toLocaleLowerCase().includes(normalizedConversationQuery)
+  )), [normalizedConversationQuery, sources])
+  const showArkoInSearch = normalizedConversationQuery === ''
+    || arkoPresentationName(arkoProfile).toLocaleLowerCase().includes(normalizedConversationQuery)
+    || (arkoLatestPreview ?? ARKO_CONVERSATION_PREVIEW_FALLBACK).toLocaleLowerCase().includes(normalizedConversationQuery)
+  const showSelfInSearch = normalizedConversationQuery === '' || '发给自己 默认分类与主题'.includes(normalizedConversationQuery)
 
 	useEffect(() => {
 		if (!authenticated || ui.extensionShareRef === undefined) return
@@ -776,7 +790,8 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'arko' || uiSnapshot.mode === 'search'
+      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
+        || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'search' || uiSnapshot.mode === 'extensions'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
@@ -848,7 +863,8 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     setSources(loaded)
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'recordings' || ui.mode === 'calendar' || ui.mode === 'arko' || ui.mode === 'search'
+    const restored = ui.mode === 'recordings' || ui.mode === 'arko'
+      || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions'
       ? undefined
       : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)
@@ -872,14 +888,14 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     onActivateSurface?.()
   }, [authenticated, notificationActivation, onActivateSurface, persistCache])
   useEffect(() => {
-    if (!authenticated || directory !== 'send_to_self') return
+    if (!authenticated || directory !== 'send_to_self' || ui.mode !== 'source') return
     const aggregateSource = sources.find(source => source.kind === 'send_to_self')
     if (aggregateSource !== undefined && !isArkmeSelfWorkspaceSource(ui.selectedSource)) {
       arkmeUi.selectSource(aggregateSource)
       persistCache({ directory, selectedSourceRef: aggregateSource.sourceRef })
       onActivateSurface?.()
     }
-  }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.selectedSource])
+  }, [authenticated, directory, onActivateSurface, persistCache, sources, ui.mode, ui.selectedSource])
   useEffect(() => {
     const sourcesByRef = new Map(sources.map(source => [source.sourceRef, source]))
     setCollapsedSourceRefs(current => {
@@ -1033,7 +1049,11 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     ><ArkmeMark size={20} /></button></div>
   }
 
-  return <section style={styles.shell} aria-label="Arkme 会话列表">
+  return <section
+    style={styles.shell}
+    aria-label="Arkme 会话列表"
+    data-arkme-layout={embeddedProductShell ? 'product-directory' : undefined}
+  >
     {extensionCenterOpen && <ArkmeExtensionCenter
       currentSessionId={currentSessionId}
       {...(auth?.userId === undefined ? {} : { currentUserId: auth.userId })}
@@ -1046,13 +1066,26 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
         type="button" style={styles.headerButton} aria-label="返回 Arkme 会话列表" title="返回"
         onClick={() => { changeDirectory('root') }}
       >‹</button>
-      <h2 style={styles.headerTitle}>发给自己</h2>
+      <h2 style={styles.sendToSelfHeaderTitle}>发给自己</h2>
       <ArkmeSourceSortControl value={sourceSort} onChange={value => {
         setSourceSort(value)
         setHoveredSourceRef(undefined)
       }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
+    {directory === 'root' && embeddedProductShell && <header style={styles.header}>
+      <h2 style={styles.headerTitle}>对话</h2>
+    </header>}
+    {directory === 'root' && embeddedProductShell && <label style={styles.searchField}>
+      <MagnifyingGlass size={16} aria-hidden />
+      <input
+        value={conversationQuery}
+        style={styles.searchInput}
+        placeholder="搜索对话或消息"
+        aria-label="搜索对话或消息"
+        onChange={event => { setConversationQuery(event.target.value) }}
+      />
+    </label>}
 
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
@@ -1067,14 +1100,14 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
-        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
-        <ArkmeArkoRow
+        {authenticated && normalizedConversationQuery === '' && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {showArkoInSearch && <ArkmeArkoRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
           {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })}
           onClick={showArko}
-        />
-        {authenticated && <button
+        />}
+        {authenticated && !embeddedProductShell && <button
           type="button" role="treeitem" aria-selected={false} style={styles.chatRow}
           onClick={() => { activateNativeEntry(); setExtensionCenterOpen(true) }}
         >
@@ -1084,7 +1117,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
             <span style={styles.chatBottom}><span style={styles.preview}>发现、安装和更新 Arkme 扩展</span></span>
           </span>
         </button>}
-        <button
+        {showSelfInSearch && <button
           type="button" role="treeitem"
           aria-selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)}
           style={{ ...styles.chatRow, ...(activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource) ? styles.chatRowActive : {}) }}
@@ -1103,10 +1136,10 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
             </span>
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
-        </button>
-        <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />
-        <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />
-        <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />
+        </button>}
+        {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
+        {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
+        {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
           wide: !!wide,
           authenticated,
@@ -1114,7 +1147,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
           activateEntry: activateDirectoryEntry,
           renderRow: renderArkmeDirectoryRow,
         })}
-        {sources.map(source => {
+        {rootSources.map(source => {
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
@@ -1128,11 +1161,11 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
                 <span style={styles.chatName}>{source.displayName}</span>
-                {source.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={16} /></span>}
                 <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
                 <span style={styles.preview}>{source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : '')}</span>
+                {source.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
                 {source.unreadCount > 0 && <span style={styles.unread}>{source.unreadCount > 99 ? '99+' : source.unreadCount}</span>}
               </span>
             </span>

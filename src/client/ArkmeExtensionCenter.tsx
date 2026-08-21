@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
   ArkmeExtensionEnabledResult, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution, ArkmeInstalledExtensionView,
@@ -28,7 +29,7 @@ import { arkmeTheme } from './arkme-theme.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
-export const ARKME_EXTENSION_BRAND_GREEN = '#09B83E'
+export const ARKME_EXTENSION_BRAND_GREEN = '#8295E8'
 export const ARKME_EXTENSION_PRIMARY_ACTION_BG = arkmeTheme.primaryAction
 export const ARKME_EXTENSION_PRIMARY_ACTION_FG = arkmeTheme.onPrimaryAction
 export const ARKME_EXTENSION_RESTART_SURFACE = arkmeTheme.menu
@@ -67,6 +68,34 @@ const styles: Record<string, CSSProperties> = {
   shell: {
     width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column',
     background: colors.surface, color: colors.text, fontFamily: 'var(--dsw-font-family, inherit)',
+  },
+  embeddedFrame: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' },
+  embeddedDialog: {
+    width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden',
+    border: 0, borderRadius: 0, background: '#fff', boxShadow: 'none',
+  },
+  embeddedShell: { overflowY: 'auto', background: '#fff' },
+  embeddedHeader: {
+    width: 'min(980px, calc(100% - 96px))', height: 'auto', minHeight: 0, margin: '0 auto',
+    padding: '38px 0 0', alignItems: 'flex-start', boxSizing: 'border-box',
+  },
+  embeddedHeaderCopy: { flex: 1, minWidth: 0 },
+  eyebrow: { margin: '0 0 8px', color: '#858991', fontSize: 14, lineHeight: '20px' },
+  embeddedTitle: { margin: 0, fontSize: 36, lineHeight: '46px', letterSpacing: '-.04em', fontWeight: 650 },
+  embeddedSubtitle: { display: 'block', marginTop: 12, color: '#7d818b', fontSize: 15, lineHeight: '22px' },
+  mineButton: {
+    height: 38, flex: 'none', marginTop: 7, padding: '0 13px', border: '1px solid #dedfe3',
+    borderRadius: 10, background: '#fff', color: '#242629', cursor: 'pointer', font: 'inherit', fontSize: 12,
+  },
+  search: {
+    width: 'min(980px, calc(100% - 96px))', height: 46, minHeight: 46, margin: '25px auto 0',
+    padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8, boxSizing: 'border-box',
+    border: '1px solid #dedfe3', borderRadius: 10, color: '#858991', background: '#fff',
+  },
+  searchInput: { flex: 1, minWidth: 0, height: '100%', border: 0, outline: 0, background: 'transparent', font: 'inherit', fontSize: 13 },
+  embeddedList: {
+    width: 'min(980px, calc(100% - 96px))', margin: '0 auto', padding: '15px 0 96px',
+    display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14, alignContent: 'start',
   },
   header: {
     height: 58, flex: 'none', display: 'flex', alignItems: 'center', gap: 8,
@@ -108,6 +137,10 @@ const styles: Record<string, CSSProperties> = {
     margin: 0, padding: '11px 8px', border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0,
     background: 'transparent', color: colors.text, textAlign: 'left',
   },
+  cardGrid: {
+    minHeight: 126, padding: 16, border: '1px solid #e2e3e6', borderRadius: 16,
+    background: '#fff', alignItems: 'stretch', boxShadow: '0 5px 18px rgba(25,28,38,.025)',
+  },
   cardButton: { cursor: 'pointer', font: 'inherit' },
   cardPrimary: {
     minWidth: 0, flex: 1, display: 'flex', gap: 10, alignItems: 'flex-start', padding: 0,
@@ -132,6 +165,7 @@ const styles: Record<string, CSSProperties> = {
     width: 18, height: 18, borderRadius: 999, background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.14)',
     transition: 'transform .15s ease',
   },
+  installSmallGrid: { width: 68, height: 34, alignSelf: 'center', justifyContent: 'center', padding: '0 12px', borderRadius: 10, background: '#17191c', color: '#fff' },
   appIcon: {
     width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center', overflow: 'hidden',
     borderRadius: 9, background: colors.subtle, color: colors.secondary,
@@ -148,21 +182,21 @@ const styles: Record<string, CSSProperties> = {
   meta: { display: 'block', marginTop: 2, color: colors.secondary, fontSize: 11, lineHeight: '16px', wordBreak: 'break-word' },
   description: {
     display: '-webkit-box', overflow: 'hidden', marginTop: 4, color: colors.secondary,
-    fontSize: 12, lineHeight: '17px', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2,
+    fontSize: 12, lineHeight: '17px', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3,
   },
   chips: { display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 },
   chip: { padding: '1px 6px', borderRadius: 999, background: colors.surface, color: colors.secondary, fontSize: 10, lineHeight: '17px' },
   activeChip: { background: colors.accentSoft, color: colors.accent },
   warningChip: { background: arkmeTheme.warningSoft, color: colors.warning },
-  error: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 12 },
-  installStatus: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
-  restartNotice: { margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
-  empty: { display: 'grid', justifyItems: 'center', padding: '46px 18px 24px', textAlign: 'center' },
+  error: { gridColumn: '1 / -1', margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 12 },
+  installStatus: { gridColumn: '1 / -1', margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
+  restartNotice: { gridColumn: '1 / -1', margin: '0 0 10px', padding: '10px 12px', borderRadius: 10, background: colors.accentSoft, color: colors.secondary, fontSize: 12 },
+  empty: { gridColumn: '1 / -1', display: 'grid', justifyItems: 'center', padding: '46px 18px 24px', textAlign: 'center' },
   emptyIcon: { width: 38, height: 38, display: 'grid', placeItems: 'center', color: colors.caption },
   emptyTitle: { marginTop: 13, color: colors.text, fontSize: 13, fontWeight: 600, lineHeight: '20px' },
   emptyDesc: { maxWidth: 230, marginTop: 4, color: colors.secondary, fontSize: 11, lineHeight: '17px' },
   skeleton: { height: 76, marginBottom: 8, borderRadius: 12, background: colors.subtle, opacity: .72 },
-  detail: { paddingBottom: 20 },
+  detail: { gridColumn: '1 / -1', paddingBottom: 20 },
   detailBack: {
     height: 30, display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 10, padding: '0 6px 0 2px',
     border: 0, borderRadius: 7, background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 11, cursor: 'pointer',
@@ -341,7 +375,7 @@ export function ArkmeExtensionToggle({ item, busy, onChange }: {
   </button>
 }
 
-export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume }: {
+export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, grid = false, onClick, onAction, onToggle, onPause, onResume }: {
   item: ArkmeExtensionCatalogItem
   installed?: ArkmeInstalledExtensionView | undefined
   actionLabel?: string | undefined
@@ -349,6 +383,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
   statusColor?: string | undefined
   installTask?: ArkmeExtensionInstallTaskSnapshot | undefined
   actionBusy?: boolean
+  grid?: boolean
   onClick(): void
   onAction?: (() => void) | undefined
   onToggle?: ((enabled: boolean) => void) | undefined
@@ -357,7 +392,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
 }) {
   const metadata = extensionCardMetadata(item)
   return <div
-    style={styles.card}
+    style={{ ...styles.card, ...(grid ? styles.cardGrid : {}) }}
     onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
     onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
   >
@@ -376,7 +411,7 @@ export function ExtensionCard({ item, installed, actionLabel, status, statusColo
     /> : <span style={styles.actionGroup}>
       {actionLabel !== undefined && <button
         type="button"
-        style={{ ...styles.installSmall, ...(onAction === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
+        style={{ ...styles.installSmall, ...(grid ? styles.installSmallGrid : {}), ...(onAction === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
         disabled={onAction === undefined || actionBusy === true}
         onClick={onAction}
       >{actionLabel}</button>}
@@ -584,12 +619,13 @@ export function extensionEnableUnavailable(
   return enabled && item?.unavailable !== undefined
 }
 
-export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef, onShareExit, onClose }: {
+export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef, onShareExit, onClose, embedded = false }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
   shareRef?: string | undefined
   onShareExit?(): void
   onClose(): void
+  embedded?: boolean | undefined
 }) {
   const [tab, setTab] = useState<Tab>('discover')
   const [discoverItems, setDiscoverItems] = useState<ArkmeExtensionCatalogItem[]>([])
@@ -608,6 +644,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   const [restartNotice, setRestartNotice] = useState('')
   const [restartPrompt, setRestartPrompt] = useState<{ extensionId: string; kind: 'apply' | 'remove' | 'unavailable' }>()
   const [uninstallConfirmExtensionId, setUninstallConfirmExtensionId] = useState<string>()
+  const [query, setQuery] = useState('')
   const [restarting, setRestarting] = useState(false)
   const [publishItem, setPublishItem] = useState<ArkmeMyExtensionItem>()
   const [publishBusy, setPublishBusy] = useState(false)
@@ -1063,7 +1100,17 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   }
 
   const updateCount = updates.filter(item => item.update_available || item.revoked).length
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const matchesQuery = (name: string, description: string) => normalizedQuery === ''
+    || name.toLocaleLowerCase().includes(normalizedQuery)
+    || description.toLocaleLowerCase().includes(normalizedQuery)
   const visibleItems = mergeExtensionDiscoverItems(discoverItems, publishedItems)
+    .filter(item => matchesQuery(item.name, item.description))
+  const visibleInstalled = installed.filter(item => matchesQuery(item.manifest.name, item.manifest.description))
+  const visibleUpdates = updates.filter(item => {
+    const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
+    return matchesQuery(local?.manifest.name ?? item.extension_id, local?.manifest.description ?? '')
+  })
   const iconRefFor = (extensionId: string): string | undefined => discoverItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? publishedItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? myExtensions.find(item => item.published?.extensionId === extensionId)?.published?.iconRef
@@ -1100,10 +1147,28 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting, shareDialogExtensionId])
 
-  const dialog = <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-  <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-center-title">
-  <div style={styles.shell} aria-label="Arkme 扩展市场">
-    <header style={styles.header}>
+  const dialog = <div
+    style={embedded ? styles.embeddedFrame : styles.backdrop}
+    onMouseDown={event => { if (!embedded && event.target === event.currentTarget) onClose() }}
+  >
+  <section
+    style={embedded ? styles.embeddedDialog : styles.dialog}
+    role={embedded ? 'region' : 'dialog'}
+    aria-modal={embedded ? undefined : true}
+    aria-labelledby="arkme-extension-center-title"
+  >
+  <div style={{ ...styles.shell, ...(embedded ? styles.embeddedShell : {}) }} aria-label="Arkme 扩展市场">
+    <header style={{ ...styles.header, ...(embedded ? styles.embeddedHeader : {}) }}>
+      {embedded ? <>
+        <div style={styles.embeddedHeaderCopy}>
+          <p style={styles.eyebrow}>插件</p>
+          <h1 id="arkme-extension-center-title" style={styles.embeddedTitle}>扩展 Arkme 的能力</h1>
+          <span style={styles.embeddedSubtitle}>安装后直接告诉 Arkme 你想完成什么。</span>
+        </div>
+        <button type="button" style={styles.mineButton} onClick={() => { switchTab(tab === 'installed' ? 'discover' : 'installed') }}>
+          {tab === 'installed' ? '发现插件' : '我的插件'}
+        </button>
+      </> : <>
       <h2 id="arkme-extension-center-title" style={styles.title}>扩展市场</h2>
       {detail?.share !== undefined && <button
         type="button"
@@ -1116,9 +1181,13 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
         onClick={onClose}
         onMouseEnter={event => { event.currentTarget.style.background = colors.hover }}
         onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
-      ><CloseIcon /></button>
+      ><CloseIcon /></button></>}
     </header>
-    <nav style={styles.tabs} role="tablist" aria-label="扩展市场分类">
+    {embedded && <label style={styles.search}>
+      <MagnifyingGlass size={16} aria-hidden />
+      <input style={styles.searchInput} value={query} placeholder="搜索插件" aria-label="搜索插件" onChange={event => { setQuery(event.target.value) }} />
+    </label>}
+    {!embedded && <nav style={styles.tabs} role="tablist" aria-label="扩展市场分类">
       {(Object.keys(TAB_LABELS) as Tab[]).map(value => <button
         key={value} type="button" role="tab" aria-selected={tab === value}
         style={{ ...styles.tab, ...(tab === value ? styles.activeTab : {}) }}
@@ -1129,8 +1198,8 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
           {value === 'updates' && updateCount > 0 && <span style={styles.count}>{updateCount}</span>}
         </span>
       </button>)}
-    </nav>
-    <main style={styles.list}>
+    </nav>}
+    <main style={{ ...styles.list, ...(embedded ? styles.embeddedList : {}) }}>
       {error !== '' && <div style={styles.error}>{error}</div>}
       {installError !== '' && <div style={styles.error}>{installError}</div>}
       {installTask !== undefined && !installTask.done && <div style={styles.installStatus} role="status">
@@ -1227,6 +1296,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
           return <ExtensionCard
             key={item.extension_id}
             item={item}
+            grid={embedded}
             {...(local === undefined || action.label === '更新' ? { actionLabel: action.label } : {})}
             {...(local === undefined ? {} : { installed: local })}
             installTask={installTask?.extensionId === item.extension_id ? installTask : undefined}
@@ -1280,18 +1350,21 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
         {myExtensions.length === 0 && <EmptyState tab="mine" />}
       </>}
       {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'installed' && <>
-        {installed.map(item => <ExtensionCard
+        {visibleInstalled.map(item => <ExtensionCard
           key={item.extensionId}
           item={installedExtensionCatalogItem(item, iconRefFor(item.extensionId))}
           installed={item}
+          grid={embedded}
+          status={item.active ? '已加载' : '已安装，尚未加载'}
+          statusColor={item.active ? colors.accent : colors.warning}
           actionBusy={actionBusyExtensionId === item.extensionId}
           onClick={() => { void inspect(item.extensionId) }}
           onToggle={enabled => { void toggleEnabled(item.extensionId, enabled) }}
         />)}
-        {installed.length === 0 && <EmptyState tab="installed" />}
+        {visibleInstalled.length === 0 && <EmptyState tab="installed" />}
       </>}
       {!busy && error === '' && sharedDetail === undefined && detail === undefined && tab === 'updates' && <>
-        {updates.map(item => {
+        {visibleUpdates.map(item => {
           const local = installed.find(installedItem => installedItem.extensionId === item.extension_id)
           const catalogItem = local === undefined
             ? { extension_id: item.extension_id, name: item.extension_id, description: '', visibility: 'private' as const }
@@ -1301,6 +1374,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
           return <ExtensionCard
             key={item.extension_id}
             item={catalogItem}
+            grid={embedded}
             {...(local === undefined ? {} : { installed: local })}
             {...(item.update_available && !item.revoked ? { actionLabel: '更新' } : {})}
             {...(updateStatus === undefined ? {} : { status: updateStatus, statusColor: colors.danger })}
@@ -1318,7 +1392,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
             onResume={() => { void controlInstall('extensions.install.resume') }}
           />
         })}
-        {updates.length === 0 && <EmptyState tab="updates" />}
+        {visibleUpdates.length === 0 && <EmptyState tab="updates" />}
       </>}
     </main>
     {restartPrompt !== undefined && <ArkmeExtensionRestartDialog
@@ -1352,7 +1426,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, shareRef
   </section>
   </div>
 
-  if (typeof document === 'undefined') return dialog
+  if (embedded || typeof document === 'undefined') return dialog
   return createPortal(dialog, document.body)
 }
 

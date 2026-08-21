@@ -29,9 +29,11 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(markup).toContain('>21<')
     expect(markup).toContain('>41<')
     expect(cell.get('display')).toBe('grid')
-    expect(cell.get('grid-template-rows')).toBe('28px 20px')
-    expect(cell.get('height')).toBe('58px')
-    expect(cell.get('border-color')).toBe('var(--dsw-alias-state-success-primary, #09b83e)')
+    expect(cell.get('align-content')).toBe('center')
+    expect(cell.get('gap')).toBe('3px')
+    expect(cell.get('height')).toBe('45px')
+    expect(cell.get('border-color')).toBe('var(--dsw-alias-button-primary-fill, #17191c)')
+    expect(cell.get('background')).toBe('var(--dsw-alias-button-primary-fill, #17191c)')
   })
 
   it('does not show a numeric marker for empty days', () => {

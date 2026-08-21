@@ -64,9 +64,9 @@ const styles: Record<string, CSSProperties> = {
     background: 'var(--dsw-alias-label-primary, #292929)', color: '#fff', font: 'inherit', fontSize: 12,
     fontWeight: 600, cursor: 'pointer',
   },
-  notice: { marginTop: 10, color: 'var(--dsw-alias-state-success-primary, #09b83e)', fontSize: 11, lineHeight: '17px' },
+  notice: { marginTop: 10, color: 'var(--dsw-alias-state-business-primary, #8295e8)', fontSize: 11, lineHeight: '17px' },
   sourceLink: {
-    color: 'var(--dsw-alias-state-success-primary, #09b83e)', fontSize: 12, lineHeight: '18px',
+    color: 'var(--dsw-alias-state-business-primary, #8295e8)', fontSize: 12, lineHeight: '18px',
     fontWeight: 600, textDecoration: 'none', wordBreak: 'break-word',
   },
 }

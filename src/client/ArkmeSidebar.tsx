@@ -13,7 +13,7 @@ import type {
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
-import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
+import { ArkmeSourceAvatar, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { ArkmeGroupChatControls } from './ArkmeGroupChatControls.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
@@ -33,6 +33,9 @@ import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution,
 } from './ArkmeTopicDirectoryPopover.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
+import { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
@@ -57,6 +60,8 @@ import { isArkmeSelfWorkspaceSource } from './source-list.js'
 export interface ArkmeSurfaceProps {
   floating?: boolean
   initialAuth?: ArkmeAuthSnapshot | undefined
+  currentSessionId?: string | undefined
+  renderSlot?: ArkmeNavigationProps['renderSlot']
 }
 
 export type ArkmeAuthView = 'login' | 'content'
@@ -106,79 +111,92 @@ const colors = {
 const styles: Record<string, CSSProperties> = {
   surface: {
     position: 'relative', overflow: 'hidden', width: '100%', height: '100%', minWidth: 0,
-    display: 'flex', background: colors.panel, color: colors.text,
+    display: 'flex', background: '#ffffff', color: colors.text,
   },
-  floatingSurface: { background: 'transparent' },
-  panel: { width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
+  compactSurface: { flexDirection: 'column' },
+  floatingSurface: { background: '#ffffff' },
+  directoryPane: {
+    width: 300, minWidth: 300, height: '100%', minHeight: 0, flex: 'none', overflow: 'hidden',
+    borderRight: `1px solid ${colors.border}`, background: '#ffffff', boxSizing: 'border-box',
+  },
+  compactDirectoryPane: {
+    width: '100%', minWidth: 0, height: 'min(292px, 36vh)', flex: 'none',
+    borderRight: 0, borderBottom: `1px solid ${colors.border}`,
+  },
+  panel: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
   header: {
-    flex: 'none', height: ARKME_CONVERSATION_HEADER_HEIGHT, display: 'flex', alignItems: 'center', padding: '12px 64px 12px 20px',
+    flex: 'none', height: 68, display: 'flex', alignItems: 'center', padding: '12px 16px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
   },
-  titleGroup: { minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 4 },
-  titleBlock: { flex: 1, minWidth: 0, padding: '2px 8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
-  title: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  titleGroup: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' },
+  headerAvatar: { flex: 'none', display: 'grid', placeItems: 'center', marginRight: 6 },
+  titleBlock: { flex: '0 1 auto', minWidth: 0, maxWidth: '100%', padding: '2px 0', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  titleLine: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
+  title: { flex: '0 1 auto', minWidth: 0, margin: 0, fontSize: 15, lineHeight: '21px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   headerSubtitle: { color: colors.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  titleMuteIcon: { flex: 'none', display: 'inline-flex', color: colors.secondary },
+  titleMuteIcon: { width: 16, height: 16, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
   headerActions: { position: 'relative', marginLeft: 'auto', flex: 'none' },
   moreButton: { width: 36, height: 32, border: 0, borderRadius: 9, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 17, letterSpacing: 2 },
   popover: { position: 'absolute', zIndex: 40, top: 38, right: 0, width: 150, padding: 6, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.12)' },
   menuItem: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, border: 0, borderRadius: 8, padding: '9px 10px', background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13 },
-  body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 32px 24px' },
+  body: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', padding: '22px 22px 12px', background: arkmeTheme.base },
+  utilityBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
   error: { padding: '10px 12px', borderRadius: 9, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
-  records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
-  date: { alignSelf: 'center', padding: '4px 9px', borderRadius: 999, color: arkmeTheme.tertiary, fontSize: 12, background: arkmeTheme.subtle },
-  row: { width: '100%', display: 'flex' },
+  records: { width: '100%', minWidth: 0, listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 0 },
+  date: { alignSelf: 'center', marginBottom: 18, color: arkmeTheme.caption, fontSize: 10 },
+  row: { width: '100%', minWidth: 0, display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
   rowOther: { justifyContent: 'flex-start' },
-  messageLine: { maxWidth: '88%', display: 'flex', alignItems: 'flex-start', gap: 9 },
+  messageLine: { maxWidth: '100%', display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 23 },
   messageLineMe: { flexDirection: 'row-reverse' },
   forwardMessageLine: { width: '88%' },
-  messageBody: { minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 },
+  messageBody: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7 },
   messageBodyMe: { alignItems: 'flex-end' },
   forwardMessageBody: { flex: 1 },
   messageAvatar: {
-    width: 32, height: 32, flex: 'none', overflow: 'hidden', borderRadius: 999,
+    width: 38, height: 38, flex: 'none', overflow: 'hidden', borderRadius: 999,
     display: 'grid', placeItems: 'center', background: 'transparent', color: arkmeTheme.secondary, fontSize: 11, fontWeight: 600,
   },
   messageAvatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
-  sender: { color: colors.secondary, fontSize: 11 },
+  sender: { color: colors.text, fontSize: 12, fontWeight: 600 },
+  messageHeader: { display: 'flex', alignItems: 'center', gap: 7 },
   agentSource: {
     marginTop: 4, maxWidth: '100%', display: 'inline-flex', alignItems: 'center', gap: 2,
     color: colors.secondary, fontSize: 12, lineHeight: '14.4px', fontWeight: 400,
   },
   agentSourceIcon: { flex: 'none', width: 12, height: 12, display: 'grid', placeItems: 'center', overflow: 'hidden' },
   agentSourceText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 22, boxSizing: 'border-box', cursor: 'pointer' },
-  bubbleMe: { background: arkmeTheme.messageOwn, '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
+  bubble: { maxWidth: 600, minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box', cursor: 'pointer', border: '1px solid rgba(29,32,40,.035)' },
+  bubbleMe: { background: arkmeTheme.messageOwn, borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
   bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
   forwardBubble: { width: '100%', maxWidth: 400, minWidth: 0, padding: 0, borderRadius: 0, background: 'transparent' },
-  text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
-  meta: { color: arkmeTheme.caption, fontSize: 11 },
+  text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, lineHeight: '20px' },
+  meta: { color: arkmeTheme.caption, fontSize: 10 },
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
   retry: { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', fontSize: 11 },
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
-  composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
+  composer: { flex: 'none', display: 'flex', justifyContent: 'stretch', padding: '0 24px 20px', background: '#fff' },
   composerInner: {
-    position: 'relative', width: 'min(780px,100%)', overflow: 'visible', boxSizing: 'border-box',
-    display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
-    border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 22,
+    position: 'relative', width: '100%', overflow: 'visible', boxSizing: 'border-box',
+    display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 13px 9px',
+    border: `1px solid ${colors.border}`, borderRadius: 15,
     background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
   },
   textarea: {
-    width: '100%', minHeight: 28, maxHeight: 336, resize: 'none', overflowY: 'auto',
-    boxSizing: 'border-box', border: 0, outline: 0, padding: '4px 12px 0 16px',
+    width: '100%', minHeight: 38, maxHeight: 336, resize: 'none', overflowY: 'auto',
+    boxSizing: 'border-box', border: 0, outline: 0, padding: 0,
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
-    fontFamily: 'var(--dsw-font-family, inherit)', fontSize: 16, lineHeight: '24px',
+    fontFamily: 'var(--dsw-font-family, inherit)', fontSize: 13, lineHeight: '21px',
     whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere',
     caretColor: 'var(--dsw-alias-state-business-primary, #3964fe)',
   },
   tools: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', minWidth: 0,
-    padding: '2px 8px 6px',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, minWidth: 0,
+    padding: 0,
   },
-  plus: { width: 32, height: 32, border: 0, borderRadius: 999, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 24, lineHeight: '30px' },
+  plus: { width: 34, height: 34, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 22, lineHeight: '30px' },
   addMenu: { position: 'absolute', left: 0, bottom: 54, zIndex: 20, width: 210, padding: '6px 0', borderRadius: 12, border: `1px solid ${colors.border}`, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.15)' },
   addMenuItem: { width: '100%', border: 0, padding: '11px 14px', display: 'flex', alignItems: 'center', gap: 10, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 14, textAlign: 'left' },
   menuDivider: { height: 1, margin: '4px 0', background: colors.border },
@@ -186,7 +204,7 @@ const styles: Record<string, CSSProperties> = {
   uploadStatus: { padding: '0 14px', color: colors.secondary, fontSize: 12 },
   send: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 999, background: 'var(--dsw-alias-button-info-fill, #3964fe)',
+    border: 0, borderRadius: 9, background: '#171923',
     color: arkmeTheme.foreground, cursor: 'pointer', transform: 'translateY(-2px)', transition: 'background-color 100ms ease',
   },
   drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 10, width: 'min(420px, 92%)', display: 'flex', flexDirection: 'column', background: colors.panel, borderLeft: `1px solid ${colors.border}`, boxShadow: '-12px 0 30px rgba(0,0,0,.12)' },
@@ -446,7 +464,7 @@ function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineItem; onCl
   </aside>
 }
 
-export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProps = {}) {
+export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, renderSlot }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authStoreSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -470,7 +488,8 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   )
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
-  const selectedSource = ui.mode === 'source' ? ui.selectedSource : undefined
+  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'calendar'
+  const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
   const [selfBreadcrumbTrail, setSelfBreadcrumbTrail] = useState<ArkmeSourceItem[]>([])
@@ -492,7 +511,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       accountChanged ? [] : current, selectedSource, selfSources,
     ))
   }, [authenticatedUserId, selectedSource, selfSources])
-  const source = ui.mode === 'source' ? selectedSource ?? aggregateSource : undefined
+  const source = conversationBackdropVisible ? selectedSource ?? aggregateSource : undefined
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
   useSyncExternalStore(
     arkmeComposerDraftStore.subscribe,
@@ -502,6 +521,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const composerDraft = arkmeComposerDraftStore.get(composerDraftKey)
   const draft = composerDraft.text
   const attachments = composerDraft.attachments
+  const surfaceRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -526,6 +546,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<{ key: string; message: string }>()
   const [busy, setBusy] = useState(false)
+  const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? '请先绑定手机号，再继续使用 Arkme' : '')
@@ -606,6 +627,16 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
       document.removeEventListener('keydown', closeFromKeyboard)
     }
   }, [relatedMenuOpen])
+
+  useEffect(() => {
+    const element = surfaceRef.current
+    if (element === null || typeof ResizeObserver === 'undefined') return
+    const update = () => { setCompactNavigation(element.getBoundingClientRect().width < 720) }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => { observer.disconnect() }
+  }, [])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot) => {
     const previous = arkmeAuthStore.getSnapshot().auth
@@ -1321,19 +1352,53 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
     : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
-    : ui.mode === 'calendar' ? '日历'
     : ui.mode === 'search' ? '搜索'
+    : ui.mode === 'extensions' ? '插件'
     : ui.mode === 'arko' ? 'Arko'
-    : ui.mode === 'source' ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
+    : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
+  const utilityContentVisible = authView === 'content'
+    && (ui.mode === 'recordings' || ui.mode === 'search' || ui.mode === 'extensions')
 
   return (
-    <div style={{ ...styles.surface, ...(floating ? styles.floatingSurface : {}) }}>
+    <div
+      ref={surfaceRef}
+      data-arkme-owned="product-surface"
+      style={{
+        ...styles.surface,
+        ...(floating ? styles.floatingSurface : {}),
+        ...(compactNavigation ? styles.compactSurface : {}),
+      }}
+    >
+      {authView === 'content' && <ArkmeProductNavigation
+        compact={compactNavigation}
+        currentSessionId={currentSessionId}
+      />}
+      {authView === 'content' && (conversationBackdropVisible || ui.mode === 'arko') && <aside
+        data-arkme-owned="directory-pane"
+        style={{ ...styles.directoryPane, ...(compactNavigation ? styles.compactDirectoryPane : {}) }}
+        aria-label="Arkme 对话目录"
+      >
+        <ArkmeNavigation
+          currentSessionId={currentSessionId}
+          embeddedProductShell
+          onActivateSurface={() => { arkmeUi.activateSurface() }}
+          {...(renderSlot === undefined ? {} : { renderSlot })}
+        />
+      </aside>}
       <section ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
-        {!arkoContentVisible && <header style={styles.header}>
+        {!arkoContentVisible && !utilityContentVisible && <header style={styles.header}>
+          {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
+            <ArkmeSourceAvatar
+              size={34}
+              {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
+              {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
+              {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
+            />
+          </span>}
           <div style={styles.titleGroup}>
-            {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
+            {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
               ? <ArkmeSourceBreadcrumb
                 trail={selfBreadcrumbTrail}
                 sources={selfSources}
@@ -1341,14 +1406,18 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
                 onSelectAggregate={activateSendToSelf}
               />
               : <div style={styles.titleBlock}>
-                <h2 style={styles.title}>{surfaceTitle}</h2>
-                {authenticated && ui.mode === 'source' && source?.kind === 'group_chat'
+                <span style={styles.titleLine}>
+                  <h2 style={styles.title}>{surfaceTitle}</h2>
+                  {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
+                </span>
+                {authenticated && conversationBackdropVisible && source?.kind === 'group_chat'
                   && aiPolishSettings?.enabled === true
                   && <span style={styles.headerSubtitle}>AI润色已开启</span>}
               </div>}
-            {source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon /></span>}
+            {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
+              && source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
           </div>
-          {authenticated && ui.mode === 'source' && isArkmeSelfWorkspaceSource(selectedSource)
+          {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
             && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
               key={auth.userId}
               userId={auth.userId}
@@ -1358,12 +1427,12 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               onSelfSourcesResolution={acceptSelfSourcesResolution}
               retryRevision={selfSourcesRetryRevision}
             />}
-          {authenticated && ui.mode === 'source' && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
+          {authenticated && conversationBackdropVisible && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}
             assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
           />}
-          {authenticated && ui.mode === 'source' && source?.kind === 'group_chat' && <ArkmeGroupChatControls
+          {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <ArkmeGroupChatControls
             source={source}
             overlayHostRef={panelRef}
             onSourceActivated={activateSource}
@@ -1403,8 +1472,12 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
-          : ui.mode === 'calendar' ? <ArkmeCalendarSurface />
-          : ui.mode === 'search' ? <div style={styles.body}><ArkmeSearchSurface /></div>
+          : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface /></div>
+          : ui.mode === 'extensions' ? <div style={styles.utilityBody}><ArkmeExtensionCenter
+            embedded
+            currentSessionId={currentSessionId}
+            onClose={() => { arkmeUi.showConversations() }}
+          /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'
@@ -1450,7 +1523,10 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
                         ...(item.isMe ? styles.messageBodyMe : {}),
                         ...(item.forwardRecords === undefined ? {} : styles.forwardMessageBody),
                       }}>
-                        {!item.isMe && <span style={styles.sender}>{item.senderName}</span>}
+                        <span style={styles.messageHeader}>
+                          <span style={styles.sender}>{item.senderName}</span>
+                          <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
+                        </span>
                         <div
                           role="button"
                           tabIndex={0}
@@ -1495,7 +1571,6 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
                         />
                           <ArkmeTimelineAgentSourceBadge item={item} />
                         </div>
-                        <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
                       </div>
                     </div>
                   </li>
@@ -1537,11 +1612,11 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
               onMouseDown={event => { event.preventDefault() }}
               onMouseEnter={event => {
                 if (!event.currentTarget.disabled) {
-                  event.currentTarget.style.background = 'var(--dsw-alias-button-info-hover, #2f57df)'
+                  event.currentTarget.style.background = '#262936'
                 }
               }}
               onMouseLeave={event => {
-                event.currentTarget.style.background = 'var(--dsw-alias-button-info-fill, #3964fe)'
+                event.currentTarget.style.background = '#171923'
               }}
               onClick={() => { void send() }}
             >
@@ -1585,6 +1660,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           </div>
         </aside>}
       </section>
+      {authView === 'content' && ui.mode === 'calendar' && <ArkmeCalendarSurface />}
       {relatedPanelOpen && source?.kind === 'private_chat' && <RelatedRecordingsPanel
         contactName={source.displayName}
         state={relatedState}

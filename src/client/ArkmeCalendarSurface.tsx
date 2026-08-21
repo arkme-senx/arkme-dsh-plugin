@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeCalendarBucketDay,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordItem,
+  ArkmeUserProfile,
+  ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { arkmeUi } from './ui-controller.js'
 
 const colors = {
   text: arkmeTheme.text,
@@ -16,85 +23,113 @@ const colors = {
   border: arkmeTheme.border,
   borderSoft: arkmeTheme.borderSoft,
   panel: arkmeTheme.base,
-  layer: arkmeTheme.layer1,
-  accent: arkmeTheme.accent,
-  accentSoft: arkmeTheme.accentSoft,
+  bubble: '#eef1f8',
+  selected: arkmeTheme.primaryAction,
+  selectedText: arkmeTheme.onPrimaryAction,
   danger: arkmeTheme.danger,
 }
 
 const styles: Record<string, CSSProperties> = {
   root: {
-    width: '100%', height: '100%', minHeight: 0, overflow: 'auto',
-    padding: 24, boxSizing: 'border-box', background: colors.panel, color: colors.text,
+    position: 'absolute', inset: 0, zIndex: 14, minWidth: 0, minHeight: 0,
+    overflow: 'hidden', color: colors.text, pointerEvents: 'none',
+  },
+  backdrop: {
+    position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%', padding: 0,
+    border: 0, background: 'rgba(245, 245, 247, .08)', backdropFilter: 'blur(.6px)',
+    WebkitBackdropFilter: 'blur(.6px)', cursor: 'default', pointerEvents: 'auto',
   },
   layout: {
-    width: 'min(940px, 100%)', minHeight: '100%', margin: '0 auto',
-    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))',
-    gap: 22, alignItems: 'start',
+    position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none',
   },
   calendarCard: {
-    position: 'relative', width: '100%', padding: '18px 28px 30px', boxSizing: 'border-box',
-    border: `1px solid ${colors.borderSoft}`, borderRadius: 22, background: colors.panel,
-    boxShadow: arkmeTheme.shadow,
+    position: 'absolute', top: 191, left: 105, width: 354, padding: '16px 17px 18px',
+    boxSizing: 'border-box', pointerEvents: 'auto', border: '1px solid rgba(216,217,221,.9)',
+    borderRadius: 18, background: 'rgba(255,255,255,.98)',
+    boxShadow: '0 22px 52px rgba(27,29,37,.14), 0 2px 8px rgba(27,29,37,.055)',
   },
-  header: { height: 40, display: 'flex', alignItems: 'center', gap: 12 },
-  navButton: {
-    width: 36, height: 36, flex: 'none', display: 'grid', placeItems: 'center',
-    padding: 0, border: 0, borderRadius: 10, background: colors.layer, color: colors.secondary,
-    cursor: 'pointer', font: 'inherit', fontSize: 28, lineHeight: 1,
+  calendarPointer: {
+    position: 'absolute', top: 124, left: -7, width: 13, height: 13,
+    transform: 'rotate(45deg)', background: '#fff',
+    borderBottom: '1px solid #dfe0e3', borderLeft: '1px solid #dfe0e3',
   },
-  navDisabled: { opacity: 0.38, cursor: 'default' },
-  monthTitle: { margin: '0 0 0 8px', flex: 1, fontSize: 20, lineHeight: '30px', fontWeight: 600 },
+  header: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
+  iconButton: {
+    width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
+    border: 0, borderRadius: 8, background: 'transparent', color: '#777b84',
+    cursor: 'pointer', font: 'inherit', lineHeight: 1,
+  },
+  navDisabled: { opacity: .32, cursor: 'default' },
+  caretLeft: { transform: 'rotate(180deg)' },
+  monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   todayButton: {
-    height: 30, flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 4,
-    padding: '0 6px', border: 0, borderRadius: 8, background: 'transparent',
-    color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 500,
+    width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0,
+    borderRadius: 8, background: 'transparent', color: '#747984', cursor: 'pointer',
+    font: 'inherit', fontSize: 11, fontWeight: 400,
   },
-  todayDisabled: { color: colors.caption, opacity: 0.48, cursor: 'default' },
+  todayDisabled: { color: colors.caption, opacity: .45, cursor: 'default' },
   week: {
-    marginTop: 24, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-    columnGap: 12,
+    height: 32, marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+    alignItems: 'center',
   },
-  weekDay: { height: 24, textAlign: 'center', color: colors.tertiary, fontSize: 14, lineHeight: '24px', fontWeight: 500 },
+  weekDay: {
+    textAlign: 'center', color: '#9a9da5', fontSize: 10, lineHeight: '16px', fontWeight: 400,
+  },
   days: {
-    marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-    gap: '14px 12px',
+    display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4,
   },
-  blank: { height: 58 },
+  blank: { height: 45 },
   dayButton: {
-    height: 58, minWidth: 0, display: 'grid', gridTemplateRows: '28px 20px', placeItems: 'center',
-    padding: 0, border: '1px solid transparent', borderRadius: 13, background: 'transparent',
-    color: colors.secondary, cursor: 'pointer', font: 'inherit', boxSizing: 'border-box',
+    height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
+    padding: 0, border: '1px solid transparent', borderRadius: 11,
+    background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit',
+    boxSizing: 'border-box', transition: 'background 120ms ease, color 120ms ease',
   },
-  dayDisabled: { color: colors.caption, cursor: 'default' },
-  daySelected: { borderColor: colors.accent, background: colors.accentSoft, color: colors.accent },
-  dayNumber: { gridRow: 1, fontSize: 20, lineHeight: '28px', fontWeight: 600 },
-  dayCount: { gridRow: 2, minHeight: 20, color: colors.accent, fontSize: 14, lineHeight: '20px', fontWeight: 500 },
-  status: { marginTop: 14, minHeight: 20, color: colors.secondary, fontSize: 13, lineHeight: '20px' },
+  dayDisabled: { color: colors.caption, opacity: .4, cursor: 'default' },
+  daySelected: {
+    borderColor: colors.selected, background: colors.selected, color: colors.selectedText,
+  },
+  dayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
+  dayCount: { height: 9, color: '#8b91a1', fontSize: 9, lineHeight: '9px', fontWeight: 400 },
+  dayCountPopulated: { minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878' },
+  selectedDayCount: { color: colors.selectedText, opacity: .8 },
+  status: { marginTop: 10, minHeight: 18, color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   error: { color: colors.danger },
   recordsPanel: {
-    minWidth: 0, minHeight: 420, display: 'flex', flexDirection: 'column',
-    borderLeft: `1px solid ${colors.border}`, paddingLeft: 22, boxSizing: 'border-box',
+    position: 'absolute', top: 0, right: 0, bottom: 0, width: 394, minWidth: 0, minHeight: 0,
+    display: 'flex', flexDirection: 'column', padding: '28px 22px', boxSizing: 'border-box',
+    overflow: 'hidden', pointerEvents: 'auto', borderLeft: '1px solid rgba(225,225,228,.9)',
+    background: 'rgba(255,255,255,.98)', boxShadow: '-18px 0 52px rgba(28,30,37,.09)',
   },
-  recordsHeader: { flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 40 },
-  recordsTitle: { margin: 0, fontSize: 16, lineHeight: '24px', fontWeight: 600 },
-  recordsMeta: { color: colors.tertiary, fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap' },
-  list: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', marginTop: 10 },
+  recordsHeader: {
+    flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  },
+  recordsTitle: { margin: 0, flex: 1, fontSize: 18, lineHeight: '28px', fontWeight: 600, letterSpacing: '-.025em', whiteSpace: 'nowrap' },
+  list: { flex: 1, minHeight: 0, maxHeight: 'calc(100% - 72px)', margin: '28px -4px 0', padding: '2px 4px 18px', overflowY: 'auto' },
   recordRow: {
-    width: '100%', minWidth: 0, padding: '12px 0', border: 0, borderBottom: `1px solid ${colors.borderSoft}`,
-    background: 'transparent', color: 'inherit', textAlign: 'left', font: 'inherit',
+    width: '100%', minWidth: 0, marginBottom: 16, display: 'flex', alignItems: 'flex-start',
+    justifyContent: 'flex-end', gap: 8, color: 'inherit', font: 'inherit', boxSizing: 'border-box',
   },
-  recordTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '21px', fontWeight: 600 },
+  recordStack: { width: 'auto', minWidth: 0, maxWidth: 282, flex: '0 1 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
+  recordHeader: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 7, marginBottom: 5 },
+  recordTitle: {
+    margin: 0, color: '#4f535c', fontSize: 12, lineHeight: '18px', fontWeight: 500,
+  },
+  recordTime: { flex: 'none', color: '#a0a3aa', fontSize: 11, lineHeight: '18px' },
+  recordBubble: { maxWidth: '100%', padding: '11px 12px 9px', border: '1px solid rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', background: colors.bubble, color: '#292c34', boxShadow: '0 1px 1px rgba(20,22,28,.015)' },
   recordText: {
-    margin: '5px 0 0', display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 3,
-    WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: colors.secondary,
-    fontSize: 13, lineHeight: '20px',
+    margin: 0, display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 5,
+    WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: '#292c34',
+    fontSize: 12, lineHeight: '19.44px',
   },
-  recordMeta: { display: 'block', marginTop: 6, color: colors.caption, fontSize: 11, lineHeight: '16px' },
+  recordSource: { display: 'block', marginTop: 8, color: '#858b99', fontSize: 9, lineHeight: '14px', textAlign: 'right' },
+  emptyDay: { marginTop: 92, display: 'grid', justifyItems: 'center', textAlign: 'center', color: '#6d727b' },
+  emptyIcon: { marginBottom: 14, color: '#747b8a' },
   loadMore: {
-    alignSelf: 'center', marginTop: 14, minWidth: 96, height: 32, padding: '0 14px',
-    border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel,
-    color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 13,
+    alignSelf: 'center', marginTop: 4, minWidth: 92, height: 30, padding: '0 12px',
+    border: `1px solid ${colors.border}`, borderRadius: 9, background: colors.panel,
+    color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12,
   },
 }
 
@@ -123,11 +158,16 @@ function dateKey(date: Date): string {
 }
 
 function monthLabel(date: Date): string {
-  return `${String(date.getFullYear())}年${String(date.getMonth() + 1).padStart(2, '0')}月`
+  return `${String(date.getFullYear())}年${String(date.getMonth() + 1)}月`
 }
 
-function dayLabel(date: Date): string {
-  return `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日`
+function sameDay(left: Date, right: Date): boolean {
+  return dateKey(left) === dateKey(right)
+}
+
+function selectedDayLabel(date: Date, today: Date): string {
+  const suffix = sameDay(date, today) ? ' · 今天' : ''
+  return `${monthLabel(date)}${String(date.getDate())}日${suffix}`
 }
 
 function timeLabel(value: number): string {
@@ -150,11 +190,27 @@ function sameMonth(left: Date, right: Date): boolean {
   return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth()
 }
 
-function RecordRow({ item }: { item: ArkmeCalendarRecordItem }) {
+function sourceLabel(item: ArkmeCalendarRecordItem): string {
+  if (item.topicTitle) return item.topicTitle
+  if (item.sourceKind === 'self') return '发给自己'
+  if (item.sourceKind === 'chat') return '聊天记录'
+  if (item.sourceKind === 'topic') return '话题记录'
+  return 'Arkme 记录'
+}
+
+function RecordRow({ item, avatarRef }: { item: ArkmeCalendarRecordItem; avatarRef?: string }) {
   return <article style={styles.recordRow}>
-    <h3 style={styles.recordTitle}>{item.title || item.preview}</h3>
-    <p style={styles.recordText}>{item.textContent || item.preview}</p>
-    <span style={styles.recordMeta}>{[timeLabel(item.sendAtMillis), item.topicTitle].filter(Boolean).join(' · ')}</span>
+    <div style={styles.recordStack}>
+      <div style={styles.recordHeader}>
+        <h3 style={styles.recordTitle}>你</h3>
+        <time style={styles.recordTime}>{timeLabel(item.sendAtMillis)}</time>
+      </div>
+      <div style={styles.recordBubble}>
+        <p style={styles.recordText}>{item.textContent || item.preview || '无文字内容'}</p>
+        <span style={styles.recordSource}>{sourceLabel(item)}</span>
+      </div>
+    </div>
+    <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label="当前用户头像" />
   </article>
 }
 
@@ -180,7 +236,7 @@ export function ArkmeCalendarCell({
     onClick={onClick}
   >
     <span style={styles.dayNumber}>{date.getDate()}</span>
-    <span style={styles.dayCount}>{count > 0 ? count : ''}</span>
+    <span style={{ ...styles.dayCount, ...(count > 0 && !selected ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? count : ''}</span>
   </button>
 }
 
@@ -189,6 +245,7 @@ export function ArkmeCalendarSurface() {
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
   const [selectedDate, setSelectedDate] = useState(today)
+  const [detailsOpen, setDetailsOpen] = useState(true)
   const [calendar, setCalendar] = useState<ArkmeCalendarBucketPage>()
   const [records, setRecords] = useState<ArkmeCalendarDayRecordPage>()
   const [calendarLoading, setCalendarLoading] = useState(true)
@@ -196,6 +253,19 @@ export function ArkmeCalendarSurface() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [calendarError, setCalendarError] = useState('')
   const [recordsError, setRecordsError] = useState('')
+  const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const controller = new AbortController()
+    void callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal)
+      .then(async snapshot => snapshot.profile === null
+        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
+        : snapshot)
+      .then(snapshot => { if (active) setUserProfile(snapshot.profile) })
+      .catch(() => undefined)
+    return () => { active = false; controller.abort() }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -229,13 +299,13 @@ export function ArkmeCalendarSurface() {
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(day => [day.bucketDate, day])), [calendar])
   const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)
-  const canJumpToday = dateKey(selectedDate) !== dateKey(today) || !sameMonth(visibleMonth, today)
-  const selectedMeta = calendarByDay.get(dateKey(selectedDate))
+  const canJumpToday = !sameDay(selectedDate, today) || !sameMonth(visibleMonth, today)
   const recordItems = records?.items ?? []
 
   const chooseDate = (date: Date) => {
     const normalized = startOfLocalDay(date)
     setSelectedDate(normalized)
+    setDetailsOpen(true)
     if (!sameMonth(normalized, visibleMonth)) setVisibleMonth(monthStart(normalized))
   }
 
@@ -260,14 +330,18 @@ export function ArkmeCalendarSurface() {
     }
   }
 
-  return <div style={styles.root}>
+  return <div style={styles.root} aria-label="客户端日历">
+    <button type="button" style={styles.backdrop} aria-label="关闭日历" onClick={() => arkmeUi.showConversations()} />
     <div style={styles.layout}>
-      <section style={styles.calendarCard} aria-label="日历">
+      <section style={styles.calendarCard} aria-label="客户端日历">
+        <span style={styles.calendarPointer} aria-hidden />
         <header style={styles.header}>
-          <button type="button" aria-label="上个月" title="上个月" style={styles.navButton} onClick={() => setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() - 1, 1))}>‹</button>
-          <button type="button" aria-label="下个月" title="下个月" disabled={!canGoNext} style={{ ...styles.navButton, ...(!canGoNext ? styles.navDisabled : {}) }} onClick={() => { if (canGoNext) setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() + 1, 1)) }}>›</button>
+          <div style={styles.navCluster}>
+            <button type="button" aria-label="上个月" title="上个月" style={styles.iconButton} onClick={() => setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() - 1, 1))}><CaretRight size={16} style={styles.caretLeft} aria-hidden /></button>
+            <button type="button" aria-label="下个月" title="下个月" disabled={!canGoNext} style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }} onClick={() => { if (canGoNext) setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() + 1, 1)) }}><CaretRight size={16} aria-hidden /></button>
+          </div>
           <h2 style={styles.monthTitle}>{monthLabel(visibleMonth)}</h2>
-          <button type="button" disabled={!canJumpToday} style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }} onClick={() => { setVisibleMonth(monthStart(today)); setSelectedDate(today) }}>↶ 回到今日</button>
+          <button type="button" disabled={!canJumpToday} style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }} onClick={() => { setVisibleMonth(monthStart(today)); setSelectedDate(today); setDetailsOpen(true) }}>回到今日</button>
         </header>
         <div style={styles.week}>{['一', '二', '三', '四', '五', '六', '日'].map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
         <div style={{ ...styles.days, opacity: calendarLoading ? .55 : 1 }}>
@@ -286,23 +360,26 @@ export function ArkmeCalendarSurface() {
             />
           })}
         </div>
-        <div style={{ ...styles.status, ...(calendarError !== '' ? styles.error : {}) }} role={calendarError !== '' ? 'alert' : 'status'}>
-          {calendarError || (calendarLoading ? '正在加载…' : '')}
-        </div>
+        {(calendarError !== '' || calendarLoading) && <div style={{ ...styles.status, ...(calendarError !== '' ? styles.error : {}) }} role={calendarError !== '' ? 'alert' : 'status'}>
+          {calendarError || '正在加载…'}
+        </div>}
       </section>
-      <section style={styles.recordsPanel} aria-label="当天记录">
+      {detailsOpen && <section style={styles.recordsPanel} aria-label="当天内容">
         <header style={styles.recordsHeader}>
-          <h2 style={styles.recordsTitle}>{dayLabel(selectedDate)}</h2>
-          <span style={styles.recordsMeta}>{selectedMeta?.count ?? recordItems.length} 条</span>
+          <h2 style={styles.recordsTitle}>{selectedDayLabel(selectedDate, today)}</h2>
+          <button type="button" aria-label="关闭当天内容" title="关闭" style={styles.iconButton} onClick={() => setDetailsOpen(false)}><X size={20} aria-hidden /></button>
         </header>
         {recordsError !== '' && <div style={{ ...styles.status, ...styles.error }} role="alert">{recordsError}</div>}
         <div style={styles.list}>
           {recordsLoading ? <div style={styles.status} role="status">正在加载…</div>
-            : recordItems.length === 0 ? <div style={styles.status}>当天暂无记录</div>
-              : recordItems.map(item => <RecordRow key={item.recordUid} item={item} />)}
+            : recordItems.length === 0 ? <div style={styles.emptyDay}>
+              <NotePencil size={23} style={styles.emptyIcon} aria-hidden />
+              <strong>这一天还没有快记</strong>
+            </div>
+              : recordItems.map(item => <RecordRow key={item.recordUid} item={item} {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })} />)}
           {records?.hasMore === true && records.nextCursor !== undefined && <button type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void loadMore() }}>{loadingMore ? '加载中…' : '加载更多'}</button>}
         </div>
-      </section>
+      </section>}
     </div>
   </div>
 }

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ComponentType } from 'react'
+import { readFile } from 'node:fs/promises'
 import type { ArkmeRecordingCalendarDay } from '../src/types.js'
 import * as recordingSurface from '../src/client/ArkmeRecordingSurface.js'
 
@@ -20,28 +21,39 @@ function matchStyle(markup: string, pattern: RegExp): Map<string, string> {
 }
 
 describe('ArkmeRecordingSurface layout', () => {
-  it('widens the desktop calendar column to keep seven cells readable', () => {
-    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
-    const layout = matchStyle(markup, /<div style="([^"]*grid-template-columns:[^"]+)">/)
-
-    expect(layout.get('grid-template-columns')).toBe('320px minmax(0,1fr)')
-  })
-
-  it('keeps page chrome fixed and scrolls only the active tab pane', () => {
+  it('uses the updated Demo two-column recording browser and analysis layout', () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
-    const detail = matchStyle(markup, /<section style="([^"]+)" aria-label="录音详情">/)
-    const pane = matchStyle(markup, /<\/nav><div style="([^"]+)">/)
+
+    expect(root.get('grid-template-columns')).toBe('326px minmax(0,1fr)')
+    expect(markup).toContain('aria-label="上个月"')
+    expect(markup).toContain('aria-label="下个月"')
+    expect(markup).toContain('aria-label="展开整月日历"')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('>展开月历<')
+    expect(markup).toContain('>当天时间轴<')
+    expect(markup).toContain('>转写</button>')
+    expect(markup).toContain('>总结</button>')
+    expect(markup).toContain('>时间轴</button>')
+  })
+
+  it('provides a whole-month calendar expansion with future dates disabled', async () => {
+    const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain("const [calendarExpanded, setCalendarExpanded] = useState(false)")
+    expect(source).toContain('calendarExpanded ? <>')
+    expect(source).toContain("aria-label={calendarExpanded ? '收起整月日历' : '展开整月日历'}")
+    expect(source).toContain('disabled={future}')
+  })
+
+  it('keeps the page fixed and scrolls only the recording analysis pane', async () => {
+    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const root = matchStyle(markup, /^<div style="([^"]+)"/)
+    const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
     expect(root.get('overflow')).toBe('hidden')
-    expect(detail.get('display')).toBe('flex')
-    expect(detail.get('flex-direction')).toBe('column')
-    expect(detail.get('height')).toBe('100%')
-    expect(detail.get('min-height')).toBe('0')
-    expect(pane.get('flex')).toBe('1')
-    expect(pane.get('min-height')).toBe('0')
-    expect(pane.get('overflow-y')).toBe('auto')
-    expect(pane.get('overscroll-behavior')).toBe('contain')
+    expect(source).toContain("pane: { minWidth: 0, minHeight: 0")
+    expect(source).toContain("overflowY: 'auto', overscrollBehavior: 'contain'")
   })
 
   it('shows the complete calendar duration in compact hours', () => {
@@ -74,7 +86,7 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).not.toContain('>1</span>')
   })
 
-  it('reserves fixed rows so dates align whether a duration exists or not', () => {
+  it('keeps compact fixed rows so calendar dates stay aligned', () => {
     type CalendarCellProps = {
       date: Date
       meta: ArkmeRecordingCalendarDay
@@ -99,8 +111,8 @@ describe('ArkmeRecordingSurface layout', () => {
     const cell = matchStyle(markup, /^<button[^>]*style="([^"]+)"/)
 
     expect(cell.get('display')).toBe('grid')
-    expect(cell.get('grid-template-rows')).toBe('24px 12px')
-    expect(cell.get('height')).toBe('54px')
+    expect(cell.get('grid-template-rows')).toBe('18px 18px')
+    expect(cell.get('height')).toBe('53px')
     expect(markup).toContain('grid-row:1;line-height:24px')
   })
 

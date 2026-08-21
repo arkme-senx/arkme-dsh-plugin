@@ -42,7 +42,8 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('checked=""')
     expect(html).toContain('《隐私条款》')
     expect(html).not.toContain('dsh-arkme-login-logo')
-    expect(html).toContain('#09b83e')
+    expect(html).toContain('#8295e8')
+    expect(html).not.toContain('state-success')
     expect(html).not.toContain('#2f80ed')
   })
 

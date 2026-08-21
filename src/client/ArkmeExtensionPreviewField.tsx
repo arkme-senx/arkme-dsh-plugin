@@ -67,6 +67,6 @@ const styles: Record<string, CSSProperties> = {
   grid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 },
   item: { position: 'relative', minWidth: 0 }, frame: { aspectRatio: '16 / 10', overflow: 'hidden', borderRadius: 8, background: '#f3f4f5' },
   image: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' }, placeholder: { height: '100%', display: 'grid', placeItems: 'center', color: '#969ca5', fontSize: 10 },
-  cover: { position: 'absolute', top: 4, left: 4, padding: '1px 5px', borderRadius: 999, background: '#09B83E', color: '#fff', fontSize: 9 },
+  cover: { position: 'absolute', top: 4, left: 4, padding: '1px 5px', borderRadius: 999, background: '#8295E8', color: '#fff', fontSize: 9 },
   actions: { display: 'flex', justifyContent: 'center', gap: 3, marginTop: 4 }, error: { color: '#b42318', fontSize: 11 },
 }

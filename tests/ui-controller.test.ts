@@ -24,12 +24,13 @@ describe('ArkmeUiController', () => {
 
     controller.selectSource(source)
     controller.showCalendar()
-    expect(controller.getSnapshot()).toEqual({
+    expect(controller.getSnapshot()).toMatchObject({
       open: true,
       surfaceOpen: true,
       authRevision: 0,
       chatRevision: 0,
       mode: 'calendar',
+      selectedSource: source,
     })
 
     controller.selectSource(source)
@@ -110,6 +111,34 @@ describe('ArkmeUiController', () => {
 
     expect(controller.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'source' })
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
+  })
+
+  it('opens the plugin page without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    controller.selectSource({
+      sourceRef: 'source-1', kind: 'topic', displayName: '主题', activeAtMillis: 1, unreadCount: 0,
+    })
+
+    controller.showExtensions()
+
+    expect(controller.getSnapshot()).toEqual({
+      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'extensions',
+    })
+  })
+
+  it('returns from a utility page to the retained conversation', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1', kind: 'group_chat' as const, displayName: '产品群', activeAtMillis: 1, unreadCount: 0,
+    }
+    controller.selectSource(source)
+    controller.showRecordings()
+
+    controller.showConversations()
+
+    expect(controller.getSnapshot()).toMatchObject({
+      open: true, surfaceOpen: true, mode: 'source', selectedSource: source,
+    })
   })
 
   it('publishes an updated selected source when its mute state changes', () => {

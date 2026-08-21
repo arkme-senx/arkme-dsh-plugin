@@ -1,10 +1,12 @@
 import { useEffect, useState, type CSSProperties } from 'react'
+import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 
 /** Shared vertical anchor: detail begins below the conversation tab/header. */
-export const ARKME_CONVERSATION_HEADER_HEIGHT = 56
+export const ARKME_CONVERSATION_HEADER_HEIGHT = 68
 
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
@@ -91,39 +93,38 @@ const styles: Record<string, CSSProperties> = {
   cardText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' },
   chevron: { width: 15, height: 15, flex: 'none', color: 'var(--dsw-alias-label-tertiary, #9097a1)' },
   aside: {
-    position: 'absolute', zIndex: 8, top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, width: 'min(405px, 100%)',
+    position: 'absolute', zIndex: 8, top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, width: 'min(372px, 100%)',
     height: 'auto', minHeight: 0,
     display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
-    borderLeft: '1px solid var(--dsw-alias-border-l2, #e2e5e9)',
-    borderBottom: '1px solid var(--dsw-alias-border-l2, #e2e5e9)',
-    background: 'var(--dsw-alias-bg-base, #fff)', boxShadow: '-8px 8px 24px rgba(20, 25, 32, .08)',
+    borderLeft: '1px solid #e5e6e9',
+    background: '#fff', boxShadow: '-12px 0 28px rgba(29,32,40,.055)',
   },
   asideHeader: {
-    minHeight: 56, padding: '12px 14px 12px 18px', display: 'flex', alignItems: 'center',
+    height: 56, flex: 'none', padding: '0 14px 0 17px', display: 'flex', alignItems: 'center',
     justifyContent: 'space-between', gap: 12, boxSizing: 'border-box',
-    borderBottom: '1px solid var(--dsw-alias-border-l2, #e2e5e9)',
   },
-  asideTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 600 },
+  asideTitleWrap: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, color: '#687081' },
+  asideTitle: { margin: 0, color: '#17191c', fontSize: 14, lineHeight: '20px', fontWeight: 600 },
   close: {
-    width: 30, height: 30, border: 0, borderRadius: 8, background: 'transparent',
-    color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 20, cursor: 'pointer',
+    width: 32, height: 32, display: 'grid', placeItems: 'center', padding: 0, border: 0,
+    borderRadius: 9, background: 'transparent', color: '#68707c', cursor: 'pointer',
   },
-  asideBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 },
+  asideBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 18px 22px' },
   detailSender: { display: 'flex', alignItems: 'center', gap: 10 },
   detailSenderText: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
   detailSenderName: {
-    color: 'var(--dsw-alias-label-primary, #17191c)', fontSize: 14, lineHeight: '20px', fontWeight: 500,
+    color: '#17191c', fontSize: 14, lineHeight: '20px', fontWeight: 600,
   },
-  detailTime: { color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 12, lineHeight: '18px' },
+  detailTime: { color: '#92959d', fontSize: 11, lineHeight: '16px' },
   detailText: {
-    margin: '16px 0 0', color: 'var(--dsw-alias-label-primary, #17191c)',
-    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 15, lineHeight: '24px',
+    margin: '18px 2px 0', color: '#343840',
+    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '24px',
   },
   mention: { color: 'var(--dsw-alias-state-business-primary, #3964fe)' },
   groupTag: {
-    maxWidth: '100%', marginTop: 16, padding: '5px 8px', border: '1px solid var(--dsw-alias-border-l2, #e2e5e9)',
-    borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 5, boxSizing: 'border-box',
-    background: 'transparent', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 12,
+    width: '100%', maxWidth: '100%', marginTop: 10, padding: '11px 12px', border: 0,
+    borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 9, boxSizing: 'border-box',
+    background: 'transparent', color: '#68707c', fontSize: 12,
     lineHeight: '18px', cursor: 'pointer', fontFamily: 'var(--dsw-font-family, inherit)',
   },
   groupTagText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -204,8 +205,8 @@ export function ArkmeInterwovenDetailAside({
     : ''
   return <aside style={styles.aside} aria-label="快记详情" data-arkme-interwoven-detail>
     <header style={styles.asideHeader}>
-      <h3 style={styles.asideTitle}>快记详情</h3>
-      <button type="button" style={styles.close} aria-label="关闭快记详情" onClick={onClose}>×</button>
+      <span style={styles.asideTitleWrap}><NotePencil size={17} aria-hidden /><h3 style={styles.asideTitle}>快记详情</h3></span>
+      <button type="button" style={styles.close} aria-label="关闭快记详情" onClick={onClose}><X size={18} aria-hidden /></button>
     </header>
     <div style={styles.asideBody} aria-live="polite">
       {state.kind === 'loading' ? <div style={styles.state} role="status">正在加载快记详情…</div>

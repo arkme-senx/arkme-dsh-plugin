@@ -133,7 +133,7 @@ export function ArkmeFooterAction({
       disabled={authPending}
       style={{ ...buttonStyle, ...(wide ? {} : railButtonStyle) }}
       aria-label={accessibleLabel}
-      aria-controls={wide ? 'arkme-footer-directory' : undefined}
+      aria-controls="arkme-product-workspace"
       aria-expanded={expanded}
       title={wide ? undefined : accessibleLabel}
       onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #eef1f5)' }}

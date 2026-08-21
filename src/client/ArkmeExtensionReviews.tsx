@@ -9,14 +9,14 @@ import type {
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 
-const accent = '#09B83E'
+const accent = '#8295E8'
 const emptyRating: ArkmeExtensionRatingSummary = { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] }
 
 const styles: Record<string, CSSProperties> = {
   section: { padding: '14px 0 4px', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
   headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   heading: { margin: 0, fontSize: 13, lineHeight: '20px', fontWeight: 650, color: 'var(--dsw-alias-label-primary, #242629)' },
-  commentButton: { height: 30, padding: '0 13px', border: 0, borderRadius: 8, background: 'rgba(9,184,62,.10)', color: accent, font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
+  commentButton: { height: 30, padding: '0 13px', border: 0, borderRadius: 8, background: 'rgba(130,149,232,.12)', color: accent, font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
   summary: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 },
   average: { fontSize: 22, lineHeight: '28px', fontWeight: 700, color: 'var(--dsw-alias-label-primary, #242629)' },
   stars: { display: 'inline-flex', gap: 2, color: '#f3aa18', letterSpacing: 0, fontSize: 14 },

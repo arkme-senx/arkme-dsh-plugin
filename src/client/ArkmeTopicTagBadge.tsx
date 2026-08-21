@@ -19,8 +19,8 @@ export function ArkmeTopicTagBadge({ label, selected = false }: { label: string,
     data-arkme-topic-tag={label}
     style={{
       ...badgeStyle,
-      background: selected ? 'rgba(32, 198, 106, .12)' : 'rgba(36, 38, 41, .05)',
-      color: selected ? '#16834b' : 'var(--dsw-alias-label-secondary, #777d85)',
+      background: selected ? '#e8eaf0' : 'rgba(36, 38, 41, .05)',
+      color: selected ? '#50545d' : 'var(--dsw-alias-label-secondary, #777d85)',
     }}
   >{label}</span>
 }

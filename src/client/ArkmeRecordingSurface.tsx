@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
+import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
+import { ClockCounterClockwise } from '@phosphor-icons/react/dist/icons/ClockCounterClockwise'
+import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
+import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
+import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import type {
   ArkmeRecordingCalendarDay,
   ArkmeRecordingCalendarMonth,
@@ -8,18 +15,17 @@ import type {
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeUi } from './ui-controller.js'
-import { arkmeTheme } from './arkme-theme.js'
 
 type RecordingTab = 'transcript' | 'summary' | 'timeline'
 
 const colors = {
-  text: arkmeTheme.text,
-  secondary: arkmeTheme.secondary,
-  border: arkmeTheme.border,
-  subtle: arkmeTheme.subtle,
-  accent: arkmeTheme.info,
-  danger: arkmeTheme.danger,
-  warning: arkmeTheme.warning,
+  text: 'var(--dsw-alias-label-primary, #17191c)',
+  secondary: 'var(--dsw-alias-label-secondary, #68707c)',
+  border: 'var(--dsw-alias-border-l2, #e2e5e9)',
+  subtle: 'var(--dsw-alias-bg-subtle, #f5f6f8)',
+  accent: '#7f8fd3',
+  danger: '#c2413b',
+  warning: '#a16207',
 }
 const speakerPalette = [
   '#ec7fa9', '#799eff', '#80a1ba', '#b4debd', '#f5d2d2',
@@ -38,47 +44,84 @@ function speakerColorAt(index: number): string {
 }
 
 const styles: Record<string, CSSProperties> = {
-  root: { flex: 1, width: '100%', height: 'auto', minWidth: 0, minHeight: 0, overflow: 'hidden', color: colors.text },
-  layout: { height: '100%', minHeight: 0, display: 'grid', alignItems: 'stretch', gap: 20, padding: 20, boxSizing: 'border-box', overflow: 'hidden' },
-  calendar: { minWidth: 0, padding: 14, border: `1px solid ${colors.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
-  monthHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 },
-  monthTitle: { margin: 0, fontSize: 15, fontWeight: 650 },
-  iconButton: { width: 30, height: 30, border: `1px solid ${colors.border}`, borderRadius: 8, background: arkmeTheme.elevated, color: 'inherit', cursor: 'pointer' },
-  week: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 4, marginBottom: 4 },
-  weekDay: { color: colors.secondary, textAlign: 'center', fontSize: 11, lineHeight: '24px' },
-  days: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 4 },
-  day: { position: 'relative', display: 'grid', gridTemplateRows: '24px 12px', alignContent: 'center', justifyItems: 'center', minWidth: 0, height: 54, padding: '7px 2px', boxSizing: 'border-box', border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit' },
+  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '326px minmax(0,1fr)', color: colors.text, background: '#fff' },
+  browser: { minWidth: 0, minHeight: 0, padding: '30px 15px 17px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', borderRight: `1px solid ${colors.border}`, background: '#fff' },
+  browserHeading: { padding: '0 1px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  eyebrow: { margin: '0 0 4px', color: '#92969e', fontSize: 11 },
+  browserTitle: { margin: 0, fontSize: 22, lineHeight: 1.15, letterSpacing: '-.035em', fontWeight: 600 },
+  calendar: { marginTop: 22, padding: '13px 11px 11px', border: `1px solid ${colors.border}`, borderRadius: 15, background: '#fcfcfd' },
+  monthHeader: { height: 25, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  monthTitle: { margin: 0, fontSize: 12, fontWeight: 500 },
+  iconButton: { width: 25, height: 25, display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 7, background: 'transparent', color: '#6e727b', cursor: 'pointer' },
+  week: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 2 },
+  day: { position: 'relative', display: 'grid', gridTemplateRows: '18px 18px', alignContent: 'center', justifyItems: 'center', gap: 1, minWidth: 0, height: 53, padding: '6px 2px', boxSizing: 'border-box', border: 0, borderRadius: 10, background: 'transparent', color: '#777b84', cursor: 'pointer', font: 'inherit' },
   dayDate: { gridRow: 1, lineHeight: '24px' },
-  daySelected: { background: colors.accent, color: arkmeTheme.foreground },
-  dayToday: { boxShadow: `inset 0 0 0 1px ${colors.accent}` },
-  duration: { gridRow: 2, display: 'block', whiteSpace: 'nowrap', color: 'inherit', opacity: .68, fontSize: 9, lineHeight: '12px' },
-  content: { minWidth: 0, minHeight: 0, height: '100%', display: 'flex', flexDirection: 'column', border: `1px solid ${colors.border}`, borderRadius: 14, overflow: 'hidden', background: arkmeTheme.layer1 },
-  contentHeader: { flex: 'none', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${colors.border}` },
-  dateControls: { display: 'flex', alignItems: 'center', gap: 8 },
-  dateTitle: { margin: 0, fontSize: 17, fontWeight: 680 },
-  total: { color: colors.secondary, fontSize: 12 },
-  todayButton: { border: `1px solid ${colors.border}`, borderRadius: 8, padding: '6px 10px', background: arkmeTheme.elevated, color: 'inherit', cursor: 'pointer' },
-  tabs: { flex: 'none', display: 'flex', gap: 4, padding: '10px 14px 0', borderBottom: `1px solid ${colors.border}` },
-  tab: { border: 0, borderBottom: '2px solid transparent', padding: '8px 12px', background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit' },
-  tabActive: { borderBottomColor: colors.accent, color: colors.text, fontWeight: 650 },
-  pane: { flex: 1, minHeight: 0, padding: 18, boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain' },
+  weekName: { fontSize: 9, fontWeight: 400 },
+  weekNumber: { fontSize: 12, fontWeight: 500 },
+  daySelected: { background: '#20232d', color: '#fff', boxShadow: '0 4px 12px rgba(26,29,37,.13)' },
+  dayToday: { boxShadow: 'inset 0 0 0 1px #aeb4c2' },
+  duration: { position: 'absolute', bottom: 5, width: 4, height: 4, overflow: 'hidden', color: 'transparent', borderRadius: '50%', background: '#8694d2' },
+  monthWeekdays: { height: 19, display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', alignItems: 'center', color: '#9699a1', textAlign: 'center' },
+  monthWeekday: { fontSize: 9, fontWeight: 400 },
+  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 2 },
+  monthSpacer: { minWidth: 0, height: 33 },
+  monthDay: { position: 'relative', minWidth: 0, height: 33, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: 'transparent', color: '#62666f', cursor: 'pointer', font: 'inherit' },
+  monthDayNumber: { fontSize: 11, fontWeight: 500 },
+  monthDayDisabled: { opacity: .32, cursor: 'default' },
+  monthDuration: { position: 'absolute', bottom: 3, width: 3, height: 3, overflow: 'hidden', color: 'transparent', borderRadius: '50%', background: '#8694d2' },
+  calendarFooter: { height: 25, marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
+  calendarToggle: { height: 25, padding: '0 5px 0 8px', display: 'flex', alignItems: 'center', gap: 3, border: 0, borderRadius: 7, background: 'transparent', color: '#868a93', cursor: 'pointer', font: 'inherit', fontSize: 10 },
+  dayLabel: { margin: '21px 3px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  dayLabelTitle: { fontSize: 12, fontWeight: 500 },
+  dayLabelMeta: { color: '#9699a1', fontSize: 10, fontStyle: 'normal' },
+  recordingList: { display: 'grid', gap: 4 },
+  recordingRow: { minWidth: 0, minHeight: 68, padding: 9, display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) 16px', alignItems: 'center', gap: 10, border: 0, borderRadius: 12, background: '#f0f1f4', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit' },
+  rowIcon: { width: 34, height: 34, display: 'grid', placeItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: '#555b66' },
+  rowCopy: { minWidth: 0, display: 'grid', gap: 5 },
+  rowTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 500 },
+  rowMeta: { color: '#92969e', fontSize: 11 },
+  empty: { margin: '34px 16px 0', display: 'grid', justifyItems: 'center', color: '#858992', textAlign: 'center' },
+  emptyIcon: { width: 40, height: 40, marginBottom: 12, display: 'grid', placeItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 12, color: '#565b65' },
+  emptyTitle: { color: '#474b54', fontSize: 13, fontWeight: 500 },
+  emptyText: { margin: '7px 0 0', fontSize: 11, lineHeight: 1.55 },
+  content: { minWidth: 0, minHeight: 0, padding: '24px 25px 20px 27px', display: 'grid', gridTemplateRows: '90px minmax(0,1fr)', gap: 12, boxSizing: 'border-box', background: '#fff' },
+  dayTimeline: { minWidth: 0, padding: '14px 16px 12px', border: `1px solid ${colors.border}`, borderRadius: 14, background: '#fcfcfd' },
+  timelineTitle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
+  timelineTitleLeft: { display: 'flex', alignItems: 'center', gap: 9, color: '#555a64' },
+  timelineTitleCopy: { display: 'grid', gap: 2 },
+  timelineStrong: { color: '#31343d', fontSize: 12, fontWeight: 500 },
+  timelineSmall: { color: '#999ca4', fontSize: 9 },
+  timelineRange: { color: '#848891', fontSize: 10, fontStyle: 'normal' },
+  track: { position: 'relative', height: 27, margin: '10px 7px 0' },
+  trackBase: { position: 'absolute', top: 5, left: 0, right: 0, height: 2, borderRadius: 2, background: '#e2e3e6' },
+  trackSegment: { position: 'absolute', top: 3, left: '5%', width: '90%', height: 6, borderRadius: 4, background: '#222530', boxShadow: '0 2px 6px rgba(24,27,35,.16)' },
+  trackNode: { position: 'absolute', zIndex: 1, top: -2, left: 0, width: 10, height: 10, border: '2px solid #fff', borderRadius: '50%', background: '#222530', boxShadow: '0 0 0 1px #c9ccd2' },
+  trackTime: { position: 'absolute', top: 11, left: 0, color: '#8b8f98', fontSize: 9 },
+  analysis: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateRows: '43px minmax(0,1fr)', border: `1px solid ${colors.border}`, borderRadius: 15, overflow: 'hidden', background: '#fff' },
+  tabs: { padding: '0 10px', display: 'flex', alignItems: 'stretch', gap: 2, borderBottom: `1px solid ${colors.border}`, background: '#fcfcfd' },
+  tab: { position: 'relative', minWidth: 94, padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: '#858992', cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  tabActive: { borderBottomColor: '#20232d', color: '#20232d', fontWeight: 500 },
+  pane: { minWidth: 0, minHeight: 0, padding: '14px 18px 24px', boxSizing: 'border-box', overflowY: 'auto', overscrollBehavior: 'contain' },
   status: { padding: '42px 16px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
-  error: { padding: '12px 14px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
-  transcriptList: { display: 'flex', flexDirection: 'column', gap: 16, margin: 0, padding: 0, listStyle: 'none' },
-  transcript: { display: 'grid', gridTemplateColumns: '64px minmax(110px,160px) minmax(0,1fr)', gap: 12, alignItems: 'start' },
-  time: { color: colors.secondary, fontVariantNumeric: 'tabular-nums', fontSize: 12, lineHeight: '22px' },
+  error: { padding: '12px 14px', borderRadius: 10, background: 'rgba(194,65,59,.08)', color: colors.danger, fontSize: 13 },
+  transcriptList: { width: 'min(780px,100%)', display: 'flex', flexDirection: 'column', gap: 2, margin: 0, padding: 0, listStyle: 'none' },
+  transcript: { minWidth: 0, padding: '13px 12px', display: 'grid', gridTemplateColumns: '32px minmax(0,1fr)', alignItems: 'start', gap: 11, borderRadius: 12 },
+  transcriptAvatar: { width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', color: '#fff', fontSize: 11, fontWeight: 650 },
+  transcriptBody: { minWidth: 0 },
+  transcriptHeader: { display: 'flex', alignItems: 'baseline', gap: 8 },
+  time: { color: '#989ba3', fontVariantNumeric: 'tabular-nums', fontSize: 10 },
   speaker: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 650, lineHeight: '22px' },
   speakerDot: { flex: 'none', width: 16, height: 16, borderRadius: 999 },
-  transcriptText: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px' },
-  background: { display: 'inline-block', marginLeft: 6, padding: '0 5px', borderRadius: 999, background: arkmeTheme.subtle, color: colors.secondary, fontSize: 9, lineHeight: '17px', verticalAlign: 1 },
+  transcriptText: { margin: '6px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4f535c', fontSize: 12, lineHeight: 1.65 },
+  background: { display: 'inline-block', marginLeft: 6, padding: '0 5px', borderRadius: 999, background: '#eef0f3', color: colors.secondary, fontSize: 9, lineHeight: '17px', verticalAlign: 1 },
   versionBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 16 },
-  select: { maxWidth: '100%', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '7px 9px', background: arkmeTheme.elevated, color: 'inherit' },
-  banner: { marginBottom: 14, padding: '9px 11px', borderRadius: 8, background: arkmeTheme.warningSoft, color: colors.warning, fontSize: 12 },
+  select: { maxWidth: '100%', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '7px 9px', background: '#fff', color: 'inherit' },
+  banner: { marginBottom: 14, padding: '9px 11px', borderRadius: 8, background: '#fff8e6', color: colors.warning, fontSize: 12 },
   markdown: { fontSize: 14, lineHeight: 1.75, wordBreak: 'break-word' },
   markdownHeading: { margin: '18px 0 8px', fontWeight: 700 },
   markdownLine: { margin: '4px 0', whiteSpace: 'pre-wrap' },
   eventList: { display: 'flex', flexDirection: 'column', gap: 12 },
-  event: { padding: 14, border: `1px solid ${colors.border}`, borderRadius: 12, background: arkmeTheme.layer2 },
+  event: { padding: 14, border: `1px solid ${colors.border}`, borderRadius: 12, background: '#fff' },
   eventHeader: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 },
   eventTime: { flex: 'none', color: colors.accent, fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 650 },
   eventTitle: { margin: 0, fontSize: 15 },
@@ -100,18 +143,25 @@ function dateKey(value: number | Date): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
 }
 
-function calendarCells(month: Date): Array<Date | undefined> {
-  const first = monthStart(month)
-  const leading = (first.getDay() + 6) % 7
-  const count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
-  return [
-    ...Array.from<undefined>({ length: leading }),
-    ...Array.from({ length: count }, (_, index) => new Date(first.getFullYear(), first.getMonth(), index + 1)),
-  ]
-}
-
 function shiftDay(value: Date, amount: number): Date {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate() + amount)
+}
+
+function shiftMonth(value: Date, amount: number): Date {
+  const target = new Date(value.getFullYear(), value.getMonth() + amount, 1)
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()
+  return new Date(target.getFullYear(), target.getMonth(), Math.min(value.getDate(), lastDay))
+}
+
+function monthCalendarCells(value: Date): Array<Date | undefined> {
+  const first = monthStart(value)
+  const mondayOffset = (first.getDay() + 6) % 7
+  const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
+  const total = Math.ceil((mondayOffset + days) / 7) * 7
+  return Array.from({ length: total }, (_, index) => {
+    const day = index - mondayOffset + 1
+    return day < 1 || day > days ? undefined : new Date(first.getFullYear(), first.getMonth(), day)
+  })
 }
 
 function errorMessage(error: unknown): string {
@@ -227,10 +277,9 @@ function VersionPicker({ versions, selectedId, onChange }: {
 export function ArkmeRecordingSurface() {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const today = useMemo(() => startOfLocalDay(new Date()), [])
-  const rootRef = useRef<HTMLDivElement>(null)
-  const [compact, setCompact] = useState(false)
   const [selectedDate, setSelectedDate] = useState(today)
   const [visibleMonth, setVisibleMonth] = useState(monthStart(today))
+  const [calendarExpanded, setCalendarExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState<RecordingTab>('transcript')
   const [calendar, setCalendar] = useState<ArkmeRecordingCalendarMonth>()
   const [day, setDay] = useState<ArkmeRecordingDay>()
@@ -249,14 +298,6 @@ export function ArkmeRecordingSurface() {
     setVisibleMonth(monthStart(targetDate))
     setActiveTab('transcript')
   }, [ui.recordingTarget])
-
-  useEffect(() => {
-    const root = rootRef.current
-    if (root === null || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(entries => { setCompact((entries[0]?.contentRect.width ?? 900) < 820) })
-    observer.observe(root)
-    return () => { observer.disconnect() }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -287,10 +328,22 @@ export function ArkmeRecordingSurface() {
   }, [selectedDate])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
+  const weekDates = useMemo(() => {
+    const mondayOffset = (selectedDate.getDay() + 6) % 7
+    const monday = shiftDay(selectedDate, -mondayOffset)
+    return Array.from({ length: 7 }, (_, index) => shiftDay(monday, index))
+  }, [selectedDate])
+  const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
   const selectedCalendarDay = calendarByDay.get(dateKey(selectedDate))
   const totalDuration = selectedCalendarDay?.durationMillis ?? day?.totalDurationMillis ?? 0
   const selectedSummary = day?.summary.items.find(version => version.id === summaryVersionId && version.selectable)
   const selectedTimeline = day?.timeline.items.find(version => version.id === timelineVersionId && version.selectable)
+  const transcriptItems = day?.transcript.state === 'ready' ? day.transcript.items : []
+  const firstTranscript = transcriptItems[0]
+  const lastTranscript = transcriptItems.at(-1)
+  const recordingRange = firstTranscript !== undefined && lastTranscript !== undefined
+    ? `${timeLabel(firstTranscript.startAtMillis).slice(0, 5)}–${timeLabel(lastTranscript.endAtMillis).slice(0, 5)}`
+    : totalDuration > 0 ? fullDuration(totalDuration).replace('当天录音 ', '') : '暂无录音'
 
   const chooseDate = (value: Date) => {
     const normalized = startOfLocalDay(value)
@@ -304,9 +357,15 @@ export function ArkmeRecordingSurface() {
     const section = day?.transcript
     if (dayLoading || section === undefined || section.state !== 'ready') return <SectionState section={section} loading={dayLoading} />
     return <ul style={styles.transcriptList}>{section.items.map(item => <li key={item.itemId} style={styles.transcript}>
-      <time style={styles.time}>{timeLabel(item.startAtMillis)}</time>
-      <RecordingSpeakerLabel label={item.speakerLabel} colorIndex={item.speakerColorIndex} isBackground={item.isBackground} />
-      <p style={styles.transcriptText}>{item.text}</p>
+      <span aria-hidden style={{ ...styles.transcriptAvatar, background: speakerColorAt(item.speakerColorIndex) }}>{item.speakerLabel.slice(0, 1) || '声'}</span>
+      <span style={styles.transcriptBody}>
+        <span style={styles.transcriptHeader}>
+          <strong style={{ fontSize: 12, fontWeight: 500 }}>{item.speakerLabel}</strong>
+          <time style={styles.time}>{timeLabel(item.startAtMillis).slice(0, 5)}</time>
+          {item.isBackground && <span style={styles.background}>背景音</span>}
+        </span>
+        <p style={styles.transcriptText}>{item.text}</p>
+      </span>
     </li>)}</ul>
   }
 
@@ -344,49 +403,95 @@ export function ArkmeRecordingSurface() {
     </>
   }
 
-  return <div ref={rootRef} style={styles.root}>
-    <div style={{
-      ...styles.layout,
-      gridTemplateColumns: compact ? 'minmax(0,1fr)' : '320px minmax(0,1fr)',
-      gridTemplateRows: compact ? 'auto minmax(0,1fr)' : 'minmax(0,1fr)',
-    }}>
-      <aside style={styles.calendar} aria-label="录音日历">
-        <div style={styles.monthHeader}>
-          <button type="button" style={styles.iconButton} aria-label="上个月" onClick={() => { setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() - 1, 1)) }}>‹</button>
-          <h3 style={styles.monthTitle}>{visibleMonth.getFullYear()}年{visibleMonth.getMonth() + 1}月</h3>
-          <button type="button" style={styles.iconButton} aria-label="下个月" onClick={() => { setVisibleMonth(value => new Date(value.getFullYear(), value.getMonth() + 1, 1)) }}>›</button>
-        </div>
-        {calendarError !== '' && <div style={styles.error} role="alert">{calendarError}</div>}
-        <div style={styles.week}>{['一', '二', '三', '四', '五', '六', '日'].map(label => <span key={label} style={styles.weekDay}>{label}</span>)}</div>
-        <div style={{ ...styles.days, opacity: calendarLoading ? .55 : 1 }}>
-          {calendarCells(visibleMonth).map((date, index) => {
-            if (date === undefined) return <span key={`blank:${index}`} />
-            const meta: ArkmeRecordingCalendarDay | undefined = calendarByDay.get(dateKey(date))
-            const selected = dateKey(date) === dateKey(selectedDate)
-            const isToday = dateKey(date) === dateKey(today)
-            return <RecordingCalendarCell key={dateKey(date)} date={date} meta={meta} selected={selected} isToday={isToday} onClick={() => { chooseDate(date) }} />
-          })}
-        </div>
-      </aside>
+  const dayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(selectedDate)
 
-      <section style={styles.content} aria-label="录音详情">
-        <header style={styles.contentHeader}>
-          <div><h2 style={styles.dateTitle}>{dateTitle(selectedDate)}</h2><div style={styles.total}>{fullDuration(totalDuration)}</div></div>
-          <div style={styles.dateControls}>
-            <button type="button" style={styles.iconButton} aria-label="前一天" onClick={() => { chooseDate(shiftDay(selectedDate, -1)) }}>‹</button>
-            <button type="button" style={styles.todayButton} onClick={() => { chooseDate(today) }}>回到今天</button>
-            <button type="button" style={styles.iconButton} aria-label="后一天" onClick={() => { chooseDate(shiftDay(selectedDate, 1)) }}>›</button>
-          </div>
+  return <div style={styles.root}>
+    <aside style={styles.browser} aria-label="录音列表">
+      <header style={styles.browserHeading}><div><p style={styles.eyebrow}>录音</p><h1 style={styles.browserTitle}>时间与内容</h1></div></header>
+      <section style={styles.calendar} aria-label="选择录音日期">
+        <header style={styles.monthHeader}>
+          <button type="button" style={styles.iconButton} aria-label="上个月" onClick={() => { chooseDate(shiftMonth(selectedDate, -1)) }}><ArrowLeft size={15} aria-hidden /></button>
+          <strong style={styles.monthTitle}>{new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(visibleMonth)}</strong>
+          <button type="button" style={styles.iconButton} aria-label="下个月" onClick={() => { chooseDate(shiftMonth(selectedDate, 1)) }}><ArrowRight size={15} aria-hidden /></button>
         </header>
+        {calendarExpanded ? <>
+          <div style={styles.monthWeekdays} aria-hidden="true">
+            {['一', '二', '三', '四', '五', '六', '日'].map(value => <span key={value} style={styles.monthWeekday}>{value}</span>)}
+          </div>
+          <div style={styles.monthGrid}>
+            {monthDates.map((value, index) => {
+              if (value === undefined) return <span key={`empty-${index}`} aria-hidden="true" style={styles.monthSpacer} />
+              const meta = calendarByDay.get(dateKey(value))
+              const selected = dateKey(value) === dateKey(selectedDate)
+              const future = value.getTime() > today.getTime()
+              return <button
+                key={value.getTime()}
+                type="button"
+                style={{ ...styles.monthDay, ...(dateKey(value) === dateKey(today) ? styles.dayToday : {}), ...(selected ? styles.daySelected : {}), ...(future ? styles.monthDayDisabled : {}) }}
+                aria-label={new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(value)}
+                aria-pressed={selected}
+                disabled={future}
+                onClick={() => { chooseDate(value) }}
+              >
+                <strong style={styles.monthDayNumber}>{value.getDate()}</strong>
+                {meta !== undefined && (meta.hasRecording || meta.durationMillis > 0) && <i aria-hidden style={{ ...styles.monthDuration, ...(selected ? { background: '#fff' } : {}) }} />}
+              </button>
+            })}
+          </div>
+        </> : <div style={styles.week}>
+          {weekDates.map(value => {
+            const meta = calendarByDay.get(dateKey(value))
+            const selected = dateKey(value) === dateKey(selectedDate)
+            return <button key={value.getTime()} type="button" style={{ ...styles.day, ...(dateKey(value) === dateKey(today) ? styles.dayToday : {}), ...(selected ? styles.daySelected : {}) }} aria-pressed={selected} onClick={() => { chooseDate(value) }}>
+              <span style={styles.weekName}>{new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(value).replace('周', '')}</span>
+              <strong style={styles.weekNumber}>{value.getDate()}</strong>
+              {meta !== undefined && (meta.hasRecording || meta.durationMillis > 0) && <i aria-hidden style={{ ...styles.duration, ...(selected ? { background: '#fff' } : {}) }} />}
+            </button>
+          })}
+        </div>}
+        <div style={styles.calendarFooter}>
+          <button
+            type="button"
+            style={styles.calendarToggle}
+            aria-label={calendarExpanded ? '收起整月日历' : '展开整月日历'}
+            aria-expanded={calendarExpanded}
+            onClick={() => { setCalendarExpanded(value => !value) }}
+          >
+            <span>{calendarExpanded ? '收起月历' : '展开月历'}</span>
+            <CaretDown size={12} aria-hidden style={{ transform: calendarExpanded ? 'rotate(180deg)' : undefined, transition: 'transform .18s ease' }} />
+          </button>
+        </div>
+      </section>
+      <div style={styles.dayLabel}><span style={styles.dayLabelTitle}>{dayLabel}{dateKey(selectedDate) === dateKey(today) ? ' · 今天' : ''}</span><em style={styles.dayLabelMeta}>{totalDuration > 0 ? '1 段录音' : '暂无录音'}</em></div>
+      {calendarError !== '' && <div style={styles.error} role="alert">{calendarError}</div>}
+      {calendarLoading && calendar === undefined ? <div style={styles.status}>正在读取录音…</div>
+        : totalDuration > 0 ? <div style={styles.recordingList}>
+          <button type="button" style={styles.recordingRow} onClick={() => { setActiveTab('transcript') }}>
+            <span style={styles.rowIcon}><Waveform size={19} aria-hidden /></span>
+            <span style={styles.rowCopy}><strong style={styles.rowTitle}>{dayLabel}的录音</strong><small style={styles.rowMeta}>{recordingRange} · {shortDuration(totalDuration) || '不足1分钟'}</small></span>
+            <ArrowRight size={15} aria-hidden />
+          </button>
+        </div> : <div style={styles.empty}><span style={styles.emptyIcon}><Waveform size={19} aria-hidden /></span><strong style={styles.emptyTitle}>这一天没有录音</strong><p style={styles.emptyText}>选择有圆点的日期查看录音。</p></div>}
+    </aside>
+
+    <section style={styles.content} aria-label="录音详情">
+      <div style={styles.dayTimeline}>
+        <div style={styles.timelineTitle}>
+          <div style={styles.timelineTitleLeft}><ClockCounterClockwise size={17} aria-hidden /><span style={styles.timelineTitleCopy}><strong style={styles.timelineStrong}>当天时间轴</strong><small style={styles.timelineSmall}>{dateTitle(selectedDate)}</small></span></div>
+          <em style={styles.timelineRange}>{recordingRange}</em>
+        </div>
+        <div style={styles.track} aria-label="当天录音时间轴"><span style={styles.trackBase} />{totalDuration > 0 && <span style={styles.trackSegment}><i style={styles.trackNode} /><span style={styles.trackTime}>{firstTranscript === undefined ? dayLabel : timeLabel(firstTranscript.startAtMillis).slice(0, 5)}</span></span>}</div>
+      </div>
+      <div style={styles.analysis}>
         <nav style={styles.tabs} aria-label="录音内容">
-          {([['transcript', '转写'], ['summary', '日总结'], ['timeline', '时间轴']] as const).map(([id, label]) => <button key={id} type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id) }}>{label}</button>)}
+          {([['transcript', '转写', FileText], ['summary', '总结', Sparkle], ['timeline', '时间轴', ClockCounterClockwise]] as const).map(([id, label, Icon]) => <button key={id} type="button" style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }} aria-current={activeTab === id ? 'page' : undefined} onClick={() => { setActiveTab(id) }}><Icon size={16} aria-hidden />{label}</button>)}
         </nav>
         <div style={styles.pane}>
           {dayError !== '' ? <div style={styles.error} role="alert">{dayError}</div>
             : activeTab === 'transcript' ? renderTranscript()
               : activeTab === 'summary' ? renderSummary() : renderTimeline()}
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
   </div>
 }

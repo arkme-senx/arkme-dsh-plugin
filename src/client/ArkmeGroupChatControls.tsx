@@ -50,7 +50,7 @@ const styles: Record<string, CSSProperties> = {
     WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center', WebkitMaskSize: 'contain',
   },
   drawer: {
-    position: 'absolute', top: 56, right: 0, bottom: 0, zIndex: 8, width: 262, maxWidth: '86%',
+    position: 'absolute', top: 68, right: 0, bottom: 0, zIndex: 8, width: 262, maxWidth: '86%',
     display: 'flex', flexDirection: 'column', background: colors.panel,
     boxShadow: '0 4px 10px rgba(0,0,0,.1)',
   },

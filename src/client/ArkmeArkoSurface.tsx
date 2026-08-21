@@ -2,6 +2,8 @@ import {
   Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties,
 } from 'react'
+import { ArrowsClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowsClockwise'
+import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import type {
   ArkmeArkoAskResult,
   ArkmeArkoCancelResult,
@@ -69,20 +71,22 @@ const colors = {
 
 const styles: Record<string, CSSProperties> = {
   shell: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' },
-  body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '18px 32px 24px' },
+  body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '22px 22px 12px' },
   header: {
-    flex: 'none', height: 56, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12,
-    padding: '8px 64px 8px 20px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
+    flex: 'none', height: 68, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
+    padding: '12px 16px 12px 20px', boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`,
     background: arkmeTheme.base,
   },
+  headerAvatar: { width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center' },
+  headerCopy: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   headerTitle: {
-    flex: 'none', minWidth: 0, maxWidth: '40%', margin: 0, padding: '4px 8px',
+    minWidth: 0, margin: 0,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.text, fontSize: 14, lineHeight: '20px', fontWeight: 500,
+    color: colors.text, fontSize: 15, lineHeight: '21px', fontWeight: 600,
   },
   aiDisclaimer: {
-    flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.secondary, fontSize: 11, lineHeight: '18px',
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.secondary, fontSize: 11, lineHeight: '15px',
   },
   actions: { minWidth: 0, marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
   actionButton: {
@@ -98,24 +102,24 @@ const styles: Record<string, CSSProperties> = {
   actionContent: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   actionTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, lineHeight: '18px', fontWeight: 600 },
   actionSub: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: colors.secondary, fontSize: 11, lineHeight: '18px' },
-  records: { width: 'min(780px,100%)', listStyle: 'none', margin: '0 auto', padding: 0, display: 'flex', flexDirection: 'column', gap: 16 },
+  records: { width: '100%', listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 0 },
   row: { width: '100%', display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
   rowArko: { justifyContent: 'flex-start' },
-  line: { maxWidth: '88%', display: 'flex', alignItems: 'flex-start', gap: 9 },
+  line: { maxWidth: '100%', display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 23 },
   lineMe: { flexDirection: 'row-reverse' },
   avatar: {
-    width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
+    width: 38, height: 38, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
     background: arkmeTheme.subtle, color: colors.secondary, fontSize: 12,
   },
-  messageBody: { minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 },
+  messageBody: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7 },
   messageBodyMe: { alignItems: 'flex-end' },
-  sender: { color: colors.secondary, fontSize: 11 },
-  bubble: { maxWidth: 560, padding: '10px 16px', borderRadius: 18, boxSizing: 'border-box' },
-  bubbleMe: { background: 'var(--dsw-specific-bubble, #eef3ff)' },
+  sender: { color: colors.text, fontSize: 12, fontWeight: 600 },
+  bubble: { maxWidth: 600, minWidth: 0, padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box' },
+  bubbleMe: { background: 'var(--dsw-specific-bubble, #eef1f8)', borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px' },
   bubbleArko: { background: arkmeTheme.subtle },
   bubbleError: { background: arkmeTheme.dangerSoft, color: colors.danger },
-  text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '24px' },
+  text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px' },
   reasoning: {
     margin: '8px 0 0', paddingTop: 8, borderTop: `1px solid ${colors.border}`,
     color: colors.secondary, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: '20px',
@@ -877,8 +881,11 @@ export function ArkmeArkoSurface() {
 
   return <div style={styles.shell}>
     <header style={styles.header}>
-      <h2 style={styles.headerTitle}>{displayName}</h2>
-      <span style={styles.aiDisclaimer}>内容由 AI 生成，仅供参考</span>
+      <span style={styles.headerAvatar}><ArkmeArkoAvatar size={34} /></span>
+      <span style={styles.headerCopy}>
+        <h2 style={styles.headerTitle}>{displayName}</h2>
+        <span style={styles.aiDisclaimer}>Agent · 内容由 AI 生成，仅供参考</span>
+      </span>
       <div style={styles.actions} role="toolbar" aria-label="Arko 操作">
         <button
           type="button"
@@ -887,7 +894,7 @@ export function ArkmeArkoSurface() {
           onClick={() => { setModelDialogOpen(true) }}
           disabled={!canChooseModel || interactionLocked || clearing}
         >
-          <span style={styles.actionIcon} aria-hidden>AI</span>
+          <span style={styles.actionIcon} aria-hidden><RobotIcon size={14} weight="regular" /></span>
           <span style={styles.actionContent}>
             <span style={styles.actionTitle}>模型选择</span>
             <span style={styles.actionSub}>{selectedModel}</span>
@@ -900,7 +907,7 @@ export function ArkmeArkoSurface() {
           onClick={() => { setClearConfirmOpen(true) }}
           disabled={loading || interactionLocked || clearing || session === undefined}
         >
-          <span style={styles.actionIcon} aria-hidden>↻</span>
+          <span style={styles.actionIcon} aria-hidden><ArrowsClockwiseIcon size={14} weight="regular" /></span>
           <span style={styles.actionContent}>
             <span style={styles.actionTitle}>{clearing ? '清除中...' : '清除上下文'}</span>
           </span>
@@ -939,9 +946,9 @@ export function ArkmeArkoSurface() {
               <span style={styles.avatar} aria-hidden>{item.role === 'user'
                 ? <ArkmeSourceAvatar
                   {...(userProfile?.avatarRef === undefined ? {} : { avatarRef: userProfile.avatarRef })}
-                  size={32}
+                  size={38}
                 />
-                : <ArkmeArkoAvatar size={32} />}</span>
+                : <ArkmeArkoAvatar size={38} />}</span>
               <div style={{ ...styles.messageBody, ...(item.role === 'user' ? styles.messageBodyMe : {}) }}>
                 {item.role === 'assistant' && <span style={styles.sender}>{displayName}</span>}
                 {showThinking && <ArkoThinkingPanel

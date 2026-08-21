@@ -6,7 +6,6 @@ import type {
   ArkmeImagePayload,
 } from '../types.js'
 import { callArkme } from './api.js'
-import { ArkmeMark } from './ArkmeFooterAction.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 const AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
@@ -288,6 +287,6 @@ export function ArkmeSourceAvatar({
       ? <ArkmeGroupAvatarVisual memberCount={groupAvatar?.memberCount ?? sourceSlots.length} slots={slots} size={size} />
       : slots[0]?.imageUrl !== undefined
         ? <span style={styles.avatar}><img src={slots[0].imageUrl} alt="" draggable={false} style={styles.image} /></span>
-        : <span style={styles.avatar}><ArkmeMark size={size} /></span>}
+        : <span style={styles.avatar}><DefaultUserAvatar size={size} /></span>}
   </span>
 }

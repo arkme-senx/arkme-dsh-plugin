@@ -15,7 +15,7 @@ export interface ArkmeUiState {
   surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'search' | 'arko'
+  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'search' | 'extensions' | 'arko'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
@@ -23,6 +23,7 @@ export interface ArkmeUiState {
 
 export class ArkmeUiController {
   private state: ArkmeUiState = { open: false, surfaceOpen: false, authRevision: 0, chatRevision: 0, mode: 'login' }
+  private lastConversationSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
 
   readonly getSnapshot = (): ArkmeUiState => this.state
@@ -45,6 +46,7 @@ export class ArkmeUiController {
   }
 
   focusSendToSelf(): void {
+    this.lastConversationSource = undefined
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'source' })
   }
@@ -67,6 +69,7 @@ export class ArkmeUiController {
       })
       return
     }
+    this.lastConversationSource = undefined
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({
       ...rest,
@@ -97,7 +100,7 @@ export class ArkmeUiController {
   }
 
   showCalendar(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
+    const { recordingTarget: _recordingTarget, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'calendar' })
   }
 
@@ -109,6 +112,22 @@ export class ArkmeUiController {
   showSearch(): void {
     const { selectedSource: _selectedSource, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'search' })
+  }
+
+  showExtensions(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'extensions' })
+  }
+
+  showConversations(): void {
+    const { recordingTarget: _recordingTarget, ...rest } = this.state
+    this.publish({
+      ...rest,
+      open: true,
+      surfaceOpen: true,
+      mode: 'source',
+      ...(this.lastConversationSource === undefined ? {} : { selectedSource: this.lastConversationSource }),
+    })
   }
 
   showArko(): void {
@@ -127,6 +146,7 @@ export class ArkmeUiController {
   }
 
   selectSource(source: ArkmeSourceItem): void {
+    this.lastConversationSource = source
     this.publish({ ...this.state, open: true, mode: 'source', selectedSource: source })
   }
 
