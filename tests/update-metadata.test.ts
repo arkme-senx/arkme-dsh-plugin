@@ -14,10 +14,10 @@ describe('published update metadata', () => {
     }
 
     expect(manifest.name).toBe('@senguoyun/dsh-arkme')
-    expect(manifest.version).toBe('0.1.12')
+    expect(manifest.version).toBe('0.1.13')
     expect(manifest.arkme?.updateNotice).toMatchObject({
       schemaVersion: 1,
-      title: 'Arkme 插件 0.1.12 更新',
+      title: 'Arkme 插件 0.1.13 更新',
       releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
     })
   })
