@@ -16,6 +16,8 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('>搜索<')
     expect(markup).toContain('>日历<')
     expect(markup).toContain('>插件<')
+    expect(markup).toContain('aria-label="账户菜单"')
+    expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('aria-current="page"')
     expect(markup).toContain('background:#f1f2f6')
     expect(markup).toContain('outline:0')
@@ -28,6 +30,7 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact currentSessionId={undefined} />)
     expect(markup).toContain('flex-direction:row')
     expect(markup).toContain('border-bottom:1px solid #e7e7e9')
+    expect(markup).toContain('margin-left:auto')
   })
 
   it('composes the desktop client as navigation, directory, and main content inside one plugin surface', () => {

@@ -190,6 +190,8 @@ export {
 } from './ArkmeExtensionReviews.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+export { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
+export { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 export { ArkmeDirectoryRow, ArkmeNavigation, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'

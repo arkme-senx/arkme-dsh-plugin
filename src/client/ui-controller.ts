@@ -15,7 +15,8 @@ export interface ArkmeUiState {
   surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'search' | 'extensions' | 'arko'
+  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'search' | 'extensions' | 'arko' | 'settings'
+  settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
@@ -135,6 +136,11 @@ export class ArkmeUiController {
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'arko' })
   }
 
+  showSettings(section: 'account' | 'general' | 'about' = 'account'): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
+    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'settings', settingsSection: section })
+  }
+
   openExtensionShare(shareRef: string): void {
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'source', extensionShareRef: shareRef })
@@ -155,6 +161,7 @@ export class ArkmeUiController {
       && next.authRevision === this.state.authRevision
       && next.chatRevision === this.state.chatRevision
       && next.mode === this.state.mode
+      && next.settingsSection === this.state.settingsSection
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef

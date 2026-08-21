@@ -4,10 +4,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { calculateArkmeFloatingFrame } from '../src/client/ArkmeConversationSurface.js'
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
-  aiPolishStatus, ArkmeTimelineAgentSourceBadge, arkmeTimelineDetailSenderText,
+  aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader,
+  arkmeTimelineAvatarRef, arkmeTimelineDetailSenderText, arkmeTimelineSenderName,
   arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
+import type { ArkmeTimelineItem, ArkmeUserProfile } from '../src/types.js'
 
 describe('Arkme floating conversation frame', () => {
   it('keeps a uniform floating inset inside a wide DSH conversation column', () => {
@@ -101,6 +103,43 @@ describe('Arkme floating conversation frame', () => {
     expect(aiPolishStatus({ ...item, aiPolish: { state: 'polished' } })).toBe('✨已润色')
     expect(aiPolishStatus({ ...item, aiPolish: { state: 'kept_original' } })).toBe('保持原文')
     expect(aiPolishStatus({ ...item, aiPolish: { state: 'failed' } })).toBe('润色失败 · 重试')
+  })
+
+  it('fills an optimistic own message from the current profile without replacing a message avatar already supplied by the timeline', () => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-1', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent: '正文', status: 1,
+    }
+    const profile: ArkmeUserProfile = {
+      userId: 8706,
+      displayName: 'Ye',
+      nickname: 'Ye',
+      avatarRef: 'profile-avatar-ref',
+      arkmeId: 'mbr_sylj',
+      accountType: 1,
+      createdAt: 1,
+      bindings: { apple: false, wechat: true, google: false },
+      contact: {},
+    }
+
+    expect(arkmeTimelineSenderName(item, profile)).toBe('Ye')
+    expect(arkmeTimelineAvatarRef(item, profile)).toBe('profile-avatar-ref')
+    expect(arkmeTimelineAvatarRef({ ...item, avatarRef: 'timeline-avatar-ref' }, profile)).toBe('timeline-avatar-ref')
+    expect(arkmeTimelineSenderName({ ...item, isMe: false, senderName: '小林' }, profile)).toBe('小林')
+  })
+
+  it('puts time before nickname for own messages and keeps nickname before time for received messages', () => {
+    const sendAtMillis = new Date(2026, 7, 21, 16, 38).getTime()
+    const ownItem: ArkmeTimelineItem = {
+      itemUid: 'record-1', senderName: 'Ye', isMe: true, sendAtMillis,
+      title: '', textContent: '正文', status: 1,
+    }
+    const receivedItem = { ...ownItem, itemUid: 'record-2', senderName: '小林', isMe: false }
+    const ownMarkup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: ownItem }))
+    const receivedMarkup = renderToStaticMarkup(createElement(ArkmeTimelineMessageHeader, { item: receivedItem }))
+
+    expect(ownMarkup.indexOf('16:38')).toBeLessThan(ownMarkup.indexOf('Ye'))
+    expect(receivedMarkup.indexOf('小林')).toBeLessThan(receivedMarkup.indexOf('16:38'))
   })
 
   it('renders agent-sent messages with a client-compatible source badge', () => {

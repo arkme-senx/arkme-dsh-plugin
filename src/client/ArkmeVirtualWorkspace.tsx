@@ -792,6 +792,7 @@ export function ArkmeNavigation({
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
       const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
         || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'search' || uiSnapshot.mode === 'extensions'
+        || uiSnapshot.mode === 'settings'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
@@ -864,7 +865,7 @@ export function ArkmeNavigation({
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
     const restored = ui.mode === 'recordings' || ui.mode === 'arko'
-      || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions'
+      || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'settings'
       ? undefined
       : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)

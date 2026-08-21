@@ -5,6 +5,7 @@ import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlas
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import type { Icon } from '@phosphor-icons/react/lib'
+import { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
 import { arkmeUi } from './ui-controller.js'
 
 interface ArkmeProductNavigationProps {
@@ -123,5 +124,6 @@ export function ArkmeProductNavigation({ compact, currentSessionId }: ArkmeProdu
           <span style={styles.label}>{item.label}</span>
         </button>
       })}
+      <ArkmeAccountMenu compact={compact} />
     </nav>
 }

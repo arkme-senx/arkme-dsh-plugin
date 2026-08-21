@@ -9,12 +9,11 @@ import type {
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
-  ArkmeUploadedAsset, ArkmeForwardRecordPreviewItem,
+  ArkmeUploadedAsset, ArkmeForwardRecordPreviewItem, ArkmeUserProfile, ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
-import { ArkmeSourceAvatar, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
-import { ArkmeMark } from './ArkmeFooterAction.js'
+import { ArkmeSourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeGroupChatControls } from './ArkmeGroupChatControls.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
@@ -34,6 +33,7 @@ import {
 } from './ArkmeTopicDirectoryPopover.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -360,19 +360,37 @@ export function aiPolishStatus(item: ArkmeTimelineItem): string {
   }
 }
 
-function MessageAvatar({ item }: { item: ArkmeTimelineItem }) {
-  const [src, setSrc] = useState('')
-  useEffect(() => {
-    let active = true
-    setSrc('')
-    if (item.avatarRef === undefined) return () => { active = false }
-    void loadArkmeImageDataUrl(item.avatarRef)
-      .then(value => { if (active) setSrc(value) })
-      .catch(() => undefined)
-    return () => { active = false }
-  }, [item.avatarRef])
+export function arkmeTimelineSenderName(item: ArkmeTimelineItem, profile?: ArkmeUserProfile): string {
+  if (!item.isMe || profile === undefined) return item.senderName
+  return profile.displayName.trim() || profile.nickname.trim() || item.senderName
+}
+
+export function arkmeTimelineAvatarRef(item: ArkmeTimelineItem, profile?: ArkmeUserProfile): string | undefined {
+  const itemAvatarRef = item.avatarRef?.trim()
+  if (itemAvatarRef !== undefined && itemAvatarRef !== '') return itemAvatarRef
+  if (!item.isMe) return undefined
+  const profileAvatarRef = profile?.avatarRef.trim()
+  return profileAvatarRef === '' ? undefined : profileAvatarRef
+}
+
+function MessageAvatar({ avatarRef }: { avatarRef?: string }) {
   return <span style={styles.messageAvatar} aria-hidden>
-    {src === '' ? <ArkmeMark size={32} /> : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
+    <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={38} label="消息头像" />
+  </span>
+}
+
+export function ArkmeTimelineMessageHeader({
+  item,
+  profile,
+}: {
+  item: ArkmeTimelineItem
+  profile?: ArkmeUserProfile
+}) {
+  const senderName = arkmeTimelineSenderName(item, profile)
+  return <span style={styles.messageHeader}>
+    {item.isMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
+    <span style={styles.sender}>{senderName}</span>
+    {!item.isMe && <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>}
   </span>
 }
 
@@ -402,18 +420,8 @@ function forwardFullTimeLabel(value: number): string {
 }
 
 function ForwardRecordAvatar({ avatarRef }: { avatarRef?: string }) {
-  const [src, setSrc] = useState('')
-  useEffect(() => {
-    let active = true
-    if (avatarRef === undefined || avatarRef === '') {
-      setSrc('')
-      return () => { active = false }
-    }
-    void loadArkmeImageDataUrl(avatarRef).then(value => { if (active) setSrc(value) }).catch(() => undefined)
-    return () => { active = false }
-  }, [avatarRef])
   return <span style={styles.forwardDetailAvatar} aria-hidden>
-    {src === '' ? <ArkmeMark size={42} /> : <img src={src} alt="" draggable={false} style={styles.messageAvatarImage} />}
+    <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={42} label="转发消息头像" />
   </span>
 }
 
@@ -530,6 +538,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
   const addMenuRef = useRef<HTMLDivElement>(null)
   const addMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [selfProfile, setSelfProfile] = useState<ArkmeUserProfile>()
   const [timelineStateSourceRef, setTimelineStateSourceRef] = useState('')
   const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
   const [aiPolishSettings, setAiPolishSettings] = useState<ArkmeGroupAiPolishSnapshot>()
@@ -559,6 +568,21 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setSelfProfile(undefined)
+    if (authenticatedUserId === undefined) return () => { active = false }
+    void callArkme<ArkmeUserProfileSnapshot>('user.profile')
+      .then(async snapshot => snapshot.profile === null
+        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+        : snapshot)
+      .then(snapshot => {
+        if (active && snapshot.profile?.userId === authenticatedUserId) setSelfProfile(snapshot.profile)
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [authenticatedUserId])
 
   useEffect(() => {
     if (!addMenuOpen || typeof document === 'undefined') return
@@ -1168,8 +1192,11 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
     const textContent = draft.trim()
     if (textContent === '' && attachments.length === 0) return
     const recordUid = crypto.randomUUID(); const relationUid = crypto.randomUUID(); const now = Date.now()
+    const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
+    const optimisticAvatarRef = selfProfile?.avatarRef.trim()
     const optimistic: ArkmeTimelineItem = {
-      itemUid: recordUid, senderName: '我', isMe: true, sendAtMillis: now,
+      itemUid: recordUid, senderName: optimisticSenderName, isMe: true, sendAtMillis: now,
+      ...(optimisticAvatarRef === undefined || optimisticAvatarRef === '' ? {} : { avatarRef: optimisticAvatarRef }),
       title: '', textContent, status: 0,
       ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
         ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
@@ -1354,12 +1381,13 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '插件'
+    : ui.mode === 'settings' ? '设置'
     : ui.mode === 'arko' ? 'Arko'
     : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'recordings' || ui.mode === 'search' || ui.mode === 'extensions')
+    && (ui.mode === 'recordings' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'settings')
 
   return (
     <div
@@ -1478,6 +1506,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
             currentSessionId={currentSessionId}
             onClose={() => { arkmeUi.showConversations() }}
           /></div>
+          : ui.mode === 'settings' ? <div style={styles.utilityBody}><ArkmeSettingsSurface /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'
@@ -1508,6 +1537,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
                   </Fragment>
                 }
                 const item = row.item
+                const avatarRef = arkmeTimelineAvatarRef(item, selfProfile)
                 const polishStatus = aiPolishStatus(item)
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
@@ -1517,16 +1547,13 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
                       ...(item.isMe ? styles.messageLineMe : {}),
                       ...(item.forwardRecords === undefined ? {} : styles.forwardMessageLine),
                     }}>
-                      {showMessageAvatars && <MessageAvatar item={item} />}
+                      {showMessageAvatars && <MessageAvatar {...(avatarRef === undefined ? {} : { avatarRef })} />}
                       <div style={{
                         ...styles.messageBody,
                         ...(item.isMe ? styles.messageBodyMe : {}),
                         ...(item.forwardRecords === undefined ? {} : styles.forwardMessageBody),
                       }}>
-                        <span style={styles.messageHeader}>
-                          <span style={styles.sender}>{item.senderName}</span>
-                          <span style={styles.meta}>{timeLabel(item.sendAtMillis)}</span>
-                        </span>
+                        <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />
                         <div
                           role="button"
                           tabIndex={0}
