@@ -7,6 +7,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'provider.instance'
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
+  | 'calendar.buckets'
+  | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'
   | 'topic.create'

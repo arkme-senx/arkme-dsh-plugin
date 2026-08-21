@@ -25,6 +25,7 @@ import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService } from './services/auth-service.js'
 import { BotService, type ArkmeBotRefPayload } from './services/bot-service.js'
+import { CalendarService } from './services/calendar-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
 import { ChatService } from './services/chat-service.js'
 import { CommunityService } from './services/community-service.js'
@@ -91,6 +92,8 @@ import type {
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
   ArkmeBotList,
+  ArkmeCalendarBucketPage,
+  ArkmeCalendarDayRecordPage,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeCaptchaResult,
@@ -184,6 +187,7 @@ export class ArkmeService {
   private readonly runtime: ServiceRuntime
   private readonly aiVideo: AiVideoService
   private readonly arrangement: ArrangementService
+  private readonly calendar: CalendarService
   private readonly wechat: WechatService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
@@ -216,6 +220,7 @@ export class ArkmeService {
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore)
     this.aiVideo = new AiVideoService(this.runtime)
     this.arrangement = new ArrangementService(this.runtime)
+    this.calendar = new CalendarService(this.runtime)
     this.wechat = new WechatService(this.runtime)
     this.recording = new RecordingService(this.runtime)
     this.profile = new ProfileService(this.runtime)
@@ -391,6 +396,7 @@ export class ArkmeService {
         revisionPolling: true,
         userProfile: true,
         imageRead: true,
+        recordCalendar: true,
         imageLibrary: true,
         sourceDirectory: true,
         sourceTimeline: true,
@@ -1130,6 +1136,24 @@ export class ArkmeService {
 
   async list(limit: number, cursor?: ArkmeRecordCursor): Promise<ArkmeSelfRecordList> {
     return await this.record.list(limit, cursor)
+  }
+
+  async calendarBuckets(
+    options: { startDate: string; endDate: string; timezone?: string; signal?: AbortSignal },
+  ): Promise<ArkmeCalendarBucketPage> {
+    return await this.calendar.bucketPage(options)
+  }
+
+  async calendarRecords(
+    options: {
+      bucketDate: string
+      timezone?: string
+      limit?: number
+      cursor?: ArkmeRecordCursor
+      signal?: AbortSignal
+    },
+  ): Promise<ArkmeCalendarDayRecordPage> {
+    return await this.calendar.dayRecords(options)
   }
 
   async listWorldRecords(

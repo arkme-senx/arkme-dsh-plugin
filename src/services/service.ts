@@ -554,6 +554,26 @@ export class ServiceRuntime {
     }
   }
 
+  async authenticatedCalendarPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'record', 'interactive-read', options)
+    try {
+      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0, 200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0, 200], signal, false, requestOptions())
+    }
+  }
+
   async authenticatedAuthPost<T>(
     path: string,
     body: Record<string, unknown>,

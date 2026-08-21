@@ -24,6 +24,8 @@ function fakeService(): ArkmeCoreToolPorts & {
   refreshLatest: ReturnType<typeof vi.fn>
   syncHistory: ReturnType<typeof vi.fn>
   queryCached: ReturnType<typeof vi.fn>
+  calendarBuckets: ReturnType<typeof vi.fn>
+  calendarRecords: ReturnType<typeof vi.fn>
   createTextForConversation: ReturnType<typeof vi.fn>
   setArkmeIdOnce: ReturnType<typeof vi.fn>
   arkoAsk: ReturnType<typeof vi.fn>
@@ -45,6 +47,7 @@ function fakeService(): ArkmeCoreToolPorts & {
         search: true as const, createText: true as const, retryOutbox: true as const, revisionPolling: true as const,
         userProfile: true as const,
         imageRead: true as const,
+        recordCalendar: true as const,
         sourceDirectory: true as const, sourceTimeline: true as const, sourceTextSend: true as const,
         outgoingCall: true as const,
       },
@@ -89,6 +92,34 @@ function fakeService(): ArkmeCoreToolPorts & {
     searchRecordings: vi.fn(async () => ({
       items: [{ sessionId: 'recording-1', dateStamp: 123, startAtMillis: 456, snippet: '录音复盘', score: 1 }],
       hasMore: false, queryGuard: { state: 'complete' },
+    })),
+    calendarBuckets: vi.fn(async () => ({
+      scope: 'self' as const,
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+      refreshedAtMillis: 1,
+      days: [{ bucketDate: '2026-08-21', count: 41, protectedCount: 0, hasRecords: true }],
+    })),
+    calendarRecords: vi.fn(async () => ({
+      scope: 'self' as const,
+      bucketDate: '2026-08-21',
+      timezone: 'Asia/Shanghai',
+      refreshedAtMillis: 1,
+      items: [{
+        recordUid: 'calendar-record-1',
+        sendAtMillis: 1_787_310_000_000,
+        accessState: 'available' as const,
+        title: '日历记录',
+        textContent: '这个测试服你能配置不',
+        preview: '这个测试服你能配置不',
+        sourceKind: 'self' as const,
+        creationSource: 2,
+        templateKind: 1,
+        displayKind: 0,
+        protected: false,
+      }],
+      hasMore: false,
     })),
     createTextForConversation: vi.fn(async (recordUid: string) => ({
       recordUid, status: 1, localState: 'synced' as const,
@@ -281,6 +312,46 @@ describe('Arkme conversation tools', () => {
 
     await tool.execute({ query: '复盘', cursor: 'next-records' }, { signal } as never)
     expect(service.searchRemote).toHaveBeenLastCalledWith({ query: '复盘', limit: 10, cursor: 'next-records', signal })
+  })
+
+  it('reads record calendar buckets and one day without using recording tools', async () => {
+    const service = fakeService()
+    const tools = createArkmeCoreToolDefinitions(service)
+    const daysTool = tools.find(definition => definition.name === 'arkme_record_calendar_days')!
+    const readTool = tools.find(definition => definition.name === 'arkme_record_calendar_read')!
+    const signal = new AbortController().signal
+
+    const days = await daysTool.execute({
+      start_date: '2026-08-01',
+      end_date: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+    }, { signal } as never) as string
+    const records = await readTool.execute({
+      date: '2026-08-21',
+      limit: 10,
+      cursor_send_at_millis: 1_787_300_000_000,
+      cursor_record_uid: 'record-next',
+      timezone: 'Asia/Shanghai',
+    }, { signal } as never) as string
+
+    expect(service.calendarBuckets).toHaveBeenCalledWith({
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+      signal,
+    })
+    expect(service.calendarRecords).toHaveBeenCalledWith({
+      bucketDate: '2026-08-21',
+      limit: 10,
+      cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+      timezone: 'Asia/Shanghai',
+      signal,
+    })
+    expect(service.searchRecordings).not.toHaveBeenCalled()
+    expect(days).toContain('Arkme 记录日历日期计数')
+    expect(days).toContain('"count": 41')
+    expect(records).toContain('这个测试服你能配置不')
+    expect(records).toContain('"record_uid": "calendar-record-1"')
   })
 
   it('lists authorized image references without exposing storage URLs', async () => {

@@ -285,6 +285,33 @@ export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; o
   </button>
 }
 
+function CalendarAvatar() {
+  return <span style={{
+    width: 34, height: 34, display: 'grid', gridTemplateRows: '9px 1fr',
+    overflow: 'hidden', borderRadius: 10, background: colors.panel,
+    border: `1px solid ${colors.border}`, boxSizing: 'border-box',
+  }}>
+    <span style={{ background: colors.accent }} />
+    <span style={{ display: 'grid', placeItems: 'center', color: colors.accent, fontSize: 16, lineHeight: '24px', fontWeight: 700 }}>21</span>
+  </span>
+}
+
+export function ArkmeCalendarRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><CalendarAvatar /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.chatName}>日历</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>按日期查看快记</span></span>
+    </span>
+  </button>
+}
+
 export function ArkmeSearchRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
   return <button
     type="button"
@@ -737,7 +764,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko' || uiSnapshot.mode === 'search'
+      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'arko' || uiSnapshot.mode === 'search'
         ? undefined
         : reconcileSelectedSource(selected ?? cachedSelected, loaded)
         ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
@@ -809,7 +836,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
     setSources(loaded)
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'recordings' || ui.mode === 'arko' || ui.mode === 'search'
+    const restored = ui.mode === 'recordings' || ui.mode === 'calendar' || ui.mode === 'arko' || ui.mode === 'search'
       ? undefined
       : reconcileSelectedSource(selected ?? cachedSelected, loaded)
     if (restored !== undefined) arkmeUi.selectSource(restored)
@@ -888,6 +915,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
 
   const showLogin = () => { activateNativeEntry(); arkmeUi.showLogin(); onActivateSurface?.() }
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
+  const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
   const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
   const showArko = () => { activateNativeEntry(); arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
@@ -1049,6 +1077,7 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
         </button>
+        <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />
         <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />
         <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {

@@ -21,6 +21,7 @@ import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
+import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
@@ -1320,6 +1321,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
     ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
     : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
+    : ui.mode === 'calendar' ? '日历'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'arko' ? 'Arko'
     : ui.mode === 'source' ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
@@ -1401,6 +1403,7 @@ export function ArkmeSurface({ floating = false, initialAuth }: ArkmeSurfaceProp
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
+          : ui.mode === 'calendar' ? <ArkmeCalendarSurface />
           : ui.mode === 'search' ? <div style={styles.body}><ArkmeSearchSurface /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body}>
