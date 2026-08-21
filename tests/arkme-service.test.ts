@@ -323,6 +323,51 @@ describe('ArkmeService', () => {
     }
   })
 
+  it('reconnects an active Chat SSE immediately when another request refreshes its access token', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'expired', refreshToken: 'refresh' }
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+    let audioRejected = false
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const authorization = new Headers(init?.headers).get('Authorization') ?? ''
+      if (url === 'https://im.test/api/v1/sse/chat/noty') {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller)
+            init?.signal?.addEventListener('abort', () => {
+              try { controller.error(new DOMException('aborted', 'AbortError')) } catch { /* already closed */ }
+            }, { once: true })
+          },
+        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: { items: [], has_more: false } })
+      if (url === 'https://auth.test/api/public/v1/auth/new-short') {
+        return json({ code: 200, data: { access_token: 'renewed' } })
+      }
+      if (url === 'https://audio.test/api/v1/audio/get-calender-summary') {
+        if (!audioRejected && authorization === 'Bearer expired') {
+          audioRejected = true
+          return json({}, 401)
+        }
+        return json({ code: 200, data: { duration_ls: [0, 0], un_click_session_ids_per_day: [[], []] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const stop = service.startChatRealtime()
+    await vi.waitFor(() => {
+      expect(service.chatRealtimeState()).toMatchObject({ connected: true, connectionGeneration: 1 })
+    })
+
+    await service.recordingCalendar(1_700_000_000_000, 1_700_172_800_000)
+
+    await vi.waitFor(() => {
+      expect(service.chatRealtimeState()).toMatchObject({ connected: true, connectionGeneration: 2 })
+    }, { timeout: 500 })
+    expect(sessions.session?.accessToken).toBe('renewed')
+    stop()
+  })
+
   it('keeps transcript rows readable when the speaker directory fails', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -1432,6 +1477,33 @@ describe('ArkmeService', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(callsBeforeAccountSwitch)
   })
 
+  it('resolves a notification source against the current account and authoritative chat snapshot', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://chat.test/api/v1/chats/display-snapshots')
+      expect(JSON.parse(String(init?.body))).toEqual({ chat_session_uids: ['chat-private-1'] })
+      return json({ code: 200, data: { items: [{
+        session: { chat_session_uid: 'chat-private-1', session_kind: 1, last_seq: 12, last_active_at: 120 },
+        private_counterpart: { user_id: 20002, display_name_snapshot: '小林' },
+        private_supplement: { remark: '林溪' },
+        current_policy: { mute_state: 1, notify_state: 1 },
+        unread_snapshot: { unread_count: 3, session_last_seq: 12 },
+      }] } })
+    })
+    const service = new ArkmeService(config, sessions, state, fetchImpl)
+    const sourceRef = sourceRefFor('private_chat', 'chat-private-1', '旧名称')
+
+    await expect(service.resolveSource(sourceRef)).resolves.toMatchObject({
+      kind: 'private_chat', displayName: '林溪', latestSequence: 12, unreadCount: 3,
+      sourceRef: expect.stringMatching(/^arkme-source-v1\./),
+    })
+    sessions.session = { userId: 10002, accessToken: 'other-access', refreshToken: 'other-refresh' }
+    await expect(service.resolveSource(sourceRef)).rejects.toMatchObject({ code: 'source-ref-invalid' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the send-to-self list usable when the hierarchy endpoint is unavailable', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -1687,12 +1759,18 @@ describe('ArkmeService', () => {
     })
     const events: unknown[] = []
     service.subscribeChatRealtime(event => { events.push(event) })
+    type TestProjection = { latestSequence: number; notificationHints: [] }
     const internal = service as unknown as {
-      refreshChatSessionProjectionBatch(pending: Array<[string, number]>): Promise<Array<[string, number]>>
+      refreshChatSessionProjectionBatch(
+        pending: Array<[string, TestProjection]>,
+      ): Promise<Array<[string, TestProjection]>>
     }
+    const projection = (latestSequence: number): TestProjection => ({ latestSequence, notificationHints: [] })
 
-    const failed = await internal.refreshChatSessionProjectionBatch([['chat-1', 9], ['chat-2', 9]])
-    expect(failed).toEqual([['chat-2', 9]])
+    const failed = await internal.refreshChatSessionProjectionBatch([
+      ['chat-1', projection(9)], ['chat-2', projection(9)],
+    ])
+    expect(failed).toEqual([['chat-2', projection(9)]])
     expect(events[0]).toMatchObject({ type: 'sessions-delta', updates: [{ source: { displayName: '群聊-chat-1' } }] })
     await expect(internal.refreshChatSessionProjectionBatch(failed)).resolves.toEqual([])
     expect(tailCalls).toEqual(new Map([['chat-1', 1], ['chat-2', 2]]))

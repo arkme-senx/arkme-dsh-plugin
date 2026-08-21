@@ -1259,6 +1259,7 @@ export interface ArkmePluginUpdateInstallSnapshot {
 export interface ArkmeChatRealtimeState {
   revision: number
   connected: boolean
+  connectionGeneration: number
   lastEventAtMillis?: number
 }
 
@@ -1267,10 +1268,22 @@ export type ArkmeChatClientEvent = {
   revision: number
   connected: boolean
   refresh?: 'none' | 'if-stale' | 'force'
+  connectionGeneration: number
 } | {
   type: 'sessions-delta'
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
+} | {
+  type: 'message-notification'
+  revision: number
+  notification: {
+    eventUid: string
+    sourceRef: string
+    sourceKind: 'private_chat' | 'group_chat'
+    title: string
+    body: string
+    eventAtMillis: number
+  }
 } | {
   type: 'read-ack'
   revision: number
@@ -1309,6 +1322,7 @@ export type ArkmePluginOperation =
   | 'world.image.read'
   | 'sources.list'
   | 'source.timeline'
+  | 'source.resolve'
   | 'source.mark-read'
   | 'source.send-text'
   | 'related-recordings.eligibility'

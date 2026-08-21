@@ -2,11 +2,16 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { ArkmeSourceItem } from '../types.js'
+import { callArkme } from './api.js'
 import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
+import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -61,6 +66,27 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
   ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
+  ctx.effect(() => {
+    let disposed = false
+    let activationGeneration = 0
+    const stop = arkmeDesktopNotifications.onActivated(sourceRef => {
+      const generation = ++activationGeneration
+      void callArkme<ArkmeSourceItem>('source.resolve', { sourceRef }).then(source => {
+        if (disposed || generation !== activationGeneration) return
+        arkmeChatDirectory.upsert(source)
+        arkmeUi.selectSource(source)
+        arkmeNotificationActivation.publish(source)
+        openArkme(undefined)
+      }).catch(error => {
+        console.warn('dsh-arkme: resolve_failed', error)
+      })
+    })
+    return () => {
+      disposed = true
+      activationGeneration += 1
+      stop()
+    }
+  }, 'dsh-arkme: activate message notification sources')
 
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',

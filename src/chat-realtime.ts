@@ -9,7 +9,7 @@ const DEFAULT_INACTIVITY_TIMEOUT_MS = 75_000
 const DEFAULT_LEASE_DURATION_MS = 9 * 60_000 + 30_000
 const DEFAULT_IDLE_POLL_MS = 2_000
 const DEFAULT_RETRY_BASE_MS = 1_000
-const DEFAULT_MAX_RETRY_MS = 60_000
+const DEFAULT_MAX_RETRY_MS = 15_000
 const DEFAULT_STABLE_CONNECTION_MS = 30_000
 const MAX_SEEN_EVENTS = 256
 
@@ -44,6 +44,10 @@ export interface ArkmeChatRealtimeRuntimeOptions {
   stableConnectionMs?: number
   random?: () => number
   now?: () => number
+  diagnostic?(
+    event: 'sse_disconnected' | 'reconnect_attempt',
+    details: { connectionGeneration: number },
+  ): void
 }
 
 class ArkmeChatRealtimeAuthError extends Error {}
@@ -127,11 +131,14 @@ export class ArkmeChatRealtimeRuntime {
   private readonly now: () => number
   private rootController: AbortController | undefined
   private connectionController: AbortController | undefined
+  private waitController: AbortController | undefined
   private loop: Promise<void> | undefined
   private revision = 0
   private connected = false
   private lastAcceptedAccessToken: string | undefined
   private lastConnectionLifetimeMs = 0
+  private connectionGeneration = 0
+  private forceReconnectRequested = false
   private lastEventAtMillis: number | undefined
   private readonly seenEventUids = new Set<string>()
   private readonly listeners = new Set<(notice: ArkmeChatRealtimeNotice) => void>()
@@ -166,16 +173,21 @@ export class ArkmeChatRealtimeRuntime {
   stop(): void {
     this.rootController?.abort()
     this.connectionController?.abort()
+    this.waitController?.abort()
   }
 
   reconnect(): void {
+    if (this.loop === undefined) return
+    this.forceReconnectRequested = true
     this.connectionController?.abort()
+    this.waitController?.abort()
   }
 
   state(): ArkmeChatRealtimeState {
     return {
       revision: this.revision,
       connected: this.connected,
+      connectionGeneration: this.connectionGeneration,
       ...(this.lastEventAtMillis === undefined ? {} : { lastEventAtMillis: this.lastEventAtMillis }),
     }
   }
@@ -198,16 +210,19 @@ export class ArkmeChatRealtimeRuntime {
       if (session === undefined) {
         this.connected = false
         blockedAccessToken = undefined
-        await waitFor(this.idlePollMs, signal)
+        await this.wait(this.idlePollMs, signal)
         continue
       }
       if (blockedAccessToken === session.accessToken) {
         this.connected = false
-        await waitFor(this.idlePollMs, signal)
+        await this.wait(this.idlePollMs, signal)
         continue
       }
       blockedAccessToken = undefined
       let stableConnection = false
+      this.options.diagnostic?.('reconnect_attempt', {
+        connectionGeneration: this.connectionGeneration + 1,
+      })
       try {
         await this.consume(session, signal)
         stableConnection = this.lastConnectionLifetimeMs >= this.stableConnectionMs
@@ -222,7 +237,7 @@ export class ArkmeChatRealtimeRuntime {
           if (refreshedButUnacceptedToken === session.accessToken) {
             blockedAccessToken = session.accessToken
             refreshedButUnacceptedToken = undefined
-            await waitFor(this.idlePollMs, signal)
+            await this.wait(this.idlePollMs, signal)
             continue
           }
           let refreshed: ArkmeSessionCredentials | undefined
@@ -230,18 +245,28 @@ export class ArkmeChatRealtimeRuntime {
           catch { refreshed = undefined }
           if (refreshed !== undefined && refreshed.accessToken !== session.accessToken) {
             refreshedButUnacceptedToken = refreshed.accessToken
+            this.forceReconnectRequested = false
             retryMs = this.retryBaseMs
             continue
           }
           blockedAccessToken = session.accessToken
-          await waitFor(this.idlePollMs, signal)
+          await this.wait(this.idlePollMs, signal)
           continue
         }
       } finally {
+        if (this.connected && !signal.aborted) {
+          this.options.diagnostic?.('sse_disconnected', {
+            connectionGeneration: this.connectionGeneration,
+          })
+        }
         this.connected = false
       }
-      const jitteredRetryMs = Math.max(1, Math.round(retryMs * (0.8 + this.random() * 0.4)))
-      await waitFor(jitteredRetryMs, signal)
+      if (this.forceReconnectRequested) {
+        this.forceReconnectRequested = false
+        retryMs = this.retryBaseMs
+        continue
+      }
+      await this.wait(this.jitteredDelay(retryMs), signal)
       if (!stableConnection) {
         retryMs = Math.min(this.maxRetryMs, Math.max(this.retryBaseMs, retryMs * 2))
       }
@@ -281,6 +306,7 @@ export class ArkmeChatRealtimeRuntime {
       acceptedAtMillis = this.now()
       this.connected = true
       this.lastAcceptedAccessToken = session.accessToken
+      this.connectionGeneration += 1
       this.advanceRevision('reconcile')
       leaseTimer = setTimeout(() => controller.abort(new Error('chat SSE lease rotation')), this.leaseDurationMs)
       const reader = response.body.getReader()
@@ -305,6 +331,25 @@ export class ArkmeChatRealtimeRuntime {
       if (leaseTimer !== undefined) clearTimeout(leaseTimer)
       rootSignal.removeEventListener('abort', abortFromRoot)
       if (this.connectionController === controller) this.connectionController = undefined
+    }
+  }
+
+  private jitteredDelay(milliseconds: number): number {
+    const random = Math.min(1, Math.max(0, this.random()))
+    return Math.max(0, Math.round(milliseconds * (0.8 + random * 0.4)))
+  }
+
+  private async wait(milliseconds: number, rootSignal: AbortSignal): Promise<void> {
+    if (rootSignal.aborted) return
+    const controller = new AbortController()
+    const abortFromRoot = () => { controller.abort(rootSignal.reason) }
+    rootSignal.addEventListener('abort', abortFromRoot, { once: true })
+    this.waitController = controller
+    try {
+      await waitFor(milliseconds, controller.signal)
+    } finally {
+      rootSignal.removeEventListener('abort', abortFromRoot)
+      if (this.waitController === controller) this.waitController = undefined
     }
   }
 

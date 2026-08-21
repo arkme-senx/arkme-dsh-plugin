@@ -8,6 +8,7 @@ import { arkmeAuthStore } from './auth-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
 } from './chat-directory-store.js'
+import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 
@@ -78,7 +79,9 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
         if (update.type === 'reconcile') {
           arkmeInterwovenInvalidation.invalidate()
           if (update.refresh === 'none') return
-          void refreshUnread(update.refresh === 'force').catch(() => undefined)
+          void refreshUnread(update.refresh === 'force')
+            .then(() => { if (!stopped) arkmeUi.chatChanged() })
+            .catch(() => undefined)
           return
         }
         if (update.type === 'read-ack') {
@@ -88,6 +91,10 @@ export function ArkmeFooterDropdown(props: ArkmeFooterActionProps) {
             update.effectiveReadSequence,
             update.unreadCount,
           )
+          return
+        }
+        if (update.type === 'message-notification') {
+          void arkmeDesktopNotifications.show(update.notification)
           return
         }
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({

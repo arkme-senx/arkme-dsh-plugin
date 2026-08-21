@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -275,7 +275,13 @@ describe('companion plugin updater', () => {
     await mkdir(stateDirectory, { recursive: true })
     const profileDirectory = join(root, 'profiles', 'web')
     await mkdir(profileDirectory, { recursive: true })
-    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.7.0' }))
+    const pnpmVersionProbe = spawnSync('pnpm', ['--version'], { encoding: 'utf8' })
+    if (pnpmVersionProbe.status !== 0) throw new Error('failed to resolve pnpm for updater integration test')
+    const pnpmVersion = pnpmVersionProbe.stdout.trim()
+    await writeFile(
+      join(profileDirectory, 'package.json'),
+      JSON.stringify({ packageManager: `pnpm@${pnpmVersion}` }),
+    )
     await writeFile(versionPath, '0.1.3')
     await writeFile(fakeDsh, `
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'

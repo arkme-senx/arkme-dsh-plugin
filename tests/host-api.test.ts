@@ -3,6 +3,7 @@ import { dispatchArkmeHostOperation } from '../src/host-api.js'
 
 function fakeService() {
   return {
+    resolveSource: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     prepareOutgoingCall: vi.fn(async (input: unknown) => input),
     claimOutgoingCallIntent: vi.fn(async () => null),
     resolveOutgoingCallIntent: vi.fn(async () => undefined),
@@ -25,6 +26,17 @@ function fakeService() {
     removeLongArticleDraft: vi.fn(async () => undefined),
   }
 }
+
+describe('notification source Host API dispatch', () => {
+  it('resolves only the opaque source reference through the service', async () => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'source.resolve', {
+      sourceRef: 'signed-source-ref', userId: 999, displayName: '伪造名称',
+    })).resolves.toEqual({ sourceRef: 'signed-source-ref' })
+    expect(service.resolveSource).toHaveBeenCalledWith('signed-source-ref')
+  })
+})
 
 describe('outgoing call Host API dispatch', () => {
   it('rejects an unknown outgoing media type before calling the service', async () => {

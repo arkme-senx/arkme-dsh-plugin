@@ -20,6 +20,7 @@ import {
 } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { arkmeSourceTimeLabel, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
 import {
@@ -552,6 +553,11 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
+  const notificationActivation = useSyncExternalStore(
+    arkmeNotificationActivation.subscribe,
+    arkmeNotificationActivation.getSnapshot,
+    arkmeNotificationActivation.getSnapshot,
+  )
   const [initialCache] = useState(readLastNavigationCache)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
@@ -774,6 +780,19 @@ export function ArkmeNavigation({ wide = true, currentSessionId, onClose, onActi
       ...(restored === undefined ? {} : { selectedSourceRef: restored.sourceRef }),
     })
   }, [authenticated, chatDirectory, directory, persistCache, ui.mode])
+  useEffect(() => {
+    const source = notificationActivation.source
+    if (!authenticated || source === undefined) return
+    const shared = arkmeChatDirectory.getSnapshot().sources
+    const nextSources = [source, ...shared.filter(item => item.sourceRef !== source.sourceRef)]
+    arkmeChatDirectory.publish(nextSources)
+    setDirectory('root')
+    setSources(nextSources)
+    arkmeUi.selectSource(source)
+    persistCache({ directory: 'root', sources: { root: nextSources }, selectedSourceRef: source.sourceRef })
+    arkmeNotificationActivation.consume(notificationActivation.revision)
+    onActivateSurface?.()
+  }, [authenticated, notificationActivation, onActivateSurface, persistCache])
   useEffect(() => {
     if (!authenticated || directory !== 'send_to_self') return
     const defaultCategory = sources.find(source => source.kind === 'default_category')

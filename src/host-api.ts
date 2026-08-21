@@ -476,6 +476,7 @@ export async function dispatchArkmeHostOperation(
       requiredInterwovenParam(params, 'sourceRef'),
       requiredInterwovenParam(params, 'momentRef'),
     )
+    case 'source.resolve': return await service.resolveSource(stringParam(params, 'sourceRef'))
     case 'source.mark-read': return await service.markSourceRead(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
