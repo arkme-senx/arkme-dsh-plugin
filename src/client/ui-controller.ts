@@ -137,8 +137,7 @@ export class ArkmeUiController {
   }
 
   showContactAdd(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'contact-add' })
+    this.publish({ ...this.state, open: true, surfaceOpen: true, mode: 'contact-add' })
   }
 
   showArko(): void {

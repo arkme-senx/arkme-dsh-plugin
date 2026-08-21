@@ -127,6 +127,25 @@ const styles: Record<string, CSSProperties> = {
     borderRight: 0, borderBottom: `1px solid ${colors.border}`,
   },
   panel: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
+  contactBackdrop: {
+    position: 'absolute', inset: 0, zIndex: 180, padding: 22, boxSizing: 'border-box',
+    display: 'grid', placeItems: 'center', background: 'rgba(19, 22, 26, .24)',
+  },
+  contactDialog: {
+    width: 'min(620px, 100%)', maxHeight: 'min(610px, calc(100% - 4px))', minHeight: 0,
+    display: 'flex', flexDirection: 'column', overflow: 'hidden', border: `1px solid ${colors.border}`,
+    borderRadius: 14, background: arkmeTheme.base, boxShadow: '0 22px 64px rgba(20, 23, 31, .22)',
+  },
+  contactDialogHeader: {
+    height: 58, minHeight: 58, padding: '0 16px 0 20px', boxSizing: 'border-box', display: 'flex',
+    alignItems: 'center', borderBottom: `1px solid ${colors.border}`, background: arkmeTheme.base,
+  },
+  contactDialogTitle: { flex: 1, minWidth: 0, margin: 0, color: colors.text, fontSize: 18, lineHeight: '24px', fontWeight: 600 },
+  contactDialogClose: {
+    width: 32, height: 32, padding: 0, border: 0, borderRadius: 8, background: 'transparent',
+    color: colors.secondary, cursor: 'pointer', fontSize: 25, lineHeight: 1,
+  },
+  contactDialogBody: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' },
   header: {
     flex: 'none', height: 68, display: 'flex', alignItems: 'center', padding: '12px 16px 12px 20px',
     boxSizing: 'border-box', borderBottom: `1px solid ${colors.border}`, position: 'relative', gap: 2,
@@ -499,7 +518,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
   )
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
-  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'calendar'
+  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'calendar' || ui.mode === 'contact-add'
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
@@ -586,6 +605,15 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
       .catch(() => undefined)
     return () => { active = false }
   }, [authenticatedUserId])
+
+  useEffect(() => {
+    if (ui.mode !== 'contact-add' || typeof document === 'undefined') return
+    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') arkmeUi.showConversations()
+    }
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => { document.removeEventListener('keydown', closeFromKeyboard) }
+  }, [ui.mode])
 
   useEffect(() => {
     if (!addMenuOpen || typeof document === 'undefined') return
@@ -1386,7 +1414,6 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '插件'
     : ui.mode === 'settings' ? '设置'
-    : ui.mode === 'contact-add' ? '添加联系人'
     : ui.mode === 'arko' ? 'Arko'
     : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
@@ -1514,8 +1541,6 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
             onClose={() => { arkmeUi.showConversations() }}
           /></div>
           : ui.mode === 'settings' ? <div style={styles.utilityBody}><ArkmeSettingsSurface /></div>
-          : ui.mode === 'contact-add' ? <div style={styles.utilityBody}><ArkmeContactAddSurface
-             shareWebsite={authStoreSnapshot.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE} onSourceActivated={activateSource} /></div>
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'
@@ -1695,6 +1720,25 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
                 : detailItem.textContent || detailItem.title || '非文本内容'}</p>
           </div>
         </aside>}
+        {authView === 'content' && ui.mode === 'contact-add' && <div
+          style={styles.contactBackdrop}
+          role="presentation"
+          onMouseDown={event => { if (event.target === event.currentTarget) arkmeUi.showConversations() }}
+        >
+          <section style={styles.contactDialog} role="dialog" aria-modal="true" aria-labelledby="arkme-contact-add-title">
+            <header style={styles.contactDialogHeader}>
+              <h2 id="arkme-contact-add-title" style={styles.contactDialogTitle}>添加联系人</h2>
+              <button type="button" style={styles.contactDialogClose} aria-label="关闭添加联系人" onClick={() => { arkmeUi.showConversations() }}>×</button>
+            </header>
+            <div style={styles.contactDialogBody}>
+              <ArkmeContactAddSurface
+                compact
+                shareWebsite={authStoreSnapshot.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE}
+                onSourceActivated={activateSource}
+              />
+            </div>
+          </section>
+        </div>}
       </section>
       {authView === 'content' && ui.mode === 'calendar' && <ArkmeCalendarSurface />}
       {relatedPanelOpen && source?.kind === 'private_chat' && <RelatedRecordingsPanel

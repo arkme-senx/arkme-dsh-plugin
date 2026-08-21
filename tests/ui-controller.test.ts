@@ -109,15 +109,19 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('opens contact add without retaining a conversation source', () => {
+  it('opens contact add above the current conversation and restores that conversation when closed', () => {
     const controller = new ArkmeUiController()
-    controller.selectSource({
+    const source = {
       sourceRef: 'source-1', kind: 'private_chat', displayName: '联系人', activeAtMillis: 1, unreadCount: 0,
-    })
+    } as const
+    controller.selectSource(source)
     controller.showContactAdd()
     expect(controller.getSnapshot()).toEqual({
       open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'contact-add',
+      selectedSource: source,
     })
+    controller.showConversations()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
   })
 
   it('clears the previous account selection when authentication changes accounts', () => {

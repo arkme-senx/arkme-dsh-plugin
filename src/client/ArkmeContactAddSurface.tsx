@@ -11,10 +11,13 @@ const decodeQr = ((jsQRModule as unknown as { default?: typeof import('jsqr').de
   ?? jsQRModule) as unknown as typeof import('jsqr').default
 const styles: Record<string, CSSProperties> = {
   shell: { width: 'min(720px, 100%)', minHeight: '100%', margin: '0 auto', padding: '28px 34px 38px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', color: arkmeTheme.text },
+  compactShell: { width: '100%', minHeight: 450, margin: 0, padding: '20px 22px 22px' },
   form: { display: 'flex', alignItems: 'center', minHeight: 58, padding: '0 16px 0 20px', borderRadius: 16, background: arkmeTheme.subtle },
+  compactForm: { minHeight: 48, padding: '0 10px 0 15px', borderRadius: 12 },
   input: { minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 17 },
   iconButton: { width: 42, height: 42, padding: 8, border: 0, borderRadius: 10, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer' },
   scan: { width: '100%', minHeight: 66, marginTop: 18, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 15, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 16, textAlign: 'left' },
+  compactScan: { minHeight: 52, marginTop: 12, padding: '0 15px', borderRadius: 12, gap: 11, fontSize: 14 },
   arrow: { marginLeft: 'auto', color: arkmeTheme.tertiary, fontSize: 26 },
   notice: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   error: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 13 },
@@ -26,10 +29,12 @@ const styles: Record<string, CSSProperties> = {
   remark: { width: '100%', height: 42, marginTop: 18, padding: '0 12px', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.base, color: arkmeTheme.text, font: 'inherit' },
   primary: { width: '100%', minHeight: 44, marginTop: 12, border: 0, borderRadius: 10, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontWeight: 600 },
   footer: { marginTop: 'auto', paddingTop: 30, borderTop: `1px solid ${arkmeTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 },
+  compactFooter: { marginTop: 24, paddingTop: 18 },
   profileName: { margin: 0, fontSize: 18, fontWeight: 600 },
   profileId: { margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 6, color: arkmeTheme.secondary, fontSize: 14 },
   copy: { width: 28, height: 28, padding: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
   qr: { width: 112, height: 112, padding: 12, boxSizing: 'border-box', borderRadius: 16, background: '#fff' },
+  compactQr: { width: 92, height: 92, padding: 9, borderRadius: 12 },
   scannerBackdrop: { position: 'fixed', inset: 0, zIndex: 1000, padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0, 0, 0, .72)' },
   scannerDialog: { width: 'min(460px, 100%)', padding: 18, boxSizing: 'border-box', borderRadius: 18, background: arkmeTheme.base, color: arkmeTheme.text, boxShadow: '0 18px 60px rgba(0,0,0,.35)' },
   scannerHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
@@ -82,9 +87,10 @@ function qrDataUrl(content: string): string | undefined {
   return qr.createDataURL(5, 8)
 }
 
-export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated }: {
+export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compact = false }: {
   shareWebsite: string
   onSourceActivated(source: ArkmeSourceItem): void
+  compact?: boolean
 }) {
   const [identifier, setIdentifier] = useState('')
   const [candidate, setCandidate] = useState<ArkmeContactSearchResult>()
@@ -256,13 +262,13 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated }: {
     void scanFile(file)
   }
 
-  return <div style={styles.shell}>
-    <form style={styles.form} onSubmit={event => { void search(event) }}>
+  return <div style={{ ...styles.shell, ...(compact ? styles.compactShell : {}) }}>
+    <form style={{ ...styles.form, ...(compact ? styles.compactForm : {}) }} onSubmit={event => { void search(event) }}>
       <input style={styles.input} value={identifier} disabled={busy} placeholder="输入手机号或即我号" aria-label="手机号或即我号" onChange={event => { setIdentifier(event.target.value); setCandidate(undefined); setError(''); setNotice('') }} />
       <button type="submit" style={styles.iconButton} disabled={busy} aria-label="搜索联系人"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" /><path d="m15.5 15.5 5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg></button>
     </form>
     <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={event => { void scanFile(event.target.files?.[0]) }} />
-    <button type="button" style={styles.scan} disabled={busy} onClick={() => { setError(''); setNotice(''); setCameraActive(false); setScannerOpen(true) }}>
+    <button type="button" style={{ ...styles.scan, ...(compact ? styles.compactScan : {}) }} disabled={busy} onClick={() => { setError(''); setNotice(''); setCameraActive(false); setScannerOpen(true) }}>
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M8 8h3v3H8zm5 0h3v3h-3zm-5 5h3v3H8zm6 1h2v2h-2z" fill="currentColor" /></svg>
       <span>识别二维码图片添加好友</span><span style={styles.arrow}>›</span>
     </button>
@@ -275,9 +281,9 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated }: {
       </div></div>
       {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
     </section>}
-    {profile !== null && <footer style={styles.footer}><div><p style={styles.profileName}>{profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile.arkmeId || '尚未设置'}
+    {profile !== null && <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }}><div><p style={styles.profileName}>{profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile.arkmeId || '尚未设置'}
       {profile.arkmeId !== '' && <button type="button" style={styles.copy} title="复制即我号" aria-label="复制即我号" onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
-    </p></div>{qr !== undefined && <img src={qr} alt="我的好友二维码" title={shareUrl} style={styles.qr} />}</footer>}
+    </p></div>{qr !== undefined && <img src={qr} alt="我的好友二维码" title={shareUrl} style={{ ...styles.qr, ...(compact ? styles.compactQr : {}) }} />}</footer>}
     {scannerOpen && <div style={styles.scannerBackdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeScanner() }}><section style={styles.scannerDialog} role="dialog" aria-modal="true" aria-label="识别联系人二维码"
       onPaste={event => { scanDroppedFiles(Array.from(event.clipboardData.items).flatMap(item => { const file = item.kind === 'file' ? item.getAsFile() : null; return file === null ? [] : [file] })) }}
       onDragOver={event => { event.preventDefault() }} onDrop={event => { event.preventDefault(); scanDroppedFiles(event.dataTransfer.files) }}>
