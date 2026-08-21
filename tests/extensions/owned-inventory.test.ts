@@ -241,6 +241,13 @@ describe('owned extension inventory', () => {
       }),
     }))
     expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBe('ext-local')
+
+    await inventory.publish({
+      ownedRef: page.items[0]!.ownedRef, extensionId: 'ext-local',
+      name: '本地天气', description: '', version: '1.0.0', visibility: 'private',
+      clientMutationId: '985c8698-7622-45f3-9ba7-085d4254aa16',
+    })
+    expect(publishBundle).toHaveBeenLastCalledWith(expect.objectContaining({ extensionId: 'ext-local' }))
     store.close()
   })
 
@@ -254,7 +261,7 @@ describe('owned extension inventory', () => {
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
       refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
-      cloudList: async () => ({ items: [], total: 0 }),
+      cloudList: async () => ({ items: [{ ...cloudItem(), extension_id: 'ext-existing' }], total: 1 }),
       runner: {
         inventory: () => [{
           agentId: 'session-1', pluginId: 'weather-1', currentPackageId: 'pkg-1',
@@ -265,13 +272,32 @@ describe('owned extension inventory', () => {
       agents: { get: () => agent }, publish,
     })
 
-    await inventory.publishCordisPackage({
-      agent, pluginId: 'weather-1', packageId: 'pkg-1', extensionId: 'ext-existing',
+    const page = await inventory.list({ currentSessionId: 'session-1' })
+    const source = page.items.find(item => item.states.includes('cordis'))!
+    const input = {
+      ownedRef: source.ownedRef, extensionId: 'ext-existing',
       name: '天气助手', description: '天气', version: '1.1.0', visibility: 'private',
       clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
-    })
+    } as const
+    await expect(inventory.preparePublish({ ...input, extensionId: 'ext-other' }))
+      .rejects.toMatchObject({ code: 'extension-target-not-owned' })
+    const prepared = await inventory.preparePublish(input)
+    await inventory.publish(prepared.input)
 
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ extensionId: 'ext-existing' }))
+    expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-existing')
+    await expect(inventory.preparePublish({ ...input, extensionId: undefined })).resolves.toMatchObject({
+      input: expect.objectContaining({ extensionId: 'ext-existing' }),
+    })
+    await expect(inventory.preparePublish({
+      ownedRef: source.ownedRef, extensionId: 'ext-other',
+      name: '天气助手', description: '天气', version: '1.2.0', visibility: 'private',
+      clientMutationId: 'bc495f57-e44f-439f-a37d-655b712b4394',
+    })).rejects.toMatchObject({ code: 'extension-lineage-mismatch' })
+    publish.mockResolvedValueOnce({ extension_id: 'ext-other', version: '1.2.0', status: 'published' as const })
+    await expect(inventory.publish({ ...input, version: '1.2.0' }))
+      .rejects.toMatchObject({ code: 'extension-publish-target-mismatch' })
+    expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-existing')
     store.close()
   })
 })

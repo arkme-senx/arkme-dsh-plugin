@@ -31,6 +31,7 @@ export interface ArkmeMyExtensionPage {
 
 export interface ArkmeMyExtensionPublishInput {
   ownedRef: string
+  extensionId?: string
   name: string
   description: string
   version: string

@@ -13,6 +13,63 @@ function draft(ownedRef: string, name: string): Omit<ArkmeMyExtensionPublishInpu
 }
 
 describe('extension publish conversation confirmation', () => {
+	it('rejects malformed and duplicate existing extension targets before preflight', async () => {
+		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => ({ input, sourceFingerprint: 'fingerprint' }))
+		const conversation = new ArkmeExtensionPublishConversation({ preflight, publish: vi.fn() })
+		const agent = { id: 'session-target-validation', session: { events: [] } }
+
+		await expect(conversation.prepare(agent as never, [{
+			...draft('owned-invalid', '无效目标'), extensionId: 'bad/extension',
+		}])).rejects.toThrow('已有扩展身份无效')
+		await expect(conversation.prepare(agent as never, [
+			{ ...draft('owned-a', '扩展 A'), extensionId: 'ext-existing' },
+			{ ...draft('owned-b', '扩展 B'), extensionId: 'ext-existing' },
+		])).rejects.toThrow('同一批次不能重复更新同一个已有扩展')
+		expect(preflight).not.toHaveBeenCalled()
+	})
+
+	it('uses effective lineage for confirmation, deduplication and confirm-time revalidation', async () => {
+		const duplicateConversation = new ArkmeExtensionPublishConversation({
+			preflight: async input => ({
+				input: input.ownedRef === 'owned-implicit' ? { ...input, extensionId: 'ext-existing' } : input,
+				sourceFingerprint: `fingerprint:${input.ownedRef}`,
+			}),
+			publish: vi.fn(),
+		})
+		const agent = { id: 'session-effective-target', session: { events: [] } }
+		await expect(duplicateConversation.prepare(agent as never, [
+			draft('owned-implicit', '隐式目标'),
+			{ ...draft('owned-explicit', '显式目标'), extensionId: 'ext-existing' },
+		])).rejects.toThrow('同一批次不能重复更新同一个已有扩展')
+
+		let effectiveExtensionId: string | undefined = 'ext-existing'
+		const events: Array<Record<string, unknown>> = [
+			{ seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '发布更新' }], source: { kind: 'user' } } },
+		]
+		const current = { id: 'session-target-change', session: { get events() { return events } } }
+		const publish = vi.fn()
+		const conversation = new ArkmeExtensionPublishConversation({
+			preflight: async input => ({
+				input: effectiveExtensionId === undefined ? { ...input, extensionId: undefined } : { ...input, extensionId: effectiveExtensionId },
+				sourceFingerprint: 'fingerprint',
+			}),
+			publish,
+			now: () => 1_000,
+		})
+		const prepared = await conversation.prepare(current as never, [draft('owned-lineage', '血缘扩展')])
+		expect(prepared).toMatchObject({
+			question: expect.stringContaining('更新已有扩展 ext-existing'),
+			items: [{ extensionId: 'ext-existing' }],
+		})
+		events.push({
+			seq: 1, type: 'user/message',
+			data: { content: [{ type: 'text', text: '确认更新' }], source: { kind: 'user' } },
+		})
+		effectiveExtensionId = 'ext-changed'
+		await expect(conversation.confirm(current as never)).rejects.toThrow('发布目标已变化')
+		expect(publish).not.toHaveBeenCalled()
+	})
+
 	it('preserves the GitHub source through prepare, confirmation and publish', async () => {
 		const events: Array<Record<string, unknown>> = [
 			{ seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '发布 GitHub 扩展' }], source: { kind: 'user' } } },

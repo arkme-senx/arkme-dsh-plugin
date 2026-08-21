@@ -97,4 +97,57 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
     expect(confirmed.isError ? '' : confirmed.value).toContain('"published": 2')
     expect(publish).toHaveBeenCalledTimes(2)
   })
+
+  it('keeps an explicit owned extension identity through prepare and confirm', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '把新版更新到原扩展' }], source: { kind: 'user' } } },
+    ]
+    const agent = {
+      id: SessionId('session-update-existing'),
+      session: { get events() { return events } },
+    } as unknown as Agent
+    const publish = vi.fn(async () => ({
+      extension_id: 'ext-existing', version: '1.1.0', status: 'published' as const,
+    }))
+    const inventory = {
+      preparePublish: vi.fn(async (input: Record<string, unknown>) => ({
+        input, sourceFingerprint: 'fingerprint:weather',
+      })),
+      publish,
+    }
+    registerArkmeExtensionTools(ctx, {} as never, inventory as never, {} as never, 'business')
+
+    const prepare = await ctx.tools.execute({
+      callId: CallId('prepare-update-existing'), name: 'arkme_extension_publish', agent,
+      arguments: { action: 'prepare', items: [{
+        owned_ref: 'weather-new-source',
+        extension_id: 'ext-existing',
+        name: '天气',
+        description: '',
+        version: '1.1.0',
+        visibility: 'private',
+      }] },
+      signal: new AbortController().signal,
+    })
+    expect(prepare.isError).toBe(false)
+    const preview = JSON.parse(prepare.isError ? '{}' : prepare.value) as { question?: string }
+    expect(preview.question).toContain('更新已有扩展 ext-existing')
+
+    events.push(
+      { seq: 2, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
+      { seq: 3, type: 'turn/start', data: { turn: 2 } },
+      { seq: 4, type: 'user/message', data: { content: [{ type: 'text', text: '确认更新这个原扩展' }], source: { kind: 'user' } } },
+    )
+    const confirmed = await ctx.tools.execute({
+      callId: CallId('confirm-update-existing'), name: 'arkme_extension_publish',
+      arguments: { action: 'confirm' }, agent,
+      signal: new AbortController().signal,
+    })
+    expect(confirmed.isError).toBe(false)
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ extensionId: 'ext-existing' }))
+  })
 })

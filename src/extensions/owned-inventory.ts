@@ -167,9 +167,15 @@ export class ArkmeOwnedExtensionInventory {
     return await this.publishTarget(userId, target, agent, input)
   }
 
-  async preparePublish(input: ArkmeMyExtensionPublishInput): Promise<ArkmePreparedExtensionPublish> {
+  async preparePublish(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmePreparedExtensionPublish> {
     const userId = await this.currentUserId()
     const target = this.options.refs.resolve(userId, input.ownedRef)
+    const extensionId = await this.preparePublishExtensionId(
+      target.kind === 'cordis' ? 'cordis' : 'profile', target.sourceKey, userId, input.extensionId, signal,
+    )
+    const preparedInput = { ...input }
+    if (extensionId === undefined) delete preparedInput.extensionId
+    else preparedInput.extensionId = extensionId
     if (target.kind === 'cordis') {
       const agent = this.options.agents.get(target.agentId)
       if (agent === undefined) throw new ArkmePluginError('extension-agent-unavailable', '创建该扩展的 DSH 会话已不可用', false, 409)
@@ -188,7 +194,7 @@ export class ArkmeOwnedExtensionInventory {
           ...(inspected.code.client === undefined ? {} : { client: inspected.code.client.replace(/\r\n?/g, '\n') }),
         },
       })).digest('hex')
-      return { input: { ...input }, sourceFingerprint }
+      return { input: preparedInput, sourceFingerprint }
     }
     if (this.options.store.owner('profile', target.sourceKey) !== userId
       || this.options.store.specDigest('profile', target.sourceKey) !== target.specDigest) {
@@ -204,7 +210,7 @@ export class ArkmeOwnedExtensionInventory {
       throw new ArkmePluginError('extension-version-mismatch', '发布版本必须与 Bundle package.json.version 一致', false, 409)
     }
     return {
-      input: { ...input },
+      input: preparedInput,
       sourceFingerprint: createHash('sha256')
         .update(`${source.bundle.bundleSha256}\0${source.source.sourceSha256}`)
         .digest('hex'),
@@ -246,7 +252,7 @@ export class ArkmeOwnedExtensionInventory {
     if (live === undefined || !live.packages.some(item => item.packageId === target.packageId)) {
       throw new ArkmePluginError('extension-cordis-stale', 'Cordis 扩展已失效，请刷新列表', false, 409)
     }
-    const extensionId = input.extensionId?.trim() || this.options.store.cloudLink('cordis', target.sourceKey, userId)
+    const extensionId = this.publishExtensionId('cordis', target.sourceKey, userId, input.extensionId)
     const result = await this.options.publish({
       agent,
       pluginId: target.pluginId,
@@ -264,7 +270,9 @@ export class ArkmeOwnedExtensionInventory {
         .digest('hex'),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     })
-    if (result.status === 'published') this.options.store.linkCloud('cordis', target.sourceKey, userId, result.extension_id)
+    if (result.status === 'published') {
+      this.linkPublishedTarget('cordis', target.sourceKey, userId, extensionId, result.extension_id)
+    }
     return result
   }
 
@@ -289,7 +297,7 @@ export class ArkmeOwnedExtensionInventory {
     if (this.options.publishBundle === undefined) {
       throw new ArkmePluginError('extension-bundle-publish-unavailable', '当前 Arkme 版本不支持发布本地 Bundle', false, 503)
     }
-    const extensionId = this.options.store.cloudLink('profile', target.sourceKey, userId)
+    const extensionId = this.publishExtensionId('profile', target.sourceKey, userId, input.extensionId)
     const result = await this.options.publishBundle({
       source,
       ...(extensionId === undefined ? {} : { extensionId }),
@@ -303,7 +311,9 @@ export class ArkmeOwnedExtensionInventory {
         .digest('hex'),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     })
-    if (result.status === 'published') this.options.store.linkCloud('profile', target.sourceKey, userId, result.extension_id)
+    if (result.status === 'published') {
+      this.linkPublishedTarget('profile', target.sourceKey, userId, extensionId, result.extension_id)
+    }
     return result
   }
 
@@ -320,6 +330,70 @@ export class ArkmeOwnedExtensionInventory {
       cursor = page.next_cursor
     }
     throw new Error('cloud extension page limit exceeded')
+  }
+
+  private publishExtensionId(
+    kind: 'cordis' | 'profile',
+    sourceKey: string,
+    userId: number,
+    requestedExtensionId?: string,
+  ): string | undefined {
+    const requestedValue = requestedExtensionId?.trim()
+    const requested = requestedValue === '' ? undefined : requestedValue
+    if (requested !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(requested)) {
+      throw new ArkmePluginError('extension-id-invalid', '已有扩展身份无效', false, 400)
+    }
+    const linked = this.options.store.cloudLink(kind, sourceKey, userId)
+    if (requested !== undefined && linked !== undefined && requested !== linked) {
+      throw new ArkmePluginError(
+        'extension-lineage-mismatch',
+        '该来源已绑定其他云端扩展，不能改绑；请刷新扩展列表后重试',
+        false,
+        409,
+      )
+    }
+    return requested ?? linked
+  }
+
+  private async preparePublishExtensionId(
+    kind: 'cordis' | 'profile',
+    sourceKey: string,
+    userId: number,
+    requestedExtensionId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<string | undefined> {
+    const linked = this.options.store.cloudLink(kind, sourceKey, userId)
+    const extensionId = this.publishExtensionId(kind, sourceKey, userId, requestedExtensionId)
+    if (extensionId !== undefined && linked === undefined) {
+      const owned = await this.cloudItems(signal)
+      if (!owned.some(item => item.extension_id === extensionId)) {
+        throw new ArkmePluginError(
+          'extension-target-not-owned',
+          '目标云端扩展不属于当前 Arkme 账号，请刷新扩展列表后重试',
+          false,
+          403,
+        )
+      }
+    }
+    return extensionId
+  }
+
+  private linkPublishedTarget(
+    kind: 'cordis' | 'profile',
+    sourceKey: string,
+    userId: number,
+    expectedExtensionId: string | undefined,
+    publishedExtensionId: string,
+  ): void {
+    if (expectedExtensionId !== undefined && publishedExtensionId !== expectedExtensionId) {
+      throw new ArkmePluginError(
+        'extension-publish-target-mismatch',
+        '云端返回的扩展身份与确认目标不一致，本地未记录该发布结果',
+        false,
+        502,
+      )
+    }
+    this.options.store.linkCloud(kind, sourceKey, userId, publishedExtensionId)
   }
 
   private project(userId: number, row: MutableOwnedItem): ArkmeMyExtensionItem {

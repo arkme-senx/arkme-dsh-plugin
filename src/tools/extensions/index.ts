@@ -112,7 +112,7 @@ export function registerArkmeExtensionTools(
   if (profile === 'disabled' || profile === 'atomic') return
 
   const publishConversation = new ArkmeExtensionPublishConversation({
-    preflight: async input => await ownedInventory.preparePublish(input),
+    preflight: async (input, signal) => await ownedInventory.preparePublish(input, signal),
     publish: async (input, signal) => await ownedInventory.publish({
       ...input,
       ...(signal === undefined ? {} : { signal }),
@@ -229,7 +229,7 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_publish',
-    description: 'Prepare or confirm one conversational publish batch. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, Bundle policy, and source fingerprints, and does not publish or upload anything. Show its returned question in ordinary conversation and wait. Only after a later direct human message clearly confirms it in any natural wording, call this same tool with action=confirm and omit items.',
+    description: 'Prepare or confirm one conversational publish batch. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, Bundle policy, and source fingerprints, and does not publish or upload anything. To update an existing extension from a new source, pass its exact owned extension_id from the current user\'s list; otherwise omit it to create a new extension or use the source\'s persisted lineage. Show the returned question in ordinary conversation and wait. Only after a later direct human message clearly confirms it in any natural wording, call this same tool with action=confirm and omit items.',
     parameters: {
       action: {
         type: 'string', enum: ['prepare', 'confirm'], required: true,
@@ -242,6 +242,7 @@ export function registerArkmeExtensionTools(
           type: 'object', additionalProperties: false,
           properties: {
             owned_ref: { type: 'string', required: true, description: 'Opaque ownedRef returned by arkme_extension_list_mine.' },
+            extension_id: { type: 'string', description: 'Exact existing extension_id owned by the current user. Set only when intentionally binding this source to that existing extension.' },
             name: { type: 'string', required: true, description: 'User-facing extension name.' },
             description: { type: 'string', required: true, description: 'User-facing purpose and behavior.' },
             version: { type: 'string', required: true, description: 'Semantic version such as 1.0.0.' },
@@ -263,6 +264,7 @@ export function registerArkmeExtensionTools(
       const items = args.items ?? []
       const result = await publishConversation.prepare(agent, items.map(item => ({
         ownedRef: item.owned_ref,
+        ...(clean(item.extension_id) === '' ? {} : { extensionId: clean(item.extension_id) }),
         name: item.name,
         description: item.description,
         version: item.version,

@@ -16,6 +16,7 @@ export interface ArkmeExtensionPublishBatchPreview {
   question: string
   items: Array<{
     ownedRef: string
+    extensionId?: string
     name: string
     version: string
     visibility: ArkmeExtensionVisibility
@@ -80,8 +81,17 @@ export class ArkmeExtensionPublishConversation {
     if (new Set(inputs.map(item => item.ownedRef)).size !== inputs.length) {
       throw new Error('同一批次不能重复发布同一个扩展')
     }
+    const extensionIds = inputs.flatMap(item => item.extensionId === undefined ? [] : [item.extensionId])
+    if (new Set(extensionIds).size !== extensionIds.length) {
+      throw new Error('同一批次不能重复更新同一个已有扩展')
+    }
     const items: ArkmePreparedExtensionPublish[] = []
     for (const input of inputs) items.push(await this.options.preflight(input, signal))
+    const preparedInputs = items.map(item => item.input)
+    const preparedExtensionIds = preparedInputs.flatMap(item => item.extensionId === undefined ? [] : [item.extensionId])
+    if (new Set(preparedExtensionIds).size !== preparedExtensionIds.length) {
+      throw new Error('同一批次不能重复更新同一个已有扩展')
+    }
     const expiresAtMillis = this.now() + this.confirmationTtlMillis
     this.pending.set(agentId, {
       preparedAfterSeq: lastSessionSeq(agent),
@@ -91,9 +101,10 @@ export class ArkmeExtensionPublishConversation {
     return {
       status: 'confirmation_required',
       count: items.length,
-      question: publishQuestion(inputs),
-      items: inputs.map(item => ({
+      question: publishQuestion(preparedInputs),
+      items: preparedInputs.map(item => ({
         ownedRef: item.ownedRef,
+        ...(item.extensionId === undefined ? {} : { extensionId: item.extensionId }),
         name: item.name,
         version: item.version,
         visibility: item.visibility,
@@ -115,9 +126,10 @@ export class ArkmeExtensionPublishConversation {
     }
     for (const prepared of pending.items) {
       const current = await this.options.preflight(prepared.input, signal)
-      if (current.sourceFingerprint !== prepared.sourceFingerprint) {
+      if (current.sourceFingerprint !== prepared.sourceFingerprint
+        || current.input.extensionId !== prepared.input.extensionId) {
         this.pending.delete(agentId)
-        throw new Error(`扩展“${prepared.input.name}”的源码或 Bundle 已变化，请重新准备并确认发布`)
+        throw new Error(`扩展“${prepared.input.name}”的源码或 Bundle 已变化，或发布目标已变化，请重新准备并确认发布`)
       }
     }
     this.pending.delete(agentId)
@@ -159,15 +171,20 @@ export class ArkmeExtensionPublishConversation {
 
 function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: string): ArkmeMyExtensionPublishInput {
   const ownedRef = draft.ownedRef.trim()
+  const extensionId = draft.extensionId?.trim() ?? ''
   const name = draft.name.trim()
   const description = draft.description.trim()
   const version = draft.version.trim()
   if (ownedRef === '' || name === '' || version === '') throw new Error('发布扩展、名称和版本不能为空')
+  if (extensionId !== '' && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(extensionId)) {
+    throw new Error('已有扩展身份无效')
+  }
   if (!['private', 'unlisted', 'public'].includes(draft.visibility)) throw new Error('扩展可见范围无效')
   const changelog = draft.changelog?.trim() ?? ''
 	const githubRepositoryUrl = normalizeGitHubRepositoryURL(draft.githubRepositoryUrl)
   return {
     ownedRef,
+    ...(extensionId === '' ? {} : { extensionId }),
     name,
     description,
     version,
@@ -189,9 +206,9 @@ function publishQuestion(inputs: ArkmeMyExtensionPublishInput[]): string {
 }
 
 function sourceConfirmation(input: ArkmeMyExtensionPublishInput): string {
-	return input.githubRepositoryUrl === undefined
+	return `${input.extensionId === undefined ? '' : `，更新已有扩展 ${input.extensionId}`}${input.githubRepositoryUrl === undefined
 		? ''
-		: `，GitHub 来源：${input.githubRepositoryUrl}（仅当前内测资格账号可发布）`
+		: `，GitHub 来源：${input.githubRepositoryUrl}（仅当前内测资格账号可发布）`}`
 }
 
 function visibilityLabel(visibility: ArkmeExtensionVisibility): string {
