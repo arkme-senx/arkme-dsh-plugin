@@ -7,9 +7,9 @@ import {
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
-  ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorTrigger, ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
+  ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger, ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
-  extensionGithubProfileUrl,
+  extensionAuthorProfileDeepLink, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
@@ -300,6 +300,86 @@ describe('Arkme extension market UI', () => {
     }} />)
     expect(unavailableHtml).toContain('data-extension-author-identity="github-static"')
     expect(unavailableHtml).not.toContain('href=')
+  })
+
+  it('opens a compact Jotmo profile popover without the incorrect Arkme author label', () => {
+    const item = {
+      extension_id: 'arkme/weather', name: '天气助手', description: '', visibility: 'public' as const,
+      owner_user_id: 7, owner_name: 'Lucis 测试', owner_arkme_id: '@lucis',
+      owner_avatar_fallback: { kind: 'phone_default' as const, colorIndex: 3, label: 'L' },
+    }
+    expect(extensionAuthorProfileDeepLink(item)).toBe(
+      'jotmo://action?type=jumpToPersonalProfile&userId=7&nickName=Lucis+%E6%B5%8B%E8%AF%95',
+    )
+
+    const html = renderToStaticMarkup(<ArkmeExtensionAuthorPopover
+      item={item}
+      open
+      currentUserId={99}
+      onToggle={() => {}}
+      onPrivateChat={() => {}}
+    />)
+    expect(html).toContain('data-extension-author-popover="profile"')
+    expect(html).toContain('data-extension-author-world-link="true"')
+    expect(html).toContain('data-extension-author-profile-link="icon"')
+    expect(html).toContain('href="jotmo://action?type=jumpToPersonalProfile&amp;userId=7&amp;nickName=Lucis+%E6%B5%8B%E8%AF%95"')
+    expect(html).toContain('进入 TA 的世界')
+    expect(html).toContain('发送消息')
+    expect(html).not.toContain('Arkme 作者')
+    expect(html).not.toContain('@lucis')
+  })
+
+  it('keeps the profile entry for the current user but hides the private-message action', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionAuthorPopover
+      item={{
+        extension_id: 'arkme/self', name: '我的扩展', description: '', visibility: 'public',
+        owner_user_id: 7, owner_name: 'Lucis',
+      }}
+      open
+      currentUserId={7}
+      onToggle={() => {}}
+      onPrivateChat={() => {}}
+    />)
+    expect(html).toContain('进入 TA 的世界')
+    expect(html).not.toContain('发送消息')
+  })
+
+  it('does not invent a profile or message action when the projected user id is unavailable', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionAuthorPopover
+      item={{ extension_id: 'arkme/unknown', name: '未知作者扩展', description: '', visibility: 'public', owner_name: '未知作者' }}
+      open
+      onToggle={() => {}}
+      onPrivateChat={() => {}}
+    />)
+    expect(extensionAuthorProfileDeepLink({ owner_user_id: 0, owner_name: '未知作者' })).toBeUndefined()
+    expect(html).toContain('data-extension-author-popover="profile"')
+    expect(html).not.toContain('进入 TA 的世界')
+    expect(html).not.toContain('发送消息')
+    expect(html).not.toContain('Arkme 作者')
+  })
+
+  it('keeps the author popover closed until the user opens it and reflects message progress', () => {
+    const item = {
+      extension_id: 'arkme/weather', name: '天气助手', description: '', visibility: 'public' as const,
+      owner_user_id: 7, owner_name: 'Lucis',
+    }
+    const closed = renderToStaticMarkup(<ArkmeExtensionAuthorPopover
+      item={item}
+      open={false}
+      onToggle={() => {}}
+      onPrivateChat={() => {}}
+    />)
+    expect(closed).not.toContain('data-extension-author-popover="profile"')
+
+    const busy = renderToStaticMarkup(<ArkmeExtensionAuthorPopover
+      item={item}
+      open
+      actionBusy
+      onToggle={() => {}}
+      onPrivateChat={() => {}}
+    />)
+    expect(busy).toContain('正在打开…')
+    expect(busy).toContain('disabled=""')
   })
 
   it('keeps lifecycle actions out of the dense marketplace tile after installation', () => {

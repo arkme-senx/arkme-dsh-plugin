@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
+import { ArrowUpRight } from '@phosphor-icons/react/dist/icons/ArrowUpRight'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionClassificationPage,
   ArkmeExtensionClassificationStatus, ArkmeExtensionClassificationTree,
@@ -279,12 +281,32 @@ const styles: Record<string, CSSProperties> = {
     display: 'inline-flex', alignItems: 'center', gap: 8, padding: 0, border: 0,
     background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12, cursor: 'pointer',
   },
+  authorPopoverRoot: { position: 'relative', width: 'fit-content', maxWidth: '100%' },
   authorCard: {
-    width: 'min(320px, 100%)', marginTop: 10, padding: 14, boxSizing: 'border-box',
-    border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.surface,
-    boxShadow: '0 12px 32px rgba(20,24,31,.12)',
+    position: 'absolute', zIndex: 25, top: 'calc(100% + 10px)', left: 0,
+    width: 'min(320px, calc(100vw - 64px))', padding: 16, boxSizing: 'border-box',
+    border: `1px solid ${colors.border}`, borderRadius: 16, background: colors.surface,
+    boxShadow: '0 18px 48px rgba(20,24,31,.18), 0 4px 14px rgba(20,24,31,.08)',
   },
-  authorCardActions: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  authorCardHeader: { position: 'relative', display: 'flex', alignItems: 'center', gap: 12, paddingRight: 30 },
+  authorCardName: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.text, fontSize: 16, lineHeight: '22px', fontWeight: 650,
+  },
+  authorCardProfileIcon: {
+    position: 'absolute', top: -3, right: -3, width: 28, height: 28, display: 'grid', placeItems: 'center',
+    border: 0, borderRadius: 8, background: 'transparent', color: colors.caption, textDecoration: 'none',
+  },
+  authorCardWorldLink: {
+    minHeight: 34, marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+    color: colors.secondary, fontSize: 12, lineHeight: '18px', textDecoration: 'none',
+  },
+  authorCardActions: { display: 'flex', marginTop: 12 },
+  authorCardMessageButton: {
+    width: '100%', height: 40, border: 0, borderRadius: 999,
+    background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: ARKME_EXTENSION_PRIMARY_ACTION_FG,
+    font: 'inherit', fontSize: 13, fontWeight: 650, cursor: 'pointer',
+  },
   card: {
     width: '100%', minWidth: 0, display: 'flex', gap: 10, boxSizing: 'border-box',
     margin: 0, padding: '11px 8px', border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0,
@@ -849,8 +871,7 @@ export function formatMarketplaceDate(value: number): string {
 export function extensionCommunityAuthor(item: ArkmeExtensionCatalogItem): { name: string; github: boolean } {
   if (item.source?.type === 'github_repository') return { name: 'GitHub', github: true }
   const ownerName = item.owner_name?.trim() ?? ''
-  const ownerArkmeId = item.owner_arkme_id?.trim() ?? ''
-  if (ownerName !== '' || ownerArkmeId !== '') return { name: extensionAuthorLabel(item), github: false }
+  if (ownerName !== '') return { name: ownerName, github: false }
   return { name: extensionAuthorLabel(item), github: false }
 }
 
@@ -978,6 +999,77 @@ export function ArkmeExtensionAuthorTrigger({
     aria-expanded={expanded}
     onClick={onToggle}
   >{identity}</button>
+}
+
+export function extensionAuthorProfileDeepLink(
+  item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name'>,
+): string | undefined {
+  const userId = item.owner_user_id
+  if (!Number.isSafeInteger(userId) || (userId ?? 0) <= 0) return undefined
+  const params = new URLSearchParams({ type: 'jumpToPersonalProfile', userId: String(userId) })
+  const displayName = item.owner_name?.trim() ?? ''
+  if (displayName !== '') params.set('nickName', displayName)
+  const hostScheme = ['jot', 'mo'].join('')
+  return `${hostScheme}://action?${params.toString()}`
+}
+
+export function ArkmeExtensionAuthorPopover({
+  item,
+  open,
+  currentUserId,
+  actionBusy = false,
+  actionError = '',
+  onToggle,
+  onPrivateChat,
+  style,
+}: {
+  item: ArkmeExtensionCatalogItem
+  open: boolean
+  currentUserId?: number | undefined
+  actionBusy?: boolean
+  actionError?: string
+  onToggle(): void
+  onPrivateChat(): void
+  style?: CSSProperties
+}) {
+  const profileLink = extensionAuthorProfileDeepLink(item)
+  const canMessage = profileLink !== undefined && item.owner_user_id !== currentUserId
+  return <div style={{ ...styles.authorPopoverRoot, ...style }}>
+    <ArkmeExtensionAuthorTrigger item={item} expanded={open} onToggle={onToggle} />
+    {open && !extensionCommunityAuthor(item).github && <aside
+      style={styles.authorCard}
+      role="dialog"
+      aria-label={`${extensionCommunityAuthor(item).name}的个人资料`}
+      data-extension-author-popover="profile"
+    >
+      <div style={styles.authorCardHeader}>
+        <ExtensionAuthorAvatar item={item} size={52} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={styles.authorCardName}>{extensionCommunityAuthor(item).name}</div>
+        </div>
+        {profileLink !== undefined && <a
+          href={profileLink}
+          style={styles.authorCardProfileIcon}
+          aria-label={`进入${extensionCommunityAuthor(item).name}的个人主页`}
+          data-extension-author-profile-link="icon"
+        ><ArrowUpRight size={17} aria-hidden /></a>}
+      </div>
+      {profileLink !== undefined && <a
+        href={profileLink}
+        style={styles.authorCardWorldLink}
+        data-extension-author-world-link="true"
+      >进入 TA 的世界 <CaretRight size={13} weight="bold" aria-hidden /></a>}
+      {actionError !== '' && <div style={{ ...styles.error, marginTop: 8 }}>{actionError}</div>}
+      {canMessage && <div style={styles.authorCardActions}>
+        <button
+          type="button"
+          style={{ ...styles.authorCardMessageButton, ...(actionBusy ? { opacity: .62, cursor: 'default' } : {}) }}
+          disabled={actionBusy}
+          onClick={onPrivateChat}
+        >{actionBusy ? '正在打开…' : '发送消息'}</button>
+      </div>}
+    </aside>}
+  </div>
 }
 
 export function ExtensionCard({ item, installed, actionLabel, status, statusColor, installTask, actionBusy, onClick, onAction, onToggle, onPause, onResume, presentation = 'list' }: {
@@ -2187,34 +2279,15 @@ export function ArkmeExtensionCenter({
         <section style={styles.detailSection}>
           <div style={styles.detailLabel}>作者</div>
           <div style={styles.detailValue}>
-            <ArkmeExtensionAuthorTrigger item={detail} expanded={authorCardOpen} onToggle={() => {
-              setAuthorCardOpen(value => !value); setAuthorActionError('')
-            }} />
-            {authorCardOpen && !extensionCommunityAuthor(detail).github && <div style={styles.authorCard}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {extensionCommunityAuthor(detail).github
-                  ? <GitHubIdentityAvatar size={42} />
-                  : <ExtensionAuthorAvatar item={detail} size={42} />}
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ color: colors.text, fontWeight: 600 }}>{extensionCommunityAuthor(detail).name}</div>
-                  <div style={{ marginTop: 2, color: colors.caption, fontSize: 11 }}>
-                    {extensionCommunityAuthor(detail).github
-                      ? 'GitHub 作者'
-                      : detail.owner_arkme_id === undefined ? 'Arkme 作者' : `@${detail.owner_arkme_id.replace(/^@+/, '')}`}
-                  </div>
-                </div>
-              </div>
-              {authorActionError !== '' && <div style={{ ...styles.error, marginTop: 10 }}>{authorActionError}</div>}
-              <div style={styles.authorCardActions}>
-                {detail.owner_user_id !== undefined && detail.owner_user_id !== currentUserId && <button
-                  type="button" style={styles.primaryButton} disabled={authorActionBusy} onClick={() => { void openAuthorPrivateChat() }}
-                >{authorActionBusy ? '正在发起…' : '发起私聊'}</button>}
-                {extensionGithubProfileUrl(detail) !== undefined && <a
-                  href={extensionGithubProfileUrl(detail)} target="_blank" rel="noreferrer"
-                  style={{ ...styles.restartLater, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
-                >查看 GitHub</a>}
-              </div>
-            </div>}
+            <ArkmeExtensionAuthorPopover
+              item={detail}
+              open={authorCardOpen}
+              currentUserId={currentUserId}
+              actionBusy={authorActionBusy}
+              actionError={authorActionError}
+              onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
+              onPrivateChat={() => { void openAuthorPrivateChat() }}
+            />
           </div>
         </section>
         {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
@@ -2424,9 +2497,16 @@ export function ArkmeExtensionCenter({
                         <h3 style={styles.detailName}>{detail.name}</h3>
                       </div>
                       <ArkmeExtensionDetailMetrics item={detail} />
-                      <ArkmeExtensionAuthorTrigger item={detail} expanded={authorCardOpen} style={{ marginTop: 10 }} onToggle={() => {
-                        setAuthorCardOpen(value => !value); setAuthorActionError('')
-                      }} />
+                      <ArkmeExtensionAuthorPopover
+                        item={detail}
+                        open={authorCardOpen}
+                        currentUserId={currentUserId}
+                        actionBusy={authorActionBusy}
+                        actionError={authorActionError}
+                        style={{ marginTop: 10 }}
+                        onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
+                        onPrivateChat={() => { void openAuthorPrivateChat() }}
+                      />
                     </div>
                   </div>
                   <div style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
@@ -2455,31 +2535,6 @@ export function ArkmeExtensionCenter({
                     </div>}
                   </div>
                 </div>
-                {authorCardOpen && !extensionCommunityAuthor(detail).github && <div style={styles.authorCard}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {extensionCommunityAuthor(detail).github
-                      ? <GitHubIdentityAvatar size={42} />
-                      : <ExtensionAuthorAvatar item={detail} size={42} />}
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ color: colors.text, fontWeight: 600 }}>{extensionCommunityAuthor(detail).name}</div>
-                      <div style={{ marginTop: 2, color: colors.caption, fontSize: 11 }}>
-                        {extensionCommunityAuthor(detail).github
-                          ? 'GitHub 作者'
-                          : detail.owner_arkme_id === undefined ? 'Arkme 作者' : `@${detail.owner_arkme_id.replace(/^@+/, '')}`}
-                      </div>
-                    </div>
-                  </div>
-                  {authorActionError !== '' && <div style={{ ...styles.error, marginTop: 10 }}>{authorActionError}</div>}
-                  <div style={styles.authorCardActions}>
-                    {detail.owner_user_id !== undefined && detail.owner_user_id !== currentUserId && <button
-                      type="button" style={styles.primaryButton} disabled={authorActionBusy} onClick={() => { void openAuthorPrivateChat() }}
-                    >{authorActionBusy ? '正在发起…' : '发起私聊'}</button>}
-                    {extensionGithubProfileUrl(detail) !== undefined && <a
-                      href={extensionGithubProfileUrl(detail)} target="_blank" rel="noreferrer"
-                      style={{ ...styles.restartLater, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
-                    >查看 GitHub</a>}
-                  </div>
-                </div>}
                 {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。</div>}
               </div>
               {detailHasPreviews && <div style={styles.detailPreview}>
