@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import type {
   ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeTopicCreateResult,
@@ -48,6 +49,8 @@ export interface ArkmeNavigationProps {
   embeddedProductShell?: boolean
   onClose?: () => void
   onActivateSurface?: () => void
+  directoryLead?: ReactNode
+  onCreateTask?: () => void
   renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
 }
 
@@ -106,6 +109,12 @@ const styles: Record<string, CSSProperties> = {
   searchField: {
     height: 40, flex: 'none', margin: '12px 16px 8px', padding: '0 11px', display: 'flex', alignItems: 'center', gap: 8,
     boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
+  },
+  conversationToolbar: { flex: 'none', margin: '24px 16px 16px', display: 'flex', alignItems: 'center', gap: 8 },
+  embeddedSearchField: { flex: 1, minWidth: 0, margin: 0 },
+  createTaskButton: {
+    width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
+    border: '1px solid #e2e3e6', borderRadius: 11, background: '#fff', color: '#555a64', cursor: 'pointer',
   },
   searchInput: { minWidth: 0, width: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12 },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '0 6px 18px', overflowY: 'auto', listStyle: 'none' },
@@ -665,7 +674,8 @@ export function ArkmeSourceSortControl({
 }
 
 export function ArkmeNavigation({
-  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, renderSlot,
+  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface,
+  directoryLead, onCreateTask, renderSlot,
 }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(
@@ -1157,24 +1167,24 @@ export function ArkmeNavigation({
       }} />
       {onClose !== undefined && <button type="button" style={styles.headerButton} aria-label="关闭 Arkme" title="关闭 Arkme" onClick={onClose}>×</button>}
     </header>}
-    {directory === 'root' && embeddedProductShell && <header style={styles.header}>
-      <h2 style={styles.headerTitle}>对话</h2>
+    {directory === 'root' && embeddedProductShell && <div style={styles.conversationToolbar}>
+      <label style={{ ...styles.searchField, ...styles.embeddedSearchField }}>
+        <MagnifyingGlass size={16} aria-hidden />
+        <input
+          value={conversationQuery}
+          style={styles.searchInput}
+          placeholder="搜索对话或消息"
+          aria-label="搜索对话或消息"
+          onChange={event => { setConversationQuery(event.target.value) }}
+        />
+      </label>
       {authenticated && <ArkmeQuickAddButton
         onContactAdd={showContactAdd}
         onSourceCreated={createdQuickAddSource}
         onBotCreated={createdQuickAddBot}
       />}
-    </header>}
-    {directory === 'root' && embeddedProductShell && <label style={styles.searchField}>
-      <MagnifyingGlass size={16} aria-hidden />
-      <input
-        value={conversationQuery}
-        style={styles.searchInput}
-        placeholder="搜索对话或消息"
-        aria-label="搜索对话或消息"
-        onChange={event => { setConversationQuery(event.target.value) }}
-      />
-    </label>}
+      {onCreateTask !== undefined && <button type="button" style={styles.createTaskButton} aria-label="新任务" onClick={onCreateTask}><Plus size={19} /></button>}
+    </div>}
 
     {directory === 'root' && personalTestEdition !== undefined
       && <ArkmePersonalTestEditionBanner edition={personalTestEdition} />}
@@ -1182,6 +1192,7 @@ export function ArkmeNavigation({
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
+    {directory === 'root' && embeddedProductShell && directoryLead}
     <div
       style={{
         ...styles.list,

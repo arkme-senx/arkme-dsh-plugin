@@ -240,7 +240,7 @@ export function ArkmeCalendarCell({
   </button>
 }
 
-export function ArkmeCalendarSurface() {
+export function ArkmeCalendarSurface({ onClose }: { onClose?: () => void } = {}) {
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
@@ -331,7 +331,10 @@ export function ArkmeCalendarSurface() {
   }
 
   return <div style={styles.root} aria-label="客户端日历">
-    <button type="button" style={styles.backdrop} aria-label="关闭日历" onClick={() => arkmeUi.showConversations()} />
+    <button type="button" style={styles.backdrop} aria-label="关闭日历" onClick={() => {
+      if (onClose === undefined) arkmeUi.showConversations()
+      else onClose()
+    }} />
     <div style={styles.layout}>
       <section style={styles.calendarCard} aria-label="客户端日历">
         <span style={styles.calendarPointer} aria-hidden />
