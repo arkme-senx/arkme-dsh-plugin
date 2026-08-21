@@ -13,14 +13,15 @@ const styles: Record<string, CSSProperties> = {
   shell: { width: 'min(720px, 100%)', minHeight: '100%', margin: '0 auto', padding: '28px 34px 38px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', color: arkmeTheme.text },
   compactShell: { width: '100%', height: '100%', minHeight: 450, margin: 0, padding: '20px 22px 22px' },
   form: { display: 'flex', alignItems: 'center', minHeight: 58, padding: '0 16px 0 20px', borderRadius: 16, background: arkmeTheme.subtle },
-  compactForm: { minHeight: 48, padding: '0 10px 0 15px', borderRadius: 12 },
+  compactForm: { height: 48, minHeight: 48, flex: 'none', padding: '0 10px 0 15px', borderRadius: 12 },
   input: { minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', color: arkmeTheme.text, font: 'inherit', fontSize: 17 },
   iconButton: { width: 42, height: 42, padding: 8, border: 0, borderRadius: 10, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer' },
   scan: { width: '100%', minHeight: 66, marginTop: 18, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 15, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 16, textAlign: 'left' },
-  compactScan: { minHeight: 52, marginTop: 12, padding: '0 15px', borderRadius: 12, gap: 11, fontSize: 14 },
+  compactScan: { height: 52, minHeight: 52, flex: 'none', marginTop: 12, padding: '0 15px', borderRadius: 12, gap: 11, fontSize: 14 },
   arrow: { marginLeft: 'auto', color: arkmeTheme.tertiary, fontSize: 26 },
   resultArea: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  statusArea: { height: 53, minHeight: 53, overflow: 'hidden' },
+  compactResultArea: { height: 297, minHeight: 297, flex: 'none' },
+  statusArea: { height: 53, minHeight: 53, flex: 'none', overflow: 'hidden' },
   candidateArea: { flex: '1 1 auto', minHeight: 0, overflow: 'hidden' },
   notice: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   error: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 13 },
@@ -32,7 +33,7 @@ const styles: Record<string, CSSProperties> = {
   remark: { width: '100%', height: 42, marginTop: 18, padding: '0 12px', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.base, color: arkmeTheme.text, font: 'inherit' },
   primary: { width: '100%', minHeight: 44, marginTop: 12, border: 0, borderRadius: 10, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontWeight: 600 },
   footer: { marginTop: 'auto', paddingTop: 30, borderTop: `1px solid ${arkmeTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 },
-  compactFooter: { marginTop: 0, paddingTop: 18 },
+  compactFooter: { height: 110, minHeight: 110, flex: 'none', marginTop: 0, paddingTop: 18, boxSizing: 'border-box' },
   profileName: { margin: 0, fontSize: 18, fontWeight: 600 },
   profileId: { margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 6, color: arkmeTheme.secondary, fontSize: 14 },
   copy: { width: 28, height: 28, padding: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
@@ -275,7 +276,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M8 8h3v3H8zm5 0h3v3h-3zm-5 5h3v3H8zm6 1h2v2h-2z" fill="currentColor" /></svg>
       <span>识别二维码图片添加好友</span><span style={styles.arrow}>›</span>
     </button>
-    <div style={styles.resultArea} data-arkme-contact-state-area>
+    <div style={{ ...styles.resultArea, ...(compact ? styles.compactResultArea : {}) }} data-arkme-contact-state-area>
       <div style={styles.statusArea} data-arkme-contact-status-area>
         {busy && <div style={styles.notice} role="status">正在处理…</div>}
         {!busy && error !== '' && !scannerOpen && <div style={styles.error} role="alert">{error}</div>}

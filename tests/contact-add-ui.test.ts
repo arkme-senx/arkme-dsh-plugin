@@ -39,6 +39,8 @@ describe('contact add dialog layout', () => {
     expect(source).toContain('data-arkme-contact-status-area')
     expect(source).toContain('data-arkme-contact-candidate-area')
     expect(source).toContain('data-arkme-contact-state-area')
+    expect(source).toContain("compactResultArea: { height: 297, minHeight: 297, flex: 'none' }")
+    expect(source).toContain("compactFooter: { height: 110, minHeight: 110, flex: 'none'")
     expect(source).toContain('{busy && <div style={styles.notice}')
     expect(source).not.toContain('busyOverlay')
   })
