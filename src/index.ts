@@ -12,7 +12,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
-import { createArkmeSessionStore } from './keychain-store.js'
+import { createArkmeSessionStores } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import {
   ArkmePluginUpdateManager,
@@ -180,8 +180,11 @@ export function apply(ctx: Context, config: Config): void {
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
-  const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
-  const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
+  const { sessionStore, pendingSessionStore } = createArkmeSessionStores(
+    config.keychainServicePrefix,
+    config.environment,
+    stateDirectory,
+  )
   const service = new ArkmeService(config, sessionStore, localDatabase, fetch, pendingSessionStore)
   const openClawStateDirectory = join(stateDirectory, 'openclaw')
   const openClawCli = createOpenClawCliAdapter({

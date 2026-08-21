@@ -48,7 +48,7 @@ export const ARKME_ATTACHMENT_TOOL_PROMPT =
 
 const BUSINESS_PROMPT_SUFFIX =
   ' When the user asks to generate a separate custom Arkme UI plugin, call arkme_plugin_contract before creating files; '
-  + 'generated consumers must use the public SDK and must never access the OS credential store or SQLite directly.'
+  + 'generated consumers must use the public SDK and must never access Provider credential storage or SQLite directly.'
   + ' For the unified Arkme directory, use arkme_sources_list to obtain account-bound source_ref values, then use '
   + 'arkme_source_read to read default-category, topic, private-chat, or group-chat timelines. Use arkme_text_send only after '
   + 'an explicit human request in the current conversation; a source_ref must come from a source-list result and must never be guessed.'

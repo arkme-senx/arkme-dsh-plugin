@@ -1,5 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
+import { chmod, lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -335,9 +338,152 @@ export class ArkmeWindowsCredentialStore implements ArkmeSessionStore {
   }
 }
 
+function linuxCredentialFailureDetail(error: unknown): string {
+  return error instanceof Error && error.message.startsWith('Linux Arkme ')
+    ? `：${error.message.slice('Linux Arkme '.length)}`
+    : ''
+}
+
+function assertLinuxCredentialOwner(uid: number, label: string): void {
+  if (typeof process.geteuid === 'function' && uid !== process.geteuid()) {
+    throw new Error(`Linux Arkme ${label}不属于当前用户`)
+  }
+}
+
+async function assertLinuxCredentialDirectory(directory: string, create: boolean): Promise<boolean> {
+  let created = false
+  let metadata
+  try {
+    metadata = await lstat(directory)
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== 'ENOENT') throw error
+    if (!create) return false
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    created = true
+    metadata = await lstat(directory)
+  }
+  if (metadata.isSymbolicLink()) throw new Error('Linux Arkme 凭据目录不能是符号链接')
+  if (!metadata.isDirectory()) throw new Error('Linux Arkme 凭据目录路径不是目录')
+  assertLinuxCredentialOwner(metadata.uid, '凭据目录')
+  if ((metadata.mode & 0o777) !== 0o700) {
+    if (!created) throw new Error('Linux Arkme 凭据目录权限必须为 700')
+    await chmod(directory, 0o700)
+    metadata = await lstat(directory)
+    if (metadata.isSymbolicLink() || !metadata.isDirectory() || (metadata.mode & 0o777) !== 0o700) {
+      throw new Error('Linux Arkme 凭据目录权限必须为 700')
+    }
+    assertLinuxCredentialOwner(metadata.uid, '凭据目录')
+  }
+  return true
+}
+
+export class ArkmeLinuxFileCredentialStore implements ArkmeSessionStore {
+  private cached: ArkmeSessionCredentials | undefined
+  private loaded = false
+  private operations: Promise<void> = Promise.resolve()
+
+  constructor(private readonly credentialPath: string) {}
+
+  async read(): Promise<ArkmeSessionCredentials | undefined> {
+    return await this.serial(async () => {
+      if (this.loaded) return this.cached === undefined ? undefined : { ...this.cached }
+      let credentialFile: Awaited<ReturnType<typeof open>> | undefined
+      try {
+        if (!await assertLinuxCredentialDirectory(dirname(this.credentialPath), false)) {
+          this.cached = undefined
+          this.loaded = true
+          return undefined
+        }
+        credentialFile = await open(this.credentialPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+        const file = await credentialFile.stat()
+        if (!file.isFile()) throw new Error('Linux Arkme 登录凭据路径不是普通文件')
+        assertLinuxCredentialOwner(file.uid, '登录凭据文件')
+        if ((file.mode & 0o777) !== 0o600) throw new Error('Linux Arkme 登录凭据文件权限必须为 600')
+        const session = validSession(JSON.parse(await credentialFile.readFile('utf8')))
+        if (session === undefined) throw new Error('Linux Arkme 登录凭据格式无效')
+        this.cached = session
+        this.loaded = true
+        return { ...this.cached }
+      } catch (error) {
+        if ((error as { code?: unknown }).code === 'ENOENT') {
+          this.cached = undefined
+          this.loaded = true
+          return undefined
+        }
+        throw new Error(`无法读取 Linux 中的 Arkme 登录凭据${linuxCredentialFailureDetail(error)}`, { cause: error })
+      } finally {
+        await credentialFile?.close().catch(() => undefined)
+      }
+    })
+  }
+
+  async write(session: ArkmeSessionCredentials): Promise<void> {
+    const payload = JSON.stringify(session)
+    await this.serial(async () => {
+      try {
+        const directory = dirname(this.credentialPath)
+        const temporaryPath = `${this.credentialPath}.${String(process.pid)}.${randomUUID()}.tmp`
+        await assertLinuxCredentialDirectory(directory, true)
+        let temporaryFile: Awaited<ReturnType<typeof open>> | undefined
+        try {
+          temporaryFile = await open(temporaryPath, 'wx', 0o600)
+          await temporaryFile.chmod(0o600)
+          await temporaryFile.writeFile(payload, 'utf8')
+          await temporaryFile.sync()
+          const temporaryMetadata = await temporaryFile.stat()
+          assertLinuxCredentialOwner(temporaryMetadata.uid, '临时凭据文件')
+          if ((temporaryMetadata.mode & 0o777) !== 0o600) {
+            throw new Error('Linux Arkme 临时凭据文件权限必须为 600')
+          }
+          await temporaryFile.close()
+          temporaryFile = undefined
+          await rename(temporaryPath, this.credentialPath)
+        } catch (error) {
+          await temporaryFile?.close().catch(() => undefined)
+          await unlink(temporaryPath).catch(() => undefined)
+          throw error
+        }
+        this.cached = { ...session }
+        this.loaded = true
+      } catch (error) {
+        throw new Error(`无法写入 Linux 中的 Arkme 登录凭据${linuxCredentialFailureDetail(error)}`, { cause: error })
+      }
+    })
+  }
+
+  async delete(): Promise<void> {
+    await this.serial(async () => {
+      try {
+        if (!await assertLinuxCredentialDirectory(dirname(this.credentialPath), false)) {
+          this.cached = undefined
+          this.loaded = true
+          return
+        }
+        await unlink(this.credentialPath)
+        this.cached = undefined
+        this.loaded = true
+      } catch (error) {
+        if ((error as { code?: unknown }).code === 'ENOENT') {
+          this.cached = undefined
+          this.loaded = true
+          return
+        }
+        throw new Error(`无法删除 Linux 中的 Arkme 登录凭据${linuxCredentialFailureDetail(error)}`, { cause: error })
+      }
+    })
+  }
+
+  private async serial<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.operations.then(operation, operation)
+    this.operations = next.then(() => undefined, () => undefined)
+    return await next
+  }
+}
+
 export interface ArkmeSessionStoreFactoryOptions {
   platform?: NodeJS.Platform
   windowsBackend?: ArkmeWindowsCredentialBackend
+  linuxCredentialPath?: string
 }
 
 export function createArkmeSessionStore(
@@ -347,5 +493,44 @@ export function createArkmeSessionStore(
   const platform = options.platform ?? process.platform
   if (platform === 'darwin') return new ArkmeKeychainStore(service)
   if (platform === 'win32') return new ArkmeWindowsCredentialStore(service, options.windowsBackend)
-  throw new Error(`当前版本只支持在 macOS 或 Windows 保存 Arkme 登录凭据，当前平台：${platform}`)
+  if (platform === 'linux') {
+    if (options.linuxCredentialPath === undefined || options.linuxCredentialPath.trim() === '') {
+      throw new Error('Linux Arkme 登录凭据文件路径不能为空')
+    }
+    return new ArkmeLinuxFileCredentialStore(options.linuxCredentialPath)
+  }
+  throw new Error(`当前平台不支持保存 Arkme 登录凭据：${platform}`)
+}
+
+export interface ArkmeSessionStores {
+  sessionStore: ArkmeSessionStore
+  pendingSessionStore: ArkmeSessionStore
+}
+
+export interface ArkmeSessionStoresFactoryOptions {
+  platform?: NodeJS.Platform
+  windowsBackend?: ArkmeWindowsCredentialBackend
+}
+
+export function createArkmeSessionStores(
+  servicePrefix: string,
+  environment: 'test' | 'prod',
+  stateDirectory: string,
+  options: ArkmeSessionStoresFactoryOptions = {},
+): ArkmeSessionStores {
+  const nativeOptions = {
+    ...(options.platform === undefined ? {} : { platform: options.platform }),
+    ...(options.windowsBackend === undefined ? {} : { windowsBackend: options.windowsBackend }),
+  }
+  const credentialDirectory = join(stateDirectory, 'credentials')
+  return {
+    sessionStore: createArkmeSessionStore(`${servicePrefix}.${environment}`, {
+      ...nativeOptions,
+      linuxCredentialPath: join(credentialDirectory, 'session.json'),
+    }),
+    pendingSessionStore: createArkmeSessionStore(`${servicePrefix}.${environment}.pending-binding`, {
+      ...nativeOptions,
+      linuxCredentialPath: join(credentialDirectory, 'pending-binding-session.json'),
+    }),
+  }
 }

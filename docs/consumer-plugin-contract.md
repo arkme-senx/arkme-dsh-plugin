@@ -1,6 +1,6 @@
 # Arkme Consumer Plugin Contract v1
 
-`@senguoyun/dsh-arkme` owns authentication, OS credential-store access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
+`@senguoyun/dsh-arkme` owns authentication, Host credential storage, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
 
 The bundled UI uses only official DSH slots: `sidebar.footer.action` owns the launcher, inline Arkme directory, and a non-modal translucent React portal that floats the Arkme message surface over the center column; `settings.general.item` owns account controls. The plugin never registers or replaces `conversation`, so the native DSH Conversation remains mounted and remains perceptible through and around the frosted card. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
 
@@ -75,7 +75,7 @@ if ((await arkme.capabilities()).features.extensionPreviews === true && userConf
 }
 ```
 
-The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
+The SDK communicates only with the same-origin Provider route. Consumers must not read Provider credential storage, SQLite files, state files, or tokens directly.
 
 `capabilities().features.myExtensions` advertises the current-account extension inventory. `myExtensions()` merges only Host-approved live Cordis, Profile-resolved and cloud-owned facts; consumers must use its states and `publish` result without rescanning Profile files or inferring ownership from names. Every publishable item carries one Host-derived route: `dynamic-cordis-v2` means `artifactContractVersion=2` and `artifactKind=dsh-bundle-tgz` for a live current-session Dynamic Cordis Package; `profile-native-v3` means `artifactContractVersion=3` and `artifactKind=dsh-native-package-tgz` for an installed or Profile-local DSH Bundle. Callers pass `ownedRef` unchanged and never choose a mode themselves. A GitHub repository URL is optional provenance metadata, not a third upload route, publication credential or cloud clone/build request. A third-party registry/Git dependency appears only when its actually resolved package declares `dsh.bundle.patch`; it is a V3 publication candidate rather than an assertion that the current account authored the upstream code. `publisher_role` is server-owned: explicit values win, while historical rows without a role resolve to importer only when they have GitHub provenance. Consumers never submit this role. `ownedRef` is short-lived and account-bound. `publishMyExtension()` requires a current explicit human request and can publish only the exact Cordis Package, resolved Bundle directory or local Bundle tgz behind that ref; consumers must refresh the list after expiry or account switch. Profile paths, Agent IDs, source archives, artifact upload requests and signing material never enter this contract.
 
