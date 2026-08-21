@@ -99,11 +99,17 @@ describe('Arkme SDK', () => {
 
   it('exposes installed extensions and desired enable state without raw Profile paths', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const installed = [{
+      extensionId: 'ext-1', installedVersion: '1.0.0', manifest: { name: '故障扩展' },
+      enabled: false, active: false, permissionSnapshot: [], updateChannel: 'stable',
+      installedAtMillis: 1, lastCheckedAtMillis: 1,
+      unavailable: { code: 'runtime-load-failed', message: '插件运行失败，已自动停用。' },
+    }]
     const sdk = createArkmeSdk({
       fetchImpl: async (_input, init) => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
-        if (request.operation === 'extensions.installed-list') return success([])
+        if (request.operation === 'extensions.installed-list') return success(installed)
         if (request.operation === 'extensions.enabled.set') return success({
           extension_id: 'ext-1', installed: true, enabled: false, active: false,
           restart_required: true, message: '已关闭',
@@ -112,7 +118,7 @@ describe('Arkme SDK', () => {
       },
     })
 
-    await expect(sdk.installedExtensions()).resolves.toEqual([])
+    await expect(sdk.installedExtensions()).resolves.toEqual(installed)
     await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({ enabled: false })
     expect(calls).toEqual([
       { operation: 'extensions.installed-list' },

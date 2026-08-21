@@ -17,6 +17,13 @@ export interface ArkmePersistentActivation {
   schema_version: 1
   extension_id: string
   enabled: boolean
+  quarantine?: ArkmePersistentQuarantine
+}
+
+export interface ArkmePersistentQuarantine {
+  code: 'runtime-load-failed'
+  failed_at_millis: number
+  message: string
 }
 
 export interface ArkmePersistentInstallation {
@@ -42,8 +49,30 @@ function writeSecure(path: string, content: string): void {
   chmodSync(path, 0o600)
 }
 
-function activationText(extensionId: string, enabled: boolean): string {
-  return `${JSON.stringify({ schema_version: 1, extension_id: extensionId, enabled } satisfies ArkmePersistentActivation, undefined, 2)}\n`
+function activationText(
+  extensionId: string,
+  enabled: boolean,
+  quarantine?: ArkmePersistentQuarantine,
+): string {
+  return `${JSON.stringify({
+    schema_version: 1,
+    extension_id: extensionId,
+    enabled,
+    ...(quarantine === undefined ? {} : { quarantine }),
+  } satisfies ArkmePersistentActivation, undefined, 2)}\n`
+}
+
+function writeActivationState(bundleDirectory: string, state: ArkmePersistentActivation): string {
+  const target = join(bundleDirectory, 'activation.json')
+  const temporary = join(bundleDirectory, `.activation.${randomUUID()}.tmp`)
+  writeSecure(temporary, activationText(state.extension_id, state.enabled, state.quarantine))
+  try {
+    renameSync(temporary, target)
+    chmodSync(target, 0o600)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+  return target
 }
 
 export function writePersistentExtensionActivation(
@@ -52,16 +81,28 @@ export function writePersistentExtensionActivation(
   enabled: boolean,
 ): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(extensionId)) throw new Error('扩展身份无效')
-  const target = join(bundleDirectory, 'activation.json')
-  const temporary = join(bundleDirectory, `.activation.${randomUUID()}.tmp`)
-  writeSecure(temporary, activationText(extensionId, enabled))
-  try {
-    renameSync(temporary, target)
-    chmodSync(target, 0o600)
-  } finally {
-    rmSync(temporary, { force: true })
-  }
-  return target
+  return writeActivationState(bundleDirectory, { schema_version: 1, extension_id: extensionId, enabled })
+}
+
+export function quarantinePersistentExtension(
+  bundleDirectory: string,
+  extensionId: string,
+  error: unknown,
+  failedAtMillis = Date.now(),
+): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(extensionId)) throw new Error('扩展身份无效')
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  const message = (rawMessage.trim() || 'persistent extension failed to load').slice(0, 2_000)
+  return writeActivationState(bundleDirectory, {
+    schema_version: 1,
+    extension_id: extensionId,
+    enabled: false,
+    quarantine: {
+      code: 'runtime-load-failed',
+      failed_at_millis: failedAtMillis,
+      message,
+    },
+  })
 }
 
 export function readPersistentExtensionActivation(installationUrl: URL): ArkmePersistentActivation {
@@ -78,6 +119,14 @@ export function readPersistentExtensionActivation(installationUrl: URL): ArkmePe
   const state = value as Partial<ArkmePersistentActivation>
   if (state.schema_version !== 1 || typeof state.extension_id !== 'string' || typeof state.enabled !== 'boolean') {
     throw new Error('Arkme persistent extension activation state is invalid')
+  }
+  if (state.quarantine !== undefined) {
+    const quarantine = state.quarantine as Partial<ArkmePersistentQuarantine>
+    if (state.enabled || quarantine.code !== 'runtime-load-failed'
+      || !Number.isSafeInteger(quarantine.failed_at_millis) || (quarantine.failed_at_millis ?? 0) < 0
+      || typeof quarantine.message !== 'string' || quarantine.message.trim() === '' || quarantine.message.length > 2_000) {
+      throw new Error('Arkme persistent extension quarantine state is invalid')
+    }
   }
   return state as ArkmePersistentActivation
 }

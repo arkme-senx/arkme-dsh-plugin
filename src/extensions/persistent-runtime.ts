@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createContext, runInContext } from 'node:vm'
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { sha256Hex, unpackArkmeExtension } from './artifact.js'
 import { verifyExtensionResolutionSignature } from './signature.js'
 import {
-  ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION, readPersistentExtensionActivation, type ArkmePersistentInstallation,
+  ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION, quarantinePersistentExtension,
+  readPersistentExtensionActivation, type ArkmePersistentInstallation,
 } from './persistent-bundle.js'
 
 type PersistentHandler = (args: unknown) => unknown | Promise<unknown>
@@ -194,8 +197,31 @@ async function mountPersistentArkmeHostExtension(
   }
 }
 
+function quarantineRuntimeFailure(
+  installation: ArkmePersistentInstallation,
+  installationUrl: URL,
+  error: unknown,
+): void {
+  try {
+    quarantinePersistentExtension(
+      dirname(fileURLToPath(installationUrl)),
+      installation.extension_id,
+      error,
+    )
+  } catch (quarantineError) {
+    console.error(`[arkme-extension:${installation.extension_id}] failed to persist quarantine state`, quarantineError)
+  }
+  console.error(`[arkme-extension:${installation.extension_id}] disabled after runtime load failure`, error)
+}
+
 export async function applyPersistentArkmeHostExtension(ctx: Context, installationUrl: URL): Promise<void> {
-  const installation = readInstallation(installationUrl)
+  let installation: ArkmePersistentInstallation
+  try {
+    installation = readInstallation(installationUrl)
+  } catch (error) {
+    console.error('[arkme-extension:unknown] ignored invalid persistent installation metadata', error)
+    return
+  }
   const previous = persistentRegistrations.get(installation.extension_id)
   if (previous?.ctx === ctx && previous.installationUrl.href === installationUrl.href) return
   if (previous !== undefined) {
@@ -203,22 +229,35 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
   }
   const registration: PersistentRuntimeRegistration = { ctx, installationUrl }
   persistentRegistrations.set(installation.extension_id, registration)
-  ctx.effect(() => () => {
-    if (persistentRegistrations.get(installation.extension_id) !== registration) return
-    persistentRegistrations.delete(installation.extension_id)
-    persistentHandlers.delete(installation.extension_id)
-  }, `arkme-extension:${installation.extension_id}:registration`)
-  ctx.effect(() => () => {
-    if (persistentHandlers.get(installation.extension_id) === registration.handlers) {
+  try {
+    ctx.effect(() => () => {
+      if (persistentRegistrations.get(installation.extension_id) !== registration) return
+      persistentRegistrations.delete(installation.extension_id)
       persistentHandlers.delete(installation.extension_id)
+    }, `arkme-extension:${installation.extension_id}:registration`)
+    ctx.effect(() => () => {
+      if (persistentHandlers.get(installation.extension_id) === registration.handlers) {
+        persistentHandlers.delete(installation.extension_id)
+      }
+    }, `arkme-extension:${installation.extension_id}:handlers`)
+    const activation = readPersistentExtensionActivation(installationUrl)
+    if (activation.extension_id !== installation.extension_id) {
+      throw new Error('Arkme persistent extension activation identity mismatch')
     }
-  }, `arkme-extension:${installation.extension_id}:handlers`)
-  const activation = readPersistentExtensionActivation(installationUrl)
-  if (activation.extension_id !== installation.extension_id) {
-    throw new Error('Arkme persistent extension activation identity mismatch')
+    if (!activation.enabled) return
+    await mountPersistentArkmeHostExtension(installation, registration)
+  } catch (error) {
+    if (persistentRegistrations.get(installation.extension_id) === registration) {
+      persistentRegistrations.delete(installation.extension_id)
+      if (persistentHandlers.get(installation.extension_id) === registration.handlers) {
+        persistentHandlers.delete(installation.extension_id)
+      }
+      if (persistentClientActivations.get(installation.extension_id) === registration.clientActivation) {
+        persistentClientActivations.delete(installation.extension_id)
+      }
+    }
+    quarantineRuntimeFailure(installation, installationUrl, error)
   }
-  if (!activation.enabled) return
-  await mountPersistentArkmeHostExtension(installation, registration)
 }
 
 export function persistentArkmeExtensionActive(extensionId: string): boolean {
@@ -229,7 +268,13 @@ export function persistentArkmeExtensionActive(extensionId: string): boolean {
 export async function activatePersistentArkmeExtension(extensionId: string): Promise<boolean> {
   const registration = persistentRegistrations.get(extensionId)
   if (registration === undefined) return false
-  return await mountPersistentArkmeHostExtension(readInstallation(registration.installationUrl), registration)
+  const installation = readInstallation(registration.installationUrl)
+  try {
+    return await mountPersistentArkmeHostExtension(installation, registration)
+  } catch (error) {
+    quarantineRuntimeFailure(installation, registration.installationUrl, error)
+    throw error
+  }
 }
 
 export async function deactivatePersistentArkmeExtension(extensionId: string): Promise<void> {

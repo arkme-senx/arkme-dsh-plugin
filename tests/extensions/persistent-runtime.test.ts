@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -53,6 +53,20 @@ function runtimeContext() {
   return { cleanups, context: { plugin, effect } as never, effect, plugin }
 }
 
+function applyingRuntimeContext() {
+  const cleanups: Array<() => void> = []
+  const effect = vi.fn((factory: () => () => void) => { cleanups.push(factory()) })
+  const childContext = {
+    effect,
+    fiber: { inject: {} },
+    get: vi.fn(() => undefined),
+  }
+  const plugin = vi.fn(async (value: { apply(ctx: unknown): unknown }) => {
+    await value.apply(childContext)
+  })
+  return { cleanups, context: { ...childContext, plugin } as never, effect, plugin }
+}
+
 describe('persistent extension Host runtime', () => {
   it('re-verifies the signed artifact before mounting its guarded Cordis plugin', async () => {
     const installation = signedInstallation({
@@ -68,6 +82,35 @@ describe('persistent extension Host runtime', () => {
     expect(persistentArkmeExtensionActive('ext_host_verified')).toBe(true)
     for (const cleanup of runtime.cleanups) cleanup()
     expect(persistentArkmeExtensionActive('ext_host_verified')).toBe(false)
+  })
+
+  it('quarantines a Host runtime failure without rejecting the DSH loader entry', async () => {
+    const installation = signedInstallation({
+      extensionId: 'ext_host_quarantined',
+      clientCode: 'return { name: "client-half", apply() {} }',
+      hostCode: 'return { name: "broken-host", apply() { harness.defineTool({ name: "broken" }) } }',
+    })
+    const runtime = applyingRuntimeContext()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(applyPersistentArkmeHostExtension(runtime.context, installation)).resolves.toBeUndefined()
+
+    expect(runtime.plugin).toHaveBeenCalledOnce()
+    expect(persistentArkmeExtensionActive('ext_host_quarantined')).toBe(false)
+    expect(JSON.parse(readFileSync(new URL('./activation.json', installation), 'utf8'))).toMatchObject({
+      schema_version: 1,
+      extension_id: 'ext_host_quarantined',
+      enabled: false,
+      quarantine: {
+        code: 'runtime-load-failed',
+        message: expect.stringContaining('harness.defineTool is not a function'),
+      },
+    })
+
+    const retry = applyingRuntimeContext()
+    await expect(applyPersistentArkmeHostExtension(retry.context, installation)).resolves.toBeUndefined()
+    expect(retry.plugin).not.toHaveBeenCalled()
+    consoleError.mockRestore()
   })
 
   it('marks a verified Client-only bundle active after its loader entry is applied', async () => {
@@ -91,13 +134,19 @@ describe('persistent extension Host runtime', () => {
       clientCode: 'return { apply() {} }',
     })
     const effect = vi.fn(() => { throw new Error('INACTIVE_EFFECT') })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     await expect(applyPersistentArkmeHostExtension(
       { plugin: vi.fn(), effect } as never,
       installation,
-    )).rejects.toThrow('INACTIVE_EFFECT')
+    )).resolves.toBeUndefined()
 
     expect(persistentArkmeExtensionActive('ext_client_effect_failure')).toBe(false)
+    expect(JSON.parse(readFileSync(new URL('./activation.json', installation), 'utf8'))).toMatchObject({
+      enabled: false,
+      quarantine: { code: 'runtime-load-failed', message: 'INACTIVE_EFFECT' },
+    })
+    consoleError.mockRestore()
   })
 
   it('keeps a newer same-ID Client activation when the older loader cleans up', async () => {
@@ -137,10 +186,16 @@ describe('persistent extension Host runtime', () => {
       invalidSignature: true,
     })
     const runtime = runtimeContext()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
-    await expect(applyPersistentArkmeHostExtension(runtime.context, installation)).rejects.toThrow()
+    await expect(applyPersistentArkmeHostExtension(runtime.context, installation)).resolves.toBeUndefined()
 
     expect(persistentArkmeExtensionActive('ext_client_invalid')).toBe(false)
+    expect(JSON.parse(readFileSync(new URL('./activation.json', installation), 'utf8'))).toMatchObject({
+      enabled: false,
+      quarantine: { code: 'runtime-load-failed' },
+    })
+    consoleError.mockRestore()
   })
 
   it('retains the wrapper context so a Host-only extension can hot stop and hot start', async () => {

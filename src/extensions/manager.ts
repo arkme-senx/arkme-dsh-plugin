@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import { canonicalExtensionJson, sha256Hex, unpackArkmeExtension } from './artifact.js'
@@ -11,7 +12,9 @@ import { arkmeBundleActive, deactivateArkmeBundle } from './bundle-runtime.js'
 import { ArkmeExtensionInstallStore } from './install-store.js'
 import { ExtensionPublishClient } from './publish-client.js'
 import { normalizeGitHubRepositoryURL } from './source.js'
-import { materializePersistentExtensionBundle, writePersistentExtensionActivation } from './persistent-bundle.js'
+import {
+  materializePersistentExtensionBundle, readPersistentExtensionActivation, writePersistentExtensionActivation,
+} from './persistent-bundle.js'
 import type { ArkmeExtensionProfileInstaller } from './profile-installer.js'
 import {
   activatePersistentArkmeExtension, deactivatePersistentArkmeExtension, persistentArkmeExtensionActive,
@@ -30,6 +33,7 @@ import {
   type ArkmeExtensionEditableVisibility, type ArkmeExtensionUpdateResolution, type ArkmeExtensionVisibility,
   type ArkmeExtensionInstallProgress, type ArkmeInstalledExtension, type ArkmeInstalledExtensionView, type DynamicCordisPackageInspectionLike,
   type DynamicCordisRunnerLike,
+  ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE, type ArkmeExtensionUnavailableView,
 } from './types.js'
 
 interface AgentLike { id?: unknown }
@@ -125,7 +129,10 @@ function requireBundleUploadSlots(session: import('./types.js').ArkmeBundlePubli
   return { bundle: session.bundle_upload, source: session.source_upload }
 }
 
-function installedView(item: ArkmeInstalledExtension): ArkmeInstalledExtensionView {
+function installedView(
+  item: ArkmeInstalledExtension,
+  unavailable?: ArkmeExtensionUnavailableView,
+): ArkmeInstalledExtensionView {
   return {
     extensionId: item.extensionId,
     installedVersion: item.installedVersion,
@@ -136,6 +143,7 @@ function installedView(item: ArkmeInstalledExtension): ArkmeInstalledExtensionVi
     updateChannel: item.updateChannel,
     installedAtMillis: item.installedAtMillis,
     lastCheckedAtMillis: item.lastCheckedAtMillis,
+    ...(unavailable === undefined ? {} : { unavailable }),
   }
 }
 
@@ -667,13 +675,49 @@ export class ArkmeExtensionManager {
   listInstalled(): ArkmeInstalledExtensionView[] {
     const loaderEntries = this.options.pluginInventory?.list().entries ?? []
     return this.store.list().map(item => {
-      const loaderActive = item.profilePackageName !== undefined && loaderEntries.some(entry =>
-        entry.moduleName === item.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
-      const active = loaderActive || item.active || (item.executionModel === 'arkme-sandboxed' && item.profilePackageName !== undefined
-        ? arkmeBundleActive(item.profilePackageName)
-        : persistentArkmeExtensionActive(item.extensionId))
-      return installedView({ ...item, active })
+      const state = this.effectivePersistentActivation(item)
+      const effective = state.item
+      if (effective.enabled !== item.enabled || effective.active !== item.active || effective.lastError !== item.lastError) {
+        this.store.put(effective)
+      }
+      const loaderActive = effective.profilePackageName !== undefined && loaderEntries.some(entry =>
+        entry.moduleName === effective.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
+      const persistentSuppressed = effective.executionModel === undefined && !effective.enabled
+      const active = !persistentSuppressed && (loaderActive || effective.active
+        || (effective.executionModel === 'arkme-sandboxed' && effective.profilePackageName !== undefined
+          ? arkmeBundleActive(effective.profilePackageName)
+          : persistentArkmeExtensionActive(effective.extensionId)))
+      return installedView({ ...effective, active }, state.unavailable)
     })
+  }
+
+  private effectivePersistentActivation(item: ArkmeInstalledExtension): {
+    item: ArkmeInstalledExtension
+    unavailable?: ArkmeExtensionUnavailableView
+  } {
+    if (item.executionModel !== undefined || item.profileBundlePath === undefined) return { item }
+    const bundleDirectory = this.resolveLegacyBundlePath(item.profileBundlePath)
+    if (bundleDirectory === undefined) return { item }
+    try {
+      const activation = readPersistentExtensionActivation(pathToFileURL(join(bundleDirectory, 'installation.json')))
+      if (activation.extension_id !== item.extensionId || activation.enabled) return { item }
+      return {
+        item: {
+          ...item,
+          enabled: false,
+          active: false,
+          ...(activation.quarantine === undefined ? {} : { lastError: activation.quarantine.message }),
+        },
+        ...(activation.quarantine === undefined ? {} : {
+          unavailable: {
+            code: 'runtime-load-failed',
+            message: ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE,
+          },
+        }),
+      }
+    } catch {
+      return { item }
+    }
   }
 
   enabledState(extensionIdValue: string): ArkmeExtensionEnabledState {
@@ -685,6 +729,7 @@ export class ArkmeExtensionManager {
       installed: true,
       enabled: installed.enabled,
       active: installed.active,
+      ...(installed.unavailable === undefined ? {} : { unavailable: installed.unavailable }),
     }
   }
 
@@ -705,7 +750,7 @@ export class ArkmeExtensionManager {
     }
     const current = this.listInstalled().find(item => item.extensionId === extensionId)
     const currentActive = current?.active === true
-    if (installed.enabled === input.enabled) {
+    if ((current?.enabled ?? installed.enabled) === input.enabled) {
       const restartRequired = input.enabled
         ? !currentActive
         : installed.manifest.halves.client && installed.profilePackageName !== undefined
@@ -718,6 +763,7 @@ export class ArkmeExtensionManager {
         message: input.enabled
           ? currentActive ? '扩展已启用' : '扩展已设为启用，重启 DSH 后生效'
           : restartRequired ? '扩展已关闭，重启 DSH 后 Client 界面完全移除' : '扩展已关闭',
+        ...(current?.unavailable === undefined ? {} : { unavailable: current.unavailable }),
       }
     }
 
@@ -806,25 +852,34 @@ export class ArkmeExtensionManager {
         activationError = error instanceof Error ? error.message : String(error)
       }
     }
-    const restartRequired = !active || installed.manifest.halves.client
+    const activationFailed = activationError !== ''
+    const restartRequired = activationFailed ? false : !active || installed.manifest.halves.client
     const { lastError: _lastError, ...retained } = installed
     this.store.put({
       ...retained,
-      enabled: true,
+      enabled: !activationFailed,
       active,
       ...(activationError === '' ? {} : { lastError: activationError }),
     })
     return {
       extension_id: extensionId,
       installed: true,
-      enabled: true,
+      enabled: !activationFailed,
       active,
       restart_required: restartRequired,
-      message: restartRequired
+      message: activationFailed
+        ? `${ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE} 请检查扩展兼容性后重试。`
+        : restartRequired
         ? activationError === ''
           ? '扩展已设为启用，重启 DSH 后完全生效'
           : `扩展已设为启用，当前进程加载失败：${activationError}；可重启 DSH 重试`
         : '扩展已启用，无需重启 DSH',
+      ...(activationFailed ? {
+        unavailable: {
+          code: 'runtime-load-failed' as const,
+          message: ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE,
+        },
+      } : {}),
     }
   }
 

@@ -54,6 +54,12 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-1', installed: true, enabled: false, active: false,
       restart_required: true, message: '已关闭',
     }))
+    const listInstalled = vi.fn(() => [{
+      extensionId: 'ext-broken', installedVersion: '1.0.0', manifest: { name: '故障扩展' },
+      enabled: false, active: false, permissionSnapshot: [], updateChannel: 'stable',
+      installedAtMillis: 1, lastCheckedAtMillis: 1,
+      unavailable: { code: 'runtime-load-failed', message: '插件运行失败，已自动停用。' },
+    }])
     const updateMetadata = vi.fn(async () => ({
       extension_id: 'ext-1', name: '新名称', description: '', visibility: 'private', updated_at: 2,
     }))
@@ -81,14 +87,14 @@ describe('Arkme extension tools', () => {
     }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
-      previewInstall, setEnabled, updateMetadata, rotateShareLink, setIcon, addPreview, deletePreview, reorderPreviews,
+      previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, setIcon, addPreview, deletePreview, reorderPreviews,
       delete: deleteExtension, apply: applyExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, {} as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
-      'arkme_extension_list_mine', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
+      'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
 		'arkme_extension_share',
       'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
@@ -96,6 +102,10 @@ describe('Arkme extension tools', () => {
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
     expect(listMine?.description).toContain('current Arkme user')
     expect(listMine?.description).toContain('untrusted')
+    const listInstalledTool = definitions.find(item => item.name === 'arkme_extension_list_installed')
+    await expect(listInstalledTool?.execute?.({}, toolExec(confirmationAgent('session-list', '查看已安装扩展'), 'call-list')))
+      .resolves.toContain('"message": "插件运行失败，已自动停用。"')
+    expect(listInstalled).toHaveBeenCalledOnce()
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')

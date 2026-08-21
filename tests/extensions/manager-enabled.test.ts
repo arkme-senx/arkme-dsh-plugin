@@ -26,6 +26,47 @@ function installed(root: string, client: boolean): ArkmeInstalledExtension {
 }
 
 describe('extension desired enable state owner', () => {
+  it('projects a quarantined persistent extension as disabled and inactive for the Client', () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-quarantined-'))
+    directories.push(root)
+    const bundle = join(root, 'profile', 'arkme-extensions', 'bundle')
+    mkdirSync(bundle, { recursive: true })
+    writeFileSync(join(bundle, 'installation.json'), JSON.stringify({ extension_id: 'ext-client' }))
+    writeFileSync(join(bundle, 'activation.json'), JSON.stringify({
+      schema_version: 1,
+      extension_id: 'ext-client',
+      enabled: false,
+      quarantine: {
+        code: 'runtime-load-failed',
+        failed_at_millis: 1,
+        message: 'harness.defineTool is not a function',
+      },
+    }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put(installed(root, true))
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: join(root, 'profile'),
+      profileInstaller: { install: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled: vi.fn() },
+    })
+
+    expect(manager.listInstalled()).toEqual([expect.objectContaining({
+      extensionId: 'ext-client',
+      enabled: false,
+      active: false,
+      unavailable: {
+        code: 'runtime-load-failed',
+        message: '插件运行失败，已自动停用。',
+      },
+    })])
+    expect(manager.enabledState('ext-client')).toMatchObject({ installed: true, enabled: false, active: false })
+    expect(store.get('ext-client')).toMatchObject({
+      enabled: false,
+      active: false,
+      lastError: 'harness.defineTool is not a function',
+    })
+    store.close()
+  })
+
   it('accepts an equivalent real path while retaining the Profile containment guard', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-realpath-'))
     directories.push(root)

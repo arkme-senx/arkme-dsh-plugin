@@ -134,6 +134,7 @@ export type {
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult,
+  ArkmeExtensionUnavailableView,
   ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery,
   ArkmeExtensionPreviewItem,
@@ -149,6 +150,7 @@ export type {
 	ArkmeExtensionShare,
 	ArkmeExtensionSource,
 } from '../extensions/types.js'
+export { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
   ArkmeOutgoingCallFailureCode,

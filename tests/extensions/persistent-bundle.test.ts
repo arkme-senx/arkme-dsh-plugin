@@ -1,11 +1,15 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packArkmeExtension } from '../../src/extensions/artifact.js'
 import { renderPersistentClientBundle } from '../../src/extensions/persistent-client-bundle.js'
-import { materializePersistentExtensionBundle } from '../../src/extensions/persistent-bundle.js'
+import {
+  materializePersistentExtensionBundle, quarantinePersistentExtension,
+  readPersistentExtensionActivation, writePersistentExtensionActivation,
+} from '../../src/extensions/persistent-bundle.js'
 import {
   ArkmeExtensionProfileInstaller,
   profilePluginCommandErrorDetail,
@@ -86,6 +90,36 @@ describe('persistent extension profile bundle', () => {
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.enabled-state')
     expect(JSON.parse(readFileSync(join(result.bundleDirectory, 'activation.json'), 'utf8'))).toEqual({
       schema_version: 1, extension_id: 'ext_test', enabled: true,
+    })
+  })
+
+  it('persists runtime quarantine atomically and clears it only on an explicit enable', () => {
+    const { root, artifact, artifactPath } = fixture()
+    const result = materializePersistentExtensionBundle({
+      profileDirectory: root,
+      artifactPath,
+      trustedPublicKey: 'public-key',
+      clientCode: 'return { apply() {} }',
+      resolution: {
+        extension_id: 'ext_quarantine', version: '1.0.0', artifact_url: 'https://objects.test/a',
+        artifact_size: artifact.bytes.byteLength, artifact_sha256: artifact.artifactSha256,
+        manifest_sha256: artifact.manifestSha256, manifest: artifact.manifest,
+        signature: 'signature', signing_key_id: 'key-1', published_at: 1_787_000_000_000, revoked: false,
+      },
+    })
+    const installationUrl = pathToFileURL(result.installationPath)
+
+    quarantinePersistentExtension(result.bundleDirectory, 'ext_quarantine', new Error('BROKEN_HOST'), 123)
+    expect(readPersistentExtensionActivation(installationUrl)).toEqual({
+      schema_version: 1,
+      extension_id: 'ext_quarantine',
+      enabled: false,
+      quarantine: { code: 'runtime-load-failed', failed_at_millis: 123, message: 'BROKEN_HOST' },
+    })
+
+    writePersistentExtensionActivation(result.bundleDirectory, 'ext_quarantine', true)
+    expect(readPersistentExtensionActivation(installationUrl)).toEqual({
+      schema_version: 1, extension_id: 'ext_quarantine', enabled: true,
     })
   })
 

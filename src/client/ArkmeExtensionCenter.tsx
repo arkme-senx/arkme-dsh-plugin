@@ -4,6 +4,7 @@ import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
   ArkmeExtensionEnabledResult, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution, ArkmeInstalledExtensionView,
 } from '../extensions/types.js'
+import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
@@ -209,7 +210,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onRestart }: {
-  kind: 'apply' | 'remove'
+  kind: 'apply' | 'remove' | 'unavailable'
   restarting: boolean
   onLater(): void
   onRestart(): void
@@ -217,21 +218,29 @@ export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onResta
   const disabledStyle: CSSProperties = restarting ? { opacity: .62, cursor: 'default' } : {}
   return <div style={styles.restartOverlay}>
     <section style={styles.restartDialog} role="alertdialog" aria-modal="true" aria-labelledby="arkme-extension-restart-title">
-      <h3 id="arkme-extension-restart-title" style={styles.restartTitle}>需要重启 DSH</h3>
+      <h3 id="arkme-extension-restart-title" style={styles.restartTitle}>{kind === 'unavailable' ? '插件不可用' : '需要重启 DSH'}</h3>
       <p style={styles.restartDescription}>
-        {kind === 'remove'
+        {kind === 'unavailable'
+          ? `${ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE} 请联系插件作者或安装兼容版本后重试。`
+          : kind === 'remove'
           ? '扩展已卸载，重启后会从当前页面完全移除。'
           : '扩展已安装到插件列表，重启后立即生效。'}
       </p>
       <div style={styles.restartActions}>
-        <button type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>稍后</button>
-        <button type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
-          {restarting ? '正在重启…' : '立即重启'}
-        </button>
+        {kind === 'unavailable'
+          ? <button type="button" style={styles.restartPrimary} onClick={onLater}>知道了</button>
+          : <>
+            <button type="button" style={{ ...styles.restartLater, ...disabledStyle }} disabled={restarting} onClick={onLater}>稍后</button>
+            <button type="button" style={{ ...styles.restartPrimary, ...disabledStyle }} disabled={restarting} onClick={onRestart}>
+              {restarting ? '正在重启…' : '立即重启'}
+            </button>
+          </>}
       </div>
     </section>
   </div>
 }
+
+const PENDING_EXTENSION_RESTART_KEY = 'arkme.extension.pending-restart'
 
 const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
 const EMPTY_COPY: Record<Tab, { title: string; description: string }> = {
@@ -566,6 +575,13 @@ function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
   return item.active ? '已启用' : '已启用，尚未加载'
 }
 
+export function extensionEnableUnavailable(
+  item: ArkmeInstalledExtensionView | undefined,
+  enabled: boolean,
+): boolean {
+  return enabled && item?.unavailable !== undefined
+}
+
 export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
@@ -586,7 +602,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const [actionBusyExtensionId, setActionBusyExtensionId] = useState<string>()
   const [installError, setInstallError] = useState('')
   const [restartNotice, setRestartNotice] = useState('')
-  const [restartPrompt, setRestartPrompt] = useState<{ extensionId: string; kind: 'apply' | 'remove' }>()
+  const [restartPrompt, setRestartPrompt] = useState<{ extensionId: string; kind: 'apply' | 'remove' | 'unavailable' }>()
   const [uninstallConfirmExtensionId, setUninstallConfirmExtensionId] = useState<string>()
   const [restarting, setRestarting] = useState(false)
   const [publishItem, setPublishItem] = useState<ArkmeMyExtensionItem>()
@@ -607,6 +623,21 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   const hostInstance = async (): Promise<string | undefined> => {
     try { return (await callArkme<{ instanceId: string }>('provider.instance')).instanceId }
     catch { return undefined }
+  }
+
+  const acceptInstalled = (local: ArkmeInstalledExtensionView[]): void => {
+    setInstalled(local)
+    if (typeof window === 'undefined') return
+    let pendingExtensionId: string | null = null
+    try { pendingExtensionId = window.sessionStorage.getItem(PENDING_EXTENSION_RESTART_KEY) } catch { return }
+    if (pendingExtensionId === null || pendingExtensionId === '') return
+    const pending = local.find(item => item.extensionId === pendingExtensionId)
+    if (pending?.unavailable !== undefined) {
+      setRestartPrompt({ extensionId: pendingExtensionId, kind: 'unavailable' })
+      try { window.sessionStorage.removeItem(PENDING_EXTENSION_RESTART_KEY) } catch { /* Best-effort UI marker cleanup. */ }
+    } else if (pending?.active === true) {
+      try { window.sessionStorage.removeItem(PENDING_EXTENSION_RESTART_KEY) } catch { /* Best-effort UI marker cleanup. */ }
+    }
   }
 
   const reloadAfterRestart = async (previous: string | undefined): Promise<void> => {
@@ -643,7 +674,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
             .catch(() => ({ value: { items: [], total: 0 }, failed: true as const })),
         ])
         if (sequence === requestSequence.current) {
-          setDiscoverItems(page.items); setInstalled(local); setPublishedItems(owned.value.items)
+          setDiscoverItems(page.items); acceptInstalled(local); setPublishedItems(owned.value.items)
           setDiscoverOwnerWarning(owned.failed ? '你的私有扩展暂未加载，请稍后刷新。' : '')
         }
       } else if (target === 'mine') {
@@ -654,7 +685,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal),
         ])
         if (sequence === requestSequence.current) {
-          setMyExtensions(page.items); setMyExtensionWarnings(page.warnings); setInstalled(local)
+          setMyExtensions(page.items); setMyExtensionWarnings(page.warnings); acceptInstalled(local)
         }
       } else if (target === 'installed') {
         const [local, catalog, owned] = await Promise.all([
@@ -665,7 +696,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
             .catch(() => ({ items: [], total: 0 })),
         ])
         if (sequence === requestSequence.current) {
-          setInstalled(local); setDiscoverItems(catalog.items); setPublishedItems(owned.items)
+          acceptInstalled(local); setDiscoverItems(catalog.items); setPublishedItems(owned.items)
         }
       } else {
         const [local, available, catalog, owned] = await Promise.all([
@@ -677,7 +708,7 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
             .catch(() => ({ items: [], total: 0 })),
         ])
         if (sequence === requestSequence.current) {
-          setInstalled(local); setUpdates(available); setDiscoverItems(catalog.items); setPublishedItems(owned.items)
+          acceptInstalled(local); setUpdates(available); setDiscoverItems(catalog.items); setPublishedItems(owned.items)
         }
       }
       if (sequence === requestSequence.current) setLoadedTabs(current => new Set(current).add(target))
@@ -828,13 +859,27 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
 
   const toggleEnabled = async (extensionId: string, enabled: boolean) => {
     setActionBusyExtensionId(extensionId); setInstallError(''); setRestartNotice('')
+    if (extensionEnableUnavailable(installed.find(item => item.extensionId === extensionId), enabled)) {
+      setRestartPrompt({ extensionId, kind: 'unavailable' })
+      setActionBusyExtensionId(undefined)
+      return
+    }
     try {
       const result = await callArkme<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled })
       setInstalled(current => current.map(item => {
         if (item.extensionId !== extensionId) return item
-        return { ...item, enabled: result.enabled, active: result.active }
+        const { unavailable: _unavailable, ...retained } = item
+        return {
+          ...retained,
+          enabled: result.enabled,
+          active: result.active,
+          ...(result.unavailable === undefined ? {} : { unavailable: result.unavailable }),
+        }
       }))
-      setRestartNotice(result.message)
+      if (result.unavailable !== undefined) {
+        setRestartNotice('')
+        setRestartPrompt({ extensionId, kind: 'unavailable' })
+      } else setRestartNotice(result.message)
     } catch (caught) {
       setInstallError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -862,7 +907,11 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
           }
           if (next.phase !== 'failed' || next.result?.installed === true) {
             const local = await callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal)
-            setInstalled(local)
+            acceptInstalled(local)
+            if (local.find(item => item.extensionId === next.extensionId)?.unavailable !== undefined) {
+              setRestartNotice('')
+              setRestartPrompt({ extensionId: next.extensionId, kind: 'unavailable' })
+            }
             setLoadedTabs(current => {
               const updated = new Set(current).add('installed')
               updated.delete('updates')
@@ -883,14 +932,20 @@ export function ArkmeExtensionCenter({ currentSessionId, currentUserId, onClose 
   }, [installTask?.taskId])
 
   const restartNow = async () => {
-    if (restartPrompt === undefined || restarting) return
+    if (restartPrompt === undefined || restartPrompt.kind === 'unavailable' || restarting) return
     setRestarting(true); setInstallError('')
     const previous = await hostInstance()
+    if (restartPrompt.kind === 'apply' && typeof window !== 'undefined') {
+      try { window.sessionStorage.setItem(PENDING_EXTENSION_RESTART_KEY, restartPrompt.extensionId) } catch { /* Reload fallback remains manual. */ }
+    }
     try {
       await callArkme('extensions.restart', { extensionId: restartPrompt.extensionId })
       setRestartNotice('DSH 正在重启，完成后页面会自动刷新。')
       await reloadAfterRestart(previous)
     } catch (caught) {
+      if (restartPrompt.kind === 'apply' && typeof window !== 'undefined') {
+        try { window.sessionStorage.removeItem(PENDING_EXTENSION_RESTART_KEY) } catch { /* Best-effort UI marker cleanup. */ }
+      }
       setRestarting(false)
       setInstallError(caught instanceof Error ? caught.message : String(caught))
     }
