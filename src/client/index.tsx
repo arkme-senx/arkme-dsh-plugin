@@ -16,6 +16,7 @@ import { arkmeAppUpdateStore } from './app-update-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
+import { readArkmePersonalTestEdition } from './personal-test-edition.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
@@ -77,8 +78,11 @@ export function apply(ctx: ClientContext): void {
   }
   const openArkme = (session: SessionId | undefined) => {
     watchOfficialNavigation()
+    const personalTestEdition = readArkmePersonalTestEdition()
     const retained = arkmeUi.getSnapshot().selectedSource
-    if (retained !== undefined) arkmeUi.open()
+    if (personalTestEdition?.defaultSurface === 'calls') arkmeUi.showCalls()
+    else if (personalTestEdition?.defaultSurface === 'recordings') arkmeUi.showRecordings()
+    else if (retained !== undefined) arkmeUi.open()
     else arkmeUi.focusSendToSelf()
     activateSurface(session)
   }
@@ -187,6 +191,7 @@ export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
+export { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 export { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 export { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
@@ -194,6 +199,13 @@ export { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 export { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 export { ArkmeExtensionCenter } from './ArkmeExtensionCenter.js'
 export { ArkmeSharedExtensionDetail } from './ArkmeSharedExtensionDetail.js'
+export {
+  ARKME_PERSONAL_TEST_EDITION_STORAGE_KEY,
+  arkmePersonalTestEditionLabel,
+  parseArkmePersonalTestEdition,
+  parseArkmePersonalTestEditionSearch,
+  readArkmePersonalTestEdition,
+} from './personal-test-edition.js'
 export { consumeExtensionShareDeepLink, extensionShareRefFromHash } from './extension-share-deeplink.js'
 export {
   ArkmeExtensionReviewComposerDialog,
@@ -205,7 +217,7 @@ export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 export { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
 export { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
-export { ArkmeDirectoryRow, ArkmeNavigation, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
+export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'
 export { ArkmePluginUpdateStore, arkmePluginUpdateStore } from './plugin-update-store.js'

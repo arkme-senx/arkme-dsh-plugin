@@ -10,6 +10,8 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} currentSessionId="session-1" />)
 
     expect(markup).toContain('data-arkme-owned="product-navigation"')
+    expect(markup).toContain('background:#151722')
+    expect(markup).not.toContain('#9eadff')
     expect(markup).toContain('aria-label="Arkme 功能导航"')
     expect(markup).toContain('>对话<')
     expect(markup).toContain('>录音<')

@@ -96,7 +96,7 @@ describe('outgoing call assets', () => {
       callEnginePackage: '@trtc/call-engine-lite-js',
       callEngineRange: '^3.5.9',
       upstreamBundleSha256: '6ff59d3eb9ce4d7556ba4054bac0df22ae279a7bccc56ccbf5712b6f475c95ce',
-      iconSha256: '583d7dbd34069c5b50ca294a071637bbd3beed913cecdb91a202c001004eed45',
+      iconSha256: '0a49fa403980fdf5d2dfb06eb0cda673798ab3b7733c6bd9e728419ca221dfc3',
       outgoingOnly: true,
     })
     expect(createHash('sha256').update(bundle).digest('hex')).toBe(manifest.bundleSha256)

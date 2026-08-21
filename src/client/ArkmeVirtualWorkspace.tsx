@@ -22,6 +22,9 @@ import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from './navigation-cache.js'
+import {
+  arkmePersonalTestEditionLabel, readArkmePersonalTestEdition, type ArkmePersonalTestEdition,
+} from './personal-test-edition.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
@@ -106,6 +109,15 @@ const styles: Record<string, CSSProperties> = {
   },
   searchInput: { minWidth: 0, width: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12 },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '0 6px 18px', overflowY: 'auto', listStyle: 'none' },
+  personalTestBanner: {
+    flex: 'none', margin: '8px 10px 2px', padding: '9px 10px', boxSizing: 'border-box',
+    border: `1px solid ${colors.border}`, borderRadius: 11, background: '#f7f7fa', color: colors.text,
+  },
+  personalTestTop: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
+  personalTestMark: { width: 20, height: 20, flex: 'none', display: 'grid', placeItems: 'center' },
+  personalTestName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, lineHeight: '18px', fontWeight: 600 },
+  personalTestPill: { flex: 'none', padding: '1px 5px', borderRadius: 999, background: '#20232d', color: '#fff', fontSize: 8, lineHeight: '12px', fontWeight: 700, letterSpacing: '.04em' },
+  personalTestHint: { margin: '3px 0 0 27px', color: colors.secondary, fontSize: 10, lineHeight: '15px' },
   topicList: { paddingBottom: 74 },
   topicCardList: { paddingTop: 0 },
   chatRow: {
@@ -276,6 +288,18 @@ export function renderArkmeDirectoryRow(props: ArkmeDirectoryRowProps): ReactNod
   return <ArkmeDirectoryRow {...props} />
 }
 
+export function ArkmePersonalTestEditionBanner({ edition }: { edition: ArkmePersonalTestEdition }) {
+  const defaultLabel = edition.defaultSurface === 'calls' ? '通话测试页' : '全天候录音测试页'
+  return <div style={styles.personalTestBanner} role="status" aria-label={`${edition.owner}个人测试版`}>
+    <div style={styles.personalTestTop}>
+      <span style={styles.personalTestMark} aria-hidden><ArkmeMark size={20} /></span>
+      <strong style={styles.personalTestName}>{arkmePersonalTestEditionLabel(edition)}</strong>
+      <span style={styles.personalTestPill}>TEST</span>
+    </div>
+    <p style={styles.personalTestHint}>首次打开默认进入{defaultLabel}</p>
+  </div>
+}
+
 export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
   return <button
     type="button"
@@ -288,6 +312,22 @@ export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; o
     <span style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.chatName}>全天候录音</span></span>
       <span style={styles.chatBottom}><span style={styles.preview}>转写、日总结与时间轴</span></span>
+    </span>
+  </button>
+}
+
+export function ArkmeCallsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><ArkmeMark size={44} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.chatName}>通话</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>通话记录、录音与 AI 摘要</span></span>
     </span>
   </button>
 }
@@ -640,6 +680,7 @@ export function ArkmeNavigation({
     arkmeNotificationActivation.getSnapshot,
   )
   const [initialCache] = useState(readLastNavigationCache)
+  const [personalTestEdition] = useState(readArkmePersonalTestEdition)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
@@ -804,7 +845,7 @@ export function ArkmeNavigation({
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
+      const restored = uiSnapshot.mode === 'calls' || uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
         || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'search' || uiSnapshot.mode === 'extensions'
         || uiSnapshot.mode === 'settings' || uiSnapshot.mode === 'contact-add'
         ? undefined
@@ -878,7 +919,7 @@ export function ArkmeNavigation({
     setSources(loaded)
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'recordings' || ui.mode === 'arko'
+    const restored = ui.mode === 'calls' || ui.mode === 'recordings' || ui.mode === 'arko'
       || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions'
       || ui.mode === 'settings' || ui.mode === 'contact-add'
       ? undefined
@@ -971,6 +1012,7 @@ export function ArkmeNavigation({
   useEffect(() => () => { stopCreatedHighlightAnimation() }, [stopCreatedHighlightAnimation])
 
   const showLogin = () => { activateNativeEntry(); arkmeUi.showLogin(); onActivateSurface?.() }
+  const showCalls = () => { activateNativeEntry(); arkmeUi.showCalls(); onActivateSurface?.() }
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
   const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
   const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
@@ -1134,6 +1176,9 @@ export function ArkmeNavigation({
       />
     </label>}
 
+    {directory === 'root' && personalTestEdition !== undefined
+      && <ArkmePersonalTestEditionBanner edition={personalTestEdition} />}
+
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
@@ -1175,6 +1220,7 @@ export function ArkmeNavigation({
           </span>
         </button>}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
+        {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {

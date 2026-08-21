@@ -3,6 +3,7 @@ import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
+import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { GlobeHemisphereWest } from '@phosphor-icons/react/dist/icons/GlobeHemisphereWest'
 import type { Icon } from '@phosphor-icons/react/lib'
@@ -15,13 +16,14 @@ interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'recordings' | 'search' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'calls' | 'recordings' | 'search' | 'calendar' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
 
 const items: NavigationItem[] = [
   { id: 'conversations', label: '对话', icon: ChatCircleText },
+  { id: 'calls', label: '通话', icon: PhoneCall },
   { id: 'recordings', label: '录音', icon: Waveform },
   { id: 'search', label: '搜索', icon: MagnifyingGlass },
   { id: 'calendar', label: '日历', icon: CalendarBlank },
@@ -80,7 +82,7 @@ const styles: Record<string, CSSProperties> = {
     width: 3,
     height: 33,
     borderRadius: 3,
-    background: '#9eadff',
+    background: '#151722',
   },
   compactMarker: { left: '50%', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
   label: { fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap' },
@@ -92,7 +94,8 @@ export function ArkmeProductNavigation({ compact, currentSessionId }: ArkmeProdu
   const activeId = ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'calendar' ? 'calendar'
-    : ui.mode === 'recordings' ? 'recordings'
+    : ui.mode === 'calls' ? 'calls'
+      : ui.mode === 'recordings' ? 'recordings'
       : ui.mode === 'search' ? 'search'
         : 'conversations'
 
@@ -101,7 +104,8 @@ export function ArkmeProductNavigation({ compact, currentSessionId }: ArkmeProdu
       arkmeUi.showExtensions()
       return
     }
-    if (id === 'recordings') arkmeUi.showRecordings()
+    if (id === 'calls') arkmeUi.showCalls()
+    else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
     else if (id === 'search') arkmeUi.showSearch()

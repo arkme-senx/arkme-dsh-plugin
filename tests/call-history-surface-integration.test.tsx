@@ -11,7 +11,8 @@ describe('call history surface integration', () => {
     }} />)
 
     expect(markup).toContain('data-arkme-call-history="prototype"')
-    expect(markup).toContain('aria-label="视频通话回放"')
+    expect(markup).toContain('aria-label="通话录音播放器"')
+    expect(markup).not.toContain('aria-label="视频通话回放"')
     expect(markup).toContain('aria-label="聊天式通话转写"')
     expect(markup).not.toContain('aria-label="发送消息"')
   })

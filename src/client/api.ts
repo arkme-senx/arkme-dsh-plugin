@@ -11,6 +11,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.doubao.start'
   | 'topic.create'
   | 'arko.profile'
   | 'arko.session'

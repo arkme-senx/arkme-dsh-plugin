@@ -553,6 +553,10 @@ export interface ArkmeProviderCapabilities {
     extensionPublish?: true
     /** Optional additive capability for extension reviews, replies, and rating summaries. */
     extensionReviews?: true
+    /** Optional additive capability for reading system and Doubao all-day recording transcripts. */
+    recordingTranscripts?: true
+    /** Optional additive capability for explicitly starting Doubao backfill for one local recording day. */
+    recordingDoubaoBackfill?: true
   }
   limits: {
     maxTextLength: number
@@ -1135,6 +1139,7 @@ export interface ArkmeRecordingCursorPayload {
   version: 1
   dateStamp: number
   content: ArkmeRecordingToolContent
+  transcriptSource?: ArkmeAiVideoTranscriptSource
   versionId?: string
   itemOffset: number
   textOffset: number
@@ -1155,6 +1160,8 @@ export interface ArkmeRecordingTranscriptItem {
   isSelf: boolean
   isBackground: boolean
   text: string
+  /** Omitted by older providers and treated as a completed transcript row. */
+  transcriptStatus?: 'ready' | 'processing' | 'silent' | 'failed'
 }
 
 export interface ArkmeRecordingTimelineEvent {
@@ -1198,10 +1205,18 @@ export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<A
   totalDurationMillis: number
 }
 
+export interface ArkmeRecordingDoubaoBackfillResult {
+  queuedChildCount: number
+  inFlightChildCount: number
+  missingAudioChildCount: number
+}
+
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
   transcript: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
+  /** Optional for compatibility with Providers released before Doubao comparison. */
+  doubaoTranscript?: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
@@ -1670,6 +1685,8 @@ export type ArkmePluginOperation =
   | 'records.retry'
   | 'calendar.buckets'
   | 'calendar.records'
+  | 'recordings.day'
+  | 'recordings.doubao.start'
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
@@ -1754,7 +1771,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
-  | 'recordings.day'
   | 'search.records'
   | 'search.scene'
   | 'search.recordings'
