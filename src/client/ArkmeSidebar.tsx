@@ -1454,7 +1454,7 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
         />
       </aside>}
       <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
-        {!arkoContentVisible && !utilityContentVisible && <header className="arkme-conversation-header" style={styles.header}>
+        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeSourceAvatar
               size={34}

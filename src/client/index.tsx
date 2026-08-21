@@ -157,6 +157,7 @@ export function apply(ctx: ClientContext): void {
         conversation: { kind: 'single', scope: 'session-maybe' },
         details: { kind: 'single', scope: 'session' },
         'shell.overlay': { kind: 'list', scope: 'root' },
+        'settings.section': { kind: 'list', scope: 'root' },
         'arkme.directory.entry': { kind: 'list', scope: 'root' },
       },
       inject: () => ({

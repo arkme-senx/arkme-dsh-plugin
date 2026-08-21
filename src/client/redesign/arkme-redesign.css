@@ -190,6 +190,7 @@
 }
 .arkme-redesign-content.has-panel { left: 396px; }
 .arkme-redesign-content.has-details { right: 360px; }
+.arkme-redesign-content.is-login-takeover { left: 0; right: 0; }
 .arkme-redesign-route-surface { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
 .arkme-redesign-route-chats .arkme-conversation-surface { background: #fff !important; }
 .arkme-redesign-route-chats .arkme-conversation-header {
@@ -214,6 +215,16 @@
 }
 .arkme-redesign-route-chats .arkme-conversation-composer textarea { min-height: 38px !important; padding: 0 !important; font-size: 14px !important; line-height: 22px !important; }
 .arkme-redesign-task-conversation { font-size: 15px; }
+.arkme-redesign-task-conversation [data-phase] {
+  --dsh-chat-content-width: calc(100% - 64px);
+  --dsh-composer-card-max-width: calc(100% - 32px);
+}
+.arkme-redesign-task-conversation [data-chat-flow] {
+  width: calc(100% - 64px) !important;
+  max-width: none !important;
+  margin-left: 32px !important;
+  margin-right: 32px !important;
+}
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
 
 .arkme-redesign-feature-page {
@@ -322,9 +333,60 @@
 @keyframes arkme-icon-spin { to { transform: rotate(360deg); } }
 .arkme-icon-spin { animation: arkme-icon-spin .8s linear infinite; }
 
-.arkme-redesign-settings-page { padding: 62px 72px; overflow-y: auto; }
-.arkme-redesign-settings-page > header { width: min(760px, 100%); margin: 0 auto 34px; }
-.arkme-redesign-settings-card { width: min(760px, 100%); margin: 0 auto; padding: 18px 24px; border: 1px solid #e3e4e7; border-radius: 16px; }
+.arkme-redesign-settings-page { overflow: hidden; background: #fff; }
+.arkme-redesign-settings-surface { width: 100%; height: 100%; overflow-y: auto; color: #20232c; background: #fff; }
+.arkme-redesign-settings-shell { width: min(760px, calc(100% - 96px)); margin: 0 auto; padding: 58px 0 68px; }
+.arkme-redesign-settings-profile { padding: 0 4px 32px; display: flex; align-items: center; gap: 16px; }
+.arkme-redesign-settings-profile > div:last-child { min-width: 0; }
+.arkme-redesign-settings-profile h1 { margin: 0 0 6px; overflow: hidden; color: #20232c; font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.03em; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-redesign-settings-profile p { margin: 0; overflow: hidden; color: #858992; font-size: 13px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-redesign-settings-group { margin: 0 0 28px; overflow: hidden; border: 1px solid #e1e2e5; border-radius: 16px; background: #fff; scroll-margin-top: 24px; }
+.arkme-redesign-settings-group h2 { margin: 0 16px; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
+.arkme-redesign-settings-group > div { padding: 0 16px; }
+.arkme-redesign-setting-row {
+  width: 100%;
+  min-height: 54px;
+  padding: 9px 1px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid #ededee;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+.arkme-redesign-setting-row:last-child { border-bottom: 0; }
+button.arkme-redesign-setting-row, a.arkme-redesign-setting-row { cursor: pointer; }
+button.arkme-redesign-setting-row:hover, a.arkme-redesign-setting-row:hover { color: #53617d; }
+.arkme-redesign-setting-row:disabled { opacity: .6; cursor: default; }
+.arkme-redesign-setting-row > strong { overflow: hidden; font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-redesign-setting-row > strong.is-danger { color: #b54841; }
+.arkme-redesign-setting-summary { max-width: 360px; overflow: hidden; color: #858992; font-size: 12px; line-height: 18px; text-align: right; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-redesign-setting-row > svg { color: #8d929b; }
+.arkme-redesign-settings-error { margin: -8px 0 28px; padding: 10px 13px; border-radius: 10px; background: #fff3f0; color: #b54841; font-size: 12px; line-height: 18px; }
+.arkme-redesign-model-settings { width: 100%; height: 100%; overflow-y: auto; color: #20232c; background: #fff; }
+.arkme-redesign-model-settings > header { width: min(760px, calc(100% - 96px)); margin: 0 auto; padding: 42px 0 22px; }
+.arkme-redesign-model-settings > header button {
+  height: 34px;
+  padding: 0 10px 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e1e2e5;
+  border-radius: 18px;
+  background: #fff;
+  color: #525762;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.arkme-redesign-model-settings > header button:hover { background: #f6f6f7; color: #20232c; }
+.arkme-redesign-model-settings-body { width: min(760px, calc(100% - 96px)); margin: 0 auto; padding: 0 0 68px; }
+.arkme-redesign-model-settings-body > * { max-width: none !important; }
 .arkme-redesign-task-start { width: 100%; height: 100%; display: grid; place-items: center; padding: 28px 58px 64px; }
 .arkme-redesign-task-start-inner { width: min(760px, 88%); transform: translateY(-12px); text-align: center; }
 .arkme-redesign-task-greeting { margin-bottom: 24px; display: flex; align-items: center; justify-content: center; gap: 12px; }

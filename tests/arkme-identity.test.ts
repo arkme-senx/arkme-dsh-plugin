@@ -66,6 +66,11 @@ function withoutOpenClawProtocolNames(file: string, content: string): string {
 }
 
 function withoutArkmeIdCompatibilityAliases(file: string, content: string): string {
+  const localizedUiFiles = new Set([
+    join(root, 'src/client/ArkmeLogin.tsx'),
+    join(root, 'src/client/ArkmeSettingsSurface.tsx'),
+  ])
+  if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
   const allowedFiles = new Set([
     join(root, 'src/tools/business/account/set-id.ts'),
     join(root, 'src/tools/business/conversation/send-direct-text.ts'),

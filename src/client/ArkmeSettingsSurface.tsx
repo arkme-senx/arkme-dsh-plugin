@@ -1,14 +1,5 @@
-import { useEffect, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
-import { Bell } from '@phosphor-icons/react/dist/icons/Bell'
-import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
-import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix'
-import { Info } from '@phosphor-icons/react/dist/icons/Info'
-import { LockKey } from '@phosphor-icons/react/dist/icons/LockKey'
-import { Palette } from '@phosphor-icons/react/dist/icons/Palette'
-import { ShieldCheck } from '@phosphor-icons/react/dist/icons/ShieldCheck'
-import { SignOut } from '@phosphor-icons/react/dist/icons/SignOut'
-import { UserCircle } from '@phosphor-icons/react/dist/icons/UserCircle'
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import type {
   ArkmeAuthSnapshot,
   ArkmePluginUpdateStatus,
@@ -24,47 +15,41 @@ import { clearLastNavigationCache } from './navigation-cache.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 
-const styles: Record<string, CSSProperties> = {
-  page: { height: '100%', overflowY: 'auto', background: '#fff', color: '#191b20' },
-  content: { width: 'min(720px, calc(100% - 48px))', margin: '0 auto', padding: '44px 0 64px' },
-  title: { margin: 0, fontSize: 27, lineHeight: '36px', letterSpacing: '-.03em', fontWeight: 680 },
-  profile: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 28, padding: '18px 20px', borderRadius: 18, background: '#f7f7f8' },
-  profileText: { minWidth: 0, flex: 1 },
-  profileName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 17, lineHeight: '24px', fontWeight: 650 },
-  profileId: { marginTop: 3, color: '#858a94', fontSize: 12, lineHeight: '18px' },
-  section: { marginTop: 30 },
-  sectionTitle: { margin: '0 0 9px 4px', color: '#777c86', fontSize: 12, lineHeight: '18px', fontWeight: 550 },
-  group: { overflow: 'hidden', border: '1px solid #e8e8eb', borderRadius: 16, background: '#fff' },
-  row: { width: '100%', minHeight: 58, display: 'flex', alignItems: 'center', gap: 12, padding: '10px 15px', boxSizing: 'border-box', border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', font: 'inherit' },
-  rowButton: { cursor: 'pointer' },
-  rowBorder: { borderTop: '1px solid #ededf0' },
-  icon: { width: 30, height: 30, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 9, background: '#f3f3f5', color: '#666c77' },
-  rowText: { minWidth: 0, flex: 1 },
-  rowTitle: { display: 'block', fontSize: 14, lineHeight: '20px', fontWeight: 520 },
-  rowDescription: { display: 'block', marginTop: 2, color: '#9297a0', fontSize: 11, lineHeight: '16px' },
-  trailing: { flex: 'none', color: '#8d929c', fontSize: 12 },
-  danger: { color: '#b54841' },
-  message: { marginTop: 12, borderRadius: 10, padding: '9px 12px', background: '#fff3f0', color: '#b54841', fontSize: 12 },
+interface SettingsRowProps {
+  title: string
+  description: string
+  href?: string
+  onClick?: () => void
+  danger?: boolean
+  disabled?: boolean
 }
 
-function SettingRow({
-  icon, title, description, trailing, href, onClick, danger = false, border = false,
-}: {
-  icon: ReactNode; title: string; description: string; trailing?: string; href?: string; onClick?: () => void; danger?: boolean; border?: boolean
-}) {
-  const rowStyle = { ...styles.row, ...(href !== undefined || onClick !== undefined ? styles.rowButton : {}), ...(border ? styles.rowBorder : {}) }
-  const body = <>
-    <span style={styles.icon}>{icon}</span>
-    <span style={styles.rowText}>
-      <span style={{ ...styles.rowTitle, ...(danger ? styles.danger : {}) }}>{title}</span>
-      <span style={styles.rowDescription}>{description}</span>
-    </span>
-    {trailing !== undefined && <span style={styles.trailing}>{trailing}</span>}
-    {(href !== undefined || onClick !== undefined) && <CaretRight size={15} style={styles.trailing} aria-hidden />}
+function SettingsRow({ title, description, href, onClick, danger = false, disabled = false }: SettingsRowProps) {
+  const interactive = href !== undefined || onClick !== undefined
+  const body: ReactNode = <>
+    <strong className={danger ? 'is-danger' : ''}>{title}</strong>
+    <span className="arkme-redesign-setting-summary">{description}</span>
+    {interactive ? <CaretRight size={15} aria-hidden /> : <span aria-hidden />}
   </>
-  if (href !== undefined) return <a href={href} target="_blank" rel="noreferrer" style={{ ...rowStyle, textDecoration: 'none' }}>{body}</a>
-  if (onClick !== undefined) return <button type="button" style={rowStyle} onClick={onClick}>{body}</button>
-  return <div style={rowStyle}>{body}</div>
+
+  if (href !== undefined) {
+    return <a className="arkme-redesign-setting-row" href={href} target="_blank" rel="noreferrer">{body}</a>
+  }
+  if (onClick !== undefined) {
+    return <button type="button" className="arkme-redesign-setting-row" disabled={disabled} onClick={onClick}>{body}</button>
+  }
+  return <div className="arkme-redesign-setting-row">{body}</div>
+}
+
+function SettingsGroup({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
+  return <section className="arkme-redesign-settings-group" {...(id === undefined ? {} : { id })}>
+    <h2>{title}</h2>
+    <div>{children}</div>
+  </section>
+}
+
+export interface ArkmeSettingsSurfaceProps {
+  onOpenModels?: () => void
 }
 
 export interface ArkmeUpdateCenterRow {
@@ -145,7 +130,7 @@ export function buildArkmeUpdateCenterRows(input: {
   }]
 }
 
-export function ArkmeSettingsSurface() {
+export function ArkmeSettingsSurface({ onOpenModels }: ArkmeSettingsSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot, arkmePluginUpdateStore.getSnapshot)
@@ -156,15 +141,22 @@ export function ArkmeSettingsSurface() {
   const [notificationPermission, setNotificationPermission] = useState(() => arkmeDesktopNotifications.permission())
 
   useEffect(() => {
+    if (authState.auth?.status !== 'authenticated') {
+      setProfile(undefined)
+      return
+    }
     let active = true
-    void callArkme<ArkmeUserProfileSnapshot>('user.profile')
+    const controller = new AbortController()
+    void callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal)
       .then(async snapshot => snapshot.profile === null
-        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh')
+        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
         : snapshot)
       .then(snapshot => { if (active && snapshot.profile !== null) setProfile(snapshot.profile) })
-      .catch(caught => { if (active) setError(caught instanceof Error ? caught.message : String(caught)) })
-    return () => { active = false }
-  }, [])
+      .catch(caught => {
+        if (active && !controller.signal.aborted) setError(caught instanceof Error ? caught.message : String(caught))
+      })
+    return () => { active = false; controller.abort() }
+  }, [authState.auth?.status, authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined])
 
   useEffect(() => {
     const element = document.getElementById(`arkme-settings-${ui.settingsSection ?? 'account'}`)
@@ -185,12 +177,21 @@ export function ArkmeSettingsSurface() {
       setBusy(false)
     }
   }
+
   const enableNotifications = async () => {
-    setNotificationPermission(await arkmeDesktopNotifications.requestPermission())
+    setBusy(true)
+    try {
+      setNotificationPermission(await arkmeDesktopNotifications.requestPermission())
+    } finally {
+      setBusy(false)
+    }
   }
+
   const displayName = profile?.displayName.trim() || profile?.nickname.trim() || '我的账户'
   const contact = profile?.contact.phoneMasked ?? profile?.contact.emailMasked ?? '已通过 Arkme 登录'
-  const notificationLabel = notificationPermission === 'granted' ? '已开启' : notificationPermission === 'denied' ? '已阻止' : '未开启'
+  const notificationLabel = notificationPermission === 'granted'
+    ? '已开启'
+    : notificationPermission === 'denied' ? '已阻止' : notificationPermission === 'default' ? '未开启' : '不可用'
   const version = updateState.status?.installedVersion ?? '…'
   const pluginInstallBusy = updateState.install !== undefined
     && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
@@ -214,67 +215,56 @@ export function ArkmeSettingsSurface() {
     else void arkmeAppUpdateStore.refresh(true)
   }
 
-  return <div style={styles.page} aria-label="Arkme 设置">
-    <div style={styles.content}>
-      <h1 style={styles.title}>设置</h1>
-      <div style={styles.profile}>
+  return <div className="arkme-redesign-settings-surface" aria-label="Arkme 设置">
+    <div className="arkme-redesign-settings-shell">
+      <div className="arkme-redesign-settings-profile">
         <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={56} label="当前用户头像" />
-        <div style={styles.profileText}>
-          <div style={styles.profileName}>{displayName}</div>
-          <div style={styles.profileId}>Arkme ID {profile?.arkmeId || '读取中…'}</div>
+        <div>
+          <h1>{displayName}</h1>
+          <p>{profile?.arkmeId ? `即我号 ${profile.arkmeId}` : '即我号读取中…'}</p>
         </div>
       </div>
 
-      <section id="arkme-settings-account" style={styles.section}>
-        <h2 style={styles.sectionTitle}>账户</h2>
-        <div style={styles.group}>
-          <SettingRow icon={<UserCircle size={18} aria-hidden />} title="个人资料" description={profile === undefined ? '正在读取账户资料' : `${displayName} · Arkme ID ${profile.arkmeId || '未设置'}`} />
-          <SettingRow border icon={<LockKey size={18} aria-hidden />} title="登录与安全" description={contact} />
-          <SettingRow border danger icon={<SignOut size={18} aria-hidden />} title={busy ? '正在退出…' : '退出登录'} description="退出当前 Arkme 账户" onClick={() => { if (!busy) void logout() }} />
-        </div>
-      </section>
+      <SettingsGroup title="账户" id="arkme-settings-account">
+        <SettingsRow title="个人资料" description={profile === undefined ? '正在读取账户资料' : '头像、昵称与即我号'} />
+        <SettingsRow title="登录与安全" description={contact} />
+        <SettingsRow danger title={busy ? '正在退出…' : '退出登录'} description="退出当前 Arkme 账户" disabled={busy} onClick={() => { void logout() }} />
+      </SettingsGroup>
 
-      <section id="arkme-settings-general" style={styles.section}>
-        <h2 style={styles.sectionTitle}>通用</h2>
-        <div style={styles.group}>
-          <SettingRow icon={<Palette size={18} aria-hidden />} title="外观" description="跟随 DSH 的显示设置" trailing="跟随系统" />
-          <SettingRow border icon={<Bell size={18} aria-hidden />} title="通知" description="Arkme 新消息桌面提醒" trailing={notificationLabel} {...(notificationPermission === 'default' ? { onClick: () => { void enableNotifications() } } : {})} />
-        </div>
-      </section>
+      <SettingsGroup title="通用" id="arkme-settings-general">
+        <SettingsRow title="模型与 API Key" description="配置模型与访问凭据" {...(onOpenModels === undefined ? {} : { onClick: onOpenModels })} />
+        <SettingsRow title="外观" description="跟随系统" />
+        <SettingsRow
+          title="通知"
+          description={notificationLabel}
+          disabled={busy}
+          {...(notificationPermission === 'default' ? { onClick: () => { void enableNotifications() } } : {})}
+        />
+      </SettingsGroup>
 
-      <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Arkme</h2>
-        <div style={styles.group}>
-          <SettingRow icon={<ShieldCheck size={18} aria-hidden />} title="执行前确认" description="敏感操作会在 DSH 对话中再次请求确认" trailing="已开启" />
-          <SettingRow border icon={<GearSix size={18} aria-hidden />} title="可读取内容" description="对话、快记与录音仅在当前账户授权范围内读取" />
-        </div>
-      </section>
+      <SettingsGroup title="Arkme">
+        <SettingsRow title="执行前确认" description="发送、发布和安装时确认" />
+        <SettingsRow title="可读取内容" description="对话、任务与录音" />
+      </SettingsGroup>
 
-      <section id="arkme-settings-update" style={styles.section}>
-        <h2 style={styles.sectionTitle}>更新</h2>
-        <div style={styles.group}>
-          {updateRows.map((row, index) => <SettingRow
-            key={row.key}
-            border={index > 0}
-            icon={<GearSix size={18} aria-hidden />}
-            title={row.label}
-            description={`${updateVersionText(row.current, row.latest)} · ${row.feedback ?? '尚未检查'}`
-              + (row.downloadedFilePath === undefined ? '' : ` · ${row.downloadedFilePath}`)}
-            trailing={row.button}
-            {...(row.action === 'busy' ? {} : { onClick: () => { runUpdateAction(row) } })}
-          />)}
-        </div>
-      </section>
+      <SettingsGroup title="更新" id="arkme-settings-update">
+        {updateRows.map(row => <SettingsRow
+          key={row.key}
+          title={row.label}
+          description={`${updateVersionText(row.current, row.latest)} · ${row.feedback ?? '尚未检查'}`
+            + (row.downloadedFilePath === undefined ? '' : ` · ${row.downloadedFilePath}`)}
+          disabled={row.action === 'busy'}
+          {...(row.action === 'busy' ? {} : { onClick: () => { runUpdateAction(row) } })}
+        />)}
+      </SettingsGroup>
 
-      <section id="arkme-settings-about" style={styles.section}>
-        <h2 style={styles.sectionTitle}>关于</h2>
-        <div style={styles.group}>
-          <SettingRow icon={<Info size={18} aria-hidden />} title="关于 Arkme" description="Arkme，你的数字自我。" trailing={`版本 ${version}`} />
-          <SettingRow border icon={<FileText size={18} aria-hidden />} title="用户协议" description="查看 Arkme 用户协议" href="https://www.arkme.ai/article/user-aggrement-v1.html" />
-          <SettingRow border icon={<FileText size={18} aria-hidden />} title="隐私条款" description="查看 Arkme 隐私条款" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
-        </div>
-      </section>
-      {error !== '' && <div style={styles.message} role="alert">{error}</div>}
+      <SettingsGroup title="关于" id="arkme-settings-about">
+        <SettingsRow title="关于 Arkme" description={`版本 ${version}`} />
+        <SettingsRow title="用户协议" description="查看 Arkme 用户协议" href="https://www.arkme.ai/article/user-aggrement-v1.html" />
+        <SettingsRow title="隐私条款" description="查看 Arkme 隐私条款" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
+      </SettingsGroup>
+
+      {error !== '' && <div className="arkme-redesign-settings-error" role="alert">{error}</div>}
     </div>
   </div>
 }
