@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import type {
   ArkmeImagePayload,
   ArkmeWorldFeedItem,
@@ -7,6 +10,7 @@ import type {
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
   ArkmeWorldVoiceprintAvailability,
+  ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
@@ -39,6 +43,7 @@ const styles: Record<string, CSSProperties> = {
   subtitle: { margin: '3px 0 0', color: colors.secondary, fontSize: 12 },
   headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
   button: { minHeight: 34, padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12 },
+  iconButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.secondary, cursor: 'pointer' },
   primaryButton: { borderColor: '#20232d', background: '#20232d', color: '#fff' },
   tabs: { height: 44, padding: '0 26px', display: 'flex', alignItems: 'stretch', gap: 22, borderBottom: `1px solid ${colors.border}` },
   tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 13 },
@@ -52,16 +57,22 @@ const styles: Record<string, CSSProperties> = {
   cardHeader: { display: 'grid', gridTemplateColumns: '42px minmax(0,1fr) auto', alignItems: 'center', gap: 11 },
   avatar: { width: 42, height: 42, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 15, fontWeight: 650 },
   avatarImage: { width: '100%', height: '100%', objectFit: 'cover' },
+  authorMeta: { minWidth: 0, display: 'grid', alignItems: 'center' },
+  authorRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
   author: { fontSize: 13, fontWeight: 650 },
+  voiceprintButton: { width: 20, height: 20, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 6, background: 'transparent', cursor: 'pointer', lineHeight: 0 },
+  voiceprintPlayable: { color: '#4c6fff' },
+  voiceprintActive: { background: 'rgba(76,111,255,.1)', color: '#3653d8' },
+  voiceprintInvite: { color: '#9aa1ad' },
   time: { color: '#969ba5', fontSize: 10 },
   headline: { margin: '14px 0 0', fontSize: 16, lineHeight: 1.5 },
   text: { margin: '9px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 13, lineHeight: 1.75 },
   imageGrid: { marginTop: 13, display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 },
   image: { width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 10, background: '#eef0f3' },
   imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 10, overflow: 'hidden', background: '#eef0f3', cursor: 'zoom-in' },
-  cardFooter: { minHeight: 34, marginTop: 14, paddingTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderTop: `1px solid ${colors.border}` },
-  footerButtons: { display: 'flex', alignItems: 'center', gap: 7 },
+  cardFooter: { minHeight: 28, marginTop: 14, paddingTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${colors.border}` },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  commentButton: { padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   loadMore: { display: 'flex', justifyContent: 'center', marginTop: 3 },
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
   modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: '#fff', boxShadow: '0 18px 60px rgba(20,22,30,.22)' },
@@ -72,6 +83,7 @@ const styles: Record<string, CSSProperties> = {
   fileInput: { maxWidth: '100%', color: colors.secondary, fontSize: 12 },
   modalActions: { marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   modalError: { color: colors.danger, fontSize: 12 },
+  invitePreview: { margin: '10px 0 0', padding: 12, borderRadius: 12, background: colors.subtle, color: colors.secondary, fontSize: 12, lineHeight: 1.6 },
   interactionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 },
   interactionList: { display: 'grid', gap: 9, margin: '14px 0' },
   interaction: { padding: 11, borderRadius: 11, background: colors.subtle },
@@ -85,13 +97,28 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function messageOf(error: unknown, fallback: string): string {
-  if (error instanceof ArkmeClientError) return error.body.message
+  if (error instanceof ArkmeClientError) {
+    if (error.body.code === 'world-voiceprint-invite-rate-limited' || /\bHTTP\s*429\b/.test(error.body.message)) {
+      return '提醒发送太频繁了，稍后再试。'
+    }
+    return error.body.message
+  }
   return error instanceof Error && error.message.trim() !== '' ? error.message : fallback
 }
 
 function dateTimeLabel(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+}
+
+function worldInviteSubject(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>): string {
+  const subject = (item.headline.trim() || item.textContent.trim()).replace(/\s+/g, ' ')
+  return subject.length > 28 ? `${subject.slice(0, 28)}…` : subject
+}
+
+export function voiceprintInvitePromptTitle(item: Pick<ArkmeWorldFeedItem, 'authorName' | 'headline' | 'textContent'>): string {
+  const subject = worldInviteSubject(item)
+  return subject === '' ? `是否邀请${item.authorName}开启声纹？` : `是否邀请${item.authorName}朗读「${subject}」？`
 }
 
 function uuid(): string {
@@ -140,7 +167,18 @@ function WorldCard({ item, playable, voiceprintActive, onOpenInteractions, onTog
       <span style={styles.avatar}>{item.avatarRef === undefined
         ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
         : <WorldImage imageRef={item.avatarRef} alt={`${item.authorName}的头像`} avatar />}</span>
-      <span><strong style={styles.author}>{item.authorName}</strong></span>
+      <span style={styles.authorMeta}>
+        <span style={styles.authorRow}>
+          <strong style={styles.author}>{item.authorName}</strong>
+          {playable
+            ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
+              <SpeakerHigh size={15} weight={voiceprintActive ? 'fill' : 'bold'} />
+            </button>
+            : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} onClick={() => { onInviteVoiceprint(item) }}>
+              <Plus size={13} weight="bold" />
+            </button>}
+        </span>
+      </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
     {item.headline !== '' && <h2 style={styles.headline}>{item.headline}</h2>}
@@ -150,17 +188,9 @@ function WorldCard({ item, playable, voiceprintActive, onOpenInteractions, onTog
         <WorldImage imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(index + 1)}`} />
       </button>)}</div>}
     <footer style={styles.cardFooter}>
-      <span style={styles.time}>{item.imageCount > 0 ? `${String(item.imageCount)} 张图片` : ''}</span>
-      <span style={styles.footerButtons}>
-        {playable
-          ? <button type="button" style={styles.linkButton} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
-            {voiceprintActive ? '停止播放声纹' : '用发布者的声音朗读'}
-          </button>
-          : <button type="button" style={styles.linkButton} onClick={() => { onInviteVoiceprint(item) }}>邀请开启声纹</button>}
-        <button type="button" style={styles.linkButton} onClick={() => { onOpenInteractions(item) }}>
-          {item.extendCount > 0 ? `查看 ${String(item.extendCount)} 条互动` : '参与互动'}
-        </button>
-      </span>
+      <button type="button" style={styles.commentButton} onClick={() => { onOpenInteractions(item) }}>
+        {item.extendCount > 0 ? `评论：${String(item.extendCount)}` : '评论'}
+      </button>
     </footer>
     {previewIndex !== undefined && item.imageRefs[previewIndex] !== undefined && <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setPreviewIndex(undefined) }}>
       <section style={styles.previewModal}>
@@ -173,6 +203,30 @@ function WorldCard({ item, playable, voiceprintActive, onOpenInteractions, onTog
       </section>
     </div>}
   </article>
+}
+
+function VoiceprintInviteDialog({ item, sending, message, onClose, onConfirm }: {
+  item: ArkmeWorldFeedItem
+  sending: boolean
+  message?: string
+  onClose(): void
+  onConfirm(item: ArkmeWorldFeedItem): void
+}) {
+  const subject = worldInviteSubject(item)
+  return <div role="dialog" aria-modal="true" aria-label="邀请开启声纹" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
+    <section style={styles.modal}>
+      <h2 style={styles.modalTitle}>{voiceprintInvitePromptTitle(item)}</h2>
+      <p style={styles.modalText}>点击提醒后，会给对方发送一条私信，邀请他开启声纹。</p>
+      {subject !== '' && <div style={styles.invitePreview}>{subject}</div>}
+      <div style={styles.modalActions}>
+        <span role="status" style={message === undefined ? styles.subtitle : styles.modalError}>{message ?? ''}</span>
+        <span style={styles.headerActions}>
+          <button type="button" style={styles.button} disabled={sending} onClick={onClose}>取消</button>
+          <button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending} onClick={() => { onConfirm(item) }}>{sending ? '发送中…' : '提醒'}</button>
+        </span>
+      </div>
+    </section>
+  </div>
 }
 
 export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voiceprintRecordRef, actionMessage, onRefresh, onSelectScope, onOpenComposer, onOpenInteractions, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
@@ -193,7 +247,9 @@ export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voicep
     <header style={styles.header}>
       <div><h1 style={styles.heading}>世界</h1><p style={styles.subtitle}>看看大家此刻正在记录什么</p></div>
       <div style={styles.headerActions}>
-        <button type="button" style={styles.button} disabled={state.refreshing} onClick={onRefresh}>{state.refreshing ? '刷新中…' : '刷新'}</button>
+        <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
+          <ArrowsClockwise size={16} weight="bold" />
+        </button>
         <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>
       </div>
     </header>
@@ -202,7 +258,7 @@ export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voicep
       <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
     </nav>
     <div style={styles.body}>
-      {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error }}>{actionMessage}</div>}
+      {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
       {state.status === 'loading' && <div role="status" style={styles.notice}>正在加载世界…</div>}
       {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
       {state.status === 'empty' && <div style={styles.notice}>这里还没有世界动态。你可以先发一条，或者稍后再刷新。</div>}
@@ -340,6 +396,9 @@ export function ArkmeWorldSurface() {
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
   const [composerOpen, setComposerOpen] = useState(false)
   const [interactionItem, setInteractionItem] = useState<ArkmeWorldFeedItem>()
+  const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
+  const [inviteSending, setInviteSending] = useState(false)
+  const [inviteMessage, setInviteMessage] = useState<string>()
   const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
@@ -427,12 +486,21 @@ export function ArkmeWorldSurface() {
     }
     await playChunk(0).catch(fail)
   }
+  const openVoiceprintInvite = (item: ArkmeWorldFeedItem) => {
+    setActionMessage(undefined)
+    setInviteMessage(undefined)
+    setInviteItem(item)
+  }
   const inviteVoiceprint = async (item: ArkmeWorldFeedItem) => {
-    setActionMessage('正在发送声纹邀请…')
+    if (inviteSending) return
+    setInviteSending(true)
+    setInviteMessage(undefined)
     try {
-      await callArkme('world.voiceprint.invite', { recordRef: item.recordRef })
-      setActionMessage(`已提醒 ${item.authorName} 开启声纹`)
-    } catch (error) { setActionMessage(messageOf(error, '声纹邀请发送失败，请稍后重试')) }
+      const result = await callArkme<ArkmeWorldVoiceprintInviteResult>('world.voiceprint.invite', { recordRef: item.recordRef })
+      setInviteItem(undefined)
+      setActionMessage(`已提醒 ${result.peerDisplayName || item.authorName} 开启声纹`)
+    } catch (error) { setInviteMessage(messageOf(error, '声纹邀请发送失败，请稍后重试')) }
+    finally { setInviteSending(false) }
   }
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
@@ -440,8 +508,9 @@ export function ArkmeWorldSurface() {
       {...(actionMessage === undefined ? {} : { actionMessage })}
       onRefresh={refresh} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
       onOpenInteractions={setInteractionItem} onToggleVoiceprint={recordRef => { void toggleVoiceprint(recordRef) }}
-      onInviteVoiceprint={item => { void inviteVoiceprint(item) }} onLoadMore={() => { if (state.nextOffset !== undefined) load(scope, state.nextOffset) }} />
+      onInviteVoiceprint={openVoiceprintInvite} onLoadMore={() => { if (state.nextOffset !== undefined) load(scope, state.nextOffset) }} />
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={() => { setLoaded(current => ({ ...current, all: false, mine: false })); setScope('mine') }} />}
     {interactionItem !== undefined && <InteractionDialog item={interactionItem} onClose={() => { setInteractionItem(undefined) }} />}
+    {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={() => { if (!inviteSending) setInviteItem(undefined) }} onConfirm={item => { void inviteVoiceprint(item) }} />}
   </main>
 }

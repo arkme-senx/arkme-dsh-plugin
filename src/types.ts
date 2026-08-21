@@ -247,6 +247,13 @@ export interface ArkmeWorldVoiceprintPlaybackChunk {
   chunkEndRune: number
 }
 
+export interface ArkmeWorldVoiceprintInviteResult {
+  sent: true
+  peerDisplayName: string
+  messageItemUid?: string
+  expiresAtMillis: number
+}
+
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
 export interface ArkmeWorldInteractionItem {
   interactionRef: string
@@ -545,6 +552,8 @@ export interface ArkmeProviderCapabilities {
     worldInteractions?: true
     /** Optional additive capability for author-voice playback of public World text. */
     worldVoiceprintPlayback?: true
+    /** Optional additive capability for sending a voiceprint invite reminder to a World author. */
+    worldVoiceprintInvite?: true
     /** Optional additive capability for the independent Arrangement consumer. */
     arrangements?: true
     /** Optional additive current-account Cordis/Profile/cloud extension inventory. */
@@ -1678,6 +1687,7 @@ export type ArkmePluginOperation =
   | 'world.mine'
   | 'world.voiceprint.availability'
   | 'world.voiceprint.playback.generate'
+  | 'world.voiceprint.invite'
   | 'world.interactions.list'
   | 'world.interactions.create-text'
   | 'world.image.read'

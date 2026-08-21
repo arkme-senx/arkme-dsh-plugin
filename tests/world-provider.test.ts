@@ -32,14 +32,38 @@ const config: ArkmeServiceConfig = {
   geetestCaptchaId: 'captcha-test-id-1234567890',
 }
 
-function json(data: unknown): Response {
+function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
-    status: 200,
+    status,
     headers: { 'Content-Type': 'application/json' },
   })
 }
 
 describe('world Provider projection', () => {
+  it('lists only the authenticated account World posts through the mobile my-list contract', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://world.test/api/v1/public-record/my-list')
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
+      expect(JSON.parse(String(init?.body))).toEqual({ limit: 10, offset: 20 })
+      return json({ code: 200, data: { list: [{
+        record_uid: 'mine-record-1', user_id: 10001, nick_name: '依涵', text_content: '我的公开快记',
+        images: [], videos: [], voices: [], extend_count: 0,
+      }], total: 21 } })
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+
+    const page = await service.listMyWorldFeed({ limit: 10, offset: 20 })
+
+    expect(page).toMatchObject({
+      total: 21,
+      hasMore: false,
+      items: [{ authorName: '依涵', textContent: '我的公开快记' }],
+    })
+    expect(JSON.stringify(page)).not.toContain('mine-record-1')
+  })
+
   it('lists an account-bound interaction tree without leaking stable record IDs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -393,6 +417,96 @@ describe('world Provider projection', () => {
     expect(availabilityCalls).toBe(1)
   })
 
+  it('creates a voiceprint invite and sends the reminder through the World author private chat', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const body = init?.body === undefined ? {} : JSON.parse(String(init.body)) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天好难',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://audio.test/api/v1/audio/voiceprint/invites/create') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
+        expect(body).toEqual({ scope: 2 })
+        return json({ code: 200, data: {
+          invite_token: 'voiceprint.invite_202608210001',
+          expires_at: 600,
+          scope: 2,
+        } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        expect(body).toEqual({ user_ids: [20002] })
+        return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '小林' }] } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/create-private') {
+        expect(body).toMatchObject({ peer_user_id: 20002, title: '小林' })
+        return json({ code: 200, data: {
+          session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 20 },
+          unread_snapshot: { session_last_seq: 7, unread_count: 0 },
+        } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/records/send') {
+        expect(body).toMatchObject({ chat_session_uid: 'private-20002', template_kind: 1 })
+        expect(String(body.text_content)).toContain('邀请你开启声纹')
+        expect(String(body.text_content)).toContain('https://jotmo-app.senguo.me/app/voiceprint/invite#t=voiceprint.invite_202608210001')
+        return json({ code: 200, data: { record_uid: body.record_uid, audit_status: 0, seq: 8 } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const state = {
+      ...stateStore,
+      async cachedProfile() { return { status: 'empty', profile: null } },
+    }
+    const service = new ArkmeService(config, sessions, state as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+
+    const result = await service.inviteWorldVoiceprint(feed.items[0]!.recordRef)
+
+    expect(result).toMatchObject({ sent: true, peerDisplayName: '小林', messageItemUid: expect.any(String) })
+    expect(JSON.stringify(result)).not.toContain('20002')
+    expect(JSON.stringify(result)).not.toContain('public-record-1')
+    expect(requests.map(request => request.url)).toEqual([
+      'https://world.test/api/public/v1/public-record/world-list',
+      'https://audio.test/api/v1/audio/voiceprint/invites/create',
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
+      'https://chat.test/api/v1/chats/create-private',
+      'https://chat.test/api/v1/chats/records/send',
+    ])
+  })
+
+  it('reports voiceprint invite rate limits as a retryable product error', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天好难',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://audio.test/api/v1/audio/voiceprint/invites/create') {
+        return json({ code: 429, message: 'too many requests', data: {} }, 429)
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+
+    await expect(service.inviteWorldVoiceprint(feed.items[0]!.recordRef)).rejects.toMatchObject({
+      code: 'world-voiceprint-invite-rate-limited',
+      message: '提醒发送太频繁了，稍后再试。',
+      retryable: true,
+      httpStatus: 429,
+    })
+  })
+
   it('rejects unsigned world voiceprint playback URLs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -501,6 +615,7 @@ describe('world Provider projection', () => {
       listMyWorldFeed: vi.fn(async (options: unknown) => options),
       worldVoiceprintPlaybackAvailability: vi.fn(async (recordRefs: string[]) => ({ recordRefs })),
       generateWorldVoiceprintPlayback: vi.fn(async (input: unknown) => input),
+      inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, recordRef })),
       listWorldInteractions: vi.fn(async (_recordRef: string, options: unknown) => options),
       createWorldTextInteraction: vi.fn(async (input: unknown) => input),
       readWorldImage: vi.fn(async (_imageRef: string) => ({
@@ -519,6 +634,9 @@ describe('world Provider projection', () => {
     await dispatchArkmeHostOperation(service as never, 'world.voiceprint.playback.generate', {
       recordRef: 'record-ref', chunkIndex: 3.9, sourceRevision: 'leak', sourceId: 'leak', text: 'leak',
     })
+    await dispatchArkmeHostOperation(service as never, 'world.voiceprint.invite', {
+      recordRef: ' invite-ref ', peerUserId: 900, inviteUrl: 'leak',
+    })
     await dispatchArkmeHostOperation(service as never, 'world.interactions.list', {
       recordRef: 'record-ref', limit: 999, offset: -4, recordUid: 'leak',
     })
@@ -535,6 +653,7 @@ describe('world Provider projection', () => {
     expect(service.generateWorldVoiceprintPlayback).toHaveBeenCalledWith({
       recordRef: 'record-ref', chunkIndex: 3,
     })
+    expect(service.inviteWorldVoiceprint).toHaveBeenCalledWith('invite-ref')
     expect(service.listWorldInteractions).toHaveBeenCalledWith('record-ref', { limit: 50, offset: 0 })
     expect(service.createWorldTextInteraction).toHaveBeenCalledWith({
       targetRef: 'target-ref', textContent: '评论', clientMutationId: 'mutation-20260819-0001',

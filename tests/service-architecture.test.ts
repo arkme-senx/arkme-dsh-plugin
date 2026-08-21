@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
@@ -40,7 +41,7 @@ const expectedPublicMethods = [
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed',
-  'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback',
+  'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback', 'inviteWorldVoiceprint',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldTextForConversation', 'createText', 'createTextForConversation', 'pendingWrites',
   'retryPending', 'extensionPost',

@@ -52,6 +52,7 @@ import type {
   ArkmeUploadedAsset,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
+  ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
@@ -160,6 +161,7 @@ export type {
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintAvailabilityItem,
+  ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
@@ -636,6 +638,16 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read the current account's public World posts through the authenticated Provider boundary. */
+  async myWorldFeed(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    return await this.call<ArkmeWorldFeedPage>('world.mine', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
   async worldVoiceprintPlaybackAvailability(
     recordRefs: readonly string[],
     signal?: AbortSignal,
@@ -658,6 +670,14 @@ export class ArkmeSdk {
       recordRef: input.recordRef,
       ...(input.chunkIndex === undefined ? {} : { chunkIndex: input.chunkIndex }),
     }, signal)
+  }
+
+  async inviteWorldVoiceprint(
+    recordRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintInviteResult> {
+    if (recordRef.trim() === '') throw new TypeError('Arkme World record reference must not be empty')
+    return await this.call<ArkmeWorldVoiceprintInviteResult>('world.voiceprint.invite', { recordRef }, signal)
   }
 
   /** Read comments and replies for one Provider-issued World record reference. */
