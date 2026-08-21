@@ -1,31 +1,25 @@
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import './composer-draft-auth-binding.js'
 import { callArkme } from './api.js'
-import { ArkmeHeroBrandMark, ArkmeSidebarBrandMark, ArkmeSidebarBrandName } from './ArkmeBrand.js'
 import { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
-import { ArkmeFooterAction } from './ArkmeFooterAction.js'
-import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
-import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
+import {
+  ArkmePersistentDetails, ArkmePersistentSidebar, ArkmePersistentWorkspace,
+} from './ArkmePersistentShell.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeAppUpdateStore } from './app-update-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
-import { watchOfficialConversationSelection, watchOfficialNewSession } from './new-session-activation.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { readArkmePersonalTestEdition } from './personal-test-edition.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
-import { ArkmeRootFrame, installArkmeRedesignStyles } from './redesign/ArkmeRootFrame.js'
-import { ArkmeLayoutController } from './redesign/layout-controller.js'
-import { ArkmeThemePresenter } from './redesign/theme-presenter.js'
-import { resolveArkmeTaskSession } from './redesign/task-session.js'
 
-export const inject = ['slots', 'theme', 'sessions', 'workspaces']
+export const inject = ['slots', 'layout', 'sessions', 'workspaces']
 
 async function resolveNotificationSource(
   activation: { sourceRef: string; sourceKey?: string },
@@ -51,63 +45,13 @@ async function resolveNotificationSource(
   return undefined
 }
 
-/** Register Arkme only through official additive DSH slots. */
+/** Permanently replace DSH's visible sidebar/conversation/details seats with Arkme-owned surfaces. */
 export function apply(ctx: ClientContext): void {
-  const redesignLayout = new ArkmeLayoutController()
-  const sessions = ctx.sessions as unknown as ISessions
-  let openedFromSession: SessionId | undefined
-  let stopWatchingConversationSelection: (() => void) | undefined
-  let stopWatchingNewSession: (() => void) | undefined
-  const closeSurface = () => {
-    openedFromSession = undefined
-    arkmeUi.deactivateSurface()
-  }
-  const closeArkme = () => {
-    const stopConversationSelection = stopWatchingConversationSelection
-    stopWatchingConversationSelection = undefined
-    stopConversationSelection?.()
-    const stop = stopWatchingNewSession
-    stopWatchingNewSession = undefined
-    stop?.()
-    closeSurface()
-    arkmeUi.close()
-  }
-  const activateSurface = (session: SessionId | undefined) => {
-    openedFromSession = session
-    arkmeUi.activateSurface()
-  }
-  const watchOfficialNavigation = () => {
-    if (stopWatchingConversationSelection === undefined) {
-      stopWatchingConversationSelection = watchOfficialConversationSelection(closeSurface)
-    }
-    if (stopWatchingNewSession === undefined) stopWatchingNewSession = watchOfficialNewSession(closeArkme)
-  }
-  const openArkme = (session: SessionId | undefined) => {
-    watchOfficialNavigation()
-    const personalTestEdition = readArkmePersonalTestEdition()
-    const retained = arkmeUi.getSnapshot().selectedSource
-    if (personalTestEdition?.defaultSurface === 'calls') arkmeUi.showCalls()
-    else if (personalTestEdition?.defaultSurface === 'recordings') arkmeUi.showRecordings()
-    else if (retained !== undefined) arkmeUi.open()
-    else arkmeUi.focusSendToSelf()
-    activateSurface(session)
-  }
-  const openLogin = (session: SessionId | undefined) => {
-    watchOfficialNavigation()
-    openedFromSession = session
-    arkmeUi.showLoginSurface()
-  }
-  const toggleArkme = (openedFromSession: SessionId | undefined, authenticated: boolean) => {
-    if (arkmeUi.getSnapshot().open) { closeArkme(); return }
-    if (authenticated) openArkme(openedFromSession)
-    else openLogin(openedFromSession)
-  }
 	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
 		const shareRef = consumeExtensionShareDeepLink(window.location, window.history)
 		if (shareRef !== undefined) arkmeUi.openExtensionShare(shareRef)
 	}
 
-  ctx.effect(() => () => { closeArkme() }, 'dsh-arkme: close floating surface on dispose')
   ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update status')
   ctx.effect(() => {
@@ -124,7 +68,6 @@ export function apply(ctx: ClientContext): void {
         arkmeChatDirectory.upsert(source)
         arkmeUi.selectSource(source)
         arkmeNotificationActivation.publish(source)
-        openArkme(undefined)
       }).catch(error => {
         if (!request.signal.aborted) console.warn('dsh-arkme: notification_source_resolve_failed', error)
       })
@@ -137,81 +80,29 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: activate message notification sources')
 
-  // DSH's single brand slots support priority shadowing. A lower priority value
-  // safely replaces the official visuals without touching host source or DOM.
-  ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.inject('sidebar.brand.name', () => (
-    ctx.slots.inject('conversation.hero.brand.mark', function* registerArkmeBrand() {
-      yield ctx.slots.register({ name: 'sidebar.brand.mark', priority: -10 }, ArkmeSidebarBrandMark)
-      yield ctx.slots.register({ name: 'sidebar.brand.name', priority: -10 }, ArkmeSidebarBrandName)
-      yield ctx.slots.register({ name: 'conversation.hero.brand.mark', priority: -10 }, ArkmeHeroBrandMark)
-    })
-  )))
+  ctx.slots.inject('sidebar', () => ctx.slots.register({
+    name: 'sidebar',
+    priority: -100,
+    inject: () => ({
+      collapseSidebar: () => { ctx.layout.toggleSidebar() },
+      closeDetails: () => { ctx.layout.closeDetails() },
+    }),
+  }, ArkmePersistentSidebar))
 
-  ctx.effect(() => {
-    const disposeStyles = installArkmeRedesignStyles()
-    const disposeLayout = ctx.reflect.provide('layout', redesignLayout)
-    const disposeRoot = ctx.slots.register({
-      name: 'root',
-      children: {
-        sidebar: { kind: 'single', scope: 'root' },
-        conversation: { kind: 'single', scope: 'session-maybe' },
-        details: { kind: 'single', scope: 'session' },
-        'shell.overlay': { kind: 'list', scope: 'root' },
-        'arkme.directory.entry': { kind: 'list', scope: 'root' },
-      },
-      inject: () => ({
-        layout: redesignLayout,
-        startSession: options => resolveArkmeTaskSession(ctx.workspaces, sessions, options),
-        pickDirectory: () => ctx.workspaces.pickDirectory(),
-        listDirectory: (path, signal) => ctx.workspaces.listDirectory(path, signal),
-        openSession: (sessionId: SessionId) => { sessions.open(sessionId) },
-        sendPrompt: async (sessionId: SessionId, text: string) => {
-          const session = sessions.binding(sessionId)?.session
-          if (session === undefined) throw new Error('任务会话尚未准备好，请稍后重试')
-          const result = await session.prompt([{ type: 'text', text }], 'queue')
-          if (!result.ok) throw new Error(result.error.message)
-        },
-      }),
-    }, ArkmeRootFrame)
-    return () => {
-      disposeRoot()
-      disposeLayout()
-      disposeStyles()
-    }
-  }, 'dsh-arkme: redesign root layout')
-
-  ctx.effect(() => {
-    const presenter = new ArkmeThemePresenter()
-    presenter.apply(ctx.theme.getTheme())
-    const off = ctx.on('theme/change', snapshot => { presenter.apply(snapshot) })
-    return () => {
-      off()
-      presenter.dispose()
-    }
-  }, 'dsh-arkme: redesign theme presenter')
-
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
-    id: 'arkme',
-    order: 70,
-    label: 'Arkme',
+  ctx.slots.inject('conversation', () => ctx.slots.register({
+    name: 'conversation',
+    priority: -100,
     children: {
       'arkme.directory.entry': { kind: 'list', scope: 'root' },
     },
-    inject: () => ({
-      toggle: toggleArkme,
-      activate: activateSurface,
-      closeSurface,
-      surfaceSession: () => openedFromSession,
-    }),
-  }, ArkmeFooterDropdown))
+    inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
+  }, ArkmePersistentWorkspace))
 
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
-    id: 'arkme-account',
-    order: 80,
-    label: 'Arkme',
-  }, ArkmeSettingsRow))
+  ctx.slots.inject('details', () => ctx.slots.register({
+    name: 'details',
+    priority: -100,
+    inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
+  }, ArkmePersistentDetails))
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
@@ -238,6 +129,10 @@ export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
+export {
+  ArkmePersistentClientRuntime, ArkmePersistentDetails,
+  ArkmePersistentSidebar, ArkmePersistentWorkspace,
+} from './ArkmePersistentShell.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 export { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'

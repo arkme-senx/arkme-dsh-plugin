@@ -876,9 +876,6 @@ export function ArkmeNavigation({
 
   useEffect(() => { reconcileAuth(auth) }, [auth, reconcileAuth])
   useEffect(() => {
-    if (!ui.open) activateNativeEntry()
-  }, [activateNativeEntry, ui.open])
-  useEffect(() => {
     activateNativeEntry()
   }, [activateNativeEntry, auth?.userId, currentSessionId, directory, ui.mode, ui.selectedSource?.sourceRef])
   useEffect(() => {
@@ -914,7 +911,7 @@ export function ArkmeNavigation({
   }, [authenticated, auth?.userId])
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
-    if (userId === undefined || !ui.open) return
+    if (userId === undefined) return
     const request = arkmeArkoConversationPreviewStore.beginHistoryRequest(userId)
     if (request === undefined) return
     const controller = new AbortController()
@@ -922,7 +919,7 @@ export function ArkmeNavigation({
       .then(page => { arkmeArkoConversationPreviewStore.setLatestFromHistory(request, page.items) })
       .catch(() => undefined)
     return () => { controller.abort() }
-  }, [authenticated, auth?.userId, ui.open])
+  }, [authenticated, auth?.userId])
   useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
     const loaded = chatDirectory.sources

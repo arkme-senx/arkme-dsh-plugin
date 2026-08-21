@@ -1,15 +1,9 @@
-import { useEffect, useSyncExternalStore, type CSSProperties } from 'react'
+import { useSyncExternalStore, type CSSProperties } from 'react'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ArkmeChatClientEvent } from '../types.js'
-import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { arkmeAuthStore } from './auth-store.js'
-import {
-  arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
-} from './chat-directory-store.js'
-import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
-import { arkmeUi } from './ui-controller.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -20,7 +14,6 @@ const styles: Record<string, CSSProperties> = {
 export type ArkmeFooterDropdownProps = ArkmeFooterActionProps & PropsRenderSlots<'arkme.directory.entry'>
 
 export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
@@ -94,7 +87,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
     <div style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
     <ArkmeFooterAction
       {...props}
-      expanded={ui.open}
+      expanded
       loggedOut={authState.checked && (auth === undefined || !['authenticated', 'binding-required'].includes(auth.status))}
       bindingRequired={auth?.status === 'binding-required'}
       authenticated={auth?.status === 'authenticated'}
@@ -105,12 +98,5 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
       onUpdate={() => { void arkmePluginUpdateStore.install() }}
     />
     </div>
-    {ui.surfaceOpen && <ArkmeConversationSurface
-      close={props.closeSurface}
-      initialAuth={auth}
-      openedFromSession={props.surfaceSession()}
-      useSessions={props.useSessions}
-      renderSlot={props.renderSlot}
-    />}
   </>
 }
