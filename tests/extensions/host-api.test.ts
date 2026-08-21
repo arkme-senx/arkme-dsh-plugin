@@ -100,6 +100,25 @@ describe('extension center Host BFF', () => {
     expect(search).toHaveBeenCalledWith('天气', 10)
   })
 
+  it('rejects stale persistent Client calls with a specific unavailable error before invoking Host handlers', async () => {
+    const persistentClientState = vi.fn(() => ({
+      extension_id: 'ext-1', version: '1.0.0', mount: false, reason: 'version-mismatch',
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.persistent.invoke',
+      { extensionId: 'ext-1', version: '1.0.0', method: 'read', args: null },
+      undefined,
+      { persistentClientState } as never,
+    )).rejects.toMatchObject({
+      code: 'extension-runtime-unavailable',
+      message: '插件不可用，请重启 DSH 后重试',
+      httpStatus: 409,
+    })
+    expect(persistentClientState).toHaveBeenCalledWith('ext-1', '1.0.0')
+  })
+
   it('resolves extension authors in the Host for public and owned details', async () => {
     const service = {
       extensionAuthors: vi.fn(async () => new Map([[77, { displayName: '发布者', arkmeId: 'publisher' }]])),

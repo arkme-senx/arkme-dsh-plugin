@@ -20,6 +20,11 @@ interface PersistentRuntimeRegistration {
   handlers?: Map<string, PersistentHandler>
   clientActivation?: object
 }
+export interface PersistentArkmeExtensionRuntimeState {
+  version: string
+  installationUrl: string
+  active: boolean
+}
 const persistentRegistrations = new Map<string, PersistentRuntimeRegistration>()
 const persistentClientActivations = new Map<string, object>()
 const VM_TIMEOUT_MS = 5_000
@@ -262,6 +267,23 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
 
 export function persistentArkmeExtensionActive(extensionId: string): boolean {
   return persistentRegistrations.get(extensionId)?.fiber !== undefined || persistentClientActivations.has(extensionId)
+}
+
+export function persistentArkmeExtensionRuntimeState(
+  extensionId: string,
+): PersistentArkmeExtensionRuntimeState | undefined {
+  const registration = persistentRegistrations.get(extensionId)
+  if (registration === undefined) return undefined
+  try {
+    const installation = readInstallation(registration.installationUrl)
+    return {
+      version: installation.version,
+      installationUrl: registration.installationUrl.href,
+      active: registration.fiber !== undefined || registration.clientActivation !== undefined,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 /** Re-mount a verified Host half when its wrapper is already present in the current DSH process. */

@@ -173,10 +173,14 @@ export function materializePersistentExtensionBundle(input: {
             exports?: Record<string, string>
             dsh?: { client?: { inject?: string[] } }
           }
+          const clientBundle = input.clientCode === undefined
+            ? undefined
+            : readFileSync(join(bundleDirectory, 'lib', 'client.js'), 'utf8')
           const clientReady = input.clientCode === undefined || (
             manifest.exports?.['./client'] === './lib/client.js'
             && manifest.dsh?.client?.inject?.length === 0
-            && readFileSync(join(bundleDirectory, 'lib', 'client.js'), 'utf8').includes('extensions.persistent.invoke')
+            && clientBundle?.includes('extensions.persistent.invoke') === true
+            && clientBundle.includes('extensions.persistent.client-state')
           )
           if (manifest.exports?.['.'] === './lib/index.js'
             && manifest.exports?.['./package.json'] === './package.json' && clientReady) {

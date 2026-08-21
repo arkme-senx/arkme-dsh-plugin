@@ -814,11 +814,19 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.restart': return await requireExtensionInstallTasks(extensionInstallTasks).restart(
       stringParam(params, 'extensionId'),
     )
-    case 'extensions.persistent.invoke': return await invokePersistentArkmeExtension(
+    case 'extensions.persistent.client-state': return requireExtensionManager(extensionManager).persistentClientState(
       stringParam(params, 'extensionId'),
-      stringParam(params, 'method'),
-      params.args,
+      stringParam(params, 'version'),
     )
+    case 'extensions.persistent.invoke': {
+      const extensionId = stringParam(params, 'extensionId')
+      const version = stringParam(params, 'version')
+      const state = requireExtensionManager(extensionManager).persistentClientState(extensionId, version)
+      if (!state.mount) {
+        throw new ArkmePluginError('extension-runtime-unavailable', '插件不可用，请重启 DSH 后重试', false, 409)
+      }
+      return await invokePersistentArkmeExtension(extensionId, stringParam(params, 'method'), params.args)
+    }
     case 'extensions.bundle.invoke': return await invokeArkmeBundle(
       stringParam(params, 'packageName'),
       stringParam(params, 'method'),

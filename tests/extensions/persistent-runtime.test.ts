@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { canonicalExtensionSignatureMessage, packArkmeExtension } from '../../src/extensions/artifact.js'
 import {
   activatePersistentArkmeExtension, applyPersistentArkmeHostExtension, deactivatePersistentArkmeExtension,
-  persistentArkmeExtensionActive,
+  persistentArkmeExtensionActive, persistentArkmeExtensionRuntimeState,
 } from '../../src/extensions/persistent-runtime.js'
 
 const directories: string[] = []
@@ -80,8 +80,14 @@ describe('persistent extension Host runtime', () => {
     expect(runtime.plugin).toHaveBeenCalledOnce()
     expect(runtime.effect).toHaveBeenCalledTimes(2)
     expect(persistentArkmeExtensionActive('ext_host_verified')).toBe(true)
+    expect(persistentArkmeExtensionRuntimeState('ext_host_verified')).toEqual({
+      version: '1.0.0',
+      installationUrl: installation.href,
+      active: true,
+    })
     for (const cleanup of runtime.cleanups) cleanup()
     expect(persistentArkmeExtensionActive('ext_host_verified')).toBe(false)
+    expect(persistentArkmeExtensionRuntimeState('ext_host_verified')).toBeUndefined()
   })
 
   it('quarantines a Host runtime failure without rejecting the DSH loader entry', async () => {

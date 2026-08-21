@@ -33,18 +33,34 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operation, params }),
     })
-    const envelope = await response.json() as { ok?: boolean; value?: unknown; error?: { message?: string } }
-    if (!response.ok || envelope.ok !== true) throw new Error(envelope.error?.message ?? `Arkme Host returned HTTP ${String(response.status)}`)
+    const envelope = await response.json() as { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } }
+    if (!response.ok || envelope.ok !== true) {
+      const error = new Error(envelope.error?.message ?? `Arkme Host returned HTTP ${String(response.status)}`) as Error & { code?: string }
+      if (envelope.error?.code !== undefined) error.code = envelope.error.code
+      throw error
+    }
     return envelope.value
   }
-  const callHost = async (method: string, args: unknown = null): Promise<unknown> => await callOperation(
-    spec.operation ?? 'extensions.persistent.invoke',
-    {
-      ...(spec.identityKey === 'packageName' ? { packageName: spec.extensionId } : { extensionId: spec.extensionId }),
-      method,
-      args: jsonValue(args),
-    },
-  )
+  let deactivateClient: (() => void) | undefined
+  const callHost = async (method: string, args: unknown = null): Promise<unknown> => {
+    try {
+      return await callOperation(
+        spec.operation ?? 'extensions.persistent.invoke',
+        {
+          ...(spec.identityKey === 'packageName'
+            ? { packageName: spec.extensionId }
+            : { extensionId: spec.extensionId, version: spec.version }),
+          method,
+          args: jsonValue(args),
+        },
+      )
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'extension-runtime-unavailable') {
+        deactivateClient?.()
+      }
+      throw error
+    }
+  }
   const guardedService = (service: object, name: string): unknown => new Proxy(service, {
     get(target, property) {
       const member = Reflect.get(target, property, target) as unknown
@@ -88,10 +104,13 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
     name: `arkme-extension-client:${spec.extensionId}`,
     async apply(ctx: any) {
       if (spec.identityKey !== 'packageName') {
-        const state = await callOperation('extensions.enabled-state', { extensionId: spec.extensionId }) as {
-          installed?: boolean; enabled?: boolean
+        const state = await callOperation('extensions.persistent.client-state', {
+          extensionId: spec.extensionId,
+          version: spec.version,
+        }) as {
+          mount?: boolean
         }
-        if (state.installed !== true || state.enabled !== true) return
+        if (state.mount !== true) return
       }
       const styles = new Styles()
       const traps = {
@@ -123,7 +142,16 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
         apply(childCtx: unknown, config?: unknown) { return applyEvaluated(guardedContext(childCtx), config) },
       }
       ctx.effect(() => () => styles.dispose(), `arkme-extension:${spec.extensionId}:styles`)
-      await ctx.plugin(guarded)
+      const fiber = ctx.plugin(guarded) as { dispose?(): unknown; then?: unknown }
+      const deactivate = () => {
+        styles.dispose()
+        void Promise.resolve(fiber.dispose?.()).catch(() => undefined)
+      }
+      deactivateClient = deactivate
+      ctx.effect(() => () => {
+        if (deactivateClient === deactivate) deactivateClient = undefined
+      }, `arkme-extension:${spec.extensionId}:client-fiber`)
+      await fiber
     },
   }
 }

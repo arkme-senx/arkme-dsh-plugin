@@ -67,6 +67,46 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
+  it('does not treat an active same-package wrapper from an older version as the installed runtime', () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-version-mismatch-'))
+    directories.push(root)
+    const bundle = join(root, 'profile', 'arkme-extensions', 'bundle-1.0.1')
+    mkdirSync(bundle, { recursive: true })
+    writeFileSync(join(bundle, 'installation.json'), JSON.stringify({ extension_id: 'ext-host', version: '1.0.1' }))
+    writeFileSync(join(bundle, 'activation.json'), JSON.stringify({
+      schema_version: 1, extension_id: 'ext-host', enabled: true,
+    }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({ ...installed(root, false), installedVersion: '1.0.1', profileBundlePath: bundle, active: false })
+    const persistentRuntimeState = vi.fn(() => ({
+      version: '1.0.0',
+      installationUrl: new URL('file:///old/profile/1.0.0/installation.json').href,
+      active: true,
+    }))
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: join(root, 'profile'),
+      profileInstaller: { install: vi.fn(), remove: vi.fn(), restart: vi.fn(), setEnabled: vi.fn() },
+      persistentRuntimeState,
+      pluginInventory: {
+        list: () => ({ entries: [{
+          entryId: 'legacy', moduleName: '@arkme-local/ext-0123456789abcdef', enabled: true, fiberPhase: 'active',
+        }] }),
+      },
+    })
+
+    expect(manager.listInstalled()).toEqual([
+      expect.objectContaining({ extensionId: 'ext-host', installedVersion: '1.0.1', enabled: true, active: false }),
+    ])
+    expect(manager.enabledState('ext-host')).toMatchObject({ enabled: false, active: false })
+    expect(manager.persistentClientState('ext-host', '1.0.0')).toEqual({
+      extension_id: 'ext-host', version: '1.0.0', mount: false, reason: 'version-mismatch',
+    })
+    expect(manager.persistentClientState('ext-host', '1.0.1')).toEqual({
+      extension_id: 'ext-host', version: '1.0.1', mount: false, reason: 'runtime-mismatch',
+    })
+    store.close()
+  })
+
   it('accepts an equivalent real path while retaining the Profile containment guard', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-realpath-'))
     directories.push(root)

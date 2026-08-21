@@ -17,7 +17,8 @@ import {
 } from './persistent-bundle.js'
 import type { ArkmeExtensionProfileInstaller } from './profile-installer.js'
 import {
-  activatePersistentArkmeExtension, deactivatePersistentArkmeExtension, persistentArkmeExtensionActive,
+  activatePersistentArkmeExtension, deactivatePersistentArkmeExtension,
+  persistentArkmeExtensionRuntimeState, type PersistentArkmeExtensionRuntimeState,
 } from './persistent-runtime.js'
 import { verifyBundleResolutionSignature, verifyExtensionResolutionSignature } from './signature.js'
 export { verifyExtensionResolutionSignature } from './signature.js'
@@ -54,6 +55,14 @@ export interface ArkmeExtensionManagerOptions {
   profileInstaller?: Pick<ArkmeExtensionProfileInstaller, 'install' | 'installTarball' | 'remove' | 'restart' | 'setEnabled'>
   clientApiPath?: string
   pluginInventory?: ArkmePluginInventoryLike
+  persistentRuntimeState?: (extensionId: string) => PersistentArkmeExtensionRuntimeState | undefined
+}
+
+export interface ArkmePersistentClientState {
+  extension_id: string
+  version: string
+  mount: boolean
+  reason?: 'not-installed' | 'version-mismatch' | 'runtime-mismatch' | 'disabled' | 'unavailable'
 }
 
 export interface ArkmePluginInventoryLike {
@@ -680,15 +689,24 @@ export class ArkmeExtensionManager {
       if (effective.enabled !== item.enabled || effective.active !== item.active || effective.lastError !== item.lastError) {
         this.store.put(effective)
       }
-      const loaderActive = effective.profilePackageName !== undefined && loaderEntries.some(entry =>
+      const loaderActive = effective.executionModel !== undefined && effective.profilePackageName !== undefined && loaderEntries.some(entry =>
         entry.moduleName === effective.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
-      const persistentSuppressed = effective.executionModel === undefined && !effective.enabled
-      const active = !persistentSuppressed && (loaderActive || effective.active
-        || (effective.executionModel === 'arkme-sandboxed' && effective.profilePackageName !== undefined
-          ? arkmeBundleActive(effective.profilePackageName)
-          : persistentArkmeExtensionActive(effective.extensionId)))
+      const active = effective.executionModel === undefined
+        ? effective.enabled && this.persistentRuntimeMatches(effective)
+        : loaderActive || effective.active || (effective.executionModel === 'arkme-sandboxed'
+          && effective.profilePackageName !== undefined && arkmeBundleActive(effective.profilePackageName))
       return installedView({ ...effective, active }, state.unavailable)
     })
+  }
+
+  private persistentRuntimeMatches(item: ArkmeInstalledExtension): boolean {
+    if (item.executionModel !== undefined || item.profileBundlePath === undefined) return false
+    const bundleDirectory = this.resolveLegacyBundlePath(item.profileBundlePath)
+    if (bundleDirectory === undefined) return false
+    const runtime = (this.options.persistentRuntimeState ?? persistentArkmeExtensionRuntimeState)(item.extensionId)
+    return runtime?.active === true
+      && runtime.version === item.installedVersion
+      && runtime.installationUrl === pathToFileURL(join(bundleDirectory, 'installation.json')).href
   }
 
   private effectivePersistentActivation(item: ArkmeInstalledExtension): {
@@ -727,10 +745,29 @@ export class ArkmeExtensionManager {
     return {
       extension_id: extensionId,
       installed: true,
-      enabled: installed.enabled,
+      enabled: installed.enabled && (this.store.get(extensionId)?.executionModel !== undefined || installed.active),
       active: installed.active,
       ...(installed.unavailable === undefined ? {} : { unavailable: installed.unavailable }),
     }
+  }
+
+  persistentClientState(extensionIdValue: string, versionValue: string): ArkmePersistentClientState {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    const version = versionValue.trim()
+    const stored = this.store.get(extensionId)
+    if (stored === undefined) return { extension_id: extensionId, version, mount: false, reason: 'not-installed' }
+    if (version === '' || stored.installedVersion !== version) {
+      return { extension_id: extensionId, version, mount: false, reason: 'version-mismatch' }
+    }
+    const installed = this.listInstalled().find(item => item.extensionId === extensionId)
+    if (installed?.unavailable !== undefined) {
+      return { extension_id: extensionId, version, mount: false, reason: 'unavailable' }
+    }
+    if (installed?.enabled !== true) return { extension_id: extensionId, version, mount: false, reason: 'disabled' }
+    if (installed.active !== true || !this.persistentRuntimeMatches(stored)) {
+      return { extension_id: extensionId, version, mount: false, reason: 'runtime-mismatch' }
+    }
+    return { extension_id: extensionId, version, mount: true }
   }
 
   async setEnabled(input: { agent: unknown; extensionId: string; enabled: boolean }): Promise<ArkmeExtensionEnabledResult> {
