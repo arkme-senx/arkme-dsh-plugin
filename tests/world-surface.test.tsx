@@ -28,12 +28,13 @@ const item: ArkmeWorldFeedItem = {
   extendCount: 2,
 }
 
-function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = new Set(['world_1'])) {
+function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = new Set(['world_1']), interactionRecordRef?: string) {
   return renderToStaticMarkup(<ArkmeWorldContent
     state={state}
     scope="all"
     voiceprintPlayableRefs={playableRefs}
     voiceprintRecordRef={undefined}
+    {...(interactionRecordRef === undefined ? {} : { interactionRecordRef })}
     {...actions}
   />)
 }
@@ -77,6 +78,20 @@ describe('Arkme native World surface', () => {
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')
     expect(refreshFailure).toContain('世界正文')
+  })
+
+  it('expands comments inline beneath the selected world card instead of opening a modal', () => {
+    const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
+
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('aria-controls="world-comments-world_1"')
+    expect(markup).toContain('aria-label="陈一涵的评论区"')
+    expect(markup).toContain('评论加载中')
+    expect(markup).toContain('写一条评论')
+    expect(markup).toContain('>收起<')
+    expect(markup).not.toContain('互动详情')
+    expect(markup).not.toContain('aria-modal="true"')
+    expect(markup.match(/世界正文/g)).toHaveLength(1)
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {

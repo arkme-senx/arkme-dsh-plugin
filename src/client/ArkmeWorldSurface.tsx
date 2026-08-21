@@ -73,6 +73,7 @@ const styles: Record<string, CSSProperties> = {
   cardFooter: { minHeight: 28, marginTop: 14, paddingTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${colors.border}` },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButton: { padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  commentButtonActive: { color: colors.accent, fontWeight: 600 },
   loadMore: { display: 'flex', justifyContent: 'center', marginTop: 3 },
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
   modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: '#fff', boxShadow: '0 18px 60px rgba(20,22,30,.22)' },
@@ -84,10 +85,15 @@ const styles: Record<string, CSSProperties> = {
   modalActions: { marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   modalError: { color: colors.danger, fontSize: 12 },
   invitePreview: { margin: '10px 0 0', padding: 12, borderRadius: 12, background: colors.subtle, color: colors.secondary, fontSize: 12, lineHeight: 1.6 },
-  interactionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 },
-  interactionList: { display: 'grid', gap: 9, margin: '14px 0' },
-  interaction: { padding: 11, borderRadius: 11, background: colors.subtle },
+  interactionPanel: { margin: '12px -18px -18px', padding: '15px 18px 18px', borderTop: `1px solid ${colors.border}`, borderRadius: '0 0 16px 16px', background: '#fafbfc' },
+  interactionPanelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  interactionPanelTitle: { fontSize: 12, fontWeight: 650 },
+  interactionList: { display: 'grid', gap: 8, margin: '12px 0' },
+  interaction: { padding: 11, border: `1px solid ${colors.border}`, borderRadius: 11, background: '#fff' },
   interactionMeta: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.secondary, fontSize: 10 },
+  interactionComposer: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${colors.border}` },
+  interactionComposerActions: { marginTop: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  interactionHint: { color: '#969ba5', fontSize: 10 },
   previewModal: { width: 'min(960px, 94vw)', height: 'min(720px, 88vh)', padding: 14, boxSizing: 'border-box', display: 'grid', gridTemplateRows: '38px minmax(0,1fr)', borderRadius: 18, background: '#17191f' },
   previewHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff', fontSize: 12 },
   previewStage: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateColumns: '44px minmax(0,1fr) 44px', alignItems: 'center', gap: 10 },
@@ -153,15 +159,22 @@ function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageR
   return <img src={source || undefined} alt={alt} loading={avatar || preview ? 'eager' : 'lazy'} style={imageStyle} />
 }
 
-function WorldCard({ item, playable, voiceprintActive, onOpenInteractions, onToggleVoiceprint, onInviteVoiceprint }: {
+function interactionRegionId(recordRef: string): string {
+  return `world-comments-${encodeURIComponent(recordRef)}`
+}
+
+function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
+  interactionsOpen: boolean
   onOpenInteractions(item: ArkmeWorldFeedItem): void
+  onInteractionCreated(recordRef: string): void
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint(item: ArkmeWorldFeedItem): void
 }) {
   const [previewIndex, setPreviewIndex] = useState<number>()
+  const interactionsId = interactionRegionId(item.recordRef)
   return <article style={styles.card} data-world-record-ref={item.recordRef}>
     <header style={styles.cardHeader}>
       <span style={styles.avatar}>{item.avatarRef === undefined
@@ -188,10 +201,11 @@ function WorldCard({ item, playable, voiceprintActive, onOpenInteractions, onTog
         <WorldImage imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(index + 1)}`} />
       </button>)}</div>}
     <footer style={styles.cardFooter}>
-      <button type="button" style={styles.commentButton} onClick={() => { onOpenInteractions(item) }}>
+      <button type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
         {item.extendCount > 0 ? `评论：${String(item.extendCount)}` : '评论'}
       </button>
     </footer>
+    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
     {previewIndex !== undefined && item.imageRefs[previewIndex] !== undefined && <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setPreviewIndex(undefined) }}>
       <section style={styles.previewModal}>
         <header style={styles.previewHeader}><span>{item.authorName} · {previewIndex + 1} / {item.imageRefs.length}</span><button type="button" style={styles.previewButton} onClick={() => { setPreviewIndex(undefined) }}>关闭</button></header>
@@ -229,16 +243,18 @@ function VoiceprintInviteDialog({ item, sending, message, onClose, onConfirm }: 
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voiceprintRecordRef, actionMessage, onRefresh, onSelectScope, onOpenComposer, onOpenInteractions, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
+export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voiceprintRecordRef, interactionRecordRef, actionMessage, onRefresh, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
   voiceprintPlayableRefs: ReadonlySet<string>
   voiceprintRecordRef: string | undefined
+  interactionRecordRef?: string
   actionMessage?: string
   onRefresh(): void
   onSelectScope(scope: WorldScope): void
   onOpenComposer(): void
   onOpenInteractions(item: ArkmeWorldFeedItem): void
+  onInteractionCreated?(recordRef: string): void
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
   onLoadMore?(): void
@@ -269,7 +285,9 @@ export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voicep
           item={item}
           playable={voiceprintPlayableRefs.has(item.recordRef)}
           voiceprintActive={voiceprintRecordRef === item.recordRef}
+          interactionsOpen={interactionRecordRef === item.recordRef}
           onOpenInteractions={onOpenInteractions}
+          onInteractionCreated={onInteractionCreated ?? (() => {})}
           onToggleVoiceprint={onToggleVoiceprint}
           onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
         />)}
@@ -331,19 +349,28 @@ function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(
   </div>
 }
 
-function InteractionDialog({ item, onClose }: { item: ArkmeWorldFeedItem; onClose(): void }) {
+function InteractionPanel({ item, onClose, onInteractionCreated }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void }) {
   const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
   const [replyTarget, setReplyTarget] = useState<ArkmeWorldInteractionItem>()
+  const loadController = useRef<AbortController>()
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const load = useCallback(() => {
+    loadController.current?.abort()
+    const controller = new AbortController()
+    loadController.current = controller
     setState({ status: 'loading', items: [], hasMore: false })
-    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 })
-      .then(page => { setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }) })
-      .catch(error => { setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '互动暂时无法加载') }) })
+    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
+      .then(page => { if (!controller.signal.aborted) setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }) })
+      .catch(error => { if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '评论暂时无法加载') }) })
   }, [item.recordRef])
-  useEffect(load, [load])
+  useEffect(() => {
+    load()
+    textareaRef.current?.focus()
+    return () => { loadController.current?.abort() }
+  }, [load])
   const loadMore = async () => {
     if (state.loadingMore || state.nextOffset === undefined) return
     setState(current => {
@@ -368,23 +395,26 @@ function InteractionDialog({ item, onClose }: { item: ArkmeWorldFeedItem; onClos
       })
       setDraft('')
       setReplyTarget(undefined)
-    } catch (error) { setState(current => ({ ...current, message: messageOf(error, '互动发送失败，请重试') })) }
+      onInteractionCreated(item.recordRef)
+    } catch (error) { setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
   }
-  return <div role="dialog" aria-modal="true" aria-label="世界互动详情" style={styles.modalBackdrop}>
-    <section style={styles.modal}>
-      <header style={styles.interactionHeader}><div><h2 style={styles.modalTitle}>互动详情</h2><p style={styles.subtitle}>{item.authorName}</p></div><button type="button" style={styles.button} onClick={onClose}>返回世界</button></header>
-      {item.headline !== '' && <h3>{item.headline}</h3>}{item.textContent !== '' && <p style={styles.text}>{item.textContent}</p>}
-      {state.status === 'loading' && <p style={styles.notice}>互动加载中…</p>}
-      {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '14px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
-      <div style={styles.interactionList}>{state.items.map(interaction => <article key={interaction.interactionRef} style={styles.interaction}><header style={styles.interactionMeta}><strong>{interaction.authorName}</strong><time>{dateTimeLabel(interaction.publishedAtMillis || interaction.createdAtMillis)}</time></header><p style={styles.text}>{interaction.textContent}</p><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction) }}>{replyTarget?.interactionRef === interaction.interactionRef ? '取消回复' : '回复'}</button></article>)}</div>
-      {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多互动'}</button></div>}
-      {state.status === 'ready' && state.items.length === 0 && <p style={styles.subtitle}>还没有互动，来写第一条评论吧。</p>}
-      {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined) }}>取消回复</button></div>}
-      <textarea style={{ ...styles.textarea, minHeight: 90 }} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => { setDraft(event.currentTarget.value) }} />
-      <div style={{ ...styles.modalActions, justifyContent: 'flex-end' }}><button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending || draft.trim() === ''} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button></div>
-    </section>
-  </div>
+  return <section id={interactionRegionId(item.recordRef)} aria-label={`${item.authorName}的评论区`} style={styles.interactionPanel}>
+    <header style={styles.interactionPanelHeader}>
+      <strong style={styles.interactionPanelTitle}>{item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论'}</strong>
+      <button type="button" style={styles.linkButton} onClick={onClose}>收起</button>
+    </header>
+    {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
+    {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
+    <div style={styles.interactionList}>{state.items.map(interaction => <article key={interaction.interactionRef} style={styles.interaction}><header style={styles.interactionMeta}><strong>{interaction.authorName}</strong><time>{dateTimeLabel(interaction.publishedAtMillis || interaction.createdAtMillis)}</time></header><p style={styles.text}>{interaction.textContent}</p><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction); textareaRef.current?.focus() }}>{replyTarget?.interactionRef === interaction.interactionRef ? '取消回复' : '回复'}</button></article>)}</div>
+    {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
+    {state.status === 'ready' && state.items.length === 0 && <p style={styles.subtitle}>还没有评论，来写第一条吧。</p>}
+    <div style={styles.interactionComposer}>
+      {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
+      <textarea ref={textareaRef} style={{ ...styles.textarea, minHeight: 72 }} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => { setDraft(event.currentTarget.value) }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} />
+      <div style={styles.interactionComposerActions}><span style={styles.interactionHint}>Ctrl / ⌘ + Enter 发送</span><button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending || draft.trim() === ''} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button></div>
+    </div>
+  </section>
 }
 
 const loadingState = (): ArkmeWorldViewState => ({ status: 'loading', items: [] })
@@ -395,7 +425,7 @@ export function ArkmeWorldSurface() {
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
   const [composerOpen, setComposerOpen] = useState(false)
-  const [interactionItem, setInteractionItem] = useState<ArkmeWorldFeedItem>()
+  const [interactionRecordRef, setInteractionRecordRef] = useState<string>()
   const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
   const [inviteSending, setInviteSending] = useState(false)
   const [inviteMessage, setInviteMessage] = useState<string>()
@@ -455,7 +485,17 @@ export function ArkmeWorldSurface() {
   }, [state.items, state.status])
 
   const refresh = () => { setActionMessage(undefined); load(scope, 0, true) }
-  const selectScope = (next: WorldScope) => { setActionMessage(undefined); setScope(next) }
+  const selectScope = (next: WorldScope) => { setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
+  const toggleInteractions = (item: ArkmeWorldFeedItem) => {
+    setInteractionRecordRef(current => current === item.recordRef ? undefined : item.recordRef)
+  }
+  const recordInteractionCreated = (recordRef: string) => {
+    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => ({
+      ...view,
+      items: view.items.map(item => item.recordRef === recordRef ? { ...item, extendCount: item.extendCount + 1 } : item),
+    })
+    setViews(current => ({ all: update(current.all), mine: update(current.mine) }))
+  }
   const toggleVoiceprint = async (recordRef: string) => {
     if (voiceprintRecordRef === recordRef) { voiceprintTokenRef.current += 1; audioRef.current?.pause(); audioRef.current = undefined; setVoiceprintRecordRef(undefined); return }
     const token = voiceprintTokenRef.current + 1
@@ -505,12 +545,12 @@ export function ArkmeWorldSurface() {
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
     <ArkmeWorldContent state={state} scope={scope} voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
+      {...(interactionRecordRef === undefined ? {} : { interactionRecordRef })}
       {...(actionMessage === undefined ? {} : { actionMessage })}
       onRefresh={refresh} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
-      onOpenInteractions={setInteractionItem} onToggleVoiceprint={recordRef => { void toggleVoiceprint(recordRef) }}
+      onOpenInteractions={toggleInteractions} onInteractionCreated={recordInteractionCreated} onToggleVoiceprint={recordRef => { void toggleVoiceprint(recordRef) }}
       onInviteVoiceprint={openVoiceprintInvite} onLoadMore={() => { if (state.nextOffset !== undefined) load(scope, state.nextOffset) }} />
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={() => { setLoaded(current => ({ ...current, all: false, mine: false })); setScope('mine') }} />}
-    {interactionItem !== undefined && <InteractionDialog item={interactionItem} onClose={() => { setInteractionItem(undefined) }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={() => { if (!inviteSending) setInviteItem(undefined) }} onConfirm={item => { void inviteVoiceprint(item) }} />}
   </main>
 }
