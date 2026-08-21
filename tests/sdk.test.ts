@@ -157,6 +157,7 @@ describe('Arkme SDK', () => {
             features: {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
+              recordCalendar: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
               extensionManagement: true,
               extensionIcons: true,
@@ -180,6 +181,12 @@ describe('Arkme SDK', () => {
         if (request.operation === 'image.read') {
           return success({ mediaType: 'image/png', bytes: 8, dataBase64: 'iVBORw0KGgo=' })
         }
+        if (request.operation === 'calendar.buckets') {
+          return success({ scope: 'self', startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, days: [] })
+        }
+        if (request.operation === 'calendar.records') {
+          return success({ scope: 'self', bucketDate: '2026-08-21', timezone: 'Asia/Shanghai', refreshedAtMillis: 1, items: [], hasMore: false })
+        }
         if (request.operation === 'records.create') return success({ recordUid: request.params?.recordUid, status: 1 })
         throw new Error(`unexpected ${request.operation}`)
       },
@@ -196,6 +203,17 @@ describe('Arkme SDK', () => {
     const image = await sdk.readImage('1_1700000000_1_0.png')
     expect(image).toMatchObject({ mediaType: 'image/png', bytes: 8 })
     expect(sdk.imageDataUrl(image)).toBe('data:image/png;base64,iVBORw0KGgo=')
+    await expect(sdk.calendarBuckets({
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+    })).resolves.toMatchObject({ scope: 'self', days: [] })
+    await expect(sdk.calendarRecords({
+      bucketDate: '2026-08-21',
+      timezone: 'Asia/Shanghai',
+      limit: 10,
+      cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+    })).resolves.toMatchObject({ scope: 'self', hasMore: false })
     await expect(sdk.createText('保存内容', { recordUid: 'a5d8df82-5b62-5b22-8f76-916a751ad63c' }))
       .resolves.toMatchObject({ status: 1 })
     expect(calls).toMatchObject([
@@ -203,6 +221,16 @@ describe('Arkme SDK', () => {
       { operation: 'records.search', params: { query: '复盘', limit: 5, syncAll: true } },
       { operation: 'user.profile.refresh' },
       { operation: 'image.read', params: { imageRef: '1_1700000000_1_0.png' } },
+      { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai' } },
+      {
+        operation: 'calendar.records',
+        params: {
+          bucketDate: '2026-08-21',
+          timezone: 'Asia/Shanghai',
+          limit: 10,
+          cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+        },
+      },
       {
         operation: 'records.create',
         params: { recordUid: 'a5d8df82-5b62-5b22-8f76-916a751ad63c', textContent: '保存内容' },

@@ -12,6 +12,8 @@ function fakeService() {
     searchScene: vi.fn(async (input: unknown) => input),
     searchImages: vi.fn(async (input: unknown) => input),
     searchRecordings: vi.fn(async (input: unknown) => input),
+    calendarBuckets: vi.fn(async (input: unknown) => input),
+    calendarRecords: vi.fn(async (input: unknown) => input),
     aiVideoList: vi.fn(async (input: unknown) => input),
     queryFileAssets: vi.fn(async (input: unknown) => input),
     arkoRunStatus: vi.fn(async () => ({ status: 'running' })),
@@ -114,6 +116,36 @@ describe('outgoing call Host API dispatch', () => {
 
     expect(service.interwovenMoments).toHaveBeenCalledWith('source-ref')
     expect(service.interwovenMomentDetail).toHaveBeenCalledWith('source-ref', 'moment-ref')
+  })
+
+  it('dispatches record calendar operations without forwarding raw scope fields', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'calendar.buckets', {
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+      bucket_scope_uid: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'calendar.records', {
+      bucketDate: '2026-08-21',
+      timezone: 'Asia/Shanghai',
+      limit: 10,
+      cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+      chat_core: { owner_user_id: 999 },
+    })
+
+    expect(service.calendarBuckets).toHaveBeenCalledWith({
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+    })
+    expect(service.calendarRecords).toHaveBeenCalledWith({
+      bucketDate: '2026-08-21',
+      timezone: 'Asia/Shanghai',
+      limit: 10,
+      cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+    })
   })
 
   it('rejects missing or oversized interwoven references', async () => {

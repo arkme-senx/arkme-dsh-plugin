@@ -23,6 +23,16 @@ describe('ArkmeUiController', () => {
     })
 
     controller.selectSource(source)
+    controller.showCalendar()
+    expect(controller.getSnapshot()).toEqual({
+      open: true,
+      surfaceOpen: true,
+      authRevision: 0,
+      chatRevision: 0,
+      mode: 'calendar',
+    })
+
+    controller.selectSource(source)
     controller.showArko()
     expect(controller.getSnapshot()).toEqual({
       open: true,

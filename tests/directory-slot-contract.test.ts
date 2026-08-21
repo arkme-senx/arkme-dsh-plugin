@@ -26,6 +26,7 @@ describe('Arkme directory slot contract', () => {
     expect(workspace).toContain('activeEntryId: activeDirectoryEntryId')
     expect(workspace).toContain('activateEntry: activateDirectoryEntry')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showRecordings()')
+    expect(workspace).toContain('activateNativeEntry(); arkmeUi.showCalendar()')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showSearch()')
     expect(workspace).toContain('activateNativeEntry(); arkmeUi.showArko()')
   })

@@ -60,6 +60,60 @@ export interface ArkmeSelfSummary {
   totalSec: number
 }
 
+export type ArkmeCalendarScopeKind = 'self'
+
+export interface ArkmeCalendarBucketDay {
+  bucketDate: string
+  count: number
+  protectedCount: number
+  hasRecords: boolean
+  firstSendAtMillis?: number
+}
+
+export interface ArkmeCalendarBucketPage {
+  scope: ArkmeCalendarScopeKind
+  startDate: string
+  endDate: string
+  timezone: string
+  refreshedAtMillis: number
+  days: ArkmeCalendarBucketDay[]
+}
+
+export type ArkmeCalendarContentAccessState = 'available' | 'protected' | 'unknown'
+
+export interface ArkmeCalendarRecordCursor {
+  sendAtMillis: number
+  recordUid: string
+}
+
+export interface ArkmeCalendarRecordItem {
+  recordUid: string
+  sendAtMillis: number
+  accessState: ArkmeCalendarContentAccessState
+  title: string
+  textContent: string
+  preview: string
+  topicTitle?: string
+  sourceKind: 'self' | 'topic' | 'chat' | 'unknown'
+  creationSource: number
+  templateKind: number
+  displayKind: number
+  protected: boolean
+  isUncategorized?: boolean
+  hasManualEdit?: boolean
+  hasPolish?: boolean
+}
+
+export interface ArkmeCalendarDayRecordPage {
+  scope: ArkmeCalendarScopeKind
+  bucketDate: string
+  timezone: string
+  refreshedAtMillis: number
+  items: ArkmeCalendarRecordItem[]
+  hasMore: boolean
+  nextCursor?: ArkmeCalendarRecordCursor
+}
+
 export interface ArkmePendingWrite {
   recordUid: string
   textContent: string
@@ -434,6 +488,8 @@ export interface ArkmeProviderCapabilities {
     revisionPolling: true
     userProfile: true
     imageRead: true
+    /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
+    recordCalendar?: true
     /** Authorized image-library listing with opaque, account-bound media references is available. */
     imageLibrary?: true
     sourceDirectory: true
@@ -1489,6 +1545,8 @@ export type ArkmePluginOperation =
   | 'records.create'
   | 'records.outbox'
   | 'records.retry'
+  | 'calendar.buckets'
+  | 'calendar.records'
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'

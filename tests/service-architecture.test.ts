@@ -33,7 +33,8 @@ const expectedPublicMethods = [
   'listWechatLocations', 'readImage', 'beginWechatLogin', 'pollWechatLogin', 'testLogin',
   'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
-  'searchScene', 'searchRecordings', 'syncHistory', 'summary', 'list', 'listWorldRecords',
+  'searchScene', 'searchRecordings', 'syncHistory', 'summary', 'list', 'calendarBuckets', 'calendarRecords',
+  'listWorldRecords',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed',
@@ -49,7 +50,7 @@ const expectedServiceFiles = [
   'record-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'search-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
-  'community-service.ts', 'extension-review-service.ts',
+  'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {

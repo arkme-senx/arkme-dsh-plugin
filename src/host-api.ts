@@ -367,6 +367,20 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'calendar.buckets': return await service.calendarBuckets({
+      startDate: stringParam(params, 'startDate'),
+      endDate: stringParam(params, 'endDate'),
+      ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
+    })
+    case 'calendar.records': {
+      const cursor = cursorParam(params)
+      return await service.calendarRecords({
+        bucketDate: stringParam(params, 'bucketDate'),
+        limit: numberParam(params, 'limit', 20),
+        ...(stringParam(params, 'timezone') === '' ? {} : { timezone: stringParam(params, 'timezone') }),
+        ...(cursor === undefined ? {} : { cursor }),
+      })
+    }
     case 'search.records': return await service.searchRemote({
       query: stringParam(params, 'query'),
       limit: numberParam(params, 'limit', 20),

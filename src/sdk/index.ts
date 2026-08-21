@@ -10,6 +10,9 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeCalendarBucketPage,
+  ArkmeCalendarDayRecordPage,
+  ArkmeCalendarRecordCursor,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeContentBlock,
@@ -73,6 +76,11 @@ export type {
   ArkmeArrangementReminderWriteResult,
   ArkmeArrangementStatus,
   ArkmeAuthSnapshot,
+  ArkmeCalendarBucketDay,
+  ArkmeCalendarBucketPage,
+  ArkmeCalendarDayRecordPage,
+  ArkmeCalendarRecordCursor,
+  ArkmeCalendarRecordItem,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeContentBlock,
@@ -783,6 +791,34 @@ export class ArkmeSdk {
       undefined,
       options.signal,
     )
+  }
+
+  async calendarBuckets(options: {
+    startDate: string
+    endDate: string
+    timezone?: string
+    signal?: AbortSignal
+  }): Promise<ArkmeCalendarBucketPage> {
+    return await this.call<ArkmeCalendarBucketPage>('calendar.buckets', {
+      startDate: options.startDate,
+      endDate: options.endDate,
+      ...(options.timezone === undefined ? {} : { timezone: options.timezone }),
+    }, options.signal)
+  }
+
+  async calendarRecords(options: {
+    bucketDate: string
+    timezone?: string
+    limit?: number
+    cursor?: ArkmeCalendarRecordCursor
+    signal?: AbortSignal
+  }): Promise<ArkmeCalendarDayRecordPage> {
+    return await this.call<ArkmeCalendarDayRecordPage>('calendar.records', {
+      bucketDate: options.bucketDate,
+      ...(options.timezone === undefined ? {} : { timezone: options.timezone }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    }, options.signal)
   }
 
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {

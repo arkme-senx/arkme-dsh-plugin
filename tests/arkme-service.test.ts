@@ -409,6 +409,98 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('reads record calendar buckets and day records from the Record origin', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown>; authorization: string }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({
+        url: String(input),
+        body,
+        authorization: new Headers(init?.headers).get('Authorization') ?? '',
+      })
+      if (String(input).endsWith('/api/v1/calendar/buckets/query')) {
+        return json({ code: 200, data: {
+          timezone: 'Asia/Shanghai',
+          daily_data: [{ bucket_date: '2026-08-21', count: 41, protected_count: 2, first_send_at: 1_787_310_000_000 }],
+        } })
+      }
+      if (String(input).endsWith('/api/v1/calendar/records/query')) {
+        return json({ code: 200, data: {
+          timezone: 'Asia/Shanghai',
+          items: [{
+            record_uid: 'record-1',
+            send_at: 1_787_310_000_000,
+            is_uncategorized: true,
+            record_core: {
+              record_uid: 'record-1',
+              send_at: 1_787_310_000_000,
+              content_access_state: 1,
+              title: '会议纪要',
+              text_content: '讨论日历迁移',
+              creation_source: 2,
+              template_kind: 1,
+              display_kind: 0,
+              has_manual_edit: false,
+              has_polish: true,
+            },
+            topic_core: { title: '前端重构' },
+          }],
+          has_more: true,
+          next_cursor_send_at: 1_787_300_000_000,
+          next_cursor_record_uid: 'record-next',
+        } })
+      }
+      throw new Error(`unexpected ${String(input)}`)
+    })
+
+    await expect(service.calendarBuckets({
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      timezone: 'Asia/Shanghai',
+    })).resolves.toMatchObject({
+      scope: 'self',
+      days: [{ bucketDate: '2026-08-21', count: 41, protectedCount: 2, hasRecords: true }],
+    })
+    await expect(service.calendarRecords({
+      bucketDate: '2026-08-21',
+      timezone: 'Asia/Shanghai',
+      limit: 10,
+      cursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+    })).resolves.toMatchObject({
+      scope: 'self',
+      items: [{ recordUid: 'record-1', title: '会议纪要', textContent: '讨论日历迁移', topicTitle: '前端重构' }],
+      nextCursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
+    })
+    expect(requests).toMatchObject([
+      {
+        url: 'https://record.test/api/v1/calendar/buckets/query',
+        authorization: 'Bearer access',
+        body: {
+          bucket_scope_kind: 1,
+          bucket_scope_uid: '',
+          start_date: '2026-08-01',
+          end_date: '2026-08-31',
+          timezone: 'Asia/Shanghai',
+        },
+      },
+      {
+        url: 'https://record.test/api/v1/calendar/records/query',
+        authorization: 'Bearer access',
+        body: {
+          bucket_scope_kind: 1,
+          bucket_scope_uid: '',
+          bucket_date: '2026-08-21',
+          timezone: 'Asia/Shanghai',
+          limit: 10,
+          cursor_send_at: 1_787_300_000_000,
+          cursor_record_uid: 'record-next',
+        },
+      },
+    ])
+  })
+
   it('loads recording day sections independently and refreshes an expired Audio bearer', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'expired', refreshToken: 'refresh' }
@@ -622,6 +714,7 @@ describe('ArkmeService', () => {
         revisionPolling: true,
         userProfile: true,
         imageRead: true,
+        recordCalendar: true,
         outgoingCall: true,
         myExtensions: true,
         extensionPublish: true,
