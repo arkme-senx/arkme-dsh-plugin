@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import type { ArkmeBotProvider, ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
+import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
 import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 import { callArkme } from './api.js'
+import { ArkmeBotCreateDialog } from './ArkmeBotCreateDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 type QuickAddDialogKind = 'group' | 'bot'
@@ -60,7 +61,6 @@ const style: Record<string, CSSProperties> = {
   },
   primary: { borderColor: arkmeTheme.primaryAction, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction },
   error: { margin: '10px 0 0', color: arkmeTheme.danger, fontSize: 12, lineHeight: '18px' },
-  success: { margin: '4px 0 12px', color: arkmeTheme.text, fontSize: 14, lineHeight: '22px' },
 }
 
 function maskIcon(base64: string, iconStyle: CSSProperties): CSSProperties {
@@ -153,28 +153,28 @@ export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreate
       onCreateGroup={() => { chooseDialog('group') }}
       onAddBot={() => { chooseDialog('bot') }}
     />}
-    {dialogKind !== undefined && <ArkmeQuickAddDialog
-      kind={dialogKind}
+    {dialogKind === 'group' && <ArkmeGroupCreateDialog
       onClose={() => {
         setDialogKind(undefined)
         triggerRef.current?.focus()
       }}
       onSourceCreated={onSourceCreated}
+    />}
+    {dialogKind === 'bot' && <ArkmeBotCreateDialog
+      onClose={() => {
+        setDialogKind(undefined)
+        triggerRef.current?.focus()
+      }}
       {...(onBotCreated === undefined ? {} : { onBotCreated })}
     />}
   </div>
 }
 
-function ArkmeQuickAddDialog({ kind, onClose, onSourceCreated, onBotCreated }: {
-  kind: QuickAddDialogKind
+function ArkmeGroupCreateDialog({ onClose, onSourceCreated }: {
   onClose(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
-  onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
 }) {
   const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [provider, setProvider] = useState<ArkmeBotProvider>('openclaw')
-  const [createdBot, setCreatedBot] = useState<ArkmeBotSummary>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const firstInput = useRef<HTMLInputElement>(null)
@@ -195,22 +195,12 @@ function ArkmeQuickAddDialog({ kind, onClose, onSourceCreated, onBotCreated }: {
     setBusy(true)
     setError('')
     try {
-      if (kind === 'group') {
-        const source = await callArkme<ArkmeSourceItem>('group.create', {
-          title: normalizedName,
-          clientMutationId: crypto.randomUUID(),
-        })
-        await onSourceCreated(source)
-        onClose()
-        return
-      }
-      const bot = await callArkme<ArkmeBotSummary>('bots.create', {
-        name: normalizedName,
-        provider,
-        ...(description.trim() === '' ? {} : { description: description.trim() }),
+      const source = await callArkme<ArkmeSourceItem>('group.create', {
+        title: normalizedName,
+        clientMutationId: crypto.randomUUID(),
       })
-      await onBotCreated?.(bot)
-      setCreatedBot(bot)
+      await onSourceCreated(source)
+      onClose()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -218,56 +208,31 @@ function ArkmeQuickAddDialog({ kind, onClose, onSourceCreated, onBotCreated }: {
     }
   }
 
-  const title = kind === 'group' ? '创建群聊' : '添加 Bot'
   return <div
     role="presentation" style={style.overlay}
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}
   >
     <div role="dialog" aria-modal="true" aria-labelledby="arkme-quick-add-title" style={style.dialog}>
       <div style={style.dialogHeader}>
-        <h2 id="arkme-quick-add-title" style={style.heading}>{title}</h2>
+        <h2 id="arkme-quick-add-title" style={style.heading}>创建群聊</h2>
         <button type="button" style={style.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
       </div>
-      {createdBot === undefined ? <>
-        <label style={style.label}>{kind === 'group' ? '群聊名称' : 'Bot 名称'}
-          <input
-            ref={firstInput} style={style.input} value={name} disabled={busy}
-            maxLength={kind === 'group' ? 80 : 64}
-            onChange={event => { setName(event.target.value) }}
-            onKeyDown={event => { if (event.key === 'Enter') void submit() }}
-          />
-        </label>
-        {kind === 'bot' && <>
-          <label style={style.label}>Provider
-            <select
-              style={style.input} value={provider} disabled={busy}
-              onChange={event => { setProvider(event.target.value as ArkmeBotProvider) }}
-            >
-              <option value="openclaw">OpenClaw</option>
-              <option value="webhook">Webhook</option>
-            </select>
-          </label>
-          <label style={style.label}>描述（可选）
-            <input
-              style={style.input} value={description} disabled={busy} maxLength={200}
-              onChange={event => { setDescription(event.target.value) }}
-            />
-          </label>
-        </>}
-        {error !== '' && <div role="alert" style={style.error}>{error}</div>}
-        <div style={style.actions}>
-          <button type="button" style={style.button} disabled={busy} onClick={onClose}>取消</button>
-          <button
-            type="button" style={{ ...style.button, ...style.primary }} disabled={busy || name.trim() === ''}
-            onClick={() => { void submit() }}
-          >{busy ? '处理中…' : '确认'}</button>
-        </div>
-      </> : <>
-        <p style={style.success}>Bot“{createdBot.name}”已创建。</p>
-        <div style={style.actions}>
-          <button type="button" style={{ ...style.button, ...style.primary }} onClick={onClose}>完成</button>
-        </div>
-      </>}
+      <label style={style.label}>群聊名称
+        <input
+          ref={firstInput} style={style.input} value={name} disabled={busy}
+          maxLength={80}
+          onChange={event => { setName(event.target.value) }}
+          onKeyDown={event => { if (event.key === 'Enter') void submit() }}
+        />
+      </label>
+      {error !== '' && <div role="alert" style={style.error}>{error}</div>}
+      <div style={style.actions}>
+        <button type="button" style={style.button} disabled={busy} onClick={onClose}>取消</button>
+        <button
+          type="button" style={{ ...style.button, ...style.primary }} disabled={busy || name.trim() === ''}
+          onClick={() => { void submit() }}
+        >{busy ? '处理中…' : '确认'}</button>
+      </div>
     </div>
   </div>
 }

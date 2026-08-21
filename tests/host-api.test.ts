@@ -142,16 +142,21 @@ describe('outgoing call Host API dispatch', () => {
       title: '项目群', clientMutationId: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', userId: 999,
     })
     await dispatchArkmeHostOperation(service as never, 'bots.create', {
-      name: '总结助手', provider: 'openclaw', description: '总结群聊', token: 'must-not-forward',
+      name: '总结助手', provider: 'openclaw', description: '总结群聊',
+      avatar: 'file_asset://avatar-asset-1', token: 'must-not-forward',
     })
     expect(service.createGroup).toHaveBeenCalledWith('项目群', 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b')
     expect(service.createBotSummary).toHaveBeenCalledWith({
-      name: '总结助手', provider: 'openclaw', description: '总结群聊',
+      name: '总结助手', provider: 'openclaw', description: '总结群聊', avatar: 'file_asset://avatar-asset-1',
     })
 
     await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
       name: '错误 Bot', provider: 'arbitrary',
     })).rejects.toMatchObject({ code: 'bot-provider-unsupported' })
+
+    await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
+      name: '错误头像 Bot', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
+    })).rejects.toMatchObject({ code: 'bot-avatar-invalid' })
   })
 
   it('rejects an unknown outgoing media type before calling the service', async () => {

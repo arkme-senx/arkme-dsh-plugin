@@ -88,12 +88,12 @@ describe('Arkme Bot tools', () => {
     const tool = module!.create(ports)
 
     const output = await tool.execute(
-      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦' },
+      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1' },
       { callId: 'bot-create-1', signal: new AbortController().signal } as never,
     ) as string
 
     expect(ports.createBot).toHaveBeenCalledWith(
-      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦' },
+      { name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(output).toContain('arkme-bot-v1.created')

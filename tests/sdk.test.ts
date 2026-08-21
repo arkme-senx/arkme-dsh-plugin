@@ -134,12 +134,19 @@ describe('Arkme SDK', () => {
     const mutationId = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
     await expect(sdk.createGroup(' 项目群 ', { clientMutationId: mutationId }))
       .resolves.toMatchObject({ kind: 'group_chat' })
-    await expect(sdk.createBot({ name: ' 总结助手 ', provider: 'openclaw' }))
+    await expect(sdk.createBot({
+      name: ' 总结助手 ', provider: 'openclaw', avatar: 'file_asset://avatar-asset-1',
+    }))
       .resolves.toMatchObject({ botRef: 'bot-ref' })
     expect(calls).toEqual([
       { operation: 'group.create', params: { title: '项目群', clientMutationId: mutationId } },
-      { operation: 'bots.create', params: { name: '总结助手', provider: 'openclaw' } },
+      { operation: 'bots.create', params: {
+        name: '总结助手', provider: 'openclaw', avatar: 'file_asset://avatar-asset-1',
+      } },
     ])
+    await expect(sdk.createBot({
+      name: '错误头像', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
+    })).rejects.toThrow('file_asset reference')
   })
 
   it('manages extension previews through same-origin Host operations', async () => {

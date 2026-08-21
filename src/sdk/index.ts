@@ -1,4 +1,5 @@
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
   ArkmeArrangementListStatus,
@@ -493,7 +494,7 @@ export class ArkmeSdk {
 
   /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
   async createBot(
-    input: { name: string; provider: ArkmeBotProvider; description?: string },
+    input: { name: string; provider: ArkmeBotProvider; description?: string; avatar?: string },
     signal?: AbortSignal,
   ): Promise<ArkmeBotSummary> {
     const name = input.name.trim()
@@ -502,10 +503,15 @@ export class ArkmeSdk {
       throw new TypeError('Arkme Bot provider is unsupported')
     }
     const description = input.description?.trim() ?? ''
+    const avatar = input.avatar?.trim() ?? ''
+    if (avatar !== '' && !isArkmeBotAvatarRef(avatar)) {
+      throw new TypeError('Arkme Bot avatar must be a file_asset reference')
+    }
     return await this.call<ArkmeBotSummary>('bots.create', {
       name,
       provider: input.provider,
       ...(description === '' ? {} : { description }),
+      ...(avatar === '' ? {} : { avatar }),
     }, signal)
   }
 

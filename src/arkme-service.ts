@@ -378,7 +378,7 @@ export class ArkmeService {
   }
 
   async createBotSummary(
-    input: { name: string; provider: ArkmeBotProvider; description?: string },
+    input: ArkmeBotCreateInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeBotSummary> {
     return await this.bot.createBotSummary(input, options)

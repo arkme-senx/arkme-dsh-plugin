@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { isArkmeBotAvatarRef } from './bot-avatar-ref.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
@@ -94,6 +95,15 @@ function botProviderParam(params: Record<string, unknown>): ArkmeBotProvider {
     throw new ArkmePluginError('bot-provider-unsupported', 'Bot Provider 不受支持', false, 400)
   }
   return provider
+}
+
+function botAvatarParam(params: Record<string, unknown>): string {
+  const avatar = stringParam(params, 'avatar').trim()
+  if (avatar === '') return ''
+  if (!isArkmeBotAvatarRef(avatar)) {
+    throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
+  }
+  return avatar
 }
 
 function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
@@ -414,13 +424,17 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'title'),
       stringParam(params, 'clientMutationId'),
     )
-    case 'bots.create': return await service.createBotSummary({
-      name: stringParam(params, 'name'),
-      provider: botProviderParam(params),
-      ...(stringParam(params, 'description').trim() === ''
-        ? {}
-        : { description: stringParam(params, 'description') }),
-    })
+    case 'bots.create': {
+      const avatar = botAvatarParam(params)
+      return await service.createBotSummary({
+        name: stringParam(params, 'name'),
+        provider: botProviderParam(params),
+        ...(stringParam(params, 'description').trim() === ''
+          ? {}
+          : { description: stringParam(params, 'description') }),
+        ...(avatar === '' ? {} : { avatar }),
+      })
+    }
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),

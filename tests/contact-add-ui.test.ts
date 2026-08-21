@@ -26,6 +26,24 @@ describe('contact add QR interoperability', () => {
 })
 
 describe('contact add dialog layout', () => {
+  it('uses the same viewport-centered overlay placement as the quick-create dialog', () => {
+    const contactSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+    const quickAddSource = readFileSync(new URL('../src/client/ArkmeQuickAdd.tsx', import.meta.url), 'utf8')
+    const sharedPlacement = [
+      "position: 'fixed', inset: 0, zIndex: 1000",
+      'padding: 16',
+      "boxSizing: 'border-box'",
+      "display: 'grid', placeItems: 'center'",
+      "background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))'",
+      "backdropFilter: 'var(--dsw-mask-blur, blur(2px))'",
+    ]
+    for (const declaration of sharedPlacement) {
+      expect(contactSource).toContain(declaration)
+      expect(quickAddSource).toContain(declaration)
+    }
+    expect(contactSource).not.toContain("position: 'absolute', inset: 0, zIndex: 180, padding: 22")
+  })
+
   it('reserves the result-state height without adding a dialog scrollbar', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(source).toContain("height: 'min(620px, calc(100% - 4px))'")

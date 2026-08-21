@@ -129,8 +129,10 @@ const styles: Record<string, CSSProperties> = {
   },
   panel: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' },
   contactBackdrop: {
-    position: 'absolute', inset: 0, zIndex: 180, padding: 22, boxSizing: 'border-box',
-    display: 'grid', placeItems: 'center', background: 'rgba(19, 22, 26, .24)',
+    position: 'fixed', inset: 0, zIndex: 1000, padding: 16, boxSizing: 'border-box',
+    display: 'grid', placeItems: 'center',
+    background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
+    backdropFilter: 'var(--dsw-mask-blur, blur(2px))', WebkitBackdropFilter: 'var(--dsw-mask-blur, blur(2px))',
   },
   contactDialog: {
     width: 'min(620px, 100%)', height: 'min(620px, calc(100% - 4px))', minHeight: 0,
