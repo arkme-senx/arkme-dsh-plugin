@@ -19,7 +19,12 @@ import { createRecordToolModule } from './records/create.js'
 import { listImagesToolModule } from './records/images.js'
 import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
-import { worldPublishTextToolModule, worldRecentToolModule } from './world/index.js'
+import {
+  worldMineToolModule,
+  worldPublishTextToolModule,
+  worldRecentToolModule,
+  worldVoiceprintInviteToolModule,
+} from './world/index.js'
 import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
 import { groupMemberToolModules } from './groups/index.js'
@@ -39,6 +44,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   createRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
+  worldMineToolModule,
+  worldVoiceprintInviteToolModule,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
   ...recordingToolModules,
