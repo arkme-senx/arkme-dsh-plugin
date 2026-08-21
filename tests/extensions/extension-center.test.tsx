@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import * as extensionCenterModule from '../../src/client/ArkmeExtensionCenter.js'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
-  ArkmeExtensionCenter, ArkmeExtensionToggle, ExtensionCard,
+  ARKME_EXTENSION_RESTART_SURFACE, ArkmeExtensionCenter, ArkmeExtensionRestartDialog,
+  ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionDirectInstallTarget,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem,
@@ -197,6 +198,27 @@ describe('Arkme extension market UI', () => {
     expect(html).toContain('--dsw-alias-button-primary-fill')
     expect(html).toContain('--dsw-alias-label-primary-inverted')
     expect(html).not.toContain('--dsw-alias-fill-secondary')
+  })
+
+  it('keeps the post-install restart dialog readable in dark mode and while restarting', () => {
+    const ready = renderToStaticMarkup(<ArkmeExtensionRestartDialog
+      kind="apply" restarting={false} onLater={() => {}} onRestart={() => {}}
+    />)
+    const restarting = renderToStaticMarkup(<ArkmeExtensionRestartDialog
+      kind="apply" restarting onLater={() => {}} onRestart={() => {}}
+    />)
+
+    expect(ARKME_EXTENSION_RESTART_SURFACE).toContain('--dsw-specific-menu')
+    expect(ready).toContain('role="alertdialog"')
+    expect(ready).toContain('--dsw-specific-menu')
+    expect(ready).toContain('--dsw-alias-label-primary')
+    expect(ready).toContain('--dsw-alias-label-secondary')
+    expect(ready).toContain('--dsw-alias-button-primary-fill')
+    expect(ready).toContain('--dsw-alias-label-primary-inverted')
+    expect(ready).toContain('立即重启')
+    expect(restarting).toContain('正在重启…')
+    expect(restarting).toContain('opacity:0.62')
+    expect(restarting.match(/disabled=""/g)).toHaveLength(2)
   })
 
   it('renders only the version in catalog card metadata', () => {
