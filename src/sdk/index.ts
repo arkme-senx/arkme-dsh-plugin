@@ -17,6 +17,12 @@ import type {
   ArkmeCachedSnapshot,
   ArkmeContentBlock,
   ArkmeCreateTextResult,
+  ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberCandidateList,
+  ArkmeGroupInvitePreview,
+  ArkmeGroupMemberList,
+  ArkmeGroupBotAddResult,
+  ArkmeGroupBotCandidateList,
   ArkmeImagePayload,
   ArkmeImageSearchResult,
   ArkmeLongArticleDetail,
@@ -88,6 +94,16 @@ export type {
   ArkmeContentBlock,
   ArkmeContentKind,
   ArkmeCreateTextResult,
+  ArkmeGroupMemberAddItemResult,
+  ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberAddStatus,
+  ArkmeGroupMemberCandidate,
+  ArkmeGroupMemberCandidateList,
+  ArkmeGroupMemberItem,
+  ArkmeGroupMemberList,
+  ArkmeGroupBotAddResult,
+  ArkmeGroupBotCandidate,
+  ArkmeGroupBotCandidateList,
   ArkmeGroupAvatarFallback,
   ArkmeGroupAvatarPresentation,
   ArkmeGroupAvatarSlot,
@@ -667,6 +683,52 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
+  }
+
+  async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)
+  }
+
+  async listGroupMemberCandidates(
+    sourceRef: string,
+    options: { query?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberCandidateList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupMemberCandidateList>('group.member-candidates', {
+      sourceRef,
+      ...(options.query === undefined ? {} : { query: options.query }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  async groupInvitePreview(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupInvitePreview> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupInvitePreview>('group.invite-preview', { sourceRef }, signal)
+  }
+
+  async addGroupMembers(
+    sourceRef: string,
+    candidateRefs: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupMemberAddResult> {
+    const refs = candidateRefs.map(value => value.trim())
+    if (sourceRef.trim() === '' || refs.length === 0 || refs.some(value => value === '')) {
+      throw new TypeError('Arkme group source and candidate references must not be empty')
+    }
+    return await this.call<ArkmeGroupMemberAddResult>('group.members.add', { sourceRef, candidateRefs: refs }, signal)
+  }
+
+  async listGroupBots(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotCandidateList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupBotCandidateList>('group.bots', { sourceRef }, signal)
+  }
+
+  async addGroupBot(sourceRef: string, botRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotAddResult> {
+    if (sourceRef.trim() === '' || botRef.trim() === '') {
+      throw new TypeError('Arkme group source and Bot references must not be empty')
+    }
+    return await this.call<ArkmeGroupBotAddResult>('group.bot.add', { sourceRef, botRef }, signal)
   }
 
   async readSource(

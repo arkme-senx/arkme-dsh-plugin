@@ -12,6 +12,7 @@ import type { ArkmeRecordToolPort } from './records.js'
 import type { ArkmeWorldToolPort } from './world.js'
 import type { ArkmeWechatToolPort } from './wechat.js'
 import type { ArkmeExtensionReviewToolPort } from './extensions.js'
+import type { ArkmeGroupToolPort } from './groups.js'
 
 export interface ArkmeCoreToolPorts extends
   ArkmeAiVideoToolPort,
@@ -26,7 +27,9 @@ export interface ArkmeCoreToolPorts extends
   ArkmeOpenClawToolPort,
   ArkmeWorldToolPort,
   ArkmeExtensionReviewToolPort,
-  ArkmeWechatToolPort {}
+  ArkmeWechatToolPort,
+  ArkmeGroupToolPort {}
+
 
 export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {}
 
@@ -35,4 +38,5 @@ export type {
   ArkmeOpenClawToolPort, ArkmeOutgoingCallToolPort, ArkmeRecordingToolPort, ArkmeRecordToolPort,
   ArkmeWorldToolPort, ArkmeWechatToolPort,
   ArkmeExtensionReviewToolPort,
+  ArkmeGroupToolPort,
 }

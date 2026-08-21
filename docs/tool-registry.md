@@ -25,6 +25,10 @@ Per-tool instructions stay in `ToolDefinition.description`. Cross-tool guidance 
 
 Business and hybrid profiles expose `arkme_extension_preview_add`, `arkme_extension_preview_delete`, and `arkme_extension_preview_reorder`. Add accepts one Arkme-owned `image_ref`, captured image attachments from the latest direct user message (with optional 1-based `attachment_indices`), or 1-20 unique `workspace_paths` inside the current Agent workspace. Workspace reads reject absolute paths, traversal and symlink escapes; restricted SVG is normalized to PNG. `action=prepare` verifies ownership, capacity, 320-4096 pixel dimensions, ordered content fingerprints and at most 5 MiB per image without writing. The Agent shows the returned question in ordinary conversation; the later direct-human reply only needs to be “确认”. `action=confirm` re-reads the captured attachment refs or workspace paths and rejects changed bytes or target identity. A different prepare cannot replace an unconfirmed operation. Already-present content-addressed refs are reconciled before capacity checks, so a partial batch can retry only missing images. Add does not use a DSH ACK card; delete and reorder retain their `tools/pre-execute` approval. Results contain only the safe ordered gallery and revision—never attachment ids, `image_ref`, base64, workspace paths, object keys, signed URLs, or signed headers. Atomic and disabled profiles expose none of these Tools.
 
+## Group member Tools
+
+Business and hybrid profiles expose `arkme_group_member_candidates` and `arkme_group_member_add`. Candidate discovery accepts only an account-bound group `source_ref`, excludes current members and returns signed, opaque `candidate_ref` values for people from the signed-in user's private chats. The write Tool accepts 1-20 unchanged candidate refs, requires explicit-user-write confirmation, reports each outcome independently, and sends private invitation links when the group's join policy requires approval. Raw user IDs are never exposed to the model.
+
 ## Adding a tool
 
 1. Add one module under `src/tools/business`, `src/tools/atomic` or `src/tools/system`.

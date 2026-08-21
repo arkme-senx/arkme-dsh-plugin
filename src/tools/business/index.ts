@@ -22,6 +22,7 @@ import { searchRecordsToolModule } from './records/search.js'
 import { worldPublishTextToolModule, worldRecentToolModule } from './world/index.js'
 import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
+import { groupMemberToolModules } from './groups/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
@@ -39,6 +40,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
+  ...groupMemberToolModules,
   readSourceToolModule,
   reportMessageToolModule,
   relatedRecordingsToolModule,

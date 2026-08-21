@@ -283,6 +283,34 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('exposes group candidate discovery and member addition without raw user IDs', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'group.member-candidates') return success({ items: [], total: 0, hasMore: false, mode: 'direct_add' })
+        if (request.operation === 'group.invite-preview') return success({ source: { sourceRef: 'group-ref' }, title: '群聊', inviterDisplayName: '发起人', inviteLink: 'https://example.test/invite', expireAtMillis: 1, mode: 'direct_add' })
+        if (request.operation === 'group.members.add') return success({ sourceRef: 'group-ref', mode: 'direct_add', items: [], addedCount: 0, invitedCount: 0, failedCount: 0 })
+        if (request.operation === 'group.bots') return success({ groupSourceRef: 'group-ref', displayName: '群聊', canAddBots: true, items: [] })
+        if (request.operation === 'group.bot.add') return success({ groupSourceRef: 'group-ref', botRef: 'bot-ref', installed: true })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    await expect(sdk.listGroupMemberCandidates('group-ref', { query: '林', limit: 10 })).resolves.toMatchObject({ mode: 'direct_add' })
+    await expect(sdk.groupInvitePreview('group-ref')).resolves.toMatchObject({ title: '群聊' })
+    await expect(sdk.addGroupMembers('group-ref', [' candidate-ref '])).resolves.toMatchObject({ sourceRef: 'group-ref' })
+    await expect(sdk.listGroupBots('group-ref')).resolves.toMatchObject({ canAddBots: true })
+    await expect(sdk.addGroupBot('group-ref', 'bot-ref')).resolves.toMatchObject({ installed: true })
+    expect(calls).toEqual([
+      { operation: 'group.member-candidates', params: { sourceRef: 'group-ref', query: '林', limit: 10 } },
+      { operation: 'group.invite-preview', params: { sourceRef: 'group-ref' } },
+      { operation: 'group.members.add', params: { sourceRef: 'group-ref', candidateRefs: ['candidate-ref'] } },
+      { operation: 'group.bots', params: { sourceRef: 'group-ref' } },
+      { operation: 'group.bot.add', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
+    ])
+  })
+
   it('exposes typed current-user extension inventory and Cordis publication', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

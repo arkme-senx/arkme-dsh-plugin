@@ -110,6 +110,9 @@ import type {
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupMemberList,
+  ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberCandidateList,
+  ArkmeGroupInvitePreview,
   ArkmeGroupNotificationResult,
   ArkmeGroupSettingsSnapshot,
   ArkmeIdAvailabilitySnapshot,
@@ -250,7 +253,13 @@ export class ArkmeService {
       this.record,
     )
     this.arko = new ArkoService(this.runtime, this.profile)
-    this.group = new GroupService(this.runtime, this.source, this.profile)
+    this.group = new GroupService(this.runtime, this.source, this.profile, {
+      sendPrivateText: async (sourceRef, chatSessionUid, text, recordUid, relationUid, session, signal) => {
+        await this.chat.sendChatSourceTextRaw(
+          sourceRef, chatSessionUid, text, recordUid, relationUid, session, undefined, undefined, signal,
+        )
+      },
+    })
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
@@ -410,6 +419,7 @@ export class ArkmeService {
         fileUpload: this.config.richMediaSendEnabled !== false,
         outgoingCall: true,
         groupMembers: true,
+        groupMemberAdd: true,
         userCard: true,
         openPrivateChat: true,
         groupSettings: true,
@@ -797,6 +807,25 @@ export class ArkmeService {
     options: { activeOnly?: boolean; signal?: AbortSignal } = {},
   ): Promise<ArkmeGroupMemberList> {
     return await this.group.listGroupMembers(sourceRef, options)
+  }
+
+  async listGroupMemberCandidates(
+    sourceRef: string,
+    options: { query?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberCandidateList> {
+    return await this.group.listGroupMemberCandidates(sourceRef, options)
+  }
+
+  async groupInvitePreview(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupInvitePreview> {
+    return await this.group.groupInvitePreview(sourceRef, signal)
+  }
+
+  async addGroupMembers(
+    sourceRef: string,
+    candidateRefs: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupMemberAddResult> {
+    return await this.group.addGroupMembers(sourceRef, candidateRefs, signal)
   }
 
   async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {

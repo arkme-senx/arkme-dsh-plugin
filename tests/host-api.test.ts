@@ -26,8 +26,35 @@ function fakeService() {
     getLongArticleDraft: vi.fn(async () => undefined),
     putLongArticleDraft: vi.fn(async () => undefined),
     removeLongArticleDraft: vi.fn(async () => undefined),
+    listGroupMemberCandidates: vi.fn(async () => ({ items: [] })),
+    addGroupMembers: vi.fn(async () => ({ items: [] })),
+    groupInvitePreview: vi.fn(async () => ({ inviteLink: 'https://example.test/invite' })),
+    listGroupBots: vi.fn(async () => ({ items: [] })),
+    addGroupBot: vi.fn(async () => ({ installed: true })),
   }
 }
+
+describe('group member Host API dispatch', () => {
+  it('forwards only bounded candidate discovery and add fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'group.member-candidates', {
+      sourceRef: 'group-ref', query: '林', limit: 12.8, userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'group.members.add', {
+      sourceRef: 'group-ref', candidateRefs: ['candidate-1'], userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'group.invite-preview', {
+      sourceRef: 'group-ref', userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'group.bots', { sourceRef: 'group-ref', userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'group.bot.add', { sourceRef: 'group-ref', botRef: 'bot-ref', userId: 999 })
+    expect(service.listGroupMemberCandidates).toHaveBeenCalledWith('group-ref', { query: '林', limit: 12.8 })
+    expect(service.addGroupMembers).toHaveBeenCalledWith('group-ref', ['candidate-1'])
+    expect(service.groupInvitePreview).toHaveBeenCalledWith('group-ref')
+    expect(service.listGroupBots).toHaveBeenCalledWith('group-ref')
+    expect(service.addGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref')
+  })
+})
 
 describe('outgoing call Host API dispatch', () => {
   it('rejects an unknown outgoing media type before calling the service', async () => {

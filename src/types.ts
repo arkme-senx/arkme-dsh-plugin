@@ -500,6 +500,7 @@ export interface ArkmeProviderCapabilities {
     fileUpload: boolean
     outgoingCall: true
     groupMembers: true
+    groupMemberAdd?: true
     userCard: true
     openPrivateChat: true
     groupSettings: true
@@ -973,6 +974,7 @@ export interface ArkmeGroupMemberItem {
   isSelf: boolean
   isOwner: boolean
   joinedAtMillis: number
+  recordCount: number
 }
 
 export interface ArkmeGroupMemberList {
@@ -982,6 +984,70 @@ export interface ArkmeGroupMemberList {
   activeCount: number
   selfRole: ArkmeGroupMemberRole
   selfStatus: ArkmeGroupMemberStatus
+}
+
+export interface ArkmeGroupMemberCandidate {
+  candidateRef: string
+  displayName: string
+  avatarRef?: string
+  origin: 'private_chat'
+  relation: 'contact' | 'stranger'
+}
+
+export interface ArkmeGroupBotCandidate {
+  botRef: string
+  name: string
+  description: string
+  installed: boolean
+}
+
+export interface ArkmeGroupBotCandidateList {
+  groupSourceRef: string
+  displayName: string
+  canAddBots: boolean
+  items: ArkmeGroupBotCandidate[]
+}
+
+export interface ArkmeGroupBotAddResult {
+  botRef: string
+  groupSourceRef: string
+  installed: boolean
+}
+
+export interface ArkmeGroupMemberCandidateList {
+  source: ArkmeSourceItem
+  items: ArkmeGroupMemberCandidate[]
+  total: number
+  hasMore: boolean
+  mode: 'direct_add' | 'approval_invite'
+  groups: ArkmeSourceItem[]
+  contactCount: number
+  strangerCount: number
+}
+
+export interface ArkmeGroupInvitePreview {
+  source: ArkmeSourceItem
+  title: string
+  inviterDisplayName: string
+  inviteLink: string
+  expireAtMillis: number
+  mode: 'direct_add' | 'approval_invite'
+}
+
+export type ArkmeGroupMemberAddStatus = 'added' | 'reactivated' | 'already_member' | 'invite_sent' | 'failed'
+
+export interface ArkmeGroupMemberAddItemResult {
+  candidateRef: string
+  displayName: string
+  status: ArkmeGroupMemberAddStatus
+  error?: string
+}
+
+export interface ArkmeGroupMemberAddResult {
+  source: ArkmeSourceItem
+  results: ArkmeGroupMemberAddItemResult[]
+  succeededCount: number
+  failedCount: number
 }
 
 export interface ArkmeUserCardSnapshot {
@@ -1597,6 +1663,11 @@ export type ArkmePluginOperation =
   | 'source.ai-polish.confirm-disable'
   | 'source.ai-polish.retry'
   | 'group.members'
+  | 'group.member-candidates'
+  | 'group.invite-preview'
+  | 'group.members.add'
+  | 'group.bots'
+  | 'group.bot.add'
   | 'group.settings'
   | 'group.notification.set'
   | 'group.rename'

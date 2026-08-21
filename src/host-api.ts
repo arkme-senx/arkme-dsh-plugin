@@ -619,6 +619,27 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
     )
+    case 'group.member-candidates': return await service.listGroupMemberCandidates(
+      stringParam(params, 'sourceRef'),
+      {
+        ...(stringParam(params, 'query') === '' ? {} : { query: stringParam(params, 'query') }),
+        limit: numberParam(params, 'limit', 20),
+      },
+    )
+    case 'group.invite-preview': return await service.groupInvitePreview(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'group.members.add': return await service.addGroupMembers(
+      stringParam(params, 'sourceRef'),
+      stringListParam(params, 'candidateRefs'),
+    )
+    case 'group.bots': return await service.listGroupBots(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'group.bot.add': return await service.addGroupBot(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'botRef'),
+    )
     case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'))
     case 'group.notification.set': return await service.setGroupMessageDnd(
       stringParam(params, 'sourceRef'),
