@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeBotProvider, ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import arkmeBotIconBase64 from '../../assets/icons/cpu-linear.svg'
 import arkmeGroupIconBase64 from '../../assets/icons/profile-2user-linear.svg'
-import arkmeQuickAddIconBase64 from '../../assets/icons/quick-add-sidebar.svg'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -10,26 +9,14 @@ import { arkmeTheme } from './arkme-theme.js'
 type QuickAddDialogKind = 'group' | 'bot'
 
 const style: Record<string, CSSProperties> = {
-  anchor: { position: 'relative', width: '100%' },
-  row: {
-    position: 'relative', width: '100%', minHeight: 52, margin: '1px 0', display: 'flex', alignItems: 'center', gap: 10,
-    padding: '7px 10px', boxSizing: 'border-box', border: 0, borderRadius: 13,
-    background: 'transparent', color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer', font: 'inherit', outline: 0,
-  },
-  rowSelected: { background: arkmeTheme.accentSoft },
-  rowIconShell: {
-    width: 38, height: 38, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 999,
-    color: arkmeTheme.text,
-  },
-  rowIcon: { width: 22, height: 19 },
-  rowContent: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
-  rowTitle: { fontSize: 13, lineHeight: '18px', fontWeight: 600 },
-  rowSubtitle: {
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: arkmeTheme.secondary, fontSize: 11, lineHeight: '16px',
+  anchor: { position: 'relative', zIndex: 90, flex: 'none' },
+  trigger: {
+    width: 30, height: 30, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.text,
+    cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
   },
   menu: {
-    position: 'absolute', zIndex: 90, top: 53, left: 10, width: 232, padding: '6px 10px',
+    position: 'absolute', zIndex: 90, top: 36, right: 0, width: 232, padding: '6px 10px',
     boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 12,
     background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow, color: arkmeTheme.text,
   },
@@ -111,8 +98,7 @@ export function ArkmeQuickAddMenu({ onContactAdd, onCreateGroup, onAddBot }: {
   </div>
 }
 
-export function ArkmeQuickAddRow({ selected = false, onContactAdd, onSourceCreated, onBotCreated }: {
-  selected?: boolean
+export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreated }: {
   onContactAdd(): void
   onSourceCreated(source: ArkmeSourceItem): void | Promise<void>
   onBotCreated?(bot: ArkmeBotSummary): void | Promise<void>
@@ -148,19 +134,11 @@ export function ArkmeQuickAddRow({ selected = false, onContactAdd, onSourceCreat
 
   return <div ref={anchorRef} style={style.anchor}>
     <button
-      ref={triggerRef} type="button" role="treeitem" aria-selected={selected}
+      ref={triggerRef} type="button" aria-label="添加联系人、群聊或 Bot" title="添加"
       aria-haspopup="menu" aria-expanded={menuOpen}
-      style={{ ...style.row, ...(selected ? style.rowSelected : {}) }}
+      style={style.trigger}
       onClick={() => { setMenuOpen(open => !open) }}
-    >
-      <span style={style.rowIconShell} aria-hidden>
-        <span style={maskIcon(arkmeQuickAddIconBase64, style.rowIcon!)} />
-      </span>
-      <span style={style.rowContent}>
-        <span style={style.rowTitle}>添加</span>
-        <span style={style.rowSubtitle}>联系人、群聊与 Bot</span>
-      </span>
-    </button>
+    >＋</button>
     {menuOpen && <ArkmeQuickAddMenu
       onContactAdd={() => {
         setMenuOpen(false)

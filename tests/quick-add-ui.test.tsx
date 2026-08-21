@@ -1,17 +1,17 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { ArkmeQuickAddMenu, ArkmeQuickAddRow } from '../src/client/ArkmeQuickAdd.js'
+import { ArkmeQuickAddButton, ArkmeQuickAddMenu } from '../src/client/ArkmeQuickAdd.js'
 
 describe('Arkme quick-add UI', () => {
-  it('keeps one ordinary add entry in the conversation list', () => {
-    const markup = renderToStaticMarkup(<ArkmeQuickAddRow
+  it('renders one compact add button for the conversation header', () => {
+    const markup = renderToStaticMarkup(<ArkmeQuickAddButton
       onContactAdd={vi.fn()}
       onSourceCreated={vi.fn()}
     />)
-    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-label="添加联系人、群聊或 Bot"')
     expect(markup).toContain('aria-haspopup="menu"')
-    expect(markup).toContain('>添加<')
-    expect(markup).toContain('联系人、群聊与 Bot')
+    expect(markup).toContain('>＋</button>')
+    expect(markup).not.toContain('role="treeitem"')
     expect(markup).not.toContain('>添加联系人<')
   })
 

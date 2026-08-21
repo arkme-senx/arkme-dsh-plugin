@@ -18,7 +18,7 @@ import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
-import { ArkmeQuickAddRow } from './ArkmeQuickAdd.js'
+import { ArkmeQuickAddButton } from './ArkmeQuickAdd.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
@@ -1132,6 +1132,11 @@ export function ArkmeNavigation({
     </header>}
     {directory === 'root' && embeddedProductShell && <header style={styles.header}>
       <h2 style={styles.headerTitle}>对话</h2>
+      {authenticated && <ArkmeQuickAddButton
+        onContactAdd={showContactAdd}
+        onSourceCreated={createdQuickAddSource}
+        onBotCreated={createdQuickAddBot}
+      />}
     </header>}
     {directory === 'root' && embeddedProductShell && <label style={styles.searchField}>
       <MagnifyingGlass size={16} aria-hidden />
@@ -1194,12 +1199,6 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
         </button>}
-        {authenticated && <ArkmeQuickAddRow
-          selected={activeDirectoryEntryId === undefined && ui.mode === 'contact-add'}
-          onContactAdd={showContactAdd}
-          onSourceCreated={createdQuickAddSource}
-          onBotCreated={createdQuickAddBot}
-        />}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}
