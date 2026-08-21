@@ -1384,6 +1384,8 @@ export interface ArkmePluginUpdateStatus {
 export type ArkmePluginUpdateInstallPhase =
   | 'idle'
   | 'preparing'
+  | 'downloading'
+  | 'verifying'
   | 'installing'
   | 'restarting'
   | 'succeeded'

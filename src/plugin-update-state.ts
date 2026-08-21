@@ -38,7 +38,7 @@ function safeReleaseNotesUrl(value: unknown): string | undefined {
   try {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
-      || !['github.com', 'npmjs.com', 'www.npmjs.com', 'arkme.ai', 'www.arkme.ai']
+      || !['github.com', 'arkme.ai', 'www.arkme.ai']
         .includes(url.hostname.toLowerCase())) return undefined
     return url.toString()
   } catch {

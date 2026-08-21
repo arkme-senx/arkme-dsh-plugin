@@ -1,25 +1,20 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { parseRegistryPackageMetadata } from '../src/plugin-update.js'
 
 describe('published update metadata', () => {
-  it('ships a Registry-compatible bounded notice in package.json', () => {
+  it('does not configure npm publication or npm-hosted plugin release notes', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       name: string
       version: string
-      arkme?: { updateNotice?: unknown }
+      publishConfig?: unknown
+      arkme?: { updateNotice?: { releaseNotesUrl?: string } }
     }
 
-    expect(parseRegistryPackageMetadata(manifest)).toEqual({
-      version: manifest.version,
-      notice: {
-        schemaVersion: 1,
-        level: 'normal',
-        title: 'Arkme 插件 0.1.10 更新',
-        summary: '基于最新 master 重新发布，包含当前扩展市场、Agent 预览图上传及新版 DSH 兼容修复。',
-        publishedAt: '2026-08-20T14:25:34.000Z',
-        releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
-      },
-    })
+    expect(manifest.name).toBe('@senguoyun/dsh-arkme')
+    expect(manifest.version).toBe('0.1.16')
+    expect(manifest.publishConfig).toBeUndefined()
+    expect(manifest.arkme?.updateNotice?.releaseNotesUrl).toBe('https://arkme.ai/releases/dsh-arkme/0.1.16')
+    expect(JSON.stringify(manifest)).not.toContain('registry.npmjs.org')
+    expect(JSON.stringify(manifest)).not.toContain('npmjs.com')
   })
 })

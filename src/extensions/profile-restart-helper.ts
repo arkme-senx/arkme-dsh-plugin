@@ -35,6 +35,13 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' && value.length <= 4096 ? value : undefined
 }
 
+function isPluginUpdateRestartPlan(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && typeof (value as { targetArtifactPath?: unknown }).targetArtifactPath === 'string'
+    && typeof (value as { targetVersion?: unknown }).targetVersion === 'string'
+    && typeof (value as { jobId?: unknown }).jobId === 'string'
+}
+
 export function parseExtensionProfileRestartPlan(value: unknown): ArkmeExtensionProfileRestartPlan {
   if (value === null || typeof value !== 'object') throw new Error('extension restart plan must be an object')
   const source = value as Record<string, unknown>
@@ -231,7 +238,19 @@ async function main(): Promise<void> {
   const managed = mode === '--managed-finalize' || mode === '--managed-rollback'
   const planPath = managed ? process.argv[3] : mode
   if (planPath === undefined) throw new Error('extension restart plan path is required')
-  const parsed = parseExtensionProfileRestartPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
+  const rawPlan = JSON.parse(await readFile(planPath, 'utf8')) as unknown
+  if (managed && isPluginUpdateRestartPlan(rawPlan)) {
+    const pluginUpdate = await import('../plugin-updater-helper.js')
+    if (mode === '--managed-finalize') {
+      const healthUrl = process.argv[4]
+      if (healthUrl === undefined) throw new Error('managed plugin update health URL is required')
+      await pluginUpdate.finalizeManagedPluginUpdate(planPath, healthUrl)
+      return
+    }
+    await pluginUpdate.rollbackManagedPluginUpdate(planPath)
+    return
+  }
+  const parsed = parseExtensionProfileRestartPlan(rawPlan)
   const log = openSync(parsed.logPath, 'a', 0o600)
   closeSync(log)
   if (mode === '--managed-finalize') {

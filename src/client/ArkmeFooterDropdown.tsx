@@ -37,7 +37,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
     ? arkmeChatDirectory.totalUnreadCount()
     : 0
   const updateInstalling = updateState.install !== undefined
-    && ['preparing', 'installing', 'restarting'].includes(updateState.install.phase)
+    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   if (ui.open) hasOpened.current = true
   useLayoutEffect(() => {
     const slot = rootRef.current?.parentElement

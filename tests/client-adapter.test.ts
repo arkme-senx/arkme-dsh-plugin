@@ -33,6 +33,7 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).toEqual([
       'sidebar.footer.action',
       'settings.general.item',
+      'shell.overlay',
     ])
     const footer = registered.find(item => item.name === 'sidebar.footer.action')!
     const face = footer.inject?.() as {
@@ -60,7 +61,10 @@ describe('official DSH client adapter', () => {
     expect(registered.map(item => item.name)).not.toContain('conversation')
     expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
     expect(registered.map(item => item.name)).not.toContain('main.surface')
-    expect(registered.map(item => item.name)).not.toContain('shell.overlay')
+    expect(registered).toContainEqual(expect.objectContaining({
+      name: 'shell.overlay',
+      id: 'arkme-app-update-dialog',
+    }))
   })
 
   it('registers the startup authentication overlay only in the Arkme desktop shell', () => {
@@ -85,5 +89,22 @@ describe('official DSH client adapter', () => {
       name: 'shell.overlay',
       id: 'arkme-startup-auth-gate',
     }))
+  })
+
+  it('starts independent APP and plugin update status stores from the client lifecycle', () => {
+    const effect = vi.fn()
+
+    apply({
+      slots: {
+        inject: vi.fn(() => () => {}),
+        register: vi.fn(),
+      },
+      effect,
+    } as never)
+
+    expect(effect.mock.calls.map(call => call[1])).toEqual(expect.arrayContaining([
+      'dsh-arkme: client plugin update status',
+      'dsh-arkme: client app update status',
+    ]))
   })
 })

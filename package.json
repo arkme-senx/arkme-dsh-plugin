@@ -1,11 +1,8 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.10",
+  "version": "0.1.16",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
-  "publishConfig": {
-    "access": "public"
-  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -57,10 +54,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.10 更新",
+      "title": "Arkme 插件 0.1.16 更新",
       "summary": "基于最新 master 重新发布，包含当前扩展市场、Agent 预览图上传及新版 DSH 兼容修复。",
       "publishedAt": "2026-08-20T14:25:34.000Z",
-      "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
+      "releaseNotesUrl": "https://arkme.ai/releases/dsh-arkme/0.1.16"
     }
   },
   "scripts": {
