@@ -17,6 +17,7 @@ function textFiles(path: string): string[] {
 function withoutInfrastructureNames(content: string): string {
   return content
     .replaceAll('https://jotmo.senguo.me', '')
+    .replaceAll('https://jotmo-app.senguo.me', '')
     .replaceAll('https://jotmo-subject.senguo.me', '')
     .replaceAll('https://jotmo-record.senguo.me', '')
     .replaceAll('https://jotmo-chat.senguo.me', '')
@@ -71,6 +72,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
     join(root, 'src/services/contact-service.ts'),
   ])

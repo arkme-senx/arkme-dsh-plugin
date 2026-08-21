@@ -106,7 +106,7 @@ describe('ArkmeCallHistorySurface', () => {
     expect(markup).toContain('placeholder="输入手机号或即我号"')
     expect(markup).toContain('扫一扫二维码添加好友')
     expect(markup).toContain('即我号：Falling')
-    expect(markup).toContain('alt="我的即我二维码"')
+    expect(markup).toContain('alt="我的 Arkme 二维码"')
     expect(markup).toContain('icon-scan-add-contact.svg')
   })
 

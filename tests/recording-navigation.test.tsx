@@ -66,10 +66,10 @@ describe('recording navigation entry', () => {
     expect(markup).not.toContain('<circle')
   })
 
-  it('uses the exact contact-add icon migrated from the Jiwo client', () => {
+  it('uses the exact contact-add icon migrated from the mobile client', () => {
     const icon = readFileSync(new URL('../assets/icons/user-add-linear.svg', import.meta.url))
     expect(createHash('sha256').update(icon).digest('hex'))
-      .toBe('ce4a9a91226c2d653d0431638607b30eb189848c1856bdd5380517a19d268518')
+      .toBe('3ce1f950f6a3999ecb66f5bf72f1c7e1300f07f2cd5ce426078184cff89f83ff')
   })
 
   it('renders a call row that keeps recordings and AI summaries together', () => {

@@ -578,9 +578,9 @@ describe('ArkmeRecordingSurface layout', () => {
     if (RecordingEmptyActions === undefined) return
 
     const markup = renderToStaticMarkup(<RecordingEmptyActions />)
-    const buttonStyle = matchStyle(markup, /<button type="button" style="([^"]+)"[^>]*>.*?绑定即我随身录/)
+    const buttonStyle = matchStyle(markup, /<button type="button" style="([^"]+)"[^>]*>.*?绑定 Arkme 随身录/)
     expect(markup).toContain('aria-label="全天候录音操作"')
-    expect(markup).toContain('>绑定即我随身录<')
+    expect(markup).toContain('>绑定 Arkme 随身录<')
     expect(markup).toContain('>导入历史音频<')
     expect(markup).toContain('>手动录音<')
     expect(markup).toContain('accept="audio/*"')

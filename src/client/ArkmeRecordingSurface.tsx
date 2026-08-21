@@ -1232,7 +1232,7 @@ export function RecordingEmptyActions() {
 
   return <section style={styles.captureArea} aria-label="全天候录音操作">
     <div style={styles.captureToolbar}>
-      <button type="button" style={{ ...styles.captureButton, ...styles.capturePrimary }} disabled={recording} onClick={() => { setNotice('请先在即我移动端完成“即我随身录”绑定，绑定后的内容会同步显示在这里。') }}><CaptureGlyph kind="bind" />绑定即我随身录</button>
+      <button type="button" style={{ ...styles.captureButton, ...styles.capturePrimary }} disabled={recording} onClick={() => { setNotice('请先在 Arkme 移动端完成“Arkme 随身录”绑定，绑定后的内容会同步显示在这里。') }}><CaptureGlyph kind="bind" />绑定 Arkme 随身录</button>
       <button type="button" style={styles.captureButton} disabled={recording} onClick={() => { importRef.current?.click() }}><CaptureGlyph kind="import" />导入历史音频</button>
       <button type="button" style={styles.captureButton} onClick={() => { if (recording) stopRecording(); else void startRecording() }}><CaptureGlyph kind="record" />{recording ? '结束录音' : '手动录音'}</button>
       <input ref={importRef} hidden type="file" accept="audio/*" aria-label="选择历史音频" onChange={event => {
@@ -1252,7 +1252,7 @@ function RecordingEmptyState() {
   return <section style={styles.emptyCard} aria-label="当天暂无录音">
     <div aria-hidden style={{ fontSize: 44, opacity: .45 }}>◌</div>
     <h3 style={styles.emptyTitle}>暂无转写内容，快去录音吧！</h3>
-    <p style={styles.emptyText}>可从左侧绑定即我随身录、导入历史音频或使用电脑麦克风录制。</p>
+    <p style={styles.emptyText}>可从左侧绑定 Arkme 随身录、导入历史音频或使用电脑麦克风录制。</p>
   </section>
 }
 
