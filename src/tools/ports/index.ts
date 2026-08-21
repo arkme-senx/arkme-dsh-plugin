@@ -29,9 +29,8 @@ export interface ArkmeCoreToolPorts extends
   ArkmeOpenClawToolPort,
   ArkmeWorldToolPort,
   ArkmeExtensionReviewToolPort,
-  ArkmeWechatToolPort,
-  ArkmeGroupToolPort {}
-
+  ArkmeGroupToolPort,
+  ArkmeWechatToolPort {}
 
 export interface ArkmeToolPorts extends ArkmeCoreToolPorts, ArkmeMediaToolPort {}
 

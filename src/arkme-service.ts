@@ -94,6 +94,8 @@ import type {
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
   ArkmeBotList,
+  ArkmeBotProvider,
+  ArkmeBotSummary,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCachedQueryResult,
@@ -352,6 +354,13 @@ export class ArkmeService {
     return await this.bot.createBot(input, options)
   }
 
+  async createBotSummary(
+    input: { name: string; provider: ArkmeBotProvider; description?: string },
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotSummary> {
+    return await this.bot.createBotSummary(input, options)
+  }
+
   async revealBotSecret(botRef: string, options: { signal?: AbortSignal } = {}): Promise<SecretValue> {
     return await this.bot.revealBotSecret(botRef, options)
   }
@@ -431,6 +440,7 @@ export class ArkmeService {
         userCard: true,
         openPrivateChat: true,
         contactAdd: true,
+        conversationQuickAdd: true,
         groupSettings: true,
         extensionManagement: true,
         extensionMetadataEdit: true,
@@ -850,6 +860,14 @@ export class ArkmeService {
     signal?: AbortSignal,
   ): Promise<ArkmeGroupMemberAddResult> {
     return await this.group.addGroupMembers(sourceRef, candidateRefs, signal)
+  }
+
+  async createGroup(
+    title: string,
+    clientMutationId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceItem> {
+    return await this.group.createGroup(title, clientMutationId, options)
   }
 
   async groupSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupSettingsSnapshot> {

@@ -81,6 +81,7 @@ describe('registerArkmeTools', () => {
       'arkme_id_set',
       'arkme_contact_search',
       'arkme_contact_add',
+      'arkme_group_create',
       'arkme_arko_profile',
       'arkme_arko_session',
       'arkme_arko_ask',

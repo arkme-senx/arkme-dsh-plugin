@@ -131,6 +131,14 @@ export class BotService {
     }
   }
 
+  /** Browser-safe result: the one-time credential never leaves the Host owner. */
+  async createBotSummary(
+    input: ArkmeBotCreateInput,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotSummary> {
+    return (await this.createBot(input, options)).bot
+  }
+
   async revealBotSecret(botRef: string, options: { signal?: AbortSignal } = {}): Promise<SecretValue> {
     const session = await this.runtime.requireSession()
     const reference = await this.openBotRef(botRef, session.userId)

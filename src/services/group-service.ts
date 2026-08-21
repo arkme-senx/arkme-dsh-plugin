@@ -20,6 +20,8 @@ import { ProfileService } from './profile-service.js'
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
@@ -386,6 +388,49 @@ export class GroupService {
       throw new ArkmePluginError('group-candidate-ref-invalid', '群成员候选引用与当前账号不匹配', false, 403)
     }
     return result
+  }
+
+  async createGroup(
+    title: string,
+    clientMutationId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceItem> {
+    const normalizedTitle = title.trim()
+    if (normalizedTitle === '' || Array.from(normalizedTitle).length > 80) {
+      throw new ArkmePluginError('group-title-invalid', '群聊名称需为 1-80 个字符', false)
+    }
+    if (!UUID.test(clientMutationId)) {
+      throw new ArkmePluginError('client-mutation-id-invalid', '群聊操作标识无效', false)
+    }
+    const session = await this.runtime.requireSession()
+    let data: Record<string, unknown>
+    try {
+      data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/create-group',
+        {
+          chat_session_uid: clientMutationId,
+          title: normalizedTitle,
+          member_user_ids: [],
+          create_at: Date.now(),
+        },
+        session,
+        options.signal,
+      )
+    } catch (error) {
+      if (error instanceof ArkmePluginError && ['arkme-network-error', 'arkme-timeout'].includes(error.code)) {
+        throw new ArkmePluginError(
+          'group-create-outcome-unknown',
+          '群聊创建结果未知，请刷新会话列表确认；不会自动重试',
+          false,
+          409,
+          { cause: error },
+        )
+      }
+      throw error
+    }
+    const source = await this.source.chatSourceFromBundle(data, session, undefined, [])
+    this.source.setChatSourceByKey(`${String(session.userId)}:${clientMutationId}`, source)
+    return source
   }
 
   async listGroupMembers(

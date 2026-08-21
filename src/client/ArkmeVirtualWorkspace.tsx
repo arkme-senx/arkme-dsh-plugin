@@ -18,6 +18,7 @@ import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
+import { ArkmeQuickAddRow } from './ArkmeQuickAdd.js'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
@@ -1066,6 +1067,38 @@ export function ArkmeNavigation({
     setSources(refreshed)
   }
 
+  const createdQuickAddSource = async (source: ArkmeSourceItem): Promise<void> => {
+    activateNativeEntry()
+    const sharedSources = arkmeChatDirectory.getSnapshot().sources
+    const currentSources = sharedSources.length > 0 ? sharedSources : sources
+    const optimistic = [source, ...currentSources.filter(item => item.sourceRef !== source.sourceRef)]
+    setDirectory('root')
+    setSources(optimistic)
+    arkmeChatDirectory.publish(optimistic)
+    arkmeUi.selectSource(source)
+    persistCache({ directory: 'root', sources: { root: optimistic }, selectedSourceRef: source.sourceRef })
+    onActivateSurface?.()
+
+    const refreshed = await arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
+    if (refreshed === undefined) return
+    const reconciled = refreshed.some(item => item.sourceRef === source.sourceRef)
+      ? refreshed
+      : optimistic
+    setSources(reconciled)
+    arkmeChatDirectory.publish(reconciled)
+    const selected = reconciled.find(item => item.sourceRef === source.sourceRef) ?? source
+    arkmeUi.selectSource(selected)
+    persistCache({ directory: 'root', sources: { root: reconciled }, selectedSourceRef: selected.sourceRef })
+  }
+
+  const createdQuickAddBot = async (): Promise<void> => {
+    const refreshed = await arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
+    if (refreshed === undefined) return
+    setSources(refreshed)
+    arkmeChatDirectory.publish(refreshed)
+    persistCache({ directory: 'root', sources: { root: refreshed } })
+  }
+
   if (!wide) {
     return <div style={styles.rail}><button
       type="button" style={styles.railButton} aria-label={authenticated ? 'Arkme' : bindingRequired ? 'Arkme · 待绑定' : 'Arkme · 未登录'}
@@ -1160,8 +1193,13 @@ export function ArkmeNavigation({
             </span>
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
-        </button>}
-        {!embeddedProductShell && <ArkmeContactAddRow selected={activeDirectoryEntryId === undefined && ui.mode === 'contact-add'} onClick={showContactAdd} />}
+        </button>
+        <ArkmeQuickAddRow
+          selected={activeDirectoryEntryId === undefined && ui.mode === 'contact-add'}
+          onContactAdd={showContactAdd}
+          onSourceCreated={createdQuickAddSource}
+          onBotCreated={createdQuickAddBot}
+        />
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}

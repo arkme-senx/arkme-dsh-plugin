@@ -16,6 +16,8 @@ function fakeService() {
     calendarRecords: vi.fn(async (input: unknown) => input),
     searchContact: vi.fn(async (identifier: string) => ({ identifier })),
     addContact: vi.fn(async (_contactRef: string, options: unknown) => options),
+    createGroup: vi.fn(async (title: string, clientMutationId: string) => ({ title, clientMutationId })),
+    createBotSummary: vi.fn(async (input: unknown) => input),
     aiVideoList: vi.fn(async (input: unknown) => input),
     queryFileAssets: vi.fn(async (input: unknown) => input),
     arkoRunStatus: vi.fn(async () => ({ status: 'running' })),
@@ -71,6 +73,24 @@ describe('outgoing call Host API dispatch', () => {
     })
     expect(service.searchContact).toHaveBeenCalledWith('lin-lin')
     expect(service.addContact).toHaveBeenCalledWith('contact-ref', { remark: '同事', requestUid: 'request-uid' })
+  })
+
+  it('dispatches group and Bot quick-add through strict domain adapters', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'group.create', {
+      title: '项目群', clientMutationId: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'bots.create', {
+      name: '总结助手', provider: 'openclaw', description: '总结群聊', token: 'must-not-forward',
+    })
+    expect(service.createGroup).toHaveBeenCalledWith('项目群', 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b')
+    expect(service.createBotSummary).toHaveBeenCalledWith({
+      name: '总结助手', provider: 'openclaw', description: '总结群聊',
+    })
+
+    await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
+      name: '错误 Bot', provider: 'arbitrary',
+    })).rejects.toMatchObject({ code: 'bot-provider-unsupported' })
   })
 
   it('rejects an unknown outgoing media type before calling the service', async () => {

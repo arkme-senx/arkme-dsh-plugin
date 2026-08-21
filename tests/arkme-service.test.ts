@@ -716,6 +716,8 @@ describe('ArkmeService', () => {
         imageRead: true,
         recordCalendar: true,
         outgoingCall: true,
+        contactAdd: true,
+        conversationQuickAdd: true,
         myExtensions: true,
         extensionPublish: true,
         extensionManagement: true,

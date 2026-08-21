@@ -24,12 +24,14 @@ import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
 import { groupMemberToolModules } from './groups/index.js'
 import { contactToolModules } from './contacts/index.js'
+import { groupToolModules } from './groups/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
   recentRecordsToolModule,
   ...accountBusinessToolModules,
   ...contactToolModules,
+  ...groupToolModules,
   ...arkoToolModules,
   searchRecordsToolModule,
   ...recordCalendarToolModules,

@@ -10,6 +10,8 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeBotProvider,
+  ArkmeBotSummary,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
@@ -40,6 +42,7 @@ import type {
   ArkmeProviderState,
   ArkmeRichSendInput,
   ArkmeSourceDirectory,
+  ArkmeSourceItem,
   ArkmeSourceList,
   ArkmeSourceReadResult,
   ArkmeSourceSendResult,
@@ -86,6 +89,9 @@ export type {
   ArkmeArrangementReminderWriteResult,
   ArkmeArrangementStatus,
   ArkmeAuthSnapshot,
+  ArkmeBotProvider,
+  ArkmeBotStatus,
+  ArkmeBotSummary,
   ArkmeCalendarBucketDay,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
@@ -428,6 +434,43 @@ export class ArkmeSdk {
       ...(remark === '' ? {} : { remark }),
       requestUid,
     }, options.signal)
+  }
+
+  /** Create an initially owner-only group chat with an idempotent client mutation id. */
+  async createGroup(
+    title: string,
+    options: { clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceItem> {
+    const normalizedTitle = title.trim()
+    if (normalizedTitle === '' || Array.from(normalizedTitle).length > 80) {
+      throw new TypeError('Arkme group title is invalid')
+    }
+    const clientMutationId = options.clientMutationId ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientMutationId)) {
+      throw new TypeError('Arkme group mutation id must be a UUID')
+    }
+    return await this.call<ArkmeSourceItem>('group.create', {
+      title: normalizedTitle,
+      clientMutationId,
+    }, options.signal)
+  }
+
+  /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
+  async createBot(
+    input: { name: string; provider: ArkmeBotProvider; description?: string },
+    signal?: AbortSignal,
+  ): Promise<ArkmeBotSummary> {
+    const name = input.name.trim()
+    if (name === '') throw new TypeError('Arkme Bot name must not be empty')
+    if (input.provider !== 'openclaw' && input.provider !== 'webhook') {
+      throw new TypeError('Arkme Bot provider is unsupported')
+    }
+    const description = input.description?.trim() ?? ''
+    return await this.call<ArkmeBotSummary>('bots.create', {
+      name,
+      provider: input.provider,
+      ...(description === '' ? {} : { description }),
+    }, signal)
   }
 
   /** List current-account Cordis, Profile-local and cloud-published extensions through one Host owner. */

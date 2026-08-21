@@ -36,6 +36,8 @@ const BUSINESS_PROMPT_PREFIX =
   + ' To add a contact, use arkme_contact_search only with an exact phone number or Arkme ID supplied by the human. Show the '
   + 'resolved display identity and whether it is registered, then use the unchanged contact_ref with arkme_contact_add only after '
   + 'an explicit current request and final confirmation. Never guess a contact, add self, or treat search results as write authorization.'
+  + ' Use arkme_group_create only after the human explicitly asks to create a group with an exact title and gives final confirmation. '
+  + 'Creation initially produces an owner-only group; never claim members were added, and never retry automatically when the outcome is unknown.'
 
 export const ARKME_ATTACHMENT_TOOL_PROMPT =
   ' When an actual image-library image is needed, pass image_ref unchanged to arkme_image_read. When the actual profile image is needed, pass the returned '

@@ -60,6 +60,33 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('creates groups and Bots through safe same-origin contracts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'group.create') return success({
+          sourceRef: 'group-source', kind: 'group_chat', displayName: '项目群', activeAtMillis: 1, unreadCount: 0,
+        })
+        if (request.operation === 'bots.create') return success({
+          botRef: 'bot-ref', name: '总结助手', provider: 'openclaw', description: '',
+          status: 'offline', directChatAvailable: false,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    const mutationId = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+    await expect(sdk.createGroup(' 项目群 ', { clientMutationId: mutationId }))
+      .resolves.toMatchObject({ kind: 'group_chat' })
+    await expect(sdk.createBot({ name: ' 总结助手 ', provider: 'openclaw' }))
+      .resolves.toMatchObject({ botRef: 'bot-ref' })
+    expect(calls).toEqual([
+      { operation: 'group.create', params: { title: '项目群', clientMutationId: mutationId } },
+      { operation: 'bots.create', params: { name: '总结助手', provider: 'openclaw' } },
+    ])
+  })
+
   it('manages extension previews through same-origin Host operations', async () => {
     const previewRef = `preview_v1_${'a'.repeat(64)}`
     const secondRef = `preview_v1_${'b'.repeat(64)}`

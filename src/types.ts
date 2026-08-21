@@ -527,6 +527,8 @@ export interface ArkmeProviderCapabilities {
     openPrivateChat: true
     /** Search accounts and idempotently add/open a contact conversation. */
     contactAdd?: true
+    /** Built-in quick-add surface plus SDK/Host support for contacts, groups, and Bots. */
+    conversationQuickAdd?: true
     groupSettings: true
     /** Installed-extension inspection and desired enable/disable state are available. */
     extensionManagement?: true
@@ -1654,6 +1656,8 @@ export type ArkmePluginOperation =
   | 'auth.logout'
   | 'contacts.search'
   | 'contacts.add'
+  | 'group.create'
+  | 'bots.create'
   | 'records.summary'
   | 'records.cache'
   | 'records.refresh'
