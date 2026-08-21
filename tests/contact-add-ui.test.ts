@@ -32,4 +32,12 @@ describe('contact add dialog layout', () => {
     expect(source).toContain("contactDialogBody: { flex: 1, minHeight: 0, overflow: 'hidden' }")
     expect(source).not.toContain("contactDialogBody: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }")
   })
+
+  it('keeps loading feedback inside the reserved result area', () => {
+    const source = readFileSync(new URL('../src/client/ArkmeContactAddSurface.tsx', import.meta.url), 'utf8')
+    expect(source).toContain("resultArea: { position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }")
+    expect(source).toContain('data-arkme-contact-state-area')
+    expect(source).toContain('position: \'absolute\', inset: 0')
+    expect(source).not.toContain('{busy && <div style={styles.notice}')
+  })
 })

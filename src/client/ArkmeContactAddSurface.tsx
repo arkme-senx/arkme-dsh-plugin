@@ -19,6 +19,12 @@ const styles: Record<string, CSSProperties> = {
   scan: { width: '100%', minHeight: 66, marginTop: 18, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 15, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 16, textAlign: 'left' },
   compactScan: { minHeight: 52, marginTop: 12, padding: '0 15px', borderRadius: 12, gap: 11, fontSize: 14 },
   arrow: { marginLeft: 'auto', color: arkmeTheme.tertiary, fontSize: 26 },
+  resultArea: { position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' },
+  busyOverlay: {
+    position: 'absolute', inset: 0, zIndex: 2, display: 'flex', alignItems: 'flex-start',
+    background: 'rgba(255, 255, 255, .88)',
+  },
+  busyMessage: { width: '100%', marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   notice: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 13 },
   error: { marginTop: 14, padding: '11px 13px', borderRadius: 10, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger, fontSize: 13 },
   card: { marginTop: 20, padding: 20, border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.base },
@@ -29,7 +35,7 @@ const styles: Record<string, CSSProperties> = {
   remark: { width: '100%', height: 42, marginTop: 18, padding: '0 12px', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.base, color: arkmeTheme.text, font: 'inherit' },
   primary: { width: '100%', minHeight: 44, marginTop: 12, border: 0, borderRadius: 10, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontWeight: 600 },
   footer: { marginTop: 'auto', paddingTop: 30, borderTop: `1px solid ${arkmeTheme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 },
-  compactFooter: { marginTop: 'auto', paddingTop: 18 },
+  compactFooter: { marginTop: 0, paddingTop: 18 },
   profileName: { margin: 0, fontSize: 18, fontWeight: 600 },
   profileId: { margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: 6, color: arkmeTheme.secondary, fontSize: 14 },
   copy: { width: 28, height: 28, padding: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
@@ -272,15 +278,17 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M8 8h3v3H8zm5 0h3v3h-3zm-5 5h3v3H8zm6 1h2v2h-2z" fill="currentColor" /></svg>
       <span>识别二维码图片添加好友</span><span style={styles.arrow}>›</span>
     </button>
-    {busy && <div style={styles.notice} role="status">正在处理…</div>}
-    {error !== '' && !scannerOpen && <div style={styles.error} role="alert">{error}</div>}
-    {notice !== '' && <div style={styles.notice} role="status">{notice}</div>}
-    {candidate !== undefined && <section style={styles.card} aria-label="联系人搜索结果">
-      <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={`${candidate.displayName}的头像`} /><div style={styles.identityText}>
-        <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : `即我号：${candidate.arkmeId} · `}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
-      </div></div>
-      {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
-    </section>}
+    <div style={styles.resultArea} data-arkme-contact-state-area>
+      {error !== '' && !scannerOpen && <div style={styles.error} role="alert">{error}</div>}
+      {notice !== '' && <div style={styles.notice} role="status">{notice}</div>}
+      {candidate !== undefined && <section style={styles.card} aria-label="联系人搜索结果">
+        <div style={styles.identity}><ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={48} label={`${candidate.displayName}的头像`} /><div style={styles.identityText}>
+          <p style={styles.name}>{candidate.displayName}</p><p style={styles.meta}>{candidate.arkmeId === undefined ? '' : `即我号：${candidate.arkmeId} · `}{candidate.registered ? '已注册' : candidate.inviteBySms ? '未注册，将创建待注册联系人' : '未注册'}</p>
+        </div></div>
+        {candidate.isSelf ? <div style={styles.notice}>这是你自己，不能添加为联系人</div> : !candidate.canAdd ? <div style={styles.notice}>该账号当前无法添加</div> : <><input style={styles.remark} maxLength={100} value={remark} placeholder="备注（可选）" onChange={event => { setRemark(event.target.value) }} /><button type="button" style={styles.primary} disabled={busy} onClick={() => { void add() }}>添加并打开会话</button></>}
+      </section>}
+      {busy && <div style={styles.busyOverlay}><div style={styles.busyMessage} role="status">正在处理…</div></div>}
+    </div>
     {profile !== null && <footer style={{ ...styles.footer, ...(compact ? styles.compactFooter : {}) }}><div><p style={styles.profileName}>{profile.displayName || profile.nickname || 'Arkme'}</p><p style={styles.profileId}>即我号：{profile.arkmeId || '尚未设置'}
       {profile.arkmeId !== '' && <button type="button" style={styles.copy} title="复制即我号" aria-label="复制即我号" onClick={() => { void copyArkmeId() }}><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></button>}
     </p></div>{qr !== undefined && <img src={qr} alt="我的好友二维码" title={shareUrl} style={{ ...styles.qr, ...(compact ? styles.compactQr : {}) }} />}</footer>}
