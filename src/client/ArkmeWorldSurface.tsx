@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
+import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
@@ -58,8 +58,8 @@ const styles: Record<string, CSSProperties> = {
   targetTitle: { minWidth: 0, display: 'grid', gap: 1 },
   backButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
   button: { minHeight: 36, padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  iconButton: { width: 36, height: 36, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: '#6d717a', cursor: 'pointer' },
-  primaryButton: { borderColor: '#191b25', background: '#191b25', color: '#fff' },
+  iconButton: { width: 40, height: 40, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: '#737984', cursor: 'pointer' },
+  primaryButton: { minHeight: 40, padding: '0 16px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, borderColor: '#191b25', background: '#191b25', color: '#fff' },
   worldToolbar: { width: 'min(980px, 100%)', minHeight: 42, margin: '0 auto 4px', padding: '0 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 24 },
   tabs: { minWidth: 0, height: 38, padding: 0, display: 'flex', alignItems: 'stretch', gap: 23 },
   tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: '#7b8089', cursor: 'pointer', font: 'inherit', fontSize: 12 },
@@ -69,17 +69,17 @@ const styles: Record<string, CSSProperties> = {
   notice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0', padding: '13px 15px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: '#f6f6f7', color: colors.secondary, fontSize: 12 },
   error: { borderColor: 'rgba(185,66,59,.25)', background: 'rgba(185,66,59,.06)', color: colors.danger },
   errorRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
-  feed: { width: 'min(884px, calc(100% - 96px))', maxWidth: '100%', minWidth: 0, margin: '6px auto 48px', boxSizing: 'border-box', display: 'grid', gap: 0 },
-  card: { minWidth: 0, maxWidth: '100%', padding: '18px 0 16px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0, background: '#fff' },
+  feed: { width: 'min(884px, calc(100% - 96px))', maxWidth: '100%', minWidth: 0, margin: '10px auto 48px', boxSizing: 'border-box', display: 'grid', gap: 16 },
+  card: { minWidth: 0, maxWidth: '100%', padding: '22px 20px 18px', boxSizing: 'border-box', border: '1px dashed #d7dbe3', borderRadius: 14, background: '#fff' },
   cardHeader: { minWidth: 0, maxWidth: '100%', display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) auto', alignItems: 'center', gap: 10 },
   avatar: { width: 36, height: 36, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 13, fontWeight: 600 },
   avatarImage: { width: '100%', height: '100%', objectFit: 'cover' },
   authorMeta: { minWidth: 0, display: 'grid', alignItems: 'center' },
   authorRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
   author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 },
-  voiceprintButton: { width: 20, height: 20, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 6, background: 'transparent', cursor: 'pointer', lineHeight: 0 },
-  voiceprintPlayable: { color: '#4c6fff' },
-  voiceprintActive: { background: 'rgba(76,111,255,.1)', color: '#3653d8' },
+  voiceprintButton: { width: 24, height: 24, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 7, background: 'transparent', cursor: 'pointer', lineHeight: 0 },
+  voiceprintPlayable: { color: '#979da6' },
+  voiceprintActive: { background: '#f0f1f3', color: '#565c66' },
   voiceprintInvite: { color: '#9aa1ad' },
   time: { whiteSpace: 'nowrap', color: '#989ba3', fontSize: 10 },
   headline: { minWidth: 0, maxWidth: '100%', margin: '12px 0 0', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.5, fontWeight: 600 },
@@ -625,7 +625,7 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
           <strong style={styles.author}>{item.authorName}</strong>
           {playable
             ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
-              <SpeakerHigh size={15} weight={voiceprintActive ? 'fill' : 'bold'} />
+              <SpeakerHigh size={20} weight="regular" />
             </button>
             : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} onClick={() => { onInviteVoiceprint(item) }}>
               <Plus size={13} weight="bold" />
@@ -716,7 +716,7 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
         </div>}
       {target !== undefined && <div style={styles.headerActions}>
         <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
-          <ArrowsClockwise size={16} weight="bold" />
+          <ArrowClockwise size={21} weight="regular" />
         </button>
       </div>}
     </header>
@@ -727,9 +727,9 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
       </nav>
       <div style={styles.headerActions}>
         <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
-          <ArrowsClockwise size={16} weight="bold" />
+          <ArrowClockwise size={21} weight="regular" />
         </button>
-        <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>
+        <button type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label="发世界" onClick={onOpenComposer}><Plus size={17} weight="regular" aria-hidden />发布</button>
       </div>
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
