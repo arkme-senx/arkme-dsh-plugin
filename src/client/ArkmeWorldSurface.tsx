@@ -578,7 +578,7 @@ function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: Arkm
       return
     }
     const controller = new AbortController()
-    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 3, offset: 0 }, controller.signal)
+    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
       .then(page => {
         if (controller.signal.aborted) return
         setItems(page.items)
