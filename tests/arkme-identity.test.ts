@@ -78,6 +78,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
     join(root, 'src/services/contact-service.ts'),
   ])

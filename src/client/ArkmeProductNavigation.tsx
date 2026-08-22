@@ -4,6 +4,7 @@ import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
+import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Fingerprint } from '@phosphor-icons/react/dist/icons/Fingerprint'
@@ -28,13 +29,14 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'recordings' | 'search' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'calls' | 'recordings' | 'search' | 'calendar' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
 
 const items: NavigationItem[] = [
   { id: 'conversations', label: '对话', icon: ChatCircleText },
+  { id: 'calls', label: '通话', icon: PhoneCall },
   { id: 'recordings', label: '录音', icon: Waveform },
   { id: 'search', label: '搜索', icon: MagnifyingGlass },
   { id: 'calendar', label: '日历', icon: CalendarBlank },
@@ -136,6 +138,7 @@ export function ArkmeProductNavigation({
     : ui.calendarOpen === true ? 'calendar'
     : ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
+    : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
       : ui.mode === 'search' ? 'search'
         : 'conversations'
@@ -145,7 +148,8 @@ export function ArkmeProductNavigation({
       arkmeUi.showExtensions()
       return
     }
-    if (id === 'recordings') arkmeUi.showRecordings()
+    if (id === 'calls') arkmeUi.showCalls()
+    else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
     else if (id === 'search') arkmeUi.showSearch()

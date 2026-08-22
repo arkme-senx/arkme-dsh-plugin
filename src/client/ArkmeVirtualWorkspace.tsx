@@ -303,6 +303,22 @@ export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; o
   </button>
 }
 
+export function ArkmeCallsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><ArkmeMark size={44} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.chatName}>通话</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>通话记录、录音与 AI 摘要</span></span>
+    </span>
+  </button>
+}
+
 function CalendarAvatar() {
   return <span style={{
     width: 34, height: 34, display: 'grid', gridTemplateRows: '9px 1fr',
@@ -997,6 +1013,7 @@ export function ArkmeNavigation({
   useEffect(() => () => { stopCreatedHighlightAnimation() }, [stopCreatedHighlightAnimation])
 
   const showLogin = () => { activateNativeEntry(); arkmeUi.showLogin(); onActivateSurface?.() }
+  const showCalls = () => { activateNativeEntry(); arkmeUi.showCalls(); onActivateSurface?.() }
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
   const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
   const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
@@ -1212,6 +1229,7 @@ export function ArkmeNavigation({
           </span>
         </button>}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}
+        {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
