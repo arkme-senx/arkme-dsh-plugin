@@ -1795,6 +1795,7 @@ export type ArkmePluginOperation =
   | 'extensions.catalog.list'
   | 'extensions.catalog.detail'
   | 'extensions.install.preview'
+  | 'extensions.delete'
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'

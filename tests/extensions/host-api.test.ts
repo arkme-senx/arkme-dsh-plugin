@@ -200,15 +200,17 @@ describe('marketplace Host BFF', () => {
     expect(service.extensionAuthors).toHaveBeenCalledWith([77])
   })
 
-  it('routes author soft deletion through the authenticated Host manager', async () => {
+  it('routes complete author deletion through the owned-inventory lifecycle owner', async () => {
     const deleteExtension = vi.fn(async () => ({
-      extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
+      extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123, installed: false, active: false,
+      references_removed: true, removed_source_count: 1, restart_required: false, message: '扩展已完全移除',
     }))
 
     await expect(dispatchArkmeHostOperation(
-      {} as never, 'extensions.delete', { extensionId: 'ext-owned' }, undefined, { delete: deleteExtension } as never,
-    )).resolves.toEqual({ extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123 })
-    expect(deleteExtension).toHaveBeenCalledWith('ext-owned')
+      {} as never, 'extensions.delete', { extensionId: 'ext-owned' }, undefined, undefined, undefined,
+      { delete: deleteExtension } as never,
+    )).resolves.toMatchObject({ extension_id: 'ext-owned', status: 'deleted', references_removed: true })
+    expect(deleteExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned' })
   })
 
   it('routes metadata editing through the authenticated Host manager', async () => {

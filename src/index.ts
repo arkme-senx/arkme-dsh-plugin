@@ -290,6 +290,13 @@ export function apply(ctx: Context, config: Config): void {
       agents,
       publish: async input => await manager.publish(input),
       publishBundle: async input => await manager.publishNativeBundleSource(input),
+      lifecycle: {
+        deleteCloud: async (extensionId, signal) => await manager.delete(extensionId, signal),
+        uninstall: async input => await manager.uninstall(input),
+        canUninstallWithoutAgent: extensionId => manager.canUninstallWithoutAgent(extensionId),
+        installedProfilePackageName: extensionId => manager.installedProfilePackageName(extensionId),
+        removeProfilePackage: async packageName => await manager.removeOwnedProfilePackage(packageName),
+      },
     })
     ownedExtensionInventory = inventory
     const tasks = new ArkmeExtensionInstallTasks(

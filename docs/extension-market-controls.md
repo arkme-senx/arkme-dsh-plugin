@@ -6,6 +6,8 @@ The marketplace separates three different lifecycle operations:
 - enable/disable changes whether an installed extension should run;
 - uninstall removes the installed artifact and Profile dependency.
 
+Author deletion is stronger than unpublishing. The registry uses a soft-delete internally so an operator can restore retained rows and artifacts, but the user-visible operation removes the extension from catalog/owned projections, uninstalls its current local copy, removes linked Cordis and Profile sources, deletes persisted lineage, and invalidates outstanding opaque source references. A required DSH restart is reported explicitly.
+
 `enabled` is the durable desired state. `active` is the current Host runtime
 observation. The UI must not infer one from the other, and must surface a
 restart requirement when the current DSH process cannot reach the desired
@@ -19,12 +21,12 @@ dependency merely because it remains installed.
 
 ## Capability matrix
 
-| Surface | Enable/disable | Version and button presentation | Extension icon management |
+| Surface | Enable/disable | Complete author deletion | Extension icon management |
 | --- | --- | --- | --- |
-| DSH Tool | `arkme_extension_set_enabled` with explicit confirmation | N/A: no model-facing behavior is added | `arkme_extension_icon_set` uses `prepare → later direct human reply → confirm` for exactly one authorized Arkme `image_ref` or current-session-relative `workspace_path`; it does not use an ACK card |
-| Public SDK | typed installed-list and enable/disable methods | N/A: display-only formatting belongs to the built-in UI | `setExtensionIcon()` uploads a local `Blob`; `extensionIconUrl()` returns only a same-origin URL |
-| Built-in UI | switch in every installed projection, with busy/error/restart states | dark install/update buttons and explicit installed/latest versions | publish, replace, list and detail surfaces share the current `icon_ref` with a generic fallback |
-| Host owner | `ArkmeExtensionManager.setEnabled()` owns persistence, Cordis disposal/activation, Profile projection and errors | existing catalog/update projections | owns file/image-ref validation, workspace confinement and normalization, signed PUT/GET transport, digest verification and bounded cache invalidation |
+| DSH Tool | `arkme_extension_set_enabled` with explicit confirmation | `arkme_extension_delete` confirms one exact owned identity and returns cleanup/restart facts | `arkme_extension_icon_set` uses `prepare → later direct human reply → confirm` for exactly one authorized Arkme `image_ref` or current-session-relative `workspace_path`; it does not use an ACK card |
+| Public SDK | typed installed-list and enable/disable methods | `deleteExtension()` is restricted by contract to an explicit current human action | `setExtensionIcon()` uploads a local `Blob`; `extensionIconUrl()` returns only a same-origin URL |
+| Built-in UI | switch in every installed projection, with busy/error/restart states | one confirmation removes the row from every tab and surfaces manual restart when required | publish, replace, list and detail surfaces share the current `icon_ref` with a generic fallback |
+| Host owner | `ArkmeExtensionManager.setEnabled()` owns persistence, Cordis disposal/activation, Profile projection and errors | `ArkmeOwnedExtensionInventory.delete()` coordinates registry soft-delete, install/runtime/Profile cleanup, lineage deletion and opaque-ref invalidation | owns file/image-ref validation, workspace confinement and normalization, signed PUT/GET transport, digest verification and bounded cache invalidation |
 
 The extension registry owns one replaceable icon for each extension identity;
 changing it does not create an extension version. Public catalog, detail and

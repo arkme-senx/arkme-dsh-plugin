@@ -16,4 +16,19 @@ describe('owned extension opaque references', () => {
     now += 60_001
     expect(() => refs.resolve(7, ref)).toThrow('引用已过期')
   })
+
+  it('invalidates every short-lived source reference for the account after deletion', () => {
+    const refs = new ArkmeOwnedExtensionRefs()
+    const deleted = refs.issue(7, {
+      kind: 'cordis', sourceKey: 'instance\0session\0plugin', agentId: 'session', pluginId: 'plugin', packageId: 'package',
+    })
+    const retained = refs.issue(8, {
+      kind: 'cordis', sourceKey: 'instance\0other\0plugin', agentId: 'other', pluginId: 'plugin', packageId: 'package',
+    })
+
+    refs.clearUser(7)
+
+    expect(() => refs.resolve(7, deleted)).toThrow('引用不存在或已失效')
+    expect(refs.resolve(8, retained)).toMatchObject({ agentId: 'other' })
+  })
 })

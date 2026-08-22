@@ -7,7 +7,7 @@ import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionClassificationPage,
   ArkmeExtensionClassificationStatus, ArkmeExtensionClassificationTree,
   ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
-  ArkmeExtensionDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionPreviewItem, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution,
+  ArkmeExtensionCompleteDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionPreviewItem, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution,
   ArkmeInstalledExtensionView, ArkmeSharedExtensionDetail, ArkmeExtensionAuditResult,
 } from '../extensions/types.js'
 import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
@@ -1961,16 +1961,22 @@ export function ArkmeMarketplace({
   const deletePublishedExtension = async (extensionId: string) => {
     setActionBusyExtensionId(extensionId); setInstallError(''); setRestartNotice('')
     try {
-      await callArkme<ArkmeExtensionDeleteResult>('extensions.delete', { extensionId })
+      const result = await callArkme<ArkmeExtensionCompleteDeleteResult>('extensions.delete', { extensionId })
       setDiscoverItems(current => current.filter(item => item.extension_id !== extensionId))
       setPublishedItems(current => current.filter(item => item.extension_id !== extensionId))
-      setMyExtensions(current => current.map(item => {
-        if (item.published?.extensionId !== extensionId) return item
-        const { published: _published, ...rest } = item
-        return { ...rest, states: item.states.filter(state => state !== 'published') }
-      }))
+      setMyExtensions(current => current.filter(item => item.published?.extensionId !== extensionId))
+      setInstalled(current => current.filter(item => item.extensionId !== extensionId))
+      setUpdates(current => current.filter(item => item.extension_id !== extensionId))
+      setLifecycleCatalogItems(current => Object.fromEntries(
+        Object.entries(current).filter(([candidateId]) => candidateId !== extensionId),
+      ))
+      setInstallTask(current => current?.extensionId === extensionId ? undefined : current)
+      setLoadedTabs(current => new Set(current).add('installed').add('mine').add('updates'))
+      setUninstallConfirmExtensionId(undefined)
       closeDetail()
-      setRestartNotice('扩展已从市集删除，本地安装状态不受影响。')
+      setRestartNotice(result.restart_required
+        ? '扩展已完全删除；请手动重启 DSH，使当前进程卸载残留的 Client/原生能力。'
+        : '扩展已完全删除；市集、本地安装、运行态和引用中均不再保留。')
     } catch (caught) {
       setInstallError(caught instanceof Error ? caught.message : String(caught))
     } finally {

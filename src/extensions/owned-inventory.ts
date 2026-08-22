@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ArkmePluginError } from '../arkme-service.js'
-import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionPublishResult,
+import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCompleteDeleteResult,
+  ArkmeExtensionDeleteResult, ArkmeExtensionPublishResult,
   ArkmeExtensionVisibility, DynamicCordisInventoryPackageLike, DynamicCordisInventoryRowLike,
   DynamicCordisRunnerLike,
 } from './types.js'
@@ -63,6 +64,20 @@ interface PublishBundleInput {
   signal?: AbortSignal
 }
 
+interface ArkmeOwnedExtensionLifecycle {
+  deleteCloud(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult>
+  uninstall(input: { agent: unknown; extensionId: string }): Promise<{
+    extension_id: string
+    installed: false
+    active: false
+    restart_required: boolean
+    message: string
+  }>
+  canUninstallWithoutAgent(extensionId: string): boolean
+  installedProfilePackageName(extensionId: string): string | undefined
+  removeProfilePackage(packageName: string): Promise<boolean>
+}
+
 export interface ArkmeOwnedExtensionInventoryOptions {
   hostInstanceId: string
   profileDirectory: string
@@ -75,6 +90,7 @@ export interface ArkmeOwnedExtensionInventoryOptions {
   agents: AgentRegistryLike
   publish(input: PublishInput): Promise<ArkmeExtensionPublishResult>
   publishBundle?(input: PublishBundleInput): Promise<ArkmeExtensionPublishResult>
+  lifecycle?: ArkmeOwnedExtensionLifecycle
 }
 
 /** Host owner for current-account Cordis, Profile-local and cloud extension projections. */
@@ -169,6 +185,83 @@ export class ArkmeOwnedExtensionInventory {
     const agent = this.options.agents.get(target.agentId)
     if (agent === undefined) throw new ArkmePluginError('extension-agent-unavailable', '创建该扩展的 DSH 会话已不可用', false, 409)
     return await this.publishTarget(userId, target, agent, input)
+  }
+
+  /**
+   * Preserve registry rows/artifacts for rollback, while removing every current-account runtime,
+   * Profile dependency, install row, lineage row, and short-lived source reference.
+   */
+  async delete(input: { extensionId: string; agent?: unknown; signal?: AbortSignal }): Promise<ArkmeExtensionCompleteDeleteResult> {
+    const extensionId = requiredExtensionId(input.extensionId)
+    const userId = await this.currentUserId()
+    const lifecycle = this.options.lifecycle
+    if (lifecycle === undefined) {
+      throw new ArkmePluginError('extension-delete-unavailable', '当前 Arkme 版本不支持完整删除扩展', false, 503)
+    }
+    if (input.agent === undefined && !lifecycle.canUninstallWithoutAgent(extensionId)) {
+      throw new ArkmePluginError('extension-delete-agent-unavailable', '该扩展仍由旧版会话运行，请在原 DSH 会话中删除', false, 409)
+    }
+
+    const linkedSources = this.options.store.cloudReferences(userId, extensionId)
+    const cordisInventory = this.options.runner.inventory?.()
+    const cordisSources = linkedSources.flatMap(source => {
+      if (source.kind !== 'cordis') return []
+      if (cordisInventory === undefined) {
+        throw new ArkmePluginError('extension-delete-runtime-unavailable', '无法确认并移除该扩展的 Cordis 运行引用', false, 503)
+      }
+      const row = cordisInventory.find(candidate => this.cordisSourceKey(candidate.agentId, candidate.pluginId) === source.key)
+      if (row === undefined) return []
+      if (this.options.runner.undefine === undefined || this.options.agents.get(row.agentId) === undefined) {
+        throw new ArkmePluginError('extension-delete-runtime-unavailable', '无法确认并移除该扩展的 Cordis 运行引用', false, 503)
+      }
+      return [row]
+    })
+    const installedPackageName = lifecycle.installedProfilePackageName(extensionId)
+    const profilePackages = [...new Set(linkedSources.flatMap(source => {
+      if (source.kind !== 'profile') return []
+      const prefix = `${this.options.profileName}\0`
+      if (!source.key.startsWith(prefix)) {
+        throw new ArkmePluginError('extension-delete-profile-reference-invalid', '扩展 Profile 引用无效', false, 500)
+      }
+      const packageName = source.key.slice(prefix.length)
+      return packageName === installedPackageName ? [] : [packageName]
+    }))]
+
+    const ownedCloudItems = await this.cloudItems(input.signal)
+    if (!ownedCloudItems.some(item => item.extension_id === extensionId)) {
+      throw new ArkmePluginError('extension-delete-target-not-owned', '待删除扩展不属于当前 Arkme 账号或已删除', false, 404)
+    }
+    const uninstalled = await lifecycle.uninstall({ agent: input.agent, extensionId })
+    let restartRequired = uninstalled.restart_required
+    for (const source of cordisSources) {
+      const agent = this.options.agents.get(source.agentId)
+      const result = await this.options.runner.undefine!(agent, source.pluginId)
+      if (!result.ok && result.reason !== 'plugin-missing') {
+        throw new ArkmePluginError(
+          'extension-delete-runtime-failed', result.message?.trim() || '无法移除扩展的 Cordis 运行引用', true, 500,
+        )
+      }
+    }
+    for (const packageName of profilePackages) {
+      if (await lifecycle.removeProfilePackage(packageName)) restartRequired = true
+    }
+    const deleted = await lifecycle.deleteCloud(extensionId, input.signal)
+    if (deleted.extension_id !== extensionId || deleted.status !== 'deleted') {
+      throw new ArkmePluginError('extension-delete-contract-invalid', '市集返回了不一致的删除结果', false, 502)
+    }
+    const removedSources = this.options.store.removeCloudReferences(userId, extensionId)
+    this.options.refs.clearUser(userId)
+    return {
+      ...deleted,
+      installed: false,
+      active: false,
+      references_removed: true,
+      removed_source_count: removedSources.length,
+      restart_required: restartRequired,
+      message: restartRequired
+        ? '扩展已删除；服务端保留可恢复数据，当前 DSH 重启后完成本地移除'
+        : '扩展已删除；服务端保留可恢复数据，本地引用和运行状态已完全移除',
+    }
   }
 
   async preparePublish(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmePreparedExtensionPublish> {
@@ -511,4 +604,12 @@ function mergeHalves(
   right: { host: boolean; client: boolean },
 ): { host: boolean; client: boolean } {
   return { host: left.host || right.host, client: left.client || right.client }
+}
+
+function requiredExtensionId(value: string): string {
+  const extensionId = value.trim()
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(extensionId)) {
+    throw new ArkmePluginError('extension-id-invalid', 'extension_id无效', false, 400)
+  }
+  return extensionId
 }

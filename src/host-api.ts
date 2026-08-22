@@ -899,9 +899,9 @@ export async function dispatchArkmeHostOperation(
 	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
 		stringParam(params, 'shareRef'),
 	)
-    case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
-      stringParam(params, 'extensionId'),
-    )
+    case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
+      extensionId: stringParam(params, 'extensionId'),
+    })
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),

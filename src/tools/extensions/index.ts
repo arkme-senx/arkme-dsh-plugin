@@ -286,7 +286,7 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_delete',
-    description: 'Soft-delete one exact extension owned by the current Arkme user. Use only after the current human explicitly asks to delete it. Deletion hides the extension, blocks new installs and future versions, and revokes published versions for installed users; registry records and artifacts are retained. Use only an exact extension_id from a trusted publish result or the current user\'s own extension list.',
+    description: 'Delete one exact extension owned by the current Arkme user. Use only after the current human explicitly asks to delete it. The registry retains recoverable data internally, but the extension is removed from marketplace lists, local install/runtime state, Profile dependencies, and author-source references. Use only an exact extension_id from a trusted publish result or the current user\'s own extension list.',
     parameters: {
       extension_id: { type: 'string', required: true, description: 'Exact extension_id owned by the current Arkme user.' },
     },
@@ -298,8 +298,10 @@ export function registerArkmeExtensionTools(
         agent,
         operationKey: 'arkme_extension_delete',
         arguments: args,
-        question: `是否确认软删除扩展 ${extensionId}？删除后将从市集隐藏、禁止新安装和继续发版，并向已安装用户标记撤销；服务端记录和制品会保留。`,
-        execute: async () => await manager.delete(args.extension_id, exec.signal),
+        question: `是否确认删除扩展 ${extensionId}？删除后它会从市集、当前 DSH 运行态、Profile 和本地引用中消失；服务端仅保留用于恢复的数据。`,
+        execute: async () => await ownedInventory.delete({
+          agent, extensionId: args.extension_id, signal: exec.signal,
+        }),
       })
       return JSON.stringify(result, undefined, 2)
     },

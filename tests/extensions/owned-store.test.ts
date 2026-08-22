@@ -38,4 +38,26 @@ describe('owned extension provenance store', () => {
     expect(store.specDigest('profile', 'web\0local-weather')).toBe('b'.repeat(64))
     store.close()
   })
+
+  it('removes every current-account source reference to one deleted cloud extension only', () => {
+    const store = new ArkmeOwnedExtensionStore(temporaryDirectory())
+    store.claim('cordis', 'instance-1\0session-1\0weather-1', 7)
+    store.linkCloud('cordis', 'instance-1\0session-1\0weather-1', 7, 'ext-weather')
+    store.claim('profile', 'web\0@example/weather', 7, 'a'.repeat(64))
+    store.linkCloud('profile', 'web\0@example/weather', 7, 'ext-weather')
+    store.claim('profile', 'web\0@example/calendar', 7, 'b'.repeat(64))
+    store.linkCloud('profile', 'web\0@example/calendar', 7, 'ext-calendar')
+    store.claim('profile', 'web\0@example/other-owner', 8, 'c'.repeat(64))
+    store.linkCloud('profile', 'web\0@example/other-owner', 8, 'ext-weather')
+
+    expect(store.removeCloudReferences(7, 'ext-weather')).toEqual([
+      { kind: 'cordis', key: 'instance-1\0session-1\0weather-1' },
+      { kind: 'profile', key: 'web\0@example/weather' },
+    ])
+    expect(store.owner('cordis', 'instance-1\0session-1\0weather-1')).toBeUndefined()
+    expect(store.owner('profile', 'web\0@example/weather')).toBeUndefined()
+    expect(store.cloudLink('profile', 'web\0@example/calendar', 7)).toBe('ext-calendar')
+    expect(store.cloudLink('profile', 'web\0@example/other-owner', 8)).toBe('ext-weather')
+    store.close()
+  })
 })

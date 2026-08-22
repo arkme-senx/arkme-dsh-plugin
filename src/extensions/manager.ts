@@ -397,7 +397,28 @@ export class ArkmeExtensionManager {
   /** Profile-only extensions can be removed without touching a legacy dynamic Agent. */
   canUninstallWithoutAgent(extensionIdValue: string): boolean {
     const extensionId = requiredId(extensionIdValue, 'extension_id')
-    return this.store.get(extensionId)?.dynamicPluginId === undefined
+    return this.store.get(extensionId)?.dynamicPluginId === undefined || this.activeAgents.has(extensionId)
+  }
+
+  installedProfilePackageName(extensionIdValue: string): string | undefined {
+    const extensionId = requiredId(extensionIdValue, 'extension_id')
+    return this.store.get(extensionId)?.profilePackageName
+  }
+
+  /** Remove a previously linked author source from the Profile without deleting its source directory/tarball. */
+  async removeOwnedProfilePackage(packageNameValue: string): Promise<boolean> {
+    const packageName = packageNameValue.trim()
+    if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)
+      || packageName.startsWith('@deepseek-ai/') || packageName === '@senguoyun/dsh-arkme') {
+      throw new ArkmePluginError('extension-delete-profile-reference-invalid', '扩展 Profile 引用无效', false, 400)
+    }
+    if (!this.profileContains(packageName, false)) return false
+    if (this.options.profileInstaller === undefined) {
+      throw new ArkmePluginError('extension-delete-profile-unavailable', '当前 DSH 运行方式不支持移除扩展 Profile 引用', false, 503)
+    }
+    await this.options.profileInstaller.remove(packageName)
+    await this.restoreDisabledProfileLayers('')
+    return true
   }
 
   inspectPackage(agent: unknown, pluginId: string, packageId: string): DynamicCordisPackageInspectionLike {

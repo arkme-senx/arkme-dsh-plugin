@@ -76,7 +76,10 @@ describe('Arkme extension tools', () => {
     const reorderPreviews = vi.fn(async () => ({
       extension_id: 'ext-1', preview_images: [{ preview_ref: previewRef }], preview_revision: 3,
     }))
-    const deleteExtension = vi.fn(async () => ({ extension_id: 'ext-1', status: 'deleted' }))
+    const deleteExtension = vi.fn(async () => ({
+      extension_id: 'ext-1', status: 'deleted', installed: false, active: false,
+      references_removed: true, removed_source_count: 1, restart_required: false, message: '扩展已完全移除',
+    }))
     const applyExtension = vi.fn(async () => ({
       extension_id: 'ext-native', version: '1.0.0', state: 'active', installed: true, active: true,
       approval_required: false, restart_required: false, message: '已激活',
@@ -99,10 +102,10 @@ describe('Arkme extension tools', () => {
     registerArkmeExtensionTools(context as never, {
       previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail,
       setIcon, addPreview, deletePreview, reorderPreviews,
-      delete: deleteExtension, apply: applyExtension,
+      apply: applyExtension,
       auditExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
-    } as never, {} as never, { readImage }, 'business')
+    } as never, { delete: deleteExtension } as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
@@ -306,7 +309,9 @@ describe('Arkme extension tools', () => {
     await expect(deleteTool?.execute?.(
       { extension_id: 'ext-1' }, toolExec(deleteAgent, 'call-delete-confirm'),
     )).resolves.toContain('"status": "deleted"')
-    expect(deleteExtension).toHaveBeenCalledWith('ext-1', expect.any(AbortSignal))
+    expect(deleteExtension).toHaveBeenCalledWith({
+      agent: deleteAgent, extensionId: 'ext-1', signal: expect.any(AbortSignal),
+    })
 
     const applyTool = definitions.find(item => item.name === 'arkme_extension_apply')
     const applyAgent = confirmationAgent('session-apply', '安装原生扩展')

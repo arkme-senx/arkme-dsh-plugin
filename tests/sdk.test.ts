@@ -243,6 +243,27 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('deletes an owned extension through the complete Host lifecycle contract', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({
+          extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
+          installed: false, active: false, references_removed: true, removed_source_count: 2,
+          restart_required: true, message: '扩展已删除；服务端保留可恢复数据，当前 DSH 重启后完成本地移除',
+        })
+      },
+    })
+
+    await expect(sdk.deleteExtension(' ext-owned ')).resolves.toMatchObject({
+      status: 'deleted', references_removed: true, restart_required: true,
+    })
+    expect(calls).toEqual([{ operation: 'extensions.delete', params: { extensionId: 'ext-owned' } }])
+    await expect(sdk.deleteExtension(' ')).rejects.toThrow('must not be empty')
+  })
+
   it('queries V3 market detail and native install capabilities through the public SDK', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

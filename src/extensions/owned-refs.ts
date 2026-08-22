@@ -58,6 +58,10 @@ export class ArkmeOwnedExtensionRefs {
     return { ...entry.target }
   }
 
+  clearUser(userId: number): void {
+    for (const [ref, entry] of this.entries) if (entry.userId === userId) this.entries.delete(ref)
+  }
+
   private prune(): void {
     const now = this.now()
     for (const [ref, entry] of this.entries) if (entry.expiresAtMillis <= now) this.entries.delete(ref)

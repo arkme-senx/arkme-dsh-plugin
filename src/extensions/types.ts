@@ -341,6 +341,16 @@ export interface ArkmeExtensionDeleteResult {
   deleted_at: number
 }
 
+/** Complete user-visible deletion result after cloud soft-delete and local reference cleanup. */
+export interface ArkmeExtensionCompleteDeleteResult extends ArkmeExtensionDeleteResult {
+  installed: false
+  active: false
+  references_removed: true
+  removed_source_count: number
+  restart_required: boolean
+  message: string
+}
+
 export type ArkmeExtensionIconMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
 
 export interface ArkmeExtensionIconUploadSession {
