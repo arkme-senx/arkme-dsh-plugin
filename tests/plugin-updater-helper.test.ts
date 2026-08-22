@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,15 @@ async function runtimeFixture(spec: string) {
   await writeFile(dshBinPath, '#!/usr/bin/env node\n')
   await writeFile(helperPath, '#!/usr/bin/env node\n')
   return { root, dshBinPath, helperPath, spec: storedSpec }
+}
+
+async function writeInstalledProfilePluginVersion(root: string, version: string) {
+  const pluginDirectory = join(root, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme')
+  await mkdir(pluginDirectory, { recursive: true })
+  await writeFile(join(pluginDirectory, 'package.json'), JSON.stringify({
+    name: '@senguoyun/dsh-arkme',
+    version,
+  }))
 }
 
 function privateUpdateFixture(version: string) {
@@ -125,10 +134,29 @@ describe('companion plugin updater', () => {
     const supervisedPlanPath = join(fixture.root, 'state', 'desktop-managed-profile-restart.json')
     const runProfilePluginAdd = vi.fn(async (plan: { targetArtifactPath: string }) => {
       expect(plan.targetArtifactPath).toBe(join(fixture.root, 'state', 'plugin-cache', '0.1.4', 'dsh-arkme-0.1.4.tgz'))
+      await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
     })
+    const runProfilePluginRemove = vi.fn(async () => undefined)
     const spawnUpdater = vi.fn(async () => undefined)
     const requestProcessExit = vi.fn()
     const requestShutdown = vi.fn()
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      execArgv: ['--import', 'tsx/esm'],
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+      preparePackageManager: () => undefined,
+      spawnUpdater,
+      requestShutdown,
+      supervisedExitCode: 75,
+      supervisedPlanPath,
+      requestProcessExit,
+      runProfilePluginAdd,
+    }
+    Object.assign(installRuntime, { runProfilePluginRemove })
     const manager = new ArkmePluginUpdateManager({
       enabled: true,
       channel: 'stable',
@@ -140,22 +168,7 @@ describe('companion plugin updater', () => {
       stateDirectory: join(fixture.root, 'state'),
       installedVersion: '0.1.3',
       fetchImpl: update.fetchImpl,
-      installRuntime: {
-        dshHome: fixture.root,
-        profileName: 'web',
-        healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
-        execArgv: ['--import', 'tsx/esm'],
-        dshBinPath: fixture.dshBinPath,
-        helperPath: fixture.helperPath,
-        restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
-        preparePackageManager: () => undefined,
-        spawnUpdater,
-        requestShutdown,
-        supervisedExitCode: 75,
-        supervisedPlanPath,
-        requestProcessExit,
-        runProfilePluginAdd,
-      },
+      installRuntime,
     })
 
     await manager.check({ manual: true })
@@ -171,8 +184,67 @@ describe('companion plugin updater', () => {
       targetArtifactPath: join(fixture.root, 'state', 'plugin-cache', '0.1.4', 'dsh-arkme-0.1.4.tgz'),
     })
     expect(runProfilePluginAdd).toHaveBeenCalledOnce()
+    expect(runProfilePluginRemove).toHaveBeenCalledOnce()
     expect(spawnUpdater).not.toHaveBeenCalled()
     expect(requestShutdown).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(800)
+    expect(requestProcessExit).toHaveBeenCalledWith(75)
+  })
+
+  it('replaces an embedded link before installing a supervised tgz update', async () => {
+    vi.useFakeTimers()
+    const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
+    await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
+    const update = privateUpdateFixture('0.1.4')
+    const supervisedPlanPath = join(fixture.root, 'state', 'desktop-managed-profile-restart.json')
+    const calls: string[] = []
+    const runProfilePluginRemove = vi.fn(async () => {
+      calls.push('remove')
+      await rm(join(fixture.root, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme'), {
+        recursive: true,
+        force: true,
+      })
+    })
+    const runProfilePluginAdd = vi.fn(async () => {
+      calls.push('add')
+      await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
+    })
+    const requestProcessExit = vi.fn()
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      execArgv: ['--import', 'tsx/esm'],
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+      preparePackageManager: () => undefined,
+      supervisedExitCode: 75,
+      supervisedPlanPath,
+      requestProcessExit,
+      runProfilePluginAdd,
+    }
+    Object.assign(installRuntime, { runProfilePluginRemove })
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://releases.jotmo.test',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: update.fetchImpl,
+      installRuntime,
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).resolves.toMatchObject({ phase: 'restarting', targetVersion: '0.1.4' })
+
+    expect(calls).toEqual(['remove', 'add'])
+    expect(runProfilePluginRemove).toHaveBeenCalledOnce()
+    expect(runProfilePluginAdd).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(800)
     expect(requestProcessExit).toHaveBeenCalledWith(75)
   })

@@ -91,6 +91,7 @@ export interface PluginUpdateInstallRuntime {
   supervisedPlanPath?: string
   requestProcessExit?: (code: number) => void
   runProfilePluginAdd?: (plan: PluginUpdaterPlan) => Promise<void>
+  runProfilePluginRemove?: (plan: PluginUpdaterPlan) => Promise<void>
   preparePackageManager?: (dshHome: string, profileName: string) => void
   allowLocalInstall?: boolean
 }
@@ -417,7 +418,7 @@ export class ArkmePluginUpdateManager {
         updatedAtMillis: this.now(),
       })
       try {
-        await (runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this))(plan)
+        await this.installSupervisedProfilePlugin(plan, runtime)
       } catch (error) {
         await this.installStore.write({
           ...snapshot,
@@ -463,8 +464,85 @@ export class ArkmePluginUpdateManager {
   }
 
   private async runProfilePluginAdd(plan: PluginUpdaterPlan): Promise<void> {
+    await this.runProfilePluginCommand(plan, buildTargetInstallArgs(plan), '安装')
+  }
+
+  private async runProfilePluginRemove(plan: PluginUpdaterPlan): Promise<void> {
+    await this.runProfilePluginCommand(plan, [
+      ...plan.execArgv,
+      plan.dshBinPath,
+      'plugin',
+      '--profile',
+      plan.profileName,
+      'remove',
+      ARKME_PLUGIN_PACKAGE_NAME,
+    ], '移除旧版本')
+  }
+
+  private async runProfilePluginRollback(plan: PluginUpdaterPlan): Promise<void> {
+    const fallbackSpec = plan.previousArtifactPath === undefined
+      ? plan.previousSpec
+      : `file:${plan.previousArtifactPath}`
+    await this.runProfilePluginCommand(plan, [
+      ...plan.execArgv,
+      plan.dshBinPath,
+      'plugin',
+      '--profile',
+      plan.profileName,
+      'add',
+      fallbackSpec,
+    ], '恢复旧版本')
+  }
+
+  private readInstalledProfilePluginVersion(plan: PluginUpdaterPlan): string {
     try {
-      await execFileAsync(plan.execPath, buildTargetInstallArgs(plan), {
+      const manifest = JSON.parse(readFileSync(join(
+        plan.dshHome,
+        'profiles',
+        plan.profileName,
+        'node_modules',
+        '@senguoyun',
+        'dsh-arkme',
+        'package.json',
+      ), 'utf8')) as { version?: string }
+      return manifest.version ?? ''
+    } catch {
+      return ''
+    }
+  }
+
+  private async installSupervisedProfilePlugin(
+    plan: PluginUpdaterPlan,
+    runtime: PluginUpdateInstallRuntime,
+  ): Promise<void> {
+    const add = runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this)
+    const remove = runtime.runProfilePluginRemove ?? this.runProfilePluginRemove.bind(this)
+    const replacesEmbeddedLink = plan.previousSpec.startsWith('link:')
+    try {
+      if (replacesEmbeddedLink) await remove(plan)
+      await add(plan)
+      const installedVersion = this.readInstalledProfilePluginVersion(plan)
+      if (installedVersion !== plan.targetVersion) {
+        throw new Error(`DSH Profile 实际安装版本为 ${installedVersion || '未知'}，预期为 ${plan.targetVersion}`)
+      }
+    } catch (error) {
+      try {
+        await this.runProfilePluginRollback(plan)
+      } catch (rollbackError) {
+        const detail = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+        throw new Error(`插件安装失败，且恢复旧版本失败：${detail}`, { cause: error })
+      }
+      throw error
+    }
+  }
+
+  private async runProfilePluginCommand(
+    plan: PluginUpdaterPlan,
+    args: readonly string[],
+    operation: string,
+  ): Promise<void> {
+    try {
+      await execFileAsync(plan.execPath, args, {
         env: { ...process.env, DSH_HOME: plan.dshHome },
         encoding: 'utf8',
         maxBuffer: 2 * 1024 * 1024,
@@ -477,7 +555,7 @@ export class ArkmePluginUpdateManager {
         .filter(value => value !== '')
         .join('\n')
         .slice(0, 2_000)
-      throw new Error(detail === '' ? 'DSH Profile 插件安装失败' : `DSH Profile 插件安装失败：${detail}`, { cause: error })
+      throw new Error(detail === '' ? `DSH Profile 插件${operation}失败` : `DSH Profile 插件${operation}失败：${detail}`, { cause: error })
     }
   }
 
