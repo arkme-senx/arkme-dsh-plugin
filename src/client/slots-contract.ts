@@ -1,6 +1,6 @@
 /**
  * Arkme-owned child-slot contract: one additive directory entry inside the
- * Arkme dropdown panel. Declaring is claiming — this entry is the only
+ * permanent Arkme workspace. Declaring is claiming — this entry is the only
  * registrant allowed to render the key. Consumer plugins (e.g. the World
  * surface) register a row into `arkme.directory.entry` without touching the
  * Arkme surface code.
@@ -10,7 +10,7 @@ import type { ReactNode } from 'react'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    /** Additive directory rows rendered inside the Arkme dropdown panel. */
+    /** Additive directory rows rendered inside the permanent Arkme directory. */
     'arkme.directory.entry': {
       kind: 'list'
       scope: 'root'

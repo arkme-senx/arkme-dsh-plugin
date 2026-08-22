@@ -16,13 +16,14 @@ describe('Arkme public brand slots', () => {
     expect(name).toBe('')
   })
 
-  it('shadows all supported official brand slots without touching host internals', async () => {
+  it('owns the permanent parent surfaces instead of relying on official child brand slots', async () => {
     const source = await readFile(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain("ctx.slots.inject('sidebar.brand.mark'")
-    expect(source).toContain("ctx.slots.inject('sidebar.brand.name'")
-    expect(source).toContain("ctx.slots.inject('conversation.hero.brand.mark'")
-    expect(source.match(/priority: -10/g)).toHaveLength(3)
+    expect(source).toContain("ctx.slots.inject('sidebar'")
+    expect(source).toContain("ctx.slots.inject('conversation'")
+    expect(source).not.toContain("ctx.slots.inject('sidebar.brand.mark'")
+    expect(source).not.toContain("ctx.slots.inject('conversation.hero.brand.mark'")
+    expect(source.match(/priority: -100/g)).toHaveLength(3)
     expect(source).not.toMatch(/querySelector|MutationObserver|document\./)
   })
 })
