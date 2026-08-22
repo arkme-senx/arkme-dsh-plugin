@@ -200,6 +200,7 @@ function ReplyButton({ item, count, onReply }: {
 interface ArkmeExtensionInlineReplyEditor {
   state: ArkmeExtensionReviewComposerState
   submitting: boolean
+  currentUserAvatarRef?: string | undefined
   onChange(next: ArkmeExtensionReviewComposerState): void
   onCancel(): void
   onSubmit(): void
@@ -214,6 +215,7 @@ function ReviewReplyComposerSlot({ item, editor }: {
     <ArkmeExtensionInlineReviewComposer
       state={editor.state}
       submitting={editor.submitting}
+      {...(editor.currentUserAvatarRef === undefined ? {} : { currentUserAvatarRef: editor.currentUserAvatarRef })}
       onChange={editor.onChange}
       onCancel={editor.onCancel}
       onSubmit={editor.onSubmit}
@@ -355,9 +357,10 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
   return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body)
 }
 
-export function ArkmeExtensionInlineReviewComposer({ state, submitting, onChange, onSubmit, onCancel }: {
+export function ArkmeExtensionInlineReviewComposer({ state, submitting, currentUserAvatarRef, onChange, onSubmit, onCancel }: {
   state: ArkmeExtensionReviewComposerState
   submitting: boolean
+  currentUserAvatarRef?: string | undefined
   onChange(next: ArkmeExtensionReviewComposerState): void
   onSubmit(): void
   onCancel?: (() => void) | undefined
@@ -365,7 +368,11 @@ export function ArkmeExtensionInlineReviewComposer({ state, submitting, onChange
   const replying = state.parent !== undefined
   const valid = extensionReviewComposerCanSubmit({ textContent: state.textContent, rating: state.rating, replying })
   return <div style={styles.inlineComposer} data-extension-review-composer="inline">
-    <ArkmeUserAvatar size={30} label="我的头像" />
+    <ArkmeUserAvatar
+      {...(currentUserAvatarRef === undefined ? {} : { avatarRef: currentUserAvatarRef })}
+      size={30}
+      label="我的头像"
+    />
     <div style={styles.inlineComposerMain}>
       {replying && <div style={styles.inlineComposerTitle}>回复 {state.parent!.authorName}</div>}
       {!replying && <div style={styles.inlineRatingPicker} aria-label="选择评分">
@@ -399,11 +406,13 @@ export function ArkmeExtensionInlineReviewComposer({ state, submitting, onChange
 
 export function ArkmeExtensionReviews({
   extensionId,
+  currentUserAvatarRef,
   canCreateTopLevelReview = true,
   initialRatingSummary = emptyRating,
   initialPage,
 }: {
   extensionId: string
+  currentUserAvatarRef?: string | undefined
   canCreateTopLevelReview?: boolean
   initialRatingSummary?: ArkmeExtensionRatingSummary
   initialPage?: ArkmeExtensionReviewPage
@@ -503,6 +512,7 @@ export function ArkmeExtensionReviews({
     </div>
     {composerMode === 'top-level' && <ArkmeExtensionInlineReviewComposer
           state={topLevelComposer} submitting={submitting}
+          {...(currentUserAvatarRef === undefined ? {} : { currentUserAvatarRef })}
           onChange={setTopLevelComposer} onSubmit={() => { void submit('top-level') }}
         />}
     {error !== '' && <div style={styles.error} role="alert">{error}</div>}
@@ -518,6 +528,7 @@ export function ArkmeExtensionReviews({
         {...(replyComposer === undefined ? {} : { replyEditor: {
           state: replyComposer,
           submitting,
+          ...(currentUserAvatarRef === undefined ? {} : { currentUserAvatarRef }),
           onChange: setReplyComposer,
           onCancel: () => { if (!submitting) setReplyComposer(undefined) },
           onSubmit: () => { void submit('reply') },

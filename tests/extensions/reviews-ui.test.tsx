@@ -104,6 +104,26 @@ describe('extension reviews UI', () => {
     })).toBe(false)
   })
 
+  it('projects the authenticated user avatar into top-level and reply composers', () => {
+    const topLevel = ArkmeExtensionInlineReviewComposer({
+      state: { textContent: '', rating: 0, clientMutationId: '', error: '' },
+      submitting: false,
+      currentUserAvatarRef: 'profile-avatar-ref',
+      onChange: () => undefined,
+      onSubmit: () => undefined,
+    }) as unknown as { props: { children: Array<{ props: { avatarRef?: string } }> } }
+    const reply = ArkmeExtensionInlineReviewComposer({
+      state: { parent: page.items[0], textContent: '', rating: 0, clientMutationId: '', error: '' },
+      submitting: false,
+      currentUserAvatarRef: 'profile-avatar-ref',
+      onChange: () => undefined,
+      onSubmit: () => undefined,
+    }) as unknown as { props: { children: Array<{ props: { avatarRef?: string } }> } }
+
+    expect(topLevel.props.children[0]?.props.avatarRef).toBe('profile-avatar-ref')
+    expect(reply.props.children[0]?.props.avatarRef).toBe('profile-avatar-ref')
+  })
+
   it('uses an owner-specific empty state without inviting a self rating', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionReviews
       extensionId="ext-1"

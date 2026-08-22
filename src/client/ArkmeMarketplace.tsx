@@ -1537,11 +1537,12 @@ export function extensionEnableUnavailable(
 }
 
 export function ArkmeMarketplace({
-  currentSessionId, currentUserId, shareRef, onShareExit, onClose,
+  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, onShareExit, onClose,
   displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
 }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
+  currentUserAvatarRef?: string | undefined
   shareRef?: string | undefined
   onShareExit?(): void
   onClose?: (() => void) | undefined
@@ -2769,6 +2770,7 @@ export function ArkmeMarketplace({
 
             {detail.visibility === 'public' && <ArkmeExtensionReviews
               extensionId={detail.extension_id}
+              {...(currentUserAvatarRef === undefined ? {} : { currentUserAvatarRef })}
               canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
               {...(detail.rating_summary === undefined ? {} : { initialRatingSummary: detail.rating_summary })}
             />}
