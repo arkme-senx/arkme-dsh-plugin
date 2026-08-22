@@ -8,6 +8,7 @@ import {
   VoiceprintInviteDialog,
   WorldImagePreviewDialog,
   WorldImagePreviewMedia,
+  WorldInteractionPreviewContent,
   WorldInteractionThreadList,
   voiceprintInvitePromptTitle,
   worldImagePreviewDragPosition,
@@ -103,7 +104,7 @@ describe('Arkme native World surface', () => {
     expect(success).toContain('陈一涵')
     expect(success).toContain('一段世界标题')
     expect(success).toContain('世界正文')
-    expect(success).toContain('评论：2')
+    expect(success).toContain('评论 2')
     expect(success).toContain('aria-label="播放陈一涵的声纹"')
     expect(success).not.toContain('用发布者的声音朗读')
     expect(success).not.toContain('查看 2 条互动')
@@ -161,18 +162,23 @@ describe('Arkme native World surface', () => {
     expect(renderTarget({ status: 'success', items: [item] })).toContain('世界正文')
   })
 
-  it('expands comments inline beneath the selected world card instead of opening a modal', () => {
+  it('keeps the feed visible and opens complete comments in a non-modal side panel', () => {
     const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
 
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-controls="world-comments-world_1"')
+    expect(markup).toContain('data-world-layout="comments-open"')
+    expect(markup).toContain('data-world-feed-pane="true"')
+    expect(markup).toContain('data-world-comment-panel="side"')
     expect(markup).toContain('aria-label="陈一涵的评论区"')
+    expect(markup).toContain('aria-label="关闭评论面板"')
     expect(markup).toContain('评论加载中')
     expect(markup).toContain('写一条评论')
-    expect(markup).toContain('>收起<')
+    expect(markup).not.toContain('>收起<')
     expect(markup).not.toContain('互动详情')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup.match(/世界正文/g)).toHaveLength(1)
+    expect(markup.indexOf('data-world-feed-pane="true"')).toBeLessThan(markup.indexOf('data-world-comment-panel="side"'))
   })
 
   it('groups every reply under its top-level comment while preserving the direct reply target', () => {
@@ -187,7 +193,7 @@ describe('Arkme native World surface', () => {
     expect(threads[1]?.root.interactionRef).toBe('comment_2')
   })
 
-  it('renders smaller indented replies with explicit targets and limits feed previews to three rows', () => {
+  it('renders compact avatar-free feed replies with explicit targets and limits previews to three rows', () => {
     const markup = renderToStaticMarkup(<WorldInteractionThreadList
       rootRef={item.recordRef}
       items={interactions}
@@ -200,10 +206,12 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('data-world-comment-level="root"')
     expect(markup).toContain('data-world-comment-level="reply"')
     expect(markup).toContain('font-size:11px')
-    expect(markup).toContain('回复 阿七')
-    expect(markup).toContain('回复 小满')
-    expect(markup).toContain('aria-label="回复小满的评论"')
-    expect(markup).toContain('>取消回复<')
+    expect(markup).toContain('小满</strong><span> 回复 </span><strong')
+    expect(markup).toContain('阿七</strong><span>：回复第一条</span>')
+    expect(markup).toContain('小周</strong><span> 回复 </span><strong')
+    expect(markup).toContain('小满</strong><span>：继续回复</span>')
+    expect(markup).not.toContain('aria-label="回复小满的评论"')
+    expect(markup).not.toContain('>取消回复<')
     expect(markup).not.toContain('第二条评论')
     expect(markup.indexOf('第一条评论')).toBeLessThan(markup.indexOf('回复第一条'))
     expect(markup.indexOf('回复第一条')).toBeLessThan(markup.indexOf('继续回复'))
@@ -255,6 +263,17 @@ describe('Arkme native World surface', () => {
     const feed = render({ status: 'success', items: [{ ...item, imageRefs: ['portrait-3x4'], imageCount: 1 }] })
     expect(feed).toContain('cursor:pointer')
     expect(feed).not.toContain('cursor:zoom-in')
+  })
+
+  it('uses one click target for the compact preview without repeating a view-comments label', () => {
+    const markup = renderToStaticMarkup(<WorldInteractionPreviewContent item={{ ...item, extendCount: 8 }} items={interactions} onOpen={noop} />)
+
+    expect(markup).toContain('aria-label="打开陈一涵的评论面板，共 8 条评论"')
+    expect(markup).toContain('第一条评论')
+    expect(markup).toContain('回复第一条')
+    expect(markup).not.toContain('第二条评论')
+    expect(markup).not.toContain('查看评论')
+    expect(markup).not.toContain('查看全部')
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {
