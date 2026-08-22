@@ -60,7 +60,8 @@ const styles: Record<string, CSSProperties> = {
   button: { minHeight: 36, padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   iconButton: { width: 36, height: 36, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: '#6d717a', cursor: 'pointer' },
   primaryButton: { borderColor: '#191b25', background: '#191b25', color: '#fff' },
-  tabs: { width: 'min(1040px, calc(100% - 72px))', height: 38, margin: '0 auto 4px', padding: 0, display: 'flex', alignItems: 'stretch', gap: 23 },
+  worldToolbar: { width: 'min(980px, 100%)', minHeight: 42, margin: '0 auto 4px', padding: '0 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 24 },
+  tabs: { minWidth: 0, height: 38, padding: 0, display: 'flex', alignItems: 'stretch', gap: 23 },
   tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: '#7b8089', cursor: 'pointer', font: 'inherit', fontSize: 12 },
   tabActive: { borderBottom: '2px solid #20232d', color: colors.text, fontWeight: 600 },
   worldLayout: { flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', position: 'relative', background: '#fff' },
@@ -713,17 +714,24 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
           />
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}的世界</h1><p style={styles.subtitle}>TA 公开分享的内容</p></div>
         </div>}
+      {target !== undefined && <div style={styles.headerActions}>
+        <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
+          <ArrowsClockwise size={16} weight="bold" />
+        </button>
+      </div>}
+    </header>
+    {target === undefined && <div style={styles.worldToolbar}>
+      <nav style={styles.tabs} aria-label="世界范围">
+        <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
+        <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
+      </nav>
       <div style={styles.headerActions}>
         <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
           <ArrowsClockwise size={16} weight="bold" />
         </button>
-        {target === undefined && <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>}
+        <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>
       </div>
-    </header>
-    {target === undefined && <nav style={styles.tabs} aria-label="世界范围">
-      <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
-      <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
-    </nav>}
+    </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
       <div style={styles.body} data-world-feed-pane="true">
         {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
