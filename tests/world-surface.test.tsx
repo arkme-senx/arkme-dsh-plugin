@@ -143,6 +143,8 @@ describe('Arkme native World surface', () => {
 
     expect(markup).toContain('width:min(1040px, calc(100% - 72px))')
     expect(markup).toContain('width:min(780px, calc(100% - 64px))')
+    expect(markup).toContain('overflow-x:hidden')
+    expect(markup).toContain('overflow-wrap:anywhere')
     expect(markup).toContain('border-radius:0')
     expect(markup).toContain('background:#fff')
     expect(markup).not.toContain('>共鸣<')
