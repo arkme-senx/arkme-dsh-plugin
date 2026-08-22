@@ -415,7 +415,17 @@ function splitVisualRuns(blocks: ArkmeContentBlock[]): Array<ArkmeContentBlock |
 function RealtimeInviteCard({ card }: { card: NonNullable<ArkmeTimelineItem['realtimeInvite']> }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const expired = card.expiresAtMillis <= Date.now()
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const remaining = card.expiresAtMillis - Date.now()
+    if (remaining <= 0) {
+      setNow(Date.now())
+      return
+    }
+    const timer = window.setTimeout(() => { setNow(Date.now()) }, Math.min(remaining + 1, 2_147_483_647))
+    return () => { window.clearTimeout(timer) }
+  }, [card.expiresAtMillis])
+  const expired = card.expiresAtMillis <= now
   const open = async () => {
     if (busy || expired) return
     setBusy(true); setError('')
@@ -433,10 +443,10 @@ function RealtimeInviteCard({ card }: { card: NonNullable<ArkmeTimelineItem['rea
   return <div style={styles.realtimeCard} data-arkme-realtime-invite={card.inviteRef}>
     <p style={styles.realtimeTitle}>{card.fallbackText}</p>
     <p style={styles.realtimeMeta}>实时房间 · 最多 {card.participantLimit} 人</p>
-    <button type="button" style={{ ...styles.realtimeButton, ...(expired ? { opacity: .5, cursor: 'default' } : {}) }} disabled={busy || expired} onClick={() => { void open() }}>
+    <button type="button" aria-busy={busy} style={{ ...styles.realtimeButton, ...(expired ? { opacity: .5, cursor: 'default' } : {}) }} disabled={busy || expired} onClick={() => { void open() }}>
       {expired ? '邀请已过期' : busy ? '正在进入…' : '进入房间'}
     </button>
-    {error !== '' && <p style={styles.realtimeError}>{error}</p>}
+    {error !== '' && <p role="status" aria-live="polite" style={styles.realtimeError}>{error}</p>}
   </div>
 }
 

@@ -356,16 +356,23 @@ export class ServiceRuntime {
           let errorEnvelope: ArkmeEnvelope<unknown> | undefined
           try { errorEnvelope = await response.json() as ArkmeEnvelope<unknown> }
           catch { /* Non-JSON upstream failures retain the HTTP fallback below. */ }
+          const errorData = objectValue(errorEnvelope?.data)
+          const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
           const serviceCode = typeof errorEnvelope?.code === 'number' && Number.isFinite(errorEnvelope.code)
             ? errorEnvelope.code
             : undefined
-          const serviceMessage = clippedText(errorEnvelope?.message, 1_000)
+          const serviceMessage = clippedText(
+            preferDataError ? stringValue(errorData.message).trim() || errorEnvelope?.message : errorEnvelope?.message,
+            1_000,
+          )
           throw new ArkmePluginError(
-            serviceCode === undefined ? 'arkme-http-error' : `arkme-code-${serviceCode}`,
+            serviceErrorCode || (serviceCode === undefined ? 'arkme-http-error' : `arkme-code-${serviceCode}`),
             serviceMessage === ''
               ? `Arkme 服务返回 HTTP ${response.status}`
               : `${serviceMessage}（服务错误码 ${serviceCode ?? response.status}）`,
-            response.status === 408 || response.status === 429 || response.status >= 500,
+            serviceErrorCode === ''
+              ? response.status === 408 || response.status === 429 || response.status >= 500
+              : errorData.retryable === true,
             response.status,
             {
               upstreamStatus: response.status,
@@ -396,7 +403,7 @@ export class ServiceRuntime {
         throw new ArkmePluginError(
           serviceErrorCode || `arkme-code-${envelope.code}`,
           serviceMessage || envelope.message?.trim() || 'Arkme 服务请求失败',
-          serviceErrorCode === '' ? envelope.code >= 500 : serviceErrorCode === 'ai_comic_video_rate_limited',
+          serviceErrorCode === '' ? envelope.code >= 500 : errorData.retryable === true,
           502,
         )
       }

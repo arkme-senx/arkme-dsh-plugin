@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { ArkmeExtensionInstallResolution } from './types.js'
 import { renderPersistentClientBundle } from './persistent-client-bundle.js'
 
@@ -168,6 +169,7 @@ export function materializePersistentExtensionBundle(input: {
   const installationText = `${JSON.stringify(installation, undefined, 2)}\n`
   const installationPath = join(bundleDirectory, 'installation.json')
   const activationPath = join(bundleDirectory, 'activation.json')
+  let retainedActivation: ArkmePersistentActivation | undefined
   if (existsSync(bundleDirectory)) {
     let existing: Partial<ArkmePersistentInstallation> | undefined
     try {
@@ -177,6 +179,10 @@ export function materializePersistentExtensionBundle(input: {
       if (existing.artifact_sha256 !== installation.artifact_sha256 || existing.version !== installation.version) {
         throw new Error('同一扩展版本已经存在不同的本地 Bundle，拒绝覆盖不可变版本')
       }
+      try {
+        const activation = readPersistentExtensionActivation(pathToFileURL(installationPath))
+        if (activation.extension_id === input.resolution.extension_id) retainedActivation = activation
+      } catch { /* Invalid historical activation state is not propagated into a regenerated wrapper. */ }
       if (JSON.stringify(effectivePermissions(existing.permissions)) === JSON.stringify(installation.permissions)) {
         try {
           const manifest = JSON.parse(readFileSync(join(bundleDirectory, 'package.json'), 'utf8')) as {
@@ -230,7 +236,11 @@ export function materializePersistentExtensionBundle(input: {
   writeSecure(join(temporary, 'package.json'), `${JSON.stringify(manifest, undefined, 2)}\n`)
   writeSecure(join(temporary, 'cordis.patch.yml'), `- insert:\n    - id: ${entryId}\n      name: '${packageName}'\n`)
   writeSecure(join(temporary, 'installation.json'), installationText)
-  writeSecure(join(temporary, 'activation.json'), activationText(input.resolution.extension_id, true))
+  writeSecure(join(temporary, 'activation.json'), activationText(
+    input.resolution.extension_id,
+    retainedActivation?.enabled ?? true,
+    retainedActivation?.quarantine,
+  ))
   writeSecure(join(temporary, 'lib', 'index.js'), [
     `import { applyPersistentArkmeHostExtension } from '@senguoyun/dsh-arkme/persistent-extension'`,
     `export const name = ${JSON.stringify(entryId)}`,

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import WebSocket, { type RawData } from 'ws'
 import type { ArkmeSessionStore } from '../keychain-store.js'
 import { ArkmePluginError, type ServiceRuntime, objectValue, stringValue } from '../services/service.js'
@@ -42,7 +42,7 @@ interface SocketFrame {
     channel_ref?: string
     command_id?: string
     seq?: number
-    sender_client_ref?: string
+    sender_seat_ref?: string
     controller_generation?: number
     payload?: unknown
     created_at?: number
@@ -65,6 +65,7 @@ interface ServiceLease {
 }
 
 interface ChannelSubscription {
+  namespace: string
   listeners: Set<(event: ArkmeRealtimeChannelEvent) => void>
   afterSequence: number
 }
@@ -137,6 +138,8 @@ function serializedPayload(value: unknown): unknown {
 class RealtimeSocketMultiplexer {
   private socket: WebSocket | undefined
   private socketUserId: number | undefined
+  private socketTokenFingerprint: string | undefined
+  private resolvedInstanceRefs: { profileRef: string; clientRef: string } | undefined
   private ready: Promise<void> | undefined
   private resolveReady: (() => void) | undefined
   private rejectReady: ((error: Error) => void) | undefined
@@ -151,8 +154,7 @@ class RealtimeSocketMultiplexer {
   constructor(
     private readonly baseUrl: string,
     private readonly sessionStore: ArkmeSessionStore,
-    readonly profileRef: string,
-    readonly clientRef: string,
+    private readonly resolveInstanceRefs: () => Promise<{ profileRef: string; clientRef: string }>,
     private readonly requestTimeoutMs: number,
   ) {}
 
@@ -197,7 +199,24 @@ class RealtimeSocketMultiplexer {
     return lease !== undefined && lease.descriptor.protocol === normalized.protocol
   }
 
+  hasCompatibleService(namespace: string, service: string, protocol: string, protocolMajor: number): boolean {
+    const prefix = `${namespace}\u0000${service}\u0000${protocolMajor}`
+    const lease = this.services.get(prefix)
+    return lease !== undefined && lease.descriptor.protocol === protocol
+  }
+
+  async instanceRefs(): Promise<{ profileRef: string; clientRef: string }> {
+    if (this.resolvedInstanceRefs !== undefined) return this.resolvedInstanceRefs
+    const refs = await this.resolveInstanceRefs()
+    if (!INSTANCE_REF_PATTERN.test(refs.profileRef) || !INSTANCE_REF_PATTERN.test(refs.clientRef)) {
+      throw new ArkmePluginError('realtime-instance-invalid', '实时客户端身份无效', false, 503)
+    }
+    this.resolvedInstanceRefs = refs
+    return refs
+  }
+
   async subscribe(
+    namespace: string,
     channelRefValue: string,
     listener: (event: ArkmeRealtimeChannelEvent) => void,
     afterSequenceValue = 0,
@@ -207,14 +226,15 @@ class RealtimeSocketMultiplexer {
     if (!INSTANCE_REF_PATTERN.test(channelRef) || typeof listener !== 'function' || afterSequence < 0) {
       throw new ArkmePluginError('realtime-subscription-invalid', '实时频道订阅参数无效', false)
     }
-    let subscription = this.channels.get(channelRef)
+    const key = `${namespace}\u0000${channelRef}`
+    let subscription = this.channels.get(key)
     if (subscription === undefined) {
-      subscription = { listeners: new Set(), afterSequence }
-      this.channels.set(channelRef, subscription)
+      subscription = { namespace, listeners: new Set(), afterSequence }
+      this.channels.set(key, subscription)
       try {
-        await this.request({ type: 'channel.subscribe', channel_ref: channelRef, after_seq: afterSequence }, 'channel.subscribed')
+        await this.request({ type: 'channel.subscribe', namespace, channel_ref: channelRef, after_seq: afterSequence }, 'channel.subscribed')
       } catch (error) {
-        this.channels.delete(channelRef)
+        this.channels.delete(key)
         throw error
       }
     }
@@ -223,17 +243,18 @@ class RealtimeSocketMultiplexer {
     return () => {
       if (!active) return
       active = false
-      const current = this.channels.get(channelRef)
+      const current = this.channels.get(key)
       current?.listeners.delete(listener)
       if (current !== undefined && current.listeners.size === 0) {
-        this.channels.delete(channelRef)
-        void this.request({ type: 'channel.unsubscribe', channel_ref: channelRef }, 'channel.unsubscribed').catch(() => undefined)
+        this.channels.delete(key)
+        void this.request({ type: 'channel.unsubscribe', namespace, channel_ref: channelRef }, 'channel.unsubscribed').catch(() => undefined)
         this.closeWhenIdle()
       }
     }
   }
 
   async publish(
+    namespace: string,
     channelRefValue: string,
     controllerGenerationValue: number,
     commandIdValue: string,
@@ -246,7 +267,7 @@ class RealtimeSocketMultiplexer {
       throw new ArkmePluginError('realtime-publish-invalid', '实时事件发布参数无效', false)
     }
     const frame = await this.request({
-      type: 'channel.publish', channel_ref: channelRef, command_id: commandId,
+      type: 'channel.publish', namespace, channel_ref: channelRef, command_id: commandId,
       controller_generation: controllerGeneration, payload: serializedPayload(payload),
     }, 'channel.published')
     return {
@@ -274,6 +295,7 @@ class RealtimeSocketMultiplexer {
     this.reconnectTimer = undefined
     this.channels.clear()
     this.socketUserId = undefined
+    this.socketTokenFingerprint = undefined
     const error = new ArkmePluginError('login-required', '请先登录 Arkme', false, 401)
     this.rejectReady?.(error)
     this.resolveReady = undefined
@@ -291,17 +313,39 @@ class RealtimeSocketMultiplexer {
     if (this.services.size > 0) this.scheduleReconnect()
   }
 
-  authenticationChanged(userId: number | undefined): void {
+  authenticationChanged(userId: number | undefined, accessToken?: string): void {
     if (userId === undefined) {
       this.suspend()
       return
     }
+    const fingerprint = accessToken === undefined ? undefined : createHash('sha256').update(accessToken).digest('base64url')
     if (this.socketUserId !== undefined && this.socketUserId !== userId) {
       this.suspend()
       this.resume()
       return
     }
+    if (this.socketTokenFingerprint !== undefined && fingerprint !== this.socketTokenFingerprint) {
+      this.reconnectForCredentialRefresh()
+      return
+    }
     this.resume()
+  }
+
+  private reconnectForCredentialRefresh(): void {
+    if (this.disposed) return
+    if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = undefined
+    const error = new ArkmePluginError('realtime-credentials-changed', 'Arkme 登录凭据已更新，正在恢复实时连接', true, 503)
+    this.rejectReady?.(error)
+    this.resolveReady = undefined
+    this.rejectReady = undefined
+    this.ready = undefined
+    this.failPending(error)
+    const socket = this.socket
+    this.socket = undefined
+    this.socketTokenFingerprint = undefined
+    socket?.close(1000, 'Arkme credentials changed')
+    if (!this.suspended && (this.services.size > 0 || this.channels.size > 0)) this.scheduleReconnect()
   }
 
   private async register(namespace: string, descriptor: ArkmeRealtimeServiceDescriptor): Promise<void> {
@@ -343,9 +387,13 @@ class RealtimeSocketMultiplexer {
     this.suspended = false
     if (this.socket?.readyState === WebSocket.OPEN && this.ready !== undefined) return await this.ready
     if (this.ready !== undefined) return await this.ready
+    if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = undefined
     const session = await this.sessionStore.read()
     if (session === undefined) throw new ArkmePluginError('login-required', '请先登录 Arkme', false, 401)
     this.socketUserId = session.userId
+    this.socketTokenFingerprint = createHash('sha256').update(session.accessToken).digest('base64url')
+    const refs = await this.instanceRefs()
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve
       this.rejectReady = reject
@@ -357,20 +405,21 @@ class RealtimeSocketMultiplexer {
     })
     this.socket = socket
     socket.once('open', () => {
-      socket.send(JSON.stringify({ type: 'connection.open', profile_ref: this.profileRef, client_ref: this.clientRef }))
+      socket.send(JSON.stringify({ type: 'connection.open', profile_ref: refs.profileRef, client_ref: refs.clientRef }))
     })
-    socket.on('message', data => { this.handleMessage(data) })
-    socket.once('error', error => { this.rejectReady?.(error) })
+    socket.on('message', data => { this.handleMessage(socket, data) })
+    socket.once('error', error => { if (this.socket === socket) this.rejectReady?.(error) })
     socket.once('close', () => { this.handleClose(socket) })
     return await this.ready
   }
 
-  private handleMessage(data: RawData): void {
+  private handleMessage(socket: WebSocket, data: RawData): void {
+    if (this.socket !== socket) return
     let frame: SocketFrame
     try {
       frame = JSON.parse(data.toString()) as SocketFrame
     } catch {
-      this.socket?.close(1002, 'invalid realtime frame')
+      socket.close(1002, 'invalid realtime frame')
       return
     }
     if (frame.type === 'connection.ready') {
@@ -381,7 +430,7 @@ class RealtimeSocketMultiplexer {
       return
     }
     if (frame.type === 'connection.replaced') {
-      this.socket?.close(1000, 'connection replaced')
+      socket.close(1000, 'connection replaced')
       return
     }
     if (frame.type === 'channel.event') {
@@ -403,14 +452,17 @@ class RealtimeSocketMultiplexer {
     const raw = frame.event
     const channelRef = stringValue(raw?.channel_ref ?? frame.channel_ref).trim()
     const sequence = Math.trunc(raw?.seq ?? frame.seq ?? 0)
-    const subscription = this.channels.get(channelRef)
+    const namespace = stringValue(frame.namespace).trim()
+    const senderSeatRef = stringValue(raw?.sender_seat_ref).trim()
+    if (!INSTANCE_REF_PATTERN.test(channelRef) || sequence < 1 || !INSTANCE_REF_PATTERN.test(senderSeatRef)) return
+    const subscription = this.channels.get(`${namespace}\u0000${channelRef}`)
     if (subscription === undefined || sequence <= subscription.afterSequence) return
     subscription.afterSequence = sequence
     const event: ArkmeRealtimeChannelEvent = {
       channelRef,
       commandId: stringValue(raw?.command_id),
       sequence,
-      senderClientRef: stringValue(raw?.sender_client_ref),
+      senderSeatRef,
       controllerGeneration: Math.trunc(raw?.controller_generation ?? 0),
       payload: raw?.payload ?? null,
       createdAtMillis: Math.trunc(raw?.created_at ?? 0),
@@ -419,7 +471,7 @@ class RealtimeSocketMultiplexer {
       try { listener(event) } catch { /* One plugin listener cannot break the shared socket. */ }
     }
     if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({ type: 'channel.ack', channel_ref: channelRef, seq: sequence }))
+      this.socket.send(JSON.stringify({ type: 'channel.ack', namespace, channel_ref: channelRef, seq: sequence }))
     }
   }
 
@@ -456,9 +508,10 @@ class RealtimeSocketMultiplexer {
       const namespace = key.split('\u0000')[0]!
       await this.register(namespace, lease.descriptor)
     }
-    for (const [channelRef, subscription] of this.channels) {
+    for (const [key, subscription] of this.channels) {
+      const channelRef = key.slice(key.indexOf('\u0000') + 1)
       await this.request({
-        type: 'channel.subscribe', channel_ref: channelRef, after_seq: subscription.afterSequence,
+        type: 'channel.subscribe', namespace: subscription.namespace, channel_ref: channelRef, after_seq: subscription.afterSequence,
       }, 'channel.subscribed')
     }
   }
@@ -489,11 +542,23 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
   ) {
     const baseUrl = runtime.config.realtimeBaseUrl?.trim() ?? ''
     if (baseUrl === '') throw new ArkmePluginError('realtime-service-disabled', '实时服务尚未配置', false, 503)
+    if ((options.profileRef === undefined) !== (options.clientRef === undefined)) {
+      throw new ArkmePluginError('realtime-instance-invalid', '实时客户端身份必须同时提供 profileRef 与 clientRef', false, 503)
+    }
+    const suppliedRefs = options.profileRef !== undefined && options.clientRef !== undefined
+      ? { profileRef: options.profileRef, clientRef: options.clientRef }
+      : undefined
     this.socket = new RealtimeSocketMultiplexer(
       baseUrl,
       sessionStore,
-      options.profileRef ?? `arkme-profile-${randomUUID()}`,
-      options.clientRef ?? `arkme-client-${randomUUID()}`,
+      async () => {
+        if (suppliedRefs !== undefined) return suppliedRefs
+        const uniqueCode = await runtime.stateStore.uniqueCode()
+        return {
+          profileRef: `arkme-profile-${createHash('sha256').update(`profile:${uniqueCode}`).digest('hex').slice(0, 32)}`,
+          clientRef: `arkme-client-${createHash('sha256').update(`client:${uniqueCode}`).digest('hex').slice(0, 32)}`,
+        }
+      },
       runtime.config.requestTimeoutMs,
     )
   }
@@ -505,12 +570,12 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
       invite: async input => await this.invite(extensionId, input),
       enter: async (card, options) => await this.enter(extensionId, card, options),
       subscribe: async (channelRef, listener, options) => await this.socket.subscribe(
-        channelRef, listener, options?.afterSequence ?? 0,
+        extensionId, channelRef, listener, options?.afterSequence ?? 0,
       ),
       publish: async (session, payload, options) => await this.socket.publish(
-        session.channelRef, session.controllerGeneration, options?.commandId ?? randomUUID(), payload,
+        extensionId, session.channelRef, session.controllerGeneration, options?.commandId ?? randomUUID(), payload,
       ),
-      close: async channelRef => await this.close(channelRef),
+      close: async channelRef => await this.close(extensionId, channelRef),
     }
     return Object.freeze(facade)
   }
@@ -519,7 +584,7 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
 
   authenticationChanged(): void {
     void this.runtime.sessionStore.read().then(session => {
-      this.socket.authenticationChanged(session?.userId)
+      this.socket.authenticationChanged(session?.userId, session?.accessToken)
     }).catch(() => { this.socket.suspend() })
   }
 
@@ -539,7 +604,8 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
       || participantLimit < descriptor.participantMin || participantLimit > descriptor.participantMax) {
       throw new ArkmePluginError('realtime-invite-invalid', '实时邀请参数无效', false)
     }
-    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+    const refs = await this.socket.instanceRefs()
+    const data = await this.chatPost<Record<string, unknown>>(
       '/api/v1/chats/realtime-invites/send',
       {
         chat_session_uid: source.ownerRef,
@@ -549,6 +615,8 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
         protocol: descriptor.protocol,
         protocol_major: descriptor.protocolMajor,
         participant_limit: participantLimit,
+        profile_instance: refs.profileRef,
+        client_instance: refs.clientRef,
         ...(input.expiresAtMillis === undefined ? {} : { expires_at: Math.trunc(input.expiresAtMillis) }),
         fallback_text: fallbackText,
         client_mutation_id: input.clientMutationId?.trim() || randomUUID(),
@@ -578,8 +646,11 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
       || !SERVICE_PATTERN.test(card.service) || !PROTOCOL_PATTERN.test(card.protocol) || card.protocolMajor < 1) {
       throw new ArkmePluginError('realtime-card-invalid', '实时邀请卡片无效', false)
     }
+    if (!this.socket.hasCompatibleService(extensionId, card.service, card.protocol, card.protocolMajor)) {
+      throw new ArkmePluginError('realtime-service-offline', '请先注册与邀请匹配的实时服务', true, 409)
+    }
     const session = await this.runtime.requireSession()
-    const grantData = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+    const grantData = await this.chatPost<Record<string, unknown>>(
       '/api/v1/chats/realtime-invites/join-grant',
       {
         invite_ref: card.inviteRef, extension_id: extensionId, service: card.service,
@@ -589,10 +660,11 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
     )
     const joinGrant = stringValue(grantData.join_grant).trim()
     if (joinGrant === '') throw new ArkmePluginError('realtime-grant-contract-invalid', '实时加入授权响应不完整', true, 502)
+    const refs = await this.socket.instanceRefs()
     const accepted = await this.realtimePost<Record<string, unknown>>('/api/v1/realtime/invites/accept', {
       join_grant: joinGrant,
-      profile_instance: this.socket.profileRef,
-      client_instance: this.socket.clientRef,
+      profile_instance: refs.profileRef,
+      client_instance: refs.clientRef,
       ...(options.allowObserver === true ? { allow_observer: true } : {}),
     }, session)
     const result: ArkmeRealtimeRoomSession = {
@@ -611,11 +683,11 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
     return result
   }
 
-  private async close(channelRefValue: string): Promise<{ channelRef: string; state: string; idempotent: boolean }> {
+  private async close(namespace: string, channelRefValue: string): Promise<{ channelRef: string; state: string; idempotent: boolean }> {
     const channelRef = channelRefValue.trim()
     if (!INSTANCE_REF_PATTERN.test(channelRef)) throw new ArkmePluginError('realtime-channel-invalid', '实时频道无效', false)
     const data = await this.realtimePost<Record<string, unknown>>('/api/v1/realtime/channels/close', {
-      channel_ref: channelRef,
+      namespace, channel_ref: channelRef,
     })
     return {
       channelRef: stringValue(data.channel_ref).trim(),
@@ -632,8 +704,27 @@ export class ArkmeRealtimeService implements ArkmeRealtimeHostService {
     const baseUrl = this.runtime.config.realtimeBaseUrl?.trim() ?? ''
     let session = initialSession ?? await this.runtime.requireSession()
     const request = async (): Promise<T> => await this.runtime.post<T>(
-      baseUrl, path, body, session.accessToken, [200], undefined, false,
+      baseUrl, path, body, session.accessToken, [200], undefined, true,
       { scope: this.runtime.requestScope(session.userId), lane: 'write', service: 'other' }, true, true,
+    )
+    try {
+      return await request()
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.runtime.refreshAccessToken(session)
+      return await request()
+    }
+  }
+
+  private async chatPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: Awaited<ReturnType<ServiceRuntime['requireSession']>>,
+  ): Promise<T> {
+    let session = initialSession ?? await this.runtime.requireSession()
+    const request = async (): Promise<T> => await this.runtime.post<T>(
+      this.runtime.config.chatBaseUrl, path, body, session.accessToken, [200], undefined, true,
+      { scope: this.runtime.requestScope(session.userId), lane: 'write', service: 'chat' },
     )
     try {
       return await request()

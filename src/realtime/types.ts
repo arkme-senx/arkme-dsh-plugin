@@ -47,7 +47,7 @@ export interface ArkmeRealtimeChannelEvent {
   channelRef: string
   commandId: string
   sequence: number
-  senderClientRef: string
+  senderSeatRef: string
   controllerGeneration: number
   payload: unknown
   createdAtMillis: number

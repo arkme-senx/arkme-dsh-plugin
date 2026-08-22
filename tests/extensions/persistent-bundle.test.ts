@@ -213,6 +213,7 @@ describe('persistent extension profile bundle', () => {
       clientCode: 'return { apply() {} }', resolution,
     })
     expect(JSON.parse(readFileSync(first.installationPath, 'utf8'))).toMatchObject({ permissions: [] })
+    writePersistentExtensionActivation(first.bundleDirectory, 'ext_permission_refresh', false)
 
     const refreshed = materializePersistentExtensionBundle({
       profileDirectory: root, artifactPath, trustedPublicKey: 'public-key',
@@ -220,6 +221,7 @@ describe('persistent extension profile bundle', () => {
     })
 
     expect(JSON.parse(readFileSync(refreshed.installationPath, 'utf8'))).toMatchObject({ permissions: ['realtime'] })
+    expect(readPersistentExtensionActivation(pathToFileURL(refreshed.installationPath))).toMatchObject({ enabled: false })
     expect(readFileSync(join(refreshed.bundleDirectory, 'lib', 'client.js'), 'utf8'))
       .toContain('"permissions":["realtime"]')
   })

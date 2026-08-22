@@ -31,14 +31,13 @@ function applyEvent(event) {
   const payload = event.payload
   if (payload === null || typeof payload !== 'object') return
   if (payload.type === 'move' && payload.round === active.round && moves.has(payload.move)) {
-    active.moves.set(event.senderClientRef, payload.move)
+    active.moves.set(event.senderSeatRef, payload.move)
     if (active.moves.size === 2 && active.resolution === undefined) {
       const entries = [...active.moves.entries()].sort(([left], [right]) => left.localeCompare(right))
       const outcome = winner(entries[0][1], entries[1][1])
       active.resolution = {
-        players: entries.map(([clientRef, move], index) => ({
+        players: entries.map(([, move], index) => ({
           label: `玩家 ${String(index + 1)}`,
-          clientRef,
           move,
         })),
         outcome: outcome === 0 ? 'draw' : `player-${String(outcome)}`,

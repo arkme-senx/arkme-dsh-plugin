@@ -1,6 +1,6 @@
 import { once } from 'node:events'
 import { createServer } from 'node:http'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocketServer } from 'ws'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import { ArkmeRealtimeService } from '../src/realtime/service.js'
@@ -33,12 +33,21 @@ describe('Arkme Host realtime capability', () => {
     const receivedFrames: Array<Record<string, unknown>> = []
     const receivedHttp: Array<{ path: string; body: Record<string, unknown> }> = []
     let connections = 0
+    let realtimeAcceptFailure = false
     const authorizationHeaders: Array<string | undefined> = []
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = []
       for await (const chunk of request) chunks.push(Buffer.from(chunk))
       const body = chunks.length === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
       receivedHttp.push({ path: request.url ?? '', body })
+      if (realtimeAcceptFailure && request.url?.endsWith('/realtime/invites/accept') === true) {
+        response.writeHead(503, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({
+          code: 50301, message: 'provider offline',
+          data: { error_code: 'SERVICE_OFFLINE', retryable: true },
+        }))
+        return
+      }
       const data = request.url?.endsWith('/realtime-invites/send') === true
         ? {
             invite: {
@@ -88,10 +97,10 @@ describe('Arkme Host realtime capability', () => {
             channel_ref: frame.channel_ref, seq: 1,
           }))
           websocket.send(JSON.stringify({
-            type: 'channel.event', channel_ref: frame.channel_ref, seq: 1,
+            type: 'channel.event', namespace: frame.namespace, channel_ref: frame.channel_ref, seq: 1,
             event: {
               channel_ref: frame.channel_ref, command_id: frame.command_id, seq: 1,
-              sender_client_ref: 'peer-client', controller_generation: 1,
+              sender_seat_ref: 'seat-peer', controller_generation: 1,
               payload: frame.payload, created_at: Date.now(),
             },
           }))
@@ -118,9 +127,9 @@ describe('Arkme Host realtime capability', () => {
     const runtime = new ServiceRuntime(config, sessions, state as never)
     const profile = new ProfileService(runtime)
     const source = new SourceService(runtime, profile, {} as never)
-    const service = new ArkmeRealtimeService(runtime, source, sessions, {
-      profileRef: 'profile-test', clientRef: 'client-test',
-    })
+    const service = new ArkmeRealtimeService(runtime, source, sessions)
+    expect(() => new ArkmeRealtimeService(runtime, source, sessions, { profileRef: 'profile-only' }))
+      .toThrowError(expect.objectContaining({ code: 'realtime-instance-invalid' }))
     const rps = service.forExtension('ext-rps')
     const chess = service.forExtension('ext-chess')
     const rpsDescriptor = {
@@ -147,21 +156,38 @@ describe('Arkme Host realtime capability', () => {
       chat_session_uid: 'chat-session-1', extension_id: 'ext-rps', namespace: 'ext-rps',
     })
 
+    const missing = service.forExtension('ext-missing')
+    const httpCountBeforeMissingEnter = receivedHttp.length
+    await expect(missing.enter({
+      schemaVersion: 1, inviteRef: invite.inviteRef, extensionId: 'ext-missing',
+      service: rpsDescriptor.service, protocol: rpsDescriptor.protocol, protocolMajor: 1,
+      expiresAtMillis: invite.expiresAtMillis, participantLimit: 2, fallbackText: '无服务',
+    })).rejects.toMatchObject({ code: 'realtime-service-offline' })
+    expect(receivedHttp).toHaveLength(httpCountBeforeMissingEnter)
+
     const room = await rps.enter({
       schemaVersion: 1, inviteRef: invite.inviteRef, extensionId: 'ext-rps',
       service: rpsDescriptor.service, protocol: rpsDescriptor.protocol, protocolMajor: 1,
       expiresAtMillis: invite.expiresAtMillis, participantLimit: 2, fallbackText: '来一局石头剪刀布',
     })
-    const event = new Promise<unknown>(resolve => {
-      void rps.subscribe(room.channelRef, value => { resolve(value.payload) }).then(dispose => {
-        setTimeout(dispose, 50)
-      })
-    })
+    let resolveEvent: ((payload: unknown) => void) | undefined
+    const event = new Promise<unknown>(resolve => { resolveEvent = resolve })
+    const disposeSubscription = await rps.subscribe(room.channelRef, value => { resolveEvent?.(value.payload) })
     await new Promise(resolve => { setTimeout(resolve, 20) })
     await rps.publish(room, { move: 'rock' }, { commandId: 'command-1' })
     await expect(event).resolves.toEqual({ move: 'rock' })
+    expect(receivedFrames.find(frame => frame.type === 'channel.subscribe')).toMatchObject({ namespace: 'ext-rps' })
+    expect(receivedFrames.find(frame => frame.type === 'channel.publish')).toMatchObject({ namespace: 'ext-rps' })
 
-    await sessions.write({ accessToken: 'access-token-b', refreshToken: 'refresh-token-b', userId: 2002 })
+    realtimeAcceptFailure = true
+    await expect(rps.enter({
+      schemaVersion: 1, inviteRef: invite.inviteRef, extensionId: 'ext-rps',
+      service: rpsDescriptor.service, protocol: rpsDescriptor.protocol, protocolMajor: 1,
+      expiresAtMillis: invite.expiresAtMillis, participantLimit: 2, fallbackText: '来一局石头剪刀布',
+    })).rejects.toMatchObject({ code: 'SERVICE_OFFLINE', retryable: true })
+    realtimeAcceptFailure = false
+
+    await sessions.write({ accessToken: 'access-token-b', refreshToken: 'refresh-token-b', userId: 1001 })
     service.authenticationChanged()
     await expect.poll(() => connections, { timeout: 3_000 }).toBe(2)
     expect(authorizationHeaders).toEqual(['Bearer access-token', 'Bearer access-token-b'])
@@ -169,9 +195,40 @@ describe('Arkme Host realtime capability', () => {
       () => receivedFrames.filter(frame => frame.type === 'service.register').length,
       { timeout: 3_000 },
     ).toBe(4)
+    await expect.poll(
+      () => receivedFrames.filter(frame => frame.type === 'channel.subscribe').length,
+      { timeout: 3_000 },
+    ).toBe(2)
 
+    const multiplexer = (service as unknown as { socket: { socket?: { close(...args: unknown[]): unknown }; handleMessage(socket: unknown, data: Buffer): void } }).socket
+    const activeSocket = multiplexer.socket
+    if (activeSocket === undefined) throw new Error('active realtime socket missing')
+    const closeSpy = vi.spyOn(activeSocket, 'close')
+    multiplexer.handleMessage({}, Buffer.from('{"type":"connection.replaced"}'))
+    expect(closeSpy).not.toHaveBeenCalled()
+    closeSpy.mockRestore()
+
+    await sessions.write({ accessToken: 'access-token-c', refreshToken: 'refresh-token-c', userId: 2002 })
+    service.authenticationChanged()
+    await expect.poll(() => connections, { timeout: 3_000 }).toBe(3)
+    expect(authorizationHeaders).toEqual(['Bearer access-token', 'Bearer access-token-b', 'Bearer access-token-c'])
+
+    const firstOpen = receivedFrames.find(frame => frame.type === 'connection.open')
+
+    disposeSubscription()
     disposeChess()
     disposeRps()
     service.dispose()
+
+    const restarted = new ArkmeRealtimeService(runtime, source, sessions)
+    const disposeRestarted = await restarted.forExtension('ext-rps').provide(rpsDescriptor)
+    await expect.poll(() => connections, { timeout: 3_000 }).toBe(4)
+    const openFrames = receivedFrames.filter(frame => frame.type === 'connection.open')
+    expect(openFrames.at(-1)).toMatchObject({
+      profile_ref: firstOpen?.profile_ref,
+      client_ref: firstOpen?.client_ref,
+    })
+    disposeRestarted()
+    restarted.dispose()
   })
 })

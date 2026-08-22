@@ -38,6 +38,8 @@ describe('realtime rock-paper-scissors example', () => {
     expect(unpacked.manifest.permissions).toEqual(['realtime'])
     expect(unpacked.manifest.halves).toEqual({ host: true, client: true })
     expect(unpacked.hostCode).toContain("harness.handle('realtime.open'")
+    expect(unpacked.hostCode).toContain('event.senderSeatRef')
+    expect(unpacked.hostCode).not.toContain('event.senderClientRef')
     expect(unpacked.clientCode).toContain('harness.realtime.onOpen')
   })
 })
