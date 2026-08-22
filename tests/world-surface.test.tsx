@@ -190,6 +190,8 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('aria-label="收起评论"')
     expect(markup).toContain('data-world-comment-toolbar="sticky"')
     expect(markup).toContain('position:sticky;top:0')
+    expect(markup).toContain('width:calc(100% - 4px)')
+    expect(markup).toContain('border-radius:12px;background:var(--dsw-alias-bg-subtle, #f5f5f6)')
     expect(markup).toContain('评论加载中')
     expect(markup).toContain('写一条评论')
     expect(markup).toContain('>收起<')

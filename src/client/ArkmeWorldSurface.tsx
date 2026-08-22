@@ -114,8 +114,8 @@ const styles: Record<string, CSSProperties> = {
   inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${colors.border}` },
   inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
   inviteConfirmButton: { borderLeft: `1px solid ${colors.border}`, color: colors.accent },
-  interactionPanel: { width: '100%', minWidth: 0, marginTop: 6, display: 'grid', background: '#fff' },
-  interactionPanelSticky: { position: 'sticky', top: 0, zIndex: 3, padding: '4px 0 10px', borderBottom: `1px solid ${colors.border}`, background: 'rgba(255,255,255,.98)' },
+  interactionPanel: { width: 'calc(100% - 4px)', minWidth: 0, margin: '6px 2px 16px', padding: '0 12px 12px', boxSizing: 'border-box', display: 'grid', borderRadius: 12, background: colors.subtle },
+  interactionPanelSticky: { position: 'sticky', top: 0, zIndex: 3, padding: '4px 0 10px', borderBottom: `1px solid ${colors.border}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-subtle, #f5f5f6) 96%, white)' },
   interactionPanelHeader: { minHeight: 36, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   interactionPanelTitle: { fontSize: 14, fontWeight: 600 },
   interactionPanelClose: { minHeight: 32, padding: '0 2px 0 10px', border: 0, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
@@ -123,11 +123,11 @@ const styles: Record<string, CSSProperties> = {
   interactionEmpty: { minHeight: 96, display: 'grid', placeItems: 'center', color: '#969ba5', fontSize: 12 },
   interactionList: { display: 'grid', margin: 0 },
   interactionThread: { padding: '12px 0' },
-  interactionRoot: { display: 'grid', gridTemplateColumns: '32px minmax(0,1fr)', alignItems: 'start', gap: 9 },
-  interactionReplyList: { display: 'grid', margin: '7px 0 0 41px', paddingLeft: 10, borderLeft: `2px solid ${colors.border}` },
-  interactionReply: { display: 'grid', gridTemplateColumns: '24px minmax(0,1fr)', alignItems: 'start', gap: 7, padding: '7px 0' },
-  interactionAvatar: { width: 32, height: 32, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 11, fontWeight: 650 },
-  interactionReplyAvatar: { width: 24, height: 24, fontSize: 9 },
+  interactionRoot: { display: 'grid', gridTemplateColumns: '28px minmax(0,1fr)', alignItems: 'start', gap: 8 },
+  interactionReplyList: { display: 'grid', margin: '7px 0 0 36px', paddingLeft: 9, borderLeft: `2px solid ${colors.border}` },
+  interactionReply: { display: 'grid', gridTemplateColumns: '22px minmax(0,1fr)', alignItems: 'start', gap: 7, padding: '7px 0' },
+  interactionAvatar: { width: 28, height: 28, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 10, fontWeight: 650 },
+  interactionReplyAvatar: { width: 22, height: 22, fontSize: 8 },
   interactionBody: { minWidth: 0 },
   interactionMeta: { minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: colors.secondary, fontSize: 10 },
   interactionAuthorLine: { minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5 },
@@ -478,7 +478,7 @@ export function worldInteractionThreads(rootRef: string, items: readonly ArkmeWo
 }
 
 function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteractionItem; reply: boolean; compact: boolean }) {
-  const size = compact ? (reply ? 20 : 24) : (reply ? 24 : 32)
+  const size = compact ? (reply ? 20 : 24) : (reply ? 22 : 28)
   return <span style={{
     ...styles.interactionAvatar,
     ...(reply ? styles.interactionReplyAvatar : {}),
