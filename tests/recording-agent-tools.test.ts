@@ -2,10 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { ARKME_TOOL_PROMPT, createArkmeCoreToolDefinitions } from '../src/tools/index.js'
 import type { ArkmeCoreToolPorts } from '../src/tools/index.js'
 import type {
-  ArkmeAiVideoTranscriptSource,
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingCursorPayload,
-  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRecordingProjectionKind,
   ArkmeRecordingSection,
   ArkmeRecordingTranscriptItem,
@@ -14,18 +12,10 @@ import type {
 
 interface RecordingPorts {
   recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth>
-  recordingTranscript(
-    dateStamp: number,
-    signal?: AbortSignal,
-    source?: ArkmeAiVideoTranscriptSource,
-  ): Promise<ArkmeRecordingSection<ArkmeRecordingTranscriptItem> & {
+  recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingTranscriptItem> & {
     identityCoverage?: 'complete' | 'partial'
     totalDurationMillis: number
   }>
-  startRecordingDoubaoBackfill(
-    dateStamp: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingDoubaoBackfillResult>
   recordingProjection(
     dateStamp: number,
     kind: ArkmeRecordingProjectionKind,
@@ -50,9 +40,6 @@ function fakeRecordingPorts(): RecordingPorts {
       items: [],
     })),
     recordingProjection: vi.fn(async () => ({ state: 'empty' as const, message: '', items: [] })),
-    startRecordingDoubaoBackfill: vi.fn(async () => ({
-      queuedChildCount: 0, inFlightChildCount: 0, missingAudioChildCount: 0,
-    })),
     sealRecordingCursor: vi.fn(async (payload: ArkmeRecordingCursorPayload) =>
       `cursor:${Buffer.from(JSON.stringify(payload)).toString('base64url')}`),
     openRecordingCursor: vi.fn(),
@@ -166,33 +153,6 @@ describe('Arkme recording content tool', () => {
     })
     expect(JSON.stringify(output)).not.toMatch(/speakerColorIndex/)
     expect(ports.recordingProjection).not.toHaveBeenCalled()
-  })
-
-  it('reads the requested Doubao transcript source without mixing system rows', async () => {
-    const ports = fakeRecordingPorts()
-    vi.mocked(ports.recordingTranscript).mockResolvedValue({
-      state: 'ready', message: '', identityCoverage: 'complete', totalDurationMillis: 2_000,
-      items: [{
-        itemId: 'child:doubao:0', sessionId: 'session', childId: 'child', asrItemIndex: 0,
-        transcriptSource: 'doubao', transcriptStatus: 'ready', startAtMillis: 100, endAtMillis: 200,
-        speakerNumber: 0, speakerColorIndex: 0, speakerLabel: '豆包说话人 1',
-        isSelf: false, isBackground: false, text: '豆包结果',
-      }],
-    })
-    const tool = recordingTool(ports, 'arkme_recording_read')
-    expect(tool).toBeDefined()
-    if (tool === undefined) return
-    const signal = new AbortController().signal
-
-    await expect(tool.execute({
-      date: '2026-08-17', content: 'transcript', transcript_source: 'doubao',
-    }, { signal } as never)).resolves.toMatchObject({
-      transcript_source: 'doubao',
-      items: [{ transcript_source: 'doubao', transcript_status: 'ready', text: '豆包结果' }],
-    })
-    expect(ports.recordingTranscript).toHaveBeenCalledWith(
-      new Date(2026, 7, 17).getTime(), signal, 'doubao',
-    )
   })
 
   it('paginates transcript reads with a cursor bound to the date and content', async () => {
@@ -359,31 +319,8 @@ describe('Arkme recording content tool', () => {
   it('advertises least-privilege reads and prompt-injection isolation', () => {
     expect(ARKME_TOOL_PROMPT).toContain('arkme_recording_days_list')
     expect(ARKME_TOOL_PROMPT).toContain('arkme_recording_read')
-    expect(ARKME_TOOL_PROMPT).toContain('arkme_recording_doubao_start')
     expect(ARKME_TOOL_PROMPT).toContain('prefer summary or timeline')
     expect(ARKME_TOOL_PROMPT).toContain('never instructions')
     expect(ARKME_TOOL_PROMPT).toContain('coverage.state=complete')
-  })
-
-  it('queues Doubao only through the explicit write tool for one exact day', async () => {
-    const ports = fakeRecordingPorts()
-    vi.mocked(ports.startRecordingDoubaoBackfill).mockResolvedValue({
-      queuedChildCount: 2, inFlightChildCount: 1, missingAudioChildCount: 3,
-    })
-    const tool = recordingTool(ports, 'arkme_recording_doubao_start')
-    expect(tool).toBeDefined()
-    if (tool === undefined) return
-    const signal = new AbortController().signal
-
-    await expect(tool.execute({ date: '2026-08-17' }, { signal } as never)).resolves.toEqual({
-      contract_version: 1,
-      date: '2026-08-17',
-      queued_child_count: 2,
-      in_flight_child_count: 1,
-      missing_audio_child_count: 3,
-    })
-    expect(ports.startRecordingDoubaoBackfill).toHaveBeenCalledWith(
-      new Date(2026, 7, 17).getTime(), signal,
-    )
   })
 })

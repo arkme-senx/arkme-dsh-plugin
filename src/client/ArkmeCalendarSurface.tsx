@@ -89,7 +89,7 @@ const styles: Record<string, CSSProperties> = {
   blank: { height: 45 },
   dayButton: {
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
-    padding: 0, border: '1px solid transparent', borderRadius: 11,
+    padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit',
     boxSizing: 'border-box', transition: 'background 120ms ease, color 120ms ease',
   },
@@ -234,6 +234,7 @@ export function ArkmeCalendarCell({
   return <button
     type="button"
     aria-label={`${dateKey(date)} ${count > 0 ? `${String(count)} 条记录` : '暂无记录'}`}
+    data-selected={selected ? 'true' : 'false'}
     disabled={disabled}
     style={{
       ...styles.dayButton,

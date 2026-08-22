@@ -12,15 +12,15 @@ type QuickAddDialogKind = 'group' | 'bot'
 const style: Record<string, CSSProperties> = {
   anchor: { position: 'relative', zIndex: 90, flex: 'none' },
   trigger: {
-    width: 30, height: 30, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.text,
+    width: 40, height: 40, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.menu, color: '#555a64',
     cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
   },
   menu: {
     position: 'absolute', zIndex: 90, top: 36, right: 0, width: 176, padding: '6px 10px',
-    boxSizing: 'border-box', border: '1px solid #e3e4e8', borderRadius: 18,
-    background: 'rgba(255,255,255,.98)', color: '#1a1c21',
-    boxShadow: '0 20px 56px rgba(30,34,43,.16), 0 2px 8px rgba(30,34,43,.08)',
+    boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2, #e3e4e8)', borderRadius: 18,
+    background: 'var(--dsw-specific-menu, rgba(255,255,255,.98))', color: 'var(--dsw-alias-label-primary, #1a1c21)',
+    boxShadow: 'var(--dsw-shadow-lv3, 0 20px 56px rgba(30,34,43,.16), 0 2px 8px rgba(30,34,43,.08))',
     WebkitBackdropFilter: 'blur(18px)', backdropFilter: 'blur(18px)',
   },
   menuItem: {
@@ -28,8 +28,8 @@ const style: Record<string, CSSProperties> = {
     padding: '0 12px', border: 0, borderRadius: 8, background: 'transparent', color: 'inherit', textAlign: 'left',
     cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '18px', fontWeight: 550,
   },
-  menuIcon: { width: 19, height: 19, flex: 'none', color: '#6f747e' },
-  divider: { height: 1, margin: '0 10px', background: '#ececef' },
+  menuIcon: { width: 19, height: 19, flex: 'none', color: 'var(--dsw-alias-label-secondary, #6f747e)' },
+  divider: { height: 1, margin: '0 10px', background: 'var(--dsw-alias-border-l1, #ececef)' },
   overlay: {
     position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 16,
     boxSizing: 'border-box', background: 'var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))',
@@ -82,7 +82,7 @@ function ArkmeQuickAddMenuItem({ icon, label, onClick }: {
 }) {
   return <button
     type="button" role="menuitem" style={style.menuItem} onClick={onClick}
-    onMouseEnter={event => { event.currentTarget.style.background = '#f4f4f6' }}
+    onMouseEnter={event => { event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)' }}
     onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
   >
     <span aria-hidden style={maskIcon(icon, style.menuIcon!)} />

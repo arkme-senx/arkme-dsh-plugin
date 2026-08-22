@@ -13,8 +13,8 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
 export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'contact-add' | 'arko'
-    | 'settings' | 'task-start' | 'task-session'
+  mode: 'login' | 'source' | 'recordings' | 'world' | 'search' | 'extensions' | 'contact-add' | 'arko'
+    | 'settings' | 'harness'
   settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
@@ -99,11 +99,6 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'recordings' })
   }
 
-  showCalls(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
-    this.publish({ ...rest, mode: 'calls' })
-  }
-
   showCalendar(): void {
     if (this.state.calendarOpen === true) {
       const { calendarOpen: _calendarOpen, ...rest } = this.state
@@ -174,14 +169,9 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'settings', settingsSection: section })
   }
 
-  showNewTask(): void {
+  showHarness(): void {
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
-    this.publish({ ...rest, mode: 'task-start' })
-  }
-
-  showTaskSession(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
-    this.publish({ ...rest, mode: 'task-session' })
+    this.publish({ ...rest, mode: 'harness' })
   }
 
   openExtensionShare(shareRef: string): void {

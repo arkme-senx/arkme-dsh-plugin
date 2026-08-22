@@ -28,6 +28,7 @@ describe('ArkmeCalendarSurface layout', () => {
 
     expect(markup).toContain('>21<')
     expect(markup).toContain('>41<')
+    expect(markup).toContain('data-selected="true"')
     expect(cell.get('display')).toBe('grid')
     expect(cell.get('align-content')).toBe('center')
     expect(cell.get('gap')).toBe('3px')
@@ -45,7 +46,23 @@ describe('ArkmeCalendarSurface layout', () => {
     />)
 
     expect(markup).toContain('>22<')
+    expect(markup).toContain('data-selected="false"')
     expect(markup).not.toContain('>0<')
+  })
+
+  it('keeps the unselected border color explicit after a selected date changes', () => {
+    const markup = renderToStaticMarkup(<ArkmeCalendarCell
+      date={new Date(2026, 7, 22)}
+      meta={{ bucketDate: '2026-08-22', count: 301, protectedCount: 0, hasRecords: true }}
+      selected={false}
+      disabled={false}
+      onClick={() => {}}
+    />)
+    const cell = matchStyle(markup, /^<button[^>]*style="([^"]+)"/)
+
+    expect(cell.get('border-width')).toBe('1px')
+    expect(cell.get('border-style')).toBe('solid')
+    expect(cell.get('border-color')).toBe('transparent')
   })
 
   it('anchors the popup beside the product rail without dimming the conversation', () => {

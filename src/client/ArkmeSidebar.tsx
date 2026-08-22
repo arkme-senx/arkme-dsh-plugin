@@ -20,7 +20,6 @@ import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
-import { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -43,11 +42,13 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
 import {
+  arkmeComposerCanSend,
   arkmeComposerDraftStore,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
   type ArkmeComposerAttachment,
 } from './composer-draft-store.js'
+import { restoreArkmeComposerFocus } from './composer-focus.js'
 import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
   mergeConversationRows, resolveInterwovenGroupTarget,
@@ -572,6 +573,7 @@ export function ArkmeSurface({
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
@@ -594,6 +596,8 @@ export function ArkmeSurface({
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<{ key: string; message: string }>()
   const [busy, setBusy] = useState(false)
+  const canSend = arkmeComposerCanSend(draft, attachments.length, busy)
+  const pendingComposerFocusDraftKeyRef = useRef<string>()
   const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -607,6 +611,26 @@ export function ArkmeSurface({
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
+
+  useEffect(() => {
+    const pendingDraftKey = pendingComposerFocusDraftKeyRef.current
+    if (pendingDraftKey === undefined || busy) return
+    if (pendingDraftKey !== composerDraftKey) {
+      pendingComposerFocusDraftKeyRef.current = undefined
+      return
+    }
+    pendingComposerFocusDraftKeyRef.current = undefined
+    const frame = requestAnimationFrame(() => {
+      const activeElement = document.activeElement
+      restoreArkmeComposerFocus(
+        textareaRef.current,
+        activeElement,
+        document.body,
+        activeElement !== null && composerRef.current?.contains(activeElement) === true,
+      )
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [busy, composerDraftKey])
 
   useEffect(() => {
     let active = true
@@ -1228,7 +1252,9 @@ export function ArkmeSurface({
       setError(errorMessage(caught))
     }
     finally {
-      setUploadStatus(current => current?.key === targetDraftKey ? undefined : current); setBusy(false)
+      setUploadStatus(current => current?.key === targetDraftKey ? undefined : current)
+      pendingComposerFocusDraftKeyRef.current = targetDraftKey
+      setBusy(false)
       if (fileInputRef.current !== null) fileInputRef.current.value = ''
     }
   }
@@ -1304,7 +1330,10 @@ export function ArkmeSurface({
         releaseArkmeComposerDraft(pendingDraft)
       }
       setError(errorMessage(caught))
-    } finally { setBusy(false) }
+    } finally {
+      pendingComposerFocusDraftKeyRef.current = targetDraftKey
+      setBusy(false)
+    }
   }
 
   const retryAiPolish = async (item: ArkmeTimelineItem) => {
@@ -1554,15 +1583,7 @@ export function ArkmeSurface({
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : ui.mode === 'calls' ? <ArkmeCallHistorySurface
-          assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
-          contacts={chatDirectory.sources.filter(source => source.kind === 'private_chat' && source.displayName !== '林小满' && source.displayName !== '妈妈').map(source => ({
-            sourceRef: source.sourceRef,
-            displayName: source.displayName,
-            ...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef }),
-          }))}
-        />
-          : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
+        /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
             onBackToWorld={() => { arkmeUi.showWorld() }}
@@ -1572,6 +1593,7 @@ export function ArkmeSurface({
             displayMode="page"
             {...(currentSessionId === undefined ? {} : { currentSessionId })}
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
+            {...(selfProfile?.avatarRef.trim() ? { currentUserAvatarRef: selfProfile.avatarRef.trim() } : {})}
             {...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
             onShareExit={() => { arkmeUi.dismissExtensionShare() }}
             onPrivateChatOpened={activateSource}
@@ -1675,7 +1697,7 @@ export function ArkmeSurface({
               })}
             </ul>}
           </div>
-          <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
+          <footer className="arkme-conversation-composer" style={styles.composer}><div ref={composerRef} className="arkme-conversation-composer-inner" style={styles.composerInner}>
             {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
               <div style={styles.menuDivider} />
@@ -1700,11 +1722,11 @@ export function ArkmeSurface({
                 event.preventDefault()
                 void selectFiles(imageFiles)
               }}
-              onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draft.trim() !== '') void send() } }} />
+              onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (canSend) void send() } }} />
             <div style={styles.tools}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => { setAddMenuOpen(value => !value) }}>+</button><button
               type="button"
-              style={{ ...styles.send, opacity: busy || (draft.trim() === '' && attachments.length === 0) ? .4 : 1 }}
-              disabled={busy || (draft.trim() === '' && attachments.length === 0)}
+              style={{ ...styles.send, opacity: canSend ? 1 : .4 }}
+              disabled={!canSend}
               aria-label="发送消息"
               onMouseDown={event => { event.preventDefault() }}
               onMouseEnter={event => {

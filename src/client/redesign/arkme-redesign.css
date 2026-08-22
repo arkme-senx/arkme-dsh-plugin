@@ -24,6 +24,7 @@
 }
 .arkme-native-desktop .arkme-redesign-root { --arkme-native-titlebar: 50px; }
 .arkme-native-desktop .arkme-redesign-root::before { content: ""; position: absolute; z-index: 30; top: 49px; left: 0; right: 0; height: 1px; background: #e8e8ea; pointer-events: none; }
+.arkme-native-desktop [data-arkme-owned="persistent-sidebar"] > [data-arkme-owned="product-navigation"] { padding-top: 28px !important; }
 
 .arkme-redesign-rail {
   position: absolute;
@@ -227,18 +228,6 @@
   margin-right: 32px !important;
 }
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
-body[data-arkme-task-session] [data-phase] {
-  --dsh-chat-content-width: calc(100% - 64px);
-  --dsh-composer-card-max-width: calc(100% - 32px);
-}
-body[data-arkme-task-session] [data-chat-flow] {
-  width: calc(100% - 64px) !important;
-  max-width: none !important;
-  margin-left: 32px !important;
-  margin-right: 32px !important;
-}
-body[data-arkme-task-session] textarea { font-size: 14px !important; }
-
 /* Keep one stable Arkme navigation column while only the right-hand conversation changes. */
 @media (min-width: 1100px) {
   [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
@@ -479,6 +468,425 @@ button.arkme-redesign-setting-row:hover, a.arkme-redesign-setting-row:hover { co
 .arkme-redesign-placeholder > span { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #e1e2e5; border-radius: 14px; color: #555a64; }
 .arkme-redesign-placeholder h1 { margin: 16px 0 7px; color: #3e424b; font-size: 18px; }
 .arkme-redesign-placeholder p { margin: 0; font-size: 12px; }
+
+/* DSH owns theme state. Keep the light baseline above unchanged and only
+   replace redesign colors while the host's dark-theme attribute is active. */
+body[data-ds-dark-theme] [data-arkme-workspace] {
+  --arkme-line: var(--dsw-alias-border-l1);
+  --arkme-muted: var(--dsw-alias-label-tertiary);
+  --arkme-soft: var(--dsw-alias-bg-layer-2);
+  --arkme-focus: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The permanent DSH seats use inline layout styles, so their light colors
+   need explicit theme-scoped overrides without changing the seat geometry. */
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"],
+body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] {
+  background: var(--dsw-specific-sidebar-fill) !important;
+  color: var(--dsw-alias-label-secondary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] > div {
+  border-color: var(--dsw-alias-border-l1) !important;
+  background: var(--dsw-alias-bg-layer-1) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] {
+  background: var(--dsw-alias-bg-base) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] .arkme-conversation-surface,
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] .arkme-conversation-composer {
+  background: var(--dsw-alias-bg-base) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] div:has(> input[aria-label="搜索"]) {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-specific-input-major) !important;
+  box-shadow: var(--dsw-shadow-lv2) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] {
+  background: var(--dsw-alias-bg-base) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] article {
+  background: var(--dsw-alias-bg-layer-1) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] [role="status"] {
+  background: var(--dsw-alias-bg-layer-1) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] button[aria-label="刷新"] {
+  background: var(--dsw-specific-input-major) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] button:hover {
+  background: var(--dsw-alias-interactive-bg-hover) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] button[aria-current="page"] {
+  background: var(--dsw-alias-interactive-bg-active) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] button[aria-current="page"] > span[aria-hidden="true"] {
+  background: var(--dsw-alias-state-business-primary) !important;
+}
+
+/* Product conversation directory: its inner workspace owns inline light
+   surfaces independently from the persistent DSH seats above. */
+body[data-ds-dark-theme] [data-arkme-owned="product-surface"],
+body[data-ds-dark-theme] [data-arkme-owned="directory-pane"],
+body[data-ds-dark-theme] [data-arkme-owned="directory-pane"] [aria-label="Arkme 会话列表"],
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] [aria-label="Arkme 会话列表"] {
+  background: var(--dsw-alias-bg-base) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="directory-pane"] label:has(> input[aria-label="搜索对话或消息"]),
+body[data-ds-dark-theme] [data-arkme-owned="directory-pane"] button[aria-label="新任务"],
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] [aria-label="Arkme 会话列表"] label:has(> input[aria-label="搜索对话或消息"]),
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] [aria-label="Arkme 会话列表"] button[aria-label="新任务"] {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-specific-input-major) !important;
+  color: var(--dsw-alias-label-secondary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="directory-pane"] [role="treeitem"][aria-selected="true"],
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] [aria-label="Arkme 会话列表"] [role="treeitem"][aria-selected="true"] {
+  background: var(--dsw-alias-interactive-bg-active) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="directory-pane"] [role="status"][aria-label$="个人测试版"],
+body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] [aria-label="Arkme 会话列表"] [role="status"][aria-label$="个人测试版"] {
+  background: var(--dsw-alias-bg-layer-2) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="product-surface"] .arkme-conversation-composer {
+  background: var(--dsw-alias-bg-base) !important;
+}
+
+/* Recording keeps the existing buttons and actions; only their inline fills
+   are remapped while the DSH dark flag is active. */
+body[data-ds-dark-theme] .arkme-redesign-recordings-page [aria-label="全天候录音操作"] > div > button,
+body[data-ds-dark-theme] [data-arkme-owned="product-surface"] [aria-label="全天候录音操作"] > div > button {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-alias-button-elevated-fill) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-recordings-page [aria-label="全天候录音操作"] > div > button:first-child,
+body[data-ds-dark-theme] [data-arkme-owned="product-surface"] [aria-label="全天候录音操作"] > div > button:first-child {
+  border-color: var(--dsw-alias-button-primary-fill) !important;
+  background: var(--dsw-alias-button-primary-fill) !important;
+  color: var(--dsw-alias-label-primary-inverted) !important;
+}
+
+/* Calendar is portalled to document.body, so it cannot inherit the product
+   workspace background. Anchor the dark mapping to its own accessible root. */
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"]) {
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  > div > section[aria-label="客户端日历"],
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  > div > section[aria-label="当天内容"] {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-alias-bg-layer-1) !important;
+  color: var(--dsw-alias-label-primary) !important;
+  box-shadow: var(--dsw-shadow-lv2) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  > div > section[aria-label="客户端日历"] > span[aria-hidden] {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-alias-bg-layer-1) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] > header button,
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] button[aria-label*="记录"] {
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] > div > span {
+  color: var(--dsw-alias-label-tertiary) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] button[data-selected="false"][aria-label*="条记录"] > span:last-child {
+  background: var(--dsw-alias-bg-layer-2) !important;
+  color: var(--dsw-alias-label-secondary) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] button[data-selected="true"],
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] button[data-selected="true"] > span {
+  color: var(--dsw-alias-label-primary-inverted) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="客户端日历"] button[data-selected="true"] > span:last-child {
+  background: transparent !important;
+  color: var(--dsw-alias-label-primary-inverted) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="当天内容"] article > div > div:last-child {
+  border-color: var(--dsw-alias-border-l1) !important;
+  background: var(--dsw-alias-bg-layer-2) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="当天内容"] article h3,
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="当天内容"] article p {
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="当天内容"] article time,
+body[data-ds-dark-theme] [aria-label="客户端日历"]:has(> button[aria-label="关闭日历"])
+  section[aria-label="当天内容"] article span {
+  color: var(--dsw-alias-label-secondary) !important;
+}
+
+/* World has inline light colors below its owner root. Cover its body, cards,
+   comments and non-media dialogs while preserving the dark image preview. */
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] > div:not([role]) {
+  background: var(--dsw-alias-bg-layer-2) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] > header button:not([aria-label]),
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] [role="alert"] button {
+  border-color: var(--dsw-alias-button-primary-fill) !important;
+  background: var(--dsw-alias-button-primary-fill) !important;
+  color: var(--dsw-alias-label-primary-inverted) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] > div:not([role]) > div > div > button {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-alias-button-elevated-fill) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] nav[aria-label="世界范围"] button[aria-current="page"] {
+  border-bottom-color: var(--dsw-alias-state-business-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] article p {
+  color: var(--dsw-alias-label-secondary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] section[aria-label$="的评论区"] {
+  background: var(--dsw-alias-bg-layer-2) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] [role="dialog"]:not([aria-label="世界图片预览"]) > section {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-specific-menu) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] [data-arkme-owned="world-surface"] [role="dialog"]:not([aria-label="世界图片预览"]) textarea {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-specific-input-major) !important;
+  color: var(--dsw-alias-label-primary) !important;
+}
+
+body[data-ds-dark-theme] .arkme-redesign-root,
+body[data-ds-dark-theme] .arkme-redesign-chat-panel,
+body[data-ds-dark-theme] .arkme-redesign-content,
+body[data-ds-dark-theme] .arkme-redesign-feature-page,
+body[data-ds-dark-theme] .arkme-redesign-recordings-page,
+body[data-ds-dark-theme] .arkme-redesign-plugins-page,
+body[data-ds-dark-theme] .arkme-redesign-settings-page,
+body[data-ds-dark-theme] .arkme-redesign-settings-surface,
+body[data-ds-dark-theme] .arkme-redesign-model-settings,
+body[data-ds-dark-theme] .arkme-redesign-details {
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+body[data-ds-dark-theme] .arkme-native-desktop .arkme-redesign-root::before {
+  background: var(--dsw-alias-border-l1);
+}
+body[data-ds-dark-theme] .arkme-redesign-rail {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-specific-sidebar-fill);
+  box-shadow: var(--dsw-shadow-lv2);
+}
+body[data-ds-dark-theme] .arkme-redesign-rail-primary button,
+body[data-ds-dark-theme] .arkme-redesign-rail-footer > button,
+body[data-ds-dark-theme] .arkme-redesign-profile-menu button,
+body[data-ds-dark-theme] .arkme-redesign-task-list > button,
+body[data-ds-dark-theme] .arkme-redesign-task-first,
+body[data-ds-dark-theme] .arkme-workspace-dialog > nav button,
+body[data-ds-dark-theme] .arkme-workspace-dialog-back,
+body[data-ds-dark-theme] .arkme-redesign-placeholder > span {
+  color: var(--dsw-alias-label-secondary);
+}
+body[data-ds-dark-theme] .arkme-redesign-rail-primary button:hover,
+body[data-ds-dark-theme] .arkme-redesign-rail-footer > button:hover,
+body[data-ds-dark-theme] .arkme-redesign-profile-menu button:hover,
+body[data-ds-dark-theme] .arkme-redesign-chat-search:hover,
+body[data-ds-dark-theme] .arkme-redesign-task-section-title button:hover,
+body[data-ds-dark-theme] .arkme-redesign-task-list > button:hover,
+body[data-ds-dark-theme] .arkme-redesign-task-first:hover,
+body[data-ds-dark-theme] .arkme-extension-toolbar > button:hover,
+body[data-ds-dark-theme] button.arkme-redesign-setting-row:hover,
+body[data-ds-dark-theme] a.arkme-redesign-setting-row:hover,
+body[data-ds-dark-theme] .arkme-redesign-model-settings > header button:hover,
+body[data-ds-dark-theme] .arkme-redesign-round-tool:hover,
+body[data-ds-dark-theme] .arkme-workspace-directory-list > button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-rail-primary button.is-active,
+body[data-ds-dark-theme] .arkme-redesign-rail-footer > button.is-active,
+body[data-ds-dark-theme] .arkme-redesign-task-list > button.is-selected {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-rail-primary button.is-active::before {
+  background: var(--dsw-alias-state-business-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-rail-footer,
+body[data-ds-dark-theme] .arkme-redesign-profile-menu,
+body[data-ds-dark-theme] .arkme-redesign-task-section,
+body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-header,
+body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-history button,
+body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-quick button,
+body[data-ds-dark-theme] .arkme-redesign-settings-group h2,
+body[data-ds-dark-theme] .arkme-redesign-setting-row,
+body[data-ds-dark-theme] .arkme-redesign-starters > button,
+body[data-ds-dark-theme] .arkme-redesign-details,
+body[data-ds-dark-theme] .arkme-workspace-dialog > nav,
+body[data-ds-dark-theme] .arkme-workspace-dialog > footer {
+  border-color: var(--dsw-alias-border-l1) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-profile::after {
+  border-color: var(--dsw-specific-sidebar-fill);
+  background: var(--dsw-alias-label-tertiary);
+}
+
+body[data-ds-dark-theme] .arkme-redesign-profile-popover,
+body[data-ds-dark-theme] .arkme-workspace-dialog {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+body[data-ds-dark-theme] .arkme-redesign-profile-head small,
+body[data-ds-dark-theme] .arkme-redesign-profile-menu small,
+body[data-ds-dark-theme] .arkme-redesign-profile-menu button > svg:last-child,
+body[data-ds-dark-theme] .arkme-redesign-task-section-title,
+body[data-ds-dark-theme] .arkme-redesign-task-copy small,
+body[data-ds-dark-theme] .arkme-redesign-feature-page > header p,
+body[data-ds-dark-theme] .arkme-redesign-feature-page > header span,
+body[data-ds-dark-theme] .arkme-redesign-search-page input[aria-label="搜索"]:not(:focus)::placeholder,
+body[data-ds-dark-theme] .arkme-redesign-settings-profile p,
+body[data-ds-dark-theme] .arkme-redesign-settings-group h2,
+body[data-ds-dark-theme] .arkme-redesign-setting-summary,
+body[data-ds-dark-theme] .arkme-redesign-setting-row > svg,
+body[data-ds-dark-theme] .arkme-redesign-hero-input textarea::placeholder,
+body[data-ds-dark-theme] .arkme-redesign-starters small,
+body[data-ds-dark-theme] .arkme-workspace-dialog > header span,
+body[data-ds-dark-theme] .arkme-workspace-dialog > nav > span,
+body[data-ds-dark-theme] .arkme-workspace-dialog-status,
+body[data-ds-dark-theme] .arkme-workspace-dialog > footer small,
+body[data-ds-dark-theme] .arkme-redesign-placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+body[data-ds-dark-theme] .arkme-redesign-chat-search,
+body[data-ds-dark-theme] .arkme-extension-toolbar label,
+body[data-ds-dark-theme] .arkme-extension-toolbar > button,
+body[data-ds-dark-theme] .arkme-redesign-settings-group,
+body[data-ds-dark-theme] .arkme-redesign-model-settings > header button,
+body[data-ds-dark-theme] .arkme-redesign-source-button,
+body[data-ds-dark-theme] .arkme-redesign-round-tool,
+body[data-ds-dark-theme] .arkme-redesign-starter-icon,
+body[data-ds-dark-theme] .arkme-workspace-directory-list > button > span,
+body[data-ds-dark-theme] .arkme-redesign-placeholder > span {
+  border-color: var(--dsw-alias-border-l2) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-chat-search,
+body[data-ds-dark-theme] .arkme-extension-toolbar label {
+  color: var(--dsw-alias-label-tertiary) !important;
+}
+body[data-ds-dark-theme] .arkme-extension-toolbar input,
+body[data-ds-dark-theme] .arkme-redesign-settings-profile h1,
+body[data-ds-dark-theme] .arkme-redesign-model-settings > header button,
+body[data-ds-dark-theme] .arkme-redesign-task-start h1,
+body[data-ds-dark-theme] .arkme-redesign-hero-input textarea,
+body[data-ds-dark-theme] .arkme-redesign-starter-icon,
+body[data-ds-dark-theme] .arkme-redesign-placeholder h1 {
+  color: var(--dsw-alias-label-primary);
+}
+
+body[data-ds-dark-theme] .arkme-redesign-task-list,
+body[data-ds-dark-theme] .arkme-redesign-settings-group,
+body[data-ds-dark-theme] .arkme-redesign-model-settings > header button,
+body[data-ds-dark-theme] .arkme-redesign-plugins-page .arkme-extension-card {
+  background: var(--dsw-alias-bg-layer-1) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-surface,
+body[data-ds-dark-theme] .arkme-redesign-plugins-page .arkme-extension-center-embedded > section {
+  background: var(--dsw-alias-bg-base) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-composer-inner,
+body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-box {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-specific-input-major) !important;
+  color: var(--dsw-alias-label-primary) !important;
+  box-shadow: var(--dsw-shadow-lv2) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-task-greeting img {
+  filter: invert(1) hue-rotate(180deg);
+}
+body[data-ds-dark-theme] .arkme-redesign-hero-input {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-specific-input-major) !important;
+  color: var(--dsw-alias-label-primary) !important;
+  box-shadow: var(--dsw-shadow-lv2) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-hero-input textarea {
+  background: transparent !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-source-button,
+body[data-ds-dark-theme] .arkme-redesign-round-tool,
+body[data-ds-dark-theme] .arkme-redesign-starter-icon {
+  background: var(--dsw-alias-button-elevated-fill) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-history button,
+body[data-ds-dark-theme] .arkme-redesign-search-page .arkme-search-quick button {
+  color: var(--dsw-alias-label-primary) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-plugins-page .arkme-extension-card {
+  border-color: var(--dsw-alias-border-l1) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-plugins-page .arkme-extension-card:hover {
+  border-color: var(--dsw-alias-border-l2) !important;
+  background: var(--dsw-alias-interactive-bg-hover) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-task-section:focus-within .arkme-redesign-task-list {
+  box-shadow: var(--dsw-shadow-lv2);
+}
+
+body[data-ds-dark-theme] .arkme-redesign-settings-error {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-setting-row > strong.is-danger,
+body[data-ds-dark-theme] .arkme-redesign-task-error,
+body[data-ds-dark-theme] .arkme-workspace-dialog-error {
+  color: var(--dsw-alias-state-error-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-task-state.is-complete > i {
+  background: var(--dsw-alias-state-success-tertiary);
+}
+body[data-ds-dark-theme] .arkme-redesign-task-state.is-complete > i::after {
+  background: var(--dsw-alias-state-success-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-task-matrix i,
+body[data-ds-dark-theme] .arkme-redesign-rail-primary button.is-active::before {
+  background: var(--dsw-alias-state-business-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-hero-input:focus-within {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 3px var(--dsw-alias-state-business-tertiary);
+}
+body[data-ds-dark-theme] .arkme-redesign-starters > button:hover strong {
+  color: var(--dsw-alias-state-business-primary);
+}
+body[data-ds-dark-theme] .arkme-redesign-send-task,
+body[data-ds-dark-theme] .arkme-workspace-dialog > footer > div > button {
+  background: var(--dsw-alias-button-primary-fill) !important;
+  color: var(--dsw-alias-label-primary-inverted) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-send-task:disabled {
+  background: var(--dsw-alias-button-elevated-fill) !important;
+  color: var(--dsw-alias-label-secondary) !important;
+}
+body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
+  background: var(--dsw-alias-bg-mask-1);
+}
 
 @media (max-width: 1024px) {
   .arkme-redesign-chat-panel { left: 82px; width: 264px; }

@@ -33,8 +33,6 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
-  ArkmeRecordingDay,
-  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
@@ -136,8 +134,6 @@ export type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
-  ArkmeRecordingDay,
-  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,
@@ -537,13 +533,22 @@ export class ArkmeSdk {
     sort?: ArkmeExtensionCatalogSort
     cursor?: string
     limit?: number
+    ownerUserId?: number
+    excludeExtensionId?: string
     signal?: AbortSignal
   } = {}): Promise<ArkmeExtensionCatalogPage> {
+    if (options.ownerUserId !== undefined && (!Number.isSafeInteger(options.ownerUserId) || options.ownerUserId <= 0)) {
+      throw new TypeError('Arkme extension owner user id must be a positive safe integer')
+    }
     return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', {
       ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
       ...(options.sort === undefined ? {} : { sort: options.sort }),
       ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.ownerUserId === undefined ? {} : { ownerUserId: options.ownerUserId }),
+      ...(options.excludeExtensionId === undefined || options.excludeExtensionId.trim() === ''
+        ? {}
+        : { excludeExtensionId: options.excludeExtensionId.trim() }),
     }, options.signal)
   }
 
@@ -1145,23 +1150,6 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  /** Read system and Doubao transcript projections for one current-account local day. */
-  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
-    assertLocalRecordingDay(dateStamp)
-    return await this.call<ArkmeRecordingDay>('recordings.day', { dateStamp }, signal)
-  }
-
-  /** Explicitly queue any eligible retained audio from one local day for Doubao transcription. */
-  async startRecordingDoubaoBackfill(
-    dateStamp: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingDoubaoBackfillResult> {
-    assertLocalRecordingDay(dateStamp)
-    return await this.call<ArkmeRecordingDoubaoBackfillResult>(
-      'recordings.doubao.start', { dateStamp }, signal,
-    )
-  }
-
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
     return await this.call<ArkmeCachedQueryResult>('records.search', {
       query,
@@ -1255,15 +1243,6 @@ export class ArkmeSdk {
 
 export function createArkmeSdk(options?: ArkmeSdkOptions): ArkmeSdk {
   return new ArkmeSdk(options)
-}
-
-function assertLocalRecordingDay(value: number): void {
-  const date = new Date(value)
-  if (!Number.isSafeInteger(value) || value <= 0 || date.getTime() !== value
-    || date.getHours() !== 0 || date.getMinutes() !== 0
-    || date.getSeconds() !== 0 || date.getMilliseconds() !== 0) {
-    throw new TypeError('Arkme recording date must be a local-day timestamp')
-  }
 }
 
 const defaultSdk = createArkmeSdk()

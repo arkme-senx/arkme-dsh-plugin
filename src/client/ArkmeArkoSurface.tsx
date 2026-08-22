@@ -30,6 +30,7 @@ import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-s
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore } from './composer-draft-store.js'
+import { restoreArkmeComposerFocus } from './composer-focus.js'
 
 type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
@@ -393,7 +394,9 @@ export function ArkmeArkoSurface() {
   const bodyRef = useRef<HTMLDivElement>(null)
   const historySentinelRef = useRef<HTMLDivElement>(null)
   const historyLoadInFlightRef = useRef(false)
+  const composerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const pendingComposerFocusRef = useRef(false)
   const authSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
     arkmeAuthStore.getSnapshot,
@@ -785,6 +788,7 @@ export function ArkmeArkoSurface() {
       }),
     }
     writeArkoPendingTurn(turn)
+    pendingComposerFocusRef.current = true
     setPendingTurn(turn)
     arkmeComposerDraftStore.clear(composerDraftKey)
     setMessages(current => [...current, {
@@ -871,6 +875,21 @@ export function ArkmeArkoSurface() {
   const canChooseModel = (catalog?.options.length ?? 0) > 1
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
+  useEffect(() => {
+    if (!pendingComposerFocusRef.current || loading || interactionLocked
+      || session === undefined || profileUserId === undefined) return
+    pendingComposerFocusRef.current = false
+    const frame = requestAnimationFrame(() => {
+      const activeElement = document.activeElement
+      restoreArkmeComposerFocus(
+        textareaRef.current,
+        activeElement,
+        document.body,
+        activeElement !== null && composerRef.current?.contains(activeElement) === true,
+      )
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [interactionLocked, loading, profileUserId, session])
   const hint = loading
     ? '正在恢复会话'
     : pendingTurn !== undefined && !sending
@@ -1011,7 +1030,7 @@ export function ArkmeArkoSurface() {
       </section>
     </div>}
 
-    <footer style={styles.composer}><div style={styles.composerInner}>
+    <footer style={styles.composer}><div ref={composerRef} style={styles.composerInner}>
       <textarea
         ref={textareaRef}
         rows={1}

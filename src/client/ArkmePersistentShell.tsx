@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type { DirectoryListing, SessionId, SessionSummary, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import { useEffect, useLayoutEffect, useSyncExternalStore, type CSSProperties } from 'react'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
@@ -9,15 +8,13 @@ import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
 } from './chat-directory-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { arkmeUi } from './ui-controller.js'
-import { ArkmeTaskDirectory, ArkmeTaskStart } from './redesign/ArkmeTaskSurface.js'
-import { ArkmeWorkspaceDialog } from './redesign/ArkmeWorkspaceDialog.js'
-import { needsArkmeWorkspaceBrowser } from './redesign/task-session.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
@@ -102,28 +99,25 @@ export function ArkmePersistentClientRuntime() {
   return <ArkmeOutgoingCallHost />
 }
 
-export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'> & {
-  collapseSidebar(): void
-  closeDetails(): void
-  openSession(sessionId: SessionId): void
-}
+export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
+  & PropsRenderSlots<'arkme.directory.entry'>
+  & {
+    collapseSidebar(): void
+    closeDetails(): void
+  }
 
-/** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and task conversations. */
+/** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
 export function ArkmePersistentSidebar({
-  collapsed, useSessions, collapseSidebar, closeDetails, openSession,
+  collapsed, useSessions, renderSlot, collapseSidebar, closeDetails,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
-  const taskMode = ui.mode === 'task-start' || ui.mode === 'task-session'
+  const harnessMode = ui.mode === 'harness'
   const loginMode = ui.mode === 'login'
     || (authState.auth !== undefined && authState.auth.status !== 'authenticated')
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'arko' || taskMode)
-  const taskSessions = useMemo(() => sessionState.ids
-    .map(id => sessionState.byId[id])
-    .filter((session): session is SessionSummary => session !== undefined
-      && session.blank === false && session.origin !== 'subagent'), [sessionState.byId, sessionState.ids])
+    && (ui.mode === 'source' || ui.mode === 'arko' || harnessMode)
   useLayoutEffect(() => {
     closeDetails()
     if (collapsed) collapseSidebar()
@@ -141,7 +135,7 @@ export function ArkmePersistentSidebar({
     data-arkme-owned="persistent-sidebar"
     data-arkme-workspace
     data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}
-    data-arkme-task-mode={taskMode ? 'true' : 'false'}
+    data-arkme-harness-mode={harnessMode ? 'true' : 'false'}
     data-arkme-directory-visible={directoryVisible ? 'true' : 'false'}
     data-arkme-login-mode="false"
     style={styles.sidebar}
@@ -157,144 +151,37 @@ export function ArkmePersistentSidebar({
       <ArkmeNavigation
         wide
         embeddedProductShell
+        showHarnessEntry
         currentSessionId={sessionState.current}
-        directoryLead={<ArkmeTaskDirectory
-          sessions={taskSessions}
-          selected={ui.mode === 'task-session' ? sessionState.current : undefined}
-          onNew={() => { arkmeUi.showNewTask() }}
-          onOpen={sessionId => { openSession(sessionId); arkmeUi.showTaskSession() }}
-        />}
-        onCreateTask={() => { arkmeUi.showNewTask() }}
+        renderSlot={renderSlot}
       />
     </div>}
   </aside>
 }
 
-export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'>
-  & PropsRenderSlots<'arkme.directory.entry'>
-  & {
-    closeDetails(): void
-    startSession(options?: { workspaceId?: WorkspaceId; path?: string }): Promise<SessionId | undefined>
-    pickDirectory(): Promise<string | null>
-    listDirectory(path?: string, signal?: AbortSignal): Promise<DirectoryListing>
-    openSession(sessionId: SessionId): void
-    sendPrompt(sessionId: SessionId, text: string): Promise<void>
-  }
+export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'> & { closeDetails(): void }
 
-/** Arkme permanently owns the whole DSH conversation seat. */
+/** Arkme keeps the conversation seat and embeds the complete native DSH client inside it. */
 export function ArkmePersistentWorkspace({
-  sessionId, useSessions, renderSlot, closeDetails,
-  startSession, pickDirectory, listDirectory, openSession, sendPrompt,
+  sessionId, closeDetails,
 }: ArkmePersistentWorkspaceProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
-  const sessionState = useSessions(state => state)
-  const taskSessions = useMemo(() => sessionState.ids
-    .map(id => sessionState.byId[id])
-    .filter((session): session is SessionSummary => session !== undefined
-      && session.blank === false && session.origin !== 'subagent'), [sessionState.byId, sessionState.ids])
-  const [sending, setSending] = useState(false)
-  const [preparingSession, setPreparingSession] = useState(false)
-  const [promptError, setPromptError] = useState('')
-  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
-  const [pendingTaskPrompt, setPendingTaskPrompt] = useState<string>()
   useLayoutEffect(() => { closeDetails() }, [closeDetails])
-
-  const prepareTaskSession = async (options?: { workspaceId?: WorkspaceId; path?: string }) => {
-    setPreparingSession(true)
-    setPromptError('')
-    try {
-      return await startSession(options)
-    } catch (error) {
-      setPromptError(error instanceof Error ? error.message : '工作区准备失败，请稍后重试')
-      return undefined
-    } finally {
-      setPreparingSession(false)
-    }
-  }
-
-  const runPrompt = async (targetSessionId: SessionId, text: string) => {
-    setSending(true)
-    setPromptError('')
-    try {
-      await sendPrompt(targetSessionId, text)
-    } catch (error) {
-      setPromptError(error instanceof Error ? error.message : '任务发送失败，请稍后重试')
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const enterTask = (targetSessionId: SessionId, prompt?: string) => {
-    openSession(targetSessionId)
-    arkmeUi.showTaskSession()
-    if (prompt !== undefined) void runPrompt(targetSessionId, prompt)
-  }
-
-  const requestTaskSession = (prompt?: string) => {
-    void prepareTaskSession().then(async targetSessionId => {
-      if (targetSessionId !== undefined) { enterTask(targetSessionId, prompt); return }
-      setPendingTaskPrompt(prompt)
-      try {
-        const path = await pickDirectory()
-        if (path === null) { setPendingTaskPrompt(undefined); return }
-        const createdSessionId = await prepareTaskSession({ path })
-        if (createdSessionId !== undefined) enterTask(createdSessionId, prompt)
-        setPendingTaskPrompt(undefined)
-      } catch (error) {
-        if (needsArkmeWorkspaceBrowser(error)) setWorkspaceDialogOpen(true)
-        else {
-          setPendingTaskPrompt(undefined)
-          setPromptError(error instanceof Error && error.message !== '' ? error.message : '工作区选择失败，请稍后重试')
-        }
-      }
-    })
-  }
-
-  const taskDirectory = <ArkmeTaskDirectory
-    sessions={taskSessions}
-    selected={undefined}
-    onNew={() => { arkmeUi.showNewTask() }}
-    onOpen={targetSessionId => { enterTask(targetSessionId) }}
-  />
 
   return <main data-arkme-owned="persistent-workspace" data-arkme-workspace style={styles.workspace} aria-label="Arkme 主界面">
     <ArkmePersistentClientRuntime />
-    {ui.mode === 'task-start'
-      ? <ArkmeTaskStart
-        busy={sending || preparingSession}
-        error={promptError}
-        onChooseWorkspace={() => { setPendingTaskPrompt(undefined); setWorkspaceDialogOpen(true) }}
-        onBrowsePlugins={() => { arkmeUi.showExtensions() }}
-        onRun={requestTaskSession}
-      />
+    {ui.mode === 'harness'
+      ? <DeepSeekHarnessSurface />
       : ui.mode === 'settings'
-        ? <div className="arkme-redesign-route-surface arkme-redesign-settings-page">
-          <ArkmeSettingsSurface />
-        </div>
-        : <ArkmeSurface
-          productChrome={false}
-          productNavigation={false}
-          currentSessionId={sessionId}
-          renderSlot={renderSlot}
-          directoryLead={taskDirectory}
-          onCreateTask={() => { arkmeUi.showNewTask() }}
-          onActivateSurface={() => undefined}
-        />}
-    <ArkmeWorkspaceDialog
-      open={workspaceDialogOpen}
-      busy={preparingSession}
-      listDirectory={listDirectory}
-      onCancel={() => { setWorkspaceDialogOpen(false); setPendingTaskPrompt(undefined) }}
-      onSelect={path => {
-        void prepareTaskSession({ path }).then(targetSessionId => {
-          if (targetSessionId === undefined) return
-          setWorkspaceDialogOpen(false)
-          const prompt = pendingTaskPrompt
-          setPendingTaskPrompt(undefined)
-          enterTask(targetSessionId, prompt)
-        })
-      }}
-    />
+      ? <div className="arkme-redesign-route-surface arkme-redesign-settings-page">
+        <ArkmeSettingsSurface />
+      </div>
+      : <ArkmeSurface
+        productChrome={false}
+        productNavigation={false}
+        currentSessionId={sessionId}
+        onActivateSurface={() => undefined}
+      />}
   </main>
 }
 

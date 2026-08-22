@@ -156,19 +156,6 @@ describe('ArkmeUiController', () => {
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
 
-  it('opens calls without retaining a conversation source', () => {
-    const controller = new ArkmeUiController()
-    controller.selectSource({
-      sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 1, unreadCount: 0,
-    })
-
-    controller.showCalls()
-
-    expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
-    })
-  })
-
   it('clears the previous account selection when authentication changes accounts', () => {
     const controller = new ArkmeUiController()
     const source = {
@@ -223,12 +210,10 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('switches between the Arkme task start and native DSH task conversation modes', () => {
+  it('switches between Arkme conversations and the native DeepSeek Harness mode', () => {
     const controller = new ArkmeUiController()
-    controller.showNewTask()
-    expect(controller.getSnapshot().mode).toBe('task-start')
-    controller.showTaskSession()
-    expect(controller.getSnapshot().mode).toBe('task-session')
+    controller.showHarness()
+    expect(controller.getSnapshot().mode).toBe('harness')
     controller.showConversations()
     expect(controller.getSnapshot().mode).toBe('source')
     controller.showSettings()
@@ -238,11 +223,11 @@ describe('ArkmeUiController', () => {
   it('opens and closes the calendar without replacing the page underneath it', () => {
     const controller = new ArkmeUiController()
 
-    controller.showTaskSession()
+    controller.showHarness()
     controller.showCalendar()
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session', calendarOpen: true })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness', calendarOpen: true })
     controller.hideCalendar()
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().calendarOpen).toBeUndefined()
 
     controller.showSearch()

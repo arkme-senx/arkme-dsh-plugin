@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -58,9 +58,9 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.13 更新",
-      "summary": "迁移世界与应用更新流程，新增联系人、群聊、机器人快捷添加和 DSH V3 市场发布，并完善通话录音与市场体验。",
-      "publishedAt": "2026-08-21T12:43:11.000Z",
+      "title": "Arkme 插件 0.1.14 更新",
+      "summary": "重构 Arkme 桌面客户端并嵌入原生 DSH，完善世界评论、声纹提醒、图片预览与扩展市场，并回退通话录音桌面改版。",
+      "publishedAt": "2026-08-22T07:24:00.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },

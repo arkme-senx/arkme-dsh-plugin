@@ -116,7 +116,6 @@ describe('registerArkmeTools', () => {
       'arkme_extension_review_create',
       'arkme_recording_days_list',
       'arkme_recording_read',
-      'arkme_recording_doubao_start',
       'arkme_wechat_conversations',
       'arkme_wechat_messages',
       'arkme_wechat_conversation_detail',

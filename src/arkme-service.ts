@@ -141,7 +141,6 @@ import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingCursorPayload,
   ArkmeRecordingDay,
-  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRecordingProjectionKind,
   ArkmeRecordingSearchResult,
   ArkmeRecordingSection,
@@ -478,9 +477,7 @@ export class ArkmeService {
         worldVoiceprintSocialContext: true,
         arrangements: true,
         myExtensions: true,
-      extensionPublish: true,
-      recordingTranscripts: true,
-      recordingDoubaoBackfill: true,
+        extensionPublish: true,
         extensionReviews: true,
         ...(this.relatedRecording.isEnabled() ? { relatedRecordings: true as const } : {}),
       },
@@ -617,17 +614,8 @@ export class ArkmeService {
   async recordingTranscript(
     dateStamp: number,
     signal?: AbortSignal,
-    source: 'system' | 'doubao' = 'system',
   ): Promise<ArkmeRecordingTranscriptSection> {
-    return await this.recording.recordingTranscript(dateStamp, signal, source)
-  }
-
-  /** Queue Doubao backfill only after an explicit UI, SDK, or Tool request. */
-  async startRecordingDoubaoBackfill(
-    dateStamp: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingDoubaoBackfillResult> {
-    return await this.recording.startRecordingDoubaoBackfill(dateStamp, signal)
+    return await this.recording.recordingTranscript(dateStamp, signal)
   }
 
   /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */

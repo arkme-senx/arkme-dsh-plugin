@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeBotCreateDialog } from '../src/client/ArkmeBotCreateDialog.js'
 import { ArkmeQuickAddButton, ArkmeQuickAddMenu } from '../src/client/ArkmeQuickAdd.js'
 
+const quickAddSource = readFileSync(new URL('../src/client/ArkmeQuickAdd.tsx', import.meta.url), 'utf8')
+
 describe('Arkme quick-add UI', () => {
   it('renders one compact add button for the conversation header', () => {
     const markup = renderToStaticMarkup(<ArkmeQuickAddButton
@@ -13,6 +15,9 @@ describe('Arkme quick-add UI', () => {
     expect(markup).toContain('aria-label="添加联系人、群聊或 Bot"')
     expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('>＋</button>')
+    expect(markup).toContain('width:40px;height:40px')
+    expect(markup).toContain('border:1px solid')
+    expect(markup).toContain('border-radius:11px')
     expect(markup).not.toContain('role="treeitem"')
     expect(markup).not.toContain('>添加联系人<')
   })
@@ -42,8 +47,22 @@ describe('Arkme quick-add UI', () => {
     expect(markup).toContain('border-radius:18px')
     expect(markup).toContain('font-size:13px')
     expect(markup).toContain('font-weight:550')
-    expect(markup).toContain('background:rgba(255,255,255,.98)')
+    expect(markup).toContain('background:var(--dsw-specific-menu, rgba(255,255,255,.98))')
     expect(markup).not.toMatch(/green|#07c160|#16a34a/i)
+  })
+
+  it('keeps the menu readable across DSH themes without changing its light fallbacks', () => {
+    const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
+      onContactAdd={vi.fn()}
+      onCreateGroup={vi.fn()}
+      onAddBot={vi.fn()}
+    />)
+
+    expect(markup).toContain('border:1px solid var(--dsw-alias-border-l2, #e3e4e8)')
+    expect(markup).toContain('color:var(--dsw-alias-label-primary, #1a1c21)')
+    expect(markup).toContain('color:var(--dsw-alias-label-secondary, #6f747e)')
+    expect(markup).toContain('background:var(--dsw-alias-border-l1, #ececef)')
+    expect(quickAddSource).toContain("event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover, #f4f4f6)'")
   })
 })
 

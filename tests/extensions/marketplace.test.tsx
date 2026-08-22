@@ -7,6 +7,7 @@ import {
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeMarketplace, ArkmeExtensionRestartDialog,
+  ArkmeExtensionAuditAction, ArkmeExtensionAuditFeedback,
   actionableExtensionUpdates, ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger,
   ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionLifecycleRow, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
@@ -325,16 +326,18 @@ describe('Arkme marketplace UI', () => {
       currentUserId={99}
       onToggle={() => {}}
       onPrivateChat={() => {}}
-      onWorld={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(html).toContain('data-extension-author-popover="profile"')
     expect(html).toContain('data-extension-author-world-link="true"')
     expect(html).toContain('data-extension-author-profile-link="icon"')
     expect(html).not.toContain('jotmo://')
-    expect(html.match(/<button/g)).toHaveLength(4)
+    expect(html.match(/<button/g)).toHaveLength(5)
     expect(html).toContain('进入 TA 的世界')
     expect(html).toContain('发送消息')
+    expect(html).toContain('data-extension-author-other-extensions="true"')
+    expect(html).toContain('TA 的全部插件')
     expect(html).not.toContain('Arkme 作者')
     expect(html).not.toContain('@lucis')
   })
@@ -349,11 +352,12 @@ describe('Arkme marketplace UI', () => {
       currentUserId={7}
       onToggle={() => {}}
       onPrivateChat={() => {}}
-      onWorld={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(html).toContain('进入 TA 的世界')
     expect(html).not.toContain('发送消息')
+    expect(html).toContain('TA 的全部插件')
   })
 
   it('does not invent a profile or message action when the projected user id is unavailable', () => {
@@ -362,12 +366,14 @@ describe('Arkme marketplace UI', () => {
       open
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(extensionAuthorWorldTarget({ owner_user_id: 0, owner_name: '未知作者' })).toBeUndefined()
     expect(html).toContain('data-extension-author-popover="profile"')
     expect(html).not.toContain('进入 TA 的世界')
     expect(html).not.toContain('发送消息')
+    expect(html).not.toContain('TA 的全部插件')
     expect(html).not.toContain('Arkme 作者')
   })
 
@@ -381,6 +387,7 @@ describe('Arkme marketplace UI', () => {
       open={false}
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(closed).not.toContain('data-extension-author-popover="profile"')
@@ -391,6 +398,7 @@ describe('Arkme marketplace UI', () => {
       actionBusy
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(busy).toContain('正在打开…')
@@ -464,6 +472,14 @@ describe('Arkme marketplace UI', () => {
     expect(marketplaceListParams(' 翻译 ', 'rating', false)).toEqual({ limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE, query: '翻译' })
     expect(marketplaceListParams('翻译', 'rating', true, 'next-page')).toEqual({
       limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE, query: '翻译', sort: 'rating', cursor: 'next-page',
+    })
+    expect(marketplaceListParams('翻译', 'comments', true, undefined, {
+      ownerUserId: 77,
+    })).toEqual({
+      limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
+      query: '翻译',
+      sort: 'comments',
+      ownerUserId: 77,
     })
     expect(classificationStatusHint('building')).toContain('正在更新分类')
     expect(classificationStatusHint('ready')).toBeUndefined()
@@ -725,6 +741,44 @@ describe('Arkme marketplace UI', () => {
       audit_reason: '读取令牌并访问网络',
     })).toBe('扩展 @example/native 是V3 原生 DSH Package，将以 DSH 插件进程权限运行。 检测到：运行依赖。 AI 风险审核提示（high）：读取令牌并访问网络。确认继续安装吗？')
     expect(extensionNativeInstallWarning({ execution_model: 'arkme-sandboxed' })).toBeUndefined()
+  })
+
+  it('renders the shared one-click audit action and result used by detail surfaces', () => {
+    const idle = renderToStaticMarkup(<ArkmeExtensionAuditAction
+      extensionId="ext-1"
+      busyExtensionId={undefined}
+      onRun={() => {}}
+    />)
+    const busy = renderToStaticMarkup(<ArkmeExtensionAuditAction
+      extensionId="ext-1"
+      busyExtensionId="ext-1"
+      onRun={() => {}}
+    />)
+    const result = renderToStaticMarkup(<ArkmeExtensionAuditFeedback
+      error=""
+      result={{
+        extension_id: 'ext-1',
+        verdict: 'review',
+        risk_level: 'medium',
+        summary: '需要人工复核权限说明',
+        reasons: ['声明了网络权限'],
+        recommendations: [],
+        source_reviewed: false,
+        source_scope: 'public_detail_only',
+        audited_at_millis: 1,
+      }}
+    />)
+    const failure = renderToStaticMarkup(<ArkmeExtensionAuditFeedback error="审核失败" />)
+
+    expect(idle).toContain('AI 审核')
+    expect(busy).toContain('disabled=""')
+    expect(busy).toContain('审核中...')
+    expect(result).toContain('AI 审核建议复核')
+    expect(result).toContain('中风险')
+    expect(result).toContain('需要人工复核权限说明')
+    expect(result).toContain('声明了网络权限')
+    expect(failure).toContain('role="alert"')
+    expect(failure).toContain('审核失败')
   })
 
   it('renders the resolved author without exposing a version in its label', () => {

@@ -72,14 +72,6 @@ describe('recording navigation entry', () => {
       .toBe('3ce1f950f6a3999ecb66f5bf72f1c7e1300f07f2cd5ce426078184cff89f83ff')
   })
 
-  it('renders a call row that keeps recordings and AI summaries together', () => {
-    const markup = renderToStaticMarkup(<navigation.ArkmeCallsRow selected onClick={vi.fn()} />)
-
-    expect(markup).toContain('role="treeitem"')
-    expect(markup).toContain('aria-selected="true"')
-    expect(markup).toContain('>通话<')
-    expect(markup).toContain('通话记录、录音与 AI 摘要')
-  })
 })
 
 describe('Arko navigation entry', () => {
@@ -108,5 +100,20 @@ describe('Arko navigation entry', () => {
   it('keeps the product description only when no conversation exists yet', () => {
     const markup = renderToStaticMarkup(<navigation.ArkmeArkoRow selected={false} onClick={vi.fn()} />)
     expect(markup).toContain('对话并处理 Arkme 业务')
+  })
+})
+
+describe('DeepSeek Harness navigation entry', () => {
+  it('uses the ordinary conversation-row contract and exposes selected state', () => {
+    const DeepSeekHarnessRow = navigation.DeepSeekHarnessRow
+    expect(DeepSeekHarnessRow).toBeDefined()
+    if (DeepSeekHarnessRow === undefined) return
+
+    const markup = renderToStaticMarkup(<DeepSeekHarnessRow selected onClick={vi.fn()} />)
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('DeepSeek Harness')
+    expect(markup).toContain('原生 DeepSeek 开发环境')
+    expect(markup).toContain('src="/favicon.svg"')
   })
 })

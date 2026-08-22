@@ -330,7 +330,14 @@ export class ExtensionPublishClient {
 		return await this.post('/api/public/v1/extensions/share/detail', { share_ref: shareRef }, signal)
 	}
 
-  async list(input: { query?: string; sort?: ArkmeExtensionCatalogSort; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
+  async list(input: {
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+    owner_user_id?: number
+    exclude_extension_id?: string
+  } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/public/v1/extensions/list', input, signal)
   }
 

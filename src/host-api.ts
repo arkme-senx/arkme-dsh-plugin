@@ -346,7 +346,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'recordings.doubao.start']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -443,9 +443,6 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
-    case 'recordings.doubao.start': return await service.startRecordingDoubaoBackfill(
-      numberParam(params, 'dateStamp', 0),
-    )
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
       endDate: stringParam(params, 'endDate'),
@@ -846,11 +843,19 @@ export async function dispatchArkmeHostOperation(
     )
     case 'extensions.catalog.list': {
       const sort = extensionCatalogSortParam(params)
+      const ownerUserId = numberParam(params, 'ownerUserId', 0)
+      if (ownerUserId !== 0 && (!Number.isSafeInteger(ownerUserId) || ownerUserId < 0)) {
+        throw new ArkmePluginError('extension-catalog-owner-invalid', '市集作者筛选参数无效', false, 400)
+      }
       return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).searchCatalog({
         query: stringParam(params, 'query'),
         cursor: stringParam(params, 'cursor'),
         limit: numberParam(params, 'limit', 20),
         ...(sort === undefined ? {} : { sort }),
+        ...(ownerUserId === 0 ? {} : { ownerUserId }),
+        ...(stringParam(params, 'excludeExtensionId').trim() === '' ? {} : {
+          excludeExtensionId: stringParam(params, 'excludeExtensionId').trim(),
+        }),
       }))
     }
     case 'extensions.classification.tree': return await requireExtensionManager(extensionManager).classificationTree(

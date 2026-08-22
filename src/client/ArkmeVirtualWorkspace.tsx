@@ -23,9 +23,6 @@ import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
   readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
 } from './navigation-cache.js'
-import {
-  arkmePersonalTestEditionLabel, readArkmePersonalTestEdition, type ArkmePersonalTestEdition,
-} from './personal-test-edition.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
@@ -49,6 +46,7 @@ export interface ArkmeNavigationProps {
   embeddedProductShell?: boolean
   onClose?: () => void
   onActivateSurface?: () => void
+  showHarnessEntry?: boolean
   directoryLead?: ReactNode
   onCreateTask?: () => void
   renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
@@ -118,15 +116,6 @@ const styles: Record<string, CSSProperties> = {
   },
   searchInput: { minWidth: 0, width: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 12 },
   list: { flex: 1, minHeight: 0, margin: 0, padding: '0 6px 18px', overflowY: 'auto', listStyle: 'none' },
-  personalTestBanner: {
-    flex: 'none', margin: '8px 10px 2px', padding: '9px 10px', boxSizing: 'border-box',
-    border: `1px solid ${colors.border}`, borderRadius: 11, background: '#f7f7fa', color: colors.text,
-  },
-  personalTestTop: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
-  personalTestMark: { width: 20, height: 20, flex: 'none', display: 'grid', placeItems: 'center' },
-  personalTestName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, lineHeight: '18px', fontWeight: 600 },
-  personalTestPill: { flex: 'none', padding: '1px 5px', borderRadius: 999, background: '#20232d', color: '#fff', fontSize: 8, lineHeight: '12px', fontWeight: 700, letterSpacing: '.04em' },
-  personalTestHint: { margin: '3px 0 0 27px', color: colors.secondary, fontSize: 10, lineHeight: '15px' },
   topicList: { paddingBottom: 74 },
   topicCardList: { paddingTop: 0 },
   chatRow: {
@@ -297,18 +286,6 @@ export function renderArkmeDirectoryRow(props: ArkmeDirectoryRowProps): ReactNod
   return <ArkmeDirectoryRow {...props} />
 }
 
-export function ArkmePersonalTestEditionBanner({ edition }: { edition: ArkmePersonalTestEdition }) {
-  const defaultLabel = edition.defaultSurface === 'calls' ? '通话测试页' : '全天候录音测试页'
-  return <div style={styles.personalTestBanner} role="status" aria-label={`${edition.owner}个人测试版`}>
-    <div style={styles.personalTestTop}>
-      <span style={styles.personalTestMark} aria-hidden><ArkmeMark size={20} /></span>
-      <strong style={styles.personalTestName}>{arkmePersonalTestEditionLabel(edition)}</strong>
-      <span style={styles.personalTestPill}>TEST</span>
-    </div>
-    <p style={styles.personalTestHint}>首次打开默认进入{defaultLabel}</p>
-  </div>
-}
-
 export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
   return <button
     type="button"
@@ -321,22 +298,6 @@ export function ArkmeRecordingsRow({ selected, onClick }: { selected: boolean; o
     <span style={styles.chatContent}>
       <span style={styles.chatTop}><span style={styles.chatName}>全天候录音</span></span>
       <span style={styles.chatBottom}><span style={styles.preview}>转写、日总结与时间轴</span></span>
-    </span>
-  </button>
-}
-
-export function ArkmeCallsRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
-  return <button
-    type="button"
-    role="treeitem"
-    aria-selected={selected}
-    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
-    onClick={onClick}
-  >
-    <span style={styles.avatar} aria-hidden><ArkmeMark size={44} /></span>
-    <span style={styles.chatContent}>
-      <span style={styles.chatTop}><span style={styles.chatName}>通话</span></span>
-      <span style={styles.chatBottom}><span style={styles.preview}>通话记录、录音与 AI 摘要</span></span>
     </span>
   </button>
 }
@@ -422,6 +383,22 @@ export function ArkmeArkoRow({
         <ArkmeTopicTagBadge label="AI" selected={selected} />
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}>{latestPreview}</span></span>
+    </span>
+  </button>
+}
+
+export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><img src="/favicon.svg" alt="" width={28} height={28} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.entryName}>DeepSeek Harness</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>原生 DeepSeek 开发环境</span></span>
     </span>
   </button>
 }
@@ -674,7 +651,7 @@ export function ArkmeSourceSortControl({
 }
 
 export function ArkmeNavigation({
-  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface,
+  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   directoryLead, onCreateTask, renderSlot,
 }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
@@ -690,7 +667,6 @@ export function ArkmeNavigation({
     arkmeNotificationActivation.getSnapshot,
   )
   const [initialCache] = useState(readLastNavigationCache)
-  const [personalTestEdition] = useState(readArkmePersonalTestEdition)
   const cacheRef = useRef<ArkmeNavigationCache | undefined>(initialCache)
   const authenticatedUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
@@ -759,6 +735,8 @@ export function ArkmeNavigation({
     || arkoPresentationName(arkoProfile).toLocaleLowerCase().includes(normalizedConversationQuery)
     || (arkoLatestPreview ?? ARKO_CONVERSATION_PREVIEW_FALLBACK).toLocaleLowerCase().includes(normalizedConversationQuery)
   const showSelfInSearch = normalizedConversationQuery === '' || '发给自己 默认分类与主题'.includes(normalizedConversationQuery)
+  const showHarnessInSearch = normalizedConversationQuery === ''
+    || 'deepseek harness 原生 deepseek 开发环境'.includes(normalizedConversationQuery)
 
   const stopCreatedHighlightAnimation = useCallback(() => {
     createdHighlightTimeoutsRef.current.forEach(timer => { clearTimeout(timer) })
@@ -1015,7 +993,6 @@ export function ArkmeNavigation({
   useEffect(() => () => { stopCreatedHighlightAnimation() }, [stopCreatedHighlightAnimation])
 
   const showLogin = () => { activateNativeEntry(); arkmeUi.showLogin(); onActivateSurface?.() }
-  const showCalls = () => { activateNativeEntry(); arkmeUi.showCalls(); onActivateSurface?.() }
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
   const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
   const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
@@ -1179,9 +1156,6 @@ export function ArkmeNavigation({
       {onCreateTask !== undefined && <button type="button" style={styles.createTaskButton} aria-label="新任务" onClick={onCreateTask}><Plus size={19} /></button>}
     </div>}
 
-    {directory === 'root' && personalTestEdition !== undefined
-      && <ArkmePersonalTestEditionBanner edition={personalTestEdition} />}
-
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
     </button> : <>
@@ -1197,6 +1171,14 @@ export function ArkmeNavigation({
     >
       {directory === 'root' && <>
         {authenticated && normalizedConversationQuery === '' && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
+          selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
+          onClick={() => {
+            activateNativeEntry()
+            arkmeUi.showHarness()
+            onActivateSurface?.()
+          }}
+        />}
         {showArkoInSearch && <ArkmeArkoRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
@@ -1224,7 +1206,6 @@ export function ArkmeNavigation({
           </span>
         </button>}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}
-        {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {

@@ -50,29 +50,6 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it('reads one recording day and explicitly starts its Doubao transcript', async () => {
-    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
-    const sdk = createArkmeSdk({
-      fetchImpl: async (_input, init) => {
-        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
-        calls.push(request)
-        return request.operation === 'recordings.day'
-          ? success({ dateStamp: request.params?.dateStamp, transcript: { state: 'empty', items: [], message: '' } })
-          : success({ queuedChildCount: 1, inFlightChildCount: 0, missingAudioChildCount: 0 })
-      },
-    })
-    const dateStamp = new Date(2026, 7, 17).getTime()
-
-    await expect(sdk.recordingDay(dateStamp)).resolves.toMatchObject({ dateStamp })
-    await expect(sdk.startRecordingDoubaoBackfill(dateStamp)).resolves.toMatchObject({ queuedChildCount: 1 })
-    expect(calls).toEqual([
-      { operation: 'recordings.day', params: { dateStamp } },
-      { operation: 'recordings.doubao.start', params: { dateStamp } },
-    ])
-    await expect(sdk.startRecordingDoubaoBackfill(dateStamp + 1)).rejects.toThrow(/local-day timestamp/)
-    expect(calls).toHaveLength(2)
-  })
-
   it('lists image-library pages through the public same-origin operation', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -286,12 +263,22 @@ describe('Arkme SDK', () => {
     })
 
     await expect(sdk.searchExtensions('native', 10)).resolves.toMatchObject({ total: 0 })
+    await expect(sdk.extensionCatalog({
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+      sort: 'comments',
+      limit: 70,
+    })).resolves.toMatchObject({ total: 0 })
     await expect(sdk.extensionDetail('ext-v3')).resolves.toMatchObject({ artifact_contract_version: 3 })
     await expect(sdk.extensionInstallPreview('ext-v3', '1.0.0')).resolves.toMatchObject({
       artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
     })
     expect(calls).toEqual([
       { operation: 'extensions.catalog.list', params: { query: 'native', limit: 10 } },
+      {
+        operation: 'extensions.catalog.list',
+        params: { sort: 'comments', limit: 70, ownerUserId: 77, excludeExtensionId: 'ext-current' },
+      },
       { operation: 'extensions.catalog.detail', params: { extensionId: 'ext-v3' } },
       { operation: 'extensions.install.preview', params: { extensionId: 'ext-v3', version: '1.0.0' } },
     ])
