@@ -332,6 +332,7 @@ export class ChatService {
         const aiPolish = this.aiPolish.timelineAiPolish(record, payload)
         const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
         const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
+        const realtimeInvite = this.chatRealtimeInviteCard(item)
         const rawAgentSource = timelineAgentSource(relation, record, payload)
         const agentSource = senderUserId === session.userId
           ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
@@ -352,6 +353,7 @@ export class ChatService {
           ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
           ...(aiPolish === undefined ? {} : { aiPolish }),
           ...(forwardRecords === undefined ? {} : { forwardRecords }),
+          ...(realtimeInvite === undefined ? {} : { realtimeInvite }),
           templateKind: numberValue(payload.template_kind),
           displayKind: numberValue(payload.display_kind),
           version: numberValue(payload.version ?? record.version),
@@ -877,6 +879,7 @@ export class ChatService {
         const aiPolish = this.aiPolish.timelineAiPolish(record, payload)
         const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
         const forwardRecords = await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
+        const realtimeInvite = this.chatRealtimeInviteCard(item)
         const rawAgentSource = timelineAgentSource(relation, record, payload)
         const agentSource = senderUserId === session.userId
           ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
@@ -895,6 +898,7 @@ export class ChatService {
           ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
           ...(aiPolish === undefined ? {} : { aiPolish }),
           ...(forwardRecords === undefined ? {} : { forwardRecords }),
+          ...(realtimeInvite === undefined ? {} : { realtimeInvite }),
           displayKind: numberValue(payload.display_kind),
           contentBlocks: this.media.richContentBlocks(item, session.userId),
         })
@@ -924,7 +928,8 @@ export class ChatService {
             && stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records') {
             await appendItems(listValue(nestedForward.items), depth + 1)
             continue
-          }
+  }
+
           const senderUserId = numberValue(item.source_sender_user_id ?? item.sourceSenderUserId ?? item.owner_id ?? item.ownerId)
           const senderName = stringValue(
             item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
@@ -963,6 +968,34 @@ export class ChatService {
         items: projectedItems,
       }
     }
+
+  private chatRealtimeInviteCard(raw: unknown): ArkmeTimelineItem['realtimeInvite'] | undefined {
+    const payload = this.media.recordContentPayload(raw)
+    if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'realtime_invite') return undefined
+    const schemaVersion = Math.trunc(numberValue(payload.schema_version ?? payload.schemaVersion))
+    const inviteRef = stringValue(payload.invite_ref ?? payload.inviteRef).trim()
+    const extensionId = stringValue(payload.extension_id ?? payload.extensionId).trim()
+    const service = stringValue(payload.service).trim()
+    const protocol = stringValue(payload.protocol).trim()
+    const protocolMajor = Math.trunc(numberValue(payload.protocol_major ?? payload.protocolMajor))
+    const expiresAtMillis = Math.trunc(numberValue(payload.expires_at ?? payload.expiresAtMillis))
+    const participantLimit = Math.trunc(numberValue(payload.participant_limit ?? payload.participantLimit))
+    const fallbackText = stringValue(payload.fallback_text ?? payload.fallbackText).trim()
+    if (schemaVersion !== 1 || inviteRef === '' || extensionId === '' || service === '' || protocol === ''
+      || protocolMajor < 1 || expiresAtMillis <= 0 || participantLimit < 2 || participantLimit > 100
+      || fallbackText === '' || Array.from(fallbackText).length > 240) return undefined
+    return {
+      schemaVersion: 1,
+      inviteRef,
+      extensionId,
+      service,
+      protocol,
+      protocolMajor,
+      expiresAtMillis,
+      participantLimit,
+      fallbackText,
+    }
+  }
   
   sealMessageRef(userId: number, chatSessionUid: string, relationUid: string, signingKey: string): string {
       const payload = encodeOpaqueJson({ version: 1, userId, chatSessionUid, relationUid } satisfies ArkmeMessageRefPayload)

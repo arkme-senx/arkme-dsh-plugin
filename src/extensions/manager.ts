@@ -1346,7 +1346,7 @@ export class ArkmeExtensionManager {
         profilePackageName: persistentBundle.packageName,
         profileBundlePath: persistentBundle.bundleDirectory,
       }),
-      permissionSnapshot: [...unpacked.manifest.permissions],
+      permissionSnapshot: [...new Set((resolution.permissions ?? []).map(value => value.trim()).filter(Boolean))].sort(),
       updateChannel: 'stable',
       installedAtMillis: Date.now(),
       lastCheckedAtMillis: Date.now(),

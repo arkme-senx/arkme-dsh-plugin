@@ -63,6 +63,7 @@ export interface ArkmeServiceConfig {
   intelligentBaseUrl: string
   routePath: string
   audioBaseUrl: string
+  realtimeBaseUrl?: string
   extensionPublishBaseUrl?: string
   requestTimeoutMs: number
   maxTextLength: number

@@ -82,6 +82,7 @@ import type {
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 import { normalizeGitHubRepositoryURL } from '../extensions/source.js'
+import type { ArkmeRealtimeInviteCard, ArkmeRealtimeRoomSession } from '../realtime/types.js'
 
 export type {
   ArkmeArrangementDetail,
@@ -208,6 +209,7 @@ export type {
 	ArkmeExtensionSource,
 	ArkmeExtensionPublisherRole,
 } from '../extensions/types.js'
+export type { ArkmeRealtimeInviteCard, ArkmeRealtimeRoomSession } from '../realtime/types.js'
 export { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 export type {
@@ -274,6 +276,14 @@ export class ArkmeSdk {
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
     return await this.call<ArkmeProviderState>('provider.state', undefined, signal)
+  }
+
+  /** Enter a native Chat invite through the Host; credentials and the upstream socket remain Host-owned. */
+  async enterRealtimeInvite(card: ArkmeRealtimeInviteCard, signal?: AbortSignal): Promise<ArkmeRealtimeRoomSession> {
+    if (card.schemaVersion !== 1 || card.inviteRef.trim() === '' || card.extensionId.trim() === '') {
+      throw new TypeError('Arkme realtime invite card is invalid')
+    }
+    return await this.call<ArkmeRealtimeRoomSession>('realtime.invite.enter', { card }, signal)
   }
 
   /** Read Browser-safe installed extension projections without Host filesystem paths or runtime IDs. */

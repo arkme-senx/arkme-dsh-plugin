@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as Rea
 import { createPortal } from 'react-dom'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
+import { createArkmeSdk } from '../sdk/index.js'
+
+const realtimeSdk = createArkmeSdk()
 
 const mediaRoute = '/arkme-self/api/media'
 const textCollapseCharacterThreshold = 300
@@ -45,6 +48,11 @@ const styles: Record<string, CSSProperties> = {
   forwardTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '22px', fontWeight: 600 },
   forwardLines: { marginTop: 4, display: 'flex', flexDirection: 'column', gap: 1 },
   forwardLine: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 14, lineHeight: '20px' },
+  realtimeCard: { width: 'min(360px, 100%)', padding: 16, boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2, #e2e5e9)', borderRadius: 16, background: 'linear-gradient(145deg, rgba(57,100,254,.10), rgba(130,149,232,.04))' },
+  realtimeTitle: { margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 650 },
+  realtimeMeta: { margin: '4px 0 12px', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 12, lineHeight: '18px' },
+  realtimeButton: { minWidth: 96, height: 34, border: 0, borderRadius: 10, padding: '0 14px', background: 'var(--dsw-alias-state-business-primary, #3964fe)', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 600 },
+  realtimeError: { margin: '8px 0 0', color: 'var(--dsw-alias-state-danger, #d92d20)', fontSize: 12, lineHeight: '18px' },
   previewOverlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 48, boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
   previewBody: { position: 'relative', width: 'min(960px, 90vw)', height: 'min(720px, 82vh)' },
   previewViewport: { width: '100%', height: '100%', overflowX: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
@@ -404,6 +412,34 @@ function splitVisualRuns(blocks: ArkmeContentBlock[]): Array<ArkmeContentBlock |
   return rows
 }
 
+function RealtimeInviteCard({ card }: { card: NonNullable<ArkmeTimelineItem['realtimeInvite']> }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const expired = card.expiresAtMillis <= Date.now()
+  const open = async () => {
+    if (busy || expired) return
+    setBusy(true); setError('')
+    try {
+      const session = await realtimeSdk.enterRealtimeInvite(card)
+      window.dispatchEvent(new CustomEvent('arkme:realtime-room-open', {
+        detail: { extensionId: card.extensionId, session },
+      }))
+    } catch (cause) {
+      setError(cause instanceof Error && cause.message.trim() !== '' ? cause.message : '暂时无法进入实时房间')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <div style={styles.realtimeCard} data-arkme-realtime-invite={card.inviteRef}>
+    <p style={styles.realtimeTitle}>{card.fallbackText}</p>
+    <p style={styles.realtimeMeta}>实时房间 · 最多 {card.participantLimit} 人</p>
+    <button type="button" style={{ ...styles.realtimeButton, ...(expired ? { opacity: .5, cursor: 'default' } : {}) }} disabled={busy || expired} onClick={() => { void open() }}>
+      {expired ? '邀请已过期' : busy ? '正在进入…' : '进入房间'}
+    </button>
+    {error !== '' && <p style={styles.realtimeError}>{error}</p>}
+  </div>
+}
+
 export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated }: {
   item: ArkmeTimelineItem
   sourceRef?: string
@@ -414,6 +450,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated }: {
   const [preview, setPreview] = useState<ArkmeContentBlock>()
   const [articleOpen, setArticleOpen] = useState(false)
   const [failedRefs, setFailedRefs] = useState<Set<string>>(() => new Set())
+  if (item.realtimeInvite !== undefined) return <RealtimeInviteCard card={item.realtimeInvite} />
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.map(value => {
       const summary = value.textContent || value.title || value.contentLabel || '非文本内容'

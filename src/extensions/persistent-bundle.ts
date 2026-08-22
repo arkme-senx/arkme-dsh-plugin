@@ -37,6 +37,12 @@ export interface ArkmePersistentInstallation {
   signing_key_id: string
   trusted_public_key: string
   published_at: number
+  /** Effective permissions returned by Extension Publish; old wrappers default to none. */
+  permissions?: string[]
+}
+
+function effectivePermissions(values: readonly string[] | undefined): string[] {
+  return [...new Set((values ?? []).map(value => value.trim()).filter(Boolean))].sort()
 }
 
 function packageIdentity(extensionId: string): { packageName: string; entryId: string } {
@@ -157,6 +163,7 @@ export function materializePersistentExtensionBundle(input: {
     signing_key_id: input.resolution.signing_key_id,
     trusted_public_key: input.trustedPublicKey,
     published_at: input.resolution.published_at,
+    permissions: effectivePermissions(input.resolution.permissions),
   }
   const installationText = `${JSON.stringify(installation, undefined, 2)}\n`
   const installationPath = join(bundleDirectory, 'installation.json')
@@ -167,7 +174,10 @@ export function materializePersistentExtensionBundle(input: {
       existing = JSON.parse(readFileSync(installationPath, 'utf8')) as Partial<ArkmePersistentInstallation>
     } catch { /* An incomplete old directory is replaced below. */ }
     if (existing !== undefined) {
-      if (existing.artifact_sha256 === installation.artifact_sha256 && existing.version === installation.version) {
+      if (existing.artifact_sha256 !== installation.artifact_sha256 || existing.version !== installation.version) {
+        throw new Error('同一扩展版本已经存在不同的本地 Bundle，拒绝覆盖不可变版本')
+      }
+      if (JSON.stringify(effectivePermissions(existing.permissions)) === JSON.stringify(installation.permissions)) {
         try {
           const manifest = JSON.parse(readFileSync(join(bundleDirectory, 'package.json'), 'utf8')) as {
             exports?: Record<string, string>
@@ -188,10 +198,8 @@ export function materializePersistentExtensionBundle(input: {
             return { packageName, bundleDirectory, installationPath, activationPath }
           }
         } catch { /* Regenerate an incomplete wrapper from the same immutable artifact. */ }
-        rmSync(bundleDirectory, { recursive: true, force: true })
-      } else {
-        throw new Error('同一扩展版本已经存在不同的本地 Bundle，拒绝覆盖不可变版本')
       }
+      rmSync(bundleDirectory, { recursive: true, force: true })
     }
     if (existsSync(bundleDirectory)) rmSync(bundleDirectory, { recursive: true, force: true })
   }
@@ -238,6 +246,7 @@ export function materializePersistentExtensionBundle(input: {
       name: input.resolution.manifest.name,
       code: input.clientCode,
       apiPath: input.clientApiPath ?? '/arkme-self/api',
+      permissions: [...(installation.permissions ?? [])],
     }))
   }
   renameSync(temporary, bundleDirectory)

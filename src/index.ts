@@ -58,6 +58,7 @@ export interface Config {
   relationBaseUrl: string
   intelligentBaseUrl: string
   audioBaseUrl: string
+  realtimeBaseUrl: string
   extensionPublishBaseUrl: string
   extensionArtifactDirectory: string
   extensionTrustedSigningKeys: string
@@ -102,6 +103,7 @@ export const Config: Schema<Config> = Schema.object({
   relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
   intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
   audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
+  realtimeBaseUrl: Schema.string().default('https://jotmo-realtime.senguo.me'),
   extensionPublishBaseUrl: Schema.string().default(''),
   extensionArtifactDirectory: Schema.string().default(''),
   extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
@@ -168,6 +170,8 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Headless Arkme data provider for trusted Host-side consumer plugins. */
     arkmeData: ArkmeService
+    /** Host-owned multiplexed realtime capability; extensions receive scoped facades only. */
+    arkmeRealtime: ArkmeService
   }
 }
 
@@ -258,6 +262,7 @@ export function apply(ctx: Context, config: Config): void {
   let extensionInstallTasks: ArkmeExtensionInstallTasks | undefined
   let ownedExtensionInventory: ArkmeOwnedExtensionInventory | undefined
   ctx.provide('arkmeData', service)
+  ctx.provide('arkmeRealtime', service)
   registerArkmeTools(ctx, service, config.toolProfile)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
@@ -435,6 +440,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.relationBaseUrl,
       config.intelligentBaseUrl,
       config.audioBaseUrl,
+      config.realtimeBaseUrl,
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
       throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
@@ -466,6 +472,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
+    ['realtimeBaseUrl', config.realtimeBaseUrl],
     ['shareWebsite', config.shareWebsite],
   ] as const) {
     const url = new URL(raw)
@@ -603,5 +610,16 @@ export type {
   ArkmeOutgoingCallPrepareResult,
   ArkmeOutgoingCallToolResult,
 } from './outgoing-call-contract.js'
+export type {
+  ArkmeExtensionRealtimeFacade,
+  ArkmeRealtimeChannelEvent,
+  ArkmeRealtimeHostService,
+  ArkmeRealtimeInvite,
+  ArkmeRealtimeInviteCard,
+  ArkmeRealtimeInviteInput,
+  ArkmeRealtimePublishResult,
+  ArkmeRealtimeRoomSession,
+  ArkmeRealtimeServiceDescriptor,
+} from './realtime/types.js'
 export { ArkmeOutgoingCallError } from './outgoing-call-contract.js'
 export { ArkmeService } from './arkme-service.js'

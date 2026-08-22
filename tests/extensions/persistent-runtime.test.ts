@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { canonicalExtensionSignatureMessage, packArkmeExtension } from '../../src/extensions/artifact.js'
 import {
   activatePersistentArkmeExtension, applyPersistentArkmeHostExtension, deactivatePersistentArkmeExtension,
-  persistentArkmeExtensionActive, persistentArkmeExtensionRuntimeState,
+  persistentArkmeExtensionActive, persistentArkmeExtensionHandles, persistentArkmeExtensionRuntimeState,
 } from '../../src/extensions/persistent-runtime.js'
 
 const directories: string[] = []
@@ -18,6 +18,8 @@ function signedInstallation(input: {
   hostCode?: string
   clientCode?: string
   invalidSignature?: boolean
+  permissions?: string[]
+  effectivePermissions?: string[]
 }): URL {
   const root = mkdtempSync(join(tmpdir(), 'arkme-persistent-runtime-'))
   directories.push(root)
@@ -25,6 +27,7 @@ function signedInstallation(input: {
     name: '永久扩展', description: '测试', version: '1.0.0', arkmeProviderContract: 1,
     ...(input.hostCode === undefined ? {} : { hostCode: input.hostCode }),
     ...(input.clientCode === undefined ? {} : { clientCode: input.clientCode }),
+    ...(input.permissions === undefined ? {} : { permissions: input.permissions }),
   })
   const artifactPath = join(root, 'extension.arkext')
   writeFileSync(artifactPath, artifact.bytes)
@@ -42,6 +45,7 @@ function signedInstallation(input: {
     signature: input.invalidSignature
       ? Buffer.alloc(64).toString('base64')
       : sign(null, canonicalExtensionSignatureMessage(envelope), privateKey).toString('base64'),
+    permissions: input.effectivePermissions ?? input.permissions ?? [],
   }))
   return pathToFileURL(installationPath)
 }
@@ -53,13 +57,13 @@ function runtimeContext() {
   return { cleanups, context: { plugin, effect } as never, effect, plugin }
 }
 
-function applyingRuntimeContext() {
+function applyingRuntimeContext(arkmeRealtime?: unknown) {
   const cleanups: Array<() => void> = []
   const effect = vi.fn((factory: () => () => void) => { cleanups.push(factory()) })
   const childContext = {
     effect,
     fiber: { inject: {} },
-    get: vi.fn(() => undefined),
+    get: vi.fn((name: string) => name === 'arkmeRealtime' ? arkmeRealtime : undefined),
   }
   const plugin = vi.fn(async (value: { apply(ctx: unknown): unknown }) => {
     await value.apply(childContext)
@@ -88,6 +92,99 @@ describe('persistent extension Host runtime', () => {
     for (const cleanup of runtime.cleanups) cleanup()
     expect(persistentArkmeExtensionActive('ext_host_verified')).toBe(false)
     expect(persistentArkmeExtensionRuntimeState('ext_host_verified')).toBeUndefined()
+  })
+
+  it('binds the realtime namespace to the signed extension identity and releases leases on teardown', async () => {
+    const release = vi.fn()
+    const provide = vi.fn(async () => release)
+    const realtimeForExtension = vi.fn(() => ({
+      provide,
+      invite: vi.fn(), enter: vi.fn(), subscribe: vi.fn(), publish: vi.fn(), close: vi.fn(),
+    }))
+    const installation = signedInstallation({
+      extensionId: 'ext_realtime_scoped',
+      permissions: ['realtime'],
+      hostCode: `
+        await harness.realtime.provide({
+          service: 'rock-paper-scissors', protocol: 'com.arkme.rps', protocolMajor: 1,
+          participantMin: 2, participantMax: 2,
+        })
+        return { name: 'realtime-scoped', apply() {} }
+      `,
+    })
+    const runtime = applyingRuntimeContext({ realtimeForExtension })
+
+    await applyPersistentArkmeHostExtension(runtime.context, installation)
+
+    expect(realtimeForExtension).toHaveBeenCalledWith('ext_realtime_scoped')
+    expect(provide).toHaveBeenCalledWith(expect.objectContaining({ service: 'rock-paper-scissors' }))
+    for (const cleanup of runtime.cleanups) cleanup()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('reports the native card entry handler only while the extension is mounted', async () => {
+    const installation = signedInstallation({
+      extensionId: 'ext_realtime_entry',
+      permissions: ['realtime'],
+      hostCode: `
+        harness.handle('realtime.open', () => ({ opened: true }))
+        return { name: 'realtime-entry', apply() {} }
+      `,
+    })
+    const runtime = applyingRuntimeContext()
+
+    await applyPersistentArkmeHostExtension(runtime.context, installation)
+    expect(persistentArkmeExtensionHandles('ext_realtime_entry', 'realtime.open')).toBe(true)
+    for (const cleanup of runtime.cleanups) cleanup()
+    expect(persistentArkmeExtensionHandles('ext_realtime_entry', 'realtime.open')).toBe(false)
+  })
+
+  it('rejects realtime access when Extension Publish omits the effective permission', async () => {
+    const realtimeForExtension = vi.fn()
+    const installation = signedInstallation({
+      extensionId: 'ext_realtime_denied',
+      hostCode: `
+        await harness.realtime.provide({
+          service: 'rock-paper-scissors', protocol: 'com.arkme.rps', protocolMajor: 1,
+          participantMin: 2, participantMax: 2,
+        })
+        return { name: 'realtime-denied', apply() {} }
+      `,
+    })
+    const runtime = applyingRuntimeContext({ realtimeForExtension })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(applyPersistentArkmeHostExtension(runtime.context, installation)).resolves.toBeUndefined()
+
+    expect(realtimeForExtension).not.toHaveBeenCalled()
+    expect(JSON.parse(readFileSync(new URL('./activation.json', installation), 'utf8'))).toMatchObject({
+      enabled: false,
+      quarantine: { message: expect.stringContaining('effective permission "realtime" is required') },
+    })
+    consoleError.mockRestore()
+  })
+
+  it('keeps historical manifest permissions inert when effective permissions are empty', async () => {
+    const realtimeForExtension = vi.fn()
+    const installation = signedInstallation({
+      extensionId: 'ext_realtime_historical',
+      permissions: ['realtime'],
+      effectivePermissions: [],
+      hostCode: `
+        await harness.realtime.provide({
+          service: 'rock-paper-scissors', protocol: 'com.arkme.rps', protocolMajor: 1,
+          participantMin: 2, participantMax: 2,
+        })
+        return { name: 'realtime-historical', apply() {} }
+      `,
+    })
+    const runtime = applyingRuntimeContext({ realtimeForExtension })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(applyPersistentArkmeHostExtension(runtime.context, installation)).resolves.toBeUndefined()
+
+    expect(realtimeForExtension).not.toHaveBeenCalled()
+    consoleError.mockRestore()
   })
 
   it('quarantines a Host runtime failure without rejecting the DSH loader entry', async () => {

@@ -582,6 +582,8 @@ export interface ArkmeProviderCapabilities {
     contactAdd?: true
     /** Built-in quick-add surface plus SDK/Host support for contacts, groups, and Bots. */
     conversationQuickAdd?: true
+    /** Host-owned single-socket realtime transport for permissioned marketplace extensions. */
+    extensionRealtime?: true
     groupSettings: true
     /** Installed-extension inspection and desired enable/disable state are available. */
     extensionManagement?: true
@@ -774,6 +776,20 @@ export interface ArkmeTimelineItem {
   mediaUnavailable?: boolean
   /** Browser-safe Chat forward snapshot. It is present only for explicit `render_kind=forward_records` payloads. */
   forwardRecords?: ArkmeForwardRecordsPreview
+  /** Browser-safe, non-authoritative projection of a native Chat realtime invite card. */
+  realtimeInvite?: ArkmeTimelineRealtimeInvite
+}
+
+export interface ArkmeTimelineRealtimeInvite {
+  schemaVersion: 1
+  inviteRef: string
+  extensionId: string
+  service: string
+  protocol: string
+  protocolMajor: number
+  expiresAtMillis: number
+  participantLimit: number
+  fallbackText: string
 }
 
 export interface ArkmeForwardRecordsPreview {
@@ -1813,6 +1829,7 @@ export type ArkmePluginOperation =
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'
+  | 'realtime.invite.enter'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'

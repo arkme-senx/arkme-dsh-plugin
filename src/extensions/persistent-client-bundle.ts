@@ -6,6 +6,7 @@ interface PersistentClientSpec {
   apiPath: string
   operation?: 'extensions.persistent.invoke' | 'extensions.bundle.invoke'
   identityKey?: 'extensionId' | 'packageName'
+  permissions?: string[]
 }
 
 /** This function is serialized into each generated browser bundle. It must stay closure-free. */
@@ -113,6 +114,7 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
         if (state.mount !== true) return
       }
       const styles = new Styles()
+      const realtimeCleanups = new Set<() => void>()
       const traps = {
         setTimeout: unavailable('setTimeout'), setInterval: unavailable('setInterval'),
         clearTimeout: unavailable('clearTimeout'), clearInterval: unavailable('clearInterval'),
@@ -127,7 +129,34 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
         warn: (...args: unknown[]) => console.warn(`[arkme-extension:${spec.extensionId}]`, ...args),
         error: (...args: unknown[]) => console.error(`[arkme-extension:${spec.extensionId}]`, ...args),
       }
-      const harness = new Proxy({}, { get(_target, property) { throw new Error(`harness.${String(property)} belongs to the Host half`) } })
+      const realtime = (spec.permissions ?? []).includes('realtime')
+        ? Object.freeze({
+            onOpen(listener: (session: unknown) => void) {
+              if (typeof listener !== 'function') throw new Error('harness.realtime.onOpen needs a listener')
+              const receive = (event: Event) => {
+                if (!(event instanceof CustomEvent) || event.detail === null || typeof event.detail !== 'object') return
+                const detail = event.detail as { extensionId?: unknown; session?: unknown }
+                if (detail.extensionId === spec.extensionId) listener(jsonValue(detail.session))
+              }
+              window.addEventListener('arkme:realtime-room-open', receive)
+              let active = true
+              const dispose = () => {
+                if (!active) return
+                active = false
+                realtimeCleanups.delete(dispose)
+                window.removeEventListener('arkme:realtime-room-open', receive)
+              }
+              realtimeCleanups.add(dispose)
+              return dispose
+            },
+          })
+        : new Proxy({}, { get() { throw new Error('effective permission "realtime" is required for harness.realtime') } })
+      const harness = new Proxy({}, {
+        get(_target, property) {
+          if (property === 'realtime') return realtime
+          throw new Error(`harness.${String(property)} belongs to the Host half`)
+        },
+      })
       const evaluated = await closure(
         React, taggedConsole, styles, { call: callHost }, harness, ...Object.values(traps), undefined, undefined,
       )
@@ -144,12 +173,14 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
       ctx.effect(() => () => styles.dispose(), `arkme-extension:${spec.extensionId}:styles`)
       const fiber = ctx.plugin(guarded) as { dispose?(): unknown; then?: unknown }
       const deactivate = () => {
+        for (const dispose of [...realtimeCleanups]) dispose()
         styles.dispose()
         void Promise.resolve(fiber.dispose?.()).catch(() => undefined)
       }
       deactivateClient = deactivate
       ctx.effect(() => () => {
         if (deactivateClient === deactivate) deactivateClient = undefined
+        for (const dispose of [...realtimeCleanups]) dispose()
       }, `arkme-extension:${spec.extensionId}:client-fiber`)
       await fiber
     },

@@ -37,7 +37,8 @@
     "assets/desktop_call",
     "cordis.patch.yml",
     "README.md",
-    "docs/*.md"
+    "docs/*.md",
+    "examples/realtime-rock-paper-scissors"
   ],
   "dsh": {
     "bundle": {
@@ -81,6 +82,7 @@
     "qrcode-generator": "2.0.4",
     "semver": "7.8.5",
     "sharp": "0.35.3",
+    "ws": "8.18.3",
     "yaml": "2.9.0"
   },
   "peerDependencies": {
@@ -128,6 +130,7 @@
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.1",
     "@types/semver": "7.8.0",
+    "@types/ws": "8.18.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tsdown": "0.22.2",

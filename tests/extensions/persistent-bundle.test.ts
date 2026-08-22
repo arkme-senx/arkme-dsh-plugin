@@ -122,6 +122,7 @@ describe('persistent extension profile bundle', () => {
         extension_id: 'ext_test', version: '1.0.0', artifact_url: 'https://objects.test/a',
         artifact_size: artifact.bytes.byteLength, artifact_sha256: artifact.artifactSha256,
         manifest_sha256: artifact.manifestSha256, manifest: artifact.manifest,
+        permissions: ['realtime'],
         signature: 'signature', signing_key_id: 'key-1', published_at: 1_787_000_000_000, revoked: false,
       },
     })
@@ -137,6 +138,8 @@ describe('persistent extension profile bundle', () => {
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.invoke')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.client-state')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('version: spec.version')
+    expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('"permissions":["realtime"]')
+    expect(JSON.parse(readFileSync(result.installationPath, 'utf8'))).toMatchObject({ permissions: ['realtime'] })
     expect(JSON.parse(readFileSync(join(result.bundleDirectory, 'activation.json'), 'utf8'))).toEqual({
       schema_version: 1, extension_id: 'ext_test', enabled: true,
     })
@@ -194,6 +197,31 @@ describe('persistent extension profile bundle', () => {
     expect(regenerated.bundleDirectory).toBe(first.bundleDirectory)
     expect(readFileSync(join(regenerated.bundleDirectory, 'lib', 'client.js'), 'utf8'))
       .toContain('extensions.persistent.client-state')
+  })
+
+  it('regenerates a wrapper when server-owned effective permissions change', () => {
+    const { root, artifact, artifactPath } = fixture()
+    const resolution = {
+      extension_id: 'ext_permission_refresh', version: '1.0.0', artifact_url: 'https://objects.test/a',
+      artifact_size: artifact.bytes.byteLength, artifact_sha256: artifact.artifactSha256,
+      manifest_sha256: artifact.manifestSha256, manifest: artifact.manifest,
+      signature: 'signature', signing_key_id: 'key-1', published_at: 1_787_000_000_000, revoked: false,
+      permissions: [] as string[],
+    }
+    const first = materializePersistentExtensionBundle({
+      profileDirectory: root, artifactPath, trustedPublicKey: 'public-key',
+      clientCode: 'return { apply() {} }', resolution,
+    })
+    expect(JSON.parse(readFileSync(first.installationPath, 'utf8'))).toMatchObject({ permissions: [] })
+
+    const refreshed = materializePersistentExtensionBundle({
+      profileDirectory: root, artifactPath, trustedPublicKey: 'public-key',
+      clientCode: 'return { apply() {} }', resolution: { ...resolution, permissions: ['realtime'] },
+    })
+
+    expect(JSON.parse(readFileSync(refreshed.installationPath, 'utf8'))).toMatchObject({ permissions: ['realtime'] })
+    expect(readFileSync(join(refreshed.bundleDirectory, 'lib', 'client.js'), 'utf8'))
+      .toContain('"permissions":["realtime"]')
   })
 
   it('keeps an installed dependency while toggling its public Profile bundle layer', async () => {

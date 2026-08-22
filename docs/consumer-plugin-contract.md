@@ -113,6 +113,58 @@ The Provider exposes one facade while preserving owner boundaries: default-categ
 
 Trusted Host-side Consumers may declare `inject: ['arkmeData']` and use `ctx.arkmeData`. Browser UI should prefer the SDK.
 
+### Realtime extension capability
+
+A marketplace extension that needs realtime rooms must include a Host half and declare the manifest permission `realtime`. Extension Publish validates it and returns `realtime` in the effective permission set; Arkme grants the facade from that effective set, not from unchecked manifest text. Historical releases whose permission was stored as inert metadata remain denied. The Host half receives an extension-scoped `harness.realtime` facade:
+
+```js
+const service = {
+  service: 'rock-paper-scissors',
+  protocol: 'app.arkme.rps',
+  protocolMajor: 1,
+  participantMin: 2,
+  participantMax: 2,
+}
+
+return {
+  name: 'realtime-game-host',
+  async apply(ctx) {
+    const release = await harness.realtime.provide(service)
+    ctx.effect(() => release, 'release realtime service')
+
+    harness.handle('realtime.open', async session => {
+      const unsubscribe = await harness.realtime.subscribe(session.channelRef, event => {
+        consumeGameEvent(event.payload)
+      })
+      ctx.effect(() => unsubscribe, 'leave realtime channel')
+    })
+
+    ctx.tools.register(defineTool({
+      name: 'arkme_example_invite',
+      description: 'Send this game invitation only after an explicit current-user request.',
+      parameters: { source_ref: { type: 'string', required: true } },
+      output: { type: 'string' },
+      async execute(args) {
+        return JSON.stringify(await harness.realtime.invite({
+          ...service,
+          sourceRef: args.source_ref,
+          participantLimit: 2,
+          fallbackText: 'Join my realtime game',
+        }))
+      },
+    }))
+  },
+}
+```
+
+`sourceRef` must be an unchanged opaque `private_chat` or `group_chat` reference. `invite()` writes one native realtime invitation card into the existing Chat timeline. The receiver clicks that card; Arkme validates current Chat membership, obtains a short-lived join grant, accepts the room, invokes the installed extension's `realtime.open` Host handler, and then emits `harness.realtime.onOpen(session)` to its Client half. A missing or disabled handler is rejected before a room seat is consumed.
+
+The physical connection belongs to the logged-in Arkme client, not to an extension: one client keeps at most one upstream WebSocket and multiplexes any number of extension services and room channels over it. Ten enabled realtime extensions therefore do not create ten WebSockets. The Host owns authentication, reconnect, heartbeat, replay cursor, acknowledgement, generation fencing, payload limits and teardown. Extension code receives only its signed extension namespace, opaque room/channel references and JSON events; access tokens, the WebSocket URL and other extension namespaces never cross the facade.
+
+`provide()` must be paired with its disposer. `subscribe()` resumes after the last delivered sequence and must likewise be disposed when the room or extension closes. Use `publish(session, payload, { commandId })` for JSON payloads up to 64 KiB; stable command IDs make retries idempotent. Use `close(channelRef)` only for a product action that ends the shared room, not merely because one local UI panel closed. Logout/account switch and extension disable automatically release or suspend Host-owned resources.
+
+The Client half cannot publish directly. With `realtime` permission it may use `harness.realtime.onOpen(listener)` to open UI after the native card entry succeeds, then call its own Host handlers through `host.call`. See [`examples/realtime-rock-paper-scissors`](../examples/realtime-rock-paper-scissors/README.md) for a two-user end-to-end example.
+
 The built-in Arkme UI and the model-facing `arkme_call_start` tool support outgoing audio/video calls to `private_chat` sources only. The tool requires a current explicit human request and an unchanged `sourceRef` from `arkme_sources_list`; it succeeds only after the built-in call runtime reaches the calling phase. Incoming calls, answering, rejecting, group calls, topics, and send-to-self sources are outside this contract. The default asset route is `/arkme-self/api/call`; test WebRTC uses `https://jotmo-webrtc.senguo.me`, while the production patch uses `https://webrtc.jiwo.cc`.
 
 ## Generation and installation rules

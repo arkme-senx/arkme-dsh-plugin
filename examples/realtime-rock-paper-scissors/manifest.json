@@ -1,0 +1,22 @@
+{
+  "description": "Arkme 实时能力的双人石头剪刀布示例",
+  "entrypoints": {
+    "client": "client.js",
+    "host": "host.js"
+  },
+  "format": "arkme-cordis-extension",
+  "format_version": 1,
+  "halves": {
+    "client": true,
+    "host": true
+  },
+  "name": "实时石头剪刀布",
+  "permissions": [
+    "realtime"
+  ],
+  "runtime": {
+    "arkme_provider_contract": 1,
+    "dsh": ">=0.1.0-rc.7"
+  },
+  "version": "1.0.0"
+}

@@ -64,6 +64,8 @@ import {
 import { SourceService } from './services/source-service.js'
 import { WechatService } from './services/wechat-service.js'
 import { WorldService } from './services/world-service.js'
+import { ArkmeRealtimeService } from './realtime/service.js'
+import type { ArkmeExtensionRealtimeFacade } from './realtime/types.js'
 import type {
   ArkmeBotCreateInput,
   ArkmeBotCreateResult,
@@ -241,6 +243,7 @@ export class ArkmeService {
   private readonly aiPolish: GroupAiPolishService
   private readonly chat: ChatService
   private readonly contact: ContactService
+  private readonly extensionRealtimeService?: ArkmeRealtimeService
 
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -272,6 +275,9 @@ export class ArkmeService {
       summary: async () => await this.summary(),
       recordItem: raw => this.recordItem(raw),
     })
+    if ((config.realtimeBaseUrl?.trim() ?? '') !== '') {
+      this.extensionRealtimeService = new ArkmeRealtimeService(this.runtime, this.source, sessionStore)
+    }
     this.record = new RecordService(this.runtime, this.media, this.source)
     this.search = new SearchService(this.runtime, this.record, this.media)
     this.bot = new BotService(this.runtime, this.source)
@@ -312,7 +318,10 @@ export class ArkmeService {
     )
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
     this.auth = new AuthService(this.runtime, this.profile, {
-      reconnectChatRealtime: () => { this.realtime.reconnect() },
+      reconnectChatRealtime: () => {
+        this.realtime.reconnect()
+        this.extensionRealtimeService?.authenticationChanged()
+      },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
   }
@@ -328,21 +337,13 @@ export class ArkmeService {
     this.contact.dispose()
   }
 
-  startChatRealtime(): () => void {
-    return this.realtime.startChatRealtime()
-  }
+  startChatRealtime(): () => void { return this.realtime.startChatRealtime() }
 
-  chatRealtimeState(): ArkmeChatRealtimeState {
-    return this.realtime.chatRealtimeState()
-  }
+  chatRealtimeState(): ArkmeChatRealtimeState { return this.realtime.chatRealtimeState() }
 
-  subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
-    return this.realtime.subscribeChatRealtime(listener)
-  }
+  subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void { return this.realtime.subscribeChatRealtime(listener) }
 
-  chatRealtimeInitialEvent(): ArkmeChatClientEvent {
-    return this.realtime.chatRealtimeInitialEvent()
-  }
+  chatRealtimeInitialEvent(): ArkmeChatClientEvent { return this.realtime.chatRealtimeInitialEvent() }
 
   private handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
     this.realtime.handleChatRealtimeNotice(notice)
@@ -358,9 +359,7 @@ export class ArkmeService {
     return failed.map(([uid, projection]) => [uid, projection.latestSequence])
   }
 
-  attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {
-    this.bot.attachOpenClawProvisioner(provisioner)
-  }
+  attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void { this.bot.attachOpenClawProvisioner(provisioner) }
 
   async connectOpenClawBot(botRef: string, options: { signal?: AbortSignal } = {}): Promise<OpenClawProvisionResult> {
     return await this.bot.connectOpenClawBot(botRef, options)
@@ -419,9 +418,7 @@ export class ArkmeService {
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
-  async authStatus(): Promise<ArkmeAuthSnapshot> {
-    return await this.auth.authStatus()
-  }
+  async authStatus(): Promise<ArkmeAuthSnapshot> { return await this.auth.authStatus() }
 
   clientConfig(): ArkmeClientConfig {
     return {
@@ -477,6 +474,7 @@ export class ArkmeService {
         worldVoiceprintSocialContext: true,
         arrangements: true,
         myExtensions: true,
+        ...(this.extensionRealtimeService === undefined ? {} : { extensionRealtime: true as const }),
         extensionPublish: true,
         extensionReviews: true,
         ...(this.relatedRecording.isEnabled() ? { relatedRecordings: true as const } : {}),
@@ -504,6 +502,11 @@ export class ArkmeService {
       ...(auth.userId === undefined ? {} : { userId: auth.userId }),
       revision: auth.userId === undefined ? 0 : await this.stateStore.revision(auth.userId),
     }
+  }
+
+  realtimeForExtension(extensionId: string): ArkmeExtensionRealtimeFacade {
+    if (this.extensionRealtimeService === undefined) throw new ArkmePluginError('realtime-service-disabled', '实时服务尚未配置', false, 503)
+    return this.extensionRealtimeService.forExtension(extensionId)
   }
 
   async requestOutgoingCall(
@@ -542,6 +545,7 @@ export class ArkmeService {
   }
 
   dispose(): void {
+    this.extensionRealtimeService?.dispose()
     this.contact.dispose()
     this.realtime.dispose()
     this.arko.dispose()
@@ -558,13 +562,9 @@ export class ArkmeService {
     this.world.dispose()
   }
 
-  requestStats(): Record<string, ArkmeRequestStats> {
-    return this.runtime.requestStats()
-  }
+  requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
 
-  async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
-    return await this.profile.cachedProfile()
-  }
+  async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
 
   async searchContact(
     identifier: string,

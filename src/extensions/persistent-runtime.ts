@@ -6,6 +6,7 @@ import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { sha256Hex, unpackArkmeExtension } from './artifact.js'
 import { verifyExtensionResolutionSignature } from './signature.js'
+import type { ArkmeExtensionRealtimeFacade } from '../realtime/types.js'
 import {
   ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION, quarantinePersistentExtension,
   readPersistentExtensionActivation, type ArkmePersistentInstallation,
@@ -19,6 +20,7 @@ interface PersistentRuntimeRegistration {
   fiber?: Fiber
   handlers?: Map<string, PersistentHandler>
   clientActivation?: object
+  realtimeDisposers?: Set<() => void>
 }
 export interface PersistentArkmeExtensionRuntimeState {
   version: string
@@ -37,7 +39,14 @@ function readInstallation(url: URL): ArkmePersistentInstallation {
     || value.trusted_public_key.trim() === '') {
     throw new Error('Arkme persistent extension installation metadata is invalid')
   }
-  return value
+  if (value.permissions !== undefined && (!Array.isArray(value.permissions)
+    || !value.permissions.every(permission => typeof permission === 'string'))) {
+    throw new Error('Arkme persistent extension effective permissions are invalid')
+  }
+  return {
+    ...value,
+    permissions: [...new Set((value.permissions ?? []).map(permission => permission.trim()).filter(Boolean))].sort(),
+  }
 }
 
 function jsonValue(value: unknown): unknown {
@@ -45,7 +54,12 @@ function jsonValue(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown
 }
 
-function evaluateHost(code: string, extensionId: string, handle: (method: unknown, fn: unknown) => () => void): Promise<unknown> {
+function evaluateHost(
+  code: string,
+  extensionId: string,
+  handle: (method: unknown, fn: unknown) => () => void,
+  realtime: ArkmeExtensionRealtimeFacade,
+): Promise<unknown> {
   const unavailable = (name: string) => (): never => { throw new Error(`${name} is unavailable in persistent Arkme extensions`) }
   const sandbox = {
     console: {
@@ -55,7 +69,7 @@ function evaluateHost(code: string, extensionId: string, handle: (method: unknow
       error: (...args: unknown[]) => { console.error(`[arkme-extension:${extensionId}]`, ...args) },
     },
     defineTool,
-    harness: Object.freeze({ handle }),
+    harness: Object.freeze({ handle, realtime }),
     process: undefined,
     Buffer: undefined,
     require: unavailable('require'),
@@ -73,6 +87,68 @@ function evaluateHost(code: string, extensionId: string, handle: (method: unknow
     timeout: VM_TIMEOUT_MS,
     filename: `arkme-extension:${extensionId}:host.js`,
   }))
+}
+
+function scopedRealtimeFacade(
+  ctx: Context,
+  extensionId: string,
+  permissions: readonly string[],
+  disposers: Set<() => void>,
+): ArkmeExtensionRealtimeFacade {
+  if (!permissions.includes('realtime')) {
+    return new Proxy({}, {
+      get() { throw new Error('effective permission "realtime" is required for harness.realtime') },
+    }) as ArkmeExtensionRealtimeFacade
+  }
+  const provider = ctx.get('arkmeRealtime') as { realtimeForExtension?(id: string): ArkmeExtensionRealtimeFacade } | null
+  if (typeof provider?.realtimeForExtension !== 'function') {
+    return new Proxy({}, {
+      get() { throw new Error('Arkme realtime Host capability is unavailable') },
+    }) as ArkmeExtensionRealtimeFacade
+  }
+  const facade = provider.realtimeForExtension(extensionId)
+  const tracked = async (operation: Promise<() => void>): Promise<() => void> => {
+    const dispose = await operation
+    let active = true
+    const release = () => {
+      if (!active) return
+      active = false
+      disposers.delete(release)
+      dispose()
+    }
+    disposers.add(release)
+    return release
+  }
+  const scoped: ArkmeExtensionRealtimeFacade = {
+    provide: async descriptor => await tracked(facade.provide(jsonValue(descriptor) as never)),
+    invite: async input => jsonValue(await facade.invite(jsonValue(input) as never)) as never,
+    enter: async (card, options) => jsonValue(await facade.enter(
+      jsonValue(card) as never,
+      options === undefined ? undefined : jsonValue(options) as never,
+    )) as never,
+    subscribe: async (channelRef, listener, options) => {
+      if (typeof listener !== 'function') throw new Error('harness.realtime.subscribe needs an event listener')
+      return await tracked(facade.subscribe(
+        channelRef,
+        event => { listener(jsonValue(event) as never) },
+        options === undefined ? undefined : jsonValue(options) as never,
+      ))
+    },
+    publish: async (session, payload, options) => jsonValue(await facade.publish(
+      jsonValue(session) as never,
+      jsonValue(payload),
+      options === undefined ? undefined : jsonValue(options) as never,
+    )) as never,
+    close: async channelRef => jsonValue(await facade.close(channelRef)) as never,
+  }
+  return Object.freeze(scoped)
+}
+
+function disposeRealtimeResources(registration: PersistentRuntimeRegistration): void {
+  for (const dispose of [...(registration.realtimeDisposers ?? [])]) {
+    try { dispose() } catch { /* Extension teardown is best effort. */ }
+  }
+  registration.realtimeDisposers?.clear()
 }
 
 function pluginValue(value: unknown): value is Plugin {
@@ -177,6 +253,8 @@ async function mountPersistentArkmeHostExtension(
     return true
   }
   const handlers = new Map<string, PersistentHandler>()
+  const realtimeDisposers = new Set<() => void>()
+  registration.realtimeDisposers = realtimeDisposers
   persistentHandlers.set(installation.extension_id, handlers)
   registration.handlers = handlers
   const handle = (methodValue: unknown, fnValue: unknown): (() => void) => {
@@ -189,13 +267,19 @@ async function mountPersistentArkmeHostExtension(
     return () => { if (handlers.get(method) === fn) handlers.delete(method) }
   }
   try {
-    const evaluated = await evaluateHost(unpacked.hostCode, installation.extension_id, handle)
+    const evaluated = await evaluateHost(
+      unpacked.hostCode,
+      installation.extension_id,
+      handle,
+      scopedRealtimeFacade(registration.ctx, installation.extension_id, installation.permissions ?? [], realtimeDisposers),
+    )
     if (!pluginValue(evaluated)) throw new Error('persistent extension host.js did not return a Cordis plugin')
     const fiber = registration.ctx.plugin(guardPlugin(evaluated))
     await fiber
     registration.fiber = fiber
     return true
   } catch (error) {
+    disposeRealtimeResources(registration)
     if (persistentHandlers.get(installation.extension_id) === handlers) persistentHandlers.delete(installation.extension_id)
     delete registration.handlers
     throw error
@@ -239,6 +323,7 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
       if (persistentRegistrations.get(installation.extension_id) !== registration) return
       persistentRegistrations.delete(installation.extension_id)
       persistentHandlers.delete(installation.extension_id)
+      disposeRealtimeResources(registration)
     }, `arkme-extension:${installation.extension_id}:registration`)
     ctx.effect(() => () => {
       if (persistentHandlers.get(installation.extension_id) === registration.handlers) {
@@ -267,6 +352,10 @@ export async function applyPersistentArkmeHostExtension(ctx: Context, installati
 
 export function persistentArkmeExtensionActive(extensionId: string): boolean {
   return persistentRegistrations.get(extensionId)?.fiber !== undefined || persistentClientActivations.has(extensionId)
+}
+
+export function persistentArkmeExtensionHandles(extensionId: string, method: string): boolean {
+  return persistentHandlers.get(extensionId)?.has(method) === true
 }
 
 export function persistentArkmeExtensionRuntimeState(
@@ -308,6 +397,7 @@ export async function deactivatePersistentArkmeExtension(extensionId: string): P
   const fiber = registration.fiber
   delete registration.fiber
   persistentHandlers.delete(extensionId)
+  disposeRealtimeResources(registration)
   delete registration.handlers
   await fiber.dispose()
 }

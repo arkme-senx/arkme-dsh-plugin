@@ -17,8 +17,11 @@ import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort } from './extensions/types.js'
 import { effectiveExtensionPublisherRole } from './extensions/publisher-role.js'
-import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
+import {
+  invokePersistentArkmeExtension, persistentArkmeExtensionHandles,
+} from './extensions/persistent-runtime.js'
 import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
+import type { ArkmeRealtimeInviteCard } from './realtime/types.js'
 
 const MAX_REQUEST_BYTES = 128 * 1024
 const ARKME_HOST_INSTANCE_ID = randomUUID()
@@ -143,6 +146,28 @@ function stringListParam(params: Record<string, unknown>, key: string): string[]
 function optionalPositiveIntegerParam(params: Record<string, unknown>, key: string): number | undefined {
   const value = params[key]
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function realtimeInviteCardParam(params: Record<string, unknown>): ArkmeRealtimeInviteCard {
+  const raw = params.card
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('realtime-card-invalid', '实时邀请卡片无效', false)
+  }
+  const card = raw as Record<string, unknown>
+  if (numberParam(card, 'schemaVersion', 0) !== 1) {
+    throw new ArkmePluginError('realtime-card-invalid', '实时邀请卡片无效', false)
+  }
+  return {
+    schemaVersion: 1,
+    inviteRef: stringParam(card, 'inviteRef'),
+    extensionId: stringParam(card, 'extensionId'),
+    service: stringParam(card, 'service'),
+    protocol: stringParam(card, 'protocol'),
+    protocolMajor: numberParam(card, 'protocolMajor', 0),
+    expiresAtMillis: numberParam(card, 'expiresAtMillis', 0),
+    participantLimit: numberParam(card, 'participantLimit', 0),
+    fallbackText: stringParam(card, 'fallbackText'),
+  }
 }
 
 async function enrichExtensionAuthors(
@@ -346,7 +371,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'realtime.invite.enter']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -393,6 +418,30 @@ export async function dispatchArkmeHostOperation(
     case 'provider.instance': return { instanceId: ARKME_HOST_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
+    case 'realtime.invite.enter': {
+      const card = realtimeInviteCardParam(params)
+      if (!persistentArkmeExtensionHandles(card.extensionId, 'realtime.open')) {
+        throw new ArkmePluginError(
+          'realtime-extension-entry-unavailable',
+          '实时插件入口不可用，请确认插件已启用后重试',
+          false,
+          409,
+        )
+      }
+      const session = await service.realtimeForExtension(card.extensionId).enter(card)
+      try {
+        await invokePersistentArkmeExtension(card.extensionId, 'realtime.open', session)
+      } catch (error) {
+        throw new ArkmePluginError(
+          'realtime-extension-entry-unavailable',
+          '实时插件入口不可用，请确认插件已启用后重试',
+          false,
+          409,
+          { cause: error },
+        )
+      }
+      return session
+    }
     case 'plugin.update.status': return await requireUpdateManager(updateManager).status()
     case 'plugin.update.check': return await requireUpdateManager(updateManager).check({ manual: true })
     case 'plugin.update.install': return await requireUpdateManager(updateManager).install()

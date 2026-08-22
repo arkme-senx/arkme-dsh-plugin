@@ -14,6 +14,7 @@ function productionConfig(): Config {
     relationBaseUrl: 'https://relation.jotmo.cc',
     intelligentBaseUrl: 'https://intelligent.jotmo.cc',
     audioBaseUrl: 'https://audio.jotmo.cc',
+    realtimeBaseUrl: 'https://realtime.jotmo.cc',
     routePath: '/arkme-self/api',
     requestTimeoutMs: 30_000,
     maxTextLength: 20_000,

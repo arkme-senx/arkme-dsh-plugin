@@ -460,6 +460,8 @@ export interface ArkmeExtensionInstallResolution {
   artifact_sha256: string
   manifest_sha256: string
   manifest: ArkmeExtensionManifest
+  /** Server-owned effective permissions. Missing means no capability grant. */
+  permissions?: string[]
   signature: string
   signing_key_id: string
   published_at: number

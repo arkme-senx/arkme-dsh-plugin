@@ -317,6 +317,7 @@ describe('Bundle v2 profile installation', () => {
     expect(store.get('ext-legacy')).toMatchObject({
       installedVersion: '1.0.0', artifactSha256: artifact.artifactSha256, active: false,
       profilePackageName: expect.stringMatching(/^@arkme-local\/ext-/),
+      permissionSnapshot: [],
     })
     expect(store.get('ext-legacy')).not.toHaveProperty('executionModel')
     store.close()
