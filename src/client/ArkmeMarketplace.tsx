@@ -419,26 +419,22 @@ const styles: Record<string, CSSProperties> = {
   },
   detailLeadWithoutPreview: { gridTemplateColumns: 'minmax(0, 1fr)' },
   detailIdentity: { minWidth: 0, padding: '8px 0' },
-  detailIdentityTop: {
-    minWidth: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-    gap: 18, flexWrap: 'wrap',
-  },
   detailHero: { minWidth: 0, flex: '1 1 320px', display: 'flex', gap: 14, alignItems: 'flex-start' },
-  detailTitleRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  detailTitleRow: { minWidth: 0, display: 'flex', alignItems: 'center', columnGap: 16, rowGap: 8, flexWrap: 'wrap' },
   detailName: { margin: 0, color: colors.text, fontSize: 24, lineHeight: '32px', fontWeight: 680, wordBreak: 'break-word' },
+  detailTitleActions: {
+    minHeight: 34, display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+  },
   detailMetrics: {
     display: 'flex', alignItems: 'center', columnGap: 18, rowGap: 6, flexWrap: 'wrap', marginTop: 9,
     color: colors.caption, fontSize: 11, lineHeight: '16px',
   },
   detailMetric: { display: 'inline-flex', alignItems: 'center', gap: 4, color: colors.caption, fontSize: 11, fontWeight: 400, lineHeight: '16px' },
-  detailPrimaryActions: {
-    flex: 'none', minWidth: 126, display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-    justifyContent: 'flex-start', gap: 9,
-  },
   detailEnabledControl: {
-    minHeight: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 9,
+    minHeight: 30, display: 'inline-flex', alignItems: 'center', gap: 9,
     color: colors.secondary, fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap',
   },
+  detailAuditAction: { marginTop: 10 },
   detailPreview: { minWidth: 0 },
   detailColumns: {
     display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))',
@@ -2315,7 +2311,7 @@ export function ArkmeMarketplace({
     ? !detailInstallAction.disabled
     : detailUpdateAvailable
   const detailPrimaryActionLabel = detailUpdateAvailable && detailUpdate?.latest_version !== undefined
-    ? `更新至 ${displayVersion(detailUpdate.latest_version)}`
+    ? '更新'
     : detailAction
   const detailTask = installTask?.extensionId === detail?.extension_id ? installTask : undefined
   const detailHasPreviews = extensionDetailHasPreviews(detail?.preview_images)
@@ -2657,56 +2653,59 @@ export function ArkmeMarketplace({
 
             <div style={{ ...styles.detailLead, ...(detailHasPreviews ? {} : styles.detailLeadWithoutPreview) }} data-detail-has-preview={detailHasPreviews ? 'true' : 'false'}>
               <div style={styles.detailIdentity}>
-                <div style={styles.detailIdentityTop}>
-                  <div style={styles.detailHero}>
-                    <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={58} />
-                    <div style={styles.cardBody}>
-                      <div style={styles.detailTitleRow}>
-                        <h3 style={styles.detailName}>{detail.name}</h3>
-                      </div>
-                      <ArkmeExtensionDetailMetrics item={detail} />
-                      <ArkmeExtensionAuthorPopover
-                        item={detail}
-                        open={authorCardOpen}
-                        currentUserId={currentUserId}
-                        actionBusy={authorActionBusy}
-                        actionError={authorActionError}
-                        style={{ marginTop: 10 }}
-                        onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
-                        onPrivateChat={() => { void openAuthorPrivateChat() }}
-                        onOtherExtensions={openAuthorExtensions}
-                        onWorld={openAuthorWorld}
-                      />
+                <div style={styles.detailHero}>
+                  <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={58} />
+                  <div style={styles.cardBody}>
+                    <div style={styles.detailTitleRow}>
+                      <h3 style={styles.detailName}>{detail.name}</h3>
+                      {(detailInstalled !== undefined || detailPrimaryActionVisible) && <div
+                        style={styles.detailTitleActions}
+                        data-extension-lifecycle-actions="title"
+                      >
+                        {detailPrimaryActionVisible && ((detailTask !== undefined && !detailTask.done)
+                          || actionBusyExtensionId === detail.extension_id
+                          ? <InstallLoadingButton
+                              task={detailTask}
+                              onPause={() => { void controlInstall('extensions.install.pause') }}
+                              onResume={() => { void controlInstall('extensions.install.resume') }}
+                            />
+                          : <button
+                              type="button" style={styles.primaryButton} disabled={actionBusyExtensionId === detail.extension_id}
+                              onClick={() => {
+                                if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
+                                  void startInstall({ extensionId: detail.extension_id, version: detailUpdate.latest_version })
+                                } else void startInstall(extensionDirectInstallTarget(detail))
+                              }}
+                            >{detailPrimaryActionLabel}</button>)}
+                        {detailInstalled !== undefined && <div style={styles.detailEnabledControl}>
+                          <span>{extensionEnabledLabel(detailInstalled)}</span>
+                          <ArkmeExtensionToggle
+                            item={detailInstalled}
+                            busy={actionBusyExtensionId === detail.extension_id}
+                            onChange={enabled => { void toggleEnabled(detail.extension_id, enabled) }}
+                          />
+                        </div>}
+                      </div>}
                     </div>
-                  </div>
-                  <div style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
-                    {detailPrimaryActionVisible && ((detailTask !== undefined && !detailTask.done)
-                      || actionBusyExtensionId === detail.extension_id
-                      ? <InstallLoadingButton
-                          task={detailTask}
-                          onPause={() => { void controlInstall('extensions.install.pause') }}
-                          onResume={() => { void controlInstall('extensions.install.resume') }}
-                        />
-                      : <button
-                          type="button" style={styles.primaryButton} disabled={actionBusyExtensionId === detail.extension_id}
-                          onClick={() => {
-                            if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
-                              void startInstall({ extensionId: detail.extension_id, version: detailUpdate.latest_version })
-                            } else void startInstall(extensionDirectInstallTarget(detail))
-                          }}
-                        >{detailPrimaryActionLabel}</button>)}
-                    {detailPrimaryActionVisible && <ArkmeExtensionAuditAction
-                      extensionId={detail.extension_id}
-                      busyExtensionId={auditBusyExtensionId}
-                      onRun={extensionId => { void runAudit(extensionId) }}
-                    />}
-                    {detailInstalled !== undefined && <div style={styles.detailEnabledControl}>
-                      <span>{extensionEnabledLabel(detailInstalled)}</span>
-                      <ArkmeExtensionToggle
-                          item={detailInstalled}
-                          busy={actionBusyExtensionId === detail.extension_id}
-                          onChange={enabled => { void toggleEnabled(detail.extension_id, enabled) }}
-                        />
+                    <ArkmeExtensionDetailMetrics item={detail} />
+                    <ArkmeExtensionAuthorPopover
+                      item={detail}
+                      open={authorCardOpen}
+                      currentUserId={currentUserId}
+                      actionBusy={authorActionBusy}
+                      actionError={authorActionError}
+                      style={{ marginTop: 10 }}
+                      onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
+                      onPrivateChat={() => { void openAuthorPrivateChat() }}
+                      onOtherExtensions={openAuthorExtensions}
+                      onWorld={openAuthorWorld}
+                    />
+                    {detailPrimaryActionVisible && <div style={styles.detailAuditAction}>
+                      <ArkmeExtensionAuditAction
+                        extensionId={detail.extension_id}
+                        busyExtensionId={auditBusyExtensionId}
+                        onRun={extensionId => { void runAudit(extensionId) }}
+                      />
                     </div>}
                   </div>
                 </div>
