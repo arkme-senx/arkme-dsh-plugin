@@ -275,19 +275,28 @@ describe('topic create UI', () => {
       trail={[rootTopic, leafTopic]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
     />)
     expect(markup).toContain('aria-label="当前主题路径"')
+    expect(markup).toContain('data-arkme-source-breadcrumb-icon="true"')
+    expect(markup.indexOf('data-arkme-source-breadcrumb-icon="true"')).toBeLessThan(markup.indexOf('发给自己'))
+    expect(markup).toContain('data-arkme-source-breadcrumb-path="true"')
+    expect(markup).toContain('data-arkme-source-breadcrumb-current="true"')
+    expect(markup.indexOf('data-arkme-source-breadcrumb-path="true"'))
+      .toBeLessThan(markup.indexOf('data-arkme-source-breadcrumb-current="true"'))
+    expect(markup).toContain('flex:0 0 auto')
+    expect(markup).toContain('flex:1 1 auto')
     expect(markup).toContain('发给自己')
     expect(markup).toContain('产品研发')
     expect(markup).not.toContain('DSH 插件')
     expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('--dsw-alias-label-secondary')
+    expect(markup).toContain('#8e9199')
     expect(markup).toContain('发布流程')
 
     const aggregateMarkup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
       trail={[]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
     />)
     expect(aggregateMarkup).toContain('aria-current="page"')
-    expect(aggregateMarkup).toContain('--dsw-alias-label-primary')
-    expect(aggregateMarkup).not.toContain('--dsw-alias-label-caption')
+    expect(aggregateMarkup).toContain('主题目录')
+    expect(aggregateMarkup).toContain('#171923')
+    expect(aggregateMarkup).not.toContain('#a0a3aa')
   })
 
   it('rebinds rotated source references without duplicating the visited destination', () => {
