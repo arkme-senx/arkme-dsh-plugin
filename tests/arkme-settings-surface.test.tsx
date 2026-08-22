@@ -1,8 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeSettingsSurface } from '../src/client/ArkmeSettingsSurface.js'
+import { ArkmeSettingsSurface, aboutArkmeVersion } from '../src/client/ArkmeSettingsSurface.js'
 
 describe('ArkmeSettingsSurface', () => {
+  it('uses the desktop-injected APP version when the update bridge has no status yet', () => {
+    expect(aboutArkmeVersion(undefined, { arkmeDesktop: { appVersion: '0.1.0' } })).toBe('v0.1.0')
+    expect(aboutArkmeVersion('1.2.0', { arkmeDesktop: { appVersion: '0.1.0' } })).toBe('v0.1.0')
+  })
+
   it('groups the Demo account, general, Arkme and about settings in the plugin surface', () => {
     const markup = renderToStaticMarkup(<ArkmeSettingsSurface />)
 
