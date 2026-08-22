@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { StackSimple } from '@phosphor-icons/react/dist/icons/StackSimple'
 import type { ArkmeSourceItem } from '../types.js'
 
 export interface ArkmeSourceBreadcrumbSegment {
@@ -11,27 +12,52 @@ export interface ArkmeSourceBreadcrumbSegment {
 }
 
 const colors = {
-  text: 'var(--dsw-alias-label-primary, #17191c)',
-  secondary: 'var(--dsw-alias-label-secondary, #8a9099)',
-  caption: 'var(--dsw-alias-label-caption, #b0b5bc)',
+  text: '#171923',
+  secondary: '#8e9199',
+  caption: '#a0a3aa',
+  accent: '#5d76e8',
+  accentSoft: '#f1f2f6',
 }
 
 const styles: Record<string, CSSProperties> = {
   breadcrumb: {
     minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden', whiteSpace: 'nowrap',
-    fontSize: 14, lineHeight: '20px',
+  },
+  directoryIconFrame: {
+    width: 36, height: 36, marginRight: 9, flex: '0 0 auto', display: 'grid', placeItems: 'center',
+    borderRadius: 10, color: colors.accent, background: colors.accentSoft,
+  },
+  directoryIcon: { width: 18, height: 18 },
+  titleGroup: {
+    minWidth: 0, flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'center', overflow: 'hidden',
+  },
+  path: {
+    minWidth: 0, display: 'flex', alignItems: 'center', overflow: 'hidden', color: colors.secondary,
+    fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap',
   },
   segment: {
-    minWidth: 0, maxWidth: 160, flex: '0 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    minWidth: 0, maxWidth: 132, flex: '0 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   ancestor: {
     padding: 0, border: 0, background: 'transparent', color: colors.secondary,
     font: 'inherit', fontWeight: 400, textAlign: 'left', cursor: 'pointer',
   },
   root: { flex: 'none', color: colors.caption },
-  current: { color: colors.text, fontWeight: 500 },
-  currentRoot: { color: colors.text, fontWeight: 500 },
-  separator: { flex: 'none', padding: '0 5px', color: colors.caption, fontWeight: 400 },
+  current: {
+    minWidth: 0, overflow: 'hidden', color: colors.text, fontSize: 15, lineHeight: '21px', fontWeight: 600,
+    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  separator: { flex: 'none', padding: '0 4px', color: colors.caption, fontWeight: 400 },
+}
+
+function ArkmeDirectoryBreadcrumbIcon() {
+  return <span
+    aria-hidden="true"
+    data-arkme-source-breadcrumb-icon="true"
+    style={styles.directoryIconFrame}
+  >
+    <StackSimple size={18} weight="regular" style={styles.directoryIcon} />
+  </span>
 }
 
 function reconcileBreadcrumbSource(
@@ -108,29 +134,36 @@ export function ArkmeSourceBreadcrumb({
   onSelectAggregate(): void
 }) {
   const segments = arkmeSourceBreadcrumb(trail, sources)
+  const currentSegment = segments.at(-1)!
+  const ancestorSegments = segments.slice(0, -1)
+  const pathLabel = ancestorSegments.map(segment => segment.label).join(' / ') || '主题目录'
   return <nav aria-label="当前主题路径" style={styles.breadcrumb}>
-    {segments.map((segment, index) => <span key={segment.key} style={{ display: 'contents' }}>
-      {index > 0 && <span aria-hidden style={styles.separator}>/</span>}
-      {segment.current
-        ? <span
-          aria-current="page" title={segment.label}
-          style={{
-            ...styles.segment,
-            ...styles.current,
-            ...(segment.root ? { ...styles.root, ...styles.currentRoot } : {}),
-          }}
-        >{segment.label}</span>
-        : <button
-          type="button" title={segment.label}
-          style={{ ...styles.segment, ...styles.ancestor, ...(segment.root ? styles.root : {}) }}
-          onClick={segment.root
-            ? onSelectAggregate
-            : () => {
-                if (segment.source !== undefined && segment.trailIndex !== undefined) {
-                  onSelect(segment.trailIndex, segment.source)
-                }
-              }}
-        >{segment.label}</button>}
-    </span>)}
+    <ArkmeDirectoryBreadcrumbIcon />
+    <span style={styles.titleGroup}>
+      <span data-arkme-source-breadcrumb-path="true" title={pathLabel} style={styles.path}>
+        {ancestorSegments.length === 0
+          ? '主题目录'
+          : ancestorSegments.map((segment, index) => <span key={segment.key} style={{ display: 'contents' }}>
+            {index > 0 && <span aria-hidden style={styles.separator}>/</span>}
+            <button
+              type="button" title={segment.label}
+              style={{ ...styles.segment, ...styles.ancestor, ...(segment.root ? styles.root : {}) }}
+              onClick={segment.root
+                ? onSelectAggregate
+                : () => {
+                    if (segment.source !== undefined && segment.trailIndex !== undefined) {
+                      onSelect(segment.trailIndex, segment.source)
+                    }
+                  }}
+            >{segment.label}</button>
+          </span>)}
+      </span>
+      <span
+        aria-current="page"
+        data-arkme-source-breadcrumb-current="true"
+        title={currentSegment.label}
+        style={styles.current}
+      >{currentSegment.label}</span>
+    </span>
   </nav>
 }
