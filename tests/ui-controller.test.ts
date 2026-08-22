@@ -31,8 +31,6 @@ describe('ArkmeUiController', () => {
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
-      open: true,
-      surfaceOpen: true,
       authRevision: 0,
       chatRevision: 0,
       mode: 'world',
@@ -105,7 +103,7 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     controller.showContactAdd()
     expect(controller.getSnapshot()).toEqual({
-      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'contact-add',
+      authRevision: 0, chatRevision: 0, mode: 'contact-add',
       selectedSource: source,
     })
     controller.showConversations()
@@ -118,7 +116,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, mode: 'extensions',
     })
   })
 
@@ -133,8 +131,6 @@ describe('ArkmeUiController', () => {
       avatarFallback: { kind: 'phone_default', colorIndex: 3, label: 'L' },
     })
     expect(controller.getSnapshot()).toMatchObject({
-      open: true,
-      surfaceOpen: true,
       mode: 'world',
       worldTarget: {
         userId: 7,
@@ -152,7 +148,7 @@ describe('ArkmeUiController', () => {
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
-      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'world',
+      authRevision: 0, chatRevision: 0, mode: 'world',
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
@@ -166,7 +162,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, mode: 'calls',
     })
   })
 
@@ -205,7 +201,7 @@ describe('ArkmeUiController', () => {
     controller.showSettings('about')
 
     expect(controller.getSnapshot()).toEqual({
-      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'settings', settingsSection: 'about',
+      authRevision: 0, chatRevision: 0, mode: 'settings', settingsSection: 'about',
     })
   })
 
