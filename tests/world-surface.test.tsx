@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  appendWorldPublishFiles,
   ArkmeWorldContent,
   ArkmeWorldSurface,
   cachedWorldImageDataUrl,
@@ -9,8 +10,11 @@ import {
   cachedWorldVoiceprintResolvedRefs,
   loadWorldImageDataUrl,
   mergeWorldVoiceprintPlayableRefs,
+  optimizeWorldPublishImage,
   pendingWorldVoiceprintRecordRefs,
+  PublishDialog,
   rememberWorldVoiceprintAvailability,
+  removeWorldPublishFile,
   VoiceprintInviteDialog,
   WorldInfiniteScrollTrigger,
   WorldImagePreviewDialog,
@@ -97,6 +101,37 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('>发布</button>')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup).not.toContain('>关闭<')
+  })
+
+  it('renders a spacious World publisher with a custom image picker and complete action area', () => {
+    const markup = renderToStaticMarkup(<PublishDialog onClose={noop} onPublished={noop} />)
+
+    expect(markup).toContain('data-world-publish-dialog="spacious"')
+    expect(markup).toContain('width:min(720px, 100%)')
+    expect(markup).toContain('data-world-publish-editor="true"')
+    expect(markup).toContain('min-height:190px')
+    expect(markup).toContain('aria-label="世界内容"')
+    expect(markup).toContain('data-world-publish-images="true"')
+    expect(markup).toContain('>添加图片<')
+    expect(markup).toContain('0 / 9')
+    expect(markup).toContain('0 / 2000')
+    expect(markup).toContain('aria-label="关闭发布窗口"')
+    expect(markup).not.toContain('选择文件')
+  })
+
+  it('appends publish images up to the product limit and removes one selection without touching the others', () => {
+    const image = (name: string) => ({ name, size: 1, type: 'image/png', lastModified: 1 } as File)
+    const current = [image('1.png'), image('2.png')]
+    const appended = appendWorldPublishFiles(current, Array.from({ length: 10 }, (_value, index) => image(`${String(index + 3)}.png`)))
+
+    expect(appended.map(file => file.name)).toEqual(['1.png', '2.png', '3.png', '4.png', '5.png', '6.png', '7.png', '8.png', '9.png'])
+    expect(removeWorldPublishFile(appended, 3).map(file => file.name)).toEqual(['1.png', '2.png', '3.png', '5.png', '6.png', '7.png', '8.png', '9.png'])
+  })
+
+  it('keeps an already small publish image byte-for-byte instead of doing unnecessary work', async () => {
+    const file = { name: 'small.png', size: 1024, type: 'image/png', lastModified: 1 } as File
+
+    await expect(optimizeWorldPublishImage(file)).resolves.toBe(file)
   })
 
   it('covers loading, error, empty, and success states without hiding actions', () => {

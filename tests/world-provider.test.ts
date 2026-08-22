@@ -342,11 +342,12 @@ describe('world Provider projection', () => {
     expect(JSON.stringify(page)).not.toContain('my-public-record-1')
   })
 
-  it('downloads a sealed world image and rejects the ref after an account switch', async () => {
+  it('downloads a published-size world image and rejects the ref after an account switch', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const publicImage = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo.png'
-    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+    const png = new Uint8Array(3 * 1024 * 1024)
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
         return json({ code: 200, data: { list: [{

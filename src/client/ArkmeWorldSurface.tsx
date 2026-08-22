@@ -106,13 +106,35 @@ const styles: Record<string, CSSProperties> = {
   feedLoadMoreRetry: { minHeight: 30, padding: '0 12px', border: 0, borderRadius: 8, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
   modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: '#fff', boxShadow: '0 18px 60px rgba(20,22,30,.22)' },
-  modalTitle: { margin: 0, fontSize: 19 },
-  modalText: { margin: '7px 0 16px', color: colors.secondary, fontSize: 12, lineHeight: 1.6 },
-  textarea: { width: '100%', minHeight: 130, resize: 'vertical', padding: 12, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 12, color: colors.text, font: 'inherit', fontSize: 13, lineHeight: 1.6, outline: 0 },
-  fieldLabel: { display: 'grid', gap: 7, marginTop: 12, color: colors.secondary, fontSize: 12 },
-  fileInput: { maxWidth: '100%', color: colors.secondary, fontSize: 12 },
-  modalActions: { marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   modalError: { color: colors.danger, fontSize: 12 },
+  publishModal: { width: 'min(720px, 100%)', maxHeight: 'min(780px, calc(100vh - 48px))', padding: 30, overflowX: 'hidden', borderRadius: 24 },
+  publishHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
+  publishTitle: { margin: 0, fontSize: 24, lineHeight: 1.3, fontWeight: 700, letterSpacing: '-.025em' },
+  publishIntro: { maxWidth: 560, margin: '8px 0 0', color: colors.secondary, fontSize: 13, lineHeight: 1.7 },
+  publishClose: { flex: '0 0 auto', width: 36, height: 36, marginTop: -3, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: colors.subtle, color: colors.secondary, cursor: 'pointer' },
+  publishEditor: { marginTop: 22, overflow: 'hidden', border: `1px solid ${colors.border}`, borderRadius: 16, background: '#fff' },
+  publishTextarea: { width: '100%', minHeight: 190, resize: 'vertical', padding: '18px 18px 10px', boxSizing: 'border-box', border: 0, color: colors.text, background: 'transparent', font: 'inherit', fontSize: 14, lineHeight: 1.7, outline: 0 },
+  publishEditorMeta: { minHeight: 36, padding: '0 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, color: colors.secondary, fontSize: 11 },
+  publishImageSection: { marginTop: 20 },
+  publishImageHeader: { marginBottom: 10, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 },
+  publishImageTitle: { display: 'grid', gap: 3, color: colors.text, fontSize: 13, fontWeight: 650 },
+  publishImageHint: { color: colors.secondary, fontSize: 11, fontWeight: 400 },
+  publishImageCount: { color: colors.secondary, fontSize: 11 },
+  publishHiddenInput: { display: 'none' },
+  publishUploadEmpty: { width: '100%', minHeight: 104, padding: 18, boxSizing: 'border-box', display: 'grid', placeItems: 'center', gap: 5, border: '1px dashed #cfd3db', borderRadius: 15, background: '#fafafb', color: colors.secondary, cursor: 'pointer', font: 'inherit' },
+  publishUploadIcon: { width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: '#eceef3', color: '#555c68' },
+  publishUploadTitle: { color: colors.text, fontSize: 13, fontWeight: 650 },
+  publishUploadHint: { fontSize: 11 },
+  publishImageGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))', gap: 10 },
+  publishImageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', borderRadius: 13, background: colors.subtle },
+  publishImagePreview: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
+  publishImagePlaceholder: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: colors.secondary, fontSize: 10 },
+  publishImageRemove: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, padding: 0, display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.65)', borderRadius: '50%', background: 'rgba(21,23,29,.72)', color: '#fff', cursor: 'pointer' },
+  publishAddTile: { minWidth: 0, aspectRatio: '1', padding: 10, display: 'grid', placeItems: 'center', alignContent: 'center', gap: 6, border: '1px dashed #cfd3db', borderRadius: 13, background: '#fafafb', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  publishFooter: { margin: '24px -30px -30px', padding: '18px 30px 22px', minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18, borderTop: `1px solid ${colors.border}`, background: '#fafafb' },
+  publishStatus: { minHeight: 18, color: colors.secondary, fontSize: 12, lineHeight: 1.5 },
+  publishActions: { flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10 },
+  publishActionButton: { minWidth: 88, minHeight: 44, padding: '0 20px', borderRadius: 12, fontSize: 14 },
   inviteModal: { width: 'min(420px, 100%)', padding: 0, overflow: 'hidden', borderRadius: 20 },
   inviteContent: { padding: '28px 24px 26px', textAlign: 'center' },
   inviteTitle: { margin: 0, color: colors.text, fontSize: 17, lineHeight: 1.35, fontWeight: 700 },
@@ -367,6 +389,51 @@ export function loadWorldImageDataUrl(imageRef: string, reader: WorldImageReader
   worldImageDataUrlCache.set(normalized, entry)
   pruneWorldImageCache()
   return pending
+}
+
+const WORLD_IMAGE_OPTIMIZE_THRESHOLD_BYTES = 2 * 1024 * 1024
+const WORLD_IMAGE_OPTIMIZE_TARGET_BYTES = 1_800 * 1024
+const worldImageOptimizeCandidates = [
+  { dimension: 2560, quality: .9 },
+  { dimension: 2048, quality: .84 },
+  { dimension: 1600, quality: .8 },
+  { dimension: 1280, quality: .76 },
+] as const
+
+function worldImageOptimizedFileName(fileName: string): string {
+  const normalized = fileName.trim() || 'world-image'
+  return `${normalized.replace(/\.[^.]+$/u, '') || 'world-image'}.webp`
+}
+
+/** Shrinks large still images before the local-to-OSS upload while preserving unsupported/animated formats. */
+export async function optimizeWorldPublishImage(file: File): Promise<File> {
+  if (file.size <= WORLD_IMAGE_OPTIMIZE_THRESHOLD_BYTES || !['image/jpeg', 'image/png'].includes(file.type.toLowerCase())
+    || typeof createImageBitmap !== 'function' || typeof document === 'undefined' || typeof File !== 'function') return file
+  let bitmap: ImageBitmap
+  try { bitmap = await createImageBitmap(file) } catch { return file }
+  try {
+    let best: Blob | undefined
+    for (const candidate of worldImageOptimizeCandidates) {
+      const scale = Math.min(1, candidate.dimension / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      const context = canvas.getContext('2d')
+      if (context === null) return file
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      const encoded = await new Promise<Blob | null>(resolve => { canvas.toBlob(resolve, 'image/webp', candidate.quality) })
+      if (encoded === null || encoded.size >= file.size) continue
+      if (best === undefined || encoded.size < best.size) best = encoded
+      if (encoded.size <= WORLD_IMAGE_OPTIMIZE_TARGET_BYTES) break
+    }
+    return best === undefined
+      ? file
+      : new File([best], worldImageOptimizedFileName(file.name), { type: best.type || 'image/webp', lastModified: file.lastModified })
+  } catch {
+    return file
+  } finally {
+    bitmap.close()
+  }
 }
 
 function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
@@ -989,17 +1056,51 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
   </>
 }
 
-function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(result: ArkmeWorldPublishResult): void }) {
+export function appendWorldPublishFiles(current: readonly File[], selected: readonly File[]): File[] {
+  return [...current, ...selected].slice(0, ARKME_WORLD_PUBLISH_MAX_IMAGES)
+}
+
+export function removeWorldPublishFile(current: readonly File[], index: number): File[] {
+  return current.filter((_file, currentIndex) => currentIndex !== index)
+}
+
+function WorldPublishImagePreview({ file, index }: { file: File; index: number }) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
+    const next = URL.createObjectURL(file)
+    setUrl(next)
+    return () => { URL.revokeObjectURL(next) }
+  }, [file])
+  return url === ''
+    ? <span style={styles.publishImagePlaceholder}>待预览</span>
+    : <img src={url} alt={`待发布图片 ${String(index + 1)}`} style={styles.publishImagePreview} />
+}
+
+export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(result: ArkmeWorldPublishResult): void }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const sendingRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const mutationIdRef = useRef(uuid())
   const uploadedAssetsRef = useRef<{ mutationId: string; assets: ArkmeUploadedAsset[] }>()
   const resetMutationId = () => {
     mutationIdRef.current = uuid()
     uploadedAssetsRef.current = undefined
+  }
+  const chooseFiles = (selectedFiles: FileList | null) => {
+    const selected = Array.from(selectedFiles ?? [])
+    if (selected.length === 0) return
+    setFiles(current => appendWorldPublishFiles(current, selected))
+    resetMutationId()
+    setMessage('')
+  }
+  const removeFile = (index: number) => {
+    setFiles(current => removeWorldPublishFile(current, index))
+    resetMutationId()
+    setMessage('')
   }
   const submit = async () => {
     if (sendingRef.current) return
@@ -1017,7 +1118,11 @@ function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(
       if (files.length > 0) {
         if (cachedUploads?.mutationId === mutationIdRef.current) assets = cachedUploads.assets
         else {
-          assets = await withTimeout(Promise.all(files.map(async file => await worldSdk.upload(file, {
+          setMessage('正在优化图片…')
+          const uploadFiles: File[] = []
+          for (const file of files) uploadFiles.push(await optimizeWorldPublishImage(file))
+          setMessage('正在上传图片…')
+          assets = await withTimeout(Promise.all(uploadFiles.map(async file => await worldSdk.upload(file, {
             fileName: file.name || 'world-image', signal: controller.signal,
           }))), 60_000, '图片上传等待太久，请检查网络后重试', () => { controller.abort() })
           uploadedAssetsRef.current = { mutationId: mutationIdRef.current, assets }
@@ -1051,14 +1156,41 @@ function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(
     finally { controller.abort(); sendingRef.current = false; setSending(false) }
   }
   return <div role="dialog" aria-modal="true" aria-label="发世界" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
-    <section style={styles.modal}>
-      <h2 style={styles.modalTitle}>发世界</h2>
-      <p style={styles.modalText}>发布后会作为公开动态展示。发布失败时原因会保留在这里，草稿不会被清空。</p>
-      <textarea style={styles.textarea} value={text} disabled={sending} maxLength={2000} autoFocus placeholder="分享此刻的想法…" onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
-      <label style={styles.fieldLabel}>图片（最多 9 张）<input style={styles.fileInput} type="file" accept="image/*" multiple disabled={sending} onChange={event => { setFiles(Array.from(event.currentTarget.files ?? []).slice(0, ARKME_WORLD_PUBLISH_MAX_IMAGES)); resetMutationId(); setMessage('') }} /></label>
-      <div style={styles.modalActions}>
-        <span role="status" style={message.includes('正在') ? styles.subtitle : styles.modalError}>{message}</span>
-        <span style={styles.headerActions}><button type="button" style={styles.button} disabled={sending} onClick={onClose}>取消</button><button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : '发布'}</button></span>
+    <section style={{ ...styles.modal, ...styles.publishModal }} data-world-publish-dialog="spacious">
+      <header style={styles.publishHeader}>
+        <div>
+          <h2 style={styles.publishTitle}>发世界</h2>
+          <p style={styles.publishIntro}>记录此刻，也分享给世界。发布失败时会显示原因，草稿不会被清空，可以继续编辑后重试。</p>
+        </div>
+        <button type="button" style={styles.publishClose} disabled={sending} aria-label="关闭发布窗口" onClick={onClose}><X size={18} weight="regular" aria-hidden /></button>
+      </header>
+      <div style={styles.publishEditor} data-world-publish-editor="true">
+        <textarea style={styles.publishTextarea} value={text} disabled={sending} maxLength={2000} autoFocus aria-label="世界内容" placeholder="分享此刻的想法…" onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
+        <div style={styles.publishEditorMeta}><span>发布后会作为公开动态展示</span><span>{text.length} / 2000</span></div>
+      </div>
+      <section style={styles.publishImageSection} data-world-publish-images="true">
+        <div style={styles.publishImageHeader}>
+          <span style={styles.publishImageTitle}>图片<span style={styles.publishImageHint}>最多 9 张，单张不超过 20MB</span></span>
+          <span style={styles.publishImageCount}>{files.length} / {ARKME_WORLD_PUBLISH_MAX_IMAGES}</span>
+        </div>
+        <input ref={fileInputRef} style={styles.publishHiddenInput} type="file" accept="image/*" multiple disabled={sending || files.length >= ARKME_WORLD_PUBLISH_MAX_IMAGES} aria-label="选择世界图片" onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+        {files.length === 0
+          ? <button type="button" style={styles.publishUploadEmpty} disabled={sending} onClick={() => { fileInputRef.current?.click() }}>
+              <span style={styles.publishUploadIcon}><Plus size={18} weight="regular" aria-hidden /></span>
+              <span style={styles.publishUploadTitle}>添加图片</span>
+              <span style={styles.publishUploadHint}>可一次选择多张图片</span>
+            </button>
+          : <div style={styles.publishImageGrid}>
+              {files.map((file, index) => <div key={`${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`} style={styles.publishImageTile}>
+                <WorldPublishImagePreview file={file} index={index} />
+                <button type="button" style={styles.publishImageRemove} disabled={sending} aria-label={`移除图片 ${String(index + 1)}`} onClick={() => { removeFile(index) }}><X size={12} weight="bold" aria-hidden /></button>
+              </div>)}
+              {files.length < ARKME_WORLD_PUBLISH_MAX_IMAGES && <button type="button" style={styles.publishAddTile} disabled={sending} aria-label="继续添加图片" onClick={() => { fileInputRef.current?.click() }}><Plus size={19} weight="regular" aria-hidden /><span>继续添加</span></button>}
+            </div>}
+      </section>
+      <div style={styles.publishFooter}>
+        <span role="status" style={{ ...styles.publishStatus, ...(message !== '' && !message.includes('正在') ? styles.modalError : {}) }}>{message}</span>
+        <span style={styles.publishActions}><button type="button" style={{ ...styles.button, ...styles.publishActionButton }} disabled={sending} onClick={onClose}>取消</button><button type="button" style={{ ...styles.button, ...styles.primaryButton, ...styles.publishActionButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : '发布'}</button></span>
       </div>
     </section>
   </div>

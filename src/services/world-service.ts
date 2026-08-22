@@ -24,7 +24,7 @@ import type {
   ArkmeWorldRecordList,
   ArkmeWorldVisibility,
 } from '../types.js'
-import { MAX_ARKME_IMAGE_BYTES, type ArkmeWorldImageEntry } from './media-service.js'
+import type { ArkmeWorldImageEntry } from './media-service.js'
 import type { ArkmeUserProfileSnapshot } from '../types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
@@ -892,8 +892,8 @@ export class WorldService {
     const session = await this.runtime.requireSession()
     const entry = await this.openWorldImageRef(imageRef, session.userId)
     const byteLimit = Math.min(
-      MAX_ARKME_IMAGE_BYTES,
-      Math.max(1, Math.trunc(options.maxBytes ?? MAX_ARKME_IMAGE_BYTES)),
+      ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES,
+      Math.max(1, Math.trunc(options.maxBytes ?? ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)),
     )
     return await this.media.downloadSignedImage(
       trustedWorldImageUrl(this.runtime.config.environment, entry.sourceUrl),
