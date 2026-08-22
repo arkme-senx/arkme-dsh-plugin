@@ -10,6 +10,12 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} currentSessionId="session-1" />)
 
     expect(markup).toContain('data-arkme-owned="product-navigation"')
+    expect(markup).toContain('data-arkme-owned="product-brand"')
+    expect(markup).toContain('alt="Arkme"')
+    expect(markup).toContain('data-arkme-theme-image="light"')
+    expect(markup).toContain('data-arkme-theme-image="dark"')
+    expect(markup).toContain('width:48px;height:48px')
+    expect(markup.indexOf('data-arkme-owned="product-brand"')).toBeLessThan(markup.indexOf('>对话<'))
     expect(markup).toContain('background:#9eadff')
     expect(markup).toContain('aria-label="Arkme 功能导航"')
     expect(markup).toContain('>对话<')
@@ -30,6 +36,7 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact currentSessionId={undefined} />)
     expect(markup).toContain('flex-direction:row')
     expect(markup).toContain('border-bottom:1px solid #e7e7e9')
+    expect(markup).not.toContain('data-arkme-owned="product-brand"')
   })
 
   it('fits the permanent DSH sidebar seat without rendering official sidebar chrome', () => {

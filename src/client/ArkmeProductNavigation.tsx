@@ -12,6 +12,8 @@ import { GlobeHemisphereWest } from '@phosphor-icons/react/dist/icons/GlobeHemis
 import { UserCircle } from '@phosphor-icons/react/dist/icons/UserCircle'
 import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
+import arkmeNavigationLogoBase64 from '../../assets/branding/arkme-navigation-logo.png'
+import arkmeNavigationLogoDarkBase64 from '../../assets/branding/arkme-navigation-logo-dark.png'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
@@ -70,6 +72,11 @@ const styles: Record<string, CSSProperties> = {
     width: '100%', minWidth: 0, padding: '16px 4px 12px', borderRight: 0,
   },
   taskExpandedRail: { width: 72, minWidth: 72 },
+  brand: {
+    width: '100%', minHeight: 48, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden', borderRadius: 10, background: 'transparent',
+  },
+  brandImage: { display: 'block', width: 48, height: 48, objectFit: 'contain' },
   primary: { minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 },
   button: {
     position: 'relative',
@@ -155,6 +162,22 @@ export function ArkmeProductNavigation({
         ...(taskExpanded ? styles.taskExpandedRail : {}),
       }}
     >
+      {!compact && <div data-arkme-owned="product-brand" style={styles.brand}>
+        <img
+          src={`data:image/png;base64,${arkmeNavigationLogoBase64}`}
+          alt="Arkme"
+          data-arkme-theme-image="light"
+          draggable={false}
+          style={styles.brandImage}
+        />
+        <img
+          src={`data:image/png;base64,${arkmeNavigationLogoDarkBase64}`}
+          alt="Arkme"
+          data-arkme-theme-image="dark"
+          draggable={false}
+          style={styles.brandImage}
+        />
+      </div>}
       <div style={{ ...styles.primary, ...(compact ? { flexDirection: 'row' as const } : {}) }}>
       {items.map(item => {
         const ItemIcon = item.icon

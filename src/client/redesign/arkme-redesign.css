@@ -11,6 +11,7 @@
 [data-arkme-workspace], [data-arkme-workspace] * { box-sizing: border-box; }
 [data-arkme-workspace] button, [data-arkme-workspace] input, [data-arkme-workspace] textarea { font: inherit; }
 [data-arkme-workspace] button { border: 0; background: none; color: inherit; cursor: pointer; }
+[data-arkme-owned="product-brand"] [data-arkme-theme-image="dark"] { display: none !important; }
 
 .arkme-redesign-root {
   --arkme-native-titlebar: 0px;
@@ -494,6 +495,12 @@ body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] {
   background: var(--dsw-specific-sidebar-fill) !important;
   color: var(--dsw-alias-label-secondary) !important;
 }
+body[data-ds-dark-theme] [data-arkme-owned="product-brand"] {
+  background: transparent !important;
+  box-shadow: none;
+}
+body[data-ds-dark-theme] [data-arkme-owned="product-brand"] [data-arkme-theme-image="light"] { display: none !important; }
+body[data-ds-dark-theme] [data-arkme-owned="product-brand"] [data-arkme-theme-image="dark"] { display: block !important; }
 body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] > div {
   border-color: var(--dsw-alias-border-l1) !important;
   background: var(--dsw-alias-bg-layer-1) !important;
