@@ -7,6 +7,7 @@ import {
   ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
   ARKME_EXTENSION_PRIMARY_ACTION_BG, ARKME_EXTENSION_PRIMARY_ACTION_FG,
   ARKME_EXTENSION_RESTART_SURFACE, ArkmeMarketplace, ArkmeExtensionRestartDialog,
+  ArkmeExtensionAuditAction, ArkmeExtensionAuditFeedback,
   actionableExtensionUpdates, ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger,
   ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionLifecycleRow, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
@@ -710,6 +711,44 @@ describe('Arkme marketplace UI', () => {
       audit_reason: '读取令牌并访问网络',
     })).toBe('扩展 @example/native 是V3 原生 DSH Package，将以 DSH 插件进程权限运行。 检测到：运行依赖。 AI 风险审核提示（high）：读取令牌并访问网络。确认继续安装吗？')
     expect(extensionNativeInstallWarning({ execution_model: 'arkme-sandboxed' })).toBeUndefined()
+  })
+
+  it('renders the shared one-click audit action and result used by detail surfaces', () => {
+    const idle = renderToStaticMarkup(<ArkmeExtensionAuditAction
+      extensionId="ext-1"
+      busyExtensionId={undefined}
+      onRun={() => {}}
+    />)
+    const busy = renderToStaticMarkup(<ArkmeExtensionAuditAction
+      extensionId="ext-1"
+      busyExtensionId="ext-1"
+      onRun={() => {}}
+    />)
+    const result = renderToStaticMarkup(<ArkmeExtensionAuditFeedback
+      error=""
+      result={{
+        extension_id: 'ext-1',
+        verdict: 'review',
+        risk_level: 'medium',
+        summary: '需要人工复核权限说明',
+        reasons: ['声明了网络权限'],
+        recommendations: [],
+        source_reviewed: false,
+        source_scope: 'public_detail_only',
+        audited_at_millis: 1,
+      }}
+    />)
+    const failure = renderToStaticMarkup(<ArkmeExtensionAuditFeedback error="审核失败" />)
+
+    expect(idle).toContain('AI 审核')
+    expect(busy).toContain('disabled=""')
+    expect(busy).toContain('审核中...')
+    expect(result).toContain('AI 审核建议复核')
+    expect(result).toContain('中风险')
+    expect(result).toContain('需要人工复核权限说明')
+    expect(result).toContain('声明了网络权限')
+    expect(failure).toContain('role="alert"')
+    expect(failure).toContain('审核失败')
   })
 
   it('renders the resolved author without exposing a version in its label', () => {

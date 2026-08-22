@@ -397,10 +397,6 @@ const styles: Record<string, CSSProperties> = {
   emptyDesc: { maxWidth: 230, marginTop: 4, color: colors.secondary, fontSize: 11, lineHeight: '17px' },
   skeleton: { height: 76, marginBottom: 8, borderRadius: 12, background: colors.subtle, opacity: .72 },
   detail: { width: '100%', maxWidth: 860, margin: '0 auto', paddingBottom: 20, boxSizing: 'border-box' },
-  detailBack: {
-    height: 30, display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 10, padding: '0 6px 0 2px',
-    border: 0, borderRadius: 7, background: 'transparent', color: colors.secondary, font: 'inherit', fontSize: 11, cursor: 'pointer',
-  },
   detailLead: {
     display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 26,
     alignItems: 'start', padding: '2px 0 24px',
@@ -444,6 +440,10 @@ const styles: Record<string, CSSProperties> = {
     background: colors.subtle, color: colors.secondary, fontSize: 11, lineHeight: '17px',
   },
   auditPanelDanger: { background: arkmeTheme.dangerSoft, color: colors.danger },
+  auditButton: {
+    height: 28, flex: 'none', padding: '0 10px', border: `1px solid ${colors.border}`, borderRadius: 8,
+    background: 'transparent', color: colors.caption, font: 'inherit', fontSize: 11, fontWeight: 500, cursor: 'pointer',
+  },
   auditTitle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: colors.text, fontSize: 12, fontWeight: 650, lineHeight: '18px' },
   auditMeta: { marginTop: 4, color: colors.caption, fontSize: 10, lineHeight: '15px' },
   auditList: { margin: '7px 0 0', paddingLeft: 17 },
@@ -665,10 +665,6 @@ const EMPTY_COPY: Record<Tab, { title: string; description: string }> = {
   updates: { title: '所有扩展均为最新版本', description: '有新版本或安全撤销时，会在这里提醒你。' },
 }
 
-function BackIcon({ size = 18 }: { size?: number }) {
-  return <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="m15 18-6-6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-}
-
 function CloseIcon() {
   return <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
 }
@@ -777,6 +773,30 @@ function ArkmeExtensionAuditPanel({ result }: { result: ArkmeExtensionAuditResul
       {details.map((item, index) => <li key={`${String(index)}-${item}`}>{item}</li>)}
     </ul>}
   </section>
+}
+
+export function ArkmeExtensionAuditAction({ extensionId, busyExtensionId, onRun }: {
+  extensionId: string
+  busyExtensionId?: string | undefined
+  onRun(extensionId: string): void
+}) {
+  const busy = busyExtensionId === extensionId
+  return <button
+    type="button"
+    style={{ ...styles.auditButton, ...(busy ? { opacity: .62, cursor: 'default' } : {}) }}
+    disabled={busy}
+    onClick={() => { onRun(extensionId) }}
+  >{busy ? '审核中...' : 'AI 审核'}</button>
+}
+
+export function ArkmeExtensionAuditFeedback({ error, result }: {
+  error: string
+  result?: ArkmeExtensionAuditResult | undefined
+}) {
+  return <>
+    {error !== '' && <section style={{ ...styles.auditPanel, ...styles.auditPanelDanger }} role="alert">{error}</section>}
+    {result !== undefined && <ArkmeExtensionAuditPanel result={result} />}
+  </>
 }
 
 function LoadingIcon() {
@@ -2216,7 +2236,7 @@ export function ArkmeMarketplace({
     ?? publishedItems.find(item => item.extension_id === extensionId)?.icon_ref
     ?? myExtensions.find(item => item.published?.extensionId === extensionId)?.published?.iconRef
   const busy = loadingTab === tab || sharedDetailBusy
-  const detailModalOpen = displayMode === 'page' && (detailRequestedExtensionId !== undefined || detail !== undefined)
+  const detailModalOpen = detailRequestedExtensionId !== undefined || detail !== undefined
   const detailInstalled = detail === undefined ? undefined : installed.find(item => item.extensionId === detail.extension_id)
   const detailUpdate = detail === undefined ? undefined : updates.find(item => item.extension_id === detail.extension_id)
   const detailInstallAction = detail === undefined
@@ -2382,101 +2402,6 @@ export function ArkmeMarketplace({
         extension={sharedDetail}
         onBack={() => { setSharedDetail(undefined); onShareExit?.() }}
       />}
-      {!busy && error === '' && sharedDetail === undefined && detail !== undefined && displayMode === 'dialog' && <div style={styles.detail}>
-        <button type="button" style={styles.detailBack} onClick={() => { closeDetail() }}><BackIcon size={14} />返回列表</button>
-        <div style={styles.detailHero}>
-          <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={46} />
-          <div style={styles.cardBody}>
-            <div style={styles.detailTitleRow}>
-              <div style={styles.name}>{detail.name}</div>
-            </div>
-            <ArkmeExtensionDetailMetrics item={detail} />
-          </div>
-          <button
-            type="button"
-            style={{ ...styles.secondaryButton, ...(auditBusyExtensionId === detail.extension_id ? { opacity: .62, cursor: 'default' } : {}) }}
-            disabled={auditBusyExtensionId === detail.extension_id}
-            onClick={() => { void runAudit(detail.extension_id) }}
-          >{auditBusyExtensionId === detail.extension_id ? '审核中…' : 'AI 审核'}</button>
-          {(detailInstalled !== undefined || detailPrimaryActionVisible) && <span style={styles.detailPrimaryActions} data-extension-lifecycle-actions="true">
-            {detailPrimaryActionVisible && ((detailTask !== undefined && !detailTask.done)
-              || actionBusyExtensionId === detail.extension_id
-              ? <InstallLoadingButton
-                  task={detailTask}
-                  onPause={() => { void controlInstall('extensions.install.pause') }}
-                  onResume={() => { void controlInstall('extensions.install.resume') }}
-                />
-              : <button
-                type="button"
-                style={styles.primaryButton}
-                disabled={actionBusyExtensionId === detail.extension_id}
-                onClick={() => {
-                  if (detailUpdateAvailable && detailUpdate?.latest_version !== undefined) {
-                    void startInstall({ extensionId: detail.extension_id, version: detailUpdate.latest_version })
-                  } else void startInstall(extensionDirectInstallTarget(detail))
-                }}
-              >{detailPrimaryActionLabel}</button>)}
-            {detailInstalled !== undefined && <span style={styles.detailEnabledControl}>
-              <span>{extensionEnabledLabel(detailInstalled)}</span>
-              <ArkmeExtensionToggle
-                  item={detailInstalled}
-                  busy={actionBusyExtensionId === detail.extension_id}
-                  onChange={enabled => { void toggleEnabled(detail.extension_id, enabled) }}
-                />
-            </span>}
-          </span>}
-        </div>
-        {auditError !== '' && <section style={{ ...styles.auditPanel, ...styles.auditPanelDanger }} role="alert">{auditError}</section>}
-        {auditResult !== undefined && <ArkmeExtensionAuditPanel result={auditResult} />}
-        <ArkmeExtensionPreviewGallery
-          key={detail.extension_id}
-          extensionId={detail.extension_id}
-          extensionName={detail.name}
-          previews={detail.preview_images ?? []}
-        />
-        <section style={styles.detailSection}>
-          <div style={styles.detailLabel}>作者</div>
-          <div style={styles.detailValue}>
-            <ArkmeExtensionAuthorPopover
-              item={detail}
-              open={authorCardOpen}
-              currentUserId={currentUserId}
-              actionBusy={authorActionBusy}
-              actionError={authorActionError}
-              onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
-              onPrivateChat={() => { void openAuthorPrivateChat() }}
-              onWorld={openAuthorWorld}
-            />
-          </div>
-        </section>
-        {detailInstalled !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>已安装版本</div><div style={styles.detailValue}>{displayVersion(detailInstalled.installedVersion)}</div></section>}
-        {(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version) !== undefined && <section style={styles.detailSection}><div style={styles.detailLabel}>市场最新版本</div><div style={styles.detailValue}>{displayVersion(detailUpdate?.latest_version ?? detail.version ?? detail.latest_stable_version)}</div></section>}
-        {detail.created_at !== undefined && formatMarketplaceDate(detail.created_at) !== '' && <section style={styles.detailSection}><div style={styles.detailLabel}>创建时间</div><div style={styles.detailValue}>{formatMarketplaceDate(detail.created_at)}</div></section>}
-        <section style={styles.detailSection}><div style={styles.detailLabel}>扩展说明</div><div style={styles.detailValue}>{detail.description || '这个扩展还没有填写说明。'}</div></section>
-        {detail.source !== undefined && <section style={styles.detailSection}>
-          <div style={styles.detailLabel}>来源</div>
-          <div style={styles.detailValue}><ArkmeExtensionSourceLink source={detail.source} /></div>
-        </section>}
-        <ArkmeExtensionManifestDetails manifest={detail.manifest} />
-        {detail.visibility === 'public' && <ArkmeExtensionReviews
-          extensionId={detail.extension_id}
-          canCreateTopLevelReview={detail.owner_user_id === undefined || detail.owner_user_id !== currentUserId}
-          {...(detail.rating_summary === undefined ? {} : { initialRatingSummary: detail.rating_summary })}
-        />}
-        {detailInstallAction.disabled && detailInstalled === undefined && <div style={styles.detailHint}>该扩展的制品上传或发布尚未完成，目前没有可安装版本。请在 DSH 对话中重新发布成功后再安装。</div>}
-        {detailInstalled !== undefined && (uninstallConfirmExtensionId === detail.extension_id
-          ? <div style={styles.detailConfirm} role="alert">
-            卸载会删除当前扩展制品和 Profile 依赖；如果只是暂时不使用，请关闭上方开关。
-            <div style={styles.detailConfirmActions}>
-              <button type="button" style={styles.restartLater} onClick={() => { setUninstallConfirmExtensionId(undefined) }}>取消</button>
-              <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void uninstall(detail.extension_id) }}>确认卸载</button>
-            </div>
-          </div>
-          : <button
-            type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
-            onClick={() => { setUninstallConfirmExtensionId(detail.extension_id) }}
-          >卸载扩展</button>)}
-      </div>}
       {!busy && error === '' && sharedDetail === undefined && (displayMode === 'page' || detail === undefined) && tab === 'discover' && <>
         <div style={displayMode === 'page' ? styles.communityGrid : undefined} data-extension-grid={displayMode === 'page' ? 'compact-auto-fill-directory' : undefined}>
         {visibleItems.map(item => {
@@ -2686,6 +2611,11 @@ export function ArkmeMarketplace({
                             } else void startInstall(extensionDirectInstallTarget(detail))
                           }}
                         >{detailPrimaryActionLabel}</button>)}
+                    {detailPrimaryActionVisible && <ArkmeExtensionAuditAction
+                      extensionId={detail.extension_id}
+                      busyExtensionId={auditBusyExtensionId}
+                      onRun={extensionId => { void runAudit(extensionId) }}
+                    />}
                     {detailInstalled !== undefined && <div style={styles.detailEnabledControl}>
                       <span>{extensionEnabledLabel(detailInstalled)}</span>
                       <ArkmeExtensionToggle
@@ -2707,6 +2637,8 @@ export function ArkmeMarketplace({
                 />
               </div>}
             </div>
+
+            <ArkmeExtensionAuditFeedback error={auditError} result={auditResult} />
 
             <div style={styles.detailColumns}>
               <div style={styles.detailAbout}>

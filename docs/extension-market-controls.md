@@ -28,6 +28,43 @@ dependency merely because it remains installed.
 | Built-in UI | switch in every installed projection, with busy/error/restart states | one confirmation removes the row from every tab and surfaces manual restart when required | publish, replace, list and detail surfaces share the current `icon_ref` with a generic fallback |
 | Host owner | `ArkmeExtensionManager.setEnabled()` owns persistence, Cordis disposal/activation, Profile projection and errors | `ArkmeOwnedExtensionInventory.delete()` coordinates registry soft-delete, install/runtime/Profile cleanup, lineage deletion and opaque-ref invalidation | owns file/image-ref validation, workspace confinement and normalization, signed PUT/GET transport, digest verification and bounded cache invalidation |
 
+## Detail AI audit entry
+
+The one-click audit entry is owned by the shared extension detail modal. The
+legacy inline dialog detail path has been removed so all marketplace containers
+show the same audit action and feedback rendering.
+
+```mermaid
+flowchart TB
+  Modal[Extension detail modal] --> Lead[Identity, metrics, author]
+  Lead --> Actions[Primary action column]
+  Actions --> AuditButton[AI audit button]
+  Actions --> Install[Install, update, or toggle]
+  Lead --> Preview[Preview gallery]
+  Modal --> Feedback[Audit result or error panel]
+  Modal --> Facts[About and detail facts]
+```
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant UI as Marketplace detail UI
+  participant Host as Arkme Host API
+  participant Owner as Extension manager
+  User->>UI: Click AI audit
+  UI->>UI: Show busy state and clear stale result
+  UI->>Host: extensions.audit.check(extensionId)
+  Host->>Owner: auditExtension(trigger=market_detail)
+  alt audit succeeds
+    Owner-->>Host: verdict, risk, summary, reasons
+    Host-->>UI: structured audit result
+    UI-->>User: Show result panel
+  else audit fails
+    Host-->>UI: structured error
+    UI-->>User: Keep detail open and show retryable error
+  end
+```
+
 The extension registry owns one replaceable icon for each extension identity;
 changing it does not create an extension version. Public catalog, detail and
 author projections expose only the immutable current `icon_ref`. Upload and
