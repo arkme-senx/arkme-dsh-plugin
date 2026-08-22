@@ -1492,11 +1492,14 @@ describe('ArkmeService', () => {
       calls.push({ url, body })
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
-        summary: { record_count: 2, latest_send_at: 99 },
-        latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 99 },
+        summary: { record_count: 2, latest_send_at: 109 },
+        latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 109 },
       }, {
         topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 98 },
         summary: { record_count: 1, latest_send_at: 97 },
+      }, {
+        topic_core: { topic_uid: 'topic-empty', title: '空主题', update_at: 999 },
+        summary: { record_count: 0 },
       }] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
         rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
@@ -1539,8 +1542,12 @@ describe('ArkmeService', () => {
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
       ['send_to_self', '发给自己', undefined], ['default_category', '默认分类', 7],
-      ['topic', '工作', 2], ['topic', '周报', 1],
+      ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '空主题', 0],
     ])
+    expect(sources.items[0]).toMatchObject({
+      activeAtMillis: 109,
+      latestPreview: '最近内容',
+    })
     expect(sources.items[1]).toMatchObject({
       activeAtMillis: 101,
       latestPreview: '默认分类最近内容',
@@ -1574,6 +1581,8 @@ describe('ArkmeService', () => {
       itemUid: 'record-create-1', localState: 'synced',
     })
     expect(calls.at(-1)?.body).toMatchObject({ topic_uid: 'topic-1', text_content: '写进主题' })
+    await service.listSources('send_to_self')
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
   })
 
   it('creates root topics and binds child topics without exposing server topic UIDs', async () => {

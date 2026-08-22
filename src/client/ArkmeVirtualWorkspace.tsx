@@ -27,7 +27,7 @@ import { arkmeUi } from './ui-controller.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
 import {
-  arkmeSelfDirectorySources, arkmeSourceTimeLabel, isArkmeSelfWorkspaceSource,
+  arkmeSelfDirectorySources, arkmeSendToSelfDirectoryPresentation, arkmeSourceTimeLabel, isArkmeSelfWorkspaceSource,
   sortArkmeSources, type ArkmeSourceSort,
 } from './source-list.js'
 import { arkoPresentationName, arkmeArkoProfileStore } from './arko-profile-store.js'
@@ -47,6 +47,7 @@ export interface ArkmeNavigationProps {
   onClose?: () => void
   onActivateSurface?: () => void
   showHarnessEntry?: boolean
+  sendToSelfSource?: ArkmeSourceItem
   directoryLead?: ReactNode
   onCreateTask?: () => void
   renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
@@ -652,7 +653,7 @@ export function ArkmeSourceSortControl({
 
 export function ArkmeNavigation({
   wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
-  directoryLead, onCreateTask, renderSlot,
+  sendToSelfSource, directoryLead, onCreateTask, renderSlot,
 }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(
@@ -734,7 +735,10 @@ export function ArkmeNavigation({
   const showArkoInSearch = normalizedConversationQuery === ''
     || arkoPresentationName(arkoProfile).toLocaleLowerCase().includes(normalizedConversationQuery)
     || (arkoLatestPreview ?? ARKO_CONVERSATION_PREVIEW_FALLBACK).toLocaleLowerCase().includes(normalizedConversationQuery)
-  const showSelfInSearch = normalizedConversationQuery === '' || '发给自己 默认分类与主题'.includes(normalizedConversationQuery)
+  const sendToSelfPresentation = arkmeSendToSelfDirectoryPresentation(sendToSelfSource)
+  const showSelfInSearch = normalizedConversationQuery === ''
+    || '发给自己 默认分类与主题'.includes(normalizedConversationQuery)
+    || sendToSelfPresentation.preview.toLocaleLowerCase().includes(normalizedConversationQuery)
   const showHarnessInSearch = normalizedConversationQuery === ''
     || 'deepseek harness 原生 deepseek 开发环境'.includes(normalizedConversationQuery)
 
@@ -1201,8 +1205,10 @@ export function ArkmeNavigation({
             <span style={styles.chatTop}>
               <span style={styles.entryName}>发给自己</span>
               <ArkmeTopicTagBadge label="私密" selected={activeDirectoryEntryId === undefined && ui.mode === 'source' && isArkmeSelfWorkspaceSource(ui.selectedSource)} />
+              <span aria-hidden style={{ flex: 1 }} />
+              {sendToSelfPresentation.time !== '' && <span style={styles.chatTime}>{sendToSelfPresentation.time}</span>}
             </span>
-            <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
+            <span style={styles.chatBottom}><span style={styles.preview}>{sendToSelfPresentation.preview}</span></span>
           </span>
         </button>}
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}

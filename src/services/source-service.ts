@@ -316,18 +316,12 @@ export class SourceService {
         ...(defaultLatestPreview === '' ? {} : { latestPreview: defaultLatestPreview }),
         ...(defaultRecordCount === undefined ? {} : { recordCount: defaultRecordCount }),
       }
-      const aggregateSource: ArkmeSourceItem = {
-        sourceRef: await this.sealSourceRef(session.userId, 'send_to_self', 'all', '发给自己'),
-        kind: 'send_to_self',
-        displayName: '发给自己',
-        activeAtMillis: 0,
-        unreadCount: 0,
-      }
       const topicDescriptors: Array<{
         topicUid: string
         parentTopicUid?: string
         title: string
         latestPreview: string
+        latestMessageAtMillis: number
         activeAtMillis: number
         recordCount: number
       }> = []
@@ -363,6 +357,7 @@ export class SourceService {
           ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
           title,
           latestPreview: textPreview(latest),
+          latestMessageAtMillis: numberValue(latest.send_at ?? summary.latest_send_at),
           activeAtMillis: numberValue(latest.send_at ?? summary.latest_send_at ?? core.update_at),
           recordCount: numberValue(summary.record_count),
         })
@@ -389,6 +384,28 @@ export class SourceService {
           recordCount: topic.recordCount,
         }
       })
+      const aggregateCandidates = [
+        defaultCategory,
+        ...topics.map((source, index) => ({
+          ...source,
+          activeAtMillis: topicDescriptors[index]?.latestMessageAtMillis ?? 0,
+        })),
+      ]
+      const latestAggregateItem = aggregateCandidates.reduce<ArkmeSourceItem | undefined>(
+        (latest, source) => latest === undefined || source.activeAtMillis > latest.activeAtMillis ? source : latest,
+        undefined,
+      )
+      const aggregateLatestPreview = latestAggregateItem === undefined || latestAggregateItem.activeAtMillis <= 0
+        ? ''
+        : latestAggregateItem.latestPreview?.trim() || '非文本内容'
+      const aggregateSource: ArkmeSourceItem = {
+        sourceRef: await this.sealSourceRef(session.userId, 'send_to_self', 'all', '发给自己'),
+        kind: 'send_to_self',
+        displayName: '发给自己',
+        ...(aggregateLatestPreview === '' ? {} : { latestPreview: aggregateLatestPreview }),
+        activeAtMillis: latestAggregateItem?.activeAtMillis ?? 0,
+        unreadCount: 0,
+      }
       return { directory, items: [aggregateSource, defaultCategory, ...topics], hasMore: false }
     }
     if (directory !== 'root') throw new ArkmePluginError('source-directory-invalid', 'Arkme 数据源目录无效', false)

@@ -195,8 +195,8 @@ describe('topic create UI', () => {
       onSelectionInvalidated={() => {}} onSelfSourcesResolution={() => {}} retryRevision={0}
     />)
 
-    expect(markup).toContain('aria-label="打开分类目录"')
-    expect(markup).toContain('title="分类目录"')
+    expect(markup).toContain('aria-label="打开主题"')
+    expect(markup).toContain('title="主题"')
     expect(markup).toContain('margin-left:auto')
     expect(markup).not.toContain('position:absolute')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).toContain('100vh')

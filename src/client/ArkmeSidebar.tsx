@@ -1511,6 +1511,7 @@ export function ArkmeSurface({
       }))
       releaseArkmeComposerDraft(pendingDraft)
       if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
+      if (result.localState !== 'failed' && isArkmeSelfWorkspaceSource(targetSource)) arkmeUi.chatChanged()
       if (result.aiPolish?.state === 'kept_original') {
         setTimeout(() => {
           setItems(current => current.map(item => {
@@ -1719,6 +1720,7 @@ export function ArkmeSurface({
         <ArkmeNavigation
           currentSessionId={currentSessionId}
           embeddedProductShell
+          {...(aggregateSource === undefined ? {} : { sendToSelfSource: aggregateSource })}
           {...(directoryLead === undefined ? {} : { directoryLead })}
           {...(onCreateTask === undefined ? {} : { onCreateTask })}
           {...(onActivateSurface === undefined ? {} : { onActivateSurface })}

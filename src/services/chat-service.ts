@@ -444,6 +444,7 @@ export class ChatService {
       const recordUid = options.recordUid?.trim() || randomUUID()
       if (source.kind === 'send_to_self' || source.kind === 'default_category') {
         const result = await this.record.createTextForConversation(recordUid, text)
+        if (result.localState !== 'failed') this.source.invalidateSourceListCache(session.userId, 'send_to_self')
         return {
           sourceRef,
           itemUid: result.recordUid,
@@ -458,6 +459,7 @@ export class ChatService {
           { topic_uid: source.ownerRef, record_uid: recordUid, template_kind: 1, title: '', text_content: text, send_at: Date.now() },
           session,
         )
+        this.source.invalidateSourceListCache(session.userId, 'send_to_self')
         return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
       }
       const relationUid = options.relationUid?.trim() || randomUUID()
@@ -679,12 +681,14 @@ export class ChatService {
       }
       if (source.kind === 'send_to_self' || source.kind === 'default_category') {
         const result = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/create', commonBody, session)
+        this.source.invalidateSourceListCache(session.userId, 'send_to_self')
         return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
       }
       if (source.kind === 'topic') {
         const result = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/records/create', { topic_uid: source.ownerRef, ...commonBody }, session,
         )
+        this.source.invalidateSourceListCache(session.userId, 'send_to_self')
         return { sourceRef, itemUid: stringValue(result.record_uid).trim() || recordUid, status: numberValue(result.status), localState: 'synced' }
       }
       const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>(

@@ -1,13 +1,14 @@
-import { useEffect, useLayoutEffect, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
-import type { ArkmeChatClientEvent } from '../types.js'
+import type { ArkmeChatClientEvent, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
 import { arkmeAuthStore } from './auth-store.js'
 import {
@@ -116,8 +117,32 @@ export function ArkmePersistentSidebar({
   const harnessMode = ui.mode === 'harness'
   const loginMode = ui.mode === 'login'
     || (authState.auth !== undefined && authState.auth.status !== 'authenticated')
+  const authenticatedUserId = authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined
+  const [sendToSelfState, setSendToSelfState] = useState<{
+    userId: number
+    source: ArkmeSourceItem
+  }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
     && (ui.mode === 'source' || ui.mode === 'arko' || harnessMode)
+  useEffect(() => {
+    if (authenticatedUserId === undefined) {
+      setSendToSelfState(undefined)
+      return
+    }
+    const controller = new AbortController()
+    void callArkme<ArkmeSourceList>('sources.list', {
+      directory: 'send_to_self', limit: 100,
+    }, controller.signal).then(page => {
+      const source = page.items.find(item => item.kind === 'send_to_self')
+      if (source !== undefined && !controller.signal.aborted) {
+        setSendToSelfState({ userId: authenticatedUserId, source })
+      }
+    }).catch(() => undefined)
+    return () => controller.abort()
+  }, [authenticatedUserId, ui.chatRevision])
+  const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
+    ? sendToSelfState.source
+    : undefined
   useLayoutEffect(() => {
     closeDetails()
     if (collapsed) collapseSidebar()
@@ -154,6 +179,7 @@ export function ArkmePersistentSidebar({
         showHarnessEntry
         currentSessionId={sessionState.current}
         renderSlot={renderSlot}
+        {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />
     </div>}
   </aside>
