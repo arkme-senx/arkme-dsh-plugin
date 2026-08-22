@@ -17,6 +17,7 @@ import type {
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import type { ArkmeWorldTarget } from './ui-controller.js'
+import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
 
 type WorldScope = 'all' | 'mine'
 
@@ -90,7 +91,14 @@ const styles: Record<string, CSSProperties> = {
   fileInput: { maxWidth: '100%', color: colors.secondary, fontSize: 12 },
   modalActions: { marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   modalError: { color: colors.danger, fontSize: 12 },
-  invitePreview: { margin: '10px 0 0', padding: 12, borderRadius: 12, background: colors.subtle, color: colors.secondary, fontSize: 12, lineHeight: 1.6 },
+  inviteModal: { width: 'min(420px, 100%)', padding: 0, overflow: 'hidden', borderRadius: 20 },
+  inviteContent: { padding: '28px 24px 26px', textAlign: 'center' },
+  inviteTitle: { margin: 0, color: colors.text, fontSize: 17, lineHeight: 1.35, fontWeight: 700 },
+  inviteAction: { margin: '14px 0 0', color: colors.secondary, fontSize: 15, lineHeight: 1.45 },
+  inviteStatus: { minHeight: 18, margin: '12px 0 0', color: colors.danger, fontSize: 12, lineHeight: 1.5 },
+  inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${colors.border}` },
+  inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
+  inviteConfirmButton: { borderLeft: `1px solid ${colors.border}`, color: colors.accent },
   interactionPanel: { margin: '12px -18px -18px', padding: '15px 18px 18px', borderTop: `1px solid ${colors.border}`, borderRadius: '0 0 16px 16px', background: '#fafbfc' },
   interactionPanelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   interactionPanelTitle: { fontSize: 12, fontWeight: 650 },
@@ -123,14 +131,12 @@ function dateTimeLabel(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
 }
 
-function worldInviteSubject(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>): string {
-  const subject = (item.headline.trim() || item.textContent.trim()).replace(/\s+/g, ' ')
-  return subject.length > 28 ? `${subject.slice(0, 28)}…` : subject
+function worldVoiceprintContent(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>): string {
+  return item.textContent.trim() !== '' ? item.textContent : item.headline
 }
 
-export function voiceprintInvitePromptTitle(item: Pick<ArkmeWorldFeedItem, 'authorName' | 'headline' | 'textContent'>): string {
-  const subject = worldInviteSubject(item)
-  return subject === '' ? `是否邀请${item.authorName}开启声纹？` : `是否邀请${item.authorName}朗读「${subject}」？`
+export function voiceprintInvitePromptTitle(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>, variantIndex = 0): string {
+  return resolveWorldVoiceprintExpectationCopy(worldVoiceprintContent(item), variantIndex).prompt
 }
 
 function uuid(): string {
@@ -225,25 +231,25 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
   </article>
 }
 
-function VoiceprintInviteDialog({ item, sending, message, onClose, onConfirm }: {
+export function VoiceprintInviteDialog({ item, variantIndex, sending, message, onClose, onConfirm }: {
   item: ArkmeWorldFeedItem
+  variantIndex: number
   sending: boolean
   message?: string
   onClose(): void
   onConfirm(item: ArkmeWorldFeedItem): void
 }) {
-  const subject = worldInviteSubject(item)
+  const author = item.authorName.trim() === '' ? 'TA' : `「${item.authorName.trim()}」`
   return <div role="dialog" aria-modal="true" aria-label="邀请开启声纹" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
-    <section style={styles.modal}>
-      <h2 style={styles.modalTitle}>{voiceprintInvitePromptTitle(item)}</h2>
-      <p style={styles.modalText}>点击提醒后，会给对方发送一条私信，邀请他开启声纹。</p>
-      {subject !== '' && <div style={styles.invitePreview}>{subject}</div>}
-      <div style={styles.modalActions}>
-        <span role="status" style={message === undefined ? styles.subtitle : styles.modalError}>{message ?? ''}</span>
-        <span style={styles.headerActions}>
-          <button type="button" style={styles.button} disabled={sending} onClick={onClose}>取消</button>
-          <button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending} onClick={() => { onConfirm(item) }}>{sending ? '发送中…' : '提醒'}</button>
-        </span>
+    <section style={{ ...styles.modal, ...styles.inviteModal }}>
+      <div style={styles.inviteContent}>
+        <h2 style={styles.inviteTitle}>{voiceprintInvitePromptTitle(item, variantIndex)}</h2>
+        <p style={styles.inviteAction}>提醒{author}录入声纹后就能听见这条文字</p>
+        {message !== undefined && <p role="status" style={styles.inviteStatus}>{message}</p>}
+      </div>
+      <div style={styles.inviteActions}>
+        <button type="button" style={styles.inviteActionButton} disabled={sending} onClick={onClose}>再想想</button>
+        <button type="button" style={{ ...styles.inviteActionButton, ...styles.inviteConfirmButton }} disabled={sending} onClick={() => { onConfirm(item) }}>{sending ? '发送中…' : '让TA知道'}</button>
       </div>
     </section>
   </div>
@@ -448,6 +454,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
   const [inviteSending, setInviteSending] = useState(false)
   const [inviteMessage, setInviteMessage] = useState<string>()
+  const invitePresentationIndexesRef = useRef(new Map<string, number>())
   const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
@@ -593,6 +600,12 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     setInviteMessage(undefined)
     setInviteItem(item)
   }
+  const closeVoiceprintInvite = () => {
+    if (inviteSending || inviteItem === undefined) return
+    const currentIndex = invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0
+    invitePresentationIndexesRef.current.set(inviteItem.recordRef, currentIndex + 1)
+    setInviteItem(undefined)
+  }
   const inviteVoiceprint = async (item: ArkmeWorldFeedItem) => {
     if (inviteSending) return
     setInviteSending(true)
@@ -617,6 +630,6 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
         else loadUser(target, state.nextOffset)
       }} />
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={() => { setLoaded(current => ({ ...current, all: false, mine: false })); setScope('mine') }} />}
-    {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={() => { if (!inviteSending) setInviteItem(undefined) }} onConfirm={item => { void inviteVoiceprint(item) }} />}
+    {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
   </main>
 }

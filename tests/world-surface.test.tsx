@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeWorldContent, ArkmeWorldSurface, voiceprintInvitePromptTitle, type ArkmeWorldViewState } from '../src/client/ArkmeWorldSurface.js'
+import { ArkmeWorldContent, ArkmeWorldSurface, VoiceprintInviteDialog, voiceprintInvitePromptTitle, type ArkmeWorldViewState } from '../src/client/ArkmeWorldSurface.js'
 import type { ArkmeWorldFeedItem } from '../src/types.js'
 
 const noop = () => {}
@@ -119,7 +119,25 @@ describe('Arkme native World surface', () => {
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {
-    expect(voiceprintInvitePromptTitle(item)).toBe('是否邀请陈一涵朗读「一段世界标题」？')
-    expect(voiceprintInvitePromptTitle({ ...item, headline: '', textContent: '今天真的很需要休息一下，明天再重新开始' })).toContain('今天真的很需要休息一下')
+    expect(voiceprintInvitePromptTitle(item)).toBe('字不多，更想听TA怎么说')
+    expect(voiceprintInvitePromptTitle({ ...item, headline: '', textContent: '今天真的很难过，留下了很多遗憾。' })).toBe('文字里有些情绪，更想听见TA的语气')
+    expect(voiceprintInvitePromptTitle({ ...item, headline: '', textContent: '今天真的很难过，留下了很多遗憾。' }, 1)).toBe('这段情绪藏在字里，想听TA怎么说')
+  })
+
+  it('matches the mobile reminder dialog while preserving the existing confirm callback', () => {
+    const markup = renderToStaticMarkup(<VoiceprintInviteDialog
+      item={{ ...item, textContent: '哈哈，这件事也太搞笑了！' }}
+      variantIndex={0}
+      sending={false}
+      onClose={noop}
+      onConfirm={noop}
+    />)
+
+    expect(markup).toContain('这段很有画面，带上声音会更有趣')
+    expect(markup).toContain('提醒「陈一涵」录入声纹后就能听见这条文字')
+    expect(markup).toContain('>再想想<')
+    expect(markup).toContain('>让TA知道<')
+    expect(markup).not.toContain('哈哈，这件事也太搞笑了')
+    expect(markup).not.toContain('点击提醒后')
   })
 })
