@@ -1,6 +1,6 @@
 import {
   Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
-  type CSSProperties, type ReactNode,
+  type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
@@ -40,7 +40,14 @@ import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
-import { ArkmeConversationMemoryCache } from './conversation-memory-cache.js'
+import {
+  ArkmeConversationMemoryCache,
+  arkmeConversationRestoredScrollTop,
+  arkmeConversationTimelineContentEqual,
+  arkmeShouldRefreshConversationTimeline,
+  type ArkmeConversationTimelineSnapshot,
+  type ArkmeConversationViewportSnapshot,
+} from './conversation-memory-cache.js'
 import {
   arkmeComposerCanSend,
   arkmeComposerDraftStore,
@@ -57,7 +64,7 @@ import {
 import { arkmeUi } from './ui-controller.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
-  RelatedRecordingsPanel, shouldShowRelatedRecordingsEntry,
+  RelatedRecordingsPanel, shouldShowPrivateChatActions, shouldShowRelatedRecordingsEntry,
 } from './related-recordings.js'
 import { isArkmeSelfWorkspaceSource } from './source-list.js'
 
@@ -169,10 +176,21 @@ const styles: Record<string, CSSProperties> = {
   moreButton: { width: 36, height: 32, border: 0, borderRadius: 9, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 17, letterSpacing: 2 },
   popover: { position: 'absolute', zIndex: 40, top: 38, right: 0, width: 150, padding: 6, border: `1px solid ${colors.border}`, borderRadius: 12, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.12)' },
   menuItem: { width: '100%', display: 'flex', alignItems: 'center', gap: 10, border: 0, borderRadius: 8, padding: '9px 10px', background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 13 },
+  menuStatus: { padding: '9px 10px', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   body: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', padding: '22px 22px 12px', background: arkmeTheme.base },
   utilityBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
   error: { padding: '10px 12px', borderRadius: 9, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
   records: { width: '100%', minWidth: 0, listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 0 },
+  timelineSkeleton: { display: 'flex', flexDirection: 'column', gap: 24, padding: '4px 0 20px' },
+  timelineSkeletonRow: { display: 'flex', alignItems: 'flex-start', gap: 11 },
+  timelineSkeletonRowMe: { flexDirection: 'row-reverse' },
+  timelineSkeletonAvatar: { width: 38, height: 38, flex: 'none', borderRadius: '50%', background: arkmeTheme.subtle },
+  timelineSkeletonBubble: { height: 54, borderRadius: 14, background: arkmeTheme.subtle },
+  newMessages: {
+    position: 'sticky', zIndex: 4, bottom: 6, display: 'block', margin: '8px auto 0', padding: '7px 13px',
+    border: `1px solid ${colors.border}`, borderRadius: 999, background: colors.panel, color: colors.text,
+    boxShadow: '0 5px 18px rgba(20,23,31,.12)', cursor: 'pointer', fontSize: 12,
+  },
   date: { alignSelf: 'center', marginBottom: 18, color: arkmeTheme.caption, fontSize: 10 },
   row: { width: '100%', minWidth: 0, display: 'flex' },
   rowMe: { justifyContent: 'flex-end' },
@@ -380,6 +398,52 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
 }
 
+interface ArkmeTimelineViewState {
+  sourceRef: string
+  items: ArkmeTimelineItem[]
+  aiPolishNotices: ArkmeGroupAiPolishNotice[]
+  aiPolishSettings: ArkmeGroupAiPolishSnapshot | undefined
+  nextCursor: ArkmeTimelineCursor | undefined
+  hasMore: boolean
+}
+
+function resolveStateAction<Value>(action: SetStateAction<Value>, current: Value): Value {
+  return typeof action === 'function' ? (action as (value: Value) => Value)(current) : action
+}
+
+function sameStateValue(left: unknown, right: unknown): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right)
+}
+
+function arkmeConversationViewport(root: HTMLDivElement): ArkmeConversationViewportSnapshot {
+  const stickToBottom = root.scrollHeight - root.scrollTop - root.clientHeight <= 80
+  if (stickToBottom) return { scrollTop: root.scrollTop, stickToBottom: true }
+  const rootRect = root.getBoundingClientRect()
+  for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
+    const rowRect = row.getBoundingClientRect()
+    if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) continue
+    const anchorId = row.dataset.arkmeConversationRow
+    if (anchorId !== undefined) {
+      return {
+        scrollTop: root.scrollTop,
+        stickToBottom: false,
+        anchorId,
+        anchorOffset: rowRect.top - rootRect.top,
+      }
+    }
+  }
+  return { scrollTop: root.scrollTop, stickToBottom: false }
+}
+
+function arkmeConversationAnchorOffset(root: HTMLDivElement, anchorId: string | undefined): number | undefined {
+  if (anchorId === undefined) return undefined
+  const rootTop = root.getBoundingClientRect().top
+  for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
+    if (row.dataset.arkmeConversationRow === anchorId) return row.getBoundingClientRect().top - rootTop
+  }
+  return undefined
+}
+
 export function aiPolishStatus(item: ArkmeTimelineItem): string {
   switch (item.aiPolish?.state) {
     case 'polishing': return 'AI润色中...'
@@ -578,11 +642,41 @@ export function ArkmeSurface({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const addMenuTriggerRef = useRef<HTMLButtonElement>(null)
-  const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [timelineView, setTimelineView] = useState<ArkmeTimelineViewState>({
+    sourceRef: '', items: [], aiPolishNotices: [], aiPolishSettings: undefined, nextCursor: undefined, hasMore: false,
+  })
+  const { sourceRef: timelineStateSourceRef, items, aiPolishNotices, aiPolishSettings, nextCursor, hasMore } = timelineView
+  const setItems = useCallback((action: SetStateAction<ArkmeTimelineItem[]>) => {
+    setTimelineView(current => {
+      const next = resolveStateAction(action, current.items)
+      return sameStateValue(current.items, next) ? current : { ...current, items: next }
+    })
+  }, [])
+  const setAiPolishNotices = useCallback((action: SetStateAction<ArkmeGroupAiPolishNotice[]>) => {
+    setTimelineView(current => {
+      const next = resolveStateAction(action, current.aiPolishNotices)
+      return sameStateValue(current.aiPolishNotices, next) ? current : { ...current, aiPolishNotices: next }
+    })
+  }, [])
+  const setAiPolishSettings = useCallback((action: SetStateAction<ArkmeGroupAiPolishSnapshot | undefined>) => {
+    setTimelineView(current => {
+      const next = resolveStateAction(action, current.aiPolishSettings)
+      return sameStateValue(current.aiPolishSettings, next) ? current : { ...current, aiPolishSettings: next }
+    })
+  }, [])
+  const setNextCursor = useCallback((action: SetStateAction<ArkmeTimelineCursor | undefined>) => {
+    setTimelineView(current => {
+      const next = resolveStateAction(action, current.nextCursor)
+      return sameStateValue(current.nextCursor, next) ? current : { ...current, nextCursor: next }
+    })
+  }, [])
+  const setHasMore = useCallback((action: SetStateAction<boolean>) => {
+    setTimelineView(current => {
+      const next = resolveStateAction(action, current.hasMore)
+      return current.hasMore === next ? current : { ...current, hasMore: next }
+    })
+  }, [])
   const [selfProfile, setSelfProfile] = useState<ArkmeUserProfile>()
-  const [timelineStateSourceRef, setTimelineStateSourceRef] = useState('')
-  const [aiPolishNotices, setAiPolishNotices] = useState<ArkmeGroupAiPolishNotice[]>([])
-  const [aiPolishSettings, setAiPolishSettings] = useState<ArkmeGroupAiPolishSnapshot>()
   const [drawer, setDrawer] = useState<'detail'>()
   const [detailItemUid, setDetailItemUid] = useState('')
   const [showOriginal, setShowOriginal] = useState(false)
@@ -590,8 +684,10 @@ export function ArkmeSurface({
   const [interwovenRefreshRevision, setInterwovenRefreshRevision] = useState(0)
   const [selectedMoment, setSelectedMoment] = useState<ArkmeInterwovenMention>()
   const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
-  const [nextCursor, setNextCursor] = useState<ArkmeTimelineCursor>()
-  const [hasMore, setHasMore] = useState(false)
+  const [timelineLoadingSourceRef, setTimelineLoadingSourceRef] = useState('')
+  const [timelineSkeletonSourceRef, setTimelineSkeletonSourceRef] = useState('')
+  const [timelineRevealSourceRef, setTimelineRevealSourceRef] = useState('')
+  const [newMessageCount, setNewMessageCount] = useState(0)
   const [longArticleCreating, setLongArticleCreating] = useState(false)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<{ key: string; message: string }>()
@@ -677,6 +773,11 @@ export function ArkmeSurface({
   const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
   const cacheAccountUserIdRef = useRef<number>()
   const timelineGenerationRef = useRef(0)
+  const timelineRequestAbortRef = useRef<AbortController>()
+  const pendingViewportRestoreRef = useRef<{
+    sourceRef: string
+    viewport: ArkmeConversationViewportSnapshot | undefined
+  }>()
   const interwovenRequestRef = useRef<AbortController>()
   const interwovenGenerationRef = useRef(0)
   const detailRequestRef = useRef<AbortController>()
@@ -723,6 +824,21 @@ export function ArkmeSurface({
       document.removeEventListener('keydown', closeFromKeyboard)
     }
   }, [relatedMenuOpen])
+
+  useEffect(() => {
+    if (timelineLoadingSourceRef === '') return
+    const sourceRef = timelineLoadingSourceRef
+    const timer = setTimeout(() => {
+      setTimelineSkeletonSourceRef(current => timelineLoadingSourceRef === sourceRef ? sourceRef : current)
+    }, 120)
+    return () => { clearTimeout(timer) }
+  }, [timelineLoadingSourceRef])
+
+  useEffect(() => {
+    if (timelineRevealSourceRef === '') return
+    const timer = setTimeout(() => { setTimelineRevealSourceRef('') }, 160)
+    return () => { clearTimeout(timer) }
+  }, [timelineRevealSourceRef])
 
   useEffect(() => {
     const element = surfaceRef.current
@@ -889,6 +1005,7 @@ export function ArkmeSurface({
 
   useEffect(() => {
     relatedEligibilityAbortRef.current?.abort()
+    relatedEligibilityAbortRef.current = undefined
     relatedPageAbortRef.current?.abort()
     relatedGenerationRef.current += 1
     activeRelatedSourceRef.current = source?.sourceRef ?? ''
@@ -904,8 +1021,13 @@ export function ArkmeSurface({
     setRelatedNextCursor(undefined)
     setRelatedLoadingMore(false)
     setRelatedError('')
-    if (!authenticated || source?.kind !== 'private_chat') return
+  }, [authenticated, source?.kind, source?.sourceRef, ui.authRevision])
+
+  const ensureRelatedEligibility = useCallback(() => {
+    if (!authenticated || source?.kind !== 'private_chat'
+      || relatedEligibility === 'loading' || relatedEligibility === 'allowed' || relatedEligibility === 'denied') return
     const controller = new AbortController()
+    relatedEligibilityAbortRef.current?.abort()
     relatedEligibilityAbortRef.current = controller
     const sourceRef = source.sourceRef
     setRelatedEligibility('loading')
@@ -917,9 +1039,17 @@ export function ArkmeSurface({
       }
     }).catch(() => {
       if (!controller.signal.aborted && activeRelatedSourceRef.current === sourceRef) setRelatedEligibility('error')
+    }).finally(() => {
+      if (relatedEligibilityAbortRef.current === controller) relatedEligibilityAbortRef.current = undefined
     })
-    return () => { controller.abort() }
-  }, [authenticated, source?.kind, source?.sourceRef, ui.authRevision])
+  }, [authenticated, relatedEligibility, source])
+
+  const toggleRelatedMenu = useCallback(() => {
+    if (relatedPanelOpen) return
+    const opening = !relatedMenuOpen
+    setRelatedMenuOpen(opening)
+    if (opening) ensureRelatedEligibility()
+  }, [ensureRelatedEligibility, relatedMenuOpen, relatedPanelOpen])
 
   const acknowledgeRead = useCallback(async (nextItems: ArkmeTimelineItem[]) => {
     if (source === undefined || nextItems.length === 0
@@ -950,44 +1080,77 @@ export function ArkmeSurface({
     if (source === undefined) return
     const sourceRef = source.sourceRef
     const generation = timelineGenerationRef.current
-    const body = bodyRef.current
-    const oldHeight = body?.scrollHeight ?? 0
-    const oldTop = body?.scrollTop ?? 0
-    const page = await callArkme<ArkmeTimelinePage>('source.timeline', {
-      sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
-    })
+    const hadCachedTimeline = conversationCacheRef.current.getTimeline(sourceRef) !== undefined
+    const controller = new AbortController()
+    timelineRequestAbortRef.current?.abort()
+    timelineRequestAbortRef.current = controller
+    let page: ArkmeTimelinePage
+    try {
+      page = await callArkme<ArkmeTimelinePage>('source.timeline', {
+        sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
+      }, controller.signal)
+    } catch (caught) {
+      if (controller.signal.aborted) return
+      throw caught
+    } finally {
+      if (timelineRequestAbortRef.current === controller) timelineRequestAbortRef.current = undefined
+    }
     if (generation !== timelineGenerationRef.current) return
     const cached = conversationCacheRef.current.getTimeline(sourceRef)
     const nextAiPolishSettings = cursor === undefined ? page.aiPolishSettings : cached?.aiPolishSettings
-    const snapshot = {
+    const snapshot: ArkmeConversationTimelineSnapshot = {
       items: cursor === undefined ? mergeItems([], page.items) : mergeItems(cached?.items ?? [], page.items),
       aiPolishNotices: cursor === undefined ? page.aiPolishNotices ?? [] : cached?.aiPolishNotices ?? [],
       hasMore: page.hasMore,
+      fetchedAtMillis: Date.now(),
+      refreshRevision: ui.chatRevision,
+      latestSequence: Math.max(source.latestSequence ?? 0, ...page.items.map(item => item.sequence ?? 0)),
       ...(nextAiPolishSettings === undefined ? {} : { aiPolishSettings: nextAiPolishSettings }),
       ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     }
+    const contentChanged = !arkmeConversationTimelineContentEqual(cached, snapshot)
     const releasedMoments = conversationCacheRef.current.storeTimeline(sourceRef, snapshot)
-    setTimelineStateSourceRef(sourceRef)
-    setItems(snapshot.items)
-    setAiPolishSettings(snapshot.aiPolishSettings)
-    setAiPolishNotices(snapshot.aiPolishNotices)
-    setHasMore(snapshot.hasMore); setNextCursor(snapshot.nextCursor)
-    if (releasedMoments !== undefined) setInterwovenMoments(releasedMoments)
-    requestAnimationFrame(() => {
-      const target = bodyRef.current
-      if (target === null) return
-      target.scrollTop = preserve ? oldTop + (target.scrollHeight - oldHeight) : target.scrollHeight
-    })
-    if (cursor === undefined) await acknowledgeRead(page.items)
-  }, [acknowledgeRead, source])
+    const releasedMomentsChanged = releasedMoments !== undefined
+      && JSON.stringify(releasedMoments) !== JSON.stringify(interwovenMoments)
+    if (contentChanged || releasedMomentsChanged) {
+      const body = bodyRef.current
+      pendingViewportRestoreRef.current = {
+        sourceRef,
+        viewport: preserve || hadCachedTimeline
+          ? body === null ? conversationCacheRef.current.getViewport(sourceRef) : arkmeConversationViewport(body)
+          : undefined,
+      }
+      if (contentChanged) setTimelineView({
+        sourceRef,
+        items: snapshot.items,
+        aiPolishNotices: snapshot.aiPolishNotices,
+        aiPolishSettings: snapshot.aiPolishSettings,
+        nextCursor: snapshot.nextCursor,
+        hasMore: snapshot.hasMore,
+      })
+      if (releasedMomentsChanged && releasedMoments !== undefined) setInterwovenMoments(releasedMoments)
+    }
+    if (cursor === undefined) {
+      setTimelineLoadingSourceRef(current => current === sourceRef ? '' : current)
+      setTimelineSkeletonSourceRef(current => current === sourceRef ? '' : current)
+      if (!hadCachedTimeline && snapshot.items.length > 0) setTimelineRevealSourceRef(sourceRef)
+      await acknowledgeRead(snapshot.items)
+    }
+  }, [acknowledgeRead, interwovenMoments, source, ui.chatRevision])
 
   useEffect(() => {
     if (!authStoreSnapshot.checked) void refreshAuth()
   }, [authStoreSnapshot.checked, refreshAuth, ui.authRevision])
   useLayoutEffect(() => {
     timelineGenerationRef.current += 1
+    timelineRequestAbortRef.current?.abort()
+    timelineRequestAbortRef.current = undefined
     const accountUserId = auth?.status === 'authenticated' ? auth.userId : undefined
-    if (cacheAccountUserIdRef.current !== accountUserId) {
+    const accountChanged = cacheAccountUserIdRef.current !== accountUserId
+    if (!accountChanged && timelineStateSourceRef !== '' && bodyRef.current !== null) {
+      conversationCacheRef.current.storeViewport(timelineStateSourceRef, arkmeConversationViewport(bodyRef.current))
+    }
+    if (accountChanged) {
       conversationCacheRef.current.clear()
       cacheAccountUserIdRef.current = accountUserId
     }
@@ -995,12 +1158,26 @@ export function ArkmeSurface({
     const cachedTimeline = sourceRef === undefined
       ? undefined
       : conversationCacheRef.current.getTimeline(sourceRef)
-    setTimelineStateSourceRef(sourceRef ?? '')
-    setItems(cachedTimeline?.items ?? [])
-    setAiPolishNotices(cachedTimeline?.aiPolishNotices ?? [])
-    setAiPolishSettings(cachedTimeline?.aiPolishSettings)
-    setNextCursor(cachedTimeline?.nextCursor)
-    setHasMore(cachedTimeline?.hasMore ?? false)
+    if (sourceRef !== undefined && cachedTimeline !== undefined) {
+      pendingViewportRestoreRef.current = {
+        sourceRef,
+        viewport: conversationCacheRef.current.getViewport(sourceRef),
+      }
+    } else {
+      pendingViewportRestoreRef.current = undefined
+    }
+    setTimelineView({
+      sourceRef: sourceRef ?? '',
+      items: cachedTimeline?.items ?? [],
+      aiPolishNotices: cachedTimeline?.aiPolishNotices ?? [],
+      aiPolishSettings: cachedTimeline?.aiPolishSettings,
+      nextCursor: cachedTimeline?.nextCursor,
+      hasMore: cachedTimeline?.hasMore ?? false,
+    })
+    setTimelineLoadingSourceRef(sourceRef !== undefined && cachedTimeline === undefined ? sourceRef : '')
+    setTimelineSkeletonSourceRef('')
+    setTimelineRevealSourceRef('')
+    setNewMessageCount(0)
     setDrawer(undefined); setDetailItemUid(''); setShowOriginal(false)
     if (authenticated) setError('')
     setLongArticleCreating(false); setAddMenuOpen(false)
@@ -1017,12 +1194,27 @@ export function ArkmeSurface({
   useEffect(() => {
     if (!authenticated || source === undefined) return
     const generation = timelineGenerationRef.current
-    const hasCachedTimeline = conversationCacheRef.current.getTimeline(source.sourceRef) !== undefined
+    const cachedTimeline = conversationCacheRef.current.getTimeline(source.sourceRef)
+    const hasCachedTimeline = cachedTimeline !== undefined
+    if (!arkmeShouldRefreshConversationTimeline(cachedTimeline, {
+      nowMillis: Date.now(),
+      refreshRevision: ui.chatRevision,
+      ...(source.latestSequence === undefined ? {} : { latestSequence: source.latestSequence }),
+    })) {
+      setTimelineLoadingSourceRef(current => current === source.sourceRef ? '' : current)
+      setTimelineSkeletonSourceRef(current => current === source.sourceRef ? '' : current)
+      void acknowledgeRead(cachedTimeline?.items ?? [])
+      return
+    }
     void loadTimeline().catch(caught => {
       arkmeChatDirectory.rejectOptimisticRead(source.sourceRef, source.sourceKey, source.latestSequence ?? 0)
-      if (generation === timelineGenerationRef.current && !hasCachedTimeline) setError(errorMessage(caught))
+      if (generation === timelineGenerationRef.current) {
+        setTimelineLoadingSourceRef(current => current === source.sourceRef ? '' : current)
+        setTimelineSkeletonSourceRef(current => current === source.sourceRef ? '' : current)
+        if (!hasCachedTimeline) setError(errorMessage(caught))
+      }
     })
-  }, [authenticated, source?.sourceRef, ui.chatRevision])
+  }, [acknowledgeRead, authenticated, loadTimeline, source, ui.chatRevision])
   useEffect(() => {
     if (!authenticated || source === undefined || timelineStateSourceRef !== source.sourceRef) return
     if (conversationCacheRef.current.getTimeline(source.sourceRef) === undefined) return
@@ -1037,10 +1229,9 @@ export function ArkmeSurface({
   useEffect(() => {
     if (!authenticated || source?.kind !== 'private_chat') return
     const sourceRef = source.sourceRef
+    if (conversationCacheRef.current.isInterwovenFresh(sourceRef, interwovenRefreshRevision)) return
     const generation = ++interwovenGenerationRef.current
     const controller = new AbortController()
-    const body = bodyRef.current
-    const stickToBottom = body === null || body.scrollHeight - body.scrollTop - body.clientHeight <= 80
     interwovenRequestRef.current?.abort()
     interwovenRequestRef.current = controller
     let active = true
@@ -1049,12 +1240,15 @@ export function ArkmeSurface({
     }, controller.signal).then(result => {
       if (!active || generation !== interwovenGenerationRef.current) return
       const moments = result.state === 'disabled' || result.state === 'empty' ? [] : result.moments
-      const ready = conversationCacheRef.current.storeInterwovenMoments(sourceRef, moments)
-      if (!ready) return
+      const previous = conversationCacheRef.current.getInterwovenMoments(sourceRef)
+      const ready = conversationCacheRef.current.storeInterwovenMoments(sourceRef, moments, interwovenRefreshRevision)
+      if (!ready || JSON.stringify(previous) === JSON.stringify(moments)) return
+      const body = bodyRef.current
+      pendingViewportRestoreRef.current = {
+        sourceRef,
+        viewport: body === null ? conversationCacheRef.current.getViewport(sourceRef) : arkmeConversationViewport(body),
+      }
       setInterwovenMoments(moments)
-      if (stickToBottom) requestAnimationFrame(() => {
-        if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-      })
     }).catch(() => undefined).finally(() => {
       if (!active || generation !== interwovenGenerationRef.current) return
       if (interwovenRequestRef.current === controller) interwovenRequestRef.current = undefined
@@ -1068,26 +1262,35 @@ export function ArkmeSurface({
   useEffect(() => {
     if (interwovenInvalidation.revision <= observedInterwovenInvalidationRef.current) return
     observedInterwovenInvalidationRef.current = interwovenInvalidation.revision
-    if (!authenticated || source?.kind !== 'private_chat') return
+    if (!authenticated) return
     const timer = setTimeout(() => { setInterwovenRefreshRevision(value => value + 1) }, 250)
     return () => { clearTimeout(timer) }
-  }, [authenticated, interwovenInvalidation.revision, source?.kind, source?.sourceRef])
+  }, [authenticated, interwovenInvalidation.revision])
   useEffect(() => {
-    if (!authenticated || source?.kind !== 'private_chat') return
+    if (!authenticated) return
     const refreshOnFocus = () => { setInterwovenRefreshRevision(value => value + 1) }
     window.addEventListener('focus', refreshOnFocus)
     return () => { window.removeEventListener('focus', refreshOnFocus) }
-  }, [authenticated, source?.kind, source?.sourceRef])
+  }, [authenticated])
   useEffect(() => {
     if (!authenticated || source === undefined) return
     const deltaItems = chatDelta.itemsBySourceRef[source.sourceRef] ?? []
     if (deltaItems.length === 0) return
-    setItems(current => mergeItems(current, deltaItems))
+    const nextItems = mergeItems(items, deltaItems)
+    if (JSON.stringify(nextItems) === JSON.stringify(items)) return
+    const body = bodyRef.current
+    const viewport = body === null ? undefined : arkmeConversationViewport(body)
+    pendingViewportRestoreRef.current = { sourceRef: source.sourceRef, viewport }
+    const existingIds = new Set(items.map(item => item.itemUid))
+    const incomingCount = deltaItems.filter(item => !existingIds.has(item.itemUid)).length
+    setItems(nextItems)
+    if (viewport?.stickToBottom === false && incomingCount > 0) {
+      setNewMessageCount(current => current + incomingCount)
+    } else {
+      setNewMessageCount(0)
+    }
     void acknowledgeRead(deltaItems)
-    requestAnimationFrame(() => {
-      if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-    })
-  }, [acknowledgeRead, authenticated, chatDelta, source?.sourceRef])
+  }, [acknowledgeRead, authenticated, chatDelta, items, source])
 
   useEffect(() => {
     if (!authenticated || source?.kind !== 'group_chat') return
@@ -1282,8 +1485,8 @@ export function ArkmeSurface({
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
     const pendingAttachments = [...pendingDraft.attachments]
     const pendingAssets = pendingAttachments.map(attachment => attachment.asset)
+    pendingViewportRestoreRef.current = { sourceRef: targetSource.sourceRef, viewport: undefined }
     setItems(current => mergeItems(current, [optimistic])); setBusy(true); setError('')
-    requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
     try {
       const result = pendingAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
@@ -1447,6 +1650,32 @@ export function ArkmeSurface({
     ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
     [aiPolishNotices, displayItems, interwovenMoments],
   )
+  useLayoutEffect(() => {
+    const pending = pendingViewportRestoreRef.current
+    const body = bodyRef.current
+    if (pending === undefined || body === null || pending.sourceRef !== timelineStateSourceRef) return
+    const anchorOffset = arkmeConversationAnchorOffset(body, pending.viewport?.anchorId)
+    body.scrollTop = arkmeConversationRestoredScrollTop(pending.viewport, {
+      currentScrollTop: body.scrollTop,
+      scrollHeight: body.scrollHeight,
+      ...(anchorOffset === undefined ? {} : { anchorOffset }),
+    })
+    conversationCacheRef.current.storeViewport(pending.sourceRef, arkmeConversationViewport(body))
+    pendingViewportRestoreRef.current = undefined
+  }, [displayRows, timelineStateSourceRef])
+  const handleConversationScroll = useCallback(() => {
+    const body = bodyRef.current
+    if (body === null || timelineStateSourceRef === '') return
+    const viewport = arkmeConversationViewport(body)
+    conversationCacheRef.current.storeViewport(timelineStateSourceRef, viewport)
+    if (viewport.stickToBottom) setNewMessageCount(0)
+  }, [timelineStateSourceRef])
+  const scrollToLatest = useCallback(() => {
+    const body = bodyRef.current
+    if (body === null) return
+    body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' })
+    setNewMessageCount(0)
+  }, [])
   const detailGroupTarget = useMemo(
     () => detailState?.kind === 'success'
       ? resolveInterwovenGroupTarget(chatDirectory.sources, detailState.detail.groupName)
@@ -1550,13 +1779,23 @@ export function ArkmeSurface({
             onSourceActivated={activateSource}
             onError={setError}
           />}
-          {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen) && <div ref={relatedMenuRef} style={styles.headerActions}>
+          {shouldShowPrivateChatActions(authenticated, source?.kind) && <div ref={relatedMenuRef} style={{
+            ...styles.headerActions,
+            width: 36,
+            visibility: relatedPanelOpen ? 'hidden' : 'visible',
+          }}>
             <button type="button" style={styles.moreButton} aria-label="更多私聊操作" aria-haspopup="menu" aria-expanded={relatedMenuOpen}
-              onClick={() => { setRelatedMenuOpen(value => !value) }}>•••</button>
-            {relatedMenuOpen && <div style={styles.popover} role="menu">
-              <button type="button" role="menuitem" style={styles.menuItem} onClick={openRelatedPanel}>
-                <span aria-hidden>◉</span><span>相关录音</span>
-              </button>
+              onClick={toggleRelatedMenu}>•••</button>
+            {relatedMenuOpen && <div style={styles.popover} role="menu" aria-busy={relatedEligibility === 'loading'}>
+              {shouldShowRelatedRecordingsEntry(authenticated, source?.kind, relatedEligibility, relatedPanelOpen)
+                ? <button type="button" role="menuitem" style={styles.menuItem} onClick={openRelatedPanel}>
+                  <span aria-hidden>◉</span><span>相关录音</span>
+                </button>
+                : relatedEligibility === 'error'
+                  ? <button type="button" role="menuitem" style={styles.menuItem} onClick={ensureRelatedEligibility}>重新检查相关录音</button>
+                  : <div role="status" style={styles.menuStatus}>
+                    {relatedEligibility === 'denied' ? '当前没有可用操作' : '正在检查相关录音…'}
+                  </div>}
             </div>}
           </div>}
         </header>}
@@ -1609,23 +1848,37 @@ export function ArkmeSurface({
               </div>
               : <div role="status" style={styles.loading}>正在加载发给自己的内容…</div>}
           </div> : <>
-          <div className="arkme-conversation-body" ref={bodyRef} style={styles.body}>
+          <div className="arkme-conversation-body" ref={bodyRef} style={styles.body} onScroll={handleConversationScroll}>
             {error !== '' && <div style={styles.error}>{error}</div>}
             <div ref={sentinelRef} style={styles.sentinel} />
             {loadingOlder && <div style={styles.loading}>正在加载更早内容…</div>}
-            {displayRows.length > 0 && <ul className="arkme-conversation-records" style={styles.records}>
+            {timelineSkeletonSourceRef === source.sourceRef && displayRows.length === 0 && <div
+              role="status"
+              aria-label="正在加载会话内容"
+              style={styles.timelineSkeleton}
+            >{[58, 44, 66, 50, 61].map((width, index) => <div
+              key={`${width}:${index}`}
+              aria-hidden
+              style={{ ...styles.timelineSkeletonRow, ...(index % 3 === 1 ? styles.timelineSkeletonRowMe : {}) }}
+            >
+              <span style={styles.timelineSkeletonAvatar} />
+              <span style={{ ...styles.timelineSkeletonBubble, width: `${width}%` }} />
+            </div>)}</div>}
+            {displayRows.length > 0 && <ul className={`arkme-conversation-records${timelineRevealSourceRef === source.sourceRef
+              ? ' arkme-conversation-records-reveal'
+              : ''}`} style={styles.records}>
               {displayRows.map((row, index) => {
                 const previous = index === 0 ? undefined : displayRows[index - 1]
                 const startsDay = previous === undefined
                   || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
                 if (row.kind === 'notice') return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
-                  <li style={styles.notice}>{row.item.message}</li>
+                  <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
                 </Fragment>
                 if (row.kind === 'moment') {
                   return <Fragment key={row.id}>
                     {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
-                    <ArkmeInterwovenMentionCard moment={row.item} onOpen={openMomentDetail} />
+                    <ArkmeInterwovenMentionCard moment={row.item} rowId={row.id} onOpen={openMomentDetail} />
                   </Fragment>
                 }
                 const item = row.item
@@ -1633,7 +1886,7 @@ export function ArkmeSurface({
                 const polishStatus = aiPolishStatus(item)
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
-                  <li style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
+                  <li data-arkme-conversation-row={row.id} style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
                     <div style={{
                       ...styles.messageLine,
                       ...(item.isMe ? styles.messageLineMe : {}),
@@ -1696,6 +1949,9 @@ export function ArkmeSurface({
                 </Fragment>
               })}
             </ul>}
+            {newMessageCount > 0 && <button type="button" style={styles.newMessages} onClick={scrollToLatest}>
+              {newMessageCount} 条新消息
+            </button>}
           </div>
           <footer className="arkme-conversation-composer" style={styles.composer}><div ref={composerRef} className="arkme-conversation-composer-inner" style={styles.composerInner}>
             {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
@@ -1832,8 +2088,8 @@ export function ArkmeSurface({
           sourceRef={source.sourceRef}
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
+            pendingViewportRestoreRef.current = { sourceRef: source.sourceRef, viewport: undefined }
             setItems(current => mergeItems(current, [item]))
-            requestAnimationFrame(() => { if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight })
           }}
         />,
         document.body,

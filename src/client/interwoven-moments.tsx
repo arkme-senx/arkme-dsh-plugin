@@ -155,14 +155,16 @@ function OpaqueAvatar({ avatarRef, size = 18 }: { avatarRef?: string; size?: num
 
 export function ArkmeInterwovenMentionCard({
   moment,
+  rowId,
   onOpen,
 }: {
   moment: ArkmeInterwovenMention
+  rowId?: string
   onOpen: (moment: ArkmeInterwovenMention) => void
 }) {
   const summary = moment.summary.trim() || '群聊提及'
   const accessible = `${moment.groupName}，${moment.senderName}：${summary}`
-  return <li style={styles.momentRow} data-arkme-interwoven-card={moment.momentId}>
+  return <li style={styles.momentRow} data-arkme-interwoven-card={moment.momentId} data-arkme-conversation-row={rowId}>
     <time style={styles.momentTime} dateTime={new Date(moment.occurredAtMillis).toISOString()}>
       {interwovenTimeLabel(moment.occurredAtMillis)}
     </time>

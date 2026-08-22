@@ -203,6 +203,14 @@
 .arkme-redesign-route-chats .arkme-conversation-header h2 { font-size: 15px !important; font-weight: 600 !important; }
 .arkme-redesign-route-chats .arkme-conversation-body { padding: 22px 22px 12px !important; }
 .arkme-redesign-route-chats .arkme-conversation-records { width: 100% !important; gap: 0 !important; }
+.arkme-conversation-records-reveal { animation: arkme-conversation-records-reveal 120ms ease-out both; }
+@keyframes arkme-conversation-records-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arkme-conversation-records-reveal { animation: none; }
+}
 .arkme-redesign-route-chats [aria-label="打开快记详情"] { border-radius: 5px 16px 16px 16px !important; }
 .arkme-redesign-route-chats [data-arkme-message-content] p { font-size: 14px !important; line-height: 22px !important; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }

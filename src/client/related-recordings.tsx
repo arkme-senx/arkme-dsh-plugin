@@ -115,6 +115,13 @@ export function shouldShowRelatedRecordingsEntry(
   return authenticated && sourceKind === 'private_chat' && eligibility === 'allowed' && !panelOpen
 }
 
+export function shouldShowPrivateChatActions(
+  authenticated: boolean,
+  sourceKind: string | undefined,
+): boolean {
+  return authenticated && sourceKind === 'private_chat'
+}
+
 function monthLabel(monthKey: string): string {
   const [year, month] = monthKey.split('-')
   return `${year ?? ''}年${month ?? ''}月`

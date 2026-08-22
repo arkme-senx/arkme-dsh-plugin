@@ -85,7 +85,7 @@ describe('interwoven conversation projection', () => {
 describe('interwoven UI', () => {
   it('renders the centered transparent 18px-avatar card as a native keyboard button', () => {
     const markup = renderToStaticMarkup(
-      <ArkmeInterwovenMentionCard moment={moment('one', Date.now())} onOpen={vi.fn()} />,
+      <ArkmeInterwovenMentionCard moment={moment('one', Date.now())} rowId="moment:one" onOpen={vi.fn()} />,
     )
 
     expect(markup).toContain('<button type="button"')
@@ -98,6 +98,7 @@ describe('interwoven UI', () => {
     expect(markup).toContain('text-overflow:ellipsis')
     expect(markup).toContain('max-width:min(680px, 100%)')
     expect(markup).toContain('var(--dsw-alias-label-secondary')
+    expect(markup).toContain('data-arkme-conversation-row="moment:one"')
   })
 
   it('renders distinct loading, error, success and degraded detail states', () => {
