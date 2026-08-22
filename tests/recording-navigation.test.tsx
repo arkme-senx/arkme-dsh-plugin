@@ -110,3 +110,18 @@ describe('Arko navigation entry', () => {
     expect(markup).toContain('对话并处理 Arkme 业务')
   })
 })
+
+describe('DeepSeek Harness navigation entry', () => {
+  it('uses the ordinary conversation-row contract and exposes selected state', () => {
+    const DeepSeekHarnessRow = navigation.DeepSeekHarnessRow
+    expect(DeepSeekHarnessRow).toBeDefined()
+    if (DeepSeekHarnessRow === undefined) return
+
+    const markup = renderToStaticMarkup(<DeepSeekHarnessRow selected onClick={vi.fn()} />)
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('DeepSeek Harness')
+    expect(markup).toContain('原生 DeepSeek 开发环境')
+    expect(markup).toContain('src="/favicon.svg"')
+  })
+})

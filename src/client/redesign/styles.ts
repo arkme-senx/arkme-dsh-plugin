@@ -13,9 +13,3 @@ export function installArkmeRedesignStyles(): () => void {
   document.head.append(style)
   return () => { style.remove() }
 }
-
-/** Scope DSH composer widening to the interval in which its native task seat is visible. */
-export function presentArkmeTaskSession(active: boolean): void {
-  if (typeof document === 'undefined') return
-  document.body.toggleAttribute('data-arkme-task-session', active)
-}

@@ -15,6 +15,26 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
+  it('does not replace any native DSH slot inside the embedded Harness document', () => {
+    const previousWindow = globalThis.window
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { search: '?arkme-harness-embed=1' } },
+    })
+    const register = vi.fn()
+    const effect = vi.fn()
+
+    try {
+      apply({ slots: { inject: vi.fn(), register }, effect } as never)
+    } finally {
+      if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
+      else Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
+    }
+
+    expect(effect).not.toHaveBeenCalled()
+    expect(register).not.toHaveBeenCalled()
+  })
+
   it('owns Arkme seats normally without redeclaring the DSH settings slot', () => {
     const registered: Array<{
       name: string
@@ -46,7 +66,7 @@ describe('official DSH client adapter', () => {
       layout: { toggleSidebar, closeDetails },
       sessions: { open: vi.fn() },
       effect: vi.fn((factory: () => unknown, label: string) => {
-        if (!label.includes('native conversation seats') && !label.includes('official settings sidebar')) return
+        if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
         const cleanup = factory()
         if (typeof cleanup === 'function') cleanups.push(cleanup)
       }),
@@ -92,7 +112,7 @@ describe('official DSH client adapter', () => {
     cleanups.forEach(cleanup => { cleanup() })
   })
 
-  it('releases the native conversation and details seats while a DSH task is active', async () => {
+  it('keeps the Arkme shell mounted while DeepSeek Harness is embedded in its conversation seat', async () => {
     const disposed: string[] = []
     const cleanups: Array<() => void> = []
     const inject = vi.fn((_key: string, register: () => unknown) => register() as () => void)
@@ -103,16 +123,18 @@ describe('official DSH client adapter', () => {
       layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
       sessions: { open: vi.fn() },
       effect: vi.fn((factory: () => unknown, label: string) => {
-        if (!label.includes('native conversation seats')) return
+        if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
         const cleanup = factory()
         if (typeof cleanup === 'function') cleanups.push(cleanup)
       }),
     } as never)
 
-    arkmeUi.showTaskSession()
+    arkmeUi.showHarness()
     await Promise.resolve()
 
-    expect(disposed).toEqual(expect.arrayContaining(['conversation', 'details']))
+    expect(disposed).toEqual([])
+    expect(register.mock.calls.map(([options]) => (options as { name: string }).name))
+      .toEqual(expect.arrayContaining(['sidebar', 'conversation', 'details']))
     cleanups.forEach(cleanup => { cleanup() })
     arkmeUi.showConversations()
   })

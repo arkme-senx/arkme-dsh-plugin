@@ -223,12 +223,10 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('switches between the Arkme task start and native DSH task conversation modes', () => {
+  it('switches between Arkme conversations and the native DeepSeek Harness mode', () => {
     const controller = new ArkmeUiController()
-    controller.showNewTask()
-    expect(controller.getSnapshot().mode).toBe('task-start')
-    controller.showTaskSession()
-    expect(controller.getSnapshot().mode).toBe('task-session')
+    controller.showHarness()
+    expect(controller.getSnapshot().mode).toBe('harness')
     controller.showConversations()
     expect(controller.getSnapshot().mode).toBe('source')
     controller.showSettings()
@@ -238,11 +236,11 @@ describe('ArkmeUiController', () => {
   it('opens and closes the calendar without replacing the page underneath it', () => {
     const controller = new ArkmeUiController()
 
-    controller.showTaskSession()
+    controller.showHarness()
     controller.showCalendar()
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session', calendarOpen: true })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness', calendarOpen: true })
     controller.hideCalendar()
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().calendarOpen).toBeUndefined()
 
     controller.showSearch()

@@ -12,8 +12,8 @@ type QuickAddDialogKind = 'group' | 'bot'
 const style: Record<string, CSSProperties> = {
   anchor: { position: 'relative', zIndex: 90, flex: 'none' },
   trigger: {
-    width: 30, height: 30, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.text,
+    width: 40, height: 40, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.menu, color: '#555a64',
     cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
   },
   menu: {

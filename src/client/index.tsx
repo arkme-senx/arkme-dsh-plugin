@@ -1,4 +1,4 @@
-import type { ClientContext, ISessions, SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -17,10 +17,10 @@ import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
-import { installArkmeRedesignStyles, presentArkmeTaskSession } from './redesign/styles.js'
-import { resolveArkmeTaskSession } from './redesign/task-session.js'
+import { deepSeekHarnessEmbedRequested } from './DeepSeekHarnessSurface.js'
+import { installArkmeRedesignStyles } from './redesign/styles.js'
 
-export const inject = ['slots', 'layout', 'sessions', 'workspaces']
+export const inject = ['slots', 'layout']
 
 async function resolveNotificationSource(
   activation: { sourceRef: string; sourceKey?: string },
@@ -46,9 +46,9 @@ async function resolveNotificationSource(
   return undefined
 }
 
-/** Permanently replace DSH's visible sidebar/conversation/details seats with Arkme-owned surfaces. */
+/** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
-	const sessions = ctx.sessions as unknown as ISessions
+	if (deepSeekHarnessEmbedRequested()) return
 	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
 		const shareRef = consumeExtensionShareDeepLink(window.location, window.history)
 		if (shareRef !== undefined) arkmeUi.openExtensionShare(shareRef)
@@ -96,7 +96,6 @@ export function apply(ctx: ClientContext): void {
         inject: () => ({
           collapseSidebar: () => { ctx.layout.toggleSidebar() },
           closeDetails: () => { ctx.layout.closeDetails() },
-          openSession: (sessionId: SessionId) => { sessions.open(sessionId) },
         }),
       }, ArkmePersistentSidebar))
     }
@@ -165,7 +164,6 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     let disposeConversation: (() => void) | undefined
     let disposeDetails: (() => void) | undefined
-    let disposed = false
 
     const mountArkmeSeats = () => {
       if (disposeConversation === undefined) {
@@ -175,19 +173,7 @@ export function apply(ctx: ClientContext): void {
           children: {
             'arkme.directory.entry': { kind: 'list', scope: 'root' },
           },
-          inject: () => ({
-            closeDetails: () => { ctx.layout.closeDetails() },
-            startSession: (options?: { workspaceId?: WorkspaceId; path?: string }) => resolveArkmeTaskSession(ctx.workspaces, sessions, options),
-            pickDirectory: () => ctx.workspaces.pickDirectory(),
-            listDirectory: (path?: string, signal?: AbortSignal) => ctx.workspaces.listDirectory(path, signal),
-            openSession: (sessionId: SessionId) => { sessions.open(sessionId) },
-            sendPrompt: async (sessionId: SessionId, text: string) => {
-              const session = sessions.binding(sessionId)?.session
-              if (session === undefined) throw new Error('任务会话尚未准备好，请稍后重试')
-              const result = await session.prompt([{ type: 'text', text }], 'queue')
-              if (!result.ok) throw new Error(result.error.message)
-            },
-          }),
+          inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
         }, ArkmePersistentWorkspace))
       }
       if (disposeDetails === undefined) {
@@ -198,28 +184,14 @@ export function apply(ctx: ClientContext): void {
         }, ArkmePersistentDetails))
       }
     }
-    const revealDshTaskSeats = () => {
+    mountArkmeSeats()
+    return () => {
       disposeConversation?.()
       disposeConversation = undefined
       disposeDetails?.()
       disposeDetails = undefined
     }
-    const syncSeatOwnership = () => {
-      if (disposed) return
-      const taskSession = arkmeUi.getSnapshot().mode === 'task-session'
-      presentArkmeTaskSession(taskSession)
-      if (taskSession) revealDshTaskSeats()
-      else mountArkmeSeats()
-    }
-    const stop = arkmeUi.subscribe(() => { queueMicrotask(syncSeatOwnership) })
-    syncSeatOwnership()
-    return () => {
-      disposed = true
-      stop()
-      revealDshTaskSeats()
-      presentArkmeTaskSession(false)
-    }
-  }, 'dsh-arkme: hand DSH task sessions their native conversation seats')
+  }, 'dsh-arkme: keep Arkme conversation seats around the embedded DeepSeek Harness')
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
@@ -241,6 +213,12 @@ export function apply(ctx: ClientContext): void {
 export { ArkmeFooterAction } from './ArkmeFooterAction.js'
 export { ArkmeHeroBrandMark, ArkmeSidebarBrandMark, ArkmeSidebarBrandName } from './ArkmeBrand.js'
 export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
+export {
+  DEEPSEEK_HARNESS_EMBED_QUERY,
+  DeepSeekHarnessSurface,
+  deepSeekHarnessEmbedRequested,
+  deepSeekHarnessEmbedUrl,
+} from './DeepSeekHarnessSurface.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'

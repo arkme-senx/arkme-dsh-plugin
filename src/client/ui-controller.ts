@@ -14,7 +14,7 @@ export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
   mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'contact-add' | 'arko'
-    | 'settings' | 'task-start' | 'task-session'
+    | 'settings' | 'harness'
   settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
@@ -174,14 +174,9 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'settings', settingsSection: section })
   }
 
-  showNewTask(): void {
+  showHarness(): void {
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
-    this.publish({ ...rest, mode: 'task-start' })
-  }
-
-  showTaskSession(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
-    this.publish({ ...rest, mode: 'task-session' })
+    this.publish({ ...rest, mode: 'harness' })
   }
 
   openExtensionShare(shareRef: string): void {

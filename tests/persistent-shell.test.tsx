@@ -22,6 +22,9 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-sidebar-collapsed="true"')
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-directory-visible="true"')
+    expect(markup).toContain('DeepSeek Harness')
+    expect(markup).not.toContain('与 Arkme 沟通任务')
+    expect(markup).not.toContain('aria-label="新任务"')
     expect(markup).not.toContain('DSH Local Build')
     expect(markup).not.toContain('sidebar.footer.action')
   })
@@ -61,16 +64,12 @@ describe('Arkme persistent DSH shell', () => {
   })
 
   it('renders Arkme as the permanent conversation owner without its old floating card', () => {
+    arkmeUi.showConversations()
     const markup = renderToStaticMarkup(<ArkmePersistentWorkspace {...({
       sessionId: 'session-1',
       useSessions: (selector: (state: { current?: string; ids: string[]; byId: Record<string, never> }) => unknown) => selector({ current: 'session-1', ids: [], byId: {} }),
       renderSlot: () => null,
       closeDetails: vi.fn(),
-      startSession: vi.fn(),
-      pickDirectory: vi.fn(),
-      listDirectory: vi.fn(),
-      openSession: vi.fn(),
-      sendPrompt: vi.fn(),
     } as never)} />)
 
     expect(markup).toContain('data-arkme-owned="persistent-workspace"')
@@ -78,6 +77,23 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).not.toContain('data-arkme-owned="product-navigation"')
     expect(markup).not.toContain('workspace-card')
     expect(markup).not.toContain('position:fixed')
+    expect(markup).not.toContain('开始 Arkme 任务')
+  })
+
+  it('embeds the complete native DSH client inside the current conversation region', () => {
+    arkmeUi.showHarness()
+    const markup = renderToStaticMarkup(<ArkmePersistentWorkspace {...({
+      sessionId: 'session-1',
+      useSessions: (selector: (state: { current?: string; ids: string[]; byId: Record<string, never> }) => unknown) => selector({ current: 'session-1', ids: [], byId: {} }),
+      renderSlot: () => null,
+      closeDetails: vi.fn(),
+    } as never)} />)
+
+    expect(markup).toContain('data-arkme-owned="persistent-workspace"')
+    expect(markup).toContain('data-arkme-owned="deepseek-harness-surface"')
+    expect(markup).toContain('src="/?arkme-harness-embed=1"')
+    expect(markup).not.toContain('data-arkme-owned="product-surface"')
+    arkmeUi.showConversations()
   })
 
   it('claims the details seat with an empty Arkme owner', () => {

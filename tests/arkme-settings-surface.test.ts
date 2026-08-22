@@ -27,6 +27,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(redesignCss).toContain('.arkme-redesign-settings-group')
     expect(redesignCss).toContain('.arkme-redesign-settings-profile')
     expect(redesignCss).toContain('.arkme-redesign-task-conversation [data-chat-flow]')
+    expect(redesignCss).not.toContain('body[data-arkme-task-session]')
     expect(redesignCss).toContain('--dsh-composer-card-max-width: calc(100% - 32px)')
     expect(redesignCss).toContain('--dsh-chat-content-width: calc(100% - 64px)')
     expect(redesignCss).toContain('max-width: none !important')

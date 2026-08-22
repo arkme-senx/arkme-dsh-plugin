@@ -227,18 +227,6 @@
   margin-right: 32px !important;
 }
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
-body[data-arkme-task-session] [data-phase] {
-  --dsh-chat-content-width: calc(100% - 64px);
-  --dsh-composer-card-max-width: calc(100% - 32px);
-}
-body[data-arkme-task-session] [data-chat-flow] {
-  width: calc(100% - 64px) !important;
-  max-width: none !important;
-  margin-left: 32px !important;
-  margin-right: 32px !important;
-}
-body[data-arkme-task-session] textarea { font-size: 14px !important; }
-
 /* Keep one stable Arkme navigation column while only the right-hand conversation changes. */
 @media (min-width: 1100px) {
   [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {

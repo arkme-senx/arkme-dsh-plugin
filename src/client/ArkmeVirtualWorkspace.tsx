@@ -49,6 +49,7 @@ export interface ArkmeNavigationProps {
   embeddedProductShell?: boolean
   onClose?: () => void
   onActivateSurface?: () => void
+  showHarnessEntry?: boolean
   directoryLead?: ReactNode
   onCreateTask?: () => void
   renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
@@ -426,6 +427,22 @@ export function ArkmeArkoRow({
   </button>
 }
 
+export function DeepSeekHarnessRow({ selected, onClick }: { selected: boolean; onClick(): void }) {
+  return <button
+    type="button"
+    role="treeitem"
+    aria-selected={selected}
+    style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+    onClick={onClick}
+  >
+    <span style={styles.avatar} aria-hidden><img src="/favicon.svg" alt="" width={28} height={28} /></span>
+    <span style={styles.chatContent}>
+      <span style={styles.chatTop}><span style={styles.entryName}>DeepSeek Harness</span></span>
+      <span style={styles.chatBottom}><span style={styles.preview}>原生 DeepSeek 开发环境</span></span>
+    </span>
+  </button>
+}
+
 function timeLabel(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
   const date = new Date(value)
@@ -674,7 +691,7 @@ export function ArkmeSourceSortControl({
 }
 
 export function ArkmeNavigation({
-  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface,
+  wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   directoryLead, onCreateTask, renderSlot,
 }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
@@ -759,6 +776,8 @@ export function ArkmeNavigation({
     || arkoPresentationName(arkoProfile).toLocaleLowerCase().includes(normalizedConversationQuery)
     || (arkoLatestPreview ?? ARKO_CONVERSATION_PREVIEW_FALLBACK).toLocaleLowerCase().includes(normalizedConversationQuery)
   const showSelfInSearch = normalizedConversationQuery === '' || '发给自己 默认分类与主题'.includes(normalizedConversationQuery)
+  const showHarnessInSearch = normalizedConversationQuery === ''
+    || 'deepseek harness 原生 deepseek 开发环境'.includes(normalizedConversationQuery)
 
   const stopCreatedHighlightAnimation = useCallback(() => {
     createdHighlightTimeoutsRef.current.forEach(timer => { clearTimeout(timer) })
@@ -1197,6 +1216,14 @@ export function ArkmeNavigation({
     >
       {directory === 'root' && <>
         {authenticated && normalizedConversationQuery === '' && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
+          selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
+          onClick={() => {
+            activateNativeEntry()
+            arkmeUi.showHarness()
+            onActivateSurface?.()
+          }}
+        />}
         {showArkoInSearch && <ArkmeArkoRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
