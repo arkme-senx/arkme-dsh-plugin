@@ -80,6 +80,17 @@ function versionLabel(version: string | undefined): string {
   return `v${version?.trim() || '…'}`
 }
 
+interface ArkmeDesktopVersionScope {
+  readonly arkmeDesktop?: Readonly<{ appVersion?: string }>
+}
+
+export function aboutArkmeVersion(
+  currentVersion: string | undefined,
+  scope: ArkmeDesktopVersionScope = globalThis as unknown as ArkmeDesktopVersionScope,
+): string {
+  return versionLabel(scope.arkmeDesktop?.appVersion ?? currentVersion)
+}
+
 export function updateVersionText(current: string, latest: string): string {
   if (current === 'v…') return '当前版本读取中…'
   if (latest === 'v…') return `当前 ${current}`
@@ -183,7 +194,7 @@ export function ArkmeSettingsSurface() {
   const notificationLabel = notificationPermission === 'granted'
     ? '已开启'
     : notificationPermission === 'denied' ? '已阻止' : notificationPermission === 'default' ? '未开启' : '不可用'
-  const version = updateState.status?.installedVersion ?? '…'
+  const version = aboutArkmeVersion(undefined)
   const updateInstalling = updateState.install !== undefined
     && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   const pluginUpdateRow = buildArkmePluginUpdateRow({
