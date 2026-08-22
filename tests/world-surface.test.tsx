@@ -12,6 +12,7 @@ import {
   WorldInteractionThreadList,
   voiceprintInvitePromptTitle,
   worldImagePreviewDragPosition,
+  worldInteractionCountLabel,
   worldInteractionThreads,
   type ArkmeWorldViewState,
 } from '../src/client/ArkmeWorldSurface.js'
@@ -187,6 +188,8 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('data-world-comment-panel="inline"')
     expect(markup).toContain('aria-label="陈一涵的评论区"')
     expect(markup).toContain('aria-label="收起评论"')
+    expect(markup).toContain('data-world-comment-toolbar="sticky"')
+    expect(markup).toContain('position:sticky;top:0')
     expect(markup).toContain('评论加载中')
     expect(markup).toContain('写一条评论')
     expect(markup).toContain('>收起<')
@@ -194,6 +197,7 @@ describe('Arkme native World surface', () => {
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup.match(/世界正文/g)).toHaveLength(1)
     expect(markup.indexOf('世界正文')).toBeLessThan(markup.indexOf('data-world-comment-panel="inline"'))
+    expect(markup.indexOf('写一条评论')).toBeLessThan(markup.indexOf('评论加载中'))
     expect(markup).not.toContain('data-world-comment-panel="side"')
   })
 
@@ -207,6 +211,16 @@ describe('Arkme native World surface', () => {
       { ref: 'reply_2', replyToName: '小满' },
     ])
     expect(threads[1]?.root.interactionRef).toBe('comment_2')
+    expect(worldInteractionCountLabel(interactions.length)).toBe('评论 4')
+    expect(worldInteractionCountLabel(interactions.length, true)).toBe('评论 4+')
+  })
+
+  it('places every full comment reply action on the far right', () => {
+    const markup = renderToStaticMarkup(<WorldInteractionThreadList rootRef={item.recordRef} items={interactions} onReply={noop} />)
+
+    expect(markup).toContain('justify-content:flex-end')
+    expect(markup).toContain('aria-label="回复阿七的评论"')
+    expect(markup).toContain('aria-label="回复小满的评论"')
   })
 
   it('renders compact avatar-free feed replies with explicit targets and limits previews to three rows', () => {

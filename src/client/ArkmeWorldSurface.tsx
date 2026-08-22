@@ -69,7 +69,7 @@ const styles: Record<string, CSSProperties> = {
   error: { borderColor: 'rgba(185,66,59,.25)', background: 'rgba(185,66,59,.06)', color: colors.danger },
   errorRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
   feed: { width: 'min(780px, calc(100% - 64px))', maxWidth: '100%', minWidth: 0, margin: '6px auto 48px', boxSizing: 'border-box', display: 'grid', gap: 0 },
-  card: { minWidth: 0, maxWidth: '100%', padding: '18px 4px 16px', boxSizing: 'border-box', overflow: 'hidden', border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0, background: '#fff' },
+  card: { minWidth: 0, maxWidth: '100%', padding: '18px 4px 16px', boxSizing: 'border-box', border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0, background: '#fff' },
   cardHeader: { minWidth: 0, maxWidth: '100%', display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) auto', alignItems: 'center', gap: 10 },
   avatar: { width: 36, height: 36, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 13, fontWeight: 600 },
   avatarImage: { width: '100%', height: '100%', objectFit: 'cover' },
@@ -114,14 +114,15 @@ const styles: Record<string, CSSProperties> = {
   inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${colors.border}` },
   inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
   inviteConfirmButton: { borderLeft: `1px solid ${colors.border}`, color: colors.accent },
-  interactionPanel: { width: '100%', minWidth: 0, marginTop: 8, display: 'grid', borderTop: `1px solid ${colors.border}`, background: '#fff' },
-  interactionPanelHeader: { minHeight: 44, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${colors.border}` },
+  interactionPanel: { width: '100%', minWidth: 0, marginTop: 6, display: 'grid', background: '#fff' },
+  interactionPanelSticky: { position: 'sticky', top: 0, zIndex: 3, padding: '4px 0 10px', borderBottom: `1px solid ${colors.border}`, background: 'rgba(255,255,255,.98)' },
+  interactionPanelHeader: { minHeight: 36, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   interactionPanelTitle: { fontSize: 14, fontWeight: 600 },
   interactionPanelClose: { minHeight: 32, padding: '0 2px 0 10px', border: 0, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   interactionPanelBody: { minWidth: 0, padding: '4px 2px 10px' },
   interactionEmpty: { minHeight: 96, display: 'grid', placeItems: 'center', color: '#969ba5', fontSize: 12 },
   interactionList: { display: 'grid', margin: 0 },
-  interactionThread: { padding: '12px 0', borderBottom: `1px solid ${colors.border}` },
+  interactionThread: { padding: '12px 0' },
   interactionRoot: { display: 'grid', gridTemplateColumns: '32px minmax(0,1fr)', alignItems: 'start', gap: 9 },
   interactionReplyList: { display: 'grid', margin: '7px 0 0 41px', paddingLeft: 10, borderLeft: `2px solid ${colors.border}` },
   interactionReply: { display: 'grid', gridTemplateColumns: '24px minmax(0,1fr)', alignItems: 'start', gap: 7, padding: '7px 0' },
@@ -135,8 +136,9 @@ const styles: Record<string, CSSProperties> = {
   interactionReplyTarget: { color: colors.secondary, fontSize: 11 },
   interactionText: { margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 12, lineHeight: 1.55 },
   interactionReplyText: { fontSize: 11, lineHeight: 1.5 },
-  interactionAction: { marginTop: 2, padding: '3px 5px 3px 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
-  interactionComposer: { padding: '11px 2px 4px', borderTop: `1px solid ${colors.border}`, background: '#fff' },
+  interactionActionRow: { minHeight: 24, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
+  interactionAction: { padding: '3px 0 3px 10px', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
+  interactionComposer: { padding: '2px 2px 0', background: 'transparent' },
   interactionComposerRow: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'end', gap: 9 },
   interactionInput: { width: '100%', height: 40, minHeight: 40, maxHeight: 96, resize: 'none', overflowY: 'auto', padding: '9px 11px', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, background: '#fff', font: 'inherit', fontSize: 12, lineHeight: 1.65, outline: 0 },
   interactionSend: { minWidth: 54, height: 40, padding: '0 13px', border: 0, borderRadius: 10, background: '#191b25', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 11 },
@@ -519,7 +521,7 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
         <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
       </header>
       <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}>{item.textContent}</p>
-      {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
+      {onReply !== undefined && <div style={styles.interactionActionRow}><button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button></div>}
     </div>
   </div>
 }
@@ -551,6 +553,12 @@ export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, co
   </div>
 }
 
+export function worldInteractionCountLabel(count: number, hasMore = false): string {
+  const normalized = Math.max(0, Math.trunc(count))
+  if (normalized === 0) return '评论'
+  return `评论 ${String(normalized)}${hasMore ? '+' : ''}`
+}
+
 export function WorldInteractionPreviewContent({ item, items, onOpen }: { item: ArkmeWorldFeedItem; items: readonly ArkmeWorldInteractionItem[]; onOpen(): void }) {
   return <section style={styles.commentPreview} aria-label={`${item.authorName}的精选评论`}>
     <WorldInteractionThreadList rootRef={item.recordRef} items={items} maxVisibleItems={3} compact />
@@ -558,7 +566,7 @@ export function WorldInteractionPreviewContent({ item, items, onOpen }: { item: 
   </section>
 }
 
-function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(): void }) {
+function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: ArkmeWorldFeedItem; onOpen(): void; onCountResolved(count: number, hasMore: boolean): void }) {
   const [items, setItems] = useState<ArkmeWorldInteractionItem[]>([])
   useEffect(() => {
     if (item.extendCount <= 0) {
@@ -567,10 +575,14 @@ function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; o
     }
     const controller = new AbortController()
     void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 3, offset: 0 }, controller.signal)
-      .then(page => { if (!controller.signal.aborted) setItems(page.items) })
+      .then(page => {
+        if (controller.signal.aborted) return
+        setItems(page.items)
+        onCountResolved(page.items.length, page.hasMore)
+      })
       .catch(() => { if (!controller.signal.aborted) setItems([]) })
     return () => { controller.abort() }
-  }, [item.extendCount, item.recordRef])
+  }, [item.extendCount, item.recordRef, onCountResolved])
   if (items.length === 0) return null
   return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
 }
@@ -586,7 +598,14 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
   onInviteVoiceprint(item: ArkmeWorldFeedItem): void
 }) {
   const [previewIndex, setPreviewIndex] = useState<number>()
+  const [interactionCount, setInteractionCount] = useState<{ count: number; hasMore: boolean }>()
+  const resolveInteractionCount = useCallback((count: number, hasMore: boolean) => {
+    setInteractionCount({ count, hasMore })
+  }, [])
   const interactionsId = interactionRegionId(item.recordRef)
+  const interactionLabel = interactionCount === undefined
+    ? (item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论')
+    : worldInteractionCountLabel(interactionCount.count, interactionCount.hasMore)
   useEffect(() => {
     if (previewIndex === undefined) return
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewIndex(undefined) }
@@ -620,11 +639,11 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
       </button>)}</div>}
     <footer style={styles.cardFooter}>
       <button type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
-        {item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论'}
+        {interactionLabel}
       </button>
     </footer>
-    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} />}
-    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
+    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} onCountResolved={resolveInteractionCount} />}
+    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} onCountResolved={resolveInteractionCount} />}
     {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
@@ -804,7 +823,7 @@ function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(
   </div>
 }
 
-function InteractionPanel({ item, onClose, onInteractionCreated }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void }) {
+function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void; onCountResolved(count: number, hasMore: boolean): void }) {
   const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -819,9 +838,13 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
     loadController.current = controller
     setState({ status: 'loading', items: [], hasMore: false })
     void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
-      .then(page => { if (!controller.signal.aborted) setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }) })
+      .then(page => {
+        if (controller.signal.aborted) return
+        setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) })
+        onCountResolved(page.items.length, page.hasMore)
+      })
       .catch(error => { if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '评论暂时无法加载') }) })
-  }, [item.recordRef])
+  }, [item.recordRef, onCountResolved])
   useEffect(() => {
     load()
     textareaRef.current?.focus()
@@ -841,6 +864,7 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
     try {
       const page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: state.nextOffset })
       setState(current => ({ ...current, status: 'ready', items: [...current.items, ...page.items], hasMore: page.hasMore, loadingMore: false, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }))
+      onCountResolved(state.items.length + page.items.length, page.hasMore)
     } catch (error) { setState(current => ({ ...current, loadingMore: false, message: messageOf(error, '更多互动加载失败，请重试') })) }
   }
   const send = async () => {
@@ -857,15 +881,29 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
       setDraft('')
       if (textareaRef.current !== null) textareaRef.current.style.height = '40px'
       setReplyTarget(undefined)
+      onCountResolved(state.items.length + 1, state.hasMore)
       onInteractionCreated(item.recordRef)
     } catch (error) { setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
   }
   return <section id={interactionRegionId(item.recordRef)} aria-label={`${item.authorName}的评论区`} style={styles.interactionPanel} data-world-comment-panel="inline">
-    <header style={styles.interactionPanelHeader}>
-      <strong style={styles.interactionPanelTitle}>{item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论'}</strong>
-      <button type="button" style={styles.interactionPanelClose} aria-label="收起评论" onClick={onClose}>收起</button>
-    </header>
+    <div style={styles.interactionPanelSticky} data-world-comment-toolbar="sticky">
+      <header style={styles.interactionPanelHeader}>
+        <strong style={styles.interactionPanelTitle}>{worldInteractionCountLabel(state.items.length, state.hasMore)}</strong>
+        <button type="button" style={styles.interactionPanelClose} aria-label="收起评论" onClick={onClose}>收起</button>
+      </header>
+      <div style={styles.interactionComposer}>
+        {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
+        <div style={styles.interactionComposerRow}>
+          <textarea ref={textareaRef} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => {
+            setDraft(event.currentTarget.value)
+            event.currentTarget.style.height = '40px'
+            event.currentTarget.style.height = `${String(Math.min(96, event.currentTarget.scrollHeight))}px`
+          }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} />
+          <button type="button" style={{ ...styles.interactionSend, ...(sendDisabled ? { opacity: 0.38, cursor: 'default' } : {}) }} title="Ctrl / ⌘ + Enter 发送" disabled={sendDisabled} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button>
+        </div>
+      </div>
+    </div>
     <div style={styles.interactionPanelBody}>
       {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
       {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
@@ -880,17 +918,6 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
       />
       {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
       {state.status === 'ready' && state.items.length === 0 && <div style={styles.interactionEmpty}>还没有评论</div>}
-    </div>
-    <div style={styles.interactionComposer}>
-      {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
-      <div style={styles.interactionComposerRow}>
-        <textarea ref={textareaRef} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => {
-          setDraft(event.currentTarget.value)
-          event.currentTarget.style.height = '40px'
-          event.currentTarget.style.height = `${String(Math.min(96, event.currentTarget.scrollHeight))}px`
-        }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} />
-        <button type="button" style={{ ...styles.interactionSend, ...(sendDisabled ? { opacity: 0.38, cursor: 'default' } : {}) }} title="Ctrl / ⌘ + Enter 发送" disabled={sendDisabled} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button>
-      </div>
     </div>
   </section>
 }
