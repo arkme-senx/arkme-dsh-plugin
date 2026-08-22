@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../openclaw/index.js'
 import { SecretValue } from '../secret-value.js'
 import type {
@@ -95,6 +96,9 @@ export class BotService {
     if (provider !== 'openclaw' && provider !== 'webhook') {
       throw new ArkmePluginError('bot-provider-unsupported', 'Bot Provider 不受支持', false, 400)
     }
+    if (avatar !== '' && !isArkmeBotAvatarRef(avatar)) {
+      throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
+    }
     const session = await this.runtime.requireSession()
     let data: Record<string, unknown>
     try {
@@ -129,6 +133,14 @@ export class BotService {
         { cause: error },
       )
     }
+  }
+
+  /** Browser-safe result: the one-time credential never leaves the Host owner. */
+  async createBotSummary(
+    input: ArkmeBotCreateInput,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotSummary> {
+    return (await this.createBot(input, options)).bot
   }
 
   async revealBotSecret(botRef: string, options: { signal?: AbortSignal } = {}): Promise<SecretValue> {

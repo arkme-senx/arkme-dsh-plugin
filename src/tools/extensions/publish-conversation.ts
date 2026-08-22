@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ArkmeExtensionPublishResult, ArkmeExtensionVisibility } from '../../extensions/types.js'
-import type { ArkmeMyExtensionPublishInput, ArkmePreparedExtensionPublish } from '../../extensions/owned-types.js'
+import type { ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute,
+  ArkmeMyExtensionPublishInput, ArkmePreparedExtensionPublish,
+} from '../../extensions/owned-types.js'
 import { hasLaterDirectUserMessage, lastSessionSeq } from '../shared/conversational-confirmation.js'
 import { normalizeGitHubRepositoryURL } from '../../extensions/source.js'
 
@@ -20,6 +22,10 @@ export interface ArkmeExtensionPublishBatchPreview {
     name: string
     version: string
     visibility: ArkmeExtensionVisibility
+    publishRoute: ArkmeExtensionPublishRoute
+    artifactContractVersion: 2 | 3
+    artifactKind: ArkmeExtensionPublishArtifactKind
+    nativeCapabilities?: import('../../extensions/types.js').ArkmeNativeCapability[]
   }>
   expiresAtMillis: number
 }
@@ -35,6 +41,9 @@ export interface ArkmeExtensionPublishBatchResult {
     status: 'published' | 'failed'
     extensionId?: string
     message?: string
+    publishRoute: ArkmeExtensionPublishRoute
+    artifactContractVersion: 2 | 3
+    artifactKind: ArkmeExtensionPublishArtifactKind
   }>
 }
 
@@ -101,14 +110,21 @@ export class ArkmeExtensionPublishConversation {
     return {
       status: 'confirmation_required',
       count: items.length,
-      question: publishQuestion(preparedInputs),
-      items: preparedInputs.map(item => ({
-        ownedRef: item.ownedRef,
-        ...(item.extensionId === undefined ? {} : { extensionId: item.extensionId }),
-        name: item.name,
-        version: item.version,
-        visibility: item.visibility,
-      })),
+      question: publishQuestion(items),
+      items: items.map(prepared => {
+        const item = prepared.input
+        return {
+          ownedRef: item.ownedRef,
+          ...(item.extensionId === undefined ? {} : { extensionId: item.extensionId }),
+          name: item.name,
+          version: item.version,
+          visibility: item.visibility,
+          publishRoute: prepared.publishRoute,
+          artifactContractVersion: prepared.artifactContractVersion,
+          artifactKind: prepared.artifactKind,
+          ...(prepared.nativeCapabilities === undefined ? {} : { nativeCapabilities: [...prepared.nativeCapabilities] }),
+        }
+      }),
       expiresAtMillis,
     }
   }
@@ -147,6 +163,9 @@ export class ArkmeExtensionPublishConversation {
           version: input.version,
           status: 'published',
           extensionId: result.extension_id,
+          publishRoute: prepared.publishRoute,
+          artifactContractVersion: prepared.artifactContractVersion,
+          artifactKind: prepared.artifactKind,
         })
       } catch (error) {
         items.push({
@@ -155,6 +174,9 @@ export class ArkmeExtensionPublishConversation {
           version: input.version,
           status: 'failed',
           message: error instanceof Error ? error.message : String(error),
+          publishRoute: prepared.publishRoute,
+          artifactContractVersion: prepared.artifactContractVersion,
+          artifactKind: prepared.artifactKind,
         })
       }
     }
@@ -195,20 +217,27 @@ function normalizeDraft(draft: ArkmeExtensionPublishDraft, clientMutationId: str
   }
 }
 
-function publishQuestion(inputs: ArkmeMyExtensionPublishInput[]): string {
-  if (inputs.length === 1) {
-    const item = inputs[0]!
-		return `是否确认发布“${item.name}” ${item.version}，可见范围为${visibilityLabel(item.visibility)}${sourceConfirmation(item)}？`
+function publishQuestion(items: ArkmePreparedExtensionPublish[]): string {
+  if (items.length === 1) {
+    const item = items[0]!
+			return `是否确认发布“${item.input.name}” ${item.input.version}，可见范围为${visibilityLabel(item.input.visibility)}${sourceConfirmation(item)}？`
   }
-  return `是否确认一次发布以下 ${String(inputs.length)} 个扩展？\n${inputs
-		.map(item => `- ${item.name} ${item.version}，${visibilityLabel(item.visibility)}${sourceConfirmation(item)}`)
+  return `是否确认一次发布以下 ${String(items.length)} 个扩展？\n${items
+			.map(item => `- ${item.input.name} ${item.input.version}，${visibilityLabel(item.input.visibility)}${sourceConfirmation(item)}`)
     .join('\n')}`
 }
 
-function sourceConfirmation(input: ArkmeMyExtensionPublishInput): string {
-	return `${input.extensionId === undefined ? '' : `，更新已有扩展 ${input.extensionId}`}${input.githubRepositoryUrl === undefined
+function sourceConfirmation(prepared: ArkmePreparedExtensionPublish): string {
+  const input = prepared.input
+	const contract = prepared.publishRoute === 'profile-native-v3'
+		? `，发布方式：V3 原生 DSH Package${(prepared.nativeCapabilities?.length ?? 0) === 0 ? '（未检测到额外原生能力）' : `（原生能力：${prepared.nativeCapabilities!.join('、')}）`}`
+		: '，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）'
+	const github = input.githubRepositoryUrl === undefined
 		? ''
-		: `，GitHub 来源：${input.githubRepositoryUrl}（仅当前内测资格账号可发布）`}`
+		: prepared.publishRoute === 'profile-native-v3'
+			? `，GitHub 来源：${input.githubRepositoryUrl}`
+			: `，GitHub 来源：${input.githubRepositoryUrl}（V2 来源账号资格仍需服务端校验）`
+		return `${input.extensionId === undefined ? '' : `，更新已有扩展 ${input.extensionId}`}${contract}${github}`
 }
 
 function visibilityLabel(visibility: ArkmeExtensionVisibility): string {

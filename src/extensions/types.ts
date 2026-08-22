@@ -8,6 +8,18 @@ export const ARKME_EXTENSION_PREVIEW_MAX_ITEMS = 20
 export type ArkmeExtensionVisibility = 'private' | 'unlisted' | 'public'
 export type ArkmeExtensionEditableVisibility = 'private' | 'public'
 export type ArkmeExtensionChannel = 'stable' | 'beta'
+export type ArkmeNativeCapability =
+  | 'runtime_dependencies'
+  | 'optional_dependencies'
+  | 'bundled_dependencies'
+  | 'peer_dependencies'
+  | 'lifecycle_scripts'
+  | 'bin'
+  | 'native_addon'
+  | 'profile_patch_override'
+  | 'external_package_reference'
+export type ArkmeExtensionCatalogSort = 'rating' | 'comments' | 'opens' | 'created_at'
+export type ArkmeExtensionClassificationStatus = 'unavailable' | 'building' | 'ready' | 'failed' | 'empty'
 
 export interface ArkmeExtensionRatingSummary {
   average: number
@@ -47,6 +59,13 @@ export interface ArkmeSharedExtensionDetail {
 	source?: ArkmeExtensionSource
 }
 
+/** Optional author projection returned by GitHub-imported marketplace entries. */
+export interface ArkmeExtensionSourceAuthor {
+  name?: string
+  avatar_url?: string
+  profile_url?: string
+}
+
 export interface ArkmeExtensionManifest {
   format: typeof ARKME_EXTENSION_FORMAT
   format_version: typeof ARKME_EXTENSION_FORMAT_VERSION
@@ -76,6 +95,9 @@ export interface ArkmeExtensionCatalogItem {
   owner_user_id?: number
   owner_name?: string
   owner_arkme_id?: string
+  owner_avatar_ref?: string
+  owner_avatar_fallback?: ArkmeExtensionReviewAvatarFallback
+  source_author?: ArkmeExtensionSourceAuthor
   visibility: ArkmeExtensionVisibility
   status?: 'active' | 'suspended' | 'deleted'
   latest_stable_version?: string
@@ -83,9 +105,18 @@ export interface ArkmeExtensionCatalogItem {
   channel?: ArkmeExtensionChannel
   manifest?: ArkmeExtensionManifest
   updated_at?: number
+  created_at?: number
+  comment_count?: number
+  open_count?: number
+  view_count?: number
+  install_user_count?: number
   installed_version?: string
   update_available?: boolean
   package_name?: string
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
+  execution_model?: 'arkme-sandboxed' | 'dsh-native'
+  native_capabilities?: ArkmeNativeCapability[]
   icon_ref?: string
   preview_cover_ref?: string
   preview_count?: number
@@ -111,6 +142,64 @@ export interface ArkmeExtensionCatalogPage {
   items: ArkmeExtensionCatalogItem[]
   total: number
   next_cursor?: string
+  capabilities?: {
+    sorts: ArkmeExtensionCatalogSort[]
+    cursor: boolean
+  }
+}
+
+export interface ArkmeExtensionClassificationCategory {
+  category_id: string
+  name: string
+  description?: string
+  extension_count: number
+  level?: number
+}
+
+export interface ArkmeExtensionClassificationTree {
+  status: ArkmeExtensionClassificationStatus
+  categories: ArkmeExtensionClassificationCategory[]
+  total_extensions: number
+  total_categories: number
+  updated_at?: number
+  message?: string
+  progress?: {
+    total: number
+    processed: number
+    percentage: number
+    stage?: string
+  }
+}
+
+export interface ArkmeExtensionClassificationPage extends ArkmeExtensionCatalogPage {
+  category_id: string
+  category_name?: string
+  status?: ArkmeExtensionClassificationStatus
+  limit: number
+  offset: number
+}
+
+export type ArkmeExtensionAuditTrigger = 'market_detail' | 'tool'
+export type ArkmeExtensionAuditVerdict = 'pass' | 'review' | 'reject'
+export type ArkmeExtensionAuditRiskLevel = 'low' | 'medium' | 'high' | 'critical'
+
+export interface ArkmeExtensionAuditResult {
+  extension_id: string
+  version?: string
+  trigger: ArkmeExtensionAuditTrigger
+  verdict: ArkmeExtensionAuditVerdict
+  risk_level: ArkmeExtensionAuditRiskLevel
+  summary: string
+  reasons: string[]
+  recommendations: string[]
+  source_reviewed: boolean
+  source_scope: 'public_detail_only' | 'public_source_reference' | 'published_source_snapshot'
+  model?: {
+    provider: string
+    model: string
+    name?: string
+  }
+  audited_at_millis: number
 }
 
 /** Browser/SDK-safe extension review projection. Record UIDs remain inside the Host. */
@@ -232,13 +321,14 @@ export interface ArkmeExtensionPublishResult {
   version: string
   status: 'uploading' | 'validating' | 'published' | 'rejected' | 'expired'
   artifact_sha256?: string
-  artifact_contract_version?: 2
-  artifact_kind?: 'dsh-bundle-tgz'
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   package_name?: string
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_sha256?: string
   package_json_sha256?: string
   source_sha256?: string
+  native_capabilities?: ArkmeNativeCapability[]
   validation_error_code?: string
   validation_error_message?: string
 	source?: ArkmeExtensionSource
@@ -249,6 +339,16 @@ export interface ArkmeExtensionDeleteResult {
   extension_id: string
   status: 'deleted'
   deleted_at: number
+}
+
+/** Complete user-visible deletion result after cloud soft-delete and local reference cleanup. */
+export interface ArkmeExtensionCompleteDeleteResult extends ArkmeExtensionDeleteResult {
+  installed: false
+  active: false
+  references_removed: true
+  removed_source_count: number
+  restart_required: boolean
+  message: string
 }
 
 export type ArkmeExtensionIconMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
@@ -363,8 +463,8 @@ export interface ArkmeExtensionInstallResolution {
   published_at: number
   revoked: boolean
   revocation_reason?: string
-  artifact_contract_version?: 2
-  artifact_kind?: 'dsh-bundle-tgz'
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   package_name?: string
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_url?: string
@@ -374,12 +474,18 @@ export interface ArkmeExtensionInstallResolution {
   bundle_sha256?: string
   package_json_sha256?: string
   source_sha256?: string
+  native_capabilities?: ArkmeNativeCapability[]
   requires_native_confirmation?: boolean
+  audit_status?: 'approved' | 'warning' | 'rejected'
+  audit_risk_level?: ArkmeExtensionAuditRiskLevel
+  audit_reason?: string
 }
 
 export interface ArkmeExtensionInstallPreview {
   extension_id: string
   version: string
+  artifact_contract_version?: 2 | 3
+  artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   artifact_size?: number
   manifest: ArkmeExtensionManifest
   revoked: boolean
@@ -388,6 +494,10 @@ export interface ArkmeExtensionInstallPreview {
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_size?: number
   requires_native_confirmation?: boolean
+  native_capabilities?: ArkmeNativeCapability[]
+  audit_status?: 'approved' | 'warning' | 'rejected'
+  audit_risk_level?: ArkmeExtensionAuditRiskLevel
+  audit_reason?: string
 }
 
 export interface ArkmeInstalledExtension {
@@ -403,6 +513,8 @@ export interface ArkmeInstalledExtension {
   profilePackageName?: string
   profileBundlePath?: string
   executionModel?: 'arkme-sandboxed' | 'dsh-native'
+  artifactContractVersion?: 2 | 3
+  nativeCapabilities?: ArkmeNativeCapability[]
   packageJsonSha256?: string
   sourceSha256?: string
   permissionSnapshot: string[]
@@ -427,6 +539,8 @@ export type ArkmeInstalledExtensionView = Pick<
   | 'manifest'
   | 'enabled'
   | 'active'
+  | 'artifactContractVersion'
+  | 'nativeCapabilities'
   | 'permissionSnapshot'
   | 'updateChannel'
   | 'installedAtMillis'

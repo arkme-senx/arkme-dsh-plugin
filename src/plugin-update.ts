@@ -1,14 +1,27 @@
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
-import { chmod, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
-import { isAbsolute, join } from 'node:path'
+import { execFile, spawn } from 'node:child_process'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import semver from 'semver'
+import {
+  ARKME_PLUGIN_PACKAGE_NAME,
+  downloadAndCachePluginArtifact,
+  existingCachedPluginArtifactPath,
+  parsePluginUpdateManifest,
+  pluginUpdateEndpointUrl,
+  PluginUpdateArtifactError,
+  validatePluginUpdateArtifactOrigin,
+  validatePluginUpdateServiceOrigin,
+  type PluginUpdateManifestV1,
+} from './plugin-update-artifact.js'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
+import { buildTargetInstallArgs } from './plugin-updater-helper.js'
 import type {
   ArkmePluginUpdateAvailability,
   ArkmePluginUpdateLevel,
@@ -17,21 +30,24 @@ import type {
   ArkmePluginUpdateStatus,
 } from './types.js'
 
-export const ARKME_PLUGIN_PACKAGE_NAME = '@senguoyun/dsh-arkme'
-const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org'
+export { validatePluginUpdateArtifactOrigin, validatePluginUpdateServiceOrigin } from './plugin-update-artifact.js'
+
+const DEFAULT_UPDATE_SERVICE_BASE_URL = 'https://api.jotmo.cc'
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
-const MAX_REGISTRY_RESPONSE_BYTES = 64 * 1024
-const MANUAL_CHECK_INTERVAL_MS = 60_000
+const MAX_UPDATE_RESPONSE_BYTES = 64 * 1024
 const STARTUP_JITTER_MIN_MS = 5_000
 const STARTUP_JITTER_SPAN_MS = 25_000
-const ALLOWED_RELEASE_NOTES_HOSTS = new Set([
-  'github.com',
-  'npmjs.com',
-  'www.npmjs.com',
-  'arkme.ai',
-  'www.arkme.ai',
-])
 const LOCAL_DEVELOPMENT_SPEC = /^(?:link:|file:)/
+const ACTIVE_INSTALL_PHASES = new Set(['preparing', 'downloading', 'verifying', 'installing', 'restarting'])
+const execFileAsync = promisify(execFile)
+
+function localPackageSpecPath(spec: string, profileDirectory: string): string | undefined {
+  const match = /^(?:link|file):(.*)$/.exec(spec)
+  if (match === null || match[1] === undefined || match[1].trim() === '') return undefined
+  let path: string
+  try { path = decodeURIComponent(match[1]) } catch { return undefined }
+  return isAbsolute(path) ? path : resolve(profileDirectory, path)
+}
 
 export type ArkmePluginUpdateChannel = 'stable' | 'next'
 
@@ -44,7 +60,10 @@ export interface PluginUpdateLogger {
 export interface ArkmePluginUpdateManagerOptions {
   enabled: boolean
   channel: ArkmePluginUpdateChannel
-  registryUrl: string
+  updateServiceBaseUrl?: string
+  updateArtifactBaseUrl?: string
+  appVersion?: string
+  dshVersion?: string
   intervalMs: number
   stateDirectory: string
   installedVersion?: string
@@ -68,13 +87,12 @@ export interface PluginUpdateInstallRuntime {
   helperPath?: string
   spawnUpdater?: (planPath: string, logPath: string) => Promise<void>
   requestShutdown?: () => void
+  supervisedExitCode?: number
+  supervisedPlanPath?: string
+  requestProcessExit?: (code: number) => void
+  runProfilePluginAdd?: (plan: PluginUpdaterPlan) => Promise<void>
   preparePackageManager?: (dshHome: string, profileName: string) => void
   allowLocalInstall?: boolean
-}
-
-interface RegistryPackageMetadata {
-  version: string
-  notice?: ArkmePluginUpdateNotice
 }
 
 export class ArkmePluginUpdateError extends Error {
@@ -98,91 +116,14 @@ export function readInstalledPluginVersion(): string {
   return version
 }
 
-export function validateUpdateRegistryOrigin(raw: string): string {
-  const url = new URL(raw)
-  if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
-    || url.pathname !== '/' || url.search !== '' || url.hash !== '') {
-    throw new Error('dsh-arkme: updateRegistryUrl must be an HTTPS origin without credentials or path')
-  }
-  return url.origin
-}
-
-function boundedString(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  return normalized !== '' && normalized.length <= maxLength ? normalized : undefined
-}
-
-function noticeLevel(value: unknown): ArkmePluginUpdateLevel {
-  return value === 'important' || value === 'critical' ? value : 'normal'
-}
-
-function safeReleaseNotesUrl(value: unknown): string | undefined {
-  const raw = boundedString(value, 2048)
-  if (raw === undefined) return undefined
-  try {
-    const url = new URL(raw)
-    if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
-      || !ALLOWED_RELEASE_NOTES_HOSTS.has(url.hostname.toLowerCase())) return undefined
-    return url.toString()
-  } catch {
-    return undefined
-  }
-}
-
-function safePublishedAt(value: unknown): string | undefined {
-  const raw = boundedString(value, 64)
-  if (raw === undefined || !Number.isFinite(Date.parse(raw))) return undefined
-  return raw
-}
-
-function parseNotice(value: unknown): ArkmePluginUpdateNotice | undefined {
-  if (value === null || typeof value !== 'object') return undefined
-  const source = value as Record<string, unknown>
-  if (source.schemaVersion !== 1) return undefined
-  const title = boundedString(source.title, 60)
-  const summary = boundedString(source.summary, 200)
-  const publishedAt = safePublishedAt(source.publishedAt)
-  const releaseNotesUrl = safeReleaseNotesUrl(source.releaseNotesUrl)
-  return {
-    schemaVersion: 1,
-    level: noticeLevel(source.level),
-    ...(title === undefined ? {} : { title }),
-    ...(summary === undefined ? {} : { summary }),
-    ...(publishedAt === undefined ? {} : { publishedAt }),
-    ...(releaseNotesUrl === undefined ? {} : { releaseNotesUrl }),
-  }
-}
-
-export function parseRegistryPackageMetadata(value: unknown): RegistryPackageMetadata {
-  if (value === null || typeof value !== 'object') {
-    throw new ArkmePluginUpdateError('plugin-update-response-invalid', '更新服务返回格式无效', true)
-  }
-  const source = value as Record<string, unknown>
-  if (source.name !== ARKME_PLUGIN_PACKAGE_NAME) {
-    throw new ArkmePluginUpdateError('plugin-update-package-mismatch', '更新服务返回了错误的插件包', true)
-  }
-  if (typeof source.version !== 'string' || semver.valid(source.version) === null) {
-    throw new ArkmePluginUpdateError('plugin-update-version-invalid', '更新服务返回了无效版本', true)
-  }
-  const arkme = source.arkme !== null && typeof source.arkme === 'object'
-    ? source.arkme as Record<string, unknown>
-    : {}
-  const notice = parseNotice(arkme.updateNotice)
-  return {
-    version: source.version,
-    ...(notice === undefined ? {} : { notice }),
-  }
-}
-
 async function readLimitedResponse(response: Response): Promise<string> {
   const declaredLength = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_REGISTRY_RESPONSE_BYTES) {
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_UPDATE_RESPONSE_BYTES) {
     throw new ArkmePluginUpdateError('plugin-update-response-too-large', '更新服务响应过大', true)
   }
   if (response.body === null) {
     const text = await response.text()
-    if (Buffer.byteLength(text) > MAX_REGISTRY_RESPONSE_BYTES) {
+    if (Buffer.byteLength(text) > MAX_UPDATE_RESPONSE_BYTES) {
       throw new ArkmePluginUpdateError('plugin-update-response-too-large', '更新服务响应过大', true)
     }
     return text
@@ -194,7 +135,7 @@ async function readLimitedResponse(response: Response): Promise<string> {
     const result = await reader.read()
     if (result.done) break
     bytes += result.value.byteLength
-    if (bytes > MAX_REGISTRY_RESPONSE_BYTES) {
+    if (bytes > MAX_UPDATE_RESPONSE_BYTES) {
       await reader.cancel()
       throw new ArkmePluginUpdateError('plugin-update-response-too-large', '更新服务响应过大', true)
     }
@@ -213,7 +154,10 @@ function retryDelayMillis(failures: number): number {
 export class ArkmePluginUpdateManager {
   private readonly enabled: boolean
   private readonly channel: ArkmePluginUpdateChannel
-  private readonly registryOrigin: string
+  private readonly updateServiceOrigin: string
+  private readonly updateArtifactOrigin: string | undefined
+  private readonly appVersion: string | undefined
+  private readonly dshVersion: string | undefined
   private readonly intervalMs: number
   private readonly installedVersion: string
   private readonly fetchImpl: typeof fetch
@@ -227,14 +171,21 @@ export class ArkmePluginUpdateManager {
   private readonly installRuntime: PluginUpdateInstallRuntime | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
   private inFlight: Promise<ArkmePluginUpdateStatus> | undefined
+  private installInFlight: Promise<ArkmePluginUpdateInstallSnapshot> | undefined
   private activeController: AbortController | undefined
+  private latestManifest: PluginUpdateManifestV1 | undefined
   private started = false
   private disposed = false
 
   constructor(options: ArkmePluginUpdateManagerOptions) {
     this.enabled = options.enabled
     this.channel = options.channel
-    this.registryOrigin = validateUpdateRegistryOrigin(options.registryUrl || DEFAULT_REGISTRY_URL)
+    this.updateServiceOrigin = validatePluginUpdateServiceOrigin(options.updateServiceBaseUrl || DEFAULT_UPDATE_SERVICE_BASE_URL)
+    this.updateArtifactOrigin = options.updateArtifactBaseUrl?.trim()
+      ? validatePluginUpdateArtifactOrigin(options.updateArtifactBaseUrl)
+      : undefined
+    this.appVersion = options.appVersion
+    this.dshVersion = options.dshVersion
     this.intervalMs = Math.max(60_000, Math.trunc(options.intervalMs))
     this.installedVersion = options.installedVersion ?? readInstalledPluginVersion()
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
@@ -296,11 +247,7 @@ export class ArkmePluginUpdateManager {
   private async checkOnce(options: { manual?: boolean }): Promise<ArkmePluginUpdateStatus> {
     const state = await this.stateStore.snapshot()
     const now = this.now()
-    if (options.manual === true) {
-      if (state.lastCheckedAtMillis !== undefined && now - state.lastCheckedAtMillis < MANUAL_CHECK_INTERVAL_MS) {
-        return this.project(state, false)
-      }
-    } else if (!this.isDue(state)) {
+    if (options.manual !== true && !this.isDue(state)) {
       return this.project(state, false)
     }
     return await this.performCheck()
@@ -330,6 +277,17 @@ export class ArkmePluginUpdateManager {
   }
 
   async install(): Promise<ArkmePluginUpdateInstallSnapshot> {
+    if (this.installInFlight !== undefined) return await this.installInFlight
+    const task = this.installOnce()
+    this.installInFlight = task
+    try {
+      return await task
+    } finally {
+      if (this.installInFlight === task) this.installInFlight = undefined
+    }
+  }
+
+  private async installOnce(): Promise<ArkmePluginUpdateInstallSnapshot> {
     const status = await this.status({ refreshIfStale: false })
     if (status.availability !== 'available' || status.latestVersion === undefined) {
       throw new ArkmePluginUpdateError('plugin-update-not-available', '当前没有可安装的插件更新', false)
@@ -339,13 +297,13 @@ export class ArkmePluginUpdateManager {
       throw new ArkmePluginUpdateError(
         'plugin-update-install-unavailable',
         capability.reason === 'local-install'
-          ? '当前是本地开发安装，不能自动覆盖'
+          ? '当前 Profile 没有可本地回滚的插件来源，不能自动覆盖'
           : '当前 DSH 运行方式不支持应用内更新',
         false,
       )
     }
     const previous = await this.installStore.read()
-    if (previous !== undefined && ['preparing', 'installing', 'restarting'].includes(previous.phase)) {
+    if (previous !== undefined && ACTIVE_INSTALL_PHASES.has(previous.phase)) {
       return previous
     }
 
@@ -374,6 +332,55 @@ export class ArkmePluginUpdateManager {
     }
     await this.installStore.write(snapshot)
 
+    let targetManifest = this.latestManifest?.version === status.latestVersion ? this.latestManifest : undefined
+    if (targetManifest === undefined) {
+      await this.performCheck()
+      targetManifest = this.latestManifest?.version === status.latestVersion ? this.latestManifest : undefined
+    }
+    if (targetManifest === undefined) {
+      await this.installStore.write({
+        ...snapshot,
+        phase: 'failed',
+        message: '无法获取插件更新信息。',
+        updatedAtMillis: this.now(),
+      })
+      throw new ArkmePluginUpdateError('plugin-update-manifest-missing', '无法获取插件更新信息', true)
+    }
+    const cacheDirectory = join(this.stateDirectory, 'plugin-cache')
+    await this.installStore.write({
+      ...snapshot,
+      phase: 'downloading',
+      message: `正在下载 ${status.latestVersion}…`,
+      updatedAtMillis: this.now(),
+    })
+    let targetArtifactPath: string
+    try {
+      targetArtifactPath = await downloadAndCachePluginArtifact(targetManifest, {
+        cacheDirectory,
+        ...(this.updateArtifactOrigin === undefined ? {} : { artifactOrigin: this.updateArtifactOrigin }),
+        fetchImpl: this.fetchImpl,
+        requestTimeoutMs: this.requestTimeoutMs,
+      })
+    } catch (error) {
+      await this.installStore.write({
+        ...snapshot,
+        phase: 'failed',
+        message: error instanceof Error ? `插件制品下载或校验失败：${error.message}` : '插件制品下载或校验失败。',
+        updatedAtMillis: this.now(),
+      })
+      throw error instanceof ArkmePluginUpdateError
+        ? error
+        : error instanceof PluginUpdateArtifactError
+          ? new ArkmePluginUpdateError(error.code, error.message, error.retryable)
+        : new ArkmePluginUpdateError('plugin-update-artifact-invalid', '插件制品下载或校验失败', true)
+    }
+    await this.installStore.write({
+      ...snapshot,
+      phase: 'verifying',
+      message: `插件 ${status.latestVersion} 已校验，准备安装…`,
+      updatedAtMillis: this.now(),
+    })
+    const previousArtifactPath = existingCachedPluginArtifactPath(cacheDirectory, this.installedVersion)
     const planPath = join(this.stateDirectory, `plugin-update-plan-${jobId}.json`)
     const logPath = join(this.stateDirectory, 'plugin-update-helper.log')
     const plan: PluginUpdaterPlan = {
@@ -389,9 +396,49 @@ export class ArkmePluginUpdateManager {
       previousVersion: this.installedVersion,
       previousSpec: capability.previousSpec ?? this.installedVersion,
       targetVersion: status.latestVersion,
+      targetArtifactPath,
+      ...(previousArtifactPath === undefined ? {} : { previousArtifactPath }),
       stateDirectory: this.stateDirectory,
       healthUrl: runtime.healthUrl,
       logPath,
+    }
+    if (runtime.supervisedExitCode !== undefined) {
+      if (!Number.isSafeInteger(runtime.supervisedExitCode)
+        || runtime.supervisedExitCode < 1 || runtime.supervisedExitCode > 255) {
+        throw new ArkmePluginUpdateError('plugin-update-supervised-exit-invalid', '受监督更新退出码无效', false)
+      }
+      if (runtime.supervisedPlanPath === undefined) {
+        throw new ArkmePluginUpdateError('plugin-update-supervised-plan-missing', '受监督更新计划路径缺失', false)
+      }
+      await this.installStore.write({
+        ...snapshot,
+        phase: 'installing',
+        message: `正在安装 ${status.latestVersion}…`,
+        updatedAtMillis: this.now(),
+      })
+      try {
+        await (runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this))(plan)
+      } catch (error) {
+        await this.installStore.write({
+          ...snapshot,
+          phase: 'failed',
+          message: error instanceof Error ? `新版本安装失败：${error.message}` : '新版本安装失败。',
+          updatedAtMillis: this.now(),
+        })
+        throw new ArkmePluginUpdateError('plugin-update-install-failed', '新版本安装失败', true)
+      }
+      await this.writeSupervisedRestartPlan(runtime.supervisedPlanPath, plan)
+      const restarting: ArkmePluginUpdateInstallSnapshot = {
+        ...snapshot,
+        phase: 'restarting',
+        message: '安装完成，正在由 Arkme 重启 DSH…',
+        updatedAtMillis: this.now(),
+      }
+      await this.installStore.write(restarting)
+      const exitProcess = runtime.requestProcessExit ?? ((code: number) => process.exit(code))
+      const timer = setTimeout(() => exitProcess(runtime.supervisedExitCode as number), 800)
+      timer.unref?.()
+      return restarting
     }
     await writeFile(planPath, `${JSON.stringify(plan, undefined, 2)}\n`, { mode: 0o600 })
     await chmod(planPath, 0o600)
@@ -415,6 +462,35 @@ export class ArkmePluginUpdateManager {
     return snapshot
   }
 
+  private async runProfilePluginAdd(plan: PluginUpdaterPlan): Promise<void> {
+    try {
+      await execFileAsync(plan.execPath, buildTargetInstallArgs(plan), {
+        env: { ...process.env, DSH_HOME: plan.dshHome },
+        encoding: 'utf8',
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 120_000,
+      })
+    } catch (error) {
+      const child = error as { stdout?: unknown; stderr?: unknown }
+      const detail = [child.stdout, child.stderr]
+        .map(value => String(value ?? '').trim())
+        .filter(value => value !== '')
+        .join('\n')
+        .slice(0, 2_000)
+      throw new Error(detail === '' ? 'DSH Profile 插件安装失败' : `DSH Profile 插件安装失败：${detail}`, { cause: error })
+    }
+  }
+
+  private async writeSupervisedRestartPlan(planPath: string, plan: PluginUpdaterPlan): Promise<void> {
+    await mkdir(dirname(planPath), { recursive: true, mode: 0o700 })
+    await chmod(dirname(planPath), 0o700)
+    await writeFile(planPath, `${JSON.stringify(plan, undefined, 2)}\n`, {
+      mode: 0o600,
+      flag: 'wx',
+    })
+    await chmod(planPath, 0o600)
+  }
+
   private async performCheck(): Promise<ArkmePluginUpdateStatus> {
     const startedAt = this.now()
     this.logger.debug?.('dsh-arkme: plugin update check started channel=%s', this.channel)
@@ -423,26 +499,28 @@ export class ArkmePluginUpdateManager {
       if (this.disposed) return this.project(await this.stateStore.snapshot(), false)
       const checkedAt = this.now()
       const state = await this.stateStore.update(value => {
-        const changedVersion = value.lastKnownLatestVersion !== metadata.version
+        const latestVersion = metadata?.version ?? this.installedVersion
+        const changedVersion = value.lastKnownLatestVersion !== latestVersion
         value.lastCheckedAtMillis = checkedAt
         value.lastSuccessfulCheckAtMillis = checkedAt
-        value.lastKnownLatestVersion = metadata.version
-        if (metadata.notice === undefined) delete value.lastKnownNotice
-        else value.lastKnownNotice = metadata.notice
+        value.lastKnownLatestVersion = latestVersion
+        if (metadata === undefined) delete value.lastKnownNotice
+        else value.lastKnownNotice = { schemaVersion: 1, ...metadata.notice }
         value.consecutiveFailures = 0
-        if (changedVersion || semver.gte(this.installedVersion, metadata.version)) {
+        if (changedVersion || semver.gte(this.installedVersion, latestVersion)) {
           delete value.acknowledgedVersion
           delete value.snoozedUntilMillis
         }
       })
+      this.latestManifest = metadata
       const status = this.project(state, false)
       this.logger.info?.(
         'dsh-arkme: plugin update check succeeded installed=%s latest=%s channel=%s durationMs=%s',
-        this.installedVersion, metadata.version, this.channel, checkedAt - startedAt,
+        this.installedVersion, metadata?.version ?? this.installedVersion, this.channel, checkedAt - startedAt,
       )
       if (status.availability === 'available') {
         this.logger.info?.('dsh-arkme: plugin update available installed=%s latest=%s level=%s',
-          this.installedVersion, metadata.version, status.level)
+          this.installedVersion, metadata?.version, status.level)
       }
       return status
     } catch (error) {
@@ -459,9 +537,12 @@ export class ArkmePluginUpdateManager {
     }
   }
 
-  private async fetchLatestMetadata(): Promise<RegistryPackageMetadata> {
-    const tag = this.channel === 'next' ? 'next' : 'latest'
-    const url = new URL(`/${encodeURIComponent(ARKME_PLUGIN_PACKAGE_NAME)}/${tag}`, this.registryOrigin)
+  private async fetchLatestMetadata(): Promise<PluginUpdateManifestV1 | undefined> {
+    const url = pluginUpdateEndpointUrl(this.updateServiceOrigin, {
+      currentVersion: this.installedVersion,
+      ...(this.appVersion === undefined ? {} : { appVersion: this.appVersion }),
+      ...(this.dshVersion === undefined ? {} : { dshVersion: this.dshVersion }),
+    })
     const controller = new AbortController()
     this.activeController = controller
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs)
@@ -473,6 +554,7 @@ export class ArkmePluginUpdateManager {
         redirect: 'error',
         signal: controller.signal,
       })
+      if (response.status === 404 || response.status === 204) return undefined
       if (!response.ok) {
         throw new ArkmePluginUpdateError(
           'plugin-update-http-error',
@@ -487,9 +569,16 @@ export class ArkmePluginUpdateManager {
         if (error instanceof ArkmePluginUpdateError) throw error
         throw new ArkmePluginUpdateError('plugin-update-response-invalid', '更新服务返回了无效 JSON', true)
       }
-      return parseRegistryPackageMetadata(value)
+      const manifest = parsePluginUpdateManifest(value, {
+        updateServiceOrigin: this.updateServiceOrigin,
+        ...(this.updateArtifactOrigin === undefined ? {} : { artifactOrigin: this.updateArtifactOrigin }),
+      })
+      return manifest
     } catch (error) {
       if (error instanceof ArkmePluginUpdateError) throw error
+      if (error instanceof PluginUpdateArtifactError) {
+        throw new ArkmePluginUpdateError(error.code, error.message, error.retryable)
+      }
       const code = controller.signal.aborted ? 'plugin-update-timeout' : 'plugin-update-network-error'
       throw new ArkmePluginUpdateError(code, controller.signal.aborted ? '检查更新超时' : '无法连接更新服务', true)
     } finally {
@@ -539,9 +628,7 @@ export class ArkmePluginUpdateManager {
       checking,
       acknowledged,
       ...(snoozedUntilMillis === undefined ? {} : { snoozedUntilMillis }),
-      updateCommand: this.channel === 'next'
-        ? 'dsh plugin --profile web up @senguoyun/dsh-arkme@next --latest'
-        : 'dsh plugin --profile web up @senguoyun/dsh-arkme --latest',
+      updateCommand: 'Arkme 应用内更新',
       canInstallInApp: capability.canInstall,
       ...(capability.reason === undefined ? {} : { installBlockedReason: capability.reason }),
       restartRequired: true,
@@ -566,14 +653,28 @@ export class ArkmePluginUpdateManager {
       return { canInstall: false, reason: 'runtime-unavailable' }
     }
     try {
-      const manifestPath = join(runtime.dshHome, 'profiles', runtime.profileName, 'package.json')
+      const profileDirectory = join(runtime.dshHome, 'profiles', runtime.profileName)
+      const manifestPath = join(profileDirectory, 'package.json')
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
         dependencies?: Record<string, string>
       }
       const spec = manifest.dependencies?.[ARKME_PLUGIN_PACKAGE_NAME]
       if (spec === undefined) return { canInstall: false, reason: 'profile-unavailable' }
-      if (semver.validRange(spec) === null
-        && (!LOCAL_DEVELOPMENT_SPEC.test(spec) || runtime.allowLocalInstall === false)) {
+      const isLocalSpec = LOCAL_DEVELOPMENT_SPEC.test(spec)
+      if (isLocalSpec) {
+        const sourcePath = localPackageSpecPath(spec, profileDirectory)
+        if (sourcePath === undefined || !existsSync(sourcePath)) {
+          return { canInstall: false, reason: 'local-install', previousSpec: spec }
+        }
+      }
+      const rollbackArtifactPath = existingCachedPluginArtifactPath(
+        join(this.stateDirectory, 'plugin-cache'),
+        this.installedVersion,
+      )
+      if (isLocalSpec && runtime.allowLocalInstall === false) {
+        return { canInstall: false, reason: 'local-install', previousSpec: spec }
+      }
+      if (!isLocalSpec && rollbackArtifactPath === undefined) {
         return { canInstall: false, reason: 'local-install', previousSpec: spec }
       }
       return { canInstall: true, previousSpec: spec }

@@ -15,58 +15,106 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
-  it('keeps the native conversation mounted while the Footer owns a floating Arkme surface', () => {
-    const registered: Array<{ name: string; id?: string; order?: number; label?: string; inject?: () => unknown }> = []
+  it('owns Arkme seats normally without redeclaring the DSH settings slot', () => {
+    const registered: Array<{
+      name: string
+      id?: string
+      priority?: number
+      children?: Record<string, unknown>
+      inject?: () => unknown
+    }> = []
     const inject = vi.fn((_key: string, register: () => unknown) => {
       register()
       return () => {}
     })
-    const register = vi.fn((options: { name: string; id?: string; order?: number; label?: string; inject?: () => unknown }) => {
+    const register = vi.fn((options: {
+      name: string
+      id?: string
+      priority?: number
+      children?: Record<string, unknown>
+      inject?: () => unknown
+    }) => {
       registered.push(options)
       return vi.fn()
     })
+    const toggleSidebar = vi.fn()
+    const closeDetails = vi.fn()
+    const cleanups: Array<() => void> = []
+    arkmeUi.showConversations()
     apply({
       slots: { inject, register },
-      effect: vi.fn(),
+      layout: { toggleSidebar, closeDetails },
+      sessions: { open: vi.fn() },
+      effect: vi.fn((factory: () => unknown, label: string) => {
+        if (!label.includes('native conversation seats') && !label.includes('official settings sidebar')) return
+        const cleanup = factory()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      }),
     } as never)
 
     expect(registered.map(item => item.name)).toEqual([
-      'sidebar.footer.action',
-      'settings.section',
+      'sidebar',
+      'conversation',
+      'details',
+      'shell.overlay',
     ])
-    expect(registered).toContainEqual(expect.objectContaining({
-      name: 'settings.section', id: 'arkme', order: 80, label: 'Arkme',
-    }))
-    expect(registered).not.toContainEqual(expect.objectContaining({
-      name: 'settings.general.item', id: 'arkme-account',
-    }))
-    const footer = registered.find(item => item.name === 'sidebar.footer.action')!
-    const face = footer.inject?.() as {
-      toggle(sessionId: string | undefined, authenticated: boolean): void
-      activate(sessionId: string | undefined): void
-      closeSurface(): void
-      surfaceSession(): string | undefined
+    expect(registered).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'sidebar',
+        priority: -100,
+      }),
+      expect.objectContaining({
+        name: 'conversation',
+        priority: -100,
+        children: {
+          'arkme.directory.entry': { kind: 'list', scope: 'root' },
+        },
+      }),
+      expect.objectContaining({ name: 'details', priority: -100 }),
+    ]))
+
+    const sidebarFace = registered.find(item => item.name === 'sidebar')?.inject?.() as {
+      collapseSidebar(): void
+      closeDetails(): void
     }
+    sidebarFace.collapseSidebar()
+    sidebarFace.closeDetails()
+    expect(toggleSidebar).toHaveBeenCalledOnce()
+    expect(closeDetails).toHaveBeenCalledOnce()
 
-    face.toggle('session-1', true)
-    expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true, mode: 'source' })
-    expect(face.surfaceSession()).toBe('session-1')
-    face.closeSurface()
-    expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: false })
-    expect(face.surfaceSession()).toBeUndefined()
-    face.activate('session-2')
-    expect(arkmeUi.getSnapshot()).toMatchObject({ open: true, surfaceOpen: true })
-    expect(face.surfaceSession()).toBe('session-2')
-    face.toggle('session-2', true)
-    expect(arkmeUi.getSnapshot()).toMatchObject({ open: false, surfaceOpen: false })
-    face.toggle('session-3', false)
-    expect(arkmeUi.getSnapshot()).toMatchObject({ open: false, surfaceOpen: true, mode: 'login' })
-    expect(face.surfaceSession()).toBe('session-3')
+    expect(registered).toContainEqual(expect.objectContaining({
+      name: 'shell.overlay',
+      id: 'arkme-app-update-dialog',
+    }))
+    expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
+    expect(registered.map(item => item.name)).not.toContain('settings.general.item')
+    expect(registered.find(item => item.name === 'sidebar')?.children).toBeUndefined()
+    cleanups.forEach(cleanup => { cleanup() })
+  })
 
-    expect(registered.map(item => item.name)).not.toContain('conversation')
-    expect(registered.map(item => item.name)).not.toContain('sidebar.workspaces.virtual')
-    expect(registered.map(item => item.name)).not.toContain('main.surface')
-    expect(registered.map(item => item.name)).not.toContain('shell.overlay')
+  it('releases the native conversation and details seats while a DSH task is active', async () => {
+    const disposed: string[] = []
+    const cleanups: Array<() => void> = []
+    const inject = vi.fn((_key: string, register: () => unknown) => register() as () => void)
+    const register = vi.fn((options: { name: string }) => () => { disposed.push(options.name) })
+    arkmeUi.showConversations()
+    apply({
+      slots: { inject, register },
+      layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+      sessions: { open: vi.fn() },
+      effect: vi.fn((factory: () => unknown, label: string) => {
+        if (!label.includes('native conversation seats')) return
+        const cleanup = factory()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      }),
+    } as never)
+
+    arkmeUi.showTaskSession()
+    await Promise.resolve()
+
+    expect(disposed).toEqual(expect.arrayContaining(['conversation', 'details']))
+    cleanups.forEach(cleanup => { cleanup() })
+    arkmeUi.showConversations()
   })
 
   it('registers the startup authentication overlay only in the Arkme desktop shell', () => {
@@ -82,7 +130,11 @@ describe('official DSH client adapter', () => {
     })
 
     try {
-      apply({ slots: { inject, register }, effect: vi.fn() } as never)
+      apply({
+        slots: { inject, register },
+        layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+        effect: vi.fn(),
+      } as never)
     } finally {
       restoreWindow()
     }
@@ -91,5 +143,22 @@ describe('official DSH client adapter', () => {
       name: 'shell.overlay',
       id: 'arkme-startup-auth-gate',
     }))
+  })
+
+  it('starts independent APP and plugin update status stores from the client lifecycle', () => {
+    const effect = vi.fn()
+
+    apply({
+      slots: {
+        inject: vi.fn(() => () => {}),
+        register: vi.fn(),
+      },
+      effect,
+    } as never)
+
+    expect(effect.mock.calls.map(call => call[1])).toEqual(expect.arrayContaining([
+      'dsh-arkme: client plugin update status',
+      'dsh-arkme: client app update status',
+    ]))
   })
 })

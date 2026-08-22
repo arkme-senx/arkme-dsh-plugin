@@ -236,6 +236,12 @@ describe('extension desired enable state owner', () => {
   it('re-applies other disabled Profile layers after DSH package reconciliation', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-reconcile-'))
     directories.push(root)
+    const profile = join(root, 'profile')
+    mkdirSync(profile)
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: { '@arkme-local/ext-1111111111111111': 'link:installed' },
+      dsh: { profile: { bundles: ['@arkme-local/ext-1111111111111111'] } },
+    }))
     const store = new ArkmeExtensionInstallStore(join(root, 'store'))
     store.put({
       ...installed(root, false), extensionId: 'ext-disabled', enabled: false, active: false,
@@ -248,13 +254,47 @@ describe('extension desired enable state owner', () => {
     const remove = vi.fn(async () => undefined)
     const setEnabled = vi.fn(async () => undefined)
     const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
-      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: join(root, 'profile'),
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
       profileInstaller: { install: vi.fn(), remove, restart: vi.fn(), setEnabled },
     })
 
     await manager.uninstall({ agent: undefined, extensionId: 'ext-remove' })
     expect(remove).toHaveBeenCalledWith('@arkme-local/ext-2222222222222222')
     expect(setEnabled).toHaveBeenCalledWith('@arkme-local/ext-1111111111111111', false)
+    store.close()
+  })
+
+  it('skips a disabled extension record whose package is no longer installed in the Profile', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-stale-disabled-'))
+    directories.push(root)
+    const profile = join(root, 'profile')
+    mkdirSync(profile)
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: { '@arkme-local/ext-2222222222222222': 'link:installed' },
+      dsh: { profile: { bundles: ['@arkme-local/ext-2222222222222222'] } },
+    }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, false), extensionId: 'ext-stale', enabled: false, active: false,
+      profilePackageName: '@arkme-local/ext-1111111111111111',
+    })
+    store.put({
+      ...installed(root, false), extensionId: 'ext-remove',
+      profilePackageName: '@arkme-local/ext-2222222222222222',
+    })
+    const remove = vi.fn(async () => undefined)
+    const setEnabled = vi.fn(async () => {
+      throw new Error('扩展尚未安装到当前 DSH Profile')
+    })
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
+      profileInstaller: { install: vi.fn(), remove, restart: vi.fn(), setEnabled },
+    })
+
+    await expect(manager.uninstall({ agent: undefined, extensionId: 'ext-remove' }))
+      .resolves.toMatchObject({ installed: false })
+    expect(remove).toHaveBeenCalledWith('@arkme-local/ext-2222222222222222')
+    expect(setEnabled).not.toHaveBeenCalled()
     store.close()
   })
 })

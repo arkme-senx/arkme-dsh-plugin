@@ -4,6 +4,11 @@ import { DatabaseSync } from 'node:sqlite'
 
 export type ArkmeOwnedExtensionSourceKind = 'cordis' | 'profile'
 
+export interface ArkmeOwnedExtensionSourceReference {
+  kind: ArkmeOwnedExtensionSourceKind
+  key: string
+}
+
 interface OwnedSourceRow {
   owner_user_id: number
   spec_digest: string | null
@@ -95,6 +100,35 @@ export class ArkmeOwnedExtensionStore {
     return row?.owner_user_id === userId ? row.cloud_extension_id ?? undefined : undefined
   }
 
+  cloudReferences(userId: number, extensionId: string): ArkmeOwnedExtensionSourceReference[] {
+    this.assertCloudIdentity(userId, extensionId)
+    const rows = this.database.prepare(`
+      SELECT source_kind, hex(source_key) AS source_key_hex
+      FROM owned_extension_sources
+      WHERE owner_user_id = ? AND cloud_extension_id = ?
+      ORDER BY source_kind ASC, source_key ASC
+    `).all(userId, extensionId) as unknown as Array<{ source_kind: ArkmeOwnedExtensionSourceKind; source_key_hex: string }>
+    return rows.map(row => ({ kind: row.source_kind, key: sqliteHexText(row.source_key_hex) }))
+  }
+
+  /** Delete local ownership/lineage references only for the authenticated owner and exact cloud identity. */
+  removeCloudReferences(userId: number, extensionId: string): ArkmeOwnedExtensionSourceReference[] {
+    const references = this.cloudReferences(userId, extensionId)
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare(`
+        DELETE FROM owned_extension_sources
+        WHERE owner_user_id = ? AND cloud_extension_id = ?
+      `).run(userId, extensionId)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    this.secureFiles()
+    return references
+  }
+
   close(): void {
     this.database.close()
   }
@@ -111,6 +145,11 @@ export class ArkmeOwnedExtensionStore {
     if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Arkme 账号身份无效')
   }
 
+  private assertCloudIdentity(userId: number, extensionId: string): void {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Arkme 账号身份无效')
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(extensionId)) throw new Error('云端扩展身份无效')
+  }
+
   private secureFiles(): void {
     for (const path of [this.path, `${this.path}-wal`, `${this.path}-shm`]) {
       try { chmodSync(path, 0o600) } catch (error) {
@@ -118,4 +157,9 @@ export class ArkmeOwnedExtensionStore {
       }
     }
   }
+}
+
+function sqliteHexText(value: string): string {
+  if (!/^(?:[0-9A-F]{2})*$/.test(value)) throw new Error('扩展来源身份无效')
+  return Buffer.from(value, 'hex').toString('utf8')
 }

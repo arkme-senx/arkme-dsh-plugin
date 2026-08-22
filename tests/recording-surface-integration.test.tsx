@@ -12,9 +12,11 @@ describe('recording surface integration', () => {
       userId: 10001,
     }} />)
 
-    expect(markup).toContain('>全天候录音<')
+    expect(markup).toContain('aria-label="全天候录音"')
     expect(markup).toContain('aria-label="录音日历"')
     expect(markup).toContain('aria-label="录音详情"')
+    expect(markup).toContain('data-arkme-recording-pane="active"')
+    expect(markup).not.toContain('data-arkme-owned="directory-pane"')
     expect(markup).not.toContain('aria-label="发送消息"')
   })
 })

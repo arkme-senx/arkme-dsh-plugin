@@ -16,7 +16,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
       items: [{
         ownedRef: 'owned-ref', name: '天气助手', description: '天气', states: ['cordis'],
         halves: { host: true, client: false }, cordis: { packageCount: 1, active: true },
-        publish: { allowed: true, mode: 'new' },
+        publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       }],
       warnings: [],
     }))
@@ -38,6 +38,9 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
 
     expect(result).toMatchObject({ isError: false })
     expect(result.isError ? '' : result.value).toContain('<data_from_arkme_extensions>')
+    expect(result.isError ? '' : result.value).toContain('"route": "dynamic-cordis-v2"')
+    expect(result.isError ? '' : result.value).toContain('"artifactContractVersion": 2')
+    expect(result.isError ? '' : result.value).toContain('"artifactKind": "dsh-bundle-tgz"')
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ currentSessionId: 'session-1' }))
   })
 

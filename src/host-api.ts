@@ -1,19 +1,22 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { ArkmePluginError, ArkmeService } from './arkme-service.js'
+import { isArkmeBotAvatarRef } from './bot-avatar-ref.js'
 import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-update.js'
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
-  ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent,
+  ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
   ArkmeBillingPaymentMethod,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
+  ArkmeWorldPublishFileAsset,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
+import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from './types.js'
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
-import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from './extensions/types.js'
+import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort } from './extensions/types.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
 import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 
@@ -108,8 +111,32 @@ function numberParam(params: Record<string, unknown>, key: string, fallback: num
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
+  const value = stringParam(params, 'sort')
+  if (value === '') return undefined
+  if (value === 'rating' || value === 'comments' || value === 'opens' || value === 'created_at') return value
+  throw new ArkmePluginError('extension-catalog-sort-invalid', '市集排序参数无效', false, 400)
+}
+
 function booleanParam(params: Record<string, unknown>, key: string): boolean {
   return params[key] === true
+}
+
+function botProviderParam(params: Record<string, unknown>): ArkmeBotProvider {
+  const provider = stringParam(params, 'provider')
+  if (provider !== 'openclaw' && provider !== 'webhook') {
+    throw new ArkmePluginError('bot-provider-unsupported', 'Bot Provider 不受支持', false, 400)
+  }
+  return provider
+}
+
+function botAvatarParam(params: Record<string, unknown>): string {
+  const avatar = stringParam(params, 'avatar').trim()
+  if (avatar === '') return ''
+  if (!isArkmeBotAvatarRef(avatar)) {
+    throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
+  }
+  return avatar
 }
 
 function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
@@ -167,6 +194,8 @@ async function enrichExtensionAuthors(
       ...item,
       owner_name: author.displayName,
       ...(author.arkmeId === undefined ? {} : { owner_arkme_id: author.arkmeId }),
+      ...(author.avatarRef === undefined ? {} : { owner_avatar_ref: author.avatarRef }),
+      ...(author.avatarFallback === undefined ? {} : { owner_avatar_fallback: author.avatarFallback }),
     }
   })
 }
@@ -276,6 +305,30 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   }
 }
 
+function worldPublishFileAssetsParam(params: Record<string, unknown>): ArkmeWorldPublishFileAsset[] {
+  const rawAssets = Array.isArray(params.fileAssets) ? params.fileAssets : []
+  if (rawAssets.length === 0 || rawAssets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES) {
+    throw new ArkmePluginError('world-publish-assets-invalid', '请选择 1 至 9 张图片', false, 400)
+  }
+  return rawAssets.map(raw => {
+    if (raw === null || typeof raw !== 'object') {
+      throw new ArkmePluginError('world-publish-assets-invalid', '世界图片参数无效', false, 400)
+    }
+    const asset = raw as Record<string, unknown>
+    const fileAssetUid = stringParam(asset, 'fileAssetUid').trim()
+    const fileName = stringParam(asset, 'fileName').trim()
+    const mimeType = stringParam(asset, 'mimeType').trim().toLowerCase()
+    const size = numberParam(asset, 'size', 0)
+    const fileKind = numberParam(asset, 'fileKind', 0)
+    if (!/^[A-Za-z0-9._:-]{8,256}$/.test(fileAssetUid) || fileName === '' || fileName.length > 255
+      || !mimeType.startsWith('image/') || !Number.isSafeInteger(size) || size <= 0 || size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES
+      || fileKind !== 1) {
+      throw new ArkmePluginError('world-publish-assets-invalid', '世界图片参数无效', false, 400)
+    }
+    return { fileAssetUid, fileName, mimeType, size, fileKind: 1 }
+  })
+}
+
 function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
   const raw = params.captcha
   const source = raw !== null && typeof raw === 'object' ? raw as Record<string, unknown> : {}
@@ -323,7 +376,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'recordings.doubao.start']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -407,11 +460,34 @@ export async function dispatchArkmeHostOperation(
     case 'billing.order.status': return await service.billingOrderStatus(billingUuidParam(
       params, 'orderId', 'billing-order-id-invalid', '支付订单标识无效',
     ))
+    case 'contacts.search': return await service.searchContact(stringParam(params, 'identifier'))
+    case 'contacts.add': return await service.addContact(stringParam(params, 'contactRef'), {
+      ...(stringParam(params, 'remark').trim() === '' ? {} : { remark: stringParam(params, 'remark') }),
+      ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid') }),
+    })
+    case 'group.create': return await service.createGroup(
+      stringParam(params, 'title'),
+      stringParam(params, 'clientMutationId'),
+    )
+    case 'bots.create': {
+      const avatar = botAvatarParam(params)
+      return await service.createBotSummary({
+        name: stringParam(params, 'name'),
+        provider: botProviderParam(params),
+        ...(stringParam(params, 'description').trim() === ''
+          ? {}
+          : { description: stringParam(params, 'description') }),
+        ...(avatar === '' ? {} : { avatar }),
+      })
+    }
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
+    case 'recordings.doubao.start': return await service.startRecordingDoubaoBackfill(
+      numberParam(params, 'dateStamp', 0),
+    )
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
       endDate: stringParam(params, 'endDate'),
@@ -557,6 +633,20 @@ export async function dispatchArkmeHostOperation(
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'world.mine': return await service.listMyWorldFeed({
+      limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+    })
+    case 'world.user': {
+      const userId = Math.trunc(numberParam(params, 'userId', 0))
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        throw new ArkmePluginError('world-user-id-invalid', '世界用户 ID 无效，请刷新后重试', false, 400)
+      }
+      return await service.listUserWorldFeed(userId, {
+        limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      })
+    }
     case 'world.voiceprint.availability': return await service.worldVoiceprintPlaybackAvailability(
       [...new Set(stringListParam(params, 'recordRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
     )
@@ -564,6 +654,13 @@ export async function dispatchArkmeHostOperation(
       recordRef: stringParam(params, 'recordRef').trim(),
       chunkIndex: Math.min(333, Math.max(0, Math.trunc(numberParam(params, 'chunkIndex', 0)))),
     })
+    case 'world.voiceprint.social-context': return await service.worldVoiceprintSocialContext(
+      stringParam(params, 'recordRef').trim(),
+      { forceRefresh: params?.forceRefresh === true },
+    )
+    case 'world.voiceprint.invite': return await service.inviteWorldVoiceprint(
+      stringParam(params, 'recordRef').trim(),
+    )
     case 'world.interactions.list': return await service.listWorldInteractions(
       stringParam(params, 'recordRef'),
       {
@@ -584,6 +681,15 @@ export async function dispatchArkmeHostOperation(
         dataBase64: Buffer.from(image.data).toString('base64'),
       }
     }
+    case 'world.publish-text': return await service.publishWorldText({
+      clientMutationId: stringParam(params, 'clientMutationId'),
+      textContent: stringParam(params, 'textContent'),
+    })
+    case 'world.publish-file-assets': return await service.publishWorldFileAssets({
+      clientMutationId: stringParam(params, 'clientMutationId'),
+      textContent: stringParam(params, 'textContent'),
+      fileAssets: worldPublishFileAssetsParam(params),
+    })
     case 'dsh-beta-community.entry-state': return await service.dshBetaCommunityEntryState()
     case 'dsh-beta-community.join': return await service.joinDSHBetaCommunity()
     case 'topic.create': return await service.createTopic(
@@ -663,6 +769,28 @@ export async function dispatchArkmeHostOperation(
     case 'group.members': return await service.listGroupMembers(
       stringParam(params, 'sourceRef'),
       { activeOnly: params.activeOnly !== false },
+    )
+    case 'group.member-candidates': return await service.listGroupMemberCandidates(
+      stringParam(params, 'sourceRef'),
+      {
+        ...(stringParam(params, 'query') === '' ? {} : { query: stringParam(params, 'query') }),
+        limit: numberParam(params, 'limit', 20),
+        ...(stringListParam(params, 'groupSourceRefs').length === 0 ? {} : { groupSourceRefs: stringListParam(params, 'groupSourceRefs') }),
+      },
+    )
+    case 'group.invite-preview': return await service.groupInvitePreview(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'group.members.add': return await service.addGroupMembers(
+      stringParam(params, 'sourceRef'),
+      stringListParam(params, 'candidateRefs'),
+    )
+    case 'group.bots': return await service.listGroupBots(
+      stringParam(params, 'sourceRef'),
+    )
+    case 'group.bot.add': return await service.addGroupBot(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'botRef'),
     )
     case 'group.settings': return await service.groupSettings(stringParam(params, 'sourceRef'))
     case 'group.notification.set': return await service.setGroupMessageDnd(
@@ -758,14 +886,36 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
-    case 'extensions.catalog.list': return await requireExtensionManager(extensionManager).search(
-      stringParam(params, 'query'),
-      numberParam(params, 'limit', 20),
+    case 'extensions.catalog.list': {
+      const sort = extensionCatalogSortParam(params)
+      return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).searchCatalog({
+        query: stringParam(params, 'query'),
+        cursor: stringParam(params, 'cursor'),
+        limit: numberParam(params, 'limit', 20),
+        ...(sort === undefined ? {} : { sort }),
+      }))
+    }
+    case 'extensions.classification.tree': return await requireExtensionManager(extensionManager).classificationTree(
+      numberParam(params, 'limit', 30),
     )
+    case 'extensions.classification.items': {
+      const sort = extensionCatalogSortParam(params)
+      return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).classificationItems({
+        categoryId: stringParam(params, 'categoryId'),
+        query: stringParam(params, 'query'),
+        cursor: stringParam(params, 'cursor'),
+        limit: numberParam(params, 'limit', 20),
+        ...(sort === undefined ? {} : { sort }),
+      }))
+    }
     case 'extensions.catalog.detail': {
       const item = await requireExtensionManager(extensionManager).inspect(stringParam(params, 'extensionId'))
       return (await enrichExtensionAuthors(service, [item]))[0]
     }
+    case 'extensions.audit.check': return await requireExtensionManager(extensionManager).auditExtension({
+      extensionId: stringParam(params, 'extensionId'),
+      trigger: 'market_detail',
+    })
     case 'extensions.reviews.list': return await service.listExtensionReviews(
       stringParam(params, 'extensionId'),
       {
@@ -798,9 +948,9 @@ export async function dispatchArkmeHostOperation(
 	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
 		stringParam(params, 'shareRef'),
 	)
-    case 'extensions.delete': return await requireExtensionManager(extensionManager).delete(
-      stringParam(params, 'extensionId'),
-    )
+    case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
+      extensionId: stringParam(params, 'extensionId'),
+    })
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
@@ -908,7 +1058,7 @@ function requireExtensionInstallTasks(tasks: ArkmeExtensionInstallTasks | undefi
 
 function requireExtensionManager(manager: ArkmeExtensionManager | undefined): ArkmeExtensionManager {
   if (manager === undefined) {
-    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，扩展市场不可用', false, 503)
+    throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，市集不可用', false, 503)
   }
   return manager
 }

@@ -9,7 +9,7 @@ export interface ArkmeOwnedCordisTarget {
 }
 
 export interface ArkmeOwnedProfileTarget {
-  kind: 'profile-directory' | 'profile-tarball'
+  kind: 'profile-directory' | 'profile-tarball' | 'profile-installed'
   sourceKey: string
   packageName: string
   sourcePath: string
@@ -56,6 +56,10 @@ export class ArkmeOwnedExtensionRefs {
     }
     if (entry.userId !== userId) throw new Error('扩展引用不属于当前账号')
     return { ...entry.target }
+  }
+
+  clearUser(userId: number): void {
+    for (const [ref, entry] of this.entries) if (entry.userId === userId) this.entries.delete(ref)
   }
 
   private prune(): void {

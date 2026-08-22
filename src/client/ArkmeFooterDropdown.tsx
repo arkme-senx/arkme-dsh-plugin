@@ -1,9 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useSyncExternalStore, type CSSProperties } from 'react'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ArkmeChatClientEvent } from '../types.js'
-import { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 import { ArkmeFooterAction, type ArkmeFooterActionProps } from './ArkmeFooterAction.js'
-import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { arkmeAuthStore } from './auth-store.js'
 import {
@@ -14,49 +12,23 @@ import { arkmeUi } from './ui-controller.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 
 const styles: Record<string, CSSProperties> = {
-  root: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' },
-  panel: {
-    width: '100%', height: 'min(44vh, 420px)', minHeight: 0, maxHeight: 'calc(100vh - 220px)', margin: '6px 0 2px',
-    boxSizing: 'border-box', overflow: 'hidden', border: '1px solid var(--dsw-alias-border-l1, #e2e5e9)',
-    borderRadius: 12, background: 'var(--dsw-specific-sidebar-fill, #f7f8fa)',
-  },
+  root: { width: '100%', minWidth: 0 },
 }
 
-/** Footer action plus an inline Arkme directory that participates in sidebar layout. */
+/** The DSH sidebar owns only the Arkme entry; all Arkme product UI lives in the right workspace. */
 export type ArkmeFooterDropdownProps = ArkmeFooterActionProps & PropsRenderSlots<'arkme.directory.entry'>
 
 export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
-  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
-  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
-  const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot)
-  const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
-  const currentSession = props.useSessions(state => state.current)
-  const hasOpened = useRef(false)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
+  const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot, arkmePluginUpdateStore.getSnapshot)
+  const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const auth = authState.auth
   const unreadCount = auth?.status === 'authenticated' && chatDirectory.revision > 0
     ? arkmeChatDirectory.totalUnreadCount()
     : 0
   const updateInstalling = updateState.install !== undefined
-    && ['preparing', 'installing', 'restarting'].includes(updateState.install.phase)
-  if (ui.open) hasOpened.current = true
-  useLayoutEffect(() => {
-    const slot = rootRef.current?.parentElement
-    if (slot?.getAttribute('data-slot') !== 'sidebar.footer.action') return
-    const previous = {
-      display: slot.style.display,
-      flexDirection: slot.style.flexDirection,
-      alignItems: slot.style.alignItems,
-      width: slot.style.width,
-      minWidth: slot.style.minWidth,
-    }
-    slot.style.display = 'flex'
-    slot.style.flexDirection = 'column'
-    slot.style.alignItems = 'stretch'
-    slot.style.width = '100%'
-    slot.style.minWidth = '0'
-    return () => { Object.assign(slot.style, previous) }
-  }, [])
+    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   useEffect(() => {
     void arkmeAuthStore.refresh().catch(() => undefined)
   }, [ui.authRevision])
@@ -118,21 +90,10 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
   }, [auth?.status, auth?.userId, ui.authRevision])
   return <>
     <ArkmeOutgoingCallHost />
-    <div ref={rootRef} style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
-    {hasOpened.current && <div
-      id="arkme-footer-directory" role="region" aria-label="Arkme 下拉列表"
-      hidden={!props.wide || !ui.open}
-      style={{ ...styles.panel, display: props.wide && ui.open ? 'block' : 'none' }}
-    >
-      <ArkmeNavigation
-        currentSessionId={currentSession}
-        onActivateSurface={() => { props.activate(currentSession) }}
-        renderSlot={props.renderSlot}
-      />
-    </div>}
+    <div style={{ ...styles.root, width: props.wide ? '100%' : 36 }}>
     <ArkmeFooterAction
       {...props}
-      expanded={ui.open}
+      expanded
       loggedOut={authState.checked && (auth === undefined || !['authenticated', 'binding-required'].includes(auth.status))}
       bindingRequired={auth?.status === 'binding-required'}
       authenticated={auth?.status === 'authenticated'}
@@ -143,11 +104,5 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
       onUpdate={() => { void arkmePluginUpdateStore.install() }}
     />
     </div>
-    {ui.surfaceOpen && <ArkmeConversationSurface
-      close={props.closeSurface}
-      initialAuth={auth}
-      openedFromSession={props.surfaceSession()}
-      useSessions={props.useSessions}
-    />}
   </>
 }

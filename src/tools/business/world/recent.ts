@@ -21,7 +21,7 @@ export const worldRecentToolModule = defineArkmeCoreToolModule({
       output: TEXT_OUTPUT,
       isConcurrencySafe: () => true,
       async execute(args, exec) {
-        const result = await ports.listWorldRecords({
+        const result = await ports.listWorldFeed({
           limit: Math.min(20, Math.max(1, Math.trunc(args.limit ?? 10))), offset: offset(args.offset), signal: exec.signal,
         })
         return `<data_from_arkme_world>\n${JSON.stringify(result, undefined, 2)}\n</data_from_arkme_world>`

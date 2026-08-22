@@ -1,6 +1,6 @@
 # Arkme DSH Plugin
 
-Arkme 的 DeepSeek Harness 集成插件，为 DSH 提供账号、记录、聊天、Bot、社区、通话和扩展市场能力。
+Arkme 的 DeepSeek Harness 集成插件，为 DSH 提供账号、记录、聊天、Bot、社区、通话和市集能力。
 
 - npm：[`@senguoyun/dsh-arkme`](https://www.npmjs.com/package/@senguoyun/dsh-arkme)
 - 源码：[`arkme-senx/arkme-dsh-plugin`](https://github.com/arkme-senx/arkme-dsh-plugin)
@@ -82,7 +82,7 @@ pnpm run verify:call-assets
 - [工具注册与能力目录](docs/tool-registry.md)
 - [外部插件消费合同](docs/consumer-plugin-contract.md)
 - [请求协调与限流](docs/request-coordination.md)
-- [扩展市场控制](docs/extension-market-controls.md)
+- [市集控制](docs/extension-market-controls.md)
 - [扩展评论与评分](docs/extension-reviews.md)
 - [消息已读乐观更新](docs/read-ack-optimistic-flow.md)
 - [Agent 代理发送链路](docs/agent-proxy-sender-flow.md)

@@ -132,10 +132,12 @@ describe('ArkmeService Bot owner adapter', () => {
       })
     })
 
-    const result = await service.createBot({ name: ' 八卦雷达 ', provider: 'openclaw', description: ' 高亮八卦 ' })
+    const result = await service.createBot({
+      name: ' 八卦雷达 ', provider: 'openclaw', description: ' 高亮八卦 ', avatar: 'file_asset://avatar-asset-1',
+    })
 
     expect(requests).toEqual([{ body: {
-      name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: '',
+      name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1',
     } }])
     expect(result.bot).toMatchObject({
       botRef: expect.stringMatching(/^arkme-bot-v1\./),
@@ -146,6 +148,20 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(JSON.stringify(result.secret)).toBe('{}')
     expect(JSON.stringify(result.bot)).not.toContain('jbot_')
     expect(JSON.stringify(result.bot)).not.toContain('bot-owner-id-2')
+  })
+
+  it('rejects a non-file-asset Bot avatar before making a remote request', async () => {
+    const requests: string[] = []
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async input => {
+      requests.push(String(input))
+      return json({ code: 200, data: {} })
+    })
+
+    await expect(service.createBot({
+      name: '错误头像', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
+    })).rejects.toMatchObject({ code: 'bot-avatar-invalid' })
+    expect(requests).toEqual([])
   })
 
   it('creates a Webhook Bot without exposing its raw ID, token, or Webhook URL', async () => {

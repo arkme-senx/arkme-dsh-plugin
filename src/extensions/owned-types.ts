@@ -2,6 +2,18 @@ import type { ArkmeExtensionPreviewItem, ArkmeExtensionShare, ArkmeExtensionSour
 
 export type ArkmeMyExtensionState = 'cordis' | 'persisted' | 'published'
 export type ArkmeMyExtensionWarning = 'cloud-unavailable' | 'cordis-unavailable' | 'profile-entry-invalid'
+export type ArkmeExtensionPublishRoute = 'dynamic-cordis-v2' | 'profile-native-v3'
+export type ArkmeExtensionPublishArtifactKind = 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
+
+export type ArkmeMyExtensionPublishState =
+  | {
+      allowed: true
+      mode: 'new' | 'version'
+      route: ArkmeExtensionPublishRoute
+      artifactContractVersion: 2 | 3
+      artifactKind: ArkmeExtensionPublishArtifactKind
+    }
+  | { allowed: false; reason: string }
 
 export interface ArkmeMyExtensionItem {
   ownedRef: string
@@ -10,7 +22,7 @@ export interface ArkmeMyExtensionItem {
   states: ArkmeMyExtensionState[]
   halves: { host: boolean; client: boolean }
   cordis?: { packageCount: number; active: boolean }
-  persisted?: { packageName: string; version?: string; active: boolean }
+  persisted?: { packageName: string; version?: string; active: boolean; artifactContractVersion?: 2 | 3 }
   published?: {
     extensionId: string
     version?: string
@@ -21,7 +33,7 @@ export interface ArkmeMyExtensionItem {
 		source?: ArkmeExtensionSource
 		share?: ArkmeExtensionShare
   }
-  publish: { allowed: boolean; mode?: 'new' | 'version'; reason?: string }
+  publish: ArkmeMyExtensionPublishState
 }
 
 export interface ArkmeMyExtensionPage {
@@ -44,4 +56,8 @@ export interface ArkmeMyExtensionPublishInput {
 export interface ArkmePreparedExtensionPublish {
   input: ArkmeMyExtensionPublishInput
   sourceFingerprint: string
+  publishRoute: ArkmeExtensionPublishRoute
+  artifactContractVersion: 2 | 3
+  artifactKind: ArkmeExtensionPublishArtifactKind
+  nativeCapabilities?: import('./types.js').ArkmeNativeCapability[]
 }

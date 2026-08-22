@@ -1,6 +1,7 @@
 import {
   useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,
 } from 'react'
+import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
 import type {
   ArkmeSourceItem, ArkmeSourceList, ArkmeTopicCreateResult,
 } from '../types.js'
@@ -74,8 +75,8 @@ const styles: Record<string, CSSProperties> = {
     background: 'transparent', color: colors.secondary, cursor: 'pointer',
   },
   triggerActive: {
-    color: arkmeTheme.accent,
-    background: arkmeTheme.accentSoft,
+    color: '#30333b',
+    background: '#f1f2f6',
   },
   popover: {
     position: 'absolute', zIndex: 12, top: 48, right: 48,
@@ -365,12 +366,7 @@ export function ArkmeTopicDirectoryPopover({
       ref={triggerRef} type="button" aria-label="打开分类目录" title="分类目录" aria-haspopup="dialog" aria-expanded={open}
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
       onClick={() => { setOpen(value => !value) }}
-    ><svg aria-hidden viewBox="0 0 24 24" width="17" height="17" fill="none">
-      <circle cx="6" cy="7" r="1.2" fill="currentColor" />
-      <circle cx="6" cy="12" r="1.2" fill="currentColor" />
-      <circle cx="6" cy="17" r="1.2" fill="currentColor" />
-      <path d="M9.5 7H19M9.5 12H16.5M9.5 17H19" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg></button>
+    ><ListBullets size={17} aria-hidden /></button>
     {open && <div ref={popoverRef} role="dialog" aria-label="目录" style={styles.popover}>
       <div style={styles.head}>
         <h3 style={styles.heading}>目录</h3>

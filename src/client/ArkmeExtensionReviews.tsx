@@ -9,34 +9,53 @@ import type {
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 
-const accent = '#09B83E'
+const primaryAction = 'var(--dsw-alias-label-primary, #242629)'
 const emptyRating: ArkmeExtensionRatingSummary = { average: 0, count: 0, histogram: [0, 0, 0, 0, 0] }
 
 const styles: Record<string, CSSProperties> = {
-  section: { padding: '14px 0 4px', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
+  section: { marginTop: 20, padding: '20px 0 4px', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
   headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  heading: { margin: 0, fontSize: 13, lineHeight: '20px', fontWeight: 650, color: 'var(--dsw-alias-label-primary, #242629)' },
-  commentButton: { height: 30, padding: '0 13px', border: 0, borderRadius: 8, background: 'rgba(9,184,62,.10)', color: accent, font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
+  heading: { margin: 0, fontSize: 14, lineHeight: '22px', fontWeight: 650, color: 'var(--dsw-alias-label-primary, #242629)' },
+  headingCount: { marginLeft: 7, color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontWeight: 500 },
+  commentButton: { height: 30, padding: '0 13px', border: 0, borderRadius: 8, background: primaryAction, color: '#fff', font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
   summary: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 },
   average: { fontSize: 22, lineHeight: '28px', fontWeight: 700, color: 'var(--dsw-alias-label-primary, #242629)' },
   stars: { display: 'inline-flex', gap: 2, color: '#f3aa18', letterSpacing: 0, fontSize: 14 },
   count: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 10 },
-  list: { marginTop: 10 },
-  review: { position: 'relative', padding: '11px 0', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', cursor: 'pointer' },
+  list: { marginTop: 18 },
+  review: { position: 'relative', padding: '14px 0', borderTop: '1px solid var(--dsw-alias-border-l1, #e7e9ec)' },
   openThreadButton: { position: 'absolute', zIndex: 0, inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
   reviewContent: { position: 'relative', zIndex: 1, pointerEvents: 'none' },
-  reviewLayout: { display: 'grid', gridTemplateColumns: '38px minmax(0, 1fr)', columnGap: 10, alignItems: 'start' },
+  reviewLayout: { display: 'grid', gridTemplateColumns: '34px minmax(0, 1fr)', columnGap: 11, alignItems: 'start' },
   reviewMain: { minWidth: 0 },
-  authorRow: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
+  authorRow: { display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0, flexWrap: 'wrap' },
   author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 12, fontWeight: 650 },
-  time: { marginLeft: 'auto', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9 },
+  time: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 10 },
   ratingRow: { height: 20, display: 'flex', alignItems: 'center', marginTop: 2 },
-  content: { margin: '7px 0 0', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  content: { margin: '7px 0 0', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 12, lineHeight: '19px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '7px 0 0' },
   replyButton: { display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 30, padding: '2px 4px 2px 0', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 12, fontWeight: 600, lineHeight: '16px', cursor: 'pointer' },
   state: { padding: '18px 0 10px', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 11, textAlign: 'center' },
   error: { marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(194,65,59,.08)', color: 'var(--dsw-alias-state-error-primary, #c2413b)', fontSize: 11 },
   loadMore: { width: '100%', height: 30, marginTop: 6, border: 0, borderRadius: 8, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 10, cursor: 'pointer' },
+  inlineComposer: {
+    display: 'grid', gridTemplateColumns: '30px minmax(0, 1fr)', gap: 9, marginTop: 10, padding: '9px 10px',
+    border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 11,
+    background: 'var(--dsw-specific-sidebar-fill, #fff)', boxSizing: 'border-box',
+  },
+  inlineComposerMain: { minWidth: 0 },
+  inlineComposerTitle: { color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 10, lineHeight: '16px' },
+  inlineRatingPicker: { display: 'flex', gap: 1, marginBottom: 4 },
+  inlineStarButton: { width: 24, height: 24, padding: 0, border: 0, background: 'transparent', fontSize: 19, lineHeight: '24px', cursor: 'pointer' },
+  inlineTextarea: {
+    width: '100%', minHeight: 42, maxHeight: 160, padding: 0, resize: 'vertical', overflowY: 'auto', boxSizing: 'border-box', border: 0, outline: 0,
+    background: 'transparent', color: 'var(--dsw-alias-label-primary, #242629)', font: 'inherit', fontSize: 12, lineHeight: '18px',
+  },
+  inlineComposerFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 5 },
+  inlineSubmit: { height: 28, padding: '0 13px', border: 0, borderRadius: 8, background: primaryAction, color: '#fff', font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
+  inlineCancel: { height: 28, padding: '0 12px', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 11, cursor: 'pointer' },
+  inlineReplySlot: { margin: '4px 0 0 45px' },
+  replyList: { margin: '8px 0 0 45px', paddingLeft: 12, borderLeft: '2px solid var(--dsw-alias-border-l1, #e7e9ec)' },
   overlay: { position: 'fixed', zIndex: 120, inset: 0, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(17,24,39,.28)' },
   composer: { width: 'min(480px, calc(100vw - 48px))', padding: 18, boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 14, background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 18px 50px rgba(20,24,31,.22)' },
   threadDialog: { width: 'min(520px, calc(100vw - 48px))', maxHeight: 'min(680px, calc(100vh - 48px))', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 14, overflow: 'hidden', background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 18px 50px rgba(20,24,31,.22)' },
@@ -48,7 +67,7 @@ const styles: Record<string, CSSProperties> = {
   closeButton: { width: 28, height: 28, padding: 0, border: 0, borderRadius: 7, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 18, lineHeight: '28px', cursor: 'pointer' },
   composerTitle: { margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 650, color: 'var(--dsw-alias-label-primary, #242629)' },
   composerHint: { marginTop: 4, color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 10, lineHeight: '16px' },
-  originalQuote: { marginTop: 12, padding: '9px 11px', borderLeft: `3px solid ${accent}`, borderRadius: '0 8px 8px 0', background: 'var(--dsw-alias-fill-secondary, #f4f5f6)' },
+  originalQuote: { marginTop: 12, padding: '9px 11px', borderLeft: `3px solid ${primaryAction}`, borderRadius: '0 8px 8px 0', background: 'var(--dsw-alias-fill-secondary, #f4f5f6)' },
   originalLabel: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9, lineHeight: '14px', fontWeight: 600 },
   originalText: { maxHeight: 54, margin: '3px 0 0', overflow: 'auto', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 11, lineHeight: '17px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   ratingPicker: { display: 'flex', gap: 3, marginTop: 12 },
@@ -58,12 +77,27 @@ const styles: Record<string, CSSProperties> = {
   charCount: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 9 },
   actions: { display: 'flex', gap: 8 },
   cancel: { height: 32, padding: '0 13px', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 11, cursor: 'pointer' },
-  submit: { height: 32, padding: '0 15px', border: 0, borderRadius: 8, background: accent, color: '#fff', font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
+  submit: { height: 32, padding: '0 15px', border: 0, borderRadius: 8, background: primaryAction, color: '#fff', font: 'inherit', fontSize: 11, fontWeight: 650, cursor: 'pointer' },
 }
 
 export interface ArkmeExtensionReviewTreeNode {
   item: ArkmeExtensionReviewItem
   children: ArkmeExtensionReviewTreeNode[]
+}
+
+export function extensionReviewComposerMode(
+  canCreateTopLevelReview: boolean,
+  hasReplyComposer: boolean,
+): 'top-level' | 'reply' | 'hidden' {
+  if (hasReplyComposer) return 'reply'
+  return canCreateTopLevelReview ? 'top-level' : 'hidden'
+}
+
+export function extensionReviewComposerTargets(
+  reviewRef: string,
+  state: ArkmeExtensionReviewComposerState | undefined,
+): boolean {
+  return state?.parent?.reviewRef === reviewRef
 }
 
 export function extensionReviewTree(items: readonly ArkmeExtensionReviewItem[]): ArkmeExtensionReviewTreeNode[] {
@@ -98,10 +132,18 @@ function Stars({ value, size = 14 }: { value: number; size?: number }) {
   </span>
 }
 
-function reviewTime(createdAtMillis: number): string {
+export function extensionReviewTimeLabel(createdAtMillis: number, nowMillis = Date.now()): string {
   if (!Number.isFinite(createdAtMillis) || createdAtMillis <= 0) return ''
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(new Date(createdAtMillis))
+  const elapsed = Math.max(0, nowMillis - createdAtMillis)
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (elapsed < minute) return '刚刚'
+  if (elapsed < hour) return `${String(Math.floor(elapsed / minute))} 分钟前`
+  if (elapsed < day) return `${String(Math.floor(elapsed / hour))} 小时前`
+  if (elapsed < 30 * day) return `${String(Math.floor(elapsed / day))} 天前`
+  if (elapsed < 365 * day) return `${String(Math.floor(elapsed / (30 * day)))} 个月前`
+  return `${String(Math.floor(elapsed / (365 * day)))} 年前`
 }
 
 function ReplyIcon() {
@@ -122,13 +164,13 @@ function ReviewPresentation({ item, replyCount, onReply, clickThrough = false }:
     <ArkmeUserAvatar
       {...(item.authorAvatarRef === undefined ? {} : { avatarRef: item.authorAvatarRef })}
       {...(item.authorAvatarFallback === undefined ? {} : { fallback: item.authorAvatarFallback })}
-      size={38}
+      size={34}
       label={`${item.authorName}头像`}
     />
     <div data-arkme-review-main="true" style={styles.reviewMain}>
       <div style={styles.authorRow}>
         <span style={styles.author}>{item.authorName}</span>
-        <time style={styles.time}>{reviewTime(item.createdAtMillis)}</time>
+        <time style={styles.time}>{extensionReviewTimeLabel(item.createdAtMillis)}</time>
       </div>
       {item.rating > 0 && <div style={styles.ratingRow}><Stars value={item.rating} size={12} /></div>}
       <p style={styles.content}>{item.textContent}</p>
@@ -155,34 +197,58 @@ function ReplyButton({ item, count, onReply }: {
   </button>
 }
 
-function ReviewNode({ node, onOpen, onReply }: {
+interface ArkmeExtensionInlineReplyEditor {
+  state: ArkmeExtensionReviewComposerState
+  submitting: boolean
+  onChange(next: ArkmeExtensionReviewComposerState): void
+  onCancel(): void
+  onSubmit(): void
+}
+
+function ReviewReplyComposerSlot({ item, editor }: {
+  item: ArkmeExtensionReviewItem
+  editor?: ArkmeExtensionInlineReplyEditor | undefined
+}) {
+  if (editor === undefined || !extensionReviewComposerTargets(item.reviewRef, editor.state)) return null
+  return <div style={styles.inlineReplySlot} data-extension-reply-composer-for={item.reviewRef}>
+    <ArkmeExtensionInlineReviewComposer
+      state={editor.state}
+      submitting={editor.submitting}
+      onChange={editor.onChange}
+      onCancel={editor.onCancel}
+      onSubmit={editor.onSubmit}
+    />
+  </div>
+}
+
+function ReviewNode({ node, onReply, replyEditor }: {
   node: ArkmeExtensionReviewTreeNode
-  onOpen(node: ArkmeExtensionReviewTreeNode): void
   onReply(item: ArkmeExtensionReviewItem): void
+  replyEditor?: ArkmeExtensionInlineReplyEditor | undefined
 }) {
   const item = node.item
   const replyCount = extensionReviewReplyCount(node)
   return <article style={styles.review}>
-    <button
-      type="button"
-      style={styles.openThreadButton}
-      aria-label={`查看${item.authorName}的评论及 ${String(replyCount)} 条回复`}
-      onClick={() => { onOpen(node) }}
-    />
-    <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} clickThrough />
+    <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
+    <ReviewReplyComposerSlot item={item} editor={replyEditor} />
+    {node.children.length > 0 && <div style={styles.replyList} aria-label={`${item.authorName}的全部回复`}>
+      {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={0} onReply={onReply} replyEditor={replyEditor} />)}
+    </div>}
   </article>
 }
 
-function ThreadReply({ node, depth, onReply }: {
+function ThreadReply({ node, depth, onReply, replyEditor }: {
   node: ArkmeExtensionReviewTreeNode
   depth: number
   onReply(item: ArkmeExtensionReviewItem): void
+  replyEditor?: ArkmeExtensionInlineReplyEditor | undefined
 }) {
   const item = node.item
   const replyCount = extensionReviewReplyCount(node)
   return <div style={{ ...styles.threadReply, marginLeft: Math.min(depth * 18, 54) }}>
     <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
-    {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={depth + 1} onReply={onReply} />)}
+    <ReviewReplyComposerSlot item={item} editor={replyEditor} />
+    {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={depth + 1} onReply={onReply} replyEditor={replyEditor} />)}
   </div>
 }
 
@@ -289,6 +355,48 @@ export function ArkmeExtensionReviewComposerDialog({ state, submitting, onChange
   return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body)
 }
 
+export function ArkmeExtensionInlineReviewComposer({ state, submitting, onChange, onSubmit, onCancel }: {
+  state: ArkmeExtensionReviewComposerState
+  submitting: boolean
+  onChange(next: ArkmeExtensionReviewComposerState): void
+  onSubmit(): void
+  onCancel?: (() => void) | undefined
+}) {
+  const replying = state.parent !== undefined
+  const valid = extensionReviewComposerCanSubmit({ textContent: state.textContent, rating: state.rating, replying })
+  return <div style={styles.inlineComposer} data-extension-review-composer="inline">
+    <ArkmeUserAvatar size={30} label="我的头像" />
+    <div style={styles.inlineComposerMain}>
+      {replying && <div style={styles.inlineComposerTitle}>回复 {state.parent!.authorName}</div>}
+      {!replying && <div style={styles.inlineRatingPicker} aria-label="选择评分">
+        {[1, 2, 3, 4, 5].map(star => <button
+          key={star} type="button" style={{ ...styles.inlineStarButton, color: star <= state.rating ? '#f3aa18' : '#d7d9dd' }}
+          aria-label={`${String(star)} 星`} aria-pressed={star <= state.rating}
+          onClick={() => { onChange({ ...state, rating: star, error: '' }) }}
+        >★</button>)}
+      </div>}
+      <textarea
+        {...(replying ? { autoFocus: true } : {})}
+        maxLength={2000} value={state.textContent}
+        placeholder={replying ? '输入回复内容…' : '分享你的使用体验'}
+        style={styles.inlineTextarea}
+        onChange={event => { onChange({ ...state, textContent: event.target.value, error: '' }) }}
+      />
+      {state.error !== '' && <div style={styles.error} role="alert">{state.error}</div>}
+      <div style={styles.inlineComposerFooter}>
+        <span style={styles.charCount}>{[...state.textContent].length}/2000</span>
+        <div style={styles.actions}>
+          {onCancel !== undefined && <button type="button" style={styles.inlineCancel} disabled={submitting} onClick={onCancel}>取消</button>}
+          <button
+            type="button" style={{ ...styles.inlineSubmit, ...(!valid || submitting ? { opacity: .42, cursor: 'not-allowed' } : {}) }}
+            disabled={!valid || submitting} onClick={onSubmit}
+          >{submitting ? '提交中…' : replying ? '回复' : '发布'}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
 export function ArkmeExtensionReviews({
   extensionId,
   canCreateTopLevelReview = true,
@@ -304,15 +412,14 @@ export function ArkmeExtensionReviews({
   const [loading, setLoading] = useState(initialPage === undefined)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
-  const [composer, setComposer] = useState<ArkmeExtensionReviewComposerState>()
-  const [selectedThreadRef, setSelectedThreadRef] = useState<string>()
+  const [topLevelComposer, setTopLevelComposer] = useState<ArkmeExtensionReviewComposerState>({
+    textContent: '', rating: 0, clientMutationId: '', error: '',
+  })
+  const [replyComposer, setReplyComposer] = useState<ArkmeExtensionReviewComposerState>()
   const [submitting, setSubmitting] = useState(false)
   const tree = useMemo(() => extensionReviewTree(page?.items ?? []), [page?.items])
-  const selectedThread = useMemo(
-    () => tree.find(node => node.item.reviewRef === selectedThreadRef),
-    [selectedThreadRef, tree],
-  )
   const summary = page?.ratingSummary ?? initialRatingSummary
+  const composerMode = extensionReviewComposerMode(canCreateTopLevelReview, replyComposer !== undefined)
 
   const load = async (offset = 0) => {
     if (offset === 0) setLoading(true)
@@ -332,46 +439,57 @@ export function ArkmeExtensionReviews({
     }
   }
 
-  useEffect(() => { if (initialPage === undefined) void load() }, [extensionId])
+  useEffect(() => {
+    setTopLevelComposer({ textContent: '', rating: 0, clientMutationId: '', error: '' })
+    setReplyComposer(undefined)
+    if (initialPage === undefined) void load()
+  }, [extensionId])
   useEffect(() => {
     if (canCreateTopLevelReview) return
-    setComposer(current => current?.parent === undefined ? undefined : current)
+    setTopLevelComposer({ textContent: '', rating: 0, clientMutationId: '', error: '' })
   }, [canCreateTopLevelReview])
   useEffect(() => {
-    if (composer === undefined) return
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !submitting) setComposer(undefined) }
+    if (replyComposer === undefined) return
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !submitting) setReplyComposer(undefined) }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [composer !== undefined, submitting])
-  useEffect(() => {
-    if (selectedThreadRef === undefined || composer !== undefined) return
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectedThreadRef(undefined) }
-    document.addEventListener('keydown', onKeyDown)
-    return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [selectedThreadRef, composer !== undefined])
+  }, [replyComposer !== undefined, submitting])
 
-  const openComposer = (parent?: ArkmeExtensionReviewItem) => {
+  const openReplyComposer = (parent: ArkmeExtensionReviewItem) => {
+    if (submitting) return
     try {
-      setComposer({ ...(parent === undefined ? {} : { parent }), textContent: '', rating: 0, clientMutationId: newMutationId(), error: '' })
+      setReplyComposer({ parent, textContent: '', rating: 0, clientMutationId: newMutationId(), error: '' })
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
   }
 
-  const submit = async () => {
-    if (composer === undefined || submitting) return
+  const submit = async (kind: 'top-level' | 'reply') => {
+    const current = kind === 'top-level' ? topLevelComposer : replyComposer
+    if (current === undefined || submitting) return
+    let prepared = current
+    try {
+      if (prepared.clientMutationId === '') prepared = { ...prepared, clientMutationId: newMutationId() }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught)
+      if (kind === 'top-level') setTopLevelComposer(value => ({ ...value, error: message }))
+      else setReplyComposer(value => value === undefined ? value : { ...value, error: message })
+      return
+    }
+    if (kind === 'top-level') setTopLevelComposer(prepared)
+    else setReplyComposer(prepared)
     setSubmitting(true)
     try {
       await callArkme<ArkmeExtensionReviewCreateResult>('extensions.reviews.create', {
-        ...extensionReviewCreateParams(extensionId, composer),
+        ...extensionReviewCreateParams(extensionId, prepared),
       })
-      setComposer(undefined)
+      if (kind === 'top-level') setTopLevelComposer({ textContent: '', rating: 0, clientMutationId: '', error: '' })
+      else setReplyComposer(undefined)
       await load()
     } catch (caught) {
-      setComposer(current => current === undefined ? current : {
-        ...current,
-        error: caught instanceof Error ? caught.message : String(caught),
-      })
+      const message = caught instanceof Error ? caught.message : String(caught)
+      if (kind === 'top-level') setTopLevelComposer(value => ({ ...value, error: message }))
+      else setReplyComposer(value => value === undefined ? value : { ...value, error: message })
     } finally {
       setSubmitting(false)
     }
@@ -379,13 +497,14 @@ export function ArkmeExtensionReviews({
 
   return <section style={styles.section} aria-label="扩展评论">
     <div style={styles.headingRow}>
-      <h3 style={styles.heading}>用户评价</h3>
-      {canCreateTopLevelReview && <button type="button" style={styles.commentButton} onClick={() => { openComposer() }}>评论</button>}
+      <h3 style={styles.heading} title={extensionRatingLabel(summary)}>
+        用户评价 <span style={styles.headingCount}>{String(page?.total ?? 0)} 条评论</span>
+      </h3>
     </div>
-    <div style={styles.summary}>
-      <span style={styles.average}>{summary.count === 0 ? '—' : summary.average.toFixed(1)}</span>
-      <div><Stars value={summary.average} /><div style={styles.count}>{extensionRatingLabel(summary)}</div></div>
-    </div>
+    {composerMode === 'top-level' && <ArkmeExtensionInlineReviewComposer
+          state={topLevelComposer} submitting={submitting}
+          onChange={setTopLevelComposer} onSubmit={() => { void submit('top-level') }}
+        />}
     {error !== '' && <div style={styles.error} role="alert">{error}</div>}
     {loading && <div style={styles.state}>正在加载评论…</div>}
     {!loading && tree.length === 0 && error === '' && <div style={styles.state}>
@@ -395,21 +514,18 @@ export function ArkmeExtensionReviews({
       {tree.map(node => <ReviewNode
         key={node.item.reviewRef}
         node={node}
-        onOpen={selected => { setSelectedThreadRef(selected.item.reviewRef) }}
-        onReply={openComposer}
+        onReply={openReplyComposer}
+        {...(replyComposer === undefined ? {} : { replyEditor: {
+          state: replyComposer,
+          submitting,
+          onChange: setReplyComposer,
+          onCancel: () => { if (!submitting) setReplyComposer(undefined) },
+          onSubmit: () => { void submit('reply') },
+        } })}
       />)}
     </div>}
     {page?.hasMore === true && <button type="button" style={styles.loadMore} disabled={loadingMore} onClick={() => { void load(page.nextOffset ?? page.offset + page.limit) }}>
       {loadingMore ? '加载中…' : '加载更多'}
     </button>}
-    {selectedThread !== undefined && <ArkmeExtensionReplyListDialog
-      root={selectedThread}
-      onClose={() => { setSelectedThreadRef(undefined) }}
-      onReply={openComposer}
-    />}
-    {composer !== undefined && <ArkmeExtensionReviewComposerDialog
-      state={composer} submitting={submitting} onChange={setComposer}
-      onClose={() => { if (!submitting) setComposer(undefined) }} onSubmit={() => { void submit() }}
-    />}
   </section>
 }

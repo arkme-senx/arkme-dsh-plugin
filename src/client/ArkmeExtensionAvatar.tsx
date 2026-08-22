@@ -17,7 +17,7 @@ export function ArkmeExtensionAvatar({ extensionId, iconRef, size = 32, fallback
   const valid = iconRef !== undefined && /^icon_v1_[a-f0-9]{64}$/.test(iconRef)
   const style: CSSProperties = {
     width: size, height: size, display: 'grid', placeItems: 'center', overflow: 'hidden',
-    borderRadius: Math.max(8, Math.round(size * .28)),
+    borderRadius: 6,
     background: arkmeTheme.subtle,
     color: fallbackColor ?? arkmeTheme.secondary,
   }

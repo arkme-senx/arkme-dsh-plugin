@@ -1,40 +1,73 @@
-# Search surface design QA
+# Arkme utility-page design QA
 
-- Source visual truth:
-  - `/var/folders/91/3cfcmnr17dgfn1g40f_2k2tw0000gn/T/codex-clipboard-14961ddc-fb95-4bf3-a944-0a488be088ef.png`
-  - `/var/folders/91/3cfcmnr17dgfn1g40f_2k2tw0000gn/T/codex-clipboard-61a5a816-c2b3-4449-ad61-e73c409ae82b.png`
-- Implementation screenshot: unavailable; the Codex in-app Browser rejected local `http://127.0.0.1:3081/` access under its URL policy.
-- Source viewport: 1500 × 2000 px for the cropped-search report; 1964 × 1192 px for the earlier desktop AI-video reference.
-- Implementation viewport / CSS size / density: unavailable because browser capture was blocked.
-- State: quick-note search with query `倒霉`; AI-video quick-entry landing state.
+## Source of truth
 
-## Full-view comparison evidence
+- Demo URL: `http://127.0.0.1:5174/`
+- Calendar Demo URL: `http://127.0.0.1:5175/`
+- Production comparison URL: `http://127.0.0.1:5191/`
+- Final clean-profile acceptance URL: `http://127.0.0.1:5193/`
+- Browser viewports: 1360 × 900 for the saved comparisons; 1733 × 1171 for final host-integration acceptance, device pixel ratio 1
+- Reference screenshots:
+  - `qa/reference-recordings-1360x900.jpg`
+  - `qa/reference-search-1360x900.jpg`
+  - `qa/reference-plugins-1360x900.jpg`
+- Production screenshots:
+  - `qa/production-recordings-1360x900.jpg`
+  - `qa/production-search-1360x900.jpg`
+  - `qa/production-plugins-1360x900.jpg`
+  - `qa/production-send-to-self-spacing-v12-1733x1171.png`
+- Combined comparison: `qa/comparison-utility-pages.jpg`
 
-The reported implementation constrained the search surface to a 600 px container with hidden overflow and constrained the AI-video quick-entry content to a 470 px centered panel. Code inspection confirmed both constraints. The fix restores the earlier desktop document-flow shell, full-width AI-video content, two-column video cards, and adds the existing client `arrow_left.svg` asset as the top-left return control.
+The send-to-self spacing pass uses the user's 2026-08-21 browser-annotation screenshot as its source visual truth and the 1733 × 1171 browser capture above as the revised implementation. Both are desktop, light-theme, expanded topic-tree states at device pixel ratio 1.
 
-## Focused region comparison evidence
+The search-history area in the production QA image is blurred because it contains real account data. The page geometry, search field, section label, rows, separators, and scroll behavior remain visible for comparison.
 
-The source screenshots clearly expose the two affected regions: the cut-off sixth search result at the bottom of the fixed-height viewport and the narrow centered AI-video panel. A post-fix focused screenshot could not be captured because local browser access was blocked.
+## States checked
 
-## Findings
+| State | Expected layout | Observed |
+| --- | --- | --- |
+| Conversation | Feature rail + directory + content | Directory spacing, header alignment, message bubbles, message typography, and list notification placement match the Demo direction |
+| Recording | Feature rail + full-width page | No conversation directory; two-column date browser and recording content area match the updated Demo structure |
+| Search | Feature rail + full-width page | No conversation directory; compact single heading, 50 px search field, quick find, and history rows |
+| Calendar | Feature rail + month calendar + day-content panel | Real bucket counts, black selected-day pill, today navigation, real day records, and paging match the updated Demo direction |
+| Plugins | Feature rail + full-width page | No conversation directory or extension modal; Demo-style hero, search, two-column cards, and real actions |
+| Send to self | Feature rail + compact topic tree + content | Root rows now use 4 px outer gutters, counts sit closer to the right edge, and child depth remains readable with an 18 px step |
+| DSH host integration | Native DSH shell + Arkme public slots | Arkme wordmark appears in the top-left brand area, the Arkme icon appears in the new-session hero, and the Arkme entry appears at the bottom-left without patching DSH source |
+| Recording month expansion | Weekly strip expands to a complete month | August 2026 expands from the 17–23 strip to all dates 1–31, with future dates disabled and the selected date preserved |
+| Composer controls | Existing production composer | The add-content `+` remains functional and is visually anchored at the far-left edge of the composer toolbar |
 
-- [Resolved P1] Search results were clipped by fixed height and hidden overflow. Removed both constraints so results stay in the page document flow.
-- [Resolved P1] AI-video quick entry used a 470 px sidebar shell. Restored the full desktop search width and removed the panel shadow/background treatment.
-- [Resolved P2] The quick-entry exit control used a close icon at the upper right. Replaced it with the existing desktop-client back asset at the upper left.
-- [Blocked] Post-fix visual comparison, interaction capture, and console inspection cannot be completed through the available browser because localhost access is denied by browser policy.
+## Iteration history
 
-## Required fidelity surfaces
+1. P1 — the first integrated layout left the conversation directory mounted for every tab. Fixed by conditionally mounting it only for `source` mode.
+2. P1 — recording, search, and plugin pages initially reused their legacy layouts too literally. Fixed with the updated Demo's recording date/content split, compact search hierarchy, and an embedded plugin marketplace.
+3. P1 — the mounted directory could asynchronously restore a source and pull a utility page back to the conversation view. Fixed by unmounting the directory outside conversation mode and excluding utility modes from source restoration.
+4. P2 — the plugin page still exposed its modal category tabs and green action styling. Fixed by using the Demo's single `我的插件` entry, dark action buttons, and two-column discovery cards while retaining production operations.
+5. P2 — the recording page was based on the previous Demo revision. Fixed by rebuilding it around the updated date strip, selected-day list, day timeline, and transcript/summary/timeline tabs while keeping the existing recording API as the data owner.
+6. P2 — search suggestion rows lacked the Demo's directional affordance. Fixed by adding consistent trailing arrows.
+7. P2 — conversation message text, group header height, member drawer top edge, DND marker placement, and bubble colors did not match the Demo. Fixed using the Demo's 14 px message type, neutral bubble palette, asymmetric radii, aligned 68 px header boundary, and lower-right list metadata.
+8. The input-composer redesign was intentionally rolled back after product review. The previous production composer remains in place for this iteration.
+9. P1 — selecting Arko replaced the entire product area and removed the conversation directory. Fixed by treating Arko as a normal conversation destination: the feature rail and directory remain mounted while Arko renders in the third column.
+10. P2 — the send-to-self entry and topic list were denser than the desktop client and inherited a green accent. Fixed with the client's bookmark asset geometry in neutral gray, a 15 px title, and 12 px horizontal topic-list margins.
+11. P2 — quick-note detail still used the legacy drawer hierarchy. Fixed against the Demo's 372 px side panel, 56 px header, compact close control, 14 px text hierarchy, and full-width source-group row.
+12. P2 — long plugin descriptions appeared clipped against the next row. Fixed by raising card minimum height, allowing three description lines, and reserving bottom scroll padding so every card boundary remains visible.
+13. P2 — send-to-self topic rows still lost too much usable width to stacked outer gutters, lead slots, and trailing count padding. Fixed by reducing row gutters from 12 px to 4 px, the lead slot from 30 px to 24 px, trailing metadata from 58 px to 44 px, and the hierarchy step from 20 px to 18 px. The revised 1733 × 1171 focused capture confirms that labels and counts move outward without flattening the parent/child structure.
+14. P1 — the final host page still presented the official DSH brand and could make Arkme look like an optional afterthought. Fixed through the public `sidebar.brand.mark`, `sidebar.brand.name`, and `conversation.hero.brand.mark` slots; the host title remains unchanged because DSH exposes no public title slot.
+15. P1 — the recording browser exposed only the selected week. Fixed with an explicit expand/collapse control that renders the complete month while preserving the existing recording API and selected-date behavior.
+16. P2 — the composer add-content control sat inside the old padded toolbar area. Fixed by removing the toolbar padding and anchoring the `+` at the far-left edge without replacing the production composer.
+17. P1 — the latest baseline introduced the calendar capability after the GUI branch diverged. Rebased onto the latest baseline, retained the calendar Host/SDK/Tool/data flow, and adapted only its plugin UI into the existing Arkme feature rail and visual system.
+18. P1 — treating the Arkme A as a standalone top-left logo duplicated the mark beside the wordmark. Fixed by rendering the complete transparent Arkme wordmark once in the top-left mark slot and leaving the adjacent name slot empty; the square new-session slot remains the compact mark to avoid overlapping the host-owned title.
 
-- Fonts and typography: existing search typography retained; post-fix browser comparison blocked.
-- Spacing and layout rhythm: restored the earlier 850 px desktop shell and natural page height; post-fix browser comparison blocked.
-- Colors and visual tokens: existing DSH theme variables retained; return icon is copied from the client asset set.
-- Image quality and asset fidelity: AI-video cover rendering is unchanged; return control uses a real client SVG asset.
-- Copy and content: `搜索快记`, `AI 视频`, and existing result copy are unchanged.
+## Final checks
 
-## Comparison history
+- Same-size source/implementation comparisons inspected together.
+- No actionable P0, P1, or P2 visual mismatch remains in the accepted scope. Real data density and the empty recording state are content differences, not layout substitutions.
+- Utility tabs stay selected after asynchronous data loading.
+- DSH source is not patched or written by this implementation.
+- Final acceptance used a fresh DSH home and a clean `@deepseek-ai/dsh@0.1.0-rc.8` runtime containing no runtime-level Arkme dependency. The immutable rebased `@senguoyun/dsh-arkme@0.1.11` tarball was installed through the official `dsh plugin --profile web add` command.
+- Final browser acceptance confirmed the bottom-left Arkme entry, top-left Arkme wordmark, new-session Arkme hero mark, far-left composer `+`, and the complete 1–31 August month view.
+- The central new-session title remains `探索未至之境`; changing it would require a DSH title slot or a host change, neither of which is in the plugin's public integration surface.
+- Validation passed with TypeScript typecheck, production build, and the full suite: 152 test files passed, 3 skipped; 837 tests passed, 3 skipped. The suite was run with the repository-pinned pnpm 11.7.0.
+- The production search history is blurred only in the saved QA artifact because it contains live account data.
+- Focused send-to-self comparison checked typography, spacing, neutral tokens, existing icons, and copy. The only image-asset change is the transparent Arkme brand wordmark/mark used through public DSH slots.
 
-1. Initial evidence: fixed-height search clipping and a mobile-like 470 px AI-video panel.
-2. Fix: removed fixed-height/hidden-overflow layout, removed the 470 px quick shell, restored desktop spacing, added the client back icon.
-3. Post-fix evidence: automated tests and HTTP health passed; browser-rendered visual evidence remains blocked.
-
-final result: blocked
+final result: passed

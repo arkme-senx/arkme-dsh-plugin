@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
 
 const PHASES = new Set<ArkmePluginUpdateInstallPhase>([
-  'idle', 'preparing', 'installing', 'restarting', 'succeeded', 'failed', 'rolled-back',
+  'idle', 'preparing', 'downloading', 'verifying', 'installing', 'restarting', 'succeeded', 'failed', 'rolled-back',
 ])
 
 function boundedString(value: unknown, maxLength: number): string {

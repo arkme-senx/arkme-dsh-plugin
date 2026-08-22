@@ -34,6 +34,11 @@ describe('ArkmeLogin', () => {
     const html = renderLogin()
 
     expect(html).toContain('登录 Arkme')
+    expect(html).toContain('即我，')
+    expect(html).toContain('你的数字自我。')
+    expect(html).toContain('Digital ark, true me')
+    expect(html).toContain('dsh-arkme-login-story')
+    expect(html).toContain('dsh-arkme-login-wordmark')
     expect(html).toContain('请使用微信扫码登录')
     expect(html).toContain('二维码加载中')
     expect(html.indexOf('微信扫码')).toBeLessThan(html.indexOf('手机号登录'))
@@ -42,7 +47,8 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('checked=""')
     expect(html).toContain('《隐私条款》')
     expect(html).not.toContain('dsh-arkme-login-logo')
-    expect(html).toContain('#09b83e')
+    expect(html).toContain('#8295e8')
+    expect(html).not.toContain('state-success')
     expect(html).not.toContain('#2f80ed')
   })
 

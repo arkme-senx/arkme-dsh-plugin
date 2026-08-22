@@ -14,7 +14,11 @@ import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
 import { createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
-import { ArkmePluginUpdateManager, validateUpdateRegistryOrigin } from './plugin-update.js'
+import {
+  ArkmePluginUpdateManager,
+  validatePluginUpdateArtifactOrigin,
+  validatePluginUpdateServiceOrigin,
+} from './plugin-update.js'
 import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmeService } from './arkme-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
@@ -39,7 +43,7 @@ import { ArkmeStateStore } from './state-store.js'
 import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
-import type { ArkmeEnvironment } from './types.js'
+import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
 
 export interface Config {
   environment: ArkmeEnvironment
@@ -75,14 +79,16 @@ export interface Config {
   allowProduction: boolean
   updateCheckEnabled: boolean
   updateChannel: 'stable' | 'next'
-  updateRegistryUrl: string
+  updateServiceBaseUrl: string
+  updateArtifactBaseUrl: string
+  appVersion: string
   updateCheckIntervalHours: number
   updateAllowLocalInstall: boolean
   openclawProfile: string
+  shareWebsite: string
 }
 
 export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
-
 export const Config: Schema<Config> = Schema.object({
   environment: Schema.union(['test', 'prod']).default('test'),
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
@@ -114,13 +120,16 @@ export const Config: Schema<Config> = Schema.object({
   allowProduction: Schema.boolean().default(false),
   updateCheckEnabled: Schema.boolean().default(true),
   updateChannel: Schema.union(['stable', 'next']).default('stable'),
-  updateRegistryUrl: Schema.string().default('https://registry.npmjs.org'),
+  updateServiceBaseUrl: Schema.string().default('https://api.jotmo.cc'),
+  updateArtifactBaseUrl: Schema.string().default(''),
+  appVersion: Schema.string().default(''),
   updateCheckIntervalHours: Schema.number().min(1).max(168).default(12),
   updateAllowLocalInstall: Schema.boolean().default(true),
   richMediaRenderEnabled: Schema.boolean().default(true),
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
   openclawProfile: Schema.string().default('dev'),
+  shareWebsite: Schema.string().default(ARKME_DEFAULT_SHARE_WEBSITE),
 })
 
 export const name = 'dsh-arkme'
@@ -145,6 +154,16 @@ export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   }
 }
 
+export function resolveArkmeAppVersion(
+  configuredAppVersion: string,
+  environment: { ARKME_APP_VERSION?: string } = process.env,
+): string | undefined {
+  const configured = configuredAppVersion.trim()
+  if (configured !== '') return configured
+  const injected = environment.ARKME_APP_VERSION?.trim()
+  return injected === undefined || injected === '' ? undefined : injected
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Headless Arkme data provider for trusted Host-side consumer plugins. */
@@ -157,6 +176,7 @@ export function apply(ctx: Context, config: Config): void {
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
+  const appVersion = resolveArkmeAppVersion(config.appVersion)
   const stateDirectory = config.stateDirectory.trim() || join(dshHome, 'arkme-self', config.environment)
   const stateStore = new ArkmeStateStore(stateDirectory)
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
@@ -177,7 +197,10 @@ export function apply(ctx: Context, config: Config): void {
   const updateManager = new ArkmePluginUpdateManager({
     enabled: config.updateCheckEnabled,
     channel: config.updateChannel,
-    registryUrl: config.updateRegistryUrl,
+    updateServiceBaseUrl: config.updateServiceBaseUrl,
+    ...(config.updateArtifactBaseUrl.trim() === '' ? {} : { updateArtifactBaseUrl: config.updateArtifactBaseUrl }),
+    ...(appVersion === undefined ? {} : { appVersion }),
+    ...(dshRuntimeVersion === undefined ? {} : { dshVersion: dshRuntimeVersion }),
     intervalMs: config.updateCheckIntervalHours * 60 * 60_000,
     stateDirectory,
     logger: ctx.logger,
@@ -186,6 +209,13 @@ export function apply(ctx: Context, config: Config): void {
       profileName: 'web',
       healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
+      ...(process.env.ARKME_DESKTOP_MANAGED_RESTART === '1'
+        && process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH !== undefined
+        ? {
+            supervisedExitCode: ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
+            supervisedPlanPath: process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH,
+          }
+        : {}),
     },
   })
   const extensionShareDiscovery = new ArkmeExtensionShareDiscoveryRelay({
@@ -247,6 +277,7 @@ export function apply(ctx: Context, config: Config): void {
       },
     )
     extensionManager = manager
+    void manager.reconcileInstallationMetrics()
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: ownedExtensionHostInstanceId,
       profileDirectory: extensionProfileDirectory,
@@ -258,7 +289,14 @@ export function apply(ctx: Context, config: Config): void {
       runner,
       agents,
       publish: async input => await manager.publish(input),
-      publishBundle: async input => await manager.publishBundleSource(input),
+      publishBundle: async input => await manager.publishNativeBundleSource(input),
+      lifecycle: {
+        deleteCloud: async (extensionId, signal) => await manager.delete(extensionId, signal),
+        uninstall: async input => await manager.uninstall(input),
+        canUninstallWithoutAgent: extensionId => manager.canUninstallWithoutAgent(extensionId),
+        installedProfilePackageName: extensionId => manager.installedProfilePackageName(extensionId),
+        removeProfilePackage: async packageName => await manager.removeOwnedProfilePackage(packageName),
+      },
     })
     ownedExtensionInventory = inventory
     const tasks = new ArkmeExtensionInstallTasks(
@@ -283,7 +321,7 @@ export function apply(ctx: Context, config: Config): void {
       if (extensionInstallTasks === tasks) extensionInstallTasks = undefined
       if (ownedExtensionInventory === inventory) ownedExtensionInventory = undefined
       tasks.dispose()
-    }, 'dsh-arkme: extension center dynamic runner bridge')
+    }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
@@ -411,7 +449,8 @@ function validateConfig(ctx: Context, config: Config): void {
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(config.geetestCaptchaId)) {
     throw new Error('dsh-arkme: geetestCaptchaId is invalid')
   }
-  validateUpdateRegistryOrigin(config.updateRegistryUrl)
+  validatePluginUpdateServiceOrigin(config.updateServiceBaseUrl)
+  if (config.updateArtifactBaseUrl.trim() !== '') validatePluginUpdateArtifactOrigin(config.updateArtifactBaseUrl)
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(config.openclawProfile)) {
     throw new Error('dsh-arkme: openclawProfile must be a fixed profile name')
   }
@@ -427,6 +466,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['relationBaseUrl', config.relationBaseUrl],
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
+    ['shareWebsite', config.shareWebsite],
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {
@@ -509,7 +549,10 @@ export type {
   ArkmePluginUpdateStatus,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
+  ArkmeWorldPublishFileAsset,
+  ArkmeWorldPublishFileAssetsInput,
   ArkmeWorldPublishResult,
+  ArkmeWorldPublishTextInput,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
@@ -537,7 +580,11 @@ export type {
   ArkmeWechatPhoneEvidence,
   ArkmeWechatPhonePage,
 } from './types.js'
-export { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+export {
+  ARKME_PROVIDER_CONTRACT_VERSION,
+  ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES,
+  ARKME_WORLD_PUBLISH_MAX_IMAGES,
+} from './types.js'
 export type {
   ArkmeExtensionRatingSummary,
   ArkmeExtensionReviewAvatarFallback,

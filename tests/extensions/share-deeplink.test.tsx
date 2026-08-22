@@ -17,12 +17,12 @@ describe('extension share DSH deep link', () => {
 		const controller = new ArkmeUiController()
 		controller.openExtensionShare(SHARE_REF)
 		expect(controller.getSnapshot()).toMatchObject({
-			open: true, surfaceOpen: true, extensionShareRef: SHARE_REF,
+			extensionShareRef: SHARE_REF,
 		})
 		controller.dismissExtensionShare()
 		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
 		controller.openExtensionShare(SHARE_REF)
-		controller.close()
+		controller.dismissExtensionShare()
 		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
 	})
 

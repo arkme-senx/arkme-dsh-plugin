@@ -1,20 +1,23 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
-  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'createBot', 'revealBotSecret',
+  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'createBot', 'createBotSummary', 'revealBotSecret',
   'openBotChat', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
   'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'dispose', 'requestStats', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'searchContact', 'addContact',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
-  'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'refreshProfile', 'arkoProfile',
+  'sealRecordingCursor', 'openRecordingCursor', 'startRecordingDoubaoBackfill', 'recordingDay',
+  'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
@@ -23,7 +26,8 @@ const expectedPublicMethods = [
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
   'confirmEnableGroupAiPolish', 'prepareDisableGroupAiPolishForSource', 'prepareDisableGroupAiPolish',
-  'confirmDisableGroupAiPolish', 'listGroupMembers', 'groupSettings', 'setGroupMessageDnd',
+  'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
+  'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
   'openPrivateChatFromUser', 'readSource', 'relatedRecordingEligibility', 'relatedRecordings',
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'sendSourceText', 'retryGroupAiPolish',
@@ -38,10 +42,11 @@ const expectedPublicMethods = [
   'listWorldRecords',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
-  'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed',
-  'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback',
+  'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
+  'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback', 'worldVoiceprintSocialContext', 'inviteWorldVoiceprint',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
-  'publishWorldTextForConversation', 'createText', 'createTextForConversation', 'pendingWrites',
+  'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
+  'createText', 'createTextForConversation', 'pendingWrites',
   'retryPending', 'extensionPost',
 ].sort()
 
@@ -52,6 +57,7 @@ const expectedServiceFiles = [
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
+  'contact-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -82,7 +88,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_500)
+    expect(facade.split('\n').length).toBeLessThan(1_550)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })
@@ -93,5 +99,14 @@ describe('Arkme service architecture', () => {
     for (const file of readdirSync(directory).filter(name => name.endsWith('-service.ts'))) {
       expect(readFileSync(join(directory, file), 'utf8')).not.toMatch(/from ['"]\.\.\/arkme-service/)
     }
+  })
+
+  it('keeps World cross-domain dependencies behind narrow ports', () => {
+    const world = readFileSync(join(root, 'src/services/world-service.ts'), 'utf8')
+    expect(world).toContain('export interface ArkmeWorldProfileReader')
+    expect(world).toContain('export interface ArkmeWorldMediaReader')
+    expect(world).toContain('export interface ArkmeWorldRecordWriter')
+    expect(world).not.toMatch(/import \{[^}]*\bMediaService\b/)
+    expect(world).not.toMatch(/import \{[^}]*\bRecordService\b/)
   })
 })

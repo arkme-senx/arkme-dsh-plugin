@@ -11,19 +11,36 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
 }
 
 export interface ArkmeUiState {
-  open: boolean
-  surfaceOpen: boolean
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings' | 'calendar' | 'search' | 'arko'
+  mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'contact-add' | 'arko'
+    | 'settings' | 'task-start' | 'task-session'
+  settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
+  calendarOpen?: boolean
+  worldTarget?: ArkmeWorldTarget
+}
+
+export interface ArkmeWorldTarget {
+  userId: number
+  displayName: string
+  avatarRef?: string
+  avatarFallback?: { kind: 'phone_default'; colorIndex: number; label: string }
+}
+
+function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTarget | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.userId === right.userId && left.displayName === right.displayName
+    && left.avatarRef === right.avatarRef && JSON.stringify(left.avatarFallback) === JSON.stringify(right.avatarFallback)
 }
 
 export class ArkmeUiController {
-  private state: ArkmeUiState = { open: false, surfaceOpen: false, authRevision: 0, chatRevision: 0, mode: 'login' }
+  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, mode: 'login' }
+  private lastConversationSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
+  private settingsOpener: (() => void) | undefined
 
   readonly getSnapshot = (): ArkmeUiState => this.state
 
@@ -32,46 +49,37 @@ export class ArkmeUiController {
     return () => { this.listeners.delete(listener) }
   }
 
-  open(): void {
-    this.publish({ ...this.state, open: true })
+  bindSettingsOpener(opener: () => void): () => void {
+    this.settingsOpener = opener
+    return () => { if (this.settingsOpener === opener) this.settingsOpener = undefined }
   }
 
-  activateSurface(): void {
-    this.publish({ ...this.state, open: true, surfaceOpen: true })
-  }
-
-  deactivateSurface(): void {
-    this.publish({ ...this.state, surfaceOpen: false })
+  openDshSettings(): void {
+    this.settingsOpener?.()
   }
 
   focusSendToSelf(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'source' })
-  }
-
-  close(): void {
-    const { extensionShareRef: _extensionShareRef, ...rest } = this.state
-    this.publish({ ...rest, open: false, surfaceOpen: false })
+    this.lastConversationSource = undefined
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'source' })
   }
 
   authChanged(authenticated = false, resetSelection = false): void {
     if (authenticated) {
-      const { selectedSource: _selectedSource, ...stateWithoutSelection } = this.state
-      const state = resetSelection ? stateWithoutSelection : this.state
+      const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...stateWithoutSelection } = this.state
+      const { calendarOpen: _activeCalendar, ...stateWithoutCalendar } = this.state
+      const state = resetSelection ? stateWithoutSelection : stateWithoutCalendar
       this.publish({
         ...state,
-        open: true,
-        surfaceOpen: true,
         mode: state.mode === 'login' ? 'source' : state.mode,
         authRevision: this.state.authRevision + 1,
       })
       return
     }
-    const { selectedSource: _selectedSource, ...rest } = this.state
+    this.lastConversationSource = undefined
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
     this.publish({
       ...rest,
-      open: false,
-      surfaceOpen: this.state.surfaceOpen,
       mode: 'login',
       authRevision: this.state.authRevision + 1,
     })
@@ -82,43 +90,103 @@ export class ArkmeUiController {
   }
 
   showLogin(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'login' })
-  }
-
-  showLoginSurface(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: false, surfaceOpen: true, mode: 'login' })
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'login' })
   }
 
   showRecordings(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'recordings' })
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings' })
+  }
+
+  showCalls(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'calls' })
   }
 
   showCalendar(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'calendar' })
+    if (this.state.calendarOpen === true) {
+      const { calendarOpen: _calendarOpen, ...rest } = this.state
+      this.publish(rest)
+      return
+    }
+    this.publish({ ...this.state, calendarOpen: true })
+  }
+
+  hideCalendar(): void {
+    const { calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish(rest)
+  }
+
+  showWorld(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, ...rest } = this.state
+    this.publish({ ...rest, mode: 'world' })
+  }
+
+  showUserWorld(target: ArkmeWorldTarget): void {
+    if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw new TypeError('世界用户 ID 必须是正整数')
+    const displayName = target.displayName.replace(/\s+/g, ' ').trim()
+    if (displayName === '') throw new TypeError('世界用户名不能为空')
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({
+      ...rest,
+      mode: 'world',
+      worldTarget: { ...target, displayName },
+    })
   }
 
   showRecordingTarget(dateStamp: number, startAtMillis: number): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis } })
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis } })
   }
 
   showSearch(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'search' })
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'search' })
+  }
+
+  showExtensions(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    const { extensionShareRef: _extensionShareRef, ...withoutShare } = rest
+    this.publish({ ...withoutShare, mode: 'extensions' })
+  }
+
+  showConversations(): void {
+    const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({
+      ...rest,
+      mode: 'source',
+      ...(this.lastConversationSource === undefined ? {} : { selectedSource: this.lastConversationSource }),
+    })
+  }
+
+  showContactAdd(): void {
+    this.publish({ ...this.state, mode: 'contact-add' })
   }
 
   showArko(): void {
-    const { selectedSource: _selectedSource, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'arko' })
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'arko' })
+  }
+
+  showSettings(section: 'account' | 'general' | 'about' = 'account'): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'settings', settingsSection: section })
+  }
+
+  showNewTask(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'task-start' })
+  }
+
+  showTaskSession(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'task-session' })
   }
 
   openExtensionShare(shareRef: string): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
-    this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'source', extensionShareRef: shareRef })
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'extensions', extensionShareRef: shareRef })
   }
 
   dismissExtensionShare(): void {
@@ -127,17 +195,21 @@ export class ArkmeUiController {
   }
 
   selectSource(source: ArkmeSourceItem): void {
-    this.publish({ ...this.state, open: true, mode: 'source', selectedSource: source })
+    this.lastConversationSource = source
+    const { calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'source', selectedSource: source })
   }
 
   private publish(next: ArkmeUiState): void {
-    if (next.open === this.state.open && next.surfaceOpen === this.state.surfaceOpen
-      && next.authRevision === this.state.authRevision
+    if (next.authRevision === this.state.authRevision
       && next.chatRevision === this.state.chatRevision
       && next.mode === this.state.mode
+      && next.settingsSection === this.state.settingsSection
+      && next.calendarOpen === this.state.calendarOpen
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef
+      && sameWorldTarget(next.worldTarget, this.state.worldTarget)
       && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next
     for (const listener of this.listeners) listener()

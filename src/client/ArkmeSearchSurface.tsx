@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
+import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import type {
   ArkmeAiVideoListItem, ArkmeAiVideoListResult, ArkmeFileAssetDisplayItem,
   ArkmeImageSearchItem, ArkmeImageSearchResult,
@@ -16,15 +18,19 @@ const colors = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  shell: { width: 'min(850px, 100%)', margin: '0 auto', padding: '20px 36px 40px', boxSizing: 'border-box', color: colors.text },
+  shell: { width: 'min(980px, 100%)', margin: '0 auto', padding: '34px 48px 44px', boxSizing: 'border-box', color: colors.text },
+  hero: { marginBottom: 22 },
+  eyebrow: { margin: '0 0 8px', color: '#858991', fontSize: 14, lineHeight: '20px' },
+  heroTitle: { margin: 0, fontSize: 26, lineHeight: '34px', letterSpacing: '-.035em', fontWeight: 650 },
+  heroSubtitle: { display: 'block', marginTop: 12, color: '#7d818b', fontSize: 15, lineHeight: '22px' },
   column: { display: 'flex', flexDirection: 'column' },
-  searchBox: { height: 44, flex: 'none', display: 'flex', alignItems: 'center', gap: 5, padding: '0 10px', boxSizing: 'border-box', border: '1px solid transparent', borderRadius: 12, background: colors.subtle },
-  searchIcon: { width: 26, height: 26, flex: 'none' },
-  input: { flex: 1, minWidth: 0, height: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 16 },
+  searchBox: { height: 50, flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', boxSizing: 'border-box', border: '1px solid #d9deef', borderRadius: 14, background: '#fff', boxShadow: '0 5px 20px rgba(25,28,38,.035)' },
+  searchIcon: { width: 22, height: 22, flex: 'none' },
+  input: { flex: 1, minWidth: 0, height: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 15 },
   clear: { width: 40, height: 40, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
   scroll: { overflowY: 'visible' },
-  section: { margin: '18px 15px 0' }, sectionTitle: { margin: '0 0 12px', color: colors.tertiary, fontSize: 12, lineHeight: '24px', fontWeight: 400 },
-  chips: { display: 'flex', flexWrap: 'wrap', gap: 12 }, chip: { minHeight: 28, padding: '3px 12px', border: `1px solid ${colors.border}`, borderRadius: 20, background: 'transparent', color: colors.blue, cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: '20px' },
+  section: { margin: '18px 0 0' }, sectionTitle: { margin: '0 0 2px', color: colors.tertiary, fontSize: 12, lineHeight: '22px', fontWeight: 400 },
+  chips: { display: 'flex', flexDirection: 'column', gap: 0 }, chip: { width: '100%', minHeight: 54, padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0, background: 'transparent', color: colors.text, textAlign: 'left', cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '20px' },
   tabs: { display: 'flex', alignItems: 'flex-end', gap: 30, flex: 'none', marginTop: 20, borderBottom: `1px solid ${colors.border}` },
   tab: { position: 'relative', minHeight: 38, padding: '0 0 11px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 14, whiteSpace: 'nowrap' }, tabActive: { fontWeight: 600 },
   indicator: { position: 'absolute', left: '50%', bottom: 5, width: 10, height: 2, marginLeft: -5, borderRadius: 22, background: colors.text },
@@ -213,19 +219,22 @@ export function ArkmeSearchSurface() {
   const recordItems = records?.items ?? []
 
   return <div style={styles.shell}>
+    <header style={styles.hero}>
+      <h1 style={styles.heroTitle}>一句话，找到所有内容</h1>
+    </header>
     {quick === undefined ? <div style={styles.column}>
       <div style={styles.searchBox}>
-        <img src={`${assetRoot}/image_search_grey.svg`} alt="" style={styles.searchIcon} />
-        <input autoFocus style={styles.input} value={query} placeholder="搜索" aria-label="搜索" onChange={event => setQuery(event.target.value)} />
+        <MagnifyingGlass size={20} color="#a3a7af" aria-hidden />
+        <input autoFocus style={styles.input} value={query} placeholder="搜索人物、主题或你记得的一句话…" aria-label="搜索" onChange={event => setQuery(event.target.value)} />
         {query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}
       </div>
-      {!hasQuery ? <div style={styles.scroll}>{history.length > 0 && <section style={styles.section}><h3 style={styles.sectionTitle}>搜索历史</h3><div style={styles.chips}>{history.map(value => <button key={value} type="button" style={styles.chip} onClick={() => setQuery(value)}>{value}</button>)}</div></section>}<section style={styles.section}><h3 style={styles.sectionTitle}>快速查找</h3><div style={styles.chips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.chip} onClick={() => { void loadQuick(entry.key) }}>{entry.label}</button>)}</div></section></div> : <>
+      {!hasQuery ? <div style={styles.scroll}><section style={styles.section}><h3 style={styles.sectionTitle}>快速查找</h3><div style={styles.chips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.chip} onClick={() => { void loadQuick(entry.key) }}><span>{entry.label}</span><ArrowRight size={16} aria-hidden /></button>)}</div></section>{history.length > 0 && <section style={styles.section}><h3 style={styles.sectionTitle}>历史搜索</h3><div style={styles.chips}>{history.map(value => <button key={value} type="button" style={styles.chip} onClick={() => setQuery(value)}><span>{value}</span><ArrowRight size={16} aria-hidden /></button>)}</div></section>}</div> : <>
         {recordError !== '' && <div style={styles.error}>{recordError}</div>}
         <div style={styles.scroll}>{loading ? <Status loading /> : recordItems.length === 0 && recordError === '' ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</div>
       </>}
     </div> : <div style={styles.quickShell}>
       <header style={styles.quickHeader}>
-        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><img src={`${assetRoot}/image_search_grey.svg`} alt="" style={styles.quickSearchIcon} /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div>
+        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div>
         <div style={styles.tabs}>{hasQuery
           ? <button type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
           : quickEntries.map(entry => {

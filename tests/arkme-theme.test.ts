@@ -16,7 +16,7 @@ describe('Arkme theme contract', () => {
 
     expect(themeSensitive.every(value => value.startsWith('var(--dsw-'))).toBe(true)
     expect(arkmeTheme.messageOwn).toContain('--arkme-chat-self-bubble')
-    expect(arkmeTheme.messageOwn).toContain('--dsw-specific-bubble')
+    expect(arkmeTheme.messageOwn).toContain('--dsw-alias-state-business-tertiary')
     expect(arkmeTheme.primaryAction).toContain('--dsw-alias-button-primary-fill')
     expect(arkmeTheme.onPrimaryAction).toContain('--dsw-alias-label-primary-inverted')
   })

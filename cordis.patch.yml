@@ -15,6 +15,7 @@
         intelligentBaseUrl: https://jotmo-intelligent.senguo.me
         audioBaseUrl: https://jotmo-audio.senguo.me
         extensionPublishBaseUrl: ''
+        shareWebsite: https://jiwo.cc
         extensionArtifactDirectory: ''
         extensionTrustedSigningKeys: '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
         routePath: /arkme-self/api
@@ -28,7 +29,9 @@
         allowProduction: false
         updateCheckEnabled: true
         updateChannel: stable
-        updateRegistryUrl: https://registry.npmjs.org
+        updateServiceBaseUrl: https://jotmo.senguo.me
+        updateArtifactBaseUrl: https://d.jiwo.cc
+        appVersion: ''
         updateCheckIntervalHours: 12
         updateAllowLocalInstall: true
         richMediaRenderEnabled: true

@@ -42,7 +42,7 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
   }
   return <div style={styles.backdrop}>
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-publish-title">
-      <h3 id="arkme-extension-publish-title" style={styles.title}>{item.publish.mode === 'version' ? '发布新版本' : '发布扩展'}</h3>
+      <h3 id="arkme-extension-publish-title" style={styles.title}>{item.publish.allowed && item.publish.mode === 'version' ? '发布新版本' : '发布扩展'}</h3>
       <form onSubmit={submit}>
         <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
         <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>

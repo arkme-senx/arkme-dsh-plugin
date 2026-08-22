@@ -1,5 +1,5 @@
 import type { ChangeEvent } from 'react'
-import { ArkmeMark } from './ArkmeFooterAction.js'
+import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 
 export type ArkmeLoginMode = 'wechat' | 'phone' | 'test'
 
@@ -43,14 +43,14 @@ const loginStyles = `
   .dsh-arkme-login-page {
     --arkme-login-base: var(--dsw-alias-bg-base, #ffffff);
     --arkme-login-surface: var(--dsw-alias-bg-layer-2, #ffffff);
-    --arkme-login-subtle: var(--dsw-alias-bg-module-platform, #f2fbf5);
+    --arkme-login-subtle: var(--dsw-alias-bg-module-platform, #f3f4f8);
     --arkme-login-hover: var(--dsw-alias-interactive-bg-hover, rgba(38,49,72,.06));
-    --arkme-login-text: var(--dsw-alias-label-primary, #17221b);
-    --arkme-login-secondary: var(--dsw-alias-label-secondary, #68766d);
-    --arkme-login-caption: var(--dsw-alias-label-caption, #9aae9f);
-    --arkme-login-border: var(--dsw-alias-border-l2, #dde5de);
-    --arkme-login-accent: var(--dsw-alias-state-success-primary, #09b83e);
-    --arkme-login-accent-soft: var(--dsw-alias-state-success-tertiary, #e8faee);
+    --arkme-login-text: var(--dsw-alias-label-primary, #17191c);
+    --arkme-login-secondary: var(--dsw-alias-label-secondary, #6f747b);
+    --arkme-login-caption: var(--dsw-alias-label-caption, #9ba1a9);
+    --arkme-login-border: var(--dsw-alias-border-l2, #e2e4e7);
+    --arkme-login-accent: var(--dsw-alias-state-business-primary, #8295e8);
+    --arkme-login-accent-soft: var(--dsw-alias-state-business-tertiary, #f1f2f6);
     --arkme-login-danger: var(--dsw-alias-state-error-primary, #b0442e);
     --arkme-login-danger-soft: var(--dsw-alias-interactive-bg-hover-danger, #fff3f0);
     --arkme-login-foreground: var(--dsw-static-neutral-bluish-00, #ffffff);
@@ -101,7 +101,7 @@ const loginStyles = `
     border-radius: 32px;
     padding: 32px 24px;
     background: color-mix(in srgb, var(--arkme-login-surface) 95%, transparent);
-    box-shadow: var(--dsw-shadow-lv3, 0 28px 80px rgba(9,184,62,.08));
+    box-shadow: var(--dsw-shadow-lv3, 0 28px 80px rgba(45,52,75,.08));
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
@@ -151,7 +151,7 @@ const loginStyles = `
     background: var(--arkme-login-surface);
     color: var(--arkme-login-text);
     font-weight: 600;
-    box-shadow: 0 8px 20px rgba(9,184,62,.14);
+    box-shadow: 0 8px 20px rgba(45,52,75,.14);
   }
   .dsh-arkme-login-method { margin-top: 28px; }
   .dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: center; text-align: center; }
@@ -341,11 +341,111 @@ const loginStyles = `
   .dsh-arkme-login-check-input:focus-visible + .dsh-arkme-login-check { box-shadow: 0 0 0 2px var(--arkme-login-accent-soft); }
   .dsh-arkme-login-link { color: var(--arkme-login-accent); font-weight: 600; text-decoration: none; }
   .dsh-arkme-login-link:hover { filter: brightness(.9); }
-  @media (min-width: 640px) {
-    .dsh-arkme-login-card { padding: 36px 32px; }
+  .dsh-arkme-login-page {
+    min-height: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(430px, .92fr);
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+    background: #fff;
   }
-  @media (max-height: 720px) {
-    .dsh-arkme-login-page { align-items: flex-start; padding-top: 28px; padding-bottom: 28px; }
+  .dsh-arkme-login-page::after {
+    content: '';
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    bottom: 0;
+    left: 54%;
+    width: 1px;
+    background: #eeeeef;
+    pointer-events: none;
+  }
+  .dsh-arkme-login-glow-top,
+  .dsh-arkme-login-glow-bottom { display: none; }
+  .dsh-arkme-login-story {
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    padding: 76px 74px 54px 86px;
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+  }
+  .dsh-arkme-login-wordmark { width: 106px; height: 27px; display: block; object-fit: contain; object-position: left center; }
+  .dsh-arkme-login-definition { width: min(540px, 92%); margin: auto 0; transform: translateY(-18px); }
+  .dsh-arkme-login-definition > p { margin: 0 0 20px; color: #787d88; font-size: 13px; line-height: 18px; letter-spacing: .04em; }
+  .dsh-arkme-login-definition h1 { margin: 0; color: #171923; font-size: 47px; line-height: 1.16; font-weight: 600; letter-spacing: -.045em; }
+  .dsh-arkme-login-definition > strong { margin-top: 24px; display: block; color: #252832; font-size: 17px; line-height: 24px; font-weight: 500; letter-spacing: -.015em; }
+  .dsh-arkme-login-definition > strong span { color: #747984; font-weight: 400; }
+  .dsh-arkme-login-definition > small { max-width: 470px; margin-top: 18px; display: block; color: #858992; font-size: 13px; line-height: 1.75; }
+  .dsh-arkme-login-story-foot { margin: 0; color: #a0a3aa; font-size: 10px; line-height: 16px; }
+  .dsh-arkme-login-card {
+    position: relative;
+    z-index: 3;
+    width: 390px;
+    max-width: calc(100% - 56px);
+    margin: auto;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .dsh-arkme-login-brand { display: block; }
+  .dsh-arkme-login-brand > p { margin: 0 0 12px; color: #858a94; font-size: 12px; line-height: 17px; }
+  .dsh-arkme-login-title { font-size: 30px; line-height: 1.2; font-weight: 600; letter-spacing: -.04em; }
+  .dsh-arkme-login-brand > span { margin-top: 9px; display: block; color: #858992; font-size: 13px; line-height: 19px; }
+  .dsh-arkme-login-notice { margin-top: 20px; border-color: #e4e5e8; border-radius: 12px; padding: 10px 12px; background: #f7f7f8; font-size: 12px; line-height: 18px; }
+  .dsh-arkme-login-tabs-wrap { justify-content: flex-start; margin-top: 32px; }
+  .dsh-arkme-login-tabs { width: 232px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 3px; border-radius: 11px; background: #f1f1f3; }
+  .dsh-arkme-login-tabs:has(.dsh-arkme-login-tab:nth-child(3)) { width: 330px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dsh-arkme-login-tab { height: 34px; padding: 0 9px; border-radius: 9px; color: #777b84; font-size: 12px; font-weight: 400; }
+  .dsh-arkme-login-tab:hover { color: #20232c; }
+  .dsh-arkme-login-tab[aria-selected='true'] { color: #20232c; font-weight: 500; box-shadow: 0 1px 4px rgba(30,32,38,.1); }
+  .dsh-arkme-login-method { margin-top: 28px; }
+  .dsh-arkme-login-qr-panel { min-height: 170px; justify-content: center; }
+  .dsh-arkme-login-qr-title { order: 2; margin-top: 14px; font-size: 14px; line-height: 20px; font-weight: 500; }
+  .dsh-arkme-login-qr-frame { order: 1; width: 116px; height: 116px; margin-top: 0; border: 0; border-radius: 0; background: transparent; }
+  .dsh-arkme-login-qr-image { width: 108px; height: 108px; }
+  .dsh-arkme-login-qr-loading { color: #91959d; font-size: 11px; }
+  .dsh-arkme-login-qr-relogin { border: 0; padding: 7px 10px; background: transparent; color: #51596f; font-size: 11px; font-weight: 500; }
+  .dsh-arkme-login-field + .dsh-arkme-login-field { margin-top: 16px; }
+  .dsh-arkme-login-label { padding-left: 2px; font-size: 12px; line-height: 18px; font-weight: 500; }
+  .dsh-arkme-login-input-shell { height: 46px; margin-top: 8px; border: 0; border-bottom: 1px solid #dfe0e3; border-radius: 0; padding: 0 2px; background: transparent; }
+  .dsh-arkme-login-input-shell:focus-within { border-color: #707992; box-shadow: none; }
+  .dsh-arkme-login-prefix { margin-right: 12px; border-right: 0; padding-right: 0; color: #5f636c; font-size: 13px; font-weight: 400; }
+  .dsh-arkme-login-input { font-size: 14px; line-height: 22px; }
+  .dsh-arkme-login-code-action { right: 0; width: 96px; }
+  .dsh-arkme-login-code-divider { display: none; }
+  .dsh-arkme-login-code-button { padding-left: 8px; color: #4f5669; font-size: 11px; font-weight: 500; }
+  .dsh-arkme-login-test-note { color: #858992; font-size: 11px; line-height: 18px; }
+  .dsh-arkme-login-submit { height: 46px; margin-top: 18px; border-radius: 12px; background: #171923; font-size: 14px; font-weight: 500; box-shadow: 0 7px 18px rgba(25,27,35,.12); }
+  .dsh-arkme-login-cancel { height: 46px; border-color: #dedfe3; border-radius: 12px; font-size: 14px; font-weight: 500; }
+  .dsh-arkme-login-actions { margin-top: 18px; }
+  .dsh-arkme-login-error { margin-top: 12px; border-radius: 10px; padding: 8px 10px; font-size: 11px; line-height: 17px; }
+  .dsh-arkme-login-agreement { margin-top: 20px; justify-content: flex-start; color: #858991; font-size: 10px; line-height: 16px; }
+  .dsh-arkme-login-check-label { gap: 7px; }
+  .dsh-arkme-login-check { border-color: #cfd1d6; border-radius: 5px; }
+  .dsh-arkme-login-check-input:checked + .dsh-arkme-login-check { border-color: #191b25; background: #191b25; }
+  .dsh-arkme-login-link { color: #606778; font-weight: 500; }
+  @media (min-width: 640px) {
+    .dsh-arkme-login-card { padding: 0; }
+  }
+  @media (max-width: 920px) {
+    .dsh-arkme-login-page { grid-template-columns: 1fr; }
+    .dsh-arkme-login-page::after { display: none; }
+    .dsh-arkme-login-story { display: none; }
+    .dsh-arkme-login-card { padding: 48px 0; }
+  }
+  @media (max-height: 690px) and (min-width: 921px) {
+    .dsh-arkme-login-story { padding-top: 48px; padding-bottom: 36px; }
+    .dsh-arkme-login-definition { transform: none; }
+    .dsh-arkme-login-definition h1 { font-size: 40px; }
+    .dsh-arkme-login-card { max-height: calc(100vh - 48px); overflow-y: auto; padding: 8px 4px; }
   }
 `
 
@@ -367,13 +467,24 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     <style>{loginStyles}</style>
     <span className="dsh-arkme-login-glow-top" aria-hidden />
     <span className="dsh-arkme-login-glow-bottom" aria-hidden />
+    <section className="dsh-arkme-login-story" aria-label="Arkme 产品定义">
+      <img className="dsh-arkme-login-wordmark" src={ARKME_WORDMARK_DATA_URL} alt="Arkme" />
+      <div className="dsh-arkme-login-definition">
+        <p>即我 · Arkme</p>
+        <h1>即我，<br />你的数字自我。</h1>
+        <strong>Arkme，<span>Digital ark, true me</span></strong>
+        <small>把散落在对话、快记和录音里的经历连接起来，成为一个理解你、陪你行动的数字自我。</small>
+      </div>
+      <p className="dsh-arkme-login-story-foot">你的内容属于你，并始终由你决定如何使用。</p>
+    </section>
     <section className="dsh-arkme-login-card" aria-labelledby="dsh-arkme-login-title">
       <div className="dsh-arkme-login-content">
         <div className="dsh-arkme-login-brand">
-          <ArkmeMark size={56} />
+          <p>{props.phoneBindingRequired === true ? '完成账号设置' : '欢迎回来'}</p>
           <h3 className="dsh-arkme-login-title" id="dsh-arkme-login-title">
             {props.phoneBindingRequired === true ? '完成登录' : '登录 Arkme'}
           </h3>
+          <span>{props.phoneBindingRequired === true ? '验证手机号后即可继续' : '选择你熟悉的方式继续'}</span>
         </div>
 
         {props.phoneBindingRequired === true && <>

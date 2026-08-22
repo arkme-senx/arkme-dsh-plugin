@@ -13,7 +13,7 @@ const availableUpdate: ArkmePluginUpdateStatus = {
   checkFailed: false,
   checking: false,
   acknowledged: false,
-  updateCommand: 'dsh plugin --profile web up @senguoyun/dsh-arkme --latest',
+  updateCommand: 'Arkme 应用内更新',
   canInstallInApp: false,
   installBlockedReason: 'runtime-unavailable',
   restartRequired: true,

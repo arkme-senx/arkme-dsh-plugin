@@ -11,6 +11,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.doubao.start'
   | 'topic.create'
   | 'arko.profile'
   | 'arko.session'
@@ -29,7 +30,10 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
   | 'extensions.catalog.list'
+  | 'extensions.classification.tree'
+  | 'extensions.classification.items'
   | 'extensions.catalog.detail'
+  | 'extensions.audit.check'
   | 'extensions.my-list'
   | 'extensions.delete'
   | 'extensions.installed-list'
@@ -51,6 +55,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'search.recordings'
   | 'ai-video.list'
   | 'files.assets'
+  | 'world.voiceprint.invite'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(

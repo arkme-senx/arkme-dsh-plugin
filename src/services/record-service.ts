@@ -3,6 +3,7 @@ import type {
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeConversationWriteResult,
+  ArkmeCreateFileAssetRecordResult,
   ArkmeCreateTextResult,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
@@ -12,6 +13,7 @@ import type {
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
   ArkmeTimelineItem,
+  ArkmeUploadedAsset,
 } from '../types.js'
 import { MediaService } from './media-service.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
@@ -268,6 +270,57 @@ export class RecordService {
         localState: 'failed',
         error: pending.lastError ?? safeFailureMessage(error),
       }
+    }
+  }
+
+  async createFileAssetsForConversation(
+    recordUid: string,
+    textContent: string,
+    assets: readonly ArkmeUploadedAsset[],
+  ): Promise<ArkmeCreateFileAssetRecordResult> {
+    const session = await this.runtime.requireSession()
+    const normalizedUid = recordUid.trim()
+    const normalizedText = textContent.trim()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
+      throw new ArkmePluginError('record-uid-invalid', '写入标识无效，请重试', false)
+    }
+    if (assets.length === 0 || assets.length > 20 || normalizedText.length > this.runtime.config.maxTextLength) {
+      throw new ArkmePluginError('record-file-assets-invalid', '附件内容为空、过长或数量超限', false)
+    }
+    for (const asset of assets) {
+      if (!/^[A-Za-z0-9._:-]{8,256}$/.test(asset.fileAssetUid) || asset.fileName.trim() === ''
+        || asset.fileName.length > 255 || !Number.isSafeInteger(asset.size) || asset.size <= 0
+        || ![1, 2, 3, 4].includes(asset.fileKind)) {
+        throw new ArkmePluginError('record-file-asset-invalid', '附件资产参数无效', false)
+      }
+    }
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/create',
+      {
+        record_uid: normalizedUid,
+        template_kind: 2,
+        display_kind: 0,
+        title: '',
+        text_content: normalizedText,
+        content_payload: {
+          payload_kind: 2,
+          schema_version: 1,
+          text_state: normalizedText === '' ? 3 : 1,
+          media_refs: assets.map((asset, index) => ({
+            file_asset_uid: asset.fileAssetUid,
+            content_file_role: 1,
+            render_role: 1,
+            sort_order: index,
+            file_name: asset.fileName,
+          })),
+        },
+        send_at: Date.now(),
+      },
+      session,
+    )
+    return {
+      recordUid: stringValue(data.record_uid).trim() || normalizedUid,
+      status: numberValue(data.status),
     }
   }
 

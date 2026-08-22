@@ -1,6 +1,7 @@
 import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingCursorPayload,
+  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRecordingProjectionKind,
   ArkmeRecordingSection,
   ArkmeRecordingTranscriptSection,
@@ -16,7 +17,12 @@ export interface ArkmeRecordingToolPort {
   recordingTranscript(
     dateStamp: number,
     signal?: AbortSignal,
+    source?: 'system' | 'doubao',
   ): Promise<ArkmeRecordingTranscriptSection>
+  startRecordingDoubaoBackfill(
+    dateStamp: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingDoubaoBackfillResult>
   recordingProjection(
     dateStamp: number,
     kind: ArkmeRecordingProjectionKind,

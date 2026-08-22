@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import YAML from 'yaml'
-import { ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS } from '../src/index.js'
+import {
+  ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS,
+  resolveArkmeAppVersion,
+} from '../src/index.js'
 
 describe('bundled plugin configuration', () => {
-  it('routes every owner API to the Jotmo test environment', () => {
+  it('routes every owner API and update service to the Jotmo test environment', () => {
     const patch = YAML.parse(readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')) as Array<{
       insert: Array<{ config: Record<string, unknown> }>
     }>
@@ -25,6 +28,12 @@ describe('bundled plugin configuration', () => {
       audioBaseUrl: 'https://jotmo-audio.senguo.me',
       extensionPublishBaseUrl: '',
       allowProduction: false,
+      updateCheckEnabled: true,
+      updateChannel: 'stable',
+      updateServiceBaseUrl: 'https://jotmo.senguo.me',
+      updateArtifactBaseUrl: 'https://d.jiwo.cc',
+      updateCheckIntervalHours: 12,
+      updateAllowLocalInstall: true,
     })
   })
 
@@ -32,5 +41,11 @@ describe('bundled plugin configuration', () => {
     expect(JSON.parse(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS)).toEqual({
       'prod-ed25519-20260819-1': 'm1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs=',
     })
+  })
+
+  it('falls back to the desktop-injected APP version for private plugin updates', () => {
+    expect(resolveArkmeAppVersion('', { ARKME_APP_VERSION: '1.2.3' })).toBe('1.2.3')
+    expect(resolveArkmeAppVersion('2.0.0', { ARKME_APP_VERSION: '1.2.3' })).toBe('2.0.0')
+    expect(resolveArkmeAppVersion('', {})).toBeUndefined()
   })
 })

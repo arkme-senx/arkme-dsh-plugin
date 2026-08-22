@@ -2,7 +2,9 @@ import { ArkmePluginError } from '../arkme-service.js'
 import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   ARKME_EXTENSION_ICON_MAX_BYTES, ARKME_EXTENSION_MAX_BYTES, ARKME_EXTENSION_PREVIEW_MAX_BYTES,
   type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
-  type ArkmeExtensionCatalogPage, type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
+  type ArkmeExtensionCatalogPage, type ArkmeExtensionCatalogSort,
+  type ArkmeExtensionClassificationPage, type ArkmeExtensionClassificationTree,
+  type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResolution, type ArkmeExtensionIconResult, type ArkmeExtensionIconUploadSession,
   type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionPreviewResolution, type ArkmeExtensionPreviewUploadSession,
@@ -15,11 +17,14 @@ import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
 	type ArkmeSharedExtensionDetail,
   type ArkmeInstalledExtension,
   type ArkmeExtensionManifest,
+  type ArkmeExtensionAuditResult, type ArkmeExtensionAuditTrigger,
 } from './types.js'
 import { assertExtensionArtifactSize } from './artifact.js'
 import {
   ARKME_BUNDLE_ARTIFACT_KIND, ARKME_BUNDLE_CONTRACT_VERSION, ARKME_BUNDLE_MAX_BYTES,
+  ARKME_NATIVE_BUNDLE_ARTIFACT_KIND, ARKME_NATIVE_BUNDLE_CONTRACT_VERSION,
   type ArkmeBundleArtifact, type ArkmeBundlePublishSource,
+  type ArkmeNativeBundleArtifact, type ArkmeNativeBundlePublishSource,
 } from './bundle-artifact.js'
 import type { ArkmeExtensionUploadSlot } from './types.js'
 
@@ -140,8 +145,52 @@ export class ExtensionPublishClient {
 		}
   }
 
+  async createNativeBundlePublishSession(input: {
+    extension_id?: string
+    name: string
+    description: string
+    visibility: ArkmeExtensionVisibility
+    changelog?: string
+    idempotency_key: string
+    bundle: ArkmeNativeBundleArtifact
+    source: ArkmeNativeBundlePublishSource['source']
+    listingSource?: { type: 'github_repository'; url: string }
+  }, signal?: AbortSignal): Promise<ArkmeBundlePublishSession> {
+    if (input.bundle.bytes.byteLength <= 0 || input.bundle.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES
+      || input.source.bytes.byteLength <= 0 || input.source.bytes.byteLength > ARKME_BUNDLE_MAX_BYTES) {
+      throw new ArkmePluginError('extension-bundle-size-invalid', '扩展 Bundle 或源码大小无效', false, 400)
+    }
+    try {
+      return await this.post('/api/v1/extensions/publish-session/create', {
+        artifact_contract_version: ARKME_NATIVE_BUNDLE_CONTRACT_VERSION,
+        artifact_kind: ARKME_NATIVE_BUNDLE_ARTIFACT_KIND,
+        ...(input.extension_id === undefined ? {} : { extension_id: input.extension_id }),
+        name: input.name,
+        description: input.description,
+        package_name: input.bundle.packageName,
+        version: input.bundle.version,
+        execution_model: 'dsh-native',
+        visibility: input.visibility,
+        ...(input.changelog === undefined ? {} : { changelog: input.changelog }),
+        bundle_size: input.bundle.bytes.byteLength,
+        bundle_sha256: input.bundle.bundleSha256,
+        package_json_sha256: input.bundle.packageJsonSha256,
+        source_size: input.source.bytes.byteLength,
+        source_sha256: input.source.sourceSha256,
+        ...(input.listingSource === undefined ? {} : { source: input.listingSource }),
+        idempotency_key: input.idempotency_key,
+      }, signal)
+    } catch (error) {
+      throw extensionSourceError(error)
+    }
+  }
+
   async uploadBundle(slot: ArkmeExtensionUploadSlot, bundle: ArkmeBundleArtifact, signal?: AbortSignal): Promise<void> {
     await this.uploadBytes(slot, bundle.bytes, 'application/vnd.dsh.bundle+gzip', 'Bundle', signal)
+  }
+
+  async uploadNativeBundle(slot: ArkmeExtensionUploadSlot, bundle: ArkmeNativeBundleArtifact, signal?: AbortSignal): Promise<void> {
+    await this.uploadBytes(slot, bundle.bytes, 'application/vnd.dsh.native-package+gzip', '原生 DSH Bundle', signal)
   }
 
   async uploadSource(
@@ -161,7 +210,7 @@ export class ExtensionPublishClient {
     assertExtensionArtifactSize(artifact.bytes.byteLength)
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-upload-url-invalid', '扩展市场返回了无效上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-upload-url-invalid', '市集返回了无效上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -281,14 +330,35 @@ export class ExtensionPublishClient {
 		return await this.post('/api/public/v1/extensions/share/detail', { share_ref: shareRef }, signal)
 	}
 
-  async list(input: { query?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
+  async list(input: { query?: string; sort?: ArkmeExtensionCatalogSort; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/public/v1/extensions/list', input, signal)
+  }
+
+  async classificationTree(limit = 30, signal?: AbortSignal): Promise<ArkmeExtensionClassificationTree> {
+    return await this.post('/api/public/v1/extensions/classification/tree', { limit }, signal)
+  }
+
+  async classificationItems(input: {
+    category_id: string
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+  }, signal?: AbortSignal): Promise<ArkmeExtensionClassificationPage> {
+    return await this.post('/api/public/v1/extensions/classification/items', input, signal)
   }
 
   async detail(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
     const response = await this.post<ArkmeExtensionCatalogItem | {
       extension: ArkmeExtensionCatalogItem
-      latest_version?: string | { version?: string; manifest?: ArkmeExtensionCatalogItem['manifest'] }
+      latest_version?: string | {
+        version?: string
+        manifest?: ArkmeExtensionCatalogItem['manifest']
+        artifact_contract_version?: 2 | 3
+        artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
+        execution_model?: 'arkme-sandboxed' | 'dsh-native'
+        native_capabilities?: import('./types.js').ArkmeNativeCapability[]
+      }
     }>('/api/public/v1/extensions/detail', { extension_id: extensionId }, signal)
     if (!('extension' in response)) return catalogItemWithSafeManifest(response)
     const latest = response.latest_version
@@ -304,13 +374,58 @@ export class ExtensionPublishClient {
             latest_stable_version: latest.version,
             version: latest.version,
             ...(latestManifest === undefined ? {} : { manifest: latestManifest }),
+            ...(latest.artifact_contract_version === undefined ? {} : { artifact_contract_version: latest.artifact_contract_version }),
+            ...(latest.artifact_kind === undefined ? {} : { artifact_kind: latest.artifact_kind }),
+            ...(latest.execution_model === undefined ? {} : { execution_model: latest.execution_model }),
+            ...(latest.native_capabilities === undefined ? {} : { native_capabilities: [...latest.native_capabilities] }),
           }
         : {}),
     }
   }
 
+  async recordOpen(extensionId: string, signal?: AbortSignal): Promise<{
+    extension_id: string
+    open_count: number
+    idempotent_replay: boolean
+  }> {
+    return await this.post('/api/v1/extensions/open', { extension_id: extensionId }, signal)
+  }
+
+  async setInstallationState(input: {
+    extension_id: string
+    installation_id: string
+    installed: boolean
+  }, signal?: AbortSignal): Promise<{
+    extension_id: string
+    installed: boolean
+    install_user_count: number
+  }> {
+    return await this.post('/api/v1/extensions/installation-state/update', input, signal)
+  }
+
+  async syncInstallationStates(input: {
+    installation_id: string
+    installed_extension_ids: string[]
+  }, signal?: AbortSignal): Promise<{
+    installation_id: string
+    install_user_counts: Record<string, number>
+  }> {
+    return await this.post('/api/v1/extensions/installation-state/sync', input, signal)
+  }
+
   async versions(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
     return await this.post('/api/public/v1/extensions/version-list', { extension_id: extensionId }, signal)
+  }
+
+  async auditExtension(
+    extensionId: string,
+    trigger: ArkmeExtensionAuditTrigger,
+    signal?: AbortSignal,
+  ): Promise<ArkmeExtensionAuditResult> {
+    return await this.post('/api/v1/extensions/audit/check', {
+      extension_id: extensionId,
+      trigger,
+    }, signal)
   }
 
   async myList(input: { cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
@@ -390,7 +505,7 @@ export class ExtensionPublishClient {
     }
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-icon-upload-url-invalid', '扩展市场返回了无效头像上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-icon-upload-url-invalid', '市集返回了无效头像上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -444,7 +559,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(resolution.download_url) } catch (error) {
-      throw new ArkmePluginError('extension-icon-download-url-invalid', '扩展市场返回了无效头像下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-icon-download-url-invalid', '市集返回了无效头像下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -517,7 +632,7 @@ export class ExtensionPublishClient {
     }
     let url: URL
     try { url = new URL(uploadUrl) } catch (error) {
-      throw new ArkmePluginError('extension-preview-upload-url-invalid', '扩展市场返回了无效预览图上传地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-preview-upload-url-invalid', '市集返回了无效预览图上传地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'upload')
     const controller = new AbortController()
@@ -592,7 +707,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(resolution.download_url) } catch (error) {
-      throw new ArkmePluginError('extension-preview-download-url-invalid', '扩展市场返回了无效预览图下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-preview-download-url-invalid', '市集返回了无效预览图下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -695,7 +810,7 @@ export class ExtensionPublishClient {
   ): Promise<Uint8Array> {
     let url: URL
     try { url = new URL(artifactUrl) } catch (error) {
-      throw new ArkmePluginError('extension-download-url-invalid', '扩展市场返回了无效下载地址', false, 502, { cause: error })
+      throw new ArkmePluginError('extension-download-url-invalid', '市集返回了无效下载地址', false, 502, { cause: error })
     }
     assertSafeArtifactUrl(url, 'download')
     const controller = new AbortController()
@@ -806,7 +921,7 @@ function safeSignedHeaders(headers: Readonly<Record<string, string>>): Record<st
     if (!/^[a-z0-9-]{1,64}$/.test(normalized)
       || ['authorization', 'cookie', 'host', 'proxy-authorization'].includes(normalized)
       || /[\r\n]/.test(value)) {
-      throw new ArkmePluginError('extension-signed-header-invalid', '扩展市场返回了不安全的制品请求头', false, 502)
+      throw new ArkmePluginError('extension-signed-header-invalid', '市集返回了不安全的制品请求头', false, 502)
     }
     result[normalized] = value
   }

@@ -9,7 +9,7 @@ export interface ArkmeTopicCreateDialogProps {
   onConfirm: (title: string) => void
 }
 
-export const ARKME_TOPIC_CREATE_ACTION_COLOR = '#09B83E'
+export const ARKME_TOPIC_CREATE_ACTION_COLOR = '#17191C'
 
 const colors = {
   text: arkmeTheme.text,

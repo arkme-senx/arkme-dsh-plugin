@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
@@ -42,6 +43,13 @@ const topicRow: ArkmeSourceTreeRow = {
 }
 
 describe('topic create UI', () => {
+  it('keeps the add action at the far left of the composer tool row', async () => {
+    const source = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain("justifyContent: 'space-between'")
+    expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('aria-label="发送消息"'))
+  })
+
   it('uses a compact trigger and a rounded floating sort menu', () => {
     const control = renderToStaticMarkup(<ArkmeSourceSortControl value="default" onChange={() => {}} />)
     const menu = renderToStaticMarkup(<ArkmeSourceSortMenu value="default" onSelect={() => {}} />)
@@ -122,10 +130,10 @@ describe('topic create UI', () => {
     expect(`${child}${root}`).toContain('background:var(--dsw-alias-bg-mask-1, rgba(19, 22, 26, 0.34))')
     expect(`${child}${root}`).toContain('box-shadow:var(--dsw-shadow-lv3')
     expect(`${child}${root}`).toContain('--dsw-specific-menu')
-    expect(`${child}${root}`).toContain('--dsw-alias-state-success-tertiary')
+    expect(`${child}${root}`).toContain('--dsw-alias-state-business-tertiary')
     expect(`${child}${root}`).not.toContain('--dsw-specific-dialog-fill')
     expect(`${child}${root}`).not.toContain('--dsw-alias-brand-disabled')
-    expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#09B83E')
+    expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#17191C')
   })
 
   it('shows the child-topic shortcut only for a hovered topic row', () => {
@@ -152,19 +160,21 @@ describe('topic create UI', () => {
     expect(hovered).toContain('aria-label="在工作下创建子主题"')
     expect(hovered).not.toContain('>36</span>')
     expect(hovered).toContain('<svg')
-    expect(hovered).toContain('width:58px')
-    expect(hovered).toContain('padding-right:12px')
+    expect(hovered).toContain('width:calc(100% - 8px)')
+    expect(hovered).toContain('margin:2px 4px')
+    expect(hovered).toContain('width:44px')
+    expect(hovered).toContain('padding-right:6px')
     expect(hovered).toContain('var(--dsw-alias-label-caption, #a3a8ae)')
     expect(leaf).toContain('background:var(--dsw-alias-label-caption, #a3a8ae)')
     expect(hovered).not.toContain('＋')
     expect(resting).not.toContain('transition:')
     expect(hovered).not.toContain('transition:')
-    expect(selected).toContain('background:var(--dsw-alias-state-success-tertiary, #def3e8)')
-    expect(selected).toContain('inset 2px 0 var(--dsw-alias-state-success-primary, #09b83e)')
-    expect(created).toContain('background:var(--dsw-alias-state-success-tertiary, #def3e8)')
+    expect(selected).toContain('background:#f1f2f6')
+    expect(selected).toContain('inset 2px 0 #9eadff')
+    expect(created).toContain('background:#f1f2f6')
     expect(created).toContain('box-shadow:none')
     expect(created).toContain('transition:background-color 140ms ease')
-    expect(created).not.toContain('inset 2px 0 #20c66a')
+    expect(created).not.toContain('inset 2px 0 #9eadff')
   })
 
   it('keeps the root create action in a non-scrolling footer', () => {

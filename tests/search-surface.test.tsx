@@ -7,10 +7,11 @@ describe('Arkme search surface', () => {
   it('starts with quick-note search and exposes desktop image and AI video quick entries', () => {
     const markup = renderToStaticMarkup(<ArkmeSearchSurface />)
 
-    expect(markup).toContain('placeholder="搜索"')
-    expect(markup).toContain('/arkme-self/api/call/image_search_grey.svg')
+    expect(markup).toContain('placeholder="搜索人物、主题或你记得的一句话…"')
+    expect(markup).toContain('viewBox="0 0 256 256"')
+    expect(markup).toContain('fill="#a3a7af"')
     expect(markup).not.toContain('>搜索</button>')
-    expect(markup).toContain('>图片</button>')
+    expect(markup).toContain('>图片</span>')
     expect(markup).toContain('AI 视频')
     for (const label of ['图片/视频', '录音', '外部链接', '文件', '长文']) expect(markup).not.toContain(label)
   })

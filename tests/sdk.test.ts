@@ -18,6 +18,61 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('uploads World images as raw files and keeps text and file-asset publish operations separate', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/upload')) {
+        expect(init?.body).toBeInstanceOf(Blob)
+        expect(new Headers(init?.headers).get('x-arkme-file-name')).toBe('a.png')
+        return success({ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 4, fileKind: 1 })
+      }
+      const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+      calls.push(request)
+      return success({
+        recordSaved: true, recordState: 'synced', worldPublished: true,
+        visibility: 'visible', checkStatus: 2, retryable: false,
+      })
+    })
+    const sdk = createArkmeSdk({ fetchImpl: fetchImpl as typeof fetch })
+    const mutationId = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+    const asset = await sdk.upload(new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' }), { fileName: 'a.png' })
+
+    await sdk.publishWorldText({ clientMutationId: mutationId, textContent: '文字正文' })
+    await sdk.publishWorldFileAssets({ clientMutationId: mutationId, textContent: '图片正文', fileAssets: [{ ...asset, fileKind: 1 }] })
+
+    expect(calls).toEqual([
+      { operation: 'world.publish-text', params: { clientMutationId: mutationId, textContent: '文字正文' } },
+      { operation: 'world.publish-file-assets', params: {
+        clientMutationId: mutationId,
+        textContent: '图片正文',
+        fileAssets: [{ fileAssetUid: 'asset-12345678', fileName: 'a.png', mimeType: 'image/png', size: 4, fileKind: 1 }],
+      } },
+    ])
+  })
+
+  it('reads one recording day and explicitly starts its Doubao transcript', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return request.operation === 'recordings.day'
+          ? success({ dateStamp: request.params?.dateStamp, transcript: { state: 'empty', items: [], message: '' } })
+          : success({ queuedChildCount: 1, inFlightChildCount: 0, missingAudioChildCount: 0 })
+      },
+    })
+    const dateStamp = new Date(2026, 7, 17).getTime()
+
+    await expect(sdk.recordingDay(dateStamp)).resolves.toMatchObject({ dateStamp })
+    await expect(sdk.startRecordingDoubaoBackfill(dateStamp)).resolves.toMatchObject({ queuedChildCount: 1 })
+    expect(calls).toEqual([
+      { operation: 'recordings.day', params: { dateStamp } },
+      { operation: 'recordings.doubao.start', params: { dateStamp } },
+    ])
+    await expect(sdk.startRecordingDoubaoBackfill(dateStamp + 1)).rejects.toThrow(/local-day timestamp/)
+    expect(calls).toHaveLength(2)
+  })
+
   it('lists image-library pages through the public same-origin operation', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -30,6 +85,68 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.images({ limit: 24, cursor: 'next-images' })).resolves.toMatchObject({ hasMore: false })
     expect(calls).toEqual([{ operation: 'images.list', params: { limit: 24, cursor: 'next-images' } }])
+  })
+
+  it('searches and adds contacts through opaque same-origin contracts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'contacts.search') return success({
+          contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432', identifierKind: 'arkme_id',
+          displayName: '林林', registered: true, inviteBySms: false, canAdd: true, isSelf: false,
+        })
+        if (request.operation === 'contacts.add') return success({
+          state: 'ready', source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '林林', activeAtMillis: 1, unreadCount: 0 },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    const candidate = await sdk.searchContact('lin-lin')
+    await expect(sdk.addContact(candidate.contactRef, {
+      remark: '同事', requestUid: '9f445b4f-55aa-45c1-9250-25161832d433',
+    })).resolves.toMatchObject({ state: 'ready' })
+    expect(calls).toEqual([
+      { operation: 'contacts.search', params: { identifier: 'lin-lin' } },
+      { operation: 'contacts.add', params: {
+        contactRef: candidate.contactRef, remark: '同事', requestUid: '9f445b4f-55aa-45c1-9250-25161832d433',
+      } },
+    ])
+  })
+
+  it('creates groups and Bots through safe same-origin contracts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'group.create') return success({
+          sourceRef: 'group-source', kind: 'group_chat', displayName: '项目群', activeAtMillis: 1, unreadCount: 0,
+        })
+        if (request.operation === 'bots.create') return success({
+          botRef: 'bot-ref', name: '总结助手', provider: 'openclaw', description: '',
+          status: 'offline', directChatAvailable: false,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    const mutationId = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+    await expect(sdk.createGroup(' 项目群 ', { clientMutationId: mutationId }))
+      .resolves.toMatchObject({ kind: 'group_chat' })
+    await expect(sdk.createBot({
+      name: ' 总结助手 ', provider: 'openclaw', avatar: 'file_asset://avatar-asset-1',
+    }))
+      .resolves.toMatchObject({ botRef: 'bot-ref' })
+    expect(calls).toEqual([
+      { operation: 'group.create', params: { title: '项目群', clientMutationId: mutationId } },
+      { operation: 'bots.create', params: {
+        name: '总结助手', provider: 'openclaw', avatar: 'file_asset://avatar-asset-1',
+      } },
+    ])
+    await expect(sdk.createBot({
+      name: '错误头像', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
+    })).rejects.toThrow('file_asset reference')
   })
 
   it('manages extension previews through same-origin Host operations', async () => {
@@ -123,6 +240,60 @@ describe('Arkme SDK', () => {
     expect(calls).toEqual([
       { operation: 'extensions.installed-list' },
       { operation: 'extensions.enabled.set', params: { extensionId: 'ext-1', enabled: false } },
+    ])
+  })
+
+  it('deletes an owned extension through the complete Host lifecycle contract', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({
+          extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
+          installed: false, active: false, references_removed: true, removed_source_count: 2,
+          restart_required: true, message: '扩展已删除；服务端保留可恢复数据，当前 DSH 重启后完成本地移除',
+        })
+      },
+    })
+
+    await expect(sdk.deleteExtension(' ext-owned ')).resolves.toMatchObject({
+      status: 'deleted', references_removed: true, restart_required: true,
+    })
+    expect(calls).toEqual([{ operation: 'extensions.delete', params: { extensionId: 'ext-owned' } }])
+    await expect(sdk.deleteExtension(' ')).rejects.toThrow('must not be empty')
+  })
+
+  it('queries V3 market detail and native install capabilities through the public SDK', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'extensions.catalog.list') return success({ items: [], total: 0 })
+        if (request.operation === 'extensions.catalog.detail') return success({
+          extension_id: 'ext-v3', name: 'Native V3', description: '', visibility: 'public',
+          artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
+        })
+        if (request.operation === 'extensions.install.preview') return success({
+          extension_id: 'ext-v3', version: '1.0.0', artifact_contract_version: 3,
+          artifact_kind: 'dsh-native-package-tgz', execution_model: 'dsh-native',
+          native_capabilities: ['bin', 'runtime_dependencies'], requires_native_confirmation: true,
+          manifest: {}, revoked: false,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.searchExtensions('native', 10)).resolves.toMatchObject({ total: 0 })
+    await expect(sdk.extensionDetail('ext-v3')).resolves.toMatchObject({ artifact_contract_version: 3 })
+    await expect(sdk.extensionInstallPreview('ext-v3', '1.0.0')).resolves.toMatchObject({
+      artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
+    })
+    expect(calls).toEqual([
+      { operation: 'extensions.catalog.list', params: { query: 'native', limit: 10 } },
+      { operation: 'extensions.catalog.detail', params: { extensionId: 'ext-v3' } },
+      { operation: 'extensions.install.preview', params: { extensionId: 'ext-v3', version: '1.0.0' } },
     ])
   })
 
@@ -283,13 +454,52 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('exposes group candidate discovery and member addition without raw user IDs', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'group.member-candidates') return success({ items: [], total: 0, hasMore: false, mode: 'direct_add' })
+        if (request.operation === 'group.invite-preview') return success({ source: { sourceRef: 'group-ref' }, title: '群聊', inviterDisplayName: '发起人', inviteLink: 'https://example.test/invite', expireAtMillis: 1, mode: 'direct_add' })
+        if (request.operation === 'group.members.add') return success({ sourceRef: 'group-ref', mode: 'direct_add', items: [], addedCount: 0, invitedCount: 0, failedCount: 0 })
+        if (request.operation === 'group.bots') return success({ groupSourceRef: 'group-ref', displayName: '群聊', canAddBots: true, items: [] })
+        if (request.operation === 'group.bot.add') return success({ groupSourceRef: 'group-ref', botRef: 'bot-ref', installed: true })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    await expect(sdk.listGroupMemberCandidates('group-ref', { query: '林', limit: 10 })).resolves.toMatchObject({ mode: 'direct_add' })
+    await expect(sdk.groupInvitePreview('group-ref')).resolves.toMatchObject({ title: '群聊' })
+    await expect(sdk.addGroupMembers('group-ref', [' candidate-ref '])).resolves.toMatchObject({ sourceRef: 'group-ref' })
+    await expect(sdk.listGroupBots('group-ref')).resolves.toMatchObject({ canAddBots: true })
+    await expect(sdk.addGroupBot('group-ref', 'bot-ref')).resolves.toMatchObject({ installed: true })
+    expect(calls).toEqual([
+      { operation: 'group.member-candidates', params: { sourceRef: 'group-ref', query: '林', limit: 10 } },
+      { operation: 'group.invite-preview', params: { sourceRef: 'group-ref' } },
+      { operation: 'group.members.add', params: { sourceRef: 'group-ref', candidateRefs: ['candidate-ref'] } },
+      { operation: 'group.bots', params: { sourceRef: 'group-ref' } },
+      { operation: 'group.bot.add', params: { sourceRef: 'group-ref', botRef: 'bot-ref' } },
+    ])
+  })
+
   it('exposes typed current-user extension inventory and Cordis publication', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
       fetchImpl: async (_input, init) => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
-        if (request.operation === 'extensions.mine.list') return success({ items: [], warnings: [] })
+        if (request.operation === 'extensions.mine.list') return success({ items: [
+          {
+            ownedRef: 'owned-cordis', name: 'Cordis', description: '', states: ['cordis'],
+            halves: { host: true, client: false },
+            publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+          },
+          {
+            ownedRef: 'owned-native', name: 'Native', description: '', states: ['persisted'],
+            halves: { host: true, client: false },
+            publish: { allowed: true, mode: 'new', route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' },
+          },
+        ], warnings: [] })
         if (request.operation === 'extensions.mine.publish') {
           return success({ extension_id: 'ext-1', version: '1.0.0', status: 'published' })
         }
@@ -312,11 +522,18 @@ describe('Arkme SDK', () => {
       },
     })
 
-    await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toEqual({ items: [], warnings: [] })
+    await expect(sdk.myExtensions({ currentSessionId: 'session-1' })).resolves.toMatchObject({ items: [
+      { publish: { route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' } },
+      { publish: { route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' } },
+    ], warnings: [] })
     await expect(sdk.publishMyExtension({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
 		visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
 		clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+    })).resolves.toMatchObject({ status: 'published' })
+    await expect(sdk.publishMyExtension({
+      ownedRef: 'owned-native', name: '原生天气', description: '原生天气卡片', version: '1.1.0',
+		visibility: 'public', clientMutationId: 'b30ce6f3-b8eb-4d2e-b9ea-cfed4e209ece',
     })).resolves.toMatchObject({ status: 'published' })
     await expect(sdk.updateExtensionMetadata('ext-1', {
       name: '新名称', description: '', visibility: 'public',
@@ -334,6 +551,10 @@ describe('Arkme SDK', () => {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
 			visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
 			clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      } },
+      { operation: 'extensions.mine.publish', params: {
+        ownedRef: 'owned-native', name: '原生天气', description: '原生天气卡片', version: '1.1.0',
+			visibility: 'public', clientMutationId: 'b30ce6f3-b8eb-4d2e-b9ea-cfed4e209ece',
       } },
       { operation: 'extensions.metadata.update', params: {
         extensionId: 'ext-1', name: '新名称', description: '', visibility: 'public',

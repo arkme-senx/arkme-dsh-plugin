@@ -1,4 +1,5 @@
 import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
   ArkmeArrangementListStatus,
@@ -10,18 +11,30 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeBotProvider,
+  ArkmeBotSummary,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
+  ArkmeContactAddResult,
+  ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeCreateTextResult,
+  ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberCandidateList,
+  ArkmeGroupInvitePreview,
+  ArkmeGroupMemberList,
+  ArkmeGroupBotAddResult,
+  ArkmeGroupBotCandidateList,
   ArkmeImagePayload,
   ArkmeImageSearchResult,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
+  ArkmeRecordingDay,
+  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
@@ -32,6 +45,7 @@ import type {
   ArkmeProviderState,
   ArkmeRichSendInput,
   ArkmeSourceDirectory,
+  ArkmeSourceItem,
   ArkmeSourceList,
   ArkmeSourceReadResult,
   ArkmeSourceSendResult,
@@ -41,13 +55,22 @@ import type {
   ArkmeUploadedAsset,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
+  ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
+  ArkmeWorldPublishFileAssetsInput,
+  ArkmeWorldPublishResult,
+  ArkmeWorldPublishTextInput,
 } from '../types.js'
 import type {
-  ArkmeExtensionCatalogItem, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
-  ArkmeExtensionIconResult, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort,
+  ArkmeExtensionClassificationPage, ArkmeExtensionClassificationTree,
+  ArkmeExtensionCompleteDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionIconResult, ArkmeExtensionInstallPreview, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
+  ArkmeNativeCapability,
+  ArkmeExtensionAuditResult,
   ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery, ArkmeExtensionPreviewMediaType,
   ArkmeExtensionReviewCreateInput,
@@ -77,6 +100,9 @@ export type {
   ArkmeArrangementReminderWriteResult,
   ArkmeArrangementStatus,
   ArkmeAuthSnapshot,
+  ArkmeBotProvider,
+  ArkmeBotStatus,
+  ArkmeBotSummary,
   ArkmeCalendarBucketDay,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
@@ -84,9 +110,22 @@ export type {
   ArkmeCalendarRecordItem,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
+  ArkmeContactAddResult,
+  ArkmeContactIdentifierKind,
+  ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeContentKind,
   ArkmeCreateTextResult,
+  ArkmeGroupMemberAddItemResult,
+  ArkmeGroupMemberAddResult,
+  ArkmeGroupMemberAddStatus,
+  ArkmeGroupMemberCandidate,
+  ArkmeGroupMemberCandidateList,
+  ArkmeGroupMemberItem,
+  ArkmeGroupMemberList,
+  ArkmeGroupBotAddResult,
+  ArkmeGroupBotCandidate,
+  ArkmeGroupBotCandidateList,
   ArkmeGroupAvatarFallback,
   ArkmeGroupAvatarPresentation,
   ArkmeGroupAvatarSlot,
@@ -97,6 +136,8 @@ export type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
+  ArkmeRecordingDay,
+  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,
@@ -129,26 +170,36 @@ export type {
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintAvailabilityItem,
+  ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
+  ArkmeWorldVoiceprintSocialRelation,
+  ArkmeWorldVoiceprintSocialRelationType,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
 } from '../types.js'
 export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+  ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute, ArkmeMyExtensionPublishState,
   ArkmeMyExtensionState, ArkmeMyExtensionWarning,
 } from '../extensions/owned-types.js'
 export type {
   ArkmeExtensionCatalogItem,
+  ArkmeExtensionCatalogPage,
+  ArkmeExtensionAuditResult,
+  ArkmeExtensionCompleteDeleteResult,
   ArkmeExtensionEnabledResult,
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult,
+  ArkmeExtensionInstallPreview,
   ArkmeExtensionUnavailableView,
   ArkmeExtensionMetadataUpdateInput,
   ArkmeExtensionPreviewGallery,
   ArkmeExtensionPreviewItem,
   ArkmeExtensionPreviewMediaType,
   ArkmeInstalledExtensionView,
+  ArkmeNativeCapability,
   ArkmeExtensionRatingSummary,
   ArkmeExtensionReviewAvatarFallback,
   ArkmeExtensionReviewCreateInput,
@@ -233,6 +284,26 @@ export class ArkmeSdk {
     return await this.call<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, signal)
   }
 
+  /** Search the market through the same Host owner used by Arkme UI and Tools. */
+  async searchExtensions(query = '', limit = 20, signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 50) throw new TypeError('Arkme extension search limit must be 1-50')
+    return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', { query: query.trim(), limit }, signal)
+  }
+
+  async extensionDetail(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionCatalogItem>('extensions.catalog.detail', { extensionId: extensionId.trim() }, signal)
+  }
+
+  /** Query V1/V2/V3 install authority before asking the user to approve installation. */
+  async extensionInstallPreview(extensionId: string, version?: string, signal?: AbortSignal): Promise<ArkmeExtensionInstallPreview> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionInstallPreview>('extensions.install.preview', {
+      extensionId: extensionId.trim(),
+      ...(version === undefined || version.trim() === '' ? {} : { version: version.trim() }),
+    }, signal)
+  }
+
   async extensionEnabledState(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionEnabledState> {
     if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
     return await this.call<ArkmeExtensionEnabledState>('extensions.enabled-state', { extensionId }, signal)
@@ -246,6 +317,16 @@ export class ArkmeSdk {
   ): Promise<ArkmeExtensionEnabledResult> {
     if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
     return await this.call<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled }, signal)
+  }
+
+  /**
+   * Delete an owned marketplace extension and remove its current local runtime/Profile/source references.
+   * Consumers must call this only from an explicit current human delete action.
+   */
+  async deleteExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCompleteDeleteResult> {
+    const normalized = extensionId.trim()
+    if (normalized === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionCompleteDeleteResult>('extensions.delete', { extensionId: normalized }, signal)
   }
 
   /** Build the same-origin URL used by every extension list/detail avatar surface. */
@@ -362,6 +443,12 @@ export class ArkmeSdk {
     }, signal)
   }
 
+  /** Run a user-triggered AI audit for one marketplace extension without installing it. */
+  async auditExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionAuditResult> {
+    if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionAuditResult>('extensions.audit.check', { extensionId: extensionId.trim() }, signal)
+  }
+
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
   }
@@ -374,7 +461,117 @@ export class ArkmeSdk {
     )
   }
 
-  /** List current-account Cordis, Profile-local and cloud-published extensions through one Host owner. */
+  /** Search by an exact phone number or Arkme ID without exposing internal account identifiers. */
+  async searchContact(identifier: string, signal?: AbortSignal): Promise<ArkmeContactSearchResult> {
+    const value = identifier.trim()
+    if (value === '' || value.length > 64) throw new TypeError('Arkme contact identifier is invalid')
+    return await this.call<ArkmeContactSearchResult>('contacts.search', { identifier: value }, signal)
+  }
+
+  /** Add the exact candidate returned by searchContact and open its idempotent private/pending chat. */
+  async addContact(
+    contactRef: string,
+    options: { remark?: string; requestUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeContactAddResult> {
+    const ref = contactRef.trim()
+    if (!/^arkme-contact-v1\.[0-9a-f-]{36}$/i.test(ref)) throw new TypeError('Arkme contact reference is invalid')
+    const remark = options.remark?.trim() ?? ''
+    if (Array.from(remark).length > 100) throw new TypeError('Arkme contact remark is too long')
+    const requestUid = options.requestUid ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestUid)) {
+      throw new TypeError('Arkme contact request id must be a UUID')
+    }
+    return await this.call<ArkmeContactAddResult>('contacts.add', {
+      contactRef: ref,
+      ...(remark === '' ? {} : { remark }),
+      requestUid,
+    }, options.signal)
+  }
+
+  /** Create an initially owner-only group chat with an idempotent client mutation id. */
+  async createGroup(
+    title: string,
+    options: { clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceItem> {
+    const normalizedTitle = title.trim()
+    if (normalizedTitle === '' || Array.from(normalizedTitle).length > 80) {
+      throw new TypeError('Arkme group title is invalid')
+    }
+    const clientMutationId = options.clientMutationId ?? crypto.randomUUID()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientMutationId)) {
+      throw new TypeError('Arkme group mutation id must be a UUID')
+    }
+    return await this.call<ArkmeSourceItem>('group.create', {
+      title: normalizedTitle,
+      clientMutationId,
+    }, options.signal)
+  }
+
+  /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
+  async createBot(
+    input: { name: string; provider: ArkmeBotProvider; description?: string; avatar?: string },
+    signal?: AbortSignal,
+  ): Promise<ArkmeBotSummary> {
+    const name = input.name.trim()
+    if (name === '') throw new TypeError('Arkme Bot name must not be empty')
+    if (input.provider !== 'openclaw' && input.provider !== 'webhook') {
+      throw new TypeError('Arkme Bot provider is unsupported')
+    }
+    const description = input.description?.trim() ?? ''
+    const avatar = input.avatar?.trim() ?? ''
+    if (avatar !== '' && !isArkmeBotAvatarRef(avatar)) {
+      throw new TypeError('Arkme Bot avatar must be a file_asset reference')
+    }
+    return await this.call<ArkmeBotSummary>('bots.create', {
+      name,
+      provider: input.provider,
+      ...(description === '' ? {} : { description }),
+      ...(avatar === '' ? {} : { avatar }),
+    }, signal)
+  }
+
+  /** Browse public marketplace extensions with server-owned query, ordering and cursor semantics. */
+  async extensionCatalog(options: {
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeExtensionCatalogPage> {
+    return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', {
+      ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
+      ...(options.sort === undefined ? {} : { sort: options.sort }),
+      ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** Read the AI-generated marketplace category tree. */
+  async extensionCategories(options: { limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeExtensionClassificationTree> {
+    return await this.call<ArkmeExtensionClassificationTree>('extensions.classification.tree', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** Browse one AI category while retaining the same server-side ordering contract. */
+  async extensionCategoryItems(categoryId: string, options: {
+    query?: string
+    sort?: ArkmeExtensionCatalogSort
+    cursor?: string
+    limit?: number
+    signal?: AbortSignal
+  } = {}): Promise<ArkmeExtensionClassificationPage> {
+    if (categoryId.trim() === '') throw new TypeError('Arkme extension category id must not be empty')
+    return await this.call<ArkmeExtensionClassificationPage>('extensions.classification.items', {
+      categoryId: categoryId.trim(),
+      ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
+      ...(options.sort === undefined ? {} : { sort: options.sort }),
+      ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    }, options.signal)
+  }
+
+  /** List current-account sources with their Host-derived dynamic-cordis-v2 or profile-native-v3 publication route. */
   async myExtensions(options: { currentSessionId?: string; signal?: AbortSignal } = {}): Promise<ArkmeMyExtensionPage> {
     return await this.call<ArkmeMyExtensionPage>('extensions.mine.list', {
       ...(options.currentSessionId === undefined || options.currentSessionId.trim() === ''
@@ -383,7 +580,7 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  /** Publish one exact live Cordis Package after the caller has obtained explicit current-user intent. */
+  /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */
   publishMyExtension(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmeExtensionPublishResult> {
     if (input.ownedRef.trim() === '') throw new TypeError('Arkme extension reference must not be empty')
     if (input.name.trim() === '' || input.name.trim().length > 120) throw new TypeError('Arkme extension name is invalid')
@@ -469,6 +666,29 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read the current account's public World posts through the authenticated Provider boundary. */
+  async myWorldFeed(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    return await this.call<ArkmeWorldFeedPage>('world.mine', {
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
+  /** Read one user's public World homepage through the authenticated Provider boundary. */
+  async userWorldFeed(
+    userId: number,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new TypeError('Arkme World userId must be a positive integer')
+    return await this.call<ArkmeWorldFeedPage>('world.user', {
+      userId,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
   async worldVoiceprintPlaybackAvailability(
     recordRefs: readonly string[],
     signal?: AbortSignal,
@@ -491,6 +711,25 @@ export class ArkmeSdk {
       recordRef: input.recordRef,
       ...(input.chunkIndex === undefined ? {} : { chunkIndex: input.chunkIndex }),
     }, signal)
+  }
+
+  async inviteWorldVoiceprint(
+    recordRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintInviteResult> {
+    if (recordRef.trim() === '') throw new TypeError('Arkme World record reference must not be empty')
+    return await this.call<ArkmeWorldVoiceprintInviteResult>('world.voiceprint.invite', { recordRef }, signal)
+  }
+
+  async worldVoiceprintSocialContext(
+    recordRef: string,
+    options: { forceRefresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldVoiceprintSocialContext> {
+    if (recordRef.trim() === '') throw new TypeError('Arkme World record reference must not be empty')
+    return await this.call<ArkmeWorldVoiceprintSocialContext>('world.voiceprint.social-context', {
+      recordRef,
+      ...(options.forceRefresh === undefined ? {} : { forceRefresh: options.forceRefresh }),
+    }, options.signal)
   }
 
   /** Read comments and replies for one Provider-issued World record reference. */
@@ -518,6 +757,33 @@ export class ArkmeSdk {
       targetRef: input.targetRef,
       textContent: input.textContent,
       clientMutationId: input.clientMutationId,
+    }, signal)
+  }
+
+  async publishWorldText(
+    input: ArkmeWorldPublishTextInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldPublishResult> {
+    if (input.clientMutationId.trim() === '' || input.textContent.trim() === '') {
+      throw new TypeError('Arkme World publish text and mutation id must not be empty')
+    }
+    return await this.call<ArkmeWorldPublishResult>('world.publish-text', {
+      clientMutationId: input.clientMutationId,
+      textContent: input.textContent,
+    }, signal)
+  }
+
+  async publishWorldFileAssets(
+    input: ArkmeWorldPublishFileAssetsInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldPublishResult> {
+    if (input.clientMutationId.trim() === '' || input.textContent.trim() === '' || input.fileAssets.length === 0) {
+      throw new TypeError('Arkme World publish text, mutation id, and file assets must not be empty')
+    }
+    return await this.call<ArkmeWorldPublishResult>('world.publish-file-assets', {
+      clientMutationId: input.clientMutationId,
+      textContent: input.textContent,
+      fileAssets: input.fileAssets,
     }, signal)
   }
 
@@ -659,6 +925,53 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
     }, options.signal)
+  }
+
+  async listGroupMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupMemberList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)
+  }
+
+  async listGroupMemberCandidates(
+    sourceRef: string,
+    options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupMemberCandidateList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupMemberCandidateList>('group.member-candidates', {
+      sourceRef,
+      ...(options.query === undefined ? {} : { query: options.query }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.groupSourceRefs === undefined ? {} : { groupSourceRefs: options.groupSourceRefs.map(value => value.trim()).filter(value => value !== '') }),
+    }, options.signal)
+  }
+
+  async groupInvitePreview(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupInvitePreview> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupInvitePreview>('group.invite-preview', { sourceRef }, signal)
+  }
+
+  async addGroupMembers(
+    sourceRef: string,
+    candidateRefs: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupMemberAddResult> {
+    const refs = candidateRefs.map(value => value.trim())
+    if (sourceRef.trim() === '' || refs.length === 0 || refs.some(value => value === '')) {
+      throw new TypeError('Arkme group source and candidate references must not be empty')
+    }
+    return await this.call<ArkmeGroupMemberAddResult>('group.members.add', { sourceRef, candidateRefs: refs }, signal)
+  }
+
+  async listGroupBots(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotCandidateList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupBotCandidateList>('group.bots', { sourceRef }, signal)
+  }
+
+  async addGroupBot(sourceRef: string, botRef: string, signal?: AbortSignal): Promise<ArkmeGroupBotAddResult> {
+    if (sourceRef.trim() === '' || botRef.trim() === '') {
+      throw new TypeError('Arkme group source and Bot references must not be empty')
+    }
+    return await this.call<ArkmeGroupBotAddResult>('group.bot.add', { sourceRef, botRef }, signal)
   }
 
   async readSource(
@@ -831,6 +1144,23 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read system and Doubao transcript projections for one current-account local day. */
+  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
+    assertLocalRecordingDay(dateStamp)
+    return await this.call<ArkmeRecordingDay>('recordings.day', { dateStamp }, signal)
+  }
+
+  /** Explicitly queue any eligible retained audio from one local day for Doubao transcription. */
+  async startRecordingDoubaoBackfill(
+    dateStamp: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingDoubaoBackfillResult> {
+    assertLocalRecordingDay(dateStamp)
+    return await this.call<ArkmeRecordingDoubaoBackfillResult>(
+      'recordings.doubao.start', { dateStamp }, signal,
+    )
+  }
+
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
     return await this.call<ArkmeCachedQueryResult>('records.search', {
       query,
@@ -924,6 +1254,15 @@ export class ArkmeSdk {
 
 export function createArkmeSdk(options?: ArkmeSdkOptions): ArkmeSdk {
   return new ArkmeSdk(options)
+}
+
+function assertLocalRecordingDay(value: number): void {
+  const date = new Date(value)
+  if (!Number.isSafeInteger(value) || value <= 0 || date.getTime() !== value
+    || date.getHours() !== 0 || date.getMinutes() !== 0
+    || date.getSeconds() !== 0 || date.getMilliseconds() !== 0) {
+    throw new TypeError('Arkme recording date must be a local-day timestamp')
+  }
 }
 
 const defaultSdk = createArkmeSdk()

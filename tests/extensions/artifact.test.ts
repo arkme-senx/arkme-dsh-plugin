@@ -121,7 +121,12 @@ describe('extension signature and runtime bridge', () => {
       manifest_sha256: artifact.manifestSha256, published_at: 1_787_000_000_000, signing_key_id: 'key-1',
     }
     const signature = sign(null, canonicalExtensionSignatureMessage(signed), privateKey).toString('base64')
-    const post = async <T>(path: string): Promise<T> => {
+    const engagementRequests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const post = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
+      if (path === '/api/v1/extensions/installation-state/sync' || path === '/api/v1/extensions/installation-state/update') {
+        engagementRequests.push({ path, body })
+        return {} as T
+      }
       if (path !== '/api/v1/extensions/resolve-install') throw new Error(`unexpected ${path}`)
       return {
         extension_id: signed.extension_id, version: signed.version, artifact_url: 'https://objects.test/ext.arkext',
@@ -183,6 +188,10 @@ describe('extension signature and runtime bridge', () => {
     ])
     expect(store.get('ext_test')).toMatchObject({ installedVersion: '1.2.3', active: false })
     expect(store.get('ext_test')?.profilePackageName).toMatch(/^@arkme-local\/ext-/)
+    expect(engagementRequests).toContainEqual(expect.objectContaining({
+      path: '/api/v1/extensions/installation-state/update',
+      body: expect.objectContaining({ extension_id: 'ext_test', installed: true }),
+    }))
     expect(installProfileBundle).toHaveBeenCalledOnce()
     await expect(manager.restartProfileChange('ext_test')).resolves.toEqual({ restarting: true })
     expect(restartProfile).toHaveBeenLastCalledWith(expect.objectContaining({ extensionId: 'ext_test', expectActive: true }))
@@ -200,6 +209,10 @@ describe('extension signature and runtime bridge', () => {
     expect(existsSync(artifactPath ?? '')).toBe(true)
     await expect(restartedManager.uninstall({ agent: { id: 'session-1' }, extensionId: 'ext_test' }))
       .resolves.toMatchObject({ installed: false, active: false })
+    expect(engagementRequests).toContainEqual(expect.objectContaining({
+      path: '/api/v1/extensions/installation-state/update',
+      body: expect.objectContaining({ extension_id: 'ext_test', installed: false }),
+    }))
     await expect(restartedManager.restartProfileChange('ext_test')).resolves.toEqual({ restarting: true })
     expect(reopened.get('ext_test')).toBeUndefined()
     expect(existsSync(artifactPath ?? '')).toBe(true)

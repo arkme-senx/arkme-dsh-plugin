@@ -17,6 +17,7 @@ export const createBotToolModule = defineArkmeCoreToolModule({
           description: 'Bot runtime provider. Choose explicitly from openclaw or webhook.',
         },
         description: { type: 'string', description: 'Short description of what this Bot should do.' },
+        avatar: { type: 'string', description: 'Optional account-scoped file_asset:// reference for the Bot avatar.' },
       },
       output: TEXT_OUTPUT,
       async execute(args, exec) {
@@ -25,6 +26,7 @@ export const createBotToolModule = defineArkmeCoreToolModule({
             name: args.name,
             provider: args.provider,
             ...(args.description === undefined ? {} : { description: args.description }),
+            ...(args.avatar === undefined ? {} : { avatar: args.avatar }),
           },
           { signal: exec.signal },
         )

@@ -19,14 +19,26 @@ import { createRecordToolModule } from './records/create.js'
 import { listImagesToolModule } from './records/images.js'
 import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
-import { worldPublishTextToolModule, worldRecentToolModule } from './world/index.js'
+import {
+  worldMineToolModule,
+  worldUserToolModule,
+  worldPublishTextToolModule,
+  worldRecentToolModule,
+  worldVoiceprintSocialContextToolModule,
+  worldVoiceprintInviteToolModule,
+} from './world/index.js'
 import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
+import { groupMemberToolModules } from './groups/index.js'
+import { contactToolModules } from './contacts/index.js'
+import { groupToolModules } from './groups/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
   recentRecordsToolModule,
   ...accountBusinessToolModules,
+  ...contactToolModules,
+  ...groupToolModules,
   ...arkoToolModules,
   searchRecordsToolModule,
   ...recordCalendarToolModules,
@@ -34,11 +46,16 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   createRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
+  worldMineToolModule,
+  worldUserToolModule,
+  worldVoiceprintSocialContextToolModule,
+  worldVoiceprintInviteToolModule,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
+  ...groupMemberToolModules,
   readSourceToolModule,
   reportMessageToolModule,
   relatedRecordingsToolModule,

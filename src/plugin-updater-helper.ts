@@ -1,14 +1,13 @@
-import { closeSync, openSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { readFile, unlink } from 'node:fs/promises'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import semver from 'semver'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
 
-const PACKAGE_NAME = '@senguoyun/dsh-arkme'
 const PARENT_EXIT_TIMEOUT_MS = 20_000
 const HEALTH_TIMEOUT_MS = 45_000
 
@@ -25,6 +24,8 @@ export interface PluginUpdaterPlan {
   previousVersion: string
   previousSpec: string
   targetVersion: string
+  targetArtifactPath: string
+  previousArtifactPath?: string
   stateDirectory: string
   healthUrl: string
   logPath: string
@@ -55,6 +56,8 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
   const previousVersion = nonEmptyString(source.previousVersion, 128)
   const previousSpec = nonEmptyString(source.previousSpec, 4096)
   const targetVersion = nonEmptyString(source.targetVersion, 128)
+  const targetArtifactPath = nonEmptyString(source.targetArtifactPath, 4096)
+  const previousArtifactPath = nonEmptyString(source.previousArtifactPath, 4096)
   const stateDirectory = nonEmptyString(source.stateDirectory)
   const healthUrl = nonEmptyString(source.healthUrl)
   const logPath = nonEmptyString(source.logPath)
@@ -62,10 +65,15 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
   if (source.schemaVersion !== 1 || jobId === undefined || execPath === undefined || execArgv === undefined
     || dshBinPath === undefined
     || dshHome === undefined || profileName === undefined || previousVersion === undefined
-    || previousSpec === undefined || targetVersion === undefined || stateDirectory === undefined || healthUrl === undefined
+    || previousSpec === undefined || targetVersion === undefined || targetArtifactPath === undefined
+    || stateDirectory === undefined || healthUrl === undefined
     || logPath === undefined || restartArgv === undefined || source.parentPid === undefined
     || typeof source.parentPid !== 'number' || !Number.isSafeInteger(source.parentPid) || source.parentPid <= 0) {
     throw new Error('updater plan is incomplete')
+  }
+  if (!isAbsolute(targetArtifactPath) || !existsSync(targetArtifactPath)
+    || (previousArtifactPath !== undefined && (!isAbsolute(previousArtifactPath) || !existsSync(previousArtifactPath)))) {
+    throw new Error('updater plan artifact paths must be existing absolute files')
   }
   const url = new URL(healthUrl)
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname)) {
@@ -84,6 +92,8 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
     previousVersion,
     previousSpec,
     targetVersion,
+    targetArtifactPath,
+    ...(previousArtifactPath === undefined ? {} : { previousArtifactPath }),
     stateDirectory,
     healthUrl: url.toString(),
     logPath,
@@ -106,7 +116,7 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
 }
 
 function isLocalPackageSpec(spec: string): boolean {
-  return /^(?:link:|file:|git\+|https?:)/.test(spec)
+  return /^(?:link:|file:)/.test(spec)
 }
 
 export function buildTargetInstallArgs(plan: PluginUpdaterPlan): string[] {
@@ -117,19 +127,7 @@ export function buildTargetInstallArgs(plan: PluginUpdaterPlan): string[] {
     '--profile',
     plan.profileName,
     'add',
-    `${PACKAGE_NAME}@${plan.targetVersion}`,
-  ]
-}
-
-function versionInstallArgs(plan: PluginUpdaterPlan, version: string): string[] {
-  return [
-    ...plan.execArgv,
-    plan.dshBinPath,
-    'plugin',
-    '--profile',
-    plan.profileName,
-    'add',
-    `${PACKAGE_NAME}@${version}`,
+    `file:${plan.targetArtifactPath}`,
   ]
 }
 
@@ -143,10 +141,11 @@ function runTargetInstall(plan: PluginUpdaterPlan): boolean {
 }
 
 function runRollbackInstall(plan: PluginUpdaterPlan): boolean {
-  const localSpec = isLocalPackageSpec(plan.previousSpec)
-  const args = localSpec
-    ? [...plan.execArgv, plan.dshBinPath, 'plugin', '--profile', plan.profileName, 'add', plan.previousSpec]
-    : versionInstallArgs(plan, plan.previousVersion)
+  const fallbackSpec = plan.previousArtifactPath === undefined
+    ? plan.previousSpec
+    : `file:${plan.previousArtifactPath}`
+  if (plan.previousArtifactPath === undefined && !isLocalPackageSpec(fallbackSpec)) return false
+  const args = [...plan.execArgv, plan.dshBinPath, 'plugin', '--profile', plan.profileName, 'add', fallbackSpec]
   const result = spawnSync(plan.execPath, args, {
     env: { ...process.env, DSH_HOME: plan.dshHome },
     stdio: 'inherit',
@@ -208,6 +207,27 @@ async function waitForHealthy(plan: PluginUpdaterPlan, expectedVersion: string):
     await new Promise(resolve => setTimeout(resolve, 500))
   }
   return false
+}
+
+export interface ManagedPluginUpdateOperations {
+  runRollbackInstall: typeof runRollbackInstall
+  waitForHealthy: typeof waitForHealthy
+}
+
+function managedOperations(overrides: Partial<ManagedPluginUpdateOperations>): ManagedPluginUpdateOperations {
+  return { runRollbackInstall, waitForHealthy, ...overrides }
+}
+
+function planWithReplacementHealthUrl(plan: PluginUpdaterPlan, replacementUrl: string): PluginUpdaterPlan {
+  const replacement = new URL(replacementUrl)
+  if (replacement.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(replacement.hostname)) {
+    throw new Error('managed plugin update replacement URL must be loopback HTTP')
+  }
+  const health = new URL(plan.healthUrl)
+  health.protocol = replacement.protocol
+  health.hostname = replacement.hostname
+  health.port = replacement.port
+  return { ...plan, healthUrl: health.toString() }
 }
 
 async function writePhase(
@@ -283,8 +303,8 @@ export async function runPluginUpdater(planPath: string): Promise<void> {
   }
   const installedVersion = installedProfileVersion(plan)
   if (semver.valid(installedVersion) === null || semver.lt(installedVersion, plan.targetVersion)) {
-    await writePhase(store, plan, 'failed', 'Registry 未安装预期版本，正在恢复旧版本…')
-    await rollbackAndRestart(plan, store, 'Registry 版本不符合预期，已自动恢复旧版本。')
+    await writePhase(store, plan, 'failed', '未安装预期插件版本，正在恢复旧版本…')
+    await rollbackAndRestart(plan, store, '插件版本不符合预期，已自动恢复旧版本。')
     return
   }
   plan.targetVersion = installedVersion
@@ -300,6 +320,39 @@ export async function runPluginUpdater(planPath: string): Promise<void> {
   if (child.pid !== undefined) await waitForProcessExit(child.pid, 10_000)
   await writePhase(store, plan, 'failed', '新版本健康检查失败，正在恢复旧版本…')
   await rollbackAndRestart(plan, store, '新版本启动失败，已自动恢复旧版本。')
+}
+
+export async function finalizeManagedPluginUpdate(
+  planPath: string,
+  replacementUrl: string,
+  overrides: Partial<ManagedPluginUpdateOperations> = {},
+): Promise<void> {
+  const plan = planWithReplacementHealthUrl(
+    parsePluginUpdaterPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown),
+    replacementUrl,
+  )
+  const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
+  const ops = managedOperations(overrides)
+  if (!await ops.waitForHealthy(plan, plan.targetVersion)) {
+    throw new Error('managed plugin update did not become healthy')
+  }
+  await writePhase(store, plan, 'succeeded', `已更新到 ${plan.targetVersion}。`)
+  await unlink(planPath)
+}
+
+export async function rollbackManagedPluginUpdate(
+  planPath: string,
+  overrides: Partial<ManagedPluginUpdateOperations> = {},
+): Promise<void> {
+  const plan = parsePluginUpdaterPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
+  const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
+  const ops = managedOperations(overrides)
+  if (!ops.runRollbackInstall(plan)) {
+    await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
+    throw new Error('managed plugin update rollback failed')
+  }
+  await writePhase(store, plan, 'rolled-back', '已恢复旧版本文件，正在由 Arkme 重启 DSH…')
+  await unlink(planPath)
 }
 
 async function main(): Promise<void> {

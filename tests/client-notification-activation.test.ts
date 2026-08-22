@@ -55,7 +55,7 @@ describe('client notification activation', () => {
         directory: 'root', limit: 50, refresh: true,
       }, expect.any(AbortSignal))
       expect(arkmeUi.getSnapshot()).toMatchObject({
-        open: true, surfaceOpen: true, mode: 'source', selectedSource: source,
+        mode: 'source', selectedSource: source,
       })
       expect(arkmeNotificationActivation.getSnapshot().source).toEqual(source)
     })

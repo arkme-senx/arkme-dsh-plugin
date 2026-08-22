@@ -90,7 +90,7 @@ export function ArkmeExtensionPreviewGallery({ extensionId, extensionName, previ
           aria-pressed={selected}
           style={{
             ...styles.thumbnail,
-            ...(selected ? { borderColor: 'var(--dsw-alias-state-success-primary, #09B83E)', boxShadow: '0 0 0 1px var(--dsw-alias-state-success-primary, #09B83E)' } : {}),
+            ...(selected ? { borderColor: 'var(--dsw-alias-state-business-primary, #8295E8)', boxShadow: '0 0 0 1px var(--dsw-alias-state-business-primary, #8295E8)' } : {}),
           }}
           onClick={() => { setSelectedRef(item.preview_ref) }}
         >

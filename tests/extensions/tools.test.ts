@@ -76,7 +76,10 @@ describe('Arkme extension tools', () => {
     const reorderPreviews = vi.fn(async () => ({
       extension_id: 'ext-1', preview_images: [{ preview_ref: previewRef }], preview_revision: 3,
     }))
-    const deleteExtension = vi.fn(async () => ({ extension_id: 'ext-1', status: 'deleted' }))
+    const deleteExtension = vi.fn(async () => ({
+      extension_id: 'ext-1', status: 'deleted', installed: false, active: false,
+      references_removed: true, removed_source_count: 1, restart_required: false, message: '扩展已完全移除',
+    }))
     const applyExtension = vi.fn(async () => ({
       extension_id: 'ext-native', version: '1.0.0', state: 'active', installed: true, active: true,
       approval_required: false, restart_required: false, message: '已激活',
@@ -90,16 +93,22 @@ describe('Arkme extension tools', () => {
 			latest_stable_version: '1.0.0', preview_images: [],
 			rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
 		}))
+    const auditExtension = vi.fn(async () => ({
+      extension_id: 'ext-1', trigger: 'tool', verdict: 'pass', risk_level: 'low',
+      summary: '未发现明显风险', reasons: [], recommendations: [], source_reviewed: false,
+      source_scope: 'public_detail_only', audited_at_millis: 1,
+    }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
       previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail,
       setIcon, addPreview, deletePreview, reorderPreviews,
-      delete: deleteExtension, apply: applyExtension,
+      apply: applyExtension,
+      auditExtension,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
-    } as never, {} as never, { readImage }, 'business')
+    } as never, { delete: deleteExtension } as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_apply',
+      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
 		'arkme_extension_share', 'arkme_extension_share_read',
@@ -107,29 +116,53 @@ describe('Arkme extension tools', () => {
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
     expect(listMine?.description).toContain('current Arkme user')
+    expect(listMine?.description).toContain('dynamic-cordis-v2')
+    expect(listMine?.description).toContain('profile-native-v3')
     expect(listMine?.description).toContain('untrusted')
     const listInstalledTool = definitions.find(item => item.name === 'arkme_extension_list_installed')
     await expect(listInstalledTool?.execute?.({}, toolExec(confirmationAgent('session-list', '查看已安装扩展'), 'call-list')))
       .resolves.toContain('"message": "插件运行失败，已自动停用。"')
     expect(listInstalled).toHaveBeenCalledOnce()
+    const search = definitions.find(item => item.name === 'arkme_extension_search')
+    expect(search?.parameters).toHaveProperty('properties.limit.description', 'Result count, 1-100. Defaults to 20.')
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')
 		expect(publish?.parameters).toHaveProperty('properties.items.items.properties.github_repository_url')
+		expect(publish?.parameters).toHaveProperty(
+			'properties.items.items.properties.github_repository_url.description',
+			'Optional canonical GitHub repository root used only as publisher-attested source metadata. It never selects an upload route.',
+		)
     expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
     expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('1 to 10')
+    expect(publish?.description).toContain('artifact_contract_version=2')
+    expect(publish?.description).toContain('artifact_contract_version=3')
+    expect(publish?.description).toContain('not a third route')
+		expect(publish?.description).not.toContain('required for public/unlisted V3')
     expect(publish?.description).toContain('does not publish')
     expect(publish?.description).toContain('later direct human message')
     expect(sections).toHaveLength(1)
     expect(sections[0]).toMatchObject({ name: 'tool:arkme-extension-authoring', order: 117 })
     expect(sections[0]?.text()).toBe(ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT)
+    expect(sections[0]?.text()).toContain('exactly two Host-selected publication routes')
+    expect(sections[0]?.text()).toContain('publish.route, artifactContractVersion, artifactKind')
+    expect(sections[0]?.text()).toContain('not a third upload route')
     expect(sections[0]?.text()).toContain('before planning, coding, searching, or calling tools')
     expect(sections[0]?.text()).toContain('validated Profile-local Bundle')
     expect(sections[0]?.text()).toContain('workspace_path')
     expect(sections[0]?.text()).toContain('workspace_paths')
     expect(sections[0]?.text()).toContain('ordinary conversation')
+    expect(sections[0]?.text()).toContain('arkme_extension_audit')
     expect(sections[0]?.text()).toContain('Do not search for image upload routes')
+    const auditTool = definitions.find(item => item.name === 'arkme_extension_audit')
+    await expect(auditTool?.execute?.(
+      { extension_id: 'ext-1' },
+      toolExec(confirmationAgent('session-audit', '审核扩展'), 'call-audit'),
+    )).resolves.toContain('<data_from_arkme_extension_audit>')
+    expect(auditExtension).toHaveBeenCalledWith({
+      extensionId: 'ext-1', trigger: 'tool', signal: expect.any(AbortSignal),
+    })
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',
@@ -276,7 +309,9 @@ describe('Arkme extension tools', () => {
     await expect(deleteTool?.execute?.(
       { extension_id: 'ext-1' }, toolExec(deleteAgent, 'call-delete-confirm'),
     )).resolves.toContain('"status": "deleted"')
-    expect(deleteExtension).toHaveBeenCalledWith('ext-1', expect.any(AbortSignal))
+    expect(deleteExtension).toHaveBeenCalledWith({
+      agent: deleteAgent, extensionId: 'ext-1', signal: expect.any(AbortSignal),
+    })
 
     const applyTool = definitions.find(item => item.name === 'arkme_extension_apply')
     const applyAgent = confirmationAgent('session-apply', '安装原生扩展')

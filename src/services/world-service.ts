@@ -2,29 +2,57 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeImageBytes,
+  ArkmeConversationWriteResult,
+  ArkmeCreateFileAssetRecordResult,
+  ArkmeUploadedAsset,
   ArkmeUserProfile,
   ArkmeWorldAvatarFallback,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
+  ArkmeWorldVoiceprintSocialRelation,
+  ArkmeWorldVoiceprintSocialRelationType,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
   ArkmeWorldPublishResult,
+  ArkmeWorldPublishFileAssetsInput,
+  ArkmeWorldPublishTextInput,
   ArkmeWorldRecordItem,
   ArkmeWorldRecordList,
   ArkmeWorldVisibility,
 } from '../types.js'
-import { MAX_ARKME_IMAGE_BYTES, MediaService, type ArkmeWorldImageEntry } from './media-service.js'
+import { MAX_ARKME_IMAGE_BYTES, type ArkmeWorldImageEntry } from './media-service.js'
 import type { ArkmeUserProfileSnapshot } from '../types.js'
-import { RecordService } from './record-service.js'
+import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+
+export interface ArkmeWorldProfileReader {
+  refreshProfile(): Promise<ArkmeUserProfileSnapshot>
+}
+
+export interface ArkmeWorldMediaReader {
+  issueWorldVoiceprintMediaRef(viewerUserId: number, input: { remoteUrl: string; mimeType: string }): string
+  downloadSignedImage(signedUrl: URL, byteLimit: number, signal?: AbortSignal): Promise<ArkmeImageBytes>
+}
+
+export interface ArkmeWorldRecordWriter {
+  createTextForConversation(recordUid: string, textContent: string): Promise<ArkmeConversationWriteResult>
+  createFileAssetsForConversation(
+    recordUid: string,
+    textContent: string,
+    assets: readonly ArkmeUploadedAsset[],
+  ): Promise<ArkmeCreateFileAssetRecordResult>
+}
 
 interface ArkmeWorldRecordRefEntry {
   viewerUserId: number
   recordUid: string
   ownerUserId?: number
+  authorName?: string
+  textPreview?: string
   expiresAtMillis: number
 }
 
@@ -32,9 +60,73 @@ const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_IMAGE_REFS = 2048
 const ARKME_WORLD_RECORD_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_RECORD_REFS = 4096
+const ARKME_VOICEPRINT_PLAY_SCOPE = 2
+const ARKME_VOICEPRINT_INVITE_TOKEN_MAX_LENGTH = 2048
+const ARKME_VOICEPRINT_SOCIAL_CACHE_MILLIS = 5 * 60 * 1000
+const ARKME_VOICEPRINT_SOCIAL_STALE_MILLIS = 24 * 60 * 60 * 1000
+const ARKME_VOICEPRINT_SOCIAL_SOURCE_TIMEOUT_MILLIS = 4_000
+
+interface ArkmeWorldVoiceprintDirectChat {
+  sessionUid: string
+  sharedTopicId: number
+  hasPrivateMessageEvidence: boolean
+}
+
+interface ArkmeWorldVoiceprintSocialSourceResult {
+  succeeded: boolean
+  relations: ArkmeWorldVoiceprintSocialRelation[]
+}
+
+interface ArkmeWorldVoiceprintSocialLoadResult {
+  context: ArkmeWorldVoiceprintSocialContext
+  allSourcesSucceeded: boolean
+}
+
+interface ArkmeWorldVoiceprintSocialCacheEntry {
+  context: ArkmeWorldVoiceprintSocialContext
+  savedAtMillis: number
+}
+
+const WORLD_VOICEPRINT_SOCIAL_RELATIONS: Record<ArkmeWorldVoiceprintSocialRelationType, ArkmeWorldVoiceprintSocialRelation> = {
+  reciprocal_expectation: {
+    type: 'reciprocal_expectation', displayLine: 'TA也曾期待过你的声音',
+    reasonCode: 'relationship_reciprocal_expectation', reasonLabel: '因为TA也曾期待过我的声音',
+  },
+  call: {
+    type: 'call', displayLine: '你们曾经通过话',
+    reasonCode: 'relationship_call', reasonLabel: '因为我们曾经通过话',
+  },
+  world_interaction: {
+    type: 'world_interaction', displayLine: '你们曾在世界回应过彼此',
+    reasonCode: 'relationship_world', reasonLabel: '因为我们在世界里回应过彼此',
+  },
+  group_interaction: {
+    type: 'group_interaction', displayLine: '你们曾在同一个群里互动过',
+    reasonCode: 'relationship_group', reasonLabel: '因为我们在群里有过互动',
+  },
+  private_chat: {
+    type: 'private_chat', displayLine: '你们曾经聊过',
+    reasonCode: 'relationship_chat', reasonLabel: '因为我们以前聊过',
+  },
+}
+
+export interface ArkmeWorldVoiceprintInviteIntent {
+  peerUserId: number
+  peerDisplayName: string
+  inviteUrl: string
+  expiresAtMillis: number
+  textPreview?: string
+}
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function integerValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value !== 'string' || !/^-?\d+$/.test(value.trim())) return 0
+  const parsed = Number(value.trim())
+  return Number.isSafeInteger(parsed) ? parsed : 0
 }
 
 function booleanValue(value: unknown): boolean { return value === true }
@@ -46,11 +138,59 @@ function safeFailureMessage(error: unknown): string {
   return '未知错误'
 }
 
+function optionalTrimmedText(value: string | undefined, limit: number): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim()
+  if (normalized === undefined || normalized === '') return undefined
+  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit).trimEnd()}...`
+}
+
+function buildVoiceprintInviteShareUrl(environment: 'test' | 'prod', token: string): string {
+  const base = environment === 'prod' ? 'https://jiwo.cc' : 'https://jotmo-app.senguo.me'
+  const url = new URL('/app/voiceprint/invite', base)
+  url.hash = `t=${encodeURIComponent(token)}`
+  return url.toString()
+}
+
+function validVoiceprintInviteToken(token: string): boolean {
+  if (token === '' || token.length > ARKME_VOICEPRINT_INVITE_TOKEN_MAX_LENGTH) return false
+  let byteLength = 0
+  for (const char of token) {
+    const codePoint = char.codePointAt(0) ?? 0
+    if (codePoint <= 0x1f || codePoint === 0x7f) return false
+    byteLength += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4
+    if (byteLength > ARKME_VOICEPRINT_INVITE_TOKEN_MAX_LENGTH) return false
+  }
+  return true
+}
+
 function worldVisibility(checkStatus: number): ArkmeWorldVisibility {
   if (checkStatus === 1) return 'pending_review'
   if (checkStatus === 4) return 'rejected'
   if (checkStatus === 0 || checkStatus === 2 || checkStatus === 3) return 'visible'
   return 'unknown'
+}
+
+function worldPublicationResult(checkStatus: number): ArkmeWorldPublishResult {
+  const visibility = worldVisibility(checkStatus)
+  if (visibility === 'rejected') {
+    return {
+      recordSaved: true,
+      recordState: 'synced',
+      worldPublished: false,
+      visibility,
+      checkStatus,
+      retryable: false,
+      error: '内容未通过审核，请调整后重试',
+    }
+  }
+  return {
+    recordSaved: true,
+    recordState: 'synced',
+    worldPublished: true,
+    visibility,
+    checkStatus,
+    retryable: false,
+  }
 }
 
 function worldTags(text: string): string[] {
@@ -60,6 +200,13 @@ function worldTags(text: string): string[] {
 function stableWorldInteractionRecordUid(userId: number, targetRecordUid: string, clientMutationId: string): string {
   const hex = createHash('sha256')
     .update(`dsh-arkme:world-interaction:${String(userId)}:${targetRecordUid}:${clientMutationId}`)
+    .digest('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
+
+function stableWorldPublishRecordUid(userId: number, clientMutationId: string): string {
+  const hex = createHash('sha256')
+    .update(`dsh-arkme:world-publish:${String(userId)}:${clientMutationId}`)
     .digest('hex')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }
@@ -102,17 +249,21 @@ function worldAvatarResolutionKey(ownerUserId: number, avatarRef: string): strin
 export class WorldService {
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
   private readonly worldRecordRefs = new Map<string, ArkmeWorldRecordRefEntry>()
+  private readonly voiceprintSocialCache = new Map<string, ArkmeWorldVoiceprintSocialCacheEntry>()
+  private readonly voiceprintSocialInFlight = new Map<string, Promise<ArkmeWorldVoiceprintSocialContext>>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
-    private readonly profile: { refreshProfile(): Promise<ArkmeUserProfileSnapshot> },
-    private readonly media: MediaService,
-    private readonly record: RecordService,
+    private readonly profile: ArkmeWorldProfileReader,
+    private readonly media: ArkmeWorldMediaReader,
+    private readonly record: ArkmeWorldRecordWriter,
   ) {}
 
   dispose(): void {
     this.worldImageRefs.clear()
     this.worldRecordRefs.clear()
+    this.voiceprintSocialCache.clear()
+    this.voiceprintSocialInFlight.clear()
   }
 
   async listWorldRecords(
@@ -152,6 +303,59 @@ export class WorldService {
     const nextOffset = offset + rawItems.length
     const hasMore = rawItems.length > 0 && nextOffset < total
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  async listMyWorldFeed(
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    const session = await this.runtime.requireSession()
+    const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/public-record/my-list', { limit, offset }, session, options.signal,
+    )
+    const rawItems = listValue(data.list)
+    const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)
+    const projected = await Promise.all(rawItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+    const items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
+    const total = Math.max(0, Math.trunc(numberValue(data.total)))
+    const nextOffset = offset + rawItems.length
+    const hasMore = rawItems.length > 0 && nextOffset < total
+    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+  }
+
+  async listUserWorldFeed(
+    userId: number,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new ArkmePluginError('world-user-id-invalid', '世界用户 ID 无效，请刷新后重试', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
+    let offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    let total = 0
+    let items: ArkmeWorldFeedItem[] = []
+    let hasMore = false
+    let attempts = 0
+
+    do {
+      const data = await this.runtime.post<Record<string, unknown>>(
+        this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/user-list',
+        { user_id: userId, limit, offset }, undefined, [200], options.signal,
+      )
+      const rawItems = listValue(data.list)
+      total = Math.max(0, Math.trunc(numberValue(data.total)))
+      const rootItems = rawItems.filter(raw => stringValue(objectValue(raw).parent_record_uid).trim() === '')
+      const resolvedAvatars = await this.resolveWorldAvatarUrls(rootItems, session, options.signal)
+      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+      items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
+      offset += rawItems.length
+      hasMore = rawItems.length > 0 && offset < total
+      attempts += 1
+    } while (items.length === 0 && hasMore && attempts < 4)
+
+    return { items, total, hasMore, ...(hasMore ? { nextOffset: offset } : {}) }
   }
 
   async worldVoiceprintPlaybackAvailability(
@@ -237,6 +441,306 @@ export class WorldService {
       chunkStartRune,
       chunkEndRune,
     }
+  }
+
+  async worldVoiceprintSocialContext(
+    recordRef: string,
+    options: { forceRefresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldVoiceprintSocialContext> {
+    const session = await this.runtime.requireSession()
+    const entry = this.openWorldRecordRef(recordRef, session.userId)
+    const authorUserId = entry.ownerUserId ?? 0
+    if (!Number.isSafeInteger(authorUserId) || authorUserId <= 0 || authorUserId === session.userId) {
+      return { relations: [] }
+    }
+    const cacheKey = `${String(session.userId)}:${String(authorUserId)}`
+    const cached = this.voiceprintSocialCache.get(cacheKey)
+    const age = cached === undefined ? Number.POSITIVE_INFINITY : Date.now() - cached.savedAtMillis
+    if (options.forceRefresh !== true && cached !== undefined
+      && cached.context.relations.length > 0 && age < ARKME_VOICEPRINT_SOCIAL_CACHE_MILLIS) {
+      return cached.context
+    }
+    if (options.forceRefresh !== true && cached !== undefined
+      && cached.context.relations.length > 0 && age < ARKME_VOICEPRINT_SOCIAL_STALE_MILLIS) {
+      void this.refreshWorldVoiceprintSocialContext({
+        cacheKey, flightKey: `${cacheKey}:${entry.recordUid}`, viewerUserId: session.userId,
+        authorUserId, recordUid: entry.recordUid, fallback: cached,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })
+      return cached.context
+    }
+    return await this.refreshWorldVoiceprintSocialContext({
+      cacheKey, flightKey: `${cacheKey}:${entry.recordUid}`, viewerUserId: session.userId,
+      authorUserId, recordUid: entry.recordUid,
+      ...(cached === undefined ? {} : { fallback: cached }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+  }
+
+  async createWorldVoiceprintInviteIntent(
+    recordRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintInviteIntent> {
+    const session = await this.runtime.requireSession()
+    const entry = this.openWorldRecordRef(recordRef, session.userId)
+    const peerUserId = entry.ownerUserId ?? 0
+    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+      throw new ArkmePluginError('world-voiceprint-invite-target-missing', '无法确认这条世界动态的作者，请刷新后重试', false)
+    }
+    if (peerUserId === session.userId) {
+      throw new ArkmePluginError('world-voiceprint-invite-self-invalid', '这是你自己的动态，不需要提醒自己开启声纹', false, 409)
+    }
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/voiceprint/invites/create',
+      { scope: ARKME_VOICEPRINT_PLAY_SCOPE },
+      session,
+      signal,
+      { lane: 'write', bypassCache: true },
+    )
+    const token = stringValue(data.invite_token).trim()
+    const expiresAtMillis = Math.trunc(numberValue(data.expires_at))
+    const scope = Math.trunc(numberValue(data.scope))
+    if (!validVoiceprintInviteToken(token) || expiresAtMillis <= 0 || scope !== ARKME_VOICEPRINT_PLAY_SCOPE) {
+      throw new ArkmePluginError('world-voiceprint-invite-contract-invalid', '声纹邀请响应不完整，请稍后重试', true, 502)
+    }
+    return {
+      peerUserId,
+      peerDisplayName: optionalTrimmedText(entry.authorName, 64) ?? '这位用户',
+      inviteUrl: buildVoiceprintInviteShareUrl(this.runtime.config.environment, token),
+      expiresAtMillis,
+      ...(entry.textPreview === undefined ? {} : { textPreview: entry.textPreview }),
+    }
+  }
+
+  private refreshWorldVoiceprintSocialContext(input: {
+    cacheKey: string
+    flightKey: string
+    viewerUserId: number
+    authorUserId: number
+    recordUid: string
+    fallback?: ArkmeWorldVoiceprintSocialCacheEntry
+    signal?: AbortSignal
+  }): Promise<ArkmeWorldVoiceprintSocialContext> {
+    const existing = this.voiceprintSocialInFlight.get(input.flightKey)
+    if (existing !== undefined) return existing
+    const refresh = this.loadWorldVoiceprintSocialContext(input)
+      .then(result => {
+        const context = this.mergeWorldVoiceprintSocialContexts(input.fallback?.context, result.context)
+        if (context.relations.length > 0 || result.allSourcesSucceeded) {
+          this.voiceprintSocialCache.set(input.cacheKey, { context, savedAtMillis: Date.now() })
+        }
+        return context
+      })
+      .catch(() => input.fallback?.context.relations.length
+        ? input.fallback.context
+        : { relations: [] })
+      .finally(() => { this.voiceprintSocialInFlight.delete(input.flightKey) })
+    this.voiceprintSocialInFlight.set(input.flightKey, refresh)
+    return refresh
+  }
+
+  private async loadWorldVoiceprintSocialContext(input: {
+    viewerUserId: number
+    authorUserId: number
+    recordUid: string
+    signal?: AbortSignal
+  }): Promise<ArkmeWorldVoiceprintSocialLoadResult> {
+    const session = await this.runtime.requireSession()
+    const directChat = this.loadWorldVoiceprintDirectChat(input.authorUserId, session, input.signal)
+    const results = await Promise.all([
+      this.guardWorldVoiceprintSocialSource(
+        async () => await this.loadWorldVoiceprintReciprocalExpectation(input.authorUserId, session, input.signal),
+      ),
+      this.guardWorldVoiceprintSocialSource(
+        async () => await this.loadWorldVoiceprintInterwovenRelations(input.authorUserId, directChat, session, input.signal),
+      ),
+      this.guardWorldVoiceprintSocialSource(
+        async () => await this.loadWorldVoiceprintPrivateChatRelation(input.authorUserId, directChat),
+      ),
+      this.guardWorldVoiceprintSocialSource(
+        async () => await this.loadWorldVoiceprintCommentRelation(input.viewerUserId, input.recordUid, session, input.signal),
+      ),
+    ])
+    return {
+      context: { relations: this.dedupeWorldVoiceprintRelations(results.flatMap(result => result.relations)) },
+      allSourcesSucceeded: results.every(result => result.succeeded),
+    }
+  }
+
+  private async guardWorldVoiceprintSocialSource(
+    loader: () => Promise<ArkmeWorldVoiceprintSocialSourceResult>,
+  ): Promise<ArkmeWorldVoiceprintSocialSourceResult> {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        loader(),
+        new Promise<ArkmeWorldVoiceprintSocialSourceResult>(resolve => {
+          timeout = setTimeout(() => { resolve({ succeeded: false, relations: [] }) }, ARKME_VOICEPRINT_SOCIAL_SOURCE_TIMEOUT_MILLIS)
+        }),
+      ])
+    } catch {
+      return { succeeded: false, relations: [] }
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
+    }
+  }
+
+  private async loadWorldVoiceprintReciprocalExpectation(
+    authorUserId: number,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintSocialSourceResult> {
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/voiceprint/world-enrollment-interactions', {}, session, signal,
+      { lane: 'interactive-read', key: 'world-enrollment-interactions', cacheMs: 5_000 },
+    )
+    const received = objectValue(data.received)
+    const requestedByAuthor = listValue(received.requesters).some(raw => {
+      const requester = objectValue(raw)
+      return integerValue(requester.user_id ?? requester.userId) === authorUserId
+    })
+    return {
+      succeeded: true,
+      relations: requestedByAuthor ? [WORLD_VOICEPRINT_SOCIAL_RELATIONS.reciprocal_expectation] : [],
+    }
+  }
+
+  private async loadWorldVoiceprintDirectChat(
+    authorUserId: number,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintDirectChat | undefined> {
+    let pageCursor: Record<string, unknown> | undefined
+    const visited = new Set<string>()
+    for (;;) {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/list', { limit: 100, session_kind: 1, ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }) },
+        session, signal, { lane: 'interactive-read', bypassCache: true },
+      )
+      for (const raw of listValue(data.items)) {
+        const bundle = objectValue(raw)
+        const chatSession = objectValue(bundle.session)
+        const counterpart = objectValue(bundle.private_counterpart)
+        const sessionKind = integerValue(chatSession.session_kind)
+        if ((sessionKind !== 1 && sessionKind !== 3)
+          || integerValue(counterpart.user_id ?? counterpart.userId) !== authorUserId) continue
+        const latestPreview = objectValue(bundle.latest_preview)
+        const latestRecord = objectValue(latestPreview.record)
+        const latestRelation = objectValue(latestPreview.relation)
+        const unread = objectValue(bundle.unread_snapshot)
+        const sessionUid = stringValue(chatSession.chat_session_uid).trim()
+        if (sessionUid === '') continue
+        const sessionExtra = objectValue(chatSession.extra)
+        const sessionPolicy = objectValue(chatSession.policy_snapshot)
+        const sharedTopicId = [chatSession, sessionExtra, sessionPolicy]
+          .map(source => integerValue(
+            source.subject_id ?? source.subjectId ?? source.shared_topic_id ?? source.sharedTopicId,
+          ))
+          .find(value => value > 0) ?? 0
+        const hasPrivateMessageEvidence = Object.keys(latestRecord).length > 0
+          || Object.keys(objectValue(latestRecord.payload)).length > 0
+          || stringValue(latestRecord.record_uid).trim() !== ''
+          || stringValue(latestRelation.record_uid).trim() !== ''
+          || integerValue(unread.session_last_seq ?? chatSession.last_seq) > 0
+        return { sessionUid, sharedTopicId: Math.max(0, sharedTopicId), hasPrivateMessageEvidence }
+      }
+      if (data.has_more !== true) return undefined
+      const nextCursor = objectValue(data.next_page_cursor)
+      if (Object.keys(nextCursor).length === 0) throw new Error('voiceprint direct-chat pagination cursor missing')
+      const identity = JSON.stringify(nextCursor)
+      if (visited.has(identity)) throw new Error('voiceprint direct-chat pagination cursor repeated')
+      visited.add(identity)
+      pageCursor = nextCursor
+    }
+  }
+
+  private async loadWorldVoiceprintInterwovenRelations(
+    authorUserId: number,
+    directChatFuture: Promise<ArkmeWorldVoiceprintDirectChat | undefined>,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintSocialSourceResult> {
+    const directChat = await directChatFuture
+    if (directChat === undefined || authorUserId <= 0) return { succeeded: true, relations: [] }
+    const data = directChat.sharedTopicId > 0
+      ? await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+        '/api/v1/interwoven-moments/summary', { subject_id: directChat.sharedTopicId }, session, signal,
+        { lane: 'interactive-read', bypassCache: true },
+      )
+      : await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/interwoven/summary', { subject_id: 0, chat_session_uid: directChat.sessionUid },
+        session, signal, { lane: 'interactive-read', bypassCache: true },
+      )
+    const recentCard = objectValue(data.recent_card)
+    const stats = listValue(recentCard.total_stats)
+    const countFor = (momentType: number): number => {
+      const raw = stats.find(value => integerValue(objectValue(value).moment_type) === momentType)
+      return integerValue(objectValue(raw).count)
+    }
+    const relations: ArkmeWorldVoiceprintSocialRelation[] = []
+    const callSummary = data.call_summary
+    const callCount = callSummary !== null && typeof callSummary === 'object' && !Array.isArray(callSummary)
+      ? integerValue(objectValue(callSummary).total_call_count)
+      : countFor(3)
+    if (callCount > 0) {
+      relations.push(WORLD_VOICEPRINT_SOCIAL_RELATIONS.call)
+    }
+    if (countFor(2) > 0) relations.push(WORLD_VOICEPRINT_SOCIAL_RELATIONS.world_interaction)
+    const groupFromStatus = listValue(data.source_status).some(raw => {
+      const status = objectValue(raw)
+      return integerValue(status.moment_type) === 1 && integerValue(status.item_count) > 0
+    })
+    if (countFor(1) > 0 || groupFromStatus) relations.push(WORLD_VOICEPRINT_SOCIAL_RELATIONS.group_interaction)
+    return { succeeded: true, relations }
+  }
+
+  private async loadWorldVoiceprintPrivateChatRelation(
+    authorUserId: number,
+    directChatFuture: Promise<ArkmeWorldVoiceprintDirectChat | undefined>,
+  ): Promise<ArkmeWorldVoiceprintSocialSourceResult> {
+    const directChat = await directChatFuture
+    return {
+      succeeded: true,
+      relations: directChat !== undefined && authorUserId > 0 && directChat.hasPrivateMessageEvidence
+        ? [WORLD_VOICEPRINT_SOCIAL_RELATIONS.private_chat]
+        : [],
+    }
+  }
+
+  private async loadWorldVoiceprintCommentRelation(
+    viewerUserId: number,
+    recordUid: string,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeWorldVoiceprintSocialSourceResult> {
+    if (recordUid.trim() === '') return { succeeded: true, relations: [] }
+    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      '/api/v1/public-record/extend-list', { record_uid: recordUid, limit: 100, offset: 0 },
+      session, signal, { lane: 'interactive-read', bypassCache: true },
+    )
+    const interacted = listValue(data.list).some(raw => {
+      const item = objectValue(raw)
+      return integerValue(item.user_id ?? item.userId) === viewerUserId
+    })
+    return {
+      succeeded: true,
+      relations: interacted ? [WORLD_VOICEPRINT_SOCIAL_RELATIONS.world_interaction] : [],
+    }
+  }
+
+  private dedupeWorldVoiceprintRelations(
+    relations: readonly ArkmeWorldVoiceprintSocialRelation[],
+  ): ArkmeWorldVoiceprintSocialRelation[] {
+    const seen = new Set<ArkmeWorldVoiceprintSocialRelationType>()
+    return relations.filter(relation => !seen.has(relation.type) && seen.add(relation.type))
+  }
+
+  private mergeWorldVoiceprintSocialContexts(
+    previous: ArkmeWorldVoiceprintSocialContext | undefined,
+    current: ArkmeWorldVoiceprintSocialContext,
+  ): ArkmeWorldVoiceprintSocialContext {
+    if (previous === undefined || previous.relations.length === 0) return current
+    return { relations: this.dedupeWorldVoiceprintRelations([...previous.relations, ...current.relations]) }
   }
 
   async listWorldInteractions(
@@ -418,10 +922,92 @@ export class WorldService {
         signal,
       )
       const checkStatus = Math.trunc(numberValue(published.check_status))
-      return { recordSaved: true, recordState: 'synced', worldPublished: true, visibility: worldVisibility(checkStatus), checkStatus, retryable: false }
+      return worldPublicationResult(checkStatus)
     } catch (error) {
       try {
         if (await this.worldRecordIsPublic(normalizedUid, signal)) {
+          return { recordSaved: true, recordState: 'synced', worldPublished: true, visibility: 'unknown', checkStatus: 0, retryable: false }
+        }
+      } catch { /* Preserve the original publication failure. */ }
+      return this.worldPublishFailure(true, error, 'synced')
+    }
+  }
+
+  async publishWorldText(input: ArkmeWorldPublishTextInput): Promise<ArkmeWorldPublishResult> {
+    const session = await this.runtime.requireSession()
+    const clientMutationId = input.clientMutationId.trim()
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(clientMutationId)) {
+      throw new ArkmePluginError('world-publish-mutation-invalid', '发布请求标识无效，请重试', false)
+    }
+    return await this.publishWorldTextForConversation(
+      stableWorldPublishRecordUid(session.userId, clientMutationId),
+      input.textContent,
+    )
+  }
+
+  async publishWorldFileAssets(input: ArkmeWorldPublishFileAssetsInput): Promise<ArkmeWorldPublishResult> {
+    const session = await this.runtime.requireSession()
+    const clientMutationId = input.clientMutationId.trim()
+    const textContent = input.textContent.trim()
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(clientMutationId)) {
+      throw new ArkmePluginError('world-publish-mutation-invalid', '发布请求标识无效，请重试', false)
+    }
+    if (textContent === '' || textContent.length > this.runtime.config.maxTextLength) {
+      throw new ArkmePluginError('world-text-invalid', '世界内容为空或过长', false)
+    }
+    if (input.fileAssets.length === 0 || input.fileAssets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES || input.fileAssets.some(asset =>
+      !/^[A-Za-z0-9._:-]{8,256}$/.test(asset.fileAssetUid) || asset.fileName.trim() === ''
+      || !asset.mimeType.toLowerCase().startsWith('image/') || !Number.isSafeInteger(asset.size)
+      || asset.size <= 0 || asset.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES || asset.fileKind !== 1)) {
+      throw new ArkmePluginError('world-publish-assets-invalid', '世界图片参数无效', false)
+    }
+    let profile: ArkmeUserProfile
+    try {
+      const snapshot = await this.profile.refreshProfile()
+      if (snapshot.profile === null) throw new ArkmePluginError('profile-unavailable', '无法读取当前 Arkme 账号资料', true)
+      profile = snapshot.profile
+    } catch (error) { return this.worldPublishFailure(false, error) }
+    if (profile.contact.phoneMasked === undefined) {
+      return {
+        recordSaved: false, recordState: 'not_saved', worldPublished: false,
+        visibility: 'not_published', checkStatus: 0, retryable: false,
+        error: '请先在 Arkme 客户端绑定手机号，再发到世界',
+      }
+    }
+    const recordUid = stableWorldPublishRecordUid(session.userId, clientMutationId)
+    try {
+      if (await this.worldRecordIsPublic(recordUid)) {
+        return { recordSaved: true, recordState: 'synced', worldPublished: true, visibility: 'unknown', checkStatus: 0, retryable: false }
+      }
+    } catch { /* Continue with the stable write identity when preflight status is unavailable. */ }
+    try { await this.record.createFileAssetsForConversation(recordUid, textContent, input.fileAssets) }
+    catch (error) { return this.worldPublishFailure(false, error) }
+    try {
+      const published = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+        '/api/v1/public-record/publish-with-file-assets',
+        {
+          record_uid: recordUid,
+          content: textContent,
+          text_content: textContent,
+          file_assets: input.fileAssets.map((asset, index) => ({
+            file_asset_uid: asset.fileAssetUid,
+            media_type: 'image',
+            file_kind: 1,
+            sort_order: index,
+          })),
+          tags: worldTags(textContent),
+          original_topic_id: 0,
+          created_at: Date.now(),
+          nick_name: profile.nickname || profile.displayName,
+          avatar: profile.avatarRef,
+        },
+        session,
+      )
+      const checkStatus = Math.trunc(numberValue(published.check_status))
+      return worldPublicationResult(checkStatus)
+    } catch (error) {
+      try {
+        if (await this.worldRecordIsPublic(recordUid)) {
           return { recordSaved: true, recordState: 'synced', worldPublished: true, visibility: 'unknown', checkStatus: 0, retryable: false }
         }
       } catch { /* Preserve the original publication failure. */ }
@@ -478,7 +1064,14 @@ export class WorldService {
       ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
       : undefined
     return {
-      recordRef: await this.worldRecordRef(viewerUserId, recordUid, ownerUserId),
+      recordRef: await this.worldRecordRef(viewerUserId, recordUid, {
+        ownerUserId,
+        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        ...(() => {
+          const textPreview = optionalTrimmedText(headline || textContent, 80)
+          return textPreview === undefined ? {} : { textPreview }
+        })(),
+      }),
       authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
@@ -570,7 +1163,14 @@ export class WorldService {
       ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
       : undefined
     return {
-      interactionRef: await this.worldRecordRef(viewerUserId, recordUid),
+      interactionRef: await this.worldRecordRef(viewerUserId, recordUid, {
+        ownerUserId,
+        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        ...(() => {
+          const textPreview = optionalTrimmedText(textContent, 80)
+          return textPreview === undefined ? {} : { textPreview }
+        })(),
+      }),
       parentRef: await this.worldRecordRef(viewerUserId, parentRecordUid),
       authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
       ...(avatarRef === undefined ? {} : { avatarRef }),
@@ -584,7 +1184,11 @@ export class WorldService {
     }
   }
 
-  private async worldRecordRef(viewerUserId: number, recordUid: string, ownerUserId?: number): Promise<string> {
+  private async worldRecordRef(
+    viewerUserId: number,
+    recordUid: string,
+    metadata: { ownerUserId?: number; authorName?: string; textPreview?: string } = {},
+  ): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`world-record-v1:${String(viewerUserId)}:${recordUid}`)
       .digest('base64url')
@@ -592,11 +1196,15 @@ export class WorldService {
     const now = Date.now()
     this.pruneWorldRecordRefs(now)
     const previous = this.worldRecordRefs.get(recordRef)
-    const resolvedOwnerUserId = ownerUserId ?? previous?.ownerUserId
+    const resolvedOwnerUserId = metadata.ownerUserId ?? previous?.ownerUserId
+    const authorName = optionalTrimmedText(metadata.authorName, 64) ?? previous?.authorName
+    const textPreview = optionalTrimmedText(metadata.textPreview, 80) ?? previous?.textPreview
     this.worldRecordRefs.set(recordRef, {
       viewerUserId,
       recordUid,
       ...(resolvedOwnerUserId === undefined || resolvedOwnerUserId <= 0 ? {} : { ownerUserId: resolvedOwnerUserId }),
+      ...(authorName === undefined ? {} : { authorName }),
+      ...(textPreview === undefined ? {} : { textPreview }),
       expiresAtMillis: now + ARKME_WORLD_RECORD_REF_TTL_MILLIS,
     })
     return recordRef

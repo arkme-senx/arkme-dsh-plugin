@@ -1,6 +1,7 @@
 export type ArkmeEnvironment = 'test' | 'prod'
 
 export const ARKME_PROVIDER_CONTRACT_VERSION = 1 as const
+export const ARKME_DEFAULT_SHARE_WEBSITE = 'https://app.arkme.ai'
 
 export type ArkmeAuthStatus = 'logged-out' | 'pending' | 'binding-required' | 'authenticated' | 'expired'
 
@@ -25,6 +26,7 @@ export interface ArkmeClientConfig {
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
   callAssetBasePath: string
+  shareWebsite: string
 }
 
 export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
@@ -83,6 +85,26 @@ export interface ArkmeBillingOrderSnapshot {
   pollIntervalMillis?: number
   paidAtMillis?: number
   creditedAtMillis?: number
+}
+
+export type ArkmeContactIdentifierKind = 'phone' | 'arkme_id'
+
+/** Browser/model-safe projection returned by contact lookup. */
+export interface ArkmeContactSearchResult {
+  contactRef: string
+  identifierKind: ArkmeContactIdentifierKind
+  displayName: string
+  arkmeId?: string
+  avatarRef?: string
+  registered: boolean
+  inviteBySms: boolean
+  canAdd: boolean
+  isSelf: boolean
+}
+
+export interface ArkmeContactAddResult {
+  state: 'ready' | 'pending'
+  source: ArkmeSourceItem
 }
 
 export interface ArkmeRecordCursor {
@@ -186,6 +208,12 @@ export interface ArkmeCreateTextResult {
   status: number
 }
 
+/** Result of creating a canonical Record backed by uploaded file assets. */
+export interface ArkmeCreateFileAssetRecordResult {
+  recordUid: string
+  status: number
+}
+
 export type ArkmeBotProvider = 'openclaw' | 'webhook'
 export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
 
@@ -271,6 +299,25 @@ export interface ArkmeWorldVoiceprintAvailability {
   items: ArkmeWorldVoiceprintAvailabilityItem[]
 }
 
+export type ArkmeWorldVoiceprintSocialRelationType =
+  | 'reciprocal_expectation'
+  | 'call'
+  | 'world_interaction'
+  | 'group_interaction'
+  | 'private_chat'
+
+/** Browser-safe relationship evidence used by the World voiceprint reminder dialog. */
+export interface ArkmeWorldVoiceprintSocialRelation {
+  type: ArkmeWorldVoiceprintSocialRelationType
+  displayLine: string
+  reasonCode: string
+  reasonLabel: string
+}
+
+export interface ArkmeWorldVoiceprintSocialContext {
+  relations: ArkmeWorldVoiceprintSocialRelation[]
+}
+
 /** Browser-safe generated World voice chunk. The signed Audio URL stays inside the Provider. */
 export interface ArkmeWorldVoiceprintPlaybackChunk {
   mediaRef: string
@@ -281,6 +328,13 @@ export interface ArkmeWorldVoiceprintPlaybackChunk {
   chunkCount: number
   chunkStartRune: number
   chunkEndRune: number
+}
+
+export interface ArkmeWorldVoiceprintInviteResult {
+  sent: true
+  peerDisplayName: string
+  messageItemUid?: string
+  expiresAtMillis: number
 }
 
 /** Browser-safe World comment or reply. Stable record IDs stay inside the Provider. */
@@ -397,6 +451,9 @@ export interface ArkmeArrangementReminderWriteResult {
 
 export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
+export const ARKME_WORLD_PUBLISH_MAX_IMAGES = 9
+export const ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
 export interface ArkmeWorldPublishResult {
   recordSaved: boolean
   recordState: 'synced' | 'pending' | 'not_saved'
@@ -405,6 +462,24 @@ export interface ArkmeWorldPublishResult {
   checkStatus: number
   retryable: boolean
   error?: string
+}
+
+/** Media upload output accepted by the World image-publish boundary. */
+export interface ArkmeWorldPublishFileAsset {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+}
+
+export interface ArkmeWorldPublishTextInput {
+  clientMutationId: string
+  textContent: string
+}
+
+export interface ArkmeWorldPublishFileAssetsInput extends ArkmeWorldPublishTextInput {
+  fileAssets: ArkmeWorldPublishFileAsset[]
 }
 
 export interface ArkmeCachedSnapshot {
@@ -558,8 +633,13 @@ export interface ArkmeProviderCapabilities {
     fileUpload: boolean
     outgoingCall: true
     groupMembers: true
+    groupMemberAdd?: true
     userCard: true
     openPrivateChat: true
+    /** Search accounts and idempotently add/open a contact conversation. */
+    contactAdd?: true
+    /** Built-in quick-add surface plus SDK/Host support for contacts, groups, and Bots. */
+    conversationQuickAdd?: true
     groupSettings: true
     /** Installed-extension inspection and desired enable/disable state are available. */
     extensionManagement?: true
@@ -574,8 +654,14 @@ export interface ArkmeProviderCapabilities {
     worldFeed?: true
     /** Optional additive capability for reading and writing World comments and replies. */
     worldInteractions?: true
+    /** Optional additive capability for publishing text and file-asset World records. */
+    worldPublish?: true
     /** Optional additive capability for author-voice playback of public World text. */
     worldVoiceprintPlayback?: true
+    /** Optional additive capability for sending a voiceprint invite reminder to a World author. */
+    worldVoiceprintInvite?: true
+    /** Optional additive capability for mobile-aligned relationship context in the voiceprint reminder dialog. */
+    worldVoiceprintSocialContext?: true
     /** Optional additive capability for the independent Arrangement consumer. */
     arrangements?: true
     /** Optional additive current-account Cordis/Profile/cloud extension inventory. */
@@ -584,6 +670,10 @@ export interface ArkmeProviderCapabilities {
     extensionPublish?: true
     /** Optional additive capability for extension reviews, replies, and rating summaries. */
     extensionReviews?: true
+    /** Optional additive capability for reading system and Doubao all-day recording transcripts. */
+    recordingTranscripts?: true
+    /** Optional additive capability for explicitly starting Doubao backfill for one local recording day. */
+    recordingDoubaoBackfill?: true
   }
   limits: {
     maxTextLength: number
@@ -1031,6 +1121,7 @@ export interface ArkmeGroupMemberItem {
   isSelf: boolean
   isOwner: boolean
   joinedAtMillis: number
+  recordCount: number
 }
 
 export interface ArkmeGroupMemberList {
@@ -1040,6 +1131,81 @@ export interface ArkmeGroupMemberList {
   activeCount: number
   selfRole: ArkmeGroupMemberRole
   selfStatus: ArkmeGroupMemberStatus
+}
+
+export interface ArkmeGroupMemberCandidate {
+  candidateRef: string
+  displayName: string
+  avatarRef?: string
+  origin: 'private_chat' | 'group_chat'
+  relation: 'contact' | 'stranger' | 'group'
+  disabled?: boolean
+  alreadyMember?: boolean
+  statusText?: string
+}
+
+export interface ArkmeGroupMemberCandidateGroup {
+  group: ArkmeSourceItem
+  items: ArkmeGroupMemberCandidate[]
+  total: number
+  error?: string
+}
+
+export interface ArkmeGroupBotCandidate {
+  botRef: string
+  name: string
+  description: string
+  installed: boolean
+}
+
+export interface ArkmeGroupBotCandidateList {
+  groupSourceRef: string
+  displayName: string
+  canAddBots: boolean
+  items: ArkmeGroupBotCandidate[]
+}
+
+export interface ArkmeGroupBotAddResult {
+  botRef: string
+  groupSourceRef: string
+  installed: boolean
+}
+
+export interface ArkmeGroupMemberCandidateList {
+  source: ArkmeSourceItem
+  items: ArkmeGroupMemberCandidate[]
+  total: number
+  hasMore: boolean
+  mode: 'direct_add' | 'approval_invite'
+  groups: ArkmeSourceItem[]
+  groupCandidates: ArkmeGroupMemberCandidateGroup[]
+  contactCount: number
+  strangerCount: number
+}
+
+export interface ArkmeGroupInvitePreview {
+  source: ArkmeSourceItem
+  title: string
+  inviterDisplayName: string
+  inviteLink: string
+  expireAtMillis: number
+  mode: 'direct_add' | 'approval_invite'
+}
+
+export type ArkmeGroupMemberAddStatus = 'added' | 'reactivated' | 'already_member' | 'invite_sent' | 'failed'
+
+export interface ArkmeGroupMemberAddItemResult {
+  candidateRef: string
+  displayName: string
+  status: ArkmeGroupMemberAddStatus
+  error?: string
+}
+
+export interface ArkmeGroupMemberAddResult {
+  source: ArkmeSourceItem
+  results: ArkmeGroupMemberAddItemResult[]
+  succeededCount: number
+  failedCount: number
 }
 
 export interface ArkmeUserCardSnapshot {
@@ -1090,6 +1256,7 @@ export interface ArkmeRecordingCursorPayload {
   version: 1
   dateStamp: number
   content: ArkmeRecordingToolContent
+  transcriptSource?: ArkmeAiVideoTranscriptSource
   versionId?: string
   itemOffset: number
   textOffset: number
@@ -1110,6 +1277,8 @@ export interface ArkmeRecordingTranscriptItem {
   isSelf: boolean
   isBackground: boolean
   text: string
+  /** Omitted by older providers and treated as a completed transcript row. */
+  transcriptStatus?: 'ready' | 'processing' | 'silent' | 'failed'
 }
 
 export interface ArkmeRecordingTimelineEvent {
@@ -1153,10 +1322,18 @@ export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<A
   totalDurationMillis: number
 }
 
+export interface ArkmeRecordingDoubaoBackfillResult {
+  queuedChildCount: number
+  inFlightChildCount: number
+  missingAudioChildCount: number
+}
+
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
   transcript: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
+  /** Optional for compatibility with Providers released before Doubao comparison. */
+  doubaoTranscript?: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
@@ -1543,6 +1720,8 @@ export interface ArkmePluginUpdateStatus {
 export type ArkmePluginUpdateInstallPhase =
   | 'idle'
   | 'preparing'
+  | 'downloading'
+  | 'verifying'
   | 'installing'
   | 'restarting'
   | 'succeeded'
@@ -1613,6 +1792,10 @@ export type ArkmePluginOperation =
   | 'billing.products'
   | 'billing.order.create'
   | 'billing.order.status'
+  | 'contacts.search'
+  | 'contacts.add'
+  | 'group.create'
+  | 'bots.create'
   | 'records.summary'
   | 'records.cache'
   | 'records.refresh'
@@ -1623,16 +1806,24 @@ export type ArkmePluginOperation =
   | 'records.retry'
   | 'calendar.buckets'
   | 'calendar.records'
+  | 'recordings.day'
+  | 'recordings.doubao.start'
   | 'user.profile'
   | 'user.profile.refresh'
   | 'image.read'
   | 'images.list'
   | 'world.feed'
+  | 'world.mine'
+  | 'world.user'
   | 'world.voiceprint.availability'
   | 'world.voiceprint.playback.generate'
+  | 'world.voiceprint.social-context'
+  | 'world.voiceprint.invite'
   | 'world.interactions.list'
   | 'world.interactions.create-text'
   | 'world.image.read'
+  | 'world.publish-text'
+  | 'world.publish-file-assets'
   | 'arrangements.list'
   | 'arrangements.detail'
   | 'arrangements.mutate'
@@ -1644,6 +1835,7 @@ export type ArkmePluginOperation =
   | 'arrangements.reminders.clear'
   | 'extensions.reviews.list'
   | 'extensions.reviews.create'
+  | 'extensions.audit.check'
   | 'sources.list'
   | 'source.timeline'
   | 'source.mark-read'
@@ -1658,6 +1850,11 @@ export type ArkmePluginOperation =
   | 'source.ai-polish.confirm-disable'
   | 'source.ai-polish.retry'
   | 'group.members'
+  | 'group.member-candidates'
+  | 'group.invite-preview'
+  | 'group.members.add'
+  | 'group.bots'
+  | 'group.bot.add'
   | 'group.settings'
   | 'group.notification.set'
   | 'group.rename'
@@ -1679,6 +1876,10 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.release'
   | 'extensions.mine.list'
   | 'extensions.mine.publish'
+  | 'extensions.catalog.list'
+  | 'extensions.catalog.detail'
+  | 'extensions.install.preview'
+  | 'extensions.delete'
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'
@@ -1688,13 +1889,15 @@ export type ArkmePluginOperation =
   | 'extensions.enabled.set'
   | 'extensions.preview.delete'
   | 'extensions.preview.reorder'
+  | 'extensions.catalog.list'
+  | 'extensions.classification.tree'
+  | 'extensions.classification.items'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
   | 'dsh-beta-community.entry-state'
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
-  | 'recordings.day'
   | 'search.records'
   | 'search.scene'
   | 'search.recordings'
@@ -1720,7 +1923,10 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
   | 'extensions.catalog.list'
+  | 'extensions.classification.tree'
+  | 'extensions.classification.items'
   | 'extensions.catalog.detail'
+  | 'extensions.audit.check'
   | 'extensions.my-list'
   | 'extensions.delete'
   | 'extensions.updates'

@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto'
 import {
-  lstatSync, readFileSync, readdirSync, realpathSync, statSync,
+  existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync,
 } from 'node:fs'
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { parseDocument } from 'yaml'
+import type { ArkmeNativeCapability } from './types.js'
+export type { ArkmeNativeCapability } from './types.js'
 
 export const ARKME_BUNDLE_CONTRACT_VERSION = 2 as const
 export const ARKME_BUNDLE_ARTIFACT_KIND = 'dsh-bundle-tgz' as const
+export const ARKME_NATIVE_BUNDLE_CONTRACT_VERSION = 3 as const
+export const ARKME_NATIVE_BUNDLE_ARTIFACT_KIND = 'dsh-native-package-tgz' as const
 export const ARKME_BUNDLE_MAX_BYTES = 100 * 1024 * 1024
 export type ArkmeBundleExecutionModel = 'arkme-sandboxed' | 'dsh-native'
 
@@ -31,7 +35,22 @@ export interface ArkmeBundlePublishSource {
   source: { bytes: Uint8Array; sourceSha256: string }
 }
 
+export interface ArkmeNativeBundleArtifact extends ArkmeBundleArtifact {
+  executionModel: 'dsh-native'
+  nativeCapabilities: ArkmeNativeCapability[]
+}
+
+export interface ArkmeNativeBundlePublishSource {
+  bundle: ArkmeNativeBundleArtifact
+  source: { bytes: Uint8Array; sourceSha256: string }
+}
+
 export interface InspectedBundleArtifact extends ArkmeBundleArtifact {
+  files: ReadonlyMap<string, Buffer>
+  patchIds: string[]
+}
+
+export interface InspectedNativeBundleArtifact extends ArkmeNativeBundleArtifact {
   files: ReadonlyMap<string, Buffer>
   patchIds: string[]
 }
@@ -89,9 +108,20 @@ function writeOctal(header: Buffer, offset: number, length: number, value: numbe
   header[offset + length - 1] = 0
 }
 
+function splitTarPath(path: string): { name: Buffer; prefix?: Buffer } {
+  const direct = Buffer.from(path, 'utf8')
+  if (direct.byteLength <= 100) return { name: direct }
+  const separators = [...path.matchAll(/\//g)].map(match => match.index).reverse()
+  for (const separator of separators) {
+    const prefix = Buffer.from(path.slice(0, separator), 'utf8')
+    const name = Buffer.from(path.slice(separator + 1), 'utf8')
+    if (prefix.byteLength <= 155 && name.byteLength <= 100) return { name, prefix }
+  }
+  throw new ArkmeBundleArtifactError('bundle-path-too-long', `Bundle 路径过长：${path}`)
+}
+
 function tarHeader(path: string, size: number): Buffer {
-  const name = Buffer.from(path, 'utf8')
-  if (name.byteLength > 100) throw new ArkmeBundleArtifactError('bundle-path-too-long', `Bundle 路径过长：${path}`)
+  const { name, prefix } = splitTarPath(path)
   const header = Buffer.alloc(TAR_BLOCK_BYTES)
   name.copy(header, 0)
   writeOctal(header, 100, 8, 0o644)
@@ -103,6 +133,7 @@ function tarHeader(path: string, size: number): Buffer {
   header[156] = '0'.charCodeAt(0)
   header.write('ustar\0', 257, 6, 'ascii')
   header.write('00', 263, 2, 'ascii')
+  prefix?.copy(header, 345)
   writeOctal(header, 148, 8, [...header].reduce((sum, byte) => sum + byte, 0))
   return header
 }
@@ -148,7 +179,9 @@ function readTar(tar: Buffer): Map<string, Buffer> {
   while (offset + TAR_BLOCK_BYTES <= tar.byteLength) {
     const header = tar.subarray(offset, offset + TAR_BLOCK_BYTES)
     if (header.every(byte => byte === 0)) break
-    const path = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '')
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '')
+    const prefix = header.subarray(345, 500).toString('utf8').replace(/\0.*$/, '')
+    const path = prefix === '' ? name : `${prefix}/${name}`
     validateArchivePath(path)
     if (files.has(path)) throw new ArkmeBundleArtifactError('bundle-duplicate-path', `Bundle 包含重复路径：${path}`)
     const type = header[156]
@@ -174,7 +207,7 @@ interface BundleManifest {
   type?: unknown
   main?: unknown
   exports?: unknown
-  files: string[]
+  files?: string[]
   scripts?: Record<string, unknown>
   dependencies?: Record<string, string>
   optionalDependencies?: Record<string, string>
@@ -321,6 +354,122 @@ function validatePatch(raw: Buffer, packageName: string, executionModel: ArkmeBu
   return [...ids].sort()
 }
 
+const NATIVE_LIFECYCLE_SCRIPTS = new Set([
+  'preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'prepublishOnly', 'prepack', 'postpack',
+])
+
+function nonEmptyManifestValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  if (typeof value === 'boolean') return value
+  return true
+}
+
+function inspectNativePatch(raw: Buffer, packageName: string): {
+  patchIds: string[]
+  capabilities: ArkmeNativeCapability[]
+} {
+  const document = parseDocument(raw.toString('utf8'), { uniqueKeys: true })
+  if (document.errors.length > 0) throw new ArkmeBundleArtifactError('bundle-patch-invalid', 'Bundle patch YAML 格式无效')
+  const value = document.toJS() as unknown
+  if (!Array.isArray(value)) throw new ArkmeBundleArtifactError('bundle-patch-invalid', 'Bundle patch 必须是操作数组')
+  const patchIds = new Set<string>()
+  const capabilities = new Set<ArkmeNativeCapability>()
+  for (const operation of value) {
+    if (operation === null || typeof operation !== 'object' || Array.isArray(operation)) {
+      capabilities.add('profile_patch_override')
+      continue
+    }
+    const record = operation as Record<string, unknown>
+    const insertOnly = Object.keys(record).length === 1 && Array.isArray(record.insert)
+    if (!insertOnly) {
+      capabilities.add('profile_patch_override')
+      if (typeof record.id === 'string' && record.id.trim() !== '') patchIds.add(record.id.trim())
+      continue
+    }
+    for (const row of record.insert as unknown[]) {
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+      const item = row as { id?: unknown; name?: unknown }
+      if (typeof item.id === 'string' && item.id.trim() !== '') patchIds.add(item.id.trim())
+      if (typeof item.name === 'string' && item.name !== packageName && !item.name.startsWith(`${packageName}/`)) {
+        capabilities.add('external_package_reference')
+      }
+    }
+  }
+  return { patchIds: [...patchIds].sort(), capabilities: [...capabilities].sort() }
+}
+
+function inspectNativeManifest(
+  manifest: BundleManifest,
+  files: ReadonlyMap<string, Buffer>,
+): { patchPath: string; capabilities: ArkmeNativeCapability[] } {
+  if (typeof manifest.name !== 'string' || manifest.name.length > 214 || !PACKAGE_NAME.test(manifest.name)
+    || manifest.name.startsWith('@deepseek-ai/') || manifest.name === '@senguoyun/dsh-arkme'
+    || manifest.name.startsWith('@arkme-local/')) {
+    throw new ArkmeBundleArtifactError('bundle-package-name-invalid', 'Bundle package name 无效或属于保留集合')
+  }
+  if (typeof manifest.version !== 'string' || !SEMVER.test(manifest.version)) {
+    throw new ArkmeBundleArtifactError('bundle-version-invalid', 'Bundle version 必须是严格 SemVer')
+  }
+  if (manifest.dsh?.arkme !== undefined && manifest.dsh.arkme !== null) {
+    throw new ArkmeBundleArtifactError('bundle-execution-model-invalid', '原生 DSH V3 Bundle 不允许声明 Arkme sandbox marker')
+  }
+  const patch = manifest.dsh?.bundle?.patch
+  if (typeof patch !== 'string' || patch.trim() === '' || patch.includes('\\') || patch.startsWith('/')) {
+    throw new ArkmeBundleArtifactError('bundle-patch-missing', 'Bundle 必须声明包内 dsh.bundle.patch')
+  }
+  const patchPath = `package/${posix.normalize(patch.replace(/^\.\//, ''))}`
+  if (!files.has(patchPath) || patchPath.includes('/../')) {
+    throw new ArkmeBundleArtifactError('bundle-patch-missing', 'Bundle patch 不在包内')
+  }
+  const capabilities = new Set<ArkmeNativeCapability>()
+  if (nonEmptyManifestValue(manifest.dependencies)) capabilities.add('runtime_dependencies')
+  if (nonEmptyManifestValue(manifest.optionalDependencies)) capabilities.add('optional_dependencies')
+  if (nonEmptyManifestValue(manifest.bundledDependencies) || nonEmptyManifestValue(manifest.bundleDependencies)) {
+    capabilities.add('bundled_dependencies')
+  }
+  for (const name of Object.keys(manifest.peerDependencies ?? {})) {
+    if (!name.startsWith('@deepseek-ai/') && name !== '@senguoyun/dsh-arkme' && name !== 'react' && name !== 'react-dom') {
+      capabilities.add('peer_dependencies')
+      break
+    }
+  }
+  if (Object.entries(manifest.scripts ?? {}).some(([name, value]) => NATIVE_LIFECYCLE_SCRIPTS.has(name) && nonEmptyManifestValue(value))) {
+    capabilities.add('lifecycle_scripts')
+  }
+  if (nonEmptyManifestValue(manifest.bin)) capabilities.add('bin')
+  if ([...files.keys()].some(name => name.toLowerCase().endsWith('.node'))) capabilities.add('native_addon')
+  return { patchPath, capabilities: [...capabilities].sort() }
+}
+
+export function inspectNativeBundleArtifactV3(bytes: Uint8Array): InspectedNativeBundleArtifact {
+  assertArchiveSize(bytes.byteLength, 'Bundle')
+  let tar: Buffer
+  try { tar = gunzipSync(bytes, { maxOutputLength: ARKME_BUNDLE_MAX_BYTES + MAX_TAR_OVERHEAD_BYTES }) } catch {
+    throw new ArkmeBundleArtifactError('bundle-gzip-invalid', 'Bundle 不是有效 gzip')
+  }
+  const files = readTar(tar)
+  const packageJSON = files.get('package/package.json')
+  if (packageJSON === undefined) throw new ArkmeBundleArtifactError('bundle-package-json-missing', 'Bundle 缺少 package.json')
+  const manifest = readManifest(packageJSON)
+  const inspected = inspectNativeManifest(manifest, files)
+  const patch = inspectNativePatch(files.get(inspected.patchPath)!, manifest.name)
+  const nativeCapabilities = [...new Set([...inspected.capabilities, ...patch.capabilities])].sort() as ArkmeNativeCapability[]
+  return {
+    bytes: Buffer.from(bytes),
+    bundleSha256: bundleSha256(bytes),
+    packageJsonSha256: bundleSha256(packageJSON),
+    packageName: manifest.name,
+    version: manifest.version,
+    executionModel: 'dsh-native',
+    nativeCapabilities,
+    files,
+    patchIds: patch.patchIds,
+  }
+}
+
 export function inspectBundleArtifact(bytes: Uint8Array): InspectedBundleArtifact {
   assertArchiveSize(bytes.byteLength, 'Bundle')
   let tar: Buffer
@@ -351,33 +500,124 @@ function pathInside(root: string, target: string): boolean {
   return fromRoot === '' || (!fromRoot.startsWith(`..${sep}`) && fromRoot !== '..' && !isAbsolute(fromRoot))
 }
 
-function collectPackageFiles(root: string, manifest: BundleManifest): Map<string, Buffer> {
+function globPattern(pattern: string): RegExp {
+  let expression = '^'
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]!
+    if (character === '*') {
+      if (pattern[index + 1] === '*') {
+        index += 1
+        if (pattern[index + 1] === '/') {
+          index += 1
+          expression += '(?:.*/)?'
+        } else {
+          expression += '.*'
+        }
+      } else {
+        expression += '[^/]*'
+      }
+    } else if (character === '?') {
+      expression += '[^/]'
+    } else {
+      expression += character.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')
+    }
+  }
+  return new RegExp(`${expression}$`)
+}
+
+function collectPackageFiles(root: string, manifest: BundleManifest, nativeV3 = false): Map<string, Buffer> {
   const canonicalRoot = realpathSync(root)
   const selected = new Map<string, Buffer>()
-  const add = (absolute: string): void => {
+  const ignoredNativeRootEntries = new Set(['.git', '.hg', '.svn', 'node_modules'])
+  const ignoredNativeFiles = new Set(['.npmrc', '.yarnrc', '.yarnrc.yml', '.pnpmfile.cjs'])
+  const add = (absolute: string, allowIgnore = false): void => {
     const stat = lstatSync(absolute)
-    if (stat.isSymbolicLink()) throw new ArkmeBundleArtifactError('bundle-link-forbidden', 'Bundle source 不允许符号链接')
+    const rel = relative(canonicalRoot, absolute).split(sep).join('/')
+    const first = rel.split('/')[0] ?? ''
+    const basename = rel.split('/').at(-1) ?? ''
+    if (allowIgnore && (ignoredNativeRootEntries.has(first) || ignoredNativeFiles.has(basename)
+      || basename === '.env' || basename.startsWith('.env.'))) return
+    if (stat.isSymbolicLink()) {
+      if (allowIgnore) return
+      throw new ArkmeBundleArtifactError('bundle-link-forbidden', 'Bundle source 不允许符号链接')
+    }
     const canonical = realpathSync(absolute)
     if (!pathInside(canonicalRoot, canonical)) throw new ArkmeBundleArtifactError('bundle-path-invalid', 'Bundle source 逃逸 package root')
     if (stat.isDirectory()) {
-      for (const child of readdirSync(canonical).sort()) add(join(canonical, child))
+      for (const child of readdirSync(canonical).sort()) add(join(canonical, child), allowIgnore)
       return
     }
     if (!stat.isFile()) throw new ArkmeBundleArtifactError('bundle-file-type-forbidden', 'Bundle source 只允许普通文件')
-    const rel = relative(canonicalRoot, canonical).split(sep).join('/')
-    selected.set(`package/${rel}`, readFileSync(canonical))
+    const canonicalRel = relative(canonicalRoot, canonical).split(sep).join('/')
+    selected.set(`package/${canonicalRel}`, readFileSync(canonical))
+  }
+  const addNativePackageExtras = (): void => {
+    if (!nativeV3) return
+    for (const child of readdirSync(canonicalRoot).sort()) {
+      if (/^(?:readme|licen[cs]e|copying|notice)(?:\.|$)/i.test(child)) add(join(canonicalRoot, child), true)
+    }
+    const paths = new Set<string>()
+    if (typeof manifest.main === 'string') paths.add(manifest.main)
+    const bin = manifest.bin
+    if (typeof bin === 'string') paths.add(bin)
+    else if (bin !== null && typeof bin === 'object' && !Array.isArray(bin)) {
+      for (const value of Object.values(bin)) if (typeof value === 'string') paths.add(value)
+    }
+    const patch = manifest.dsh?.bundle?.patch
+    if (typeof patch === 'string') paths.add(patch)
+    for (const entry of paths) {
+      const target = resolve(canonicalRoot, entry)
+      if (pathInside(canonicalRoot, target) && existsSync(target)) add(target, true)
+    }
   }
   add(join(canonicalRoot, 'package.json'))
-  for (const entry of manifest.files) {
-    if (entry.includes('*') || entry.includes('?') || entry.includes('[') || entry.includes('\\')) {
-      throw new ArkmeBundleArtifactError('bundle-files-invalid', 'Bundle files 暂不接受 glob 或反斜杠')
+  const entries = manifest.files ?? []
+  if (entries.length === 0) {
+    if (!nativeV3) throw new ArkmeBundleArtifactError('bundle-files-missing', 'Bundle 必须显式声明 files')
+    for (const child of readdirSync(canonicalRoot).sort()) {
+      if (child !== 'package.json') add(join(canonicalRoot, child), true)
     }
-    const target = resolve(canonicalRoot, entry)
-    if (!pathInside(canonicalRoot, target) || !statSync(target).isFile() && !statSync(target).isDirectory()) {
+    addNativePackageExtras()
+    return selected
+  }
+  let candidates: string[] | undefined
+  const listCandidates = (): string[] => {
+    if (candidates !== undefined) return candidates
+    candidates = []
+    const walk = (directory: string): void => {
+      for (const child of readdirSync(directory).sort()) {
+        const absolute = join(directory, child)
+        const stat = lstatSync(absolute)
+        if (stat.isSymbolicLink()) continue
+        if (stat.isDirectory()) walk(absolute)
+        else if (stat.isFile()) candidates!.push(relative(canonicalRoot, absolute).split(sep).join('/'))
+      }
+    }
+    walk(canonicalRoot)
+    return candidates
+  }
+  for (const entry of entries) {
+    if (entry.includes('\\') || entry.startsWith('/') || entry.split('/').includes('..')) {
       throw new ArkmeBundleArtifactError('bundle-files-invalid', `Bundle files 路径无效：${entry}`)
     }
-    add(target)
+    const hasGlob = entry.includes('*') || entry.includes('?') || entry.includes('[')
+    if (hasGlob && !nativeV3) {
+      throw new ArkmeBundleArtifactError('bundle-files-invalid', 'Bundle files 暂不接受 glob 或反斜杠')
+    }
+    if (hasGlob) {
+      const matcher = globPattern(entry.replace(/^\.\//, ''))
+      const matches = listCandidates().filter(candidate => matcher.test(candidate))
+      if (matches.length === 0) throw new ArkmeBundleArtifactError('bundle-files-invalid', `Bundle files 路径无效：${entry}`)
+      for (const match of matches) add(resolve(canonicalRoot, match), true)
+      continue
+    }
+    const target = resolve(canonicalRoot, entry)
+    if (!pathInside(canonicalRoot, target) || !existsSync(target) || !statSync(target).isFile() && !statSync(target).isDirectory()) {
+      throw new ArkmeBundleArtifactError('bundle-files-invalid', `Bundle files 路径无效：${entry}`)
+    }
+    add(target, nativeV3)
   }
+  addNativePackageExtras()
   return selected
 }
 
@@ -401,6 +641,32 @@ export function readLocalBundleTarball(path: string): ArkmeBundlePublishSource {
   if (!lstatSync(path).isFile()) throw new ArkmeBundleArtifactError('bundle-tarball-invalid', '本地 Bundle tgz 必须是普通文件')
   const bytes = readFileSync(path)
   const inspected = inspectBundleArtifact(bytes)
+  return {
+    bundle: inspected,
+    source: { bytes: Buffer.from(bytes), sourceSha256: bundleSha256(bytes) },
+  }
+}
+
+function packNativeBundleFiles(files: ReadonlyMap<string, Buffer>): ArkmeNativeBundlePublishSource {
+  const bytes = gzipSync(createTar(files), { level: 9 })
+  assertArchiveSize(bytes.byteLength, 'Bundle')
+  const inspected = inspectNativeBundleArtifactV3(bytes)
+  return {
+    bundle: inspected,
+    source: { bytes: Buffer.from(bytes), sourceSha256: bundleSha256(bytes) },
+  }
+}
+
+export function packLocalNativeBundleDirectoryV3(directory: string): ArkmeNativeBundlePublishSource {
+  const packageJSON = readFileSync(join(directory, 'package.json'))
+  const manifest = readManifest(packageJSON)
+  return packNativeBundleFiles(collectPackageFiles(directory, manifest, true))
+}
+
+export function readNativeBundleTarballV3(path: string): ArkmeNativeBundlePublishSource {
+  if (!lstatSync(path).isFile()) throw new ArkmeBundleArtifactError('bundle-tarball-invalid', '本地 Bundle tgz 必须是普通文件')
+  const bytes = readFileSync(path)
+  const inspected = inspectNativeBundleArtifactV3(bytes)
   return {
     bundle: inspected,
     source: { bytes: Buffer.from(bytes), sourceSha256: bundleSha256(bytes) },

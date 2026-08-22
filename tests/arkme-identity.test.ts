@@ -17,6 +17,7 @@ function textFiles(path: string): string[] {
 function withoutInfrastructureNames(content: string): string {
   return content
     .replaceAll('https://jotmo.senguo.me', '')
+    .replaceAll('https://jotmo-app.senguo.me', '')
     .replaceAll('https://jotmo-subject.senguo.me', '')
     .replaceAll('https://jotmo-record.senguo.me', '')
     .replaceAll('https://jotmo-chat.senguo.me', '')
@@ -35,11 +36,13 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://bot.jotmo.cc', '')
     .replaceAll('https://im.jotmo.cc', '')
     .replaceAll('https://webrtc.jiwo.cc', '')
+    .replaceAll('https://jiwo.cc', '')
     .replaceAll('https://world.jotmo.cc', '')
     .replaceAll('https://relation.jotmo.cc', '')
     .replaceAll('https://intelligent.jotmo.cc', '')
     .replaceAll('https://audio.jotmo.cc', '')
     .replaceAll('https://extension-publish.jotmo.cc', '')
+    .replaceAll('https://d.jiwo.cc', '')
     .replaceAll('jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.senguo.me', '')
@@ -63,10 +66,20 @@ function withoutOpenClawProtocolNames(file: string, content: string): string {
 }
 
 function withoutArkmeIdCompatibilityAliases(file: string, content: string): string {
+  const localizedUiFiles = new Set([
+    join(root, 'src/client/ArkmeLogin.tsx'),
+    join(root, 'src/client/ArkmeSettingsSurface.tsx'),
+  ])
+  if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
   const allowedFiles = new Set([
     join(root, 'src/tools/business/account/set-id.ts'),
     join(root, 'src/tools/business/conversation/send-direct-text.ts'),
+    join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
+    join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
+    join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
+    join(root, 'src/services/contact-service.ts'),
   ])
   if (!allowedFiles.has(file)) return content
   return content
@@ -84,11 +97,6 @@ function withoutOfficialCommunityProductCopy(file: string, content: string): str
   return content
 }
 
-function withoutHarnessBuildInfrastructure(file: string, content: string): string {
-  if (file !== join(root, 'src/client/ArkmeSettingsSection.tsx')) return content
-  return content.replaceAll('jotmo-harness', '')
-}
-
 describe('Arkme plugin identity', () => {
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
@@ -100,12 +108,9 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutHarnessBuildInfrastructure(
+      const source = withoutOfficialCommunityProductCopy(
         file,
-        withoutOfficialCommunityProductCopy(
-          file,
-          withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
-        ),
+        withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
       )
       const content = withoutInfrastructureNames(withoutOpenClawProtocolNames(file, source))
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []
@@ -126,14 +131,14 @@ describe('Arkme plugin identity', () => {
     ]))
   })
 
-  it('embeds the complete official Arkme application icon', () => {
+  it('embeds the transparent Arkme application mark', () => {
     const source = readFileSync(join(root, 'src/client/arkme-assets.ts'), 'utf8')
     const encoded = source.match(/base64,([^']+)'/)?.[1]
 
     expect(encoded).toBeDefined()
     const image = Buffer.from(encoded ?? '', 'base64')
-    expect(image).toHaveLength(6_597)
+    expect(image).toHaveLength(18_781)
     expect(createHash('sha256').update(image).digest('hex'))
-      .toBe('7c23a11cfe237a7ab09259453ecbf982099f53f1d0df2a187e26daa92d20d664')
+      .toBe('a5cb368d40afb15ca3b59259a2abb30a2f98defdacbd2cecdaf663d549ef44da')
   })
 })

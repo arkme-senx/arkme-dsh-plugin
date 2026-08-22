@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef, type CSSProperties } from 'react'
 import type { ArkmeAuthSnapshot } from '../types.js'
 import { ArkmeAuthChecking, useArkmeAuthFlow, type ArkmeAuthFlowController, type ArkmePhoneBindingGate } from './arkme-auth-flow.js'
 import { ArkmeLogin } from './ArkmeLogin.js'
-import { arkmeUi } from './ui-controller.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 declare global {
@@ -150,7 +149,6 @@ export function ArkmeStartupAuthGate() {
   useLayoutEffect(() => {
     gateActiveRef.current = syncAuthGateHostDialogs(gateActiveRef.current, screen, document)
     if (screen === 'authenticated') return
-    arkmeUi.deactivateSurface()
     const root = rootRef.current
     if (root === null) return
     const overlayLayer = root.closest<HTMLElement>('[data-shell-overlay]')

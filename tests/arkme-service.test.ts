@@ -716,6 +716,8 @@ describe('ArkmeService', () => {
         imageRead: true,
         recordCalendar: true,
         outgoingCall: true,
+        contactAdd: true,
+        conversationQuickAdd: true,
         myExtensions: true,
         extensionPublish: true,
         extensionManagement: true,
@@ -744,6 +746,7 @@ describe('ArkmeService', () => {
       environment: 'test',
       testLoginEnabled: true,
       callAssetBasePath: '/arkme-self/api/call',
+      shareWebsite: 'https://app.arkme.ai',
     })
   })
 
