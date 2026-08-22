@@ -145,8 +145,8 @@ describe('Arkme native World surface', () => {
 
     expect(markup).toContain('width:min(980px, 100%);min-height:90px;margin:0 auto;padding:34px 48px 0')
     expect(markup).toContain('font-size:26px;line-height:34px;font-weight:650')
-    expect(markup).toContain('width:min(980px, 100%);min-height:42px;margin:0 auto 4px;padding:0 48px')
-    expect(markup.indexOf('aria-label="世界范围"')).toBeLessThan(markup.indexOf('aria-label="发世界"'))
+    expect(markup).toContain('width:min(980px, 100%);min-height:38px;margin:0 auto 4px;padding:0 48px')
+    expect(markup.indexOf('aria-label="发世界"')).toBeLessThan(markup.indexOf('aria-label="世界范围"'))
     expect(markup).toContain('width:min(884px, calc(100% - 96px))')
     expect(markup).toContain('padding:22px 20px 18px')
     expect(markup).toContain('border:1px dashed #d7dbe3')

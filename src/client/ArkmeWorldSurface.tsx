@@ -58,9 +58,9 @@ const styles: Record<string, CSSProperties> = {
   targetTitle: { minWidth: 0, display: 'grid', gap: 1 },
   backButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
   button: { minHeight: 36, padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  iconButton: { width: 40, height: 40, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: '#737984', cursor: 'pointer' },
-  primaryButton: { minHeight: 40, padding: '0 16px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, borderColor: '#191b25', background: '#191b25', color: '#fff' },
-  worldToolbar: { width: 'min(980px, 100%)', minHeight: 42, margin: '0 auto 4px', padding: '0 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 24 },
+  iconButton: { width: 32, height: 32, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: 'transparent', color: '#737984', cursor: 'pointer' },
+  primaryButton: { minHeight: 34, padding: '0 12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, borderColor: '#191b25', background: '#191b25', color: '#fff' },
+  worldToolbar: { width: 'min(980px, 100%)', minHeight: 38, margin: '0 auto 4px', padding: '0 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch' },
   tabs: { minWidth: 0, height: 38, padding: 0, display: 'flex', alignItems: 'stretch', gap: 23 },
   tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: '#7b8089', cursor: 'pointer', font: 'inherit', fontSize: 12 },
   tabActive: { borderBottom: '2px solid #20232d', color: colors.text, fontWeight: 600 },
@@ -75,9 +75,9 @@ const styles: Record<string, CSSProperties> = {
   avatar: { width: 36, height: 36, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 13, fontWeight: 600 },
   avatarImage: { width: '100%', height: '100%', objectFit: 'cover' },
   authorMeta: { minWidth: 0, display: 'grid', alignItems: 'center' },
-  authorRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
+  authorRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 },
   author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 },
-  voiceprintButton: { width: 24, height: 24, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 7, background: 'transparent', cursor: 'pointer', lineHeight: 0 },
+  voiceprintButton: { width: 20, height: 20, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer', lineHeight: 0 },
   voiceprintPlayable: { color: '#979da6' },
   voiceprintActive: { background: '#f0f1f3', color: '#565c66' },
   voiceprintInvite: { color: '#9aa1ad' },
@@ -625,7 +625,7 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
           <strong style={styles.author}>{item.authorName}</strong>
           {playable
             ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
-              <SpeakerHigh size={20} weight="regular" />
+              <SpeakerHigh size={16} weight="light" />
             </button>
             : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} onClick={() => { onInviteVoiceprint(item) }}>
               <Plus size={13} weight="bold" />
@@ -714,23 +714,18 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
           />
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}的世界</h1><p style={styles.subtitle}>TA 公开分享的内容</p></div>
         </div>}
-      {target !== undefined && <div style={styles.headerActions}>
+      <div style={styles.headerActions}>
         <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
-          <ArrowClockwise size={21} weight="regular" />
+          <ArrowClockwise size={18} weight="light" />
         </button>
-      </div>}
+        {target === undefined && <button type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label="发世界" onClick={onOpenComposer}><Plus size={14} weight="regular" aria-hidden />发布</button>}
+      </div>
     </header>
     {target === undefined && <div style={styles.worldToolbar}>
       <nav style={styles.tabs} aria-label="世界范围">
         <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
         <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
       </nav>
-      <div style={styles.headerActions}>
-        <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
-          <ArrowClockwise size={21} weight="regular" />
-        </button>
-        <button type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label="发世界" onClick={onOpenComposer}><Plus size={17} weight="regular" aria-hidden />发布</button>
-      </div>
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
       <div style={styles.body} data-world-feed-pane="true">
