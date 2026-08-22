@@ -31,7 +31,7 @@ const products: ArkmeBillingProduct[] = [
 ]
 
 describe('Arkme billing settings migration', () => {
-  it('places the balance below its title and the recharge control before the disclosure arrow', () => {
+  it('places the balance below its title and renders recharge as the only trailing control', () => {
     const markup = renderToStaticMarkup(<ArkmeBalanceSettingsRowView
       quotaState={{ kind: 'ready', quota: {
         availableNanoCny: '12801736510', totalNanoCny: '12801736510', reservedNanoCny: '0', currency: 'CNY',
@@ -39,7 +39,9 @@ describe('Arkme billing settings migration', () => {
       onOpen={noop}
     />)
 
-    expect(markup).toMatch(/当前余量[\s\S]*¥12\.80[\s\S]*>充值<\/button>[\s\S]*<svg/)
+    expect(markup).toMatch(/当前余量[\s\S]*¥12\.80[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toContain('>充值</button><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
+    expect(markup).not.toContain('<svg')
     expect(markup).not.toContain('总余额')
     expect(markup).not.toContain('已预占')
   })
@@ -66,6 +68,7 @@ describe('Arkme billing settings migration', () => {
     expect(markup).not.toMatch(/overflow-x:/)
     expect(markup).toMatch(/AI 余额 ¥10[\s\S]*AI 余额 ¥50[\s\S]*AI 余额 ¥100[\s\S]*AI 余额支付测试/)
     expect(markup).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*支付宝网页支付/)
+    expect(markup).toMatch(/<svg[^>]*class="arkme-billing-platform-icon is-alipay"[^>]*viewBox="0 0 1024 1024"[^>]*>[\s\S]*<path[^>]*fill="#009FE8"/)
     expect(markup).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*微信扫码支付/)
     expect(markup).toContain('aria-label="关闭充值弹窗"')
   })

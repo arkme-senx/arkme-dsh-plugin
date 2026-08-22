@@ -67,12 +67,12 @@ describe('ArkmeSettingsRow', () => {
     })[0].feedback).toBe('已检查 · 暂无可用版本')
   })
 
-  it('surfaces a missing desktop update bridge instead of silently offering a broken action', () => {
+  it('keeps the APP update retry visible when the desktop update bridge is unavailable', () => {
     expect(buildArkmeUpdateCenterRows({
       appError: 'APP 更新只在 Arkme 桌面端可用',
     })[0]).toMatchObject({
-      button: '当前不可用',
-      action: 'busy',
+      button: '检查更新',
+      action: 'check',
       feedback: '检查失败：APP 更新只在 Arkme 桌面端可用',
     })
   })
@@ -100,6 +100,17 @@ describe('ArkmeSettingsRow', () => {
       '已检查 · 当前已是最新版本',
       '已检查 · 当前已是最新版本',
     ])
+  })
+
+  it('projects the APP store busy state immediately while the desktop check promise is pending', () => {
+    expect(buildArkmeUpdateCenterRows({
+      app: { status: 'current', currentVersion: '1.2.0' },
+      appBusy: true,
+    })[0]).toMatchObject({
+      button: '检查中…',
+      action: 'busy',
+      feedback: '正在检查更新…',
+    })
   })
 
   it('makes APP package download progress visible in the update center', () => {
