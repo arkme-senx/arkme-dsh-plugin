@@ -27,14 +27,19 @@ const styles: Record<string, CSSProperties> = {
   openThreadButton: { position: 'absolute', zIndex: 0, inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
   reviewContent: { position: 'relative', zIndex: 1, pointerEvents: 'none' },
   reviewLayout: { display: 'grid', gridTemplateColumns: '34px minmax(0, 1fr)', columnGap: 11, alignItems: 'start' },
-  reviewMain: { minWidth: 0 },
+  reviewMain: { position: 'relative', minWidth: 0, paddingRight: 32 },
   authorRow: { display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0, flexWrap: 'wrap' },
   author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 12, fontWeight: 650 },
   time: { color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 10 },
   ratingRow: { height: 20, display: 'flex', alignItems: 'center', marginTop: 2 },
   content: { margin: '7px 0 0', color: 'var(--dsw-alias-label-primary, #242629)', fontSize: 12, lineHeight: '19px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-  itemActions: { display: 'flex', alignItems: 'center', gap: 8, margin: '7px 0 0' },
-  replyButton: { display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 30, padding: '2px 4px 2px 0', border: 0, background: 'transparent', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 12, fontWeight: 600, lineHeight: '16px', cursor: 'pointer' },
+  itemActions: { position: 'absolute', zIndex: 2, top: -5, right: 0, pointerEvents: 'auto' },
+  replyButton: {
+    display: 'inline-grid', placeItems: 'center', width: 28, height: 28, padding: 0,
+    border: 0, borderRadius: 7, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)',
+    color: 'var(--dsw-alias-label-secondary, #717780)', cursor: 'pointer',
+    transition: 'opacity 120ms ease, transform 120ms ease',
+  },
   state: { padding: '18px 0 10px', color: 'var(--dsw-alias-label-caption, #9ba1a9)', fontSize: 11, textAlign: 'center' },
   error: { marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(194,65,59,.08)', color: 'var(--dsw-alias-state-error-primary, #c2413b)', fontSize: 11 },
   loadMore: { width: '100%', height: 30, marginTop: 6, border: 0, borderRadius: 8, background: 'var(--dsw-alias-fill-secondary, #f4f5f6)', color: 'var(--dsw-alias-label-secondary, #717780)', font: 'inherit', fontSize: 10, cursor: 'pointer' },
@@ -148,19 +153,31 @@ export function extensionReviewTimeLabel(createdAtMillis: number, nowMillis = Da
 
 function ReplyIcon() {
   return <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none">
-    <path d="M8.5 19H8C4 19 2 18 2 13V8C2 4 4 2 8 2H16C20 2 22 4 22 8V13C22 17 20 19 16 19H15.5C15.19 19 14.89 19.15 14.7 19.4L13.2 21.4C12.54 22.28 11.46 22.28 10.8 21.4L9.3 19.4C9.14 19.18 8.77 19 8.5 19Z" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M7 8H17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M7 13H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M9 8L4 12L9 16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M5 12H13.5C17.09 12 20 14.91 20 18.5V19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 }
 
-function ReviewPresentation({ item, replyCount, onReply, clickThrough = false }: {
+function browserSupportsHover(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+  return window.matchMedia('(hover: hover)').matches
+}
+
+function ReviewPresentation({ item, onReply, clickThrough = false }: {
   item: ArkmeExtensionReviewItem
-  replyCount: number
   onReply(item: ArkmeExtensionReviewItem): void
   clickThrough?: boolean
 }) {
-  return <div style={{ ...styles.reviewLayout, ...(clickThrough ? styles.reviewContent : {}) }}>
+  const [hoverCapable] = useState(browserSupportsHover)
+  const [actionsVisible, setActionsVisible] = useState(false)
+  const showReplyAction = !hoverCapable || actionsVisible
+  return <div
+    style={{ ...styles.reviewLayout, ...(clickThrough ? styles.reviewContent : {}) }}
+    onPointerEnter={() => setActionsVisible(true)}
+    onPointerLeave={() => setActionsVisible(false)}
+    onFocusCapture={() => setActionsVisible(true)}
+    onBlurCapture={() => setActionsVisible(false)}
+  >
     <ArkmeUserAvatar
       {...(item.authorAvatarRef === undefined ? {} : { avatarRef: item.authorAvatarRef })}
       {...(item.authorAvatarFallback === undefined ? {} : { fallback: item.authorAvatarFallback })}
@@ -174,26 +191,32 @@ function ReviewPresentation({ item, replyCount, onReply, clickThrough = false }:
       </div>
       {item.rating > 0 && <div style={styles.ratingRow}><Stars value={item.rating} size={12} /></div>}
       <p style={styles.content}>{item.textContent}</p>
-      <div style={{ ...styles.itemActions, position: 'relative', zIndex: 2, pointerEvents: 'auto' }}>
-        <ReplyButton item={item} count={replyCount} onReply={onReply} />
+      <div style={styles.itemActions} data-extension-review-actions="hover">
+        <ReplyButton item={item} visible={showReplyAction} onReply={onReply} />
       </div>
     </div>
   </div>
 }
 
-function ReplyButton({ item, count, onReply }: {
+function ReplyButton({ item, visible, onReply }: {
   item: ArkmeExtensionReviewItem
-  count: number
+  visible: boolean
   onReply(item: ArkmeExtensionReviewItem): void
 }) {
   return <button
     type="button"
-    style={styles.replyButton}
-    aria-label={`回复${item.authorName}，已有 ${String(count)} 条回复`}
+    style={{
+      ...styles.replyButton,
+      opacity: visible ? 1 : 0,
+      transform: visible ? 'translateY(0)' : 'translateY(-2px)',
+      pointerEvents: visible ? 'auto' : 'none',
+    }}
+    aria-label={`回复${item.authorName}`}
+    title="回复"
+    data-extension-review-reply-action="true"
     onClick={event => { event.stopPropagation(); onReply(item) }}
   >
     <ReplyIcon />
-    <span>{count}</span>
   </button>
 }
 
@@ -229,9 +252,8 @@ function ReviewNode({ node, onReply, replyEditor }: {
   replyEditor?: ArkmeExtensionInlineReplyEditor | undefined
 }) {
   const item = node.item
-  const replyCount = extensionReviewReplyCount(node)
   return <article style={styles.review}>
-    <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
+    <ReviewPresentation item={item} onReply={onReply} />
     <ReviewReplyComposerSlot item={item} editor={replyEditor} />
     {node.children.length > 0 && <div style={styles.replyList} aria-label={`${item.authorName}的全部回复`}>
       {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={0} onReply={onReply} replyEditor={replyEditor} />)}
@@ -246,9 +268,8 @@ function ThreadReply({ node, depth, onReply, replyEditor }: {
   replyEditor?: ArkmeExtensionInlineReplyEditor | undefined
 }) {
   const item = node.item
-  const replyCount = extensionReviewReplyCount(node)
   return <div style={{ ...styles.threadReply, marginLeft: Math.min(depth * 18, 54) }}>
-    <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
+    <ReviewPresentation item={item} onReply={onReply} />
     <ReviewReplyComposerSlot item={item} editor={replyEditor} />
     {node.children.map(child => <ThreadReply key={child.item.reviewRef} node={child} depth={depth + 1} onReply={onReply} replyEditor={replyEditor} />)}
   </div>
@@ -271,7 +292,7 @@ export function ArkmeExtensionReplyListDialog({ root, onClose, onReply }: {
         <div style={styles.threadOriginal}>
           <div style={styles.originalLabel}>原评论</div>
           <div style={{ marginTop: 7 }}>
-            <ReviewPresentation item={item} replyCount={replyCount} onReply={onReply} />
+            <ReviewPresentation item={item} onReply={onReply} />
           </div>
         </div>
         <div style={styles.threadSectionLabel}>全部回复 {replyCount}</div>
