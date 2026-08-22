@@ -1,5 +1,7 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchArkmeHostOperation } from '../src/host-api.js'
+import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 function fakeService() {
   return {
@@ -45,6 +47,52 @@ function fakeService() {
 }
 
 describe('World publish Host API dispatch', () => {
+  it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    const generationStarted = Promise.withResolvers<void>()
+    const generationAborted = Promise.withResolvers<void>()
+    const service = {
+      generateWorldVoiceprintPlayback: vi.fn(async (input: { signal?: AbortSignal }) => {
+        upstreamSignal = input.signal
+        generationStarted.resolve()
+        await new Promise<void>(resolve => {
+          if (input.signal?.aborted === true) resolve()
+          else input.signal?.addEventListener('abort', () => { resolve() }, { once: true })
+        })
+        generationAborted.resolve()
+        throw new Error('cancelled')
+      }),
+    }
+    const server = createServer(createArkmeHostApi(service as never, {
+      expectedPort: 0,
+      allowNonLoopback: false,
+    }))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    const controller = new AbortController()
+    try {
+      const request = fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'world.voiceprint.playback.generate',
+          params: { recordRef: 'record-ref', chunkIndex: 0 },
+        }),
+        signal: controller.signal,
+      })
+      await generationStarted.promise
+      controller.abort()
+      await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+      await generationAborted.promise
+      expect(upstreamSignal?.aborted).toBe(true)
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
+  })
+
   it('keeps text publishing separate and drops Browser-owned fields', async () => {
     const service = fakeService()
 

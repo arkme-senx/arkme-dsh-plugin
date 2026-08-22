@@ -428,6 +428,7 @@ export class WorldService {
         source_scene: 4,
         source_id: entry.recordUid,
         source_chunk_index: chunkIndex,
+        source_chunk_max_runes: 120,
       },
       session,
       input.signal,

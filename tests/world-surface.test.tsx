@@ -221,6 +221,21 @@ describe('Arkme native World surface', () => {
     expect(source).toContain("rootMargin: '0px 0px 180px 0px'")
   })
 
+  it('shows an explicit cancellable loading state while the first voiceprint chunk is generated', () => {
+    const markup = renderToStaticMarkup(<ArkmeWorldContent
+      state={{ status: 'success', items: [item] }}
+      scope="all"
+      voiceprintPlayableRefs={new Set(['world_1'])}
+      voiceprintRecordRef="world_1"
+      voiceprintLoadingRecordRef="world_1"
+      {...actions}
+    />)
+
+    expect(markup).toContain('aria-busy="true"')
+    expect(markup).toContain('aria-label="正在生成陈一涵的声纹，点击停止"')
+    expect(markup).toContain('arkme-icon-spin')
+  })
+
   it('renders a target user World homepage with mobile-equivalent back navigation and four states', () => {
     const target = { userId: 7, displayName: '泡泡', avatarFallback: { kind: 'phone_default' as const, colorIndex: 2, label: '泡' } }
     const renderTarget = (state: ArkmeWorldViewState) => renderToStaticMarkup(<ArkmeWorldContent

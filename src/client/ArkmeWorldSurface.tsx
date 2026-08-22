@@ -4,6 +4,7 @@ import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
+import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeImagePayload,
@@ -26,6 +27,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type { ArkmeWorldTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
+import { downloadWorldVoiceprintAudio, playPreparedWorldVoiceprintAudio, playWorldVoiceprintChunkQueue } from './world-voiceprint-playback.js'
 
 type WorldScope = 'all' | 'mine'
 
@@ -595,10 +597,11 @@ function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: Arkm
   return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
 }
 
-function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint }: {
+function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
+  voiceprintLoading: boolean
   interactionsOpen: boolean
   onOpenInteractions(item: ArkmeWorldFeedItem): void
   onInteractionCreated(recordRef: string): void
@@ -629,8 +632,10 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
         <span style={styles.authorRow}>
           <strong style={styles.author}>{item.authorName}</strong>
           {playable
-            ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
-              <SpeakerHigh size={16} weight="light" />
+            ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? `正在生成${item.authorName}的声纹，点击停止` : voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
+              {voiceprintLoading
+                ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
+                : <SpeakerHigh size={16} weight="light" />}
             </button>
             : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} onClick={() => { onInviteVoiceprint(item) }}>
               <Plus size={13} weight="bold" />
@@ -735,12 +740,13 @@ export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLo
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs, voiceprintRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
+export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
   target?: ArkmeWorldTarget
   voiceprintPlayableRefs: ReadonlySet<string>
   voiceprintRecordRef: string | undefined
+  voiceprintLoadingRecordRef?: string
   interactionRecordRef?: string
   actionMessage?: string
   onRefresh(): void
@@ -797,6 +803,7 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
             item={item}
             playable={voiceprintPlayableRefs.has(item.recordRef)}
             voiceprintActive={voiceprintRecordRef === item.recordRef}
+            voiceprintLoading={voiceprintLoadingRecordRef === item.recordRef}
             interactionsOpen={interactionRecordRef === item.recordRef}
             onOpenInteractions={onOpenInteractions}
             onInteractionCreated={onInteractionCreated ?? (() => {})}
@@ -1009,12 +1016,33 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   const resolvedVoiceprintRefsRef = useRef(new Set<string>())
   const [voiceprintAvailabilityRevision, setVoiceprintAvailabilityRevision] = useState(0)
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
+  const [voiceprintLoadingRecordRef, setVoiceprintLoadingRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
   const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
   const loadController = useRef<AbortController>()
   const audioRef = useRef<HTMLAudioElement>()
+  const voiceprintControllerRef = useRef<AbortController>()
+  const voiceprintAudioRefsRef = useRef(new Set<HTMLAudioElement>())
+  const voiceprintAudioUrlsRef = useRef(new Map<HTMLAudioElement, string>())
   const voiceprintTokenRef = useRef(0)
   const state = target === undefined ? views[scope] : targetView
+
+  const stopVoiceprintMedia = () => {
+    voiceprintControllerRef.current?.abort()
+    voiceprintControllerRef.current = undefined
+    for (const audio of voiceprintAudioRefsRef.current) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.removeAttribute('src')
+      try { audio.load() } catch { /* The browser may already have released this media element. */ }
+      const objectUrl = voiceprintAudioUrlsRef.current.get(audio)
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+    }
+    voiceprintAudioRefsRef.current.clear()
+    voiceprintAudioUrlsRef.current.clear()
+    audioRef.current = undefined
+  }
 
   const load = useCallback((target: WorldScope, offset = 0, preserveItems = false) => {
     loadController.current?.abort()
@@ -1090,7 +1118,22 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     setActionMessage(undefined)
     loadUser(target)
   }, [loadUser, target?.userId])
-  useEffect(() => () => { loadController.current?.abort(); voiceprintTokenRef.current += 1; inviteLoadTokenRef.current += 1; audioRef.current?.pause() }, [])
+  useEffect(() => () => {
+    loadController.current?.abort()
+    voiceprintTokenRef.current += 1
+    inviteLoadTokenRef.current += 1
+    voiceprintControllerRef.current?.abort()
+    for (const audio of voiceprintAudioRefsRef.current) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.removeAttribute('src')
+      const objectUrl = voiceprintAudioUrlsRef.current.get(audio)
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+    }
+    voiceprintAudioRefsRef.current.clear()
+    voiceprintAudioUrlsRef.current.clear()
+  }, [])
   useEffect(() => {
     if (state.status !== 'success' || state.items.length === 0) return
     const pendingRefs = pendingWorldVoiceprintRecordRefs(state.items, resolvedVoiceprintRefsRef.current)
@@ -1131,34 +1174,84 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     setTargetView(update)
   }
   const toggleVoiceprint = async (recordRef: string) => {
-    if (voiceprintRecordRef === recordRef) { voiceprintTokenRef.current += 1; audioRef.current?.pause(); audioRef.current = undefined; setVoiceprintRecordRef(undefined); return }
+    if (voiceprintRecordRef === recordRef) {
+      voiceprintTokenRef.current += 1
+      stopVoiceprintMedia()
+      setVoiceprintRecordRef(undefined)
+      setVoiceprintLoadingRecordRef(undefined)
+      return
+    }
     const token = voiceprintTokenRef.current + 1
     voiceprintTokenRef.current = token
-    audioRef.current?.pause()
+    stopVoiceprintMedia()
+    const controller = new AbortController()
+    voiceprintControllerRef.current = controller
     setActionMessage(undefined)
     setVoiceprintRecordRef(recordRef)
-    const playChunk = async (chunkIndex: number): Promise<void> => {
-      const chunk = await callArkme<ArkmeWorldVoiceprintPlaybackChunk>('world.voiceprint.playback.generate', { recordRef, chunkIndex })
-      if (voiceprintTokenRef.current !== token) return
-      if (typeof Audio === 'undefined') throw new Error('当前环境无法播放声音')
-      const audio = new Audio(`/arkme-self/api/media?ref=${encodeURIComponent(chunk.mediaRef)}`)
-      audioRef.current = audio
-      audio.onended = () => {
-        if (voiceprintTokenRef.current !== token) return
-        if (chunk.chunkIndex + 1 < chunk.chunkCount) void playChunk(chunk.chunkIndex + 1).catch(fail)
-        else { setVoiceprintRecordRef(undefined); audioRef.current = undefined }
+    setVoiceprintLoadingRecordRef(recordRef)
+    const isActive = () => voiceprintTokenRef.current === token && !controller.signal.aborted
+    try {
+      const result = await playWorldVoiceprintChunkQueue({
+        loadChunk: async chunkIndex => {
+          const chunk = await callArkme<ArkmeWorldVoiceprintPlaybackChunk>(
+            'world.voiceprint.playback.generate',
+            { recordRef, chunkIndex },
+            controller.signal,
+          )
+          if (!isActive()) throw new Error('声纹播放已停止')
+          if (typeof Audio === 'undefined' || typeof URL.createObjectURL !== 'function') throw new Error('当前环境无法播放声音')
+          const blob = await downloadWorldVoiceprintAudio(
+            `/arkme-self/api/media?ref=${encodeURIComponent(chunk.mediaRef)}`,
+            controller.signal,
+          )
+          if (!isActive()) throw new Error('声纹播放已停止')
+          const objectUrl = URL.createObjectURL(blob)
+          const audio = new Audio(objectUrl)
+          audio.preload = 'auto'
+          voiceprintAudioRefsRef.current.add(audio)
+          voiceprintAudioUrlsRef.current.set(audio, objectUrl)
+          audio.load()
+          return { ...chunk, audio }
+        },
+        playChunk: async prepared => {
+          if (!isActive()) return
+          const { audio } = prepared
+          audioRef.current = audio
+          try {
+            await playPreparedWorldVoiceprintAudio(
+              audio,
+              controller.signal,
+              () => { setVoiceprintLoadingRecordRef(undefined) },
+            )
+            if (prepared.chunkIndex + 1 < prepared.chunkCount && isActive()) {
+              setVoiceprintLoadingRecordRef(recordRef)
+            }
+          } finally {
+            voiceprintAudioRefsRef.current.delete(audio)
+            const objectUrl = voiceprintAudioUrlsRef.current.get(audio)
+            voiceprintAudioUrlsRef.current.delete(audio)
+            audio.removeAttribute('src')
+            try { audio.load() } catch { /* The browser may already have released this media element. */ }
+            if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+            if (audioRef.current === audio) audioRef.current = undefined
+          }
+        },
+        isActive,
+      })
+      if (result === 'completed' && isActive()) {
+        setVoiceprintRecordRef(undefined)
+        setVoiceprintLoadingRecordRef(undefined)
       }
-      audio.onerror = () => { fail(new Error('声纹音频播放失败，请重试')) }
-      await audio.play()
-    }
-    const fail = (error: unknown) => {
-      if (voiceprintTokenRef.current !== token) return
+    } catch (error) {
+      if (!isActive()) return
       voiceprintTokenRef.current += 1
+      stopVoiceprintMedia()
       setActionMessage(messageOf(error, '声纹生成失败，请重试'))
       setVoiceprintRecordRef(undefined)
-      audioRef.current = undefined
+      setVoiceprintLoadingRecordRef(undefined)
+    } finally {
+      if (voiceprintTokenRef.current === token) voiceprintControllerRef.current = undefined
     }
-    await playChunk(0).catch(fail)
   }
   const openVoiceprintInvite = async (item: ArkmeWorldFeedItem) => {
     const token = inviteLoadTokenRef.current + 1
@@ -1200,6 +1293,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
     <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })} voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
+      {...(voiceprintLoadingRecordRef === undefined ? {} : { voiceprintLoadingRecordRef })}
       {...(interactionRecordRef === undefined ? {} : { interactionRecordRef })}
       {...(actionMessage === undefined ? {} : { actionMessage })}
       onRefresh={refresh} {...(onBackToWorld === undefined ? {} : { onBackToWorld })} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}

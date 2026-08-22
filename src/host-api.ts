@@ -324,6 +324,11 @@ export interface ArkmeHostApiOptions {
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController()
+    const abortDisconnectedRequest = () => {
+      if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
+    }
+    res.once('close', abortDisconnectedRequest)
     try {
       if (req.method !== 'POST') {
         throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
@@ -358,9 +363,11 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.extensionManager?.(),
         options.extensionInstallTasks?.(),
         options.ownedExtensionInventory?.(),
+        controller.signal,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
+      if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
         ? error
         : error instanceof ArkmePluginUpdateError
@@ -372,6 +379,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable },
       })
+    } finally {
+      res.off('close', abortDisconnectedRequest)
     }
   }
 }
@@ -387,6 +396,7 @@ export async function dispatchArkmeHostOperation(
   extensionManager?: ArkmeExtensionManager,
   extensionInstallTasks?: ArkmeExtensionInstallTasks,
   ownedExtensionInventory?: ArkmeOwnedExtensionInventory,
+  requestSignal?: AbortSignal,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -608,6 +618,7 @@ export async function dispatchArkmeHostOperation(
     case 'world.voiceprint.playback.generate': return await service.generateWorldVoiceprintPlayback({
       recordRef: stringParam(params, 'recordRef').trim(),
       chunkIndex: Math.min(333, Math.max(0, Math.trunc(numberParam(params, 'chunkIndex', 0)))),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'world.voiceprint.social-context': return await service.worldVoiceprintSocialContext(
       stringParam(params, 'recordRef').trim(),

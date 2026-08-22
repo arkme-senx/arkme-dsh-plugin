@@ -397,6 +397,7 @@ describe('world Provider projection', () => {
           source_scene: 4,
           source_id: 'public-record-1',
           source_chunk_index: 0,
+          source_chunk_max_runes: 120,
         })
         return json({ code: 200, data: {
           audio_url: audioUrl,
@@ -406,7 +407,7 @@ describe('world Provider projection', () => {
           source_chunk_index: 0,
           source_chunk_count: 2,
           source_chunk_start_rune: 0,
-          source_chunk_end_rune: 240,
+          source_chunk_end_rune: 120,
         } })
       }
       expect(url).toBe(audioUrl)
@@ -441,7 +442,7 @@ describe('world Provider projection', () => {
       chunkIndex: 0,
       chunkCount: 2,
       chunkStartRune: 0,
-      chunkEndRune: 240,
+      chunkEndRune: 120,
     })
     expect(JSON.stringify(playback)).not.toContain('x-oss-signature')
     expect(JSON.stringify(playback)).not.toContain('public-record-1')
