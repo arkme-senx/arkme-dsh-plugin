@@ -177,23 +177,24 @@ describe('Arkme native World surface', () => {
     expect(renderTarget({ status: 'success', items: [item] })).toContain('世界正文')
   })
 
-  it('keeps the feed visible and opens complete comments in a non-modal side panel', () => {
+  it('keeps complete comments inline under the selected World item', () => {
     const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
 
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-controls="world-comments-world_1"')
     expect(markup).toContain('data-world-layout="comments-open"')
     expect(markup).toContain('data-world-feed-pane="true"')
-    expect(markup).toContain('data-world-comment-panel="side"')
+    expect(markup).toContain('data-world-comment-panel="inline"')
     expect(markup).toContain('aria-label="陈一涵的评论区"')
-    expect(markup).toContain('aria-label="关闭评论面板"')
+    expect(markup).toContain('aria-label="收起评论"')
     expect(markup).toContain('评论加载中')
     expect(markup).toContain('写一条评论')
-    expect(markup).not.toContain('>收起<')
+    expect(markup).toContain('>收起<')
     expect(markup).not.toContain('互动详情')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup.match(/世界正文/g)).toHaveLength(1)
-    expect(markup.indexOf('data-world-feed-pane="true"')).toBeLessThan(markup.indexOf('data-world-comment-panel="side"'))
+    expect(markup.indexOf('世界正文')).toBeLessThan(markup.indexOf('data-world-comment-panel="inline"'))
+    expect(markup).not.toContain('data-world-comment-panel="side"')
   })
 
   it('groups every reply under its top-level comment while preserving the direct reply target', () => {

@@ -114,12 +114,12 @@ const styles: Record<string, CSSProperties> = {
   inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${colors.border}` },
   inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
   inviteConfirmButton: { borderLeft: `1px solid ${colors.border}`, color: colors.accent },
-  interactionPanel: { width: 'clamp(340px, 32vw, 392px)', minWidth: 0, minHeight: 0, flex: '0 0 clamp(340px, 32vw, 392px)', display: 'grid', gridTemplateRows: '56px minmax(0,1fr) auto', borderLeft: `1px solid ${colors.border}`, background: '#fff' },
-  interactionPanelHeader: { padding: '0 14px 0 17px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${colors.border}` },
+  interactionPanel: { width: '100%', minWidth: 0, marginTop: 8, display: 'grid', borderTop: `1px solid ${colors.border}`, background: '#fff' },
+  interactionPanelHeader: { minHeight: 44, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${colors.border}` },
   interactionPanelTitle: { fontSize: 14, fontWeight: 600 },
-  interactionPanelClose: { width: 32, height: 32, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
-  interactionPanelBody: { minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 17px 18px' },
-  interactionEmpty: { minHeight: 150, display: 'grid', placeItems: 'center', color: '#969ba5', fontSize: 12 },
+  interactionPanelClose: { minHeight: 32, padding: '0 2px 0 10px', border: 0, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  interactionPanelBody: { minWidth: 0, padding: '4px 2px 10px' },
+  interactionEmpty: { minHeight: 96, display: 'grid', placeItems: 'center', color: '#969ba5', fontSize: 12 },
   interactionList: { display: 'grid', margin: 0 },
   interactionThread: { padding: '12px 0', borderBottom: `1px solid ${colors.border}` },
   interactionRoot: { display: 'grid', gridTemplateColumns: '32px minmax(0,1fr)', alignItems: 'start', gap: 9 },
@@ -136,7 +136,7 @@ const styles: Record<string, CSSProperties> = {
   interactionText: { margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 12, lineHeight: 1.55 },
   interactionReplyText: { fontSize: 11, lineHeight: 1.5 },
   interactionAction: { marginTop: 2, padding: '3px 5px 3px 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
-  interactionComposer: { padding: '11px 14px 13px', borderTop: `1px solid ${colors.border}`, background: '#fff' },
+  interactionComposer: { padding: '11px 2px 4px', borderTop: `1px solid ${colors.border}`, background: '#fff' },
   interactionComposerRow: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'end', gap: 9 },
   interactionInput: { width: '100%', height: 40, minHeight: 40, maxHeight: 96, resize: 'none', overflowY: 'auto', padding: '9px 11px', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, background: '#fff', font: 'inherit', fontSize: 12, lineHeight: 1.65, outline: 0 },
   interactionSend: { minWidth: 54, height: 40, padding: '0 13px', border: 0, borderRadius: 10, background: '#191b25', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 11 },
@@ -575,12 +575,13 @@ function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; o
   return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
 }
 
-function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenInteractions, onToggleVoiceprint, onInviteVoiceprint }: {
+function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
   interactionsOpen: boolean
   onOpenInteractions(item: ArkmeWorldFeedItem): void
+  onInteractionCreated(recordRef: string): void
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint(item: ArkmeWorldFeedItem): void
 }) {
@@ -622,7 +623,8 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
         {item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论'}
       </button>
     </footer>
-    {item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} />}
+    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} />}
+    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
     {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
@@ -716,13 +718,13 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
             voiceprintActive={voiceprintRecordRef === item.recordRef}
             interactionsOpen={interactionRecordRef === item.recordRef}
             onOpenInteractions={onOpenInteractions}
+            onInteractionCreated={onInteractionCreated ?? (() => {})}
             onToggleVoiceprint={onToggleVoiceprint}
             onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
           />)}
           {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={onLoadMore}>{state.loadingMore ? '加载中…' : '加载更多'}</button></div>}
         </div>}
       </div>
-      {interactionItem !== undefined && <InteractionPanel item={interactionItem} onClose={() => { onOpenInteractions(interactionItem) }} onInteractionCreated={onInteractionCreated ?? (() => {})} />}
     </div>
   </>
 }
@@ -859,10 +861,10 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
     } catch (error) { setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
   }
-  return <aside id={interactionRegionId(item.recordRef)} aria-label={`${item.authorName}的评论区`} style={styles.interactionPanel} data-world-comment-panel="side">
+  return <section id={interactionRegionId(item.recordRef)} aria-label={`${item.authorName}的评论区`} style={styles.interactionPanel} data-world-comment-panel="inline">
     <header style={styles.interactionPanelHeader}>
       <strong style={styles.interactionPanelTitle}>{item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论'}</strong>
-      <button type="button" style={styles.interactionPanelClose} aria-label="关闭评论面板" title="关闭" onClick={onClose}><X size={18} weight="bold" /></button>
+      <button type="button" style={styles.interactionPanelClose} aria-label="收起评论" onClick={onClose}>收起</button>
     </header>
     <div style={styles.interactionPanelBody}>
       {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
@@ -890,7 +892,7 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
         <button type="button" style={{ ...styles.interactionSend, ...(sendDisabled ? { opacity: 0.38, cursor: 'default' } : {}) }} title="Ctrl / ⌘ + Enter 发送" disabled={sendDisabled} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button>
       </div>
     </div>
-  </aside>
+  </section>
 }
 
 const loadingState = (): ArkmeWorldViewState => ({ status: 'loading', items: [] })
