@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
+import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
 import type {
   ArkmeAuthSnapshot,
   ArkmePluginUpdateStatus,
@@ -30,7 +31,7 @@ function SettingsRow({ title, description, href, onClick, danger = false, disabl
   const body: ReactNode = <>
     <strong className={danger ? 'is-danger' : ''}>{title}</strong>
     <span className="arkme-redesign-setting-summary">{description}</span>
-    {interactive ? <CaretRight size={15} aria-hidden /> : <span aria-hidden />}
+    {interactive ? <CaretRight size={15} aria-hidden /> : <span className="arkme-redesign-trailing-slot" aria-hidden />}
   </>
 
   if (href !== undefined) {
@@ -42,8 +43,53 @@ function SettingsRow({ title, description, href, onClick, danger = false, disabl
   return <div className="arkme-redesign-setting-row">{body}</div>
 }
 
-function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="arkme-redesign-settings-group">
+interface VersionSettingsRowProps {
+  title: string
+  version: string
+  feedback?: string
+  actionLabel?: '检查更新' | '检查中…' | '立即更新'
+  disabled?: boolean
+  loading?: boolean
+  onAction?: () => void
+}
+
+export function VersionSettingsRow({
+  title,
+  version,
+  feedback,
+  actionLabel,
+  disabled = false,
+  loading = false,
+  onAction,
+}: VersionSettingsRowProps) {
+  const hasAction = actionLabel !== undefined && onAction !== undefined
+  return <div className={`arkme-redesign-setting-row arkme-redesign-version-row${hasAction ? '' : ' is-without-action'}`}>
+    <span className="arkme-redesign-version-copy">
+      <strong>{title}</strong>
+      {feedback === undefined ? null : <small>{feedback}</small>}
+    </span>
+    <span className="arkme-redesign-version-value">{version}</span>
+    {hasAction ? <>
+      <span className="arkme-redesign-version-action-slot">
+      <button
+        type="button"
+        className="arkme-redesign-update-button"
+        aria-label={loading ? `正在检查 ${title}更新` : actionLabel === '检查更新' ? `检查 ${title}更新` : `${actionLabel}：${title}`}
+        aria-busy={loading}
+        disabled={disabled}
+        onClick={onAction}
+      >
+        {loading ? <CircleNotch className="arkme-icon-spin" size={13} aria-hidden /> : null}
+        {actionLabel}
+      </button>
+      </span>
+      <span className="arkme-redesign-trailing-slot" aria-hidden />
+    </> : <span className="arkme-redesign-trailing-slot" aria-hidden />}
+  </div>
+}
+
+function SettingsGroup({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
+  return <section className="arkme-redesign-settings-group" {...(id === undefined ? {} : { id })}>
     <h2>{title}</h2>
     <div>{children}</div>
   </section>
@@ -81,7 +127,7 @@ function versionLabel(version: string | undefined): string {
 }
 
 interface ArkmeDesktopVersionScope {
-  readonly arkmeDesktop?: Readonly<{ appVersion?: string }>
+  readonly arkmeDesktop?: Readonly<{ appVersion?: string; harnessVersion?: string }>
 }
 
 export function aboutArkmeVersion(
@@ -89,6 +135,12 @@ export function aboutArkmeVersion(
   scope: ArkmeDesktopVersionScope = globalThis as unknown as ArkmeDesktopVersionScope,
 ): string {
   return versionLabel(scope.arkmeDesktop?.appVersion ?? currentVersion)
+}
+
+export function aboutHarnessVersion(
+  scope: ArkmeDesktopVersionScope = globalThis as unknown as ArkmeDesktopVersionScope,
+): string {
+  return versionLabel(scope.arkmeDesktop?.harnessVersion)
 }
 
 export function updateVersionText(current: string, latest: string): string {
@@ -195,6 +247,7 @@ export function ArkmeSettingsSurface() {
     ? '已开启'
     : notificationPermission === 'denied' ? '已阻止' : notificationPermission === 'default' ? '未开启' : '不可用'
   const version = aboutArkmeVersion(undefined)
+  const harnessVersion = aboutHarnessVersion()
   const updateInstalling = updateState.install !== undefined
     && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   const pluginUpdateRow = buildArkmePluginUpdateRow({
@@ -239,17 +292,22 @@ export function ArkmeSettingsSurface() {
         />
       </SettingsGroup>
 
-      <SettingsGroup title="更新">
-        <SettingsRow
-          title={pluginUpdateRow.label}
-          description={`${updateVersionText(pluginUpdateRow.current, pluginUpdateRow.latest)} · ${pluginUpdateRow.feedback ?? '尚未检查'}`}
+      <SettingsGroup title="关于" id="arkme-settings-about">
+        <VersionSettingsRow title="ArkME 客户端" version={version} />
+        <VersionSettingsRow
+          title="ArkME 插件"
+          version={pluginUpdateRow.latest === 'v…' || pluginUpdateRow.latest === pluginUpdateRow.current
+            ? pluginUpdateRow.current
+            : `${pluginUpdateRow.current} → ${pluginUpdateRow.latest}`}
+          feedback={pluginUpdateRow.feedback ?? '尚未检查'}
+          actionLabel={pluginUpdateRow.action === 'busy'
+            ? '检查中…'
+            : pluginUpdateRow.action === 'install' ? '立即更新' : '检查更新'}
           disabled={pluginUpdateRow.action === 'busy'}
-          {...(pluginUpdateRow.action === 'busy' ? {} : { onClick: () => { runPluginUpdateAction(pluginUpdateRow) } })}
+          loading={pluginUpdateRow.action === 'busy'}
+          onAction={() => { runPluginUpdateAction(pluginUpdateRow) }}
         />
-      </SettingsGroup>
-
-      <SettingsGroup title="关于">
-        <SettingsRow title="关于 Arkme" description={`版本 ${version}`} />
+        <VersionSettingsRow title="DeepSeek Harness" version={harnessVersion} />
         <SettingsRow title="用户协议" description="查看 Arkme 用户协议" href="https://www.arkme.ai/article/user-aggrement-v1.html" />
         <SettingsRow title="隐私条款" description="查看 Arkme 隐私条款" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
       </SettingsGroup>

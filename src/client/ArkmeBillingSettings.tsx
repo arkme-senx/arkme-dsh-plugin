@@ -2,7 +2,6 @@ import {
   useCallback, useEffect, useRef, useState,
 } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import type {
   ArkmeBillingOrderSnapshot,
   ArkmeBillingPaymentMethod,
@@ -65,15 +64,18 @@ export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewPr
       <strong>当前余量</strong>
       <small>{description}</small>
     </button>
-    <button type="button" className="arkme-redesign-recharge-trigger" onClick={props.onOpen}>充值</button>
-    <CaretRight size={15} aria-hidden />
+    <button
+      type="button"
+      className="arkme-redesign-update-button arkme-redesign-recharge-trigger"
+      onClick={props.onOpen}
+    >充值</button>
+    <span className="arkme-redesign-trailing-slot" aria-hidden />
   </div>
 }
 
 function AlipayIcon() {
-  return <svg aria-hidden="true" focusable="false" className="arkme-billing-platform-icon is-alipay" viewBox="0 0 24 24" fill="none">
-    <path d="M5 6.25h14M12 3.5v7.75M7.25 10.25h9.5c-.8 4.1-4.3 7.3-9.2 9.25" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8.5 13.25c2.8 2.55 6.2 4.5 10.5 5.75" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  return <svg aria-hidden="true" focusable="false" className="arkme-billing-platform-icon is-alipay" viewBox="0 0 1024 1024">
+    <path d="M1024.0512 701.0304V196.864A196.9664 196.9664 0 0 0 827.136 0H196.864A196.9664 196.9664 0 0 0 0 196.864v630.272A196.9152 196.9152 0 0 0 196.864 1024h630.272a197.12 197.12 0 0 0 193.8432-162.0992c-52.224-22.6304-278.528-120.32-396.4416-176.64-89.7024 108.6976-183.7056 173.9264-325.3248 173.9264s-236.1856-87.2448-224.8192-194.048c7.4752-70.0416 55.552-184.576 264.2944-164.9664 110.08 10.3424 160.4096 30.8736 250.1632 60.5184 23.1936-42.5984 42.496-89.4464 57.1392-139.264H248.064v-39.424h196.9152V311.1424H204.8V267.776h240.128V165.632s2.1504-15.9744 19.8144-15.9744h98.4576V267.776h256v43.4176h-256V381.952h208.8448a805.9904 805.9904 0 0 1-84.8384 212.6848c60.672 22.016 336.7936 106.3936 336.7936 106.3936zM283.5456 791.6032c-149.6576 0-173.312-94.464-165.376-133.9392 7.8336-39.3216 51.2-90.624 134.4-90.624 95.5904 0 181.248 24.4736 284.0576 74.5472-72.192 94.0032-160.9216 150.016-253.0816 150.016z" fill="#009FE8" />
   </svg>
 }
 
