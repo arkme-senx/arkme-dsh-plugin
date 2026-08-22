@@ -5,7 +5,8 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 APP_DIR=${1:-"$REPOSITORY_DIR/dist/Arkme DSH.app"}
 CONTENTS_DIR="$APP_DIR/Contents"
-MODULE_CACHE=/private/tmp/arkme-dsh-swift-module-cache
+MODULE_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/arkme-dsh-swift-module-cache.XXXXXX")
+trap 'rm -rf "$MODULE_CACHE"' EXIT
 
 mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources" "$MODULE_CACHE"
 cp "$SCRIPT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
