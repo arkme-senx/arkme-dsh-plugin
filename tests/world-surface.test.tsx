@@ -116,6 +116,28 @@ describe('Arkme native World surface', () => {
     expect(refreshFailure).toContain('世界正文')
   })
 
+  it('renders mobile-compatible emoji tokens in world posts and comments', () => {
+    const feed = render({
+      status: 'success',
+      items: [{
+        ...item,
+        headline: '喜欢[jm_emoji:heart_eyes]',
+        textContent: '支持[im_emoji:thumb_up]，未知[jm_emoji:not_exists]',
+      }],
+    })
+    expect(feed).toContain('喜欢😍')
+    expect(feed).toContain('支持👍，未知[jm_emoji:not_exists]')
+    expect(feed).not.toContain('[jm_emoji:heart_eyes]')
+
+    const comments = renderToStaticMarkup(<WorldInteractionThreadList
+      rootRef={item.recordRef}
+      items={[{ ...interactions[0]!, textContent: '笑哭[jm_emoji:joy_face]' }]}
+      compact
+    />)
+    expect(comments).toContain('笑哭😂')
+    expect(comments).not.toContain('[jm_emoji:joy_face]')
+  })
+
   it('keeps existing voiceprint playback state when loading more World items', () => {
     const firstPageAvailability = {
       items: [{ recordRef: 'world_1', playable: true }],
