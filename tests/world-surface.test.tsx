@@ -187,9 +187,14 @@ describe('Arkme native World surface', () => {
 
   it('contains a 3:4 portrait image inside the preview stage without cropping it', () => {
     const markup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef="portrait-3x4" alt="3:4 竖图" />)
+    const zoomedMarkup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef="portrait-3x4" alt="3:4 竖图" zoomed />)
 
-    expect(markup).toContain('position:absolute;inset:0;min-width:0;min-height:0;overflow:hidden')
+    expect(markup).toContain('role="img"')
+    expect(markup).toContain('position:relative;width:100%;height:100%;min-width:0;min-height:0')
     expect(markup).toContain('position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain')
+    expect(markup).toContain('data-world-image-preview-loading="true"')
+    expect(markup).not.toContain('alt="3:4 竖图"')
+    expect(zoomedMarkup).toContain('width:200%;height:200%')
     expect(markup).not.toContain('object-fit:cover')
   })
 
@@ -206,6 +211,8 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('<svg')
     expect(markup).toContain('aria-label="上一张图片"')
     expect(markup).toContain('aria-label="下一张图片"')
+    expect(markup).toContain('data-world-image-preview-zoomed="false"')
+    expect(markup).toContain('cursor:zoom-in')
     expect(markup).not.toContain('陈一涵 ·')
     expect(markup).not.toContain('1 / 2')
     expect(markup).not.toContain('>关闭</button>')
