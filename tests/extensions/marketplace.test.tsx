@@ -165,7 +165,7 @@ describe('Arkme marketplace UI', () => {
       comment_count: 76,
       open_count: 41_100,
     }
-    expect(extensionDetailMetricLabels(item)).toEqual(['★ 4.8', '安装 12.3k', '评论 76', '查看 41.1k'])
+    expect(extensionDetailMetricLabels(item)).toEqual(['★ 4.8', '评论 76', '查看 41.1k', '安装 12.3k'])
 
     const html = renderToStaticMarkup(<ArkmeExtensionDetailMetrics item={item} />)
     const visibleText = html.replace(/<[^>]+>/g, '')
@@ -176,7 +176,7 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('aria-label="76 条评论"')
     expect(html).toContain('aria-label="查看次数 41100"')
     expect(html).toContain('column-gap:18px')
-    expect(visibleText).toBe('4.812.3k7641.1k')
+    expect(visibleText).toBe('4.87641.1k12.3k')
     expect(html).toContain('font-size:11px')
     expect(html).toContain('font-weight:400')
     expect(html).toContain('margin-top:9px')
@@ -238,6 +238,10 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('aria-label="评分 4.5"')
     expect(html).not.toContain('人已安装')
     expect(html).not.toContain('99 人评分')
+
+    const explicitZero = renderToStaticMarkup(<ArkmeExtensionDetailMetrics item={{ install_user_count: 0 }} />)
+    expect(explicitZero).toContain('aria-label="0 人已安装"')
+    expect(explicitZero.replace(/<[^>]+>/g, '')).toBe('0')
   })
 
   it('reuses the GitHub avatar and name identity in extension details instead of a source badge', () => {

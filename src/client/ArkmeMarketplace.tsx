@@ -857,10 +857,10 @@ export function extensionDetailMetricLabels(
   if (item.rating_summary !== undefined) {
     labels.push(`★ ${item.rating_summary.average.toFixed(1)}`)
   }
-  if (item.install_user_count !== undefined) labels.push(`安装 ${formatCompactCount(item.install_user_count)}`)
   if (item.comment_count !== undefined) labels.push(`评论 ${formatCompactCount(item.comment_count)}`)
   const views = item.open_count ?? item.view_count
   if (views !== undefined) labels.push(`查看 ${formatCompactCount(views)}`)
+  if (item.install_user_count !== undefined) labels.push(`安装 ${formatCompactCount(item.install_user_count)}`)
   return labels
 }
 
@@ -873,14 +873,14 @@ export function ArkmeExtensionDetailMetrics({ item }: {
     {item.rating_summary !== undefined && <span style={styles.detailMetric} aria-label={`评分 ${item.rating_summary.average.toFixed(1)}`}>
       <StarIcon />{item.rating_summary.average.toFixed(1)}
     </span>}
-    {item.install_user_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.install_user_count)} 人已安装`}>
-      <InstallUsersIcon />{formatCompactCount(item.install_user_count)}
-    </span>}
     {item.comment_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.comment_count)} 条评论`}>
       <CommentIcon />{formatCompactCount(item.comment_count)}
     </span>}
     {views !== undefined && <span style={styles.detailMetric} aria-label={`查看次数 ${String(views)}`}>
       <EyeIcon />{formatCompactCount(views)}
+    </span>}
+    {item.install_user_count !== undefined && <span style={styles.detailMetric} aria-label={`${String(item.install_user_count)} 人已安装`}>
+      <InstallUsersIcon />{formatCompactCount(item.install_user_count)}
     </span>}
   </div>
 }
