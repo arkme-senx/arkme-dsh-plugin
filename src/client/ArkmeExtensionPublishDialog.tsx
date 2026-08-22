@@ -26,7 +26,6 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
   const [visibility, setVisibility] = useState<ArkmeExtensionEditableVisibility>(item.published?.visibility === 'public' ? 'public' : 'private')
   const [changelog, setChangelog] = useState('')
 	const [githubRepositoryUrl, setGitHubRepositoryUrl] = useState('')
-  const nativeV3 = item.persisted?.artifactContractVersion === 3
   const [iconFile, setIconFile] = useState<File>()
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -52,12 +51,11 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
           <option value="private">仅自己</option><option value="public">公开</option>
         </select></label>
         <label style={styles.label}>更新说明<textarea style={styles.textarea} value={changelog} maxLength={2000} disabled={busy} onChange={event => { setChangelog(event.target.value) }} /></label>
-		<label style={styles.label}>GitHub 仓库{nativeV3 && visibility === 'public' ? '（V3 公开发布必填）' : '（可选）'}<input
+		<label style={styles.label}>GitHub 仓库（可选）<input
 			style={styles.input}
 			type="url"
 			placeholder="https://github.com/owner/repository"
 			value={githubRepositoryUrl}
-			required={nativeV3 && visibility === 'public'}
 			disabled={busy}
 			onChange={event => { setGitHubRepositoryUrl(event.target.value) }}
 		/></label>

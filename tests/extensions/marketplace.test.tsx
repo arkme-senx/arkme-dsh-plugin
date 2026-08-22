@@ -865,6 +865,27 @@ describe('Arkme marketplace UI', () => {
 		expect(html).toContain('placeholder="https://github.com/owner/repository"')
   })
 
+  it('keeps GitHub source optional for a public native publish', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionPublishDialog
+      item={{
+        ownedRef: 'owned-native', name: '原生天气', description: '天气卡片', states: ['persisted', 'published'],
+        halves: { host: true, client: false }, persisted: {
+          packageName: '@example/native-weather', version: '1.0.0', active: true, artifactContractVersion: 3,
+        },
+        published: { extensionId: 'ext-native', version: '1.0.0', visibility: 'public' },
+        publish: { allowed: true, mode: 'version', route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' },
+      }}
+      busy={false}
+      error=""
+      onCancel={() => {}}
+      onSubmit={() => {}}
+    />)
+
+    expect(html).toContain('GitHub 仓库（可选）')
+    expect(html).not.toMatch(/GitHub[^<]*必填/)
+    expect(html).not.toMatch(/type="url"[^>]*required/)
+  })
+
   it('keeps preview image management out of the extension edit dialog', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionEditDialog
       item={{

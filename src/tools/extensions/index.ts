@@ -49,8 +49,9 @@ export const ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT =
   'Arkme has exactly two Host-selected publication routes. Route dynamic-cordis-v2 publishes a live current-session Dynamic Cordis '
   + 'Package as artifact_contract_version=2 / dsh-bundle-tgz with the Arkme sandbox contract. Route profile-native-v3 publishes an '
   + 'already installed or otherwise Profile-local DSH Bundle as artifact_contract_version=3 / dsh-native-package-tgz with native DSH '
-  + 'authority and explicit install confirmation. A GitHub repository URL is source metadata, not a third upload route and not a cloud '
-  + 'clone/build request. Never guess or manually select a route: call arkme_extension_list_mine and use the exact Host-derived '
+  + 'authority and explicit install confirmation. A GitHub repository URL is always optional publisher-attested source metadata, not a '
+  + 'third upload route or cloud clone/build request. Never ask for it merely to make an extension publishable. Never guess or manually '
+  + 'select a route: call arkme_extension_list_mine and use the exact Host-derived '
   + 'publish.route, artifactContractVersion, artifactKind, and opaque owned_ref. '
   + 'When the user asks to create a new Dynamic Cordis extension for publication, inspect the currently visible tool catalog '
   + 'before planning, coding, searching, or calling tools. If cordis_define or cordis_inspect_self is absent, explain immediately '
@@ -236,7 +237,7 @@ export function registerArkmeExtensionTools(
 
   ctx.tools.register(defineTool({
     name: 'arkme_extension_publish',
-    description: 'Prepare or confirm one conversational publish batch across two Host-selected routes: dynamic-cordis-v2 creates an artifact_contract_version=2 sandbox Bundle from a live current-session Dynamic Cordis Package; profile-native-v3 publishes an installed/Profile-local DSH Bundle as artifact_contract_version=3 native Package. GitHub URL is source metadata, not a third route. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, route, Bundle policy, and source fingerprints, and does not publish or upload anything. Never choose the route manually; use the exact opaque owned_ref and Host-derived route. To update an existing extension from a new source, pass its exact owned extension_id from the current user\'s list; otherwise omit it to create a new extension or use the source\'s persisted lineage. Show the returned question in ordinary conversation and wait. Only after a later direct human message clearly confirms it in any natural wording, call this same tool with action=confirm and omit items.',
+    description: 'Prepare or confirm one conversational publish batch across two Host-selected routes: dynamic-cordis-v2 creates an artifact_contract_version=2 sandbox Bundle from a live current-session Dynamic Cordis Package; profile-native-v3 publishes an installed/Profile-local DSH Bundle as artifact_contract_version=3 native Package. An optional GitHub URL is publisher-attested source metadata, not a third route or a publication requirement. action=prepare accepts 1 to 10 exact current-user sources returned by arkme_extension_list_mine, validates ownership, versions, route, Bundle policy, and source fingerprints, and does not publish or upload anything. Never choose the route manually; use the exact opaque owned_ref and Host-derived route. To update an existing extension from a new source, pass its exact owned extension_id from the current user\'s list; otherwise omit it to create a new extension or use the source\'s persisted lineage. Show the returned question in ordinary conversation and wait. Only after a later direct human message clearly confirms it in any natural wording, call this same tool with action=confirm and omit items.',
     parameters: {
       action: {
         type: 'string', enum: ['prepare', 'confirm'], required: true,
@@ -255,7 +256,7 @@ export function registerArkmeExtensionTools(
             version: { type: 'string', required: true, description: 'Semantic version such as 1.0.0.' },
             visibility: { type: 'string', enum: ['private', 'unlisted', 'public'], required: true },
             changelog: { type: 'string', description: 'What changed in this immutable version.' },
-			github_repository_url: { type: 'string', description: 'Canonical GitHub repository root. It is source metadata, not an upload route; required for public/unlisted V3 and optional for private V3. V2 source eligibility is still checked by the server.' },
+			github_repository_url: { type: 'string', description: 'Optional canonical GitHub repository root used only as publisher-attested source metadata. It never selects an upload route.' },
           },
         },
       },

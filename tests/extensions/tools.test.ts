@@ -126,12 +126,17 @@ describe('Arkme extension tools', () => {
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')
 		expect(publish?.parameters).toHaveProperty('properties.items.items.properties.github_repository_url')
+		expect(publish?.parameters).toHaveProperty(
+			'properties.items.items.properties.github_repository_url.description',
+			'Optional canonical GitHub repository root used only as publisher-attested source metadata. It never selects an upload route.',
+		)
     expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
     expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('1 to 10')
     expect(publish?.description).toContain('artifact_contract_version=2')
     expect(publish?.description).toContain('artifact_contract_version=3')
     expect(publish?.description).toContain('not a third route')
+		expect(publish?.description).not.toContain('required for public/unlisted V3')
     expect(publish?.description).toContain('does not publish')
     expect(publish?.description).toContain('later direct human message')
     expect(sections).toHaveLength(1)

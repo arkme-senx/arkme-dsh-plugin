@@ -503,6 +503,10 @@ describe('Arkme SDK', () => {
 		visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
 		clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
     })).resolves.toMatchObject({ status: 'published' })
+    await expect(sdk.publishMyExtension({
+      ownedRef: 'owned-native', name: '原生天气', description: '原生天气卡片', version: '1.1.0',
+		visibility: 'public', clientMutationId: 'b30ce6f3-b8eb-4d2e-b9ea-cfed4e209ece',
+    })).resolves.toMatchObject({ status: 'published' })
     await expect(sdk.updateExtensionMetadata('ext-1', {
       name: '新名称', description: '', visibility: 'public',
       clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',
@@ -519,6 +523,10 @@ describe('Arkme SDK', () => {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
 			visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
 			clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      } },
+      { operation: 'extensions.mine.publish', params: {
+        ownedRef: 'owned-native', name: '原生天气', description: '原生天气卡片', version: '1.1.0',
+			visibility: 'public', clientMutationId: 'b30ce6f3-b8eb-4d2e-b9ea-cfed4e209ece',
       } },
       { operation: 'extensions.metadata.update', params: {
         extensionId: 'ext-1', name: '新名称', description: '', visibility: 'public',

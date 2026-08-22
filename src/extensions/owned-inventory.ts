@@ -219,9 +219,6 @@ export class ArkmeOwnedExtensionInventory {
     if (source.bundle.version !== input.version) {
       throw new ArkmePluginError('extension-version-mismatch', '发布版本必须与 Bundle package.json.version 一致', false, 409)
     }
-    if (input.visibility !== 'private' && (input.githubRepositoryUrl?.trim() ?? '') === '') {
-      throw new ArkmePluginError('extension-source-invalid', '公开发布原生 DSH V3 Package 必须提供 GitHub 仓库地址', false, 400)
-    }
     return {
       input: preparedInput,
       sourceFingerprint: createHash('sha256')

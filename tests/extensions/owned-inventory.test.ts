@@ -250,17 +250,26 @@ describe('owned extension inventory', () => {
       publishRoute: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz',
     })
 
+    await expect(inventory.preparePublish({
+      ownedRef: page.items[0]!.ownedRef, name: '本地天气', description: '', version: '1.0.0',
+      visibility: 'public', clientMutationId: '15ba6620-9952-4ea4-a34c-89966ad82ec4',
+    })).resolves.toMatchObject({
+      input: expect.not.objectContaining({ githubRepositoryUrl: expect.anything() }),
+      publishRoute: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz',
+    })
+
     const result = await inventory.publish({
       ownedRef: page.items[0]!.ownedRef, name: '本地天气', description: '', version: '1.0.0',
-      visibility: 'private', clientMutationId: '15ba6620-9952-4ea4-a34c-89966ad82ec4',
+      visibility: 'public', clientMutationId: '85f3aa95-b12a-4de7-96b0-252611a98a67',
     })
 
     expect(result.status).toBe('published')
     expect(publishBundle).toHaveBeenCalledWith(expect.objectContaining({
-      name: '本地天气', source: expect.objectContaining({
+      name: '本地天气', visibility: 'public', source: expect.objectContaining({
         bundle: expect.objectContaining({ packageName, version: '1.0.0' }),
       }),
     }))
+    expect(publishBundle.mock.calls[0]?.[0]).not.toHaveProperty('githubRepositoryUrl')
     expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBe('ext-local')
 
     await inventory.publish({
