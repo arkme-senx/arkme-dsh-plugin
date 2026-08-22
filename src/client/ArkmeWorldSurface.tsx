@@ -87,7 +87,10 @@ const styles: Record<string, CSSProperties> = {
   voiceprintInvite: { color: '#9aa1ad' },
   time: { whiteSpace: 'nowrap', color: '#989ba3', fontSize: 10 },
   headline: { minWidth: 0, maxWidth: '100%', margin: '12px 0 0', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.5, fontWeight: 600 },
+  textBlock: { minWidth: 0, maxWidth: '100%' },
   text: { minWidth: 0, maxWidth: '100%', margin: '8px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', color: '#3b3f48', fontSize: 13, lineHeight: 1.62 },
+  textCollapsed: { display: '-webkit-box', WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+  textToggle: { marginTop: 3, padding: '3px 0', border: 0, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, lineHeight: 1.4 },
   imageGrid: { width: '100%', maxWidth: 620, minWidth: 0, marginTop: 12, boxSizing: 'border-box', display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 },
   image: { width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 11, background: '#f1f1f3' },
   imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: '#f1f1f3', cursor: 'pointer' },
@@ -602,6 +605,80 @@ function interactionRegionId(recordRef: string): string {
   return `world-comments-${encodeURIComponent(recordRef)}`
 }
 
+function worldTextRegionId(recordRef: string): string {
+  return `world-text-${encodeURIComponent(recordRef)}`
+}
+
+export function worldTextCollapsedLines(hasMedia: boolean): number {
+  return hasMedia ? 3 : 5
+}
+
+/**
+ * Give obviously long posts the correct first-frame presentation. The browser
+ * then measures the clamped paragraph so responsive widths are handled exactly.
+ */
+export function worldTextLikelyNeedsCollapse(value: string, maxLines: number): boolean {
+  const normalized = value.trim()
+  if (normalized === '') return false
+  if (normalized.split(/\r\n|\r|\n/).length > maxLines) return true
+  return Array.from(normalized.replace(/\s+/g, ' ')).length > maxLines * 96
+}
+
+export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMedia }: {
+  recordRef: string
+  authorName: string
+  textContent: string
+  hasMedia: boolean
+}) {
+  const content = arkmeEmojiPlainText(textContent)
+  const maxLines = worldTextCollapsedLines(hasMedia)
+  const paragraphRef = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [collapsible, setCollapsible] = useState(() => worldTextLikelyNeedsCollapse(content, maxLines))
+  const textId = worldTextRegionId(recordRef)
+
+  useEffect(() => {
+    setExpanded(false)
+    setCollapsible(worldTextLikelyNeedsCollapse(content, maxLines))
+  }, [content, maxLines])
+
+  useEffect(() => {
+    if (expanded) return
+    const paragraph = paragraphRef.current
+    if (paragraph === null) return
+    const measure = () => {
+      if (paragraph.clientHeight <= 0) return
+      setCollapsible(paragraph.scrollHeight > paragraph.clientHeight + 1)
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(paragraph)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [content, expanded, maxLines])
+
+  return <div style={styles.textBlock}>
+    <p
+      ref={paragraphRef}
+      id={textId}
+      style={{ ...styles.text, ...(!expanded ? styles.textCollapsed : {}), ...(!expanded ? { WebkitLineClamp: maxLines } : {}) }}
+      data-world-text-expanded={expanded ? 'true' : 'false'}
+    >{content}</p>
+    {collapsible && <button
+      type="button"
+      style={styles.textToggle}
+      aria-expanded={expanded}
+      aria-controls={textId}
+      aria-label={expanded ? `收起${authorName}发布的全文` : `展开${authorName}发布的全文`}
+      data-world-text-collapsible="true"
+      onClick={() => { setExpanded(value => !value) }}
+    >{expanded ? '收起' : '展开全文'}</button>}
+  </div>
+}
+
 export interface WorldInteractionReplyPresentation {
   item: ArkmeWorldInteractionItem
   replyToName: string
@@ -811,7 +888,12 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
     {item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
-    {item.textContent.trim() !== '' && <p style={styles.text}>{arkmeEmojiPlainText(item.textContent)}</p>}
+    {item.textContent.trim() !== '' && <WorldCollapsibleText
+      recordRef={item.recordRef}
+      authorName={item.authorName}
+      textContent={item.textContent}
+      hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
+    />}
     {item.imageRefs.length > 0 && <div style={styles.imageGrid}>{item.imageRefs.slice(0, 3).map((imageRef, index) =>
       <button key={imageRef} type="button" style={styles.imageButton} aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}`} onClick={() => { setPreviewIndex(index) }}>
         <WorldImage imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(index + 1)}`} />

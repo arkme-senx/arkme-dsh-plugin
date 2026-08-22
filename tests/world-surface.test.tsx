@@ -151,6 +151,29 @@ describe('Arkme native World surface', () => {
     expect(comments).not.toContain('[jm_emoji:joy_face]')
   })
 
+  it('collapses long World articles to the mobile feed line limits and exposes an accessible toggle', () => {
+    const longText = Array.from({ length: 6 }, (_, index) => `第 ${String(index + 1)} 段很长的世界正文`).join('\n')
+    const textOnly = render({
+      status: 'success',
+      items: [{ ...item, textContent: longText }],
+    })
+
+    expect(textOnly).toContain('data-world-text-collapsible="true"')
+    expect(textOnly).toContain('-webkit-line-clamp:5')
+    expect(textOnly).toContain('aria-expanded="false"')
+    expect(textOnly).toContain('>展开全文<')
+
+    const withImage = render({
+      status: 'success',
+      items: [{ ...item, textContent: longText, imageRefs: ['image-ref'], imageCount: 1 }],
+    })
+    expect(withImage).toContain('-webkit-line-clamp:3')
+
+    const shortText = render({ status: 'success', items: [item] })
+    expect(shortText).not.toContain('data-world-text-collapsible="true"')
+    expect(shortText).not.toContain('>展开全文<')
+  })
+
   it('keeps existing voiceprint playback state when loading more World items', () => {
     const firstPageAvailability = {
       items: [{ recordRef: 'world_1', playable: true }],
