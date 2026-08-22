@@ -230,7 +230,6 @@ export {
 } from './ArkmePersistentShell.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
-export { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 export { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 export { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
@@ -243,13 +242,6 @@ export {
   ArkmeMarketplace as ArkmeExtensionCenter,
 } from './ArkmeMarketplace.js'
 export { ArkmeSharedExtensionDetail } from './ArkmeSharedExtensionDetail.js'
-export {
-  ARKME_PERSONAL_TEST_EDITION_STORAGE_KEY,
-  arkmePersonalTestEditionLabel,
-  parseArkmePersonalTestEdition,
-  parseArkmePersonalTestEditionSearch,
-  readArkmePersonalTestEdition,
-} from './personal-test-edition.js'
 export { consumeExtensionShareDeepLink, extensionShareRefFromHash } from './extension-share-deeplink.js'
 export {
   ArkmeExtensionReviewComposerDialog,
@@ -261,7 +253,7 @@ export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 export { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
 export { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
-export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
+export { ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export { ArkmeRootFrame } from './redesign/ArkmeRootFrame.js'
 export { ArkmeLayoutController } from './redesign/layout-controller.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'

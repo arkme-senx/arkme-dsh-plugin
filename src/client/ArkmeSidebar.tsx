@@ -20,7 +20,6 @@ import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
-import { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -1554,15 +1553,7 @@ export function ArkmeSurface({
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : ui.mode === 'calls' ? <ArkmeCallHistorySurface
-          assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
-          contacts={chatDirectory.sources.filter(source => source.kind === 'private_chat' && source.displayName !== '林小满' && source.displayName !== '妈妈').map(source => ({
-            sourceRef: source.sourceRef,
-            displayName: source.displayName,
-            ...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef }),
-          }))}
-        />
-          : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
+        /></div> : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
             onBackToWorld={() => { arkmeUi.showWorld() }}

@@ -50,29 +50,6 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it('reads one recording day and explicitly starts its Doubao transcript', async () => {
-    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
-    const sdk = createArkmeSdk({
-      fetchImpl: async (_input, init) => {
-        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
-        calls.push(request)
-        return request.operation === 'recordings.day'
-          ? success({ dateStamp: request.params?.dateStamp, transcript: { state: 'empty', items: [], message: '' } })
-          : success({ queuedChildCount: 1, inFlightChildCount: 0, missingAudioChildCount: 0 })
-      },
-    })
-    const dateStamp = new Date(2026, 7, 17).getTime()
-
-    await expect(sdk.recordingDay(dateStamp)).resolves.toMatchObject({ dateStamp })
-    await expect(sdk.startRecordingDoubaoBackfill(dateStamp)).resolves.toMatchObject({ queuedChildCount: 1 })
-    expect(calls).toEqual([
-      { operation: 'recordings.day', params: { dateStamp } },
-      { operation: 'recordings.doubao.start', params: { dateStamp } },
-    ])
-    await expect(sdk.startRecordingDoubaoBackfill(dateStamp + 1)).rejects.toThrow(/local-day timestamp/)
-    expect(calls).toHaveLength(2)
-  })
-
   it('lists image-library pages through the public same-origin operation', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

@@ -156,19 +156,6 @@ describe('ArkmeUiController', () => {
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
 
-  it('opens calls without retaining a conversation source', () => {
-    const controller = new ArkmeUiController()
-    controller.selectSource({
-      sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 1, unreadCount: 0,
-    })
-
-    controller.showCalls()
-
-    expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
-    })
-  })
-
   it('clears the previous account selection when authentication changes accounts', () => {
     const controller = new ArkmeUiController()
     const source = {
