@@ -138,6 +138,19 @@ describe('Arkme native World surface', () => {
     expect([...afterRefresh]).toEqual([])
   })
 
+  it('uses the demo compact white-feed language without introducing demo-only actions', () => {
+    const markup = render({ status: 'success', items: [item] })
+
+    expect(markup).toContain('width:min(1040px, calc(100% - 72px))')
+    expect(markup).toContain('width:min(780px, calc(100% - 64px))')
+    expect(markup).toContain('border-radius:0')
+    expect(markup).toContain('background:#fff')
+    expect(markup).not.toContain('>共鸣<')
+    expect(markup).not.toContain('aria-label="分享"')
+    expect(markup).not.toContain('正在发生')
+    expect(markup).not.toContain('发布前由你确认')
+  })
+
   it('renders a target user World homepage with mobile-equivalent back navigation and four states', () => {
     const target = { userId: 7, displayName: '泡泡', avatarFallback: { kind: 'phone_default' as const, colorIndex: 2, label: '泡' } }
     const renderTarget = (state: ArkmeWorldViewState) => renderToStaticMarkup(<ArkmeWorldContent
