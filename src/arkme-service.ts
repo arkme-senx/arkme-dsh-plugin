@@ -181,6 +181,7 @@ import type {
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
   ArkmeWorldPublishFileAssetsInput, ArkmeWorldPublishResult, ArkmeWorldPublishTextInput,
@@ -474,6 +475,7 @@ export class ArkmeService {
         worldPublish: true,
         worldVoiceprintPlayback: true,
         worldVoiceprintInvite: true,
+        worldVoiceprintSocialContext: true,
         arrangements: true,
         myExtensions: true,
       extensionPublish: true,
@@ -1365,6 +1367,7 @@ export class ArkmeService {
     return await this.world.generateWorldVoiceprintPlayback(input)
   }
 
+  async worldVoiceprintSocialContext(recordRef: string, options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeWorldVoiceprintSocialContext> { return await this.world.worldVoiceprintSocialContext(recordRef, options) }
   async inviteWorldVoiceprint(
     recordRef: string,
     signal?: AbortSignal,

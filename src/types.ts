@@ -241,6 +241,25 @@ export interface ArkmeWorldVoiceprintAvailability {
   items: ArkmeWorldVoiceprintAvailabilityItem[]
 }
 
+export type ArkmeWorldVoiceprintSocialRelationType =
+  | 'reciprocal_expectation'
+  | 'call'
+  | 'world_interaction'
+  | 'group_interaction'
+  | 'private_chat'
+
+/** Browser-safe relationship evidence used by the World voiceprint reminder dialog. */
+export interface ArkmeWorldVoiceprintSocialRelation {
+  type: ArkmeWorldVoiceprintSocialRelationType
+  displayLine: string
+  reasonCode: string
+  reasonLabel: string
+}
+
+export interface ArkmeWorldVoiceprintSocialContext {
+  relations: ArkmeWorldVoiceprintSocialRelation[]
+}
+
 /** Browser-safe generated World voice chunk. The signed Audio URL stays inside the Provider. */
 export interface ArkmeWorldVoiceprintPlaybackChunk {
   mediaRef: string
@@ -583,6 +602,8 @@ export interface ArkmeProviderCapabilities {
     worldVoiceprintPlayback?: true
     /** Optional additive capability for sending a voiceprint invite reminder to a World author. */
     worldVoiceprintInvite?: true
+    /** Optional additive capability for mobile-aligned relationship context in the voiceprint reminder dialog. */
+    worldVoiceprintSocialContext?: true
     /** Optional additive capability for the independent Arrangement consumer. */
     arrangements?: true
     /** Optional additive current-account Cordis/Profile/cloud extension inventory. */
@@ -1734,6 +1755,7 @@ export type ArkmePluginOperation =
   | 'world.user'
   | 'world.voiceprint.availability'
   | 'world.voiceprint.playback.generate'
+  | 'world.voiceprint.social-context'
   | 'world.voiceprint.invite'
   | 'world.interactions.list'
   | 'world.interactions.create-text'

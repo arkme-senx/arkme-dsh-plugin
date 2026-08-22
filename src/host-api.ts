@@ -609,6 +609,10 @@ export async function dispatchArkmeHostOperation(
       recordRef: stringParam(params, 'recordRef').trim(),
       chunkIndex: Math.min(333, Math.max(0, Math.trunc(numberParam(params, 'chunkIndex', 0)))),
     })
+    case 'world.voiceprint.social-context': return await service.worldVoiceprintSocialContext(
+      stringParam(params, 'recordRef').trim(),
+      { forceRefresh: params?.forceRefresh === true },
+    )
     case 'world.voiceprint.invite': return await service.inviteWorldVoiceprint(
       stringParam(params, 'recordRef').trim(),
     )

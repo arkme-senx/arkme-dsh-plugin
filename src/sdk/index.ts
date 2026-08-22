@@ -57,6 +57,7 @@ import type {
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionPage,
   ArkmeWorldPublishFileAssetsInput,
@@ -171,6 +172,9 @@ export type {
   ArkmeWorldVoiceprintAvailabilityItem,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
+  ArkmeWorldVoiceprintSocialRelation,
+  ArkmeWorldVoiceprintSocialRelationType,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
@@ -704,6 +708,17 @@ export class ArkmeSdk {
   ): Promise<ArkmeWorldVoiceprintInviteResult> {
     if (recordRef.trim() === '') throw new TypeError('Arkme World record reference must not be empty')
     return await this.call<ArkmeWorldVoiceprintInviteResult>('world.voiceprint.invite', { recordRef }, signal)
+  }
+
+  async worldVoiceprintSocialContext(
+    recordRef: string,
+    options: { forceRefresh?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldVoiceprintSocialContext> {
+    if (recordRef.trim() === '') throw new TypeError('Arkme World record reference must not be empty')
+    return await this.call<ArkmeWorldVoiceprintSocialContext>('world.voiceprint.social-context', {
+      recordRef,
+      ...(options.forceRefresh === undefined ? {} : { forceRefresh: options.forceRefresh }),
+    }, options.signal)
   }
 
   /** Read comments and replies for one Provider-issued World record reference. */

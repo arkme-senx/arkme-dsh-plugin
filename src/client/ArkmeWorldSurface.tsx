@@ -15,6 +15,7 @@ import type {
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
+  ArkmeWorldVoiceprintSocialContext,
 } from '../types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -103,6 +104,7 @@ const styles: Record<string, CSSProperties> = {
   inviteContent: { padding: '28px 24px 26px', textAlign: 'center' },
   inviteTitle: { margin: 0, color: colors.text, fontSize: 17, lineHeight: 1.35, fontWeight: 700 },
   inviteAction: { margin: '14px 0 0', color: colors.secondary, fontSize: 15, lineHeight: 1.45 },
+  inviteRelationship: { margin: '16px 0 0', color: 'color-mix(in srgb, var(--dsw-alias-label-primary, #17191c) 78%, transparent)', fontSize: 14, lineHeight: 1.35, fontWeight: 500 },
   inviteStatus: { minHeight: 18, margin: '12px 0 0', color: colors.danger, fontSize: 12, lineHeight: 1.5 },
   inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${colors.border}` },
   inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
@@ -399,20 +401,24 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
   </article>
 }
 
-export function VoiceprintInviteDialog({ item, variantIndex, sending, message, onClose, onConfirm }: {
+export function VoiceprintInviteDialog({ item, variantIndex, socialContext, sending, message, onClose, onConfirm }: {
   item: ArkmeWorldFeedItem
   variantIndex: number
+  socialContext?: ArkmeWorldVoiceprintSocialContext
   sending: boolean
   message?: string
   onClose(): void
   onConfirm(item: ArkmeWorldFeedItem): void
 }) {
   const author = item.authorName.trim() === '' ? 'TA' : `「${item.authorName.trim()}」`
+  const relations = socialContext?.relations ?? []
+  const relationship = relations.length === 0 ? undefined : relations[Math.max(0, variantIndex) % relations.length]
   return <div role="dialog" aria-modal="true" aria-label="邀请开启声纹" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
     <section style={{ ...styles.modal, ...styles.inviteModal }}>
       <div style={styles.inviteContent}>
         <h2 style={styles.inviteTitle}>{voiceprintInvitePromptTitle(item, variantIndex)}</h2>
-        <p style={styles.inviteAction}>提醒{author}录入声纹后就能听见这条文字</p>
+        {relationship !== undefined && <p style={styles.inviteRelationship}>{relationship.displayLine}</p>}
+        <p style={{ ...styles.inviteAction, ...(relationship === undefined ? {} : { marginTop: 7 }) }}>提醒{author}录入声纹后就能听见这条文字</p>
         {message !== undefined && <p role="status" style={styles.inviteStatus}>{message}</p>}
       </div>
       <div style={styles.inviteActions}>
@@ -653,7 +659,9 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
   const [inviteSending, setInviteSending] = useState(false)
   const [inviteMessage, setInviteMessage] = useState<string>()
+  const [inviteSocialContext, setInviteSocialContext] = useState<ArkmeWorldVoiceprintSocialContext>()
   const invitePresentationIndexesRef = useRef(new Map<string, number>())
+  const inviteLoadTokenRef = useRef(0)
   const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
@@ -737,7 +745,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     setActionMessage(undefined)
     loadUser(target)
   }, [loadUser, target?.userId])
-  useEffect(() => () => { loadController.current?.abort(); voiceprintTokenRef.current += 1; audioRef.current?.pause() }, [])
+  useEffect(() => () => { loadController.current?.abort(); voiceprintTokenRef.current += 1; inviteLoadTokenRef.current += 1; audioRef.current?.pause() }, [])
   useEffect(() => {
     if (state.status !== 'success' || state.items.length === 0) { setPlayableRefs(new Set()); return }
     const controller = new AbortController()
@@ -794,9 +802,23 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     }
     await playChunk(0).catch(fail)
   }
-  const openVoiceprintInvite = (item: ArkmeWorldFeedItem) => {
+  const openVoiceprintInvite = async (item: ArkmeWorldFeedItem) => {
+    const token = inviteLoadTokenRef.current + 1
+    inviteLoadTokenRef.current = token
     setActionMessage(undefined)
     setInviteMessage(undefined)
+    setInviteSocialContext(undefined)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => { controller.abort() }, 6_000)
+    let socialContext: ArkmeWorldVoiceprintSocialContext = { relations: [] }
+    try {
+      socialContext = await callArkme<ArkmeWorldVoiceprintSocialContext>(
+        'world.voiceprint.social-context', { recordRef: item.recordRef, forceRefresh: true }, controller.signal,
+      )
+    } catch { /* Relationship context is optional; the reminder still opens without invented evidence. */ }
+    finally { clearTimeout(timeout) }
+    if (inviteLoadTokenRef.current !== token) return
+    setInviteSocialContext(socialContext)
     setInviteItem(item)
   }
   const closeVoiceprintInvite = () => {
@@ -804,6 +826,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     const currentIndex = invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0
     invitePresentationIndexesRef.current.set(inviteItem.recordRef, currentIndex + 1)
     setInviteItem(undefined)
+    setInviteSocialContext(undefined)
   }
   const inviteVoiceprint = async (item: ArkmeWorldFeedItem) => {
     if (inviteSending) return
@@ -823,7 +846,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
       {...(actionMessage === undefined ? {} : { actionMessage })}
       onRefresh={refresh} {...(onBackToWorld === undefined ? {} : { onBackToWorld })} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
       onOpenInteractions={toggleInteractions} onInteractionCreated={recordInteractionCreated} onToggleVoiceprint={recordRef => { void toggleVoiceprint(recordRef) }}
-      onInviteVoiceprint={openVoiceprintInvite} onLoadMore={() => {
+      onInviteVoiceprint={item => { void openVoiceprintInvite(item) }} onLoadMore={() => {
         if (state.nextOffset === undefined) return
         if (target === undefined) load(scope, state.nextOffset)
         else loadUser(target, state.nextOffset)
@@ -833,6 +856,6 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
       setActionMessage(result.visibility === 'pending_review' ? '已提交审核，可稍后在“我的世界”查看' : '已发布到世界')
       setScope('mine')
     }} />}
-    {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
+    {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} {...(inviteSocialContext === undefined ? {} : { socialContext: inviteSocialContext })} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
   </main>
 }

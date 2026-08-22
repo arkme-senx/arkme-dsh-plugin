@@ -39,6 +39,7 @@ function fakeService() {
     listUserWorldFeed: vi.fn(async (_userId: number, input: unknown) => input),
     publishWorldText: vi.fn(async (input: unknown) => input),
     publishWorldFileAssets: vi.fn(async (input: unknown) => input),
+    worldVoiceprintSocialContext: vi.fn(async (recordRef: string, options: unknown) => ({ recordRef, options })),
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
   }
 }
@@ -371,6 +372,16 @@ describe('outgoing call Host API dispatch', () => {
     })
 
     expect(service.inviteWorldVoiceprint).toHaveBeenCalledWith('world-ref')
+  })
+
+  it('dispatches only the opaque World reference and refresh flag for voiceprint social context', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'world.voiceprint.social-context', {
+      recordRef: ' world-ref ', forceRefresh: true, authorUserId: 999, chatSessionUid: 'must-not-forward',
+    })
+
+    expect(service.worldVoiceprintSocialContext).toHaveBeenCalledWith('world-ref', { forceRefresh: true })
   })
 
   it('dispatches a bounded current-account World page', async () => {

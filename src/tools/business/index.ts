@@ -24,6 +24,7 @@ import {
   worldUserToolModule,
   worldPublishTextToolModule,
   worldRecentToolModule,
+  worldVoiceprintSocialContextToolModule,
   worldVoiceprintInviteToolModule,
 } from './world/index.js'
 import { wechatToolModules } from './wechat/index.js'
@@ -47,6 +48,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   worldRecentToolModule,
   worldMineToolModule,
   worldUserToolModule,
+  worldVoiceprintSocialContextToolModule,
   worldVoiceprintInviteToolModule,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,

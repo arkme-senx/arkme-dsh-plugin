@@ -18,8 +18,10 @@ const stateStore = {
 const config: ArkmeServiceConfig = {
   environment: 'test',
   authBaseUrl: 'https://auth.test',
+  subjectBaseUrl: 'https://subject.test',
   recordBaseUrl: 'https://record.test',
   chatBaseUrl: 'https://chat.test',
+  botBaseUrl: 'https://bot.test',
   imBaseUrl: 'https://im.test',
   webrtcBaseUrl: 'https://webrtc.test',
   worldBaseUrl: 'https://world.test',
@@ -30,6 +32,7 @@ const config: ArkmeServiceConfig = {
   requestTimeoutMs: 5000,
   maxTextLength: 20_000,
   geetestCaptchaId: 'captcha-test-id-1234567890',
+  interwovenMomentsEnabled: true,
 }
 
 function json(data: unknown, status = 200): Response {
@@ -445,6 +448,154 @@ describe('world Provider projection', () => {
     await service.worldVoiceprintPlaybackAvailability([...recordRefs].reverse())
 
     expect(availabilityCalls).toBe(1)
+  })
+
+  it('matches the mobile World voiceprint social relationship order and fixed copy', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '今天的风很舒服',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://audio.test/api/v1/audio/voiceprint/world-enrollment-interactions') {
+        expect(body).toEqual({})
+        return json({ code: 200, data: { received: { requesters: [{ user_id: '20002' }] } } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/list') {
+        expect(body).toEqual({ limit: 100, session_kind: 1 })
+        return json({ code: 200, data: { items: [{
+          session: { chat_session_uid: 'private-20002', session_kind: 1, shared_topic_id: '41', last_seq: '8' },
+          private_counterpart: { user_id: '20002' },
+          latest_preview: { record: { record_uid: 'message-1', payload: { text_content: '之前聊过' } } },
+          unread_snapshot: { session_last_seq: 8 },
+        }], has_more: false } })
+      }
+      if (url === 'https://world.test/api/v1/interwoven-moments/summary') {
+        expect(body).toEqual({ subject_id: 41 })
+        return json({ code: 200, data: {
+          call_summary: { total_call_count: '1' },
+          recent_card: { total_stats: [
+            { moment_type: '2', count: '2' },
+            { moment_type: '1', count: '3' },
+          ] },
+          source_status: [],
+        } })
+      }
+      if (url === 'https://world.test/api/v1/public-record/extend-list') {
+        expect(body).toEqual({ record_uid: 'public-record-1', limit: 100, offset: 0 })
+        return json({ code: 200, data: { list: [{ user_id: '10001' }] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+
+    const context = await service.worldVoiceprintSocialContext(feed.items[0]!.recordRef, { forceRefresh: true })
+
+    expect(context).toEqual({ relations: [
+      {
+        type: 'reciprocal_expectation', displayLine: 'TA也曾期待过你的声音',
+        reasonCode: 'relationship_reciprocal_expectation', reasonLabel: '因为TA也曾期待过我的声音',
+      },
+      {
+        type: 'call', displayLine: '你们曾经通过话',
+        reasonCode: 'relationship_call', reasonLabel: '因为我们曾经通过话',
+      },
+      {
+        type: 'world_interaction', displayLine: '你们曾在世界回应过彼此',
+        reasonCode: 'relationship_world', reasonLabel: '因为我们在世界里回应过彼此',
+      },
+      {
+        type: 'group_interaction', displayLine: '你们曾在同一个群里互动过',
+        reasonCode: 'relationship_group', reasonLabel: '因为我们在群里有过互动',
+      },
+      {
+        type: 'private_chat', displayLine: '你们曾经聊过',
+        reasonCode: 'relationship_chat', reasonLabel: '因为我们以前聊过',
+      },
+    ] })
+    expect(JSON.stringify(context)).not.toContain('public-record-1')
+    expect(JSON.stringify(context)).not.toContain('20002')
+  })
+
+  it('uses call summary before the recent-stat fallback like mobile', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let interwovenCalls = 0
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '正文',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://audio.test/api/v1/audio/voiceprint/world-enrollment-interactions') {
+        return json({ code: 200, data: { received: { requesters: [] } } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/list') {
+        return json({ code: 200, data: { items: [{
+          session: { chat_session_uid: 'private-20002', session_kind: 1, shared_topic_id: 41 },
+          private_counterpart: { user_id: 20002 },
+        }], has_more: false } })
+      }
+      if (url === 'https://world.test/api/v1/interwoven-moments/summary') {
+        interwovenCalls += 1
+        return json({ code: 200, data: {
+          ...(interwovenCalls === 1 ? { call_summary: { total_call_count: 0 } } : {}),
+          recent_card: { total_stats: [{ moment_type: 3, count: 5 }] },
+          source_status: [],
+        } })
+      }
+      if (url === 'https://world.test/api/v1/public-record/extend-list') {
+        return json({ code: 200, data: { list: [] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+
+    await expect(service.worldVoiceprintSocialContext(feed.items[0]!.recordRef, { forceRefresh: true }))
+      .resolves.toEqual({ relations: [] })
+    await expect(service.worldVoiceprintSocialContext(feed.items[0]!.recordRef, { forceRefresh: true }))
+      .resolves.toMatchObject({ relations: [{ type: 'call' }] })
+  })
+
+  it('keeps successful relationship evidence when another mobile source fails', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      const url = String(input)
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-1', user_id: 20002, nick_name: '小林', text_content: '正文',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://audio.test/api/v1/audio/voiceprint/world-enrollment-interactions') {
+        return json({ code: 503, message: 'temporarily unavailable' }, 503)
+      }
+      if (url === 'https://chat.test/api/v1/chats/list') {
+        return json({ code: 200, data: { items: [], has_more: false } })
+      }
+      if (url === 'https://world.test/api/v1/public-record/extend-list') {
+        return json({ code: 200, data: { list: [{ user_id: 10001 }] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+    const feed = await service.listWorldFeed()
+
+    await expect(service.worldVoiceprintSocialContext(feed.items[0]!.recordRef, { forceRefresh: true }))
+      .resolves.toEqual({ relations: [{
+        type: 'world_interaction', displayLine: '你们曾在世界回应过彼此',
+        reasonCode: 'relationship_world', reasonLabel: '因为我们在世界里回应过彼此',
+      }] })
   })
 
   it('creates a voiceprint invite and sends the reminder through the World author private chat', async () => {

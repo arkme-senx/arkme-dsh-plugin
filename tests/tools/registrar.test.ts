@@ -109,6 +109,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_recent',
       'arkme_world_mine',
       'arkme_world_user',
+      'arkme_world_voiceprint_social_context',
       'arkme_world_voiceprint_invite',
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
@@ -205,6 +206,34 @@ describe('registerArkmeTools', () => {
     })
     expect(confirmed.isError).toBe(false)
     expect(inviteWorldVoiceprint).toHaveBeenCalledWith('arkme-world-record-v1.opaque', signal)
+  })
+
+  it('reads World voiceprint social context without entering the write confirmation flow', async () => {
+    const ctx = await setup()
+    const worldVoiceprintSocialContext = vi.fn(async () => ({ relations: [{
+      type: 'world_interaction' as const,
+      displayLine: '你们曾在世界回应过彼此',
+      reasonCode: 'relationship_world',
+      reasonLabel: '因为我们在世界里回应过彼此',
+    }] }))
+    await mountArkmeTools(ctx, 'business', {
+      ...ports,
+      worldVoiceprintSocialContext,
+    } as unknown as ArkmeToolPorts)
+    const signal = new AbortController().signal
+    const result = await ctx.tools.execute({
+      callId: CallId('social-context'),
+      name: 'arkme_world_voiceprint_social_context',
+      arguments: { record_ref: 'arkme-world-record-v1.opaque', force_refresh: true },
+      signal,
+    })
+
+    expect(result.isError).toBe(false)
+    expect(result.isError ? '' : result.value).toContain('你们曾在世界回应过彼此')
+    expect(worldVoiceprintSocialContext).toHaveBeenCalledWith('arkme-world-record-v1.opaque', {
+      forceRefresh: true,
+      signal,
+    })
   })
 
   it('adds and withdraws attachment-phase tools with the dependency fiber', async () => {

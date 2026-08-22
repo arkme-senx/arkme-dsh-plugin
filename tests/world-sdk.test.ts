@@ -25,6 +25,12 @@ describe('World consumer SDK', () => {
           mediaRef: 'media-ref', mimeType: 'audio/wav', durationMillis: 1000, cacheHit: false,
           chunkIndex: 0, chunkCount: 1, chunkStartRune: 0, chunkEndRune: 4,
         })
+        if (request.operation === 'world.voiceprint.social-context') return success({
+          relations: [{
+            type: 'private_chat', displayLine: '你们曾经聊过',
+            reasonCode: 'relationship_chat', reasonLabel: '因为我们以前聊过',
+          }],
+        })
         if (request.operation === 'world.voiceprint.invite') return success({
           sent: true, peerDisplayName: '小林', messageItemUid: 'message-1', expiresAtMillis: 1_900_000_000_000,
         })
@@ -55,6 +61,12 @@ describe('World consumer SDK', () => {
     await expect(sdk.generateWorldVoiceprintPlayback({
       recordRef: 'record-ref', chunkIndex: 0,
     })).resolves.toMatchObject({ mediaRef: 'media-ref', chunkCount: 1 })
+    await expect(sdk.worldVoiceprintSocialContext('record-ref', { forceRefresh: true })).resolves.toEqual({
+      relations: [{
+        type: 'private_chat', displayLine: '你们曾经聊过',
+        reasonCode: 'relationship_chat', reasonLabel: '因为我们以前聊过',
+      }],
+    })
     await expect(sdk.inviteWorldVoiceprint('record-ref')).resolves.toMatchObject({
       sent: true, peerDisplayName: '小林',
     })
@@ -75,6 +87,7 @@ describe('World consumer SDK', () => {
         operation: 'world.voiceprint.playback.generate',
         params: { recordRef: 'record-ref', chunkIndex: 0 },
       },
+      { operation: 'world.voiceprint.social-context', params: { recordRef: 'record-ref', forceRefresh: true } },
       { operation: 'world.voiceprint.invite', params: { recordRef: 'record-ref' } },
       { operation: 'world.interactions.list', params: { recordRef: 'record-ref', limit: 50, offset: 10 } },
       {

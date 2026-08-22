@@ -205,4 +205,28 @@ describe('Arkme native World surface', () => {
     expect(markup).not.toContain('哈哈，这件事也太搞笑了')
     expect(markup).not.toContain('点击提醒后')
   })
+
+  it('shows the mobile relationship line selected by the same presentation index', () => {
+    const markup = renderToStaticMarkup(<VoiceprintInviteDialog
+      item={item}
+      variantIndex={1}
+      socialContext={{ relations: [
+        {
+          type: 'private_chat', displayLine: '你们曾经聊过',
+          reasonCode: 'relationship_chat', reasonLabel: '因为我们以前聊过',
+        },
+        {
+          type: 'world_interaction', displayLine: '你们曾在世界回应过彼此',
+          reasonCode: 'relationship_world', reasonLabel: '因为我们在世界里回应过彼此',
+        },
+      ] }}
+      sending={false}
+      onClose={noop}
+      onConfirm={noop}
+    />)
+
+    expect(markup).toContain('你们曾在世界回应过彼此')
+    expect(markup).not.toContain('你们曾经聊过')
+    expect(markup).toContain('>让TA知道<')
+  })
 })
