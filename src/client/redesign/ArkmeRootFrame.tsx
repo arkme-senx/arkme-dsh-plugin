@@ -4,6 +4,7 @@ import {
 } from 'react'
 import { ArrowUp } from '@phosphor-icons/react/ArrowUp'
 import { CaretDown } from '@phosphor-icons/react/CaretDown'
+import { CaretLeft } from '@phosphor-icons/react/CaretLeft'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { CalendarBlank } from '@phosphor-icons/react/CalendarBlank'
 import { ChatCircleText } from '@phosphor-icons/react/ChatCircleText'
@@ -21,6 +22,7 @@ import type { Icon } from '@phosphor-icons/react/lib'
 import type { DirectoryListing, SessionId, SessionSummary, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../../types.js'
 import { callArkme } from '../api.js'
 import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
@@ -29,7 +31,7 @@ import { ArkmeExtensionCenter } from '../ArkmeExtensionCenter.js'
 import { ArkmeCalendarSurface } from '../ArkmeCalendarSurface.js'
 import { ArkmeRecordingSurface } from '../ArkmeRecordingSurface.js'
 import { ArkmeSearchSurface } from '../ArkmeSearchSurface.js'
-import { ArkmeSettingsRow } from '../ArkmeSettingsRow.js'
+import { ArkmeSettingsSurface } from '../ArkmeSettingsSurface.js'
 import { ArkmeSurface } from '../ArkmeSidebar.js'
 import { ArkmeNavigation } from '../ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from '../auth-store.js'
@@ -64,7 +66,7 @@ export interface ArkmeRootInjected {
 }
 
 export type ArkmeRootFrameProps = PropsRuntime<'root'>
-  & PropsRenderSlots<'sidebar' | 'conversation' | 'details' | 'shell.overlay' | 'arkme.directory.entry'>
+  & PropsRenderSlots<'sidebar' | 'conversation' | 'details' | 'shell.overlay' | 'settings.section' | 'arkme.directory.entry'>
   & ArkmeRootInjected
 
 interface NavItem {
@@ -208,6 +210,7 @@ export function ArkmeRootFrame({
   sendPrompt,
 }: ArkmeRootFrameProps) {
   const [route, setRoute] = useState<ArkmeRoute>('chats')
+  const [settingsView, setSettingsView] = useState<'overview' | 'models'>('overview')
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [taskStartOpen, setTaskStartOpen] = useState(true)
@@ -220,6 +223,7 @@ export function ArkmeRootFrame({
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const layoutState = useSyncExternalStore(layout.subscribe, layout.getSnapshot, layout.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
+  const arkmeUiState = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot)
   const sessionState = useSessions(state => state)
   const current = sessionState.current === undefined ? undefined : sessionState.byId[sessionState.current]
   const taskSessions = useMemo(() => sessionState.ids
@@ -270,6 +274,7 @@ export function ArkmeRootFrame({
 
   const selectRoute = (next: ArkmeRoute) => {
     setRoute(next)
+    setSettingsView('overview')
     setCalendarOpen(false)
     setProfileOpen(false)
     if (next === 'chats') arkmeUi.focusSendToSelf()
@@ -337,8 +342,10 @@ export function ArkmeRootFrame({
     arkmeUi.showCalendar()
   }
   const hasSecondaryPanel = layoutState.sidebarOpen && route === 'chats'
-  return <div className="arkme-redesign-root" data-arkme-workspace data-route={route}>
-    <aside className="arkme-redesign-rail" aria-label="主要功能">
+  const authRequiresLogin = authState.checked && authState.auth?.status !== 'authenticated'
+  const loginTakeover = authRequiresLogin || (arkmeUiState.mode === 'login' && arkmeUiState.surfaceOpen)
+  return <div className="arkme-redesign-root" data-arkme-workspace data-route={route} data-login-takeover={loginTakeover ? '' : undefined}>
+    {!loginTakeover && <aside className="arkme-redesign-rail" aria-label="主要功能">
       <div className="arkme-redesign-rail-primary">{NAV_ITEMS.map(item => {
         const IconComponent = item.icon
         return <button
@@ -372,9 +379,9 @@ export function ArkmeRootFrame({
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={32} label="当前用户头像" />
         </button>
       </div>
-    </aside>
+    </aside>}
 
-    {route === 'chats' && layoutState.sidebarOpen && <aside className="arkme-redesign-chat-panel">
+    {!loginTakeover && route === 'chats' && layoutState.sidebarOpen && <aside className="arkme-redesign-chat-panel">
       <div className="arkme-redesign-chat-directory">
         <ArkmeNavigation
           wide
@@ -393,8 +400,10 @@ export function ArkmeRootFrame({
       </div>
     </aside>}
 
-    <main className={`arkme-redesign-content${hasSecondaryPanel ? ' has-panel' : ''}${layoutState.detailsOpen ? ' has-details' : ''}`}>
-      {route === 'chats'
+    <main className={`arkme-redesign-content${loginTakeover ? ' is-login-takeover' : ''}${!loginTakeover && hasSecondaryPanel ? ' has-panel' : ''}${!loginTakeover && layoutState.detailsOpen ? ' has-details' : ''}`}>
+      {loginTakeover
+        ? <div className="arkme-redesign-route-surface arkme-redesign-route-chats"><ArkmeSurface productChrome={false} /></div>
+        : route === 'chats'
         ? taskStartOpen
           ? <TaskStart
             busy={sending || preparingSession}
@@ -425,20 +434,31 @@ export function ArkmeRootFrame({
                     onClose={() => undefined}
                   />
                 </div>
-                : <section className="arkme-redesign-feature-page arkme-redesign-settings-page">
-                  <header><p>设置</p><h1>Arkme 设置</h1><span>管理账号、版本与插件运行状态。</span></header>
-                  <div className="arkme-redesign-settings-card"><ArkmeSettingsRow useSessions={useSessions} useWorkspaces={useWorkspaces} /></div>
-                </section>}
+                : <div className="arkme-redesign-route-surface arkme-redesign-settings-page">
+                  {settingsView === 'models'
+                    ? <section className="arkme-redesign-model-settings" aria-label="模型与 API Key">
+                      <header>
+                        <button type="button" onClick={() => { setSettingsView('overview') }}>
+                          <CaretLeft size={17} weight="bold" />
+                          <span>设置</span>
+                        </button>
+                      </header>
+                      <div className="arkme-redesign-model-settings-body">
+                        {renderSlot('settings.section', { close: () => { setSettingsView('overview') } }, { only: 'models' })}
+                      </div>
+                    </section>
+                    : <ArkmeSettingsSurface onOpenModels={() => { setSettingsView('models') }} />}
+                </div>}
     </main>
 
-    {route === 'chats' && taskConversationOpen && layoutState.detailsOpen && <aside className="arkme-redesign-details">
+    {!loginTakeover && route === 'chats' && taskConversationOpen && layoutState.detailsOpen && <aside className="arkme-redesign-details">
       {renderSlot('details', {})}
     </aside>}
-    {calendarOpen && <div className="arkme-redesign-calendar-overlay"><ArkmeCalendarSurface onClose={() => { setCalendarOpen(false) }} /></div>}
+    {!loginTakeover && calendarOpen && <div className="arkme-redesign-calendar-overlay"><ArkmeCalendarSurface onClose={() => { setCalendarOpen(false) }} /></div>}
     <div className="arkme-redesign-overlays" data-shell-overlay>
       {renderSlot('shell.overlay', {})}
     </div>
-    <ArkmeWorkspaceDialog
+    {!loginTakeover && <ArkmeWorkspaceDialog
       open={workspaceDialogOpen}
       busy={preparingSession}
       listDirectory={listDirectory}
@@ -455,6 +475,6 @@ export function ArkmeRootFrame({
           if (prompt !== undefined) void runPrompt(sessionId, prompt)
         })
       }}
-    />
+    />}
   </div>
 }

@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions, SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -14,10 +14,11 @@ import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeAppUpdateStore } from './app-update-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
-import { readArkmePersonalTestEdition } from './personal-test-edition.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
+import { installArkmeRedesignStyles, presentArkmeTaskSession } from './redesign/styles.js'
+import { resolveArkmeTaskSession } from './redesign/task-session.js'
 
 export const inject = ['slots', 'layout', 'sessions', 'workspaces']
 
@@ -47,6 +48,7 @@ async function resolveNotificationSource(
 
 /** Permanently replace DSH's visible sidebar/conversation/details seats with Arkme-owned surfaces. */
 export function apply(ctx: ClientContext): void {
+	const sessions = ctx.sessions as unknown as ISessions
 	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
 		const shareRef = consumeExtensionShareDeepLink(window.location, window.history)
 		if (shareRef !== undefined) arkmeUi.openExtensionShare(shareRef)
@@ -80,29 +82,144 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: activate message notification sources')
 
-  ctx.slots.inject('sidebar', () => ctx.slots.register({
-    name: 'sidebar',
-    priority: -100,
-    inject: () => ({
-      collapseSidebar: () => { ctx.layout.toggleSidebar() },
-      closeDetails: () => { ctx.layout.closeDetails() },
-    }),
-  }, ArkmePersistentSidebar))
+  ctx.effect(() => {
+    let disposeSidebar: (() => void) | undefined
+    let settingsTimer: number | undefined
+    let settingsDialogSeen = false
+    let disposed = false
 
-  ctx.slots.inject('conversation', () => ctx.slots.register({
-    name: 'conversation',
-    priority: -100,
-    children: {
-      'arkme.directory.entry': { kind: 'list', scope: 'root' },
-    },
-    inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
-  }, ArkmePersistentWorkspace))
+    const mountArkmeSidebar = () => {
+      if (disposed || disposeSidebar !== undefined) return
+      disposeSidebar = ctx.slots.inject('sidebar', () => ctx.slots.register({
+        name: 'sidebar',
+        priority: -100,
+        inject: () => ({
+          collapseSidebar: () => { ctx.layout.toggleSidebar() },
+          closeDetails: () => { ctx.layout.closeDetails() },
+          openSession: (sessionId: SessionId) => { sessions.open(sessionId) },
+        }),
+      }, ArkmePersistentSidebar))
+    }
+    const stopSettingsTimer = () => {
+      if (settingsTimer === undefined || typeof window === 'undefined') return
+      window.clearInterval(settingsTimer)
+      settingsTimer = undefined
+    }
+    const restoreArkmeSidebar = () => {
+      stopSettingsTimer()
+      settingsDialogSeen = false
+      mountArkmeSidebar()
+    }
+    const openOfficialSettings = () => {
+      if (disposed || typeof document === 'undefined' || typeof window === 'undefined') return
+      stopSettingsTimer()
+      disposeSidebar?.()
+      disposeSidebar = undefined
+      settingsDialogSeen = false
+      let attempts = 0
+      let triggerClicked = false
+      settingsTimer = window.setInterval(() => {
+        if (disposed) return
+        attempts += 1
+        const dialog = document.querySelector('[role="dialog"][aria-modal="true"]')
+        if (dialog !== null) settingsDialogSeen = true
+        if (settingsDialogSeen && dialog === null) {
+          restoreArkmeSidebar()
+          return
+        }
+        if (!triggerClicked) {
+          const sidebar = document.querySelector('[data-slot="sidebar"]')
+          const arkmeSidebarPresent = sidebar?.querySelector('[data-arkme-owned="persistent-sidebar"]') !== null
+          const trigger = arkmeSidebarPresent
+            ? null
+            : sidebar?.querySelector<HTMLButtonElement>(
+              '[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]',
+            ) ?? null
+          if (trigger !== null) {
+            triggerClicked = true
+            trigger.click()
+          }
+        }
+        if (!settingsDialogSeen && attempts >= 40) restoreArkmeSidebar()
+      }, 50)
+    }
 
-  ctx.slots.inject('details', () => ctx.slots.register({
-    name: 'details',
-    priority: -100,
-    inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
-  }, ArkmePersistentDetails))
+    const unbindSettings = arkmeUi.bindSettingsOpener(openOfficialSettings)
+    mountArkmeSidebar()
+    return () => {
+      disposed = true
+      unbindSettings()
+      stopSettingsTimer()
+      disposeSidebar?.()
+      disposeSidebar = undefined
+    }
+  }, 'dsh-arkme: bridge to official settings sidebar')
+
+  ctx.effect(() => {
+    const disposeStyles = installArkmeRedesignStyles()
+    return () => {
+      disposeStyles()
+    }
+  }, 'dsh-arkme: install redesign visual system')
+
+  ctx.effect(() => {
+    let disposeConversation: (() => void) | undefined
+    let disposeDetails: (() => void) | undefined
+    let disposed = false
+
+    const mountArkmeSeats = () => {
+      if (disposeConversation === undefined) {
+        disposeConversation = ctx.slots.inject('conversation', () => ctx.slots.register({
+          name: 'conversation',
+          priority: -100,
+          children: {
+            'arkme.directory.entry': { kind: 'list', scope: 'root' },
+          },
+          inject: () => ({
+            closeDetails: () => { ctx.layout.closeDetails() },
+            startSession: (options?: { workspaceId?: WorkspaceId; path?: string }) => resolveArkmeTaskSession(ctx.workspaces, sessions, options),
+            pickDirectory: () => ctx.workspaces.pickDirectory(),
+            listDirectory: (path?: string, signal?: AbortSignal) => ctx.workspaces.listDirectory(path, signal),
+            openSession: (sessionId: SessionId) => { sessions.open(sessionId) },
+            sendPrompt: async (sessionId: SessionId, text: string) => {
+              const session = sessions.binding(sessionId)?.session
+              if (session === undefined) throw new Error('任务会话尚未准备好，请稍后重试')
+              const result = await session.prompt([{ type: 'text', text }], 'queue')
+              if (!result.ok) throw new Error(result.error.message)
+            },
+          }),
+        }, ArkmePersistentWorkspace))
+      }
+      if (disposeDetails === undefined) {
+        disposeDetails = ctx.slots.inject('details', () => ctx.slots.register({
+          name: 'details',
+          priority: -100,
+          inject: () => ({ closeDetails: () => { ctx.layout.closeDetails() } }),
+        }, ArkmePersistentDetails))
+      }
+    }
+    const revealDshTaskSeats = () => {
+      disposeConversation?.()
+      disposeConversation = undefined
+      disposeDetails?.()
+      disposeDetails = undefined
+    }
+    const syncSeatOwnership = () => {
+      if (disposed) return
+      const taskSession = arkmeUi.getSnapshot().mode === 'task-session'
+      presentArkmeTaskSession(taskSession)
+      if (taskSession) revealDshTaskSeats()
+      else mountArkmeSeats()
+    }
+    const stop = arkmeUi.subscribe(() => { queueMicrotask(syncSeatOwnership) })
+    syncSeatOwnership()
+    return () => {
+      disposed = true
+      stop()
+      revealDshTaskSeats()
+      presentArkmeTaskSession(false)
+    }
+  }, 'dsh-arkme: hand DSH task sessions their native conversation seats')
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
