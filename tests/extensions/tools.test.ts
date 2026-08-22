@@ -98,12 +98,14 @@ describe('Arkme extension tools', () => {
       summary: '未发现明显风险', reasons: [], recommendations: [], source_reviewed: false,
       source_scope: 'public_detail_only', audited_at_millis: 1,
     }))
+    const searchCatalog = vi.fn(async () => ({ items: [], total: 0 }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
       previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail,
       setIcon, addPreview, deletePreview, reorderPreviews,
       apply: applyExtension,
       auditExtension,
+      searchCatalog,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, { delete: deleteExtension } as never, { readImage }, 'business')
 
@@ -125,6 +127,20 @@ describe('Arkme extension tools', () => {
     expect(listInstalled).toHaveBeenCalledOnce()
     const search = definitions.find(item => item.name === 'arkme_extension_search')
     expect(search?.parameters).toHaveProperty('properties.limit.description', 'Result count, 1-100. Defaults to 20.')
+    expect(search?.parameters).toHaveProperty('properties.owner_user_id.type', 'integer')
+    expect(search?.parameters).toHaveProperty('properties.exclude_extension_id.type', 'string')
+    await expect(search?.execute?.({
+      owner_user_id: 77,
+      exclude_extension_id: 'ext-current',
+      sort: 'opens',
+      limit: 70,
+    }, toolExec(confirmationAgent('session-search', '查看作者其他插件'), 'call-search'))).resolves.toContain('"total": 0')
+    expect(searchCatalog).toHaveBeenCalledWith({
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+      sort: 'opens',
+      limit: 70,
+    }, expect.any(AbortSignal))
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')

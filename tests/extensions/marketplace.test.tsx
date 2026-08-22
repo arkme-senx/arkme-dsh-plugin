@@ -326,16 +326,18 @@ describe('Arkme marketplace UI', () => {
       currentUserId={99}
       onToggle={() => {}}
       onPrivateChat={() => {}}
-      onWorld={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(html).toContain('data-extension-author-popover="profile"')
     expect(html).toContain('data-extension-author-world-link="true"')
     expect(html).toContain('data-extension-author-profile-link="icon"')
     expect(html).not.toContain('jotmo://')
-    expect(html.match(/<button/g)).toHaveLength(4)
+    expect(html.match(/<button/g)).toHaveLength(5)
     expect(html).toContain('进入 TA 的世界')
     expect(html).toContain('发送消息')
+    expect(html).toContain('data-extension-author-other-extensions="true"')
+    expect(html).toContain('TA 的全部插件')
     expect(html).not.toContain('Arkme 作者')
     expect(html).not.toContain('@lucis')
   })
@@ -350,11 +352,12 @@ describe('Arkme marketplace UI', () => {
       currentUserId={7}
       onToggle={() => {}}
       onPrivateChat={() => {}}
-      onWorld={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(html).toContain('进入 TA 的世界')
     expect(html).not.toContain('发送消息')
+    expect(html).toContain('TA 的全部插件')
   })
 
   it('does not invent a profile or message action when the projected user id is unavailable', () => {
@@ -363,12 +366,14 @@ describe('Arkme marketplace UI', () => {
       open
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(extensionAuthorWorldTarget({ owner_user_id: 0, owner_name: '未知作者' })).toBeUndefined()
     expect(html).toContain('data-extension-author-popover="profile"')
     expect(html).not.toContain('进入 TA 的世界')
     expect(html).not.toContain('发送消息')
+    expect(html).not.toContain('TA 的全部插件')
     expect(html).not.toContain('Arkme 作者')
   })
 
@@ -382,6 +387,7 @@ describe('Arkme marketplace UI', () => {
       open={false}
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(closed).not.toContain('data-extension-author-popover="profile"')
@@ -392,6 +398,7 @@ describe('Arkme marketplace UI', () => {
       actionBusy
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onOtherExtensions={() => {}}
       onWorld={() => {}}
     />)
     expect(busy).toContain('正在打开…')
@@ -465,6 +472,14 @@ describe('Arkme marketplace UI', () => {
     expect(marketplaceListParams(' 翻译 ', 'rating', false)).toEqual({ limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE, query: '翻译' })
     expect(marketplaceListParams('翻译', 'rating', true, 'next-page')).toEqual({
       limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE, query: '翻译', sort: 'rating', cursor: 'next-page',
+    })
+    expect(marketplaceListParams('翻译', 'comments', true, undefined, {
+      ownerUserId: 77,
+    })).toEqual({
+      limit: ARKME_EXTENSION_MARKETPLACE_PAGE_SIZE,
+      query: '翻译',
+      sort: 'comments',
+      ownerUserId: 77,
     })
     expect(classificationStatusHint('building')).toContain('正在更新分类')
     expect(classificationStatusHint('ready')).toBeUndefined()

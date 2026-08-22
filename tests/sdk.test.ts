@@ -263,12 +263,22 @@ describe('Arkme SDK', () => {
     })
 
     await expect(sdk.searchExtensions('native', 10)).resolves.toMatchObject({ total: 0 })
+    await expect(sdk.extensionCatalog({
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+      sort: 'comments',
+      limit: 70,
+    })).resolves.toMatchObject({ total: 0 })
     await expect(sdk.extensionDetail('ext-v3')).resolves.toMatchObject({ artifact_contract_version: 3 })
     await expect(sdk.extensionInstallPreview('ext-v3', '1.0.0')).resolves.toMatchObject({
       artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
     })
     expect(calls).toEqual([
       { operation: 'extensions.catalog.list', params: { query: 'native', limit: 10 } },
+      {
+        operation: 'extensions.catalog.list',
+        params: { sort: 'comments', limit: 70, ownerUserId: 77, excludeExtensionId: 'ext-current' },
+      },
       { operation: 'extensions.catalog.detail', params: { extensionId: 'ext-v3' } },
       { operation: 'extensions.install.preview', params: { extensionId: 'ext-v3', version: '1.0.0' } },
     ])

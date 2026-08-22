@@ -533,13 +533,22 @@ export class ArkmeSdk {
     sort?: ArkmeExtensionCatalogSort
     cursor?: string
     limit?: number
+    ownerUserId?: number
+    excludeExtensionId?: string
     signal?: AbortSignal
   } = {}): Promise<ArkmeExtensionCatalogPage> {
+    if (options.ownerUserId !== undefined && (!Number.isSafeInteger(options.ownerUserId) || options.ownerUserId <= 0)) {
+      throw new TypeError('Arkme extension owner user id must be a positive safe integer')
+    }
     return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', {
       ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
       ...(options.sort === undefined ? {} : { sort: options.sort }),
       ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.ownerUserId === undefined ? {} : { ownerUserId: options.ownerUserId }),
+      ...(options.excludeExtensionId === undefined || options.excludeExtensionId.trim() === ''
+        ? {}
+        : { excludeExtensionId: options.excludeExtensionId.trim() }),
     }, options.signal)
   }
 

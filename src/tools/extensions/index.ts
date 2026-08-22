@@ -315,15 +315,27 @@ export function registerArkmeExtensionTools(
       category_id: { type: 'string', description: 'Optional category_id returned by the marketplace classification tree.' },
       sort: { type: 'string', enum: ['rating', 'comments', 'opens', 'created_at'], description: 'Server-side ordering.' },
       limit: { type: 'integer', description: 'Result count, 1-100. Defaults to 20.' },
+      owner_user_id: { type: 'integer', description: 'Optional exact Arkme author user id.' },
+      exclude_extension_id: { type: 'string', description: 'Optional current extension_id to exclude from author results.' },
     },
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       const categoryId = clean(args.category_id)
+      const excludeExtensionId = clean(args.exclude_extension_id)
+      const ownerUserId = args.owner_user_id === undefined ? undefined : Number(args.owner_user_id)
+      if (ownerUserId !== undefined && (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0)) {
+        throw new TypeError('owner_user_id must be a positive safe integer')
+      }
+      if (categoryId !== '' && (ownerUserId !== undefined || excludeExtensionId !== '')) {
+        throw new TypeError('author filters cannot be combined with category_id')
+      }
       const options = {
         ...(args.query === undefined ? {} : { query: args.query }),
         ...(args.sort === undefined ? {} : { sort: args.sort }),
         ...(args.limit === undefined ? {} : { limit: args.limit }),
+        ...(ownerUserId === undefined ? {} : { ownerUserId }),
+        ...(excludeExtensionId === '' ? {} : { excludeExtensionId }),
       }
       const result = categoryId === ''
         ? await manager.searchCatalog(options, exec.signal)

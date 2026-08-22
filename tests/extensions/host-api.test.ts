@@ -179,11 +179,24 @@ describe('marketplace Host BFF', () => {
     }))
 
     await expect(dispatchArkmeHostOperation(
-      service as never, 'extensions.catalog.list', {}, undefined, { searchCatalog } as never,
+      service as never, 'extensions.catalog.list', {
+        ownerUserId: 77,
+        excludeExtensionId: 'ext-current',
+        sort: 'opens',
+        limit: 70,
+      }, undefined, { searchCatalog } as never,
     )).resolves.toMatchObject({ items: [{
       owner_name: '发布者', owner_arkme_id: 'publisher', owner_avatar_ref: 'sealed-avatar-ref',
       owner_avatar_fallback: { kind: 'phone_default', colorIndex: 3, label: '发' },
     }] })
+    expect(searchCatalog).toHaveBeenCalledWith({
+      query: '',
+      cursor: '',
+      limit: 70,
+      sort: 'opens',
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+    })
     await expect(dispatchArkmeHostOperation(
       service as never, 'extensions.catalog.detail', { extensionId: 'ext-1' }, undefined, { inspect } as never,
     )).resolves.toMatchObject({

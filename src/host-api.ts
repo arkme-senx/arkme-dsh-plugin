@@ -843,11 +843,19 @@ export async function dispatchArkmeHostOperation(
     )
     case 'extensions.catalog.list': {
       const sort = extensionCatalogSortParam(params)
+      const ownerUserId = numberParam(params, 'ownerUserId', 0)
+      if (ownerUserId !== 0 && (!Number.isSafeInteger(ownerUserId) || ownerUserId < 0)) {
+        throw new ArkmePluginError('extension-catalog-owner-invalid', '市集作者筛选参数无效', false, 400)
+      }
       return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).searchCatalog({
         query: stringParam(params, 'query'),
         cursor: stringParam(params, 'cursor'),
         limit: numberParam(params, 'limit', 20),
         ...(sort === undefined ? {} : { sort }),
+        ...(ownerUserId === 0 ? {} : { ownerUserId }),
+        ...(stringParam(params, 'excludeExtensionId').trim() === '' ? {} : {
+          excludeExtensionId: stringParam(params, 'excludeExtensionId').trim(),
+        }),
       }))
     }
     case 'extensions.classification.tree': return await requireExtensionManager(extensionManager).classificationTree(

@@ -217,6 +217,16 @@ const styles: Record<string, CSSProperties> = {
     background: colors.subtle, color: colors.text, font: 'inherit', fontSize: 13,
   },
   discoverControls: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, marginLeft: 'auto' },
+  marketplaceAuthorFilter: {
+    height: 28, maxWidth: '100%', display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: '0 9px', border: `1px solid ${colors.border}`, borderRadius: 999,
+    background: colors.subtle, color: colors.text, fontSize: 12, lineHeight: '18px',
+  },
+  marketplaceAuthorFilterLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  marketplaceAuthorFilterClear: {
+    width: 18, height: 18, display: 'grid', placeItems: 'center', padding: 0, border: 0,
+    borderRadius: 999, background: 'transparent', color: colors.secondary, font: 'inherit', cursor: 'pointer',
+  },
   marketplaceMenuRoot: { position: 'relative', flex: 'none' },
   marketplaceMenuButton: {
     height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
@@ -327,11 +337,16 @@ const styles: Record<string, CSSProperties> = {
     width: '100%', padding: 0, border: 0, background: 'transparent', color: colors.secondary,
     font: 'inherit', fontSize: 12, lineHeight: '18px', cursor: 'pointer',
   },
-  authorCardActions: { display: 'flex', marginTop: 12 },
+  authorCardActions: { display: 'flex', gap: 8, marginTop: 12 },
   authorCardMessageButton: {
-    width: '100%', height: 40, border: 0, borderRadius: 999,
+    flex: 1, minWidth: 0, height: 40, border: 0, borderRadius: 999,
     background: ARKME_EXTENSION_PRIMARY_ACTION_BG, color: ARKME_EXTENSION_PRIMARY_ACTION_FG,
     font: 'inherit', fontSize: 13, fontWeight: 650, cursor: 'pointer',
+  },
+  authorCardExtensionsButton: {
+    flex: 1, minWidth: 0, height: 40, border: `1px solid ${colors.border}`, borderRadius: 999,
+    background: colors.surface, color: colors.text,
+    font: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   card: {
     width: '100%', minWidth: 0, display: 'flex', gap: 10, boxSizing: 'border-box',
@@ -527,6 +542,10 @@ const PENDING_EXTENSION_RESTART_KEY = 'arkme.extension.pending-restart'
 
 const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
 type MarketplaceCategory = string
+type MarketplaceAuthorFilter = {
+  ownerUserId: number
+  ownerName: string
+}
 type MarketplaceSort = 'rating' | 'comments' | 'opens' | 'created_at'
 const MARKET_SORTS: ReadonlyArray<{ value: MarketplaceSort; label: string }> = [
   { value: 'rating', label: '评分最高' },
@@ -614,7 +633,14 @@ export function marketplaceListParams(
   sort: MarketplaceSort,
   sortingEnabled: boolean,
   cursor?: string,
-): { limit: number; query?: string; sort?: MarketplaceSort; cursor?: string } {
+  authorFilter?: Pick<MarketplaceAuthorFilter, 'ownerUserId'>,
+): {
+  limit: number
+  query?: string
+  sort?: MarketplaceSort
+  cursor?: string
+  ownerUserId?: number
+} {
   const query = searchQuery.trim()
   const normalizedCursor = cursor?.trim() ?? ''
   return {
@@ -622,6 +648,9 @@ export function marketplaceListParams(
     ...(query === '' ? {} : { query }),
     ...(sortingEnabled ? { sort } : {}),
     ...(normalizedCursor === '' ? {} : { cursor: normalizedCursor }),
+    ...(authorFilter === undefined ? {} : {
+      ownerUserId: authorFilter.ownerUserId,
+    }),
   }
 }
 
@@ -1080,6 +1109,7 @@ export function ArkmeExtensionAuthorPopover({
   actionError = '',
   onToggle,
   onPrivateChat,
+  onOtherExtensions,
   onWorld,
   style,
 }: {
@@ -1090,11 +1120,13 @@ export function ArkmeExtensionAuthorPopover({
   actionError?: string
   onToggle(): void
   onPrivateChat(): void
+  onOtherExtensions(): void
   onWorld(): void
   style?: CSSProperties
 }) {
   const worldTarget = extensionAuthorWorldTarget(item)
   const canMessage = worldTarget !== undefined && item.owner_user_id !== currentUserId
+  const canBrowseOtherExtensions = worldTarget !== undefined
   const navigationPending = useRef(false)
   const openWorld = () => {
     if (navigationPending.current || worldTarget === undefined) return
@@ -1129,13 +1161,20 @@ export function ArkmeExtensionAuthorPopover({
         onClick={openWorld}
       >进入 TA 的世界 <CaretRight size={13} weight="bold" aria-hidden /></button>}
       {actionError !== '' && <div style={{ ...styles.error, marginTop: 8 }}>{actionError}</div>}
-      {canMessage && <div style={styles.authorCardActions}>
-        <button
+      {(canMessage || canBrowseOtherExtensions) && <div style={styles.authorCardActions}>
+        {canMessage && <button
           type="button"
           style={{ ...styles.authorCardMessageButton, ...(actionBusy ? { opacity: .62, cursor: 'default' } : {}) }}
           disabled={actionBusy}
           onClick={onPrivateChat}
-        >{actionBusy ? '正在打开…' : '发送消息'}</button>
+        >{actionBusy ? '正在打开…' : '发送消息'}</button>}
+        {canBrowseOtherExtensions && <button
+          type="button"
+          style={styles.authorCardExtensionsButton}
+          disabled={actionBusy}
+          data-extension-author-other-extensions="true"
+          onClick={onOtherExtensions}
+        >TA 的全部插件</button>}
       </div>}
     </aside>}
   </div>
@@ -1557,6 +1596,7 @@ export function ArkmeMarketplace({
   const [discoverNextCursor, setDiscoverNextCursor] = useState<string>()
   const [loadingMoreDiscover, setLoadingMoreDiscover] = useState(false)
   const [loadMoreDiscoverError, setLoadMoreDiscoverError] = useState('')
+  const [authorFilter, setAuthorFilter] = useState<MarketplaceAuthorFilter>()
   const [authorCardOpen, setAuthorCardOpen] = useState(false)
   const [authorActionBusy, setAuthorActionBusy] = useState(false)
   const [authorActionError, setAuthorActionError] = useState('')
@@ -1703,7 +1743,7 @@ export function ArkmeMarketplace({
         const page = await (category === 'all'
           ? callArkme<ArkmeExtensionCatalogPage>(
               'extensions.catalog.list',
-              marketplaceListParams(searchQuery, sort, sortingEnabled),
+              marketplaceListParams(searchQuery, sort, sortingEnabled, undefined, authorFilter),
               controller.signal,
             )
           : callArkme<ArkmeExtensionClassificationPage>(
@@ -1778,7 +1818,7 @@ export function ArkmeMarketplace({
       const page = category === 'all'
         ? await callArkme<ArkmeExtensionCatalogPage>(
             'extensions.catalog.list',
-            marketplaceListParams(searchQuery, sort, sortingEnabled, cursor),
+            marketplaceListParams(searchQuery, sort, sortingEnabled, cursor, authorFilter),
             controller.signal,
           )
         : await callArkme<ArkmeExtensionClassificationPage>(
@@ -1822,7 +1862,7 @@ export function ArkmeMarketplace({
       requestController.current?.abort()
       loadMoreController.current?.abort()
     }
-  }, [shareRef, searchQuery, sort, category, sortingEnabled])
+  }, [shareRef, searchQuery, sort, category, sortingEnabled, authorFilter?.ownerUserId])
 
   useEffect(() => {
     if (shareRef === undefined) return
@@ -2229,12 +2269,26 @@ export function ArkmeMarketplace({
     arkmeUi.showUserWorld(target)
   }
 
+  const openAuthorExtensions = () => {
+    if (detail?.owner_user_id === undefined || !Number.isSafeInteger(detail.owner_user_id) || detail.owner_user_id <= 0) return
+    setAuthorFilter({
+      ownerUserId: detail.owner_user_id,
+      ownerName: extensionCommunityAuthor(detail).name,
+    })
+    setCategory('all')
+    setTab('discover')
+    setAuthorCardOpen(false)
+    closeDetail(false)
+  }
+
   const updateCount = actionableExtensionUpdates(updates).length
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const matchesQuery = (name: string, description: string) => normalizedQuery === ''
     || name.toLocaleLowerCase().includes(normalizedQuery)
     || description.toLocaleLowerCase().includes(normalizedQuery)
-  const visibleItems = mergeExtensionDiscoverItems(discoverItems, publishedItems)
+  const visibleItems = (authorFilter === undefined
+    ? mergeExtensionDiscoverItems(discoverItems, publishedItems)
+    : discoverItems)
     .filter(item => matchesQuery(item.name, item.description))
   const visibleInstalled = installed.filter(item => matchesQuery(item.manifest.name, item.manifest.description))
   const visibleUpdates = actionableExtensionUpdates(updates).filter(item => {
@@ -2363,6 +2417,16 @@ export function ArkmeMarketplace({
         aria-label="搜索扩展、功能或作者"
         placeholder="搜索扩展、功能或作者…"
       />
+      {authorFilter !== undefined && <span style={styles.marketplaceAuthorFilter} data-marketplace-author-filter="true">
+        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName} 的全部插件</span>
+        <button
+          type="button"
+          style={styles.marketplaceAuthorFilterClear}
+          aria-label={`清除作者 ${authorFilter.ownerName} 筛选`}
+          title="清除作者筛选"
+          onClick={() => { setAuthorFilter(undefined) }}
+        >×</button>
+      </span>}
       <div style={styles.discoverControls}>
         <MarketplaceMenu
           ariaLabel="扩展分类"
@@ -2370,7 +2434,10 @@ export function ArkmeMarketplace({
           value={category}
           options={categoryOptions}
           {...(classificationHint === undefined ? {} : { hint: classificationHint })}
-          onChange={setCategory}
+          onChange={value => {
+            setCategory(value)
+            if (value !== 'all') setAuthorFilter(undefined)
+          }}
         />
         <MarketplaceMenu
           ariaLabel="扩展排序"
@@ -2441,7 +2508,13 @@ export function ArkmeMarketplace({
           <span>加载更多失败</span>
           <button type="button" style={styles.marketplaceRetryButton} onClick={() => { void loadMoreDiscoverPage() }}>重试</button>
         </div>}
-        {visibleItems.length === 0 && <EmptyState tab={tab} />}
+        {visibleItems.length === 0 && (authorFilter === undefined
+          ? <EmptyState tab={tab} />
+          : <div style={styles.empty} data-marketplace-author-empty="true">
+              <span style={styles.emptyIcon}><ArkmeExtensionIcon size={22} /></span>
+              <span style={styles.emptyTitle}>暂无插件</span>
+              <span style={styles.emptyDesc}>该作者暂未发布公开插件</span>
+            </div>)}
       </>}
       {!busy && error === '' && sharedDetail === undefined && (displayMode === 'page' || detail === undefined) && tab === 'mine' && <>
         {myExtensions.map(item => {
@@ -2600,6 +2673,7 @@ export function ArkmeMarketplace({
                         style={{ marginTop: 10 }}
                         onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
                         onPrivateChat={() => { void openAuthorPrivateChat() }}
+                        onOtherExtensions={openAuthorExtensions}
                         onWorld={openAuthorWorld}
                       />
                     </div>
