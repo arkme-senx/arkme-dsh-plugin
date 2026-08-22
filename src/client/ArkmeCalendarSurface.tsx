@@ -34,10 +34,16 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', inset: 0, zIndex: 14, minWidth: 0, minHeight: 0,
     overflow: 'hidden', color: colors.text, pointerEvents: 'none',
   },
+  productRailRoot: {
+    position: 'fixed', top: 0, right: 0, bottom: 0, left: 72, zIndex: 60,
+  },
   backdrop: {
     position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%', padding: 0,
     border: 0, background: 'rgba(245, 245, 247, .08)', backdropFilter: 'blur(.6px)',
     WebkitBackdropFilter: 'blur(.6px)', cursor: 'default', pointerEvents: 'auto',
+  },
+  productRailBackdrop: {
+    background: 'transparent', backdropFilter: 'none', WebkitBackdropFilter: 'none',
   },
   layout: {
     position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none',
@@ -48,6 +54,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 18, background: 'rgba(255,255,255,.98)',
     boxShadow: '0 22px 52px rgba(27,29,37,.14), 0 2px 8px rgba(27,29,37,.055)',
   },
+  productRailCalendarCard: { top: 88, left: 12 },
   calendarPointer: {
     position: 'absolute', top: 124, left: -7, width: 13, height: 13,
     transform: 'rotate(45deg)', background: '#fff',
@@ -240,7 +247,9 @@ export function ArkmeCalendarCell({
   </button>
 }
 
-export function ArkmeCalendarSurface({ onClose }: { onClose?: () => void } = {}) {
+export function ArkmeCalendarSurface({
+  onClose, anchor = 'directory',
+}: { onClose?: () => void; anchor?: 'directory' | 'product-rail' } = {}) {
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
@@ -330,13 +339,22 @@ export function ArkmeCalendarSurface({ onClose }: { onClose?: () => void } = {})
     }
   }
 
-  return <div style={styles.root} aria-label="客户端日历">
-    <button type="button" style={styles.backdrop} aria-label="关闭日历" onClick={() => {
+  return <div style={{
+    ...styles.root,
+    ...(anchor === 'product-rail' ? styles.productRailRoot : {}),
+  }} aria-label="客户端日历">
+    <button type="button" style={{
+      ...styles.backdrop,
+      ...(anchor === 'product-rail' ? styles.productRailBackdrop : {}),
+    }} aria-label="关闭日历" onClick={() => {
       if (onClose === undefined) arkmeUi.showConversations()
       else onClose()
     }} />
     <div style={styles.layout}>
-      <section style={styles.calendarCard} aria-label="客户端日历">
+      <section style={{
+        ...styles.calendarCard,
+        ...(anchor === 'product-rail' ? styles.productRailCalendarCard : {}),
+      }} aria-label="客户端日历">
         <span style={styles.calendarPointer} aria-hidden />
         <header style={styles.header}>
           <div style={styles.navCluster}>

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 
 function installDesktopGateMarker(): () => void {
   const previousWindow = globalThis.window
@@ -14,7 +15,7 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
-  it('permanently replaces the visible sidebar, conversation, and details seats', () => {
+  it('owns Arkme seats normally without redeclaring the DSH settings slot', () => {
     const registered: Array<{
       name: string
       id?: string
@@ -38,10 +39,17 @@ describe('official DSH client adapter', () => {
     })
     const toggleSidebar = vi.fn()
     const closeDetails = vi.fn()
+    const cleanups: Array<() => void> = []
+    arkmeUi.showConversations()
     apply({
       slots: { inject, register },
       layout: { toggleSidebar, closeDetails },
-      effect: vi.fn(),
+      sessions: { open: vi.fn() },
+      effect: vi.fn((factory: () => unknown, label: string) => {
+        if (!label.includes('native conversation seats') && !label.includes('official settings sidebar')) return
+        const cleanup = factory()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      }),
     } as never)
 
     expect(registered.map(item => item.name)).toEqual([
@@ -51,11 +59,16 @@ describe('official DSH client adapter', () => {
       'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'sidebar', priority: -100 }),
+      expect.objectContaining({
+        name: 'sidebar',
+        priority: -100,
+      }),
       expect.objectContaining({
         name: 'conversation',
         priority: -100,
-        children: { 'arkme.directory.entry': { kind: 'list', scope: 'root' } },
+        children: {
+          'arkme.directory.entry': { kind: 'list', scope: 'root' },
+        },
       }),
       expect.objectContaining({ name: 'details', priority: -100 }),
     ]))
@@ -75,6 +88,33 @@ describe('official DSH client adapter', () => {
     }))
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
     expect(registered.map(item => item.name)).not.toContain('settings.general.item')
+    expect(registered.find(item => item.name === 'sidebar')?.children).toBeUndefined()
+    cleanups.forEach(cleanup => { cleanup() })
+  })
+
+  it('releases the native conversation and details seats while a DSH task is active', async () => {
+    const disposed: string[] = []
+    const cleanups: Array<() => void> = []
+    const inject = vi.fn((_key: string, register: () => unknown) => register() as () => void)
+    const register = vi.fn((options: { name: string }) => () => { disposed.push(options.name) })
+    arkmeUi.showConversations()
+    apply({
+      slots: { inject, register },
+      layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+      sessions: { open: vi.fn() },
+      effect: vi.fn((factory: () => unknown, label: string) => {
+        if (!label.includes('native conversation seats')) return
+        const cleanup = factory()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      }),
+    } as never)
+
+    arkmeUi.showTaskSession()
+    await Promise.resolve()
+
+    expect(disposed).toEqual(expect.arrayContaining(['conversation', 'details']))
+    cleanups.forEach(cleanup => { cleanup() })
+    arkmeUi.showConversations()
   })
 
   it('registers the startup authentication overlay only in the Arkme desktop shell', () => {

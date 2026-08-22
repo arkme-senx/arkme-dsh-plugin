@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeCalendarCell } from '../src/client/ArkmeCalendarSurface.js'
+import { ArkmeCalendarCell, ArkmeCalendarSurface } from '../src/client/ArkmeCalendarSurface.js'
 
 function styleMap(value: string): Map<string, string> {
   return new Map(value.split(';').filter(Boolean).map(rule => {
@@ -46,5 +46,16 @@ describe('ArkmeCalendarSurface layout', () => {
 
     expect(markup).toContain('>22<')
     expect(markup).not.toContain('>0<')
+  })
+
+  it('anchors the popup beside the product rail without dimming the conversation', () => {
+    const markup = renderToStaticMarkup(<ArkmeCalendarSurface anchor="product-rail" />)
+    const backdrop = matchStyle(markup, /<button type="button" style="([^"]+)" aria-label="关闭日历"/)
+    const card = matchStyle(markup, /<section style="([^"]+)" aria-label="客户端日历"/)
+
+    expect(backdrop.get('background')).toBe('transparent')
+    expect(backdrop.get('backdrop-filter')).toBe('none')
+    expect(card.get('left')).toBe('12px')
+    expect(card.get('top')).toBe('88px')
   })
 })

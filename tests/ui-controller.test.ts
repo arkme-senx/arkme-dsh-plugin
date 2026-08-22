@@ -25,9 +25,12 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       authRevision: 0,
       chatRevision: 0,
-      mode: 'calendar',
+      mode: 'source',
       selectedSource: source,
+      calendarOpen: true,
     })
+    controller.hideCalendar()
+    expect(controller.getSnapshot().calendarOpen).toBeUndefined()
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
@@ -218,6 +221,33 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       mode: 'source', selectedSource: source,
     })
+  })
+
+  it('switches between the Arkme task start and native DSH task conversation modes', () => {
+    const controller = new ArkmeUiController()
+    controller.showNewTask()
+    expect(controller.getSnapshot().mode).toBe('task-start')
+    controller.showTaskSession()
+    expect(controller.getSnapshot().mode).toBe('task-session')
+    controller.showConversations()
+    expect(controller.getSnapshot().mode).toBe('source')
+    controller.showSettings()
+    expect(controller.getSnapshot().mode).toBe('settings')
+  })
+
+  it('opens and closes the calendar without replacing the page underneath it', () => {
+    const controller = new ArkmeUiController()
+
+    controller.showTaskSession()
+    controller.showCalendar()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session', calendarOpen: true })
+    controller.hideCalendar()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session' })
+    expect(controller.getSnapshot().calendarOpen).toBeUndefined()
+
+    controller.showSearch()
+    controller.showCalendar()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'search', calendarOpen: true })
   })
 
   it('publishes an updated selected source when its mute state changes', () => {

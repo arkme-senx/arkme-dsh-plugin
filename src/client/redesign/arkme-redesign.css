@@ -87,18 +87,19 @@
 .arkme-redesign-profile { position: relative; }
 .arkme-redesign-profile > span { width: 32px !important; height: 32px !important; }
 .arkme-redesign-profile::after { content: ""; position: absolute; right: 7px; bottom: 6px; width: 8px; height: 8px; border: 2px solid #fbfbfc; border-radius: 50%; background: #8e93a0; }
-.arkme-redesign-profile-popover { position: absolute; z-index: 20; left: 60px; bottom: 0; width: 264px; padding: 10px; border: 1px solid rgba(216,217,221,.9); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 20px 50px rgba(26,28,35,.15), 0 2px 8px rgba(26,28,35,.05); backdrop-filter: blur(20px); }
+.arkme-redesign-profile-popover { position: fixed; z-index: 10000; left: 64px; bottom: 14px; width: 264px; padding: 10px; border: 1px solid rgba(216,217,221,.9); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 20px 50px rgba(26,28,35,.15), 0 2px 8px rgba(26,28,35,.05); backdrop-filter: blur(20px); }
 .arkme-redesign-profile-head { padding: 9px 9px 13px; display: flex; align-items: center; gap: 11px; }
 .arkme-redesign-profile-head > span { min-width: 0; display: grid; gap: 4px; text-align: left; }
 .arkme-redesign-profile-head strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
 .arkme-redesign-profile-head small { color: #8b8f98; font-size: 11px; font-weight: 400; }
 .arkme-redesign-profile-menu { display: grid; gap: 2px; padding-top: 6px; border-top: 1px solid #eeeeef; }
-.arkme-redesign-profile-menu button { width: 100%; min-height: 50px; padding: 7px 8px; display: grid; grid-template-columns: 28px minmax(0,1fr) 16px; align-items: center; gap: 8px; border-radius: 11px; color: #393d46; text-align: left; }
+.arkme-redesign-profile-menu button { width: 100%; min-height: 50px; padding: 7px 8px; display: grid; grid-template-columns: 28px minmax(0,1fr) 16px; align-items: center; gap: 8px; border: 0; border-radius: 11px; outline: 0; background: transparent; box-shadow: none; color: #393d46; font: inherit; text-align: left; cursor: pointer; }
 .arkme-redesign-profile-menu button:hover { background: #f4f4f5; }
 .arkme-redesign-profile-menu button > span { min-width: 0; display: grid; gap: 3px; }
 .arkme-redesign-profile-menu strong { font-size: 12px; font-weight: 500; }
 .arkme-redesign-profile-menu small { overflow: hidden; color: #92969f; font-size: 10px; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-redesign-profile-menu button > svg:last-child { color: #a0a3aa; }
+.arkme-redesign-native-settings-trigger { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 .arkme-redesign-chat-panel {
   position: absolute;
@@ -132,14 +133,14 @@
 .arkme-redesign-chat-directory > section {
   background: transparent !important;
 }
-.arkme-redesign-task-section { position: relative; z-index: 3; height: 126px; margin: 0 6px 12px; outline: none; border-bottom: 1px solid #ececef; }
+.arkme-redesign-task-section { position: relative; z-index: 3; height: 158px; margin: 0 6px 12px; outline: none; border-bottom: 1px solid #ececef; }
 .arkme-redesign-task-section-title { height: 28px; padding: 0 7px; display: flex; align-items: center; justify-content: space-between; color: #767b85; }
 .arkme-redesign-task-section-title strong { font-size: 12px; font-weight: 500; }
 .arkme-redesign-task-section-title button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; }
 .arkme-redesign-task-section-title button:hover { background: #f3f3f5; }
-.arkme-redesign-task-list { position: absolute; top: 28px; left: 0; right: 0; max-height: 96px; padding-bottom: 2px; display: grid; overflow: hidden; background: #fff; transition: max-height .18s ease, box-shadow .18s ease, padding .18s ease; }
+.arkme-redesign-task-list { position: absolute; top: 28px; left: 0; right: 0; max-height: 128px; padding-bottom: 2px; display: grid; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; background: #fff; transition: max-height .18s ease, box-shadow .18s ease, padding .18s ease; }
 .arkme-redesign-task-section:hover .arkme-redesign-task-list,
-.arkme-redesign-task-section:focus-within .arkme-redesign-task-list { max-height: 134px; padding-bottom: 6px; box-shadow: 0 14px 22px rgba(27,30,37,.07); }
+.arkme-redesign-task-section:focus-within .arkme-redesign-task-list { max-height: min(360px, calc(100vh - 180px)); padding-bottom: 6px; box-shadow: 0 14px 22px rgba(27,30,37,.07); }
 .arkme-redesign-task-list > button {
   width: 100%;
   min-width: 0;
@@ -226,6 +227,30 @@
   margin-right: 32px !important;
 }
 .arkme-redesign-task-conversation textarea { font-size: 14px !important; }
+body[data-arkme-task-session] [data-phase] {
+  --dsh-chat-content-width: calc(100% - 64px);
+  --dsh-composer-card-max-width: calc(100% - 32px);
+}
+body[data-arkme-task-session] [data-chat-flow] {
+  width: calc(100% - 64px) !important;
+  max-width: none !important;
+  margin-left: 32px !important;
+  margin-right: 32px !important;
+}
+body[data-arkme-task-session] textarea { font-size: 14px !important; }
+
+/* Keep one stable Arkme navigation column while only the right-hand conversation changes. */
+@media (min-width: 1100px) {
+  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
+    grid-template-columns: 356px minmax(0, 1fr) 0 !important;
+  }
+  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="false"]) {
+    grid-template-columns: 72px minmax(0, 1fr) 0 !important;
+  }
+  [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-login-mode="true"]) {
+    grid-template-columns: 0 minmax(0, 1fr) 0 !important;
+  }
+}
 
 .arkme-redesign-feature-page {
   width: 100%;

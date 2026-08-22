@@ -57,7 +57,7 @@ export interface ArkmeNavigationProps {
 export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
 
 const colors = {
-  panel: arkmeTheme.sidebar,
+  panel: '#fff',
   text: arkmeTheme.text,
   secondary: arkmeTheme.secondary,
   caption: arkmeTheme.caption,
@@ -855,12 +855,10 @@ export function ArkmeNavigation({
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      const restored = uiSnapshot.mode === 'calls' || uiSnapshot.mode === 'recordings' || uiSnapshot.mode === 'arko'
-        || uiSnapshot.mode === 'calendar' || uiSnapshot.mode === 'search' || uiSnapshot.mode === 'extensions'
-        || uiSnapshot.mode === 'settings' || uiSnapshot.mode === 'contact-add'
-        ? undefined
-        : reconcileSelectedSource(selected ?? cachedSelected, loaded)
-        ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
+      const restored = uiSnapshot.mode === 'source'
+        ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
+          ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
+        : undefined
       if (restored !== undefined) arkmeUi.selectSource(restored)
       persistCache({
         directory: next,
@@ -926,11 +924,9 @@ export function ArkmeNavigation({
     setSources(loaded)
     const selected = ui.mode === 'source' ? arkmeUi.getSnapshot().selectedSource : undefined
     const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-    const restored = ui.mode === 'calls' || ui.mode === 'recordings' || ui.mode === 'arko'
-      || ui.mode === 'calendar' || ui.mode === 'search' || ui.mode === 'extensions'
-      || ui.mode === 'settings' || ui.mode === 'contact-add'
-      ? undefined
-      : reconcileSelectedSource(selected ?? cachedSelected, loaded)
+    const restored = ui.mode === 'source'
+      ? reconcileSelectedSource(selected ?? cachedSelected, loaded)
+      : undefined
     if (restored !== undefined) arkmeUi.selectSource(restored)
     persistCache({
       directory: 'root',
@@ -1227,7 +1223,7 @@ export function ArkmeNavigation({
             <span style={styles.chatBottom}><span style={styles.preview}>全部个人消息</span></span>
           </span>
         </button>}
-        {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calendar'} onClick={showCalendar} />}
+        {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}
         {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
         {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}

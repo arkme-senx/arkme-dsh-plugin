@@ -88,15 +88,13 @@ describe('Arkme product navigation', () => {
     expect(searchMarkup).not.toContain('data-arkme-owned="directory-pane"')
     expect(searchMarkup).toContain('>一句话，找到所有内容<')
 
+    arkmeUi.showConversations()
     arkmeUi.showCalendar()
     const calendarMarkup = renderToStaticMarkup(<ArkmeSurface
       initialAuth={{ status: 'authenticated', environment: 'prod', userId: 1 }}
     />)
     expect(calendarMarkup).toContain('data-arkme-owned="directory-pane"')
-    expect(calendarMarkup).toContain('aria-label="客户端日历"')
-    expect(calendarMarkup.indexOf('aria-label="客户端日历"')).toBeGreaterThan(
-      calendarMarkup.indexOf('data-arkme-owned="directory-pane"'),
-    )
+    expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'source', calendarOpen: true })
 
     arkmeUi.showExtensions()
     const pluginMarkup = renderToStaticMarkup(<ArkmeSurface
