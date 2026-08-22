@@ -408,6 +408,13 @@ describe('Arkme SDK', () => {
           source: { sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
           items: [], hasMore: false,
         })
+        if (request.operation === 'source.members') return success({
+          source: { sourceRef: 'source-1' }, items: [{ memberRef: 'member-1', displayName: '小林' }], total: 1, activeCount: 1,
+        })
+        if (request.operation === 'source.member-records') return success({
+          source: { sourceRef: 'source-1' }, member: { memberRef: 'member-1', displayName: '小林' },
+          mode: 'mentioned', items: [], hasMore: false,
+        })
         if (request.operation === 'source.send-text') return success({
           sourceRef: 'source-1', itemUid: request.params?.recordUid, status: 1, localState: 'synced',
         })
@@ -417,6 +424,9 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.listSources('root')).resolves.toMatchObject({ directory: 'root' })
     await expect(sdk.readSource('source-1')).resolves.toMatchObject({ source: { displayName: '小林' } })
+    await expect(sdk.listSourceMembers('source-1')).resolves.toMatchObject({ activeCount: 1 })
+    await expect(sdk.sourceMemberRecords('source-1', 'member-1', 'mentioned', { limit: 12, beforeSequence: 44 }))
+      .resolves.toMatchObject({ mode: 'mentioned' })
     await expect(sdk.sendText('source-1', '你好', { recordUid: 'record-1', relationUid: 'rel-1' }))
       .resolves.toMatchObject({ itemUid: 'record-1' })
     await expect(sdk.sendText('source-1', '代发', {
@@ -424,9 +434,18 @@ describe('Arkme SDK', () => {
       relationUid: 'rel-agent-1',
       agentAuthored: true,
     })).resolves.toMatchObject({ itemUid: 'record-agent-1' })
+    await expect(sdk.sendText('source-1', '@小林 请看', {
+      recordUid: 'record-mention-1', relationUid: 'rel-mention-1',
+      humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+    })).resolves.toMatchObject({ itemUid: 'record-mention-1' })
     expect(calls).toMatchObject([
       { operation: 'sources.list', params: { directory: 'root' } },
       { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
+      { operation: 'source.members', params: { sourceRef: 'source-1', activeOnly: true } },
+      {
+        operation: 'source.member-records',
+        params: { sourceRef: 'source-1', memberRef: 'member-1', mode: 'mentioned', limit: 12, beforeSequence: 44 },
+      },
       { operation: 'source.send-text', params: { sourceRef: 'source-1', textContent: '你好', recordUid: 'record-1', relationUid: 'rel-1' } },
       {
         operation: 'source.send-text',
@@ -436,6 +455,16 @@ describe('Arkme SDK', () => {
           recordUid: 'record-agent-1',
           relationUid: 'rel-agent-1',
           agentAuthored: true,
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@小林 请看',
+          recordUid: 'record-mention-1',
+          relationUid: 'rel-mention-1',
+          humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
         },
       },
     ])

@@ -5,6 +5,8 @@ import {
 import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
 import type {
+  ArkmeConversationMemberItem,
+  ArkmeConversationMemberList,
   ArkmeGroupActionResult,
   ArkmeGroupMemberAddResult,
   ArkmeGroupBotCandidateList,
@@ -12,11 +14,8 @@ import type {
   ArkmeGroupMemberCandidateGroup,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupInvitePreview,
-  ArkmeGroupMemberItem,
-  ArkmeGroupMemberList,
   ArkmeGroupNotificationResult,
   ArkmeGroupSettingsSnapshot,
-  ArkmeOpenPrivateChatResult,
   ArkmeSourceItem,
 } from '../types.js'
 import { callArkme } from './api.js'
@@ -104,28 +103,6 @@ const styles: Record<string, CSSProperties> = {
     width: 18, height: 18, borderRadius: 999, background: arkmeTheme.foreground, boxShadow: '0 1px 2px rgba(0,0,0,.14)',
     transition: 'transform .15s ease',
   },
-  cardScrim: {
-    position: 'absolute', inset: 0, zIndex: 20, display: 'grid', placeItems: 'center',
-    background: 'rgba(15,23,42,.18)', padding: 20,
-  },
-  card: {
-    width: 344, maxWidth: '100%', borderRadius: 24, background: colors.panel,
-    boxShadow: '0 24px 72px rgba(15,23,42,.2)', overflow: 'hidden',
-  },
-  cardContent: { padding: '26px 24px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 },
-  cardName: {
-    maxWidth: 296, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    fontSize: 18, lineHeight: '26px', fontWeight: 600, color: colors.text,
-  },
-  cardSubtitle: {
-    maxWidth: 296, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-    color: colors.secondary, fontSize: 12, lineHeight: '17px',
-  },
-  cardActions: { display: 'flex', padding: '0 18px 20px' },
-  cardButton: {
-    flex: 1, height: 38, border: 0, borderRadius: 999, background: colors.primary,
-    color: arkmeTheme.foreground, fontSize: 14, cursor: 'pointer',
-  },
   dialogScrim: {
     position: 'absolute', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center',
     background: 'var(--dsw-alias-bg-mask-1, rgba(0,0,0,.18))', padding: 20,
@@ -147,18 +124,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function roleLabel(member: ArkmeGroupMemberItem): string {
+function roleLabel(member: Pick<ArkmeConversationMemberItem, 'role'>): string {
   if (member.role === 'owner') return '发起人'
   if (member.role === 'admin') return '管理员'
   return ''
-}
-
-function memberCardSubtitle(member: ArkmeGroupMemberItem): string {
-  const displayName = member.displayName.trim()
-  const memberName = member.memberName?.trim() ?? ''
-  if (memberName !== '' && memberName !== displayName) return `主题内昵称：${memberName}`
-  const secondaryName = member.secondaryName?.trim() ?? ''
-  return secondaryName !== '' && secondaryName !== displayName ? secondaryName : ''
 }
 
 function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
@@ -216,24 +185,26 @@ function GroupMembersDrawer(props: {
   refreshToken: number
   onClose: () => void
   onAdd: () => void
-  onMemberOpen: (member: ArkmeGroupMemberItem) => void
+  onMemberOpen: (member: ArkmeConversationMemberItem) => void
+  onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
   onSettingsLoaded: (settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => void
   onError: (message: string) => void
 }) {
-  const [snapshot, setSnapshot] = useState<ArkmeGroupMemberList>()
+  const [snapshot, setSnapshot] = useState<ArkmeConversationMemberList>()
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!props.open) return
     const controller = new AbortController()
     setLoading(true)
-    void callArkme<ArkmeGroupMemberList>('group.members', {
+    void callArkme<ArkmeConversationMemberList>('source.members', {
       sourceRef: props.source.sourceRef,
       activeOnly: true,
     }, controller.signal)
       .then(value => {
         setSnapshot(value)
-        props.onSettingsLoaded({ selfRole: value.selfRole, selfStatus: value.selfStatus })
+        const self = value.items.find(member => member.isSelf)
+        if (self !== undefined) props.onSettingsLoaded({ selfRole: self.role, selfStatus: self.status })
       })
       .catch(caught => { props.onError(errorMessage(caught)) })
       .finally(() => { setLoading(false) })
@@ -254,7 +225,7 @@ function GroupMembersDrawer(props: {
       {items.map(member => {
         const badge = roleLabel(member)
         return <button
-          key={member.userId}
+          key={member.memberRef}
           type="button"
           style={styles.memberRow}
           onMouseEnter={event => {
@@ -262,8 +233,13 @@ function GroupMembersDrawer(props: {
           }}
           onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
           onClick={() => { props.onMemberOpen(member) }}
+          onContextMenu={event => {
+            event.preventDefault()
+            const avatar = event.currentTarget.querySelector('[data-arkme-member-avatar]')
+            props.onMemberContextMenu(member, (avatar ?? event.currentTarget).getBoundingClientRect())
+          }}
         >
-          <Avatar imageRef={member.avatarRef} />
+          <span data-arkme-member-avatar="true"><Avatar imageRef={member.avatarRef} /></span>
           <span style={styles.memberMain}>
             <span style={styles.memberNameLine}>
               <span style={styles.memberName}>{member.displayName}{member.isSelf ? '（我）' : ''}</span>
@@ -887,39 +863,12 @@ function RenameDialog(props: {
   </div>
 }
 
-function MemberCard(props: {
-  member: ArkmeGroupMemberItem
-  busy: boolean
-  onClose: () => void
-  onSend: () => void
-}) {
-  const member = props.member
-  const subtitle = memberCardSubtitle(member)
-  return <div style={styles.cardScrim} role="presentation" onMouseDown={event => {
-    if (event.target === event.currentTarget) props.onClose()
-  }}>
-    <section style={styles.card} role="dialog" aria-modal="true" aria-label={`${member.displayName} 的用户卡片`}>
-      <div style={styles.cardContent}>
-        <Avatar imageRef={member.avatarRef} size={72} />
-        <h3 style={styles.cardName}>{member.displayName}</h3>
-        {subtitle !== '' && <div style={styles.cardSubtitle}>{subtitle}</div>}
-      </div>
-      <div style={styles.cardActions}>
-        <button
-          type="button"
-          style={{ ...styles.cardButton, opacity: props.busy || member.isSelf ? .55 : 1 }}
-          disabled={props.busy || member.isSelf}
-          onClick={props.onSend}
-        >发送消息</button>
-      </div>
-    </section>
-  </div>
-}
-
 export function ArkmeGroupChatControls(props: {
   source: ArkmeSourceItem
   overlayHostRef: RefObject<HTMLElement>
   onSourceActivated: (source: ArkmeSourceItem) => void
+  onMemberOpen: (member: ArkmeConversationMemberItem) => void
+  onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
   onError: (message: string) => void
 }) {
   const [membersOpen, setMembersOpen] = useState(false)
@@ -929,8 +878,6 @@ export function ArkmeGroupChatControls(props: {
   const [settingsPosition, setSettingsPosition] = useState({ left: 12, top: 54 })
   const [renameOpen, setRenameOpen] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
-  const [memberCard, setMemberCard] = useState<ArkmeGroupMemberItem>()
-  const [privateChatBusy, setPrivateChatBusy] = useState(false)
   const [selfRole, setSelfRole] = useState<ArkmeGroupSettingsSnapshot['selfRole']>('unknown')
   const [selfStatus, setSelfStatus] = useState<ArkmeGroupSettingsSnapshot['selfStatus']>('unknown')
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
@@ -945,22 +892,6 @@ export function ArkmeGroupChatControls(props: {
     setMembersOpen(true)
     setRefreshToken(value => value + 1)
   }, [])
-
-  const openPrivateChat = useCallback((member: ArkmeGroupMemberItem) => {
-    if (member.isSelf || privateChatBusy) return
-    setPrivateChatBusy(true)
-    void callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
-      peerUserId: member.userId,
-      displayName: member.displayName,
-    })
-      .then(result => {
-        props.onSourceActivated(result.source)
-        setMemberCard(undefined)
-        setMembersOpen(false)
-      })
-      .catch(caught => { props.onError(errorMessage(caught)) })
-      .finally(() => { setPrivateChatBusy(false) })
-  }, [privateChatBusy, props])
 
   const overlayHost = props.overlayHostRef.current
 
@@ -982,7 +913,6 @@ export function ArkmeGroupChatControls(props: {
       })
     }
     setMembersOpen(false)
-    setMemberCard(undefined)
     setSettingsOpen(true)
   }, [props.overlayHostRef, settingsOpen])
 
@@ -1007,9 +937,10 @@ export function ArkmeGroupChatControls(props: {
         source={props.source}
         open={membersOpen}
         refreshToken={refreshToken}
-        onClose={() => { setMembersOpen(false); setMemberCard(undefined) }}
+        onClose={() => { setMembersOpen(false) }}
         onAdd={() => { setInviteOpen(true) }}
-        onMemberOpen={setMemberCard}
+        onMemberOpen={props.onMemberOpen}
+        onMemberContextMenu={props.onMemberContextMenu}
         onSettingsLoaded={settingsLoaded}
         onError={props.onError}
       />
@@ -1027,12 +958,6 @@ export function ArkmeGroupChatControls(props: {
         onAdded={() => { setRefreshToken(value => value + 1) }}
         onError={props.onError}
       />
-      {memberCard !== undefined && <MemberCard
-        member={memberCard}
-        busy={privateChatBusy}
-        onClose={() => { setMemberCard(undefined) }}
-        onSend={() => { openPrivateChat(memberCard) }}
-      />}
       <RenameDialog
         source={props.source}
         open={renameOpen}

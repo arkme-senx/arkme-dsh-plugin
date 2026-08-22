@@ -751,6 +751,8 @@ export interface ArkmeTimelineItem {
   itemUid: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
   messageRef?: string
+  /** Account- and conversation-bound opaque reference for actions on the sender. */
+  memberRef?: string
   senderName: string
   agentSource?: ArkmeTimelineAgentSource
   /** Opaque Provider image reference for the concrete message sender. */
@@ -877,6 +879,13 @@ export interface ArkmeRichSendInput {
   displayKind?: 0 | 1
   thinkingDurationMillis?: number
   assets?: ArkmeUploadedAsset[]
+  humanMentions?: ArkmeHumanMentionInput[]
+}
+
+export interface ArkmeHumanMentionInput {
+  memberRef: string
+  startIndex: number
+  length: number
 }
 
 export interface ArkmeLongArticleDetail {
@@ -1060,6 +1069,7 @@ export interface ArkmeGroupMemberItem {
   isOwner: boolean
   joinedAtMillis: number
   recordCount: number
+  mentionCount?: number
 }
 
 export interface ArkmeGroupMemberList {
@@ -1069,6 +1079,39 @@ export interface ArkmeGroupMemberList {
   activeCount: number
   selfRole: ArkmeGroupMemberRole
   selfStatus: ArkmeGroupMemberStatus
+}
+
+export interface ArkmeConversationMemberItem {
+  memberRef: string
+  displayName: string
+  memberName?: string
+  secondaryName?: string
+  avatarRef?: string
+  role: ArkmeGroupMemberRole
+  status: ArkmeGroupMemberStatus
+  isSelf: boolean
+  isOwner: boolean
+  joinedAtMillis: number
+  recordCount: number
+  mentionCount: number
+}
+
+export interface ArkmeConversationMemberList {
+  source: ArkmeSourceItem
+  items: ArkmeConversationMemberItem[]
+  total: number
+  activeCount: number
+}
+
+export type ArkmeConversationMemberRecordMode = 'owner' | 'mentioned'
+
+export interface ArkmeConversationMemberRecordPage {
+  source: ArkmeSourceItem
+  member: ArkmeConversationMemberItem
+  mode: ArkmeConversationMemberRecordMode
+  items: ArkmeTimelineItem[]
+  hasMore: boolean
+  nextCursor?: ArkmeTimelineCursor
 }
 
 export interface ArkmeGroupMemberCandidate {
@@ -1759,6 +1802,8 @@ export type ArkmePluginOperation =
   | 'extensions.audit.check'
   | 'sources.list'
   | 'source.timeline'
+  | 'source.members'
+  | 'source.member-records'
   | 'source.mark-read'
   | 'source.send-text'
   | 'related-recordings.eligibility'
@@ -1784,6 +1829,7 @@ export type ArkmePluginOperation =
   | 'group.report'
   | 'user.card'
   | 'chat.private.open'
+  | 'chat.member.private.open'
   | 'source.send-rich'
   | 'source.long-article.detail'
   | 'source.long-article.update'

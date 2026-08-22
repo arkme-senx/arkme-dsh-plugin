@@ -128,6 +128,8 @@ describe('registerArkmeTools', () => {
       'arkme_group_member_candidates',
       'arkme_group_member_add',
       'arkme_source_read',
+      'arkme_source_members',
+      'arkme_source_member_records',
       'arkme_message_report',
       'arkme_related_recordings_read',
       'arkme_group_ai_polish_manage',

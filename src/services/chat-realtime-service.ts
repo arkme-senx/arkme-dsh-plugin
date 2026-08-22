@@ -14,7 +14,7 @@ import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeChatProjectionReader {
-  chatTimelineItems(data: Record<string, unknown>, session: ArkmeSessionCredentials): Promise<ArkmeTimelineItem[]>
+  chatTimelineItems(data: Record<string, unknown>, session: ArkmeSessionCredentials, chatSessionUid: string): Promise<ArkmeTimelineItem[]>
 }
 
 const MAX_PROJECTION_RETRIES = 5
@@ -333,7 +333,7 @@ export class ChatRealtimeService {
             key: `projection:tail:${uid}:${String(afterSequence)}:${String(notificationAttempt)}`,
           },
         )
-        return [uid, await this.projectionReader.chatTimelineItems(data, session)] as const
+        return [uid, await this.projectionReader.chatTimelineItems(data, session, uid)] as const
       }))
       results.forEach((result, index) => {
         const uid = chunk[index]?.[0]

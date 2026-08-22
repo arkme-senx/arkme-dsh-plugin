@@ -84,12 +84,41 @@ function shouldCollapseText(value: string): boolean {
   return normalizedTextLength(value) > textCollapseCharacterThreshold || newlineCount > textCollapseNewlineThreshold
 }
 
-function LongText({ text }: { text: string }) {
+export interface ArkmeVisibleTextRun {
+  kind: 'text' | 'mention'
+  text: string
+}
+
+export function arkmeVisibleMentionRuns(text: string): ArkmeVisibleTextRun[] {
+  const runs: ArkmeVisibleTextRun[] = []
+  const pattern = /(^|[\s([{（【])(@[\p{L}\p{N}_\-·]+)/gmu
+  let cursor = 0
+  for (const match of text.matchAll(pattern)) {
+    const prefix = match[1] ?? ''
+    const value = match[2] ?? ''
+    const start = match.index + prefix.length
+    if (start > cursor) runs.push({ kind: 'text', text: text.slice(cursor, start) })
+    runs.push({ kind: 'mention', text: value })
+    cursor = start + value.length
+  }
+  if (cursor < text.length) runs.push({ kind: 'text', text: text.slice(cursor) })
+  return runs.length === 0 && text !== '' ? [{ kind: 'text', text }] : runs
+}
+
+function HighlightedText({ text }: { text: string }) {
+  return <>{arkmeVisibleMentionRuns(text).map((run, index) => <span
+    key={`${String(index)}:${run.kind}:${run.text}`}
+    style={run.kind === 'mention' ? { color: 'var(--dsw-alias-state-business-primary, #3964fe)' } : undefined}
+  >{run.text}</span>)}</>
+}
+
+function LongText({ text, highlightMentions = false }: { text: string; highlightMentions?: boolean }) {
   const collapsible = shouldCollapseText(text)
   const [collapsed, setCollapsed] = useState(collapsible)
-  if (!collapsible) return <p style={styles.text}>{text}</p>
+  const content = highlightMentions ? <HighlightedText text={text} /> : text
+  if (!collapsible) return <p style={styles.text}>{content}</p>
   return <div style={styles.textFrame} data-arkme-text-collapsible="true">
-    <p style={{ ...styles.text, ...(collapsed ? styles.collapsedText : {}) }}>{text}</p>
+    <p style={{ ...styles.text, ...(collapsed ? styles.collapsedText : {}) }}>{content}</p>
     {collapsed && <span aria-hidden style={styles.textFade} />}
     <button type="button" style={styles.collapseToggle} aria-expanded={!collapsed} onClick={() => { setCollapsed(value => !value) }}>
       {collapsed ? '展开' : '收起'}
@@ -404,10 +433,11 @@ function splitVisualRuns(blocks: ArkmeContentBlock[]): Array<ArkmeContentBlock |
   return rows
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated }: {
+export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false }: {
   item: ArkmeTimelineItem
   sourceRef?: string
   onLongArticleUpdated?: (detail: ArkmeLongArticleDetail) => void
+  highlightMentions?: boolean
 }) {
   const blocks = [...(item.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
   const visualBlocks = blocks.filter(block => block.kind === 'image' || block.kind === 'video')
@@ -451,7 +481,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated }: {
 
   return <>
     <div style={styles.stack} data-arkme-message-content={isArticle ? 'article' : 'message'}>
-      {isArticle ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : text !== '' && <LongText text={text} />}
+      {isArticle ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : text !== '' && <LongText text={text} highlightMentions={highlightMentions} />}
       {renderRows}
       {!isArticle && blocks.length === 0 && text === '' && <p style={styles.text}>
         {item.mediaUnavailable === true ? '媒体暂时无法加载' : '暂不支持的非文本内容'}

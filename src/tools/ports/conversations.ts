@@ -1,4 +1,5 @@
 import type {
+  ArkmeConversationMemberList, ArkmeConversationMemberRecordMode, ArkmeConversationMemberRecordPage,
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
   ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
@@ -13,6 +14,13 @@ export interface ArkmeConversationToolPort {
     sourceRef: string,
     options?: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal },
   ): Promise<ArkmeTimelinePage>
+  listSourceMembers(sourceRef: string, options?: { activeOnly?: boolean; signal?: AbortSignal }): Promise<ArkmeConversationMemberList>
+  sourceMemberRecords(
+    sourceRef: string,
+    memberRef: string,
+    mode: ArkmeConversationMemberRecordMode,
+    options?: { limit?: number; beforeSequence?: number; signal?: AbortSignal },
+  ): Promise<ArkmeConversationMemberRecordPage>
   relatedRecordings(
     sourceRef: string,
     options?: ArkmeRelatedRecordingPageOptions,

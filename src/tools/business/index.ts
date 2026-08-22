@@ -6,6 +6,7 @@ import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule } from './conversation/list-sources.js'
 import { groupAiPolishToolModule } from './conversation/group-ai-polish.js'
 import { readSourceToolModule } from './conversation/read-source.js'
+import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -57,6 +58,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
+  sourceMembersToolModule,
+  sourceMemberRecordsToolModule,
   reportMessageToolModule,
   relatedRecordingsToolModule,
   groupAiPolishToolModule,

@@ -1,0 +1,429 @@
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { XIcon } from '@phosphor-icons/react/dist/csr/X'
+import type {
+  ArkmeConversationMemberItem,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
+  ArkmeSourceItem,
+  ArkmeTimelineItem,
+} from '../types.js'
+import { callArkme } from './api.js'
+import { ArkmeUserAvatar, loadArkmeImageDataUrl } from './ArkmeAvatar.js'
+import { ArkmeMessageContent } from './ArkmeRichContent.js'
+import { arkmeTheme } from './arkme-theme.js'
+
+const MENU_WIDTH = 188
+const MENU_ROW_HEIGHT = 44
+const MENU_EDGE_PADDING = 8
+const MENU_ANCHOR_GAP = 4
+const RECORD_TIME_GAP_MILLIS = 30 * 60 * 1000
+
+export interface ArkmeMemberMenuPosition {
+  left: number
+  top: number
+  placement: 'above' | 'below'
+}
+
+export function positionArkmeMemberMenu(
+  anchorRect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+  hostRect: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
+  rowCount: number,
+): ArkmeMemberMenuPosition {
+  const height = Math.max(1, rowCount) * MENU_ROW_HEIGHT
+  const preferredLeft = anchorRect.left - hostRect.left
+  const left = Math.max(
+    MENU_EDGE_PADDING,
+    Math.min(hostRect.width - MENU_WIDTH - MENU_EDGE_PADDING, preferredLeft),
+  )
+  const below = anchorRect.bottom - hostRect.top + MENU_ANCHOR_GAP
+  const above = anchorRect.top - hostRect.top - height - MENU_ANCHOR_GAP
+  if (below + height <= hostRect.height - MENU_EDGE_PADDING || above < MENU_EDGE_PADDING) {
+    return {
+      left,
+      top: Math.max(MENU_EDGE_PADDING, Math.min(hostRect.height - height - MENU_EDGE_PADDING, below)),
+      placement: 'below',
+    }
+  }
+  return {
+    left,
+    top: Math.max(MENU_EDGE_PADDING, above),
+    placement: 'above',
+  }
+}
+
+function errorMessage(caught: unknown): string {
+  return caught instanceof Error ? caught.message : String(caught)
+}
+
+const styles: Record<string, CSSProperties> = {
+  menu: {
+    position: 'absolute', zIndex: 42, width: MENU_WIDTH, overflow: 'hidden', boxSizing: 'border-box',
+    border: `1px solid ${arkmeTheme.border}`, borderRadius: 12,
+    background: 'rgba(255, 255, 255, .92)',
+    backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+    boxShadow: '0 12px 34px rgba(24, 29, 36, .16)',
+  },
+  menuRow: {
+    width: '100%', height: MENU_ROW_HEIGHT, padding: '0 12px', border: 0, background: 'transparent',
+    display: 'flex', alignItems: 'center', gap: 10, boxSizing: 'border-box', cursor: 'pointer',
+    color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', textAlign: 'left',
+  },
+  menuLabel: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  menuCount: { flex: 'none', color: arkmeTheme.text, fontVariantNumeric: 'tabular-nums' },
+  divider: { height: 1, margin: '0 12px', background: arkmeTheme.border },
+  cardScrim: {
+    position: 'absolute', inset: 0, zIndex: 40, display: 'grid', placeItems: 'center', padding: 20,
+    background: 'rgba(25, 28, 34, .12)', boxSizing: 'border-box',
+  },
+  card: {
+    position: 'relative', width: 300, height: 340, maxWidth: '100%', overflow: 'hidden',
+    borderRadius: 9, background: arkmeTheme.layer2, boxShadow: '0 18px 48px rgba(22, 26, 32, .28)',
+  },
+  cardBackdrop: {
+    position: 'absolute', left: -18, right: -18, top: -22, height: 170,
+    backgroundPosition: 'center', backgroundSize: 'cover', filter: 'blur(15px)', opacity: .28,
+    maskImage: 'linear-gradient(to bottom, #000 46%, transparent 100%)',
+    WebkitMaskImage: 'linear-gradient(to bottom, #000 46%, transparent 100%)',
+    transform: 'scale(1.12)',
+  },
+  cardContent: {
+    position: 'relative', zIndex: 1, height: '100%', display: 'flex', flexDirection: 'column',
+    alignItems: 'center', padding: '64px 18px 18px', boxSizing: 'border-box',
+  },
+  cardName: {
+    margin: '10px 0 0', color: arkmeTheme.text, fontSize: 20, lineHeight: '28px', fontWeight: 600,
+    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  cardButton: {
+    width: '100%', height: 50, marginTop: 'auto', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
+    background: arkmeTheme.foreground, color: arkmeTheme.text, fontSize: 16, fontWeight: 600, cursor: 'pointer',
+  },
+  drawer: {
+    position: 'absolute', zIndex: 36, top: 68, right: 0, bottom: 0, width: 428, maxWidth: '92%',
+    display: 'flex', flexDirection: 'column', background: arkmeTheme.layer2,
+    borderLeft: `1px solid ${arkmeTheme.border}`, borderRadius: '12px 0 0 0', overflow: 'hidden',
+    boxShadow: '-8px 14px 28px rgba(24, 29, 36, .1)',
+  },
+  drawerDismiss: { position: 'absolute', inset: 0, zIndex: 35, background: 'transparent' },
+  drawerHeader: {
+    minHeight: 88, flex: 'none', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '16px 12px 14px 20px',
+    borderBottom: `1px solid ${arkmeTheme.border}`, boxSizing: 'border-box',
+  },
+  drawerHeading: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 },
+  drawerTitle: {
+    margin: 0, minWidth: 0, color: arkmeTheme.text, fontSize: 18, lineHeight: '25px',
+    fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  drawerCount: { color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px', fontVariantNumeric: 'tabular-nums' },
+  drawerClose: {
+    width: 30, height: 30, flex: 'none', border: 0, borderRadius: 6, background: 'transparent',
+    color: arkmeTheme.secondary, cursor: 'pointer', fontSize: 22,
+  },
+  drawerBody: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 8px 24px', boxSizing: 'border-box' },
+  state: { padding: '42px 12px', color: arkmeTheme.secondary, fontSize: 13, textAlign: 'center' },
+  retry: {
+    height: 32, marginTop: 10, padding: '0 14px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 7,
+    background: arkmeTheme.foreground, color: arkmeTheme.text, cursor: 'pointer',
+  },
+  recordTime: { margin: '16px 0 10px', color: arkmeTheme.caption, fontSize: 12, lineHeight: '18px', textAlign: 'center' },
+  recordRow: { width: '100%', display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 12, boxSizing: 'border-box' },
+  recordMain: { minWidth: 0, maxWidth: 'calc(100% - 44px)', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
+  recordName: { margin: '0 0 4px', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
+  recordBubble: {
+    minWidth: 0, maxWidth: '100%', padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)',
+    borderRadius: '5px 14px 14px 14px', background: arkmeTheme.messageOther,
+    color: arkmeTheme.text, fontSize: 14, lineHeight: '22px', overflowWrap: 'anywhere',
+    '--arkme-bubble-fade': arkmeTheme.messageOther,
+  } as CSSProperties,
+  recordBubbleSelf: {
+    borderRadius: '14px 5px 14px 14px', background: arkmeTheme.messageOwn,
+    '--arkme-bubble-fade': arkmeTheme.messageOwn,
+  } as CSSProperties,
+  more: {
+    width: '100%', height: 38, marginBottom: 12, border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
+    background: arkmeTheme.foreground, color: arkmeTheme.text, cursor: 'pointer',
+  },
+}
+
+function menuRows(member: ArkmeConversationMemberItem, sourceKind: ArkmeSourceItem['kind']): number {
+  return member.isSelf || sourceKind !== 'group_chat' ? 2 : 3
+}
+
+export function arkmeMemberActionMenuRowCount(
+  member: ArkmeConversationMemberItem,
+  sourceKind: ArkmeSourceItem['kind'],
+): number {
+  return menuRows(member, sourceKind)
+}
+
+export function ArkmeMemberActionMenu(props: {
+  member: ArkmeConversationMemberItem
+  sourceKind: ArkmeSourceItem['kind']
+  position: ArkmeMemberMenuPosition
+  onMention: () => void
+  onRecords: (mode: ArkmeConversationMemberRecordMode) => void
+  onClose: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onPointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target) === true) return
+      props.onClose()
+    }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
+    window.addEventListener('pointerdown', onPointer, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointer, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [props.onClose])
+  const ownerLabel = props.member.isSelf ? '看我的快记' : '看TA的快记'
+  const mentionedLabel = props.member.isSelf ? '@我的快记' : '@TA的快记'
+  return <div
+    ref={menuRef}
+    role="menu"
+    aria-label={`${props.member.displayName} 的成员操作`}
+    data-arkme-member-action-menu="true"
+    data-placement={props.position.placement}
+    style={{ ...styles.menu, left: props.position.left, top: props.position.top }}
+    onContextMenu={event => { event.preventDefault() }}
+  >
+    {!props.member.isSelf && props.sourceKind === 'group_chat' && <>
+      <button type="button" role="menuitem" style={styles.menuRow} onClick={props.onMention}
+        onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
+        <span style={styles.menuLabel}>@{props.member.displayName}</span>
+      </button>
+      <div style={styles.divider} />
+    </>}
+    <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('mentioned') }}
+      onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
+      <span style={styles.menuLabel}>{mentionedLabel}</span><span style={styles.menuCount}>{props.member.mentionCount}</span>
+    </button>
+    <div style={styles.divider} />
+    <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('owner') }}
+      onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
+      <span style={styles.menuLabel}>{ownerLabel}</span><span style={styles.menuCount}>{props.member.recordCount}</span>
+    </button>
+  </div>
+}
+
+export function ArkmeMemberProfileCard(props: {
+  member: ArkmeConversationMemberItem
+  busy: boolean
+  onClose: () => void
+  onSend: () => void
+}) {
+  const [backdrop, setBackdrop] = useState('')
+  useEffect(() => {
+    let active = true
+    setBackdrop('')
+    if (props.member.avatarRef === undefined) return () => { active = false }
+    void loadArkmeImageDataUrl(props.member.avatarRef)
+      .then(value => { if (active) setBackdrop(value) })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [props.member.avatarRef])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [props.onClose])
+  return <div style={styles.cardScrim} role="presentation" onMouseDown={event => {
+    if (event.target === event.currentTarget) props.onClose()
+  }}>
+    <section style={styles.card} role="dialog" aria-modal="true" aria-label={`${props.member.displayName} 的用户卡片`}>
+      {backdrop !== '' && <div aria-hidden style={{ ...styles.cardBackdrop, backgroundImage: `url(${JSON.stringify(backdrop).slice(1, -1)})` }} />}
+      <div style={styles.cardContent}>
+        <ArkmeUserAvatar {...(props.member.avatarRef === undefined ? {} : { avatarRef: props.member.avatarRef })}
+          size={100} label={`${props.member.displayName} 的头像`} />
+        <h3 style={styles.cardName}>{props.member.displayName}</h3>
+        <button type="button" style={{ ...styles.cardButton, opacity: props.busy ? .55 : 1 }} disabled={props.busy} onClick={props.onSend}>
+          {props.busy ? '正在打开…' : '发送消息'}
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+function mergeRecordItems(current: readonly ArkmeTimelineItem[], incoming: readonly ArkmeTimelineItem[]): ArkmeTimelineItem[] {
+  const merged = new Map(current.map(item => [item.itemUid, item]))
+  for (const item of incoming) merged.set(item.itemUid, item)
+  return [...merged.values()].sort((left, right) => right.sendAtMillis - left.sendAtMillis)
+}
+
+export function arkmeMemberRecordTotal(
+  member: ArkmeConversationMemberItem,
+  mode: ArkmeConversationMemberRecordMode,
+): number {
+  return Math.max(0, Math.trunc(mode === 'mentioned' ? member.mentionCount : member.recordCount))
+}
+
+export function formatArkmeMemberRecordTime(timestamp: number, nowMillis = Date.now()): string {
+  const value = new Date(timestamp)
+  const now = new Date(nowMillis)
+  const pad = (part: number) => String(part).padStart(2, '0')
+  const time = `${pad(value.getHours())}:${pad(value.getMinutes())}`
+  const valueDay = new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime()
+  const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const dayDistance = Math.round((nowDay - valueDay) / 86_400_000)
+  if (dayDistance === 0) return time
+  if (dayDistance === 1) return `昨天 ${time}`
+  if (dayDistance === 2) return `前天 ${time}`
+  if (value.getFullYear() === now.getFullYear()) return `${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${time}`
+  return `${String(value.getFullYear())}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${time}`
+}
+
+export type ArkmeMemberRecordTimelineEntry =
+  | { kind: 'time'; key: string; timestamp: number; label: string }
+  | { kind: 'record'; key: string; item: ArkmeTimelineItem }
+
+export function arkmeMemberRecordTimeline(
+  items: readonly ArkmeTimelineItem[],
+  nowMillis = Date.now(),
+): ArkmeMemberRecordTimelineEntry[] {
+  const sorted = [...items].sort((left, right) => left.sendAtMillis - right.sendAtMillis)
+  const entries: ArkmeMemberRecordTimelineEntry[] = []
+  let lastVisibleTimestamp: number | undefined
+  for (const item of sorted) {
+    const timestamp = item.sendAtMillis
+    if (lastVisibleTimestamp === undefined || !Number.isFinite(timestamp)
+      || Math.abs(timestamp - lastVisibleTimestamp) > RECORD_TIME_GAP_MILLIS) {
+      if (Number.isFinite(timestamp) && timestamp > 0) {
+        entries.push({
+          kind: 'time',
+          key: `time:${item.itemUid}:${String(timestamp)}`,
+          timestamp,
+          label: formatArkmeMemberRecordTime(timestamp, nowMillis),
+        })
+        lastVisibleTimestamp = timestamp
+      }
+    }
+    entries.push({ kind: 'record', key: `record:${item.itemUid}`, item })
+  }
+  return entries
+}
+
+export function ArkmeMemberRecordsPanel(props: {
+  sourceRef: string
+  member: ArkmeConversationMemberItem
+  mode: ArkmeConversationMemberRecordMode
+  onClose: () => void
+}) {
+  const [items, setItems] = useState<ArkmeTimelineItem[]>([])
+  const [cursor, setCursor] = useState<number>()
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const requestRef = useRef<AbortController>()
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const initialScrollRef = useRef(false)
+
+  const load = (beforeSequence?: number) => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    setLoading(true)
+    setError('')
+    void callArkme<ArkmeConversationMemberRecordPage>('source.member-records', {
+      sourceRef: props.sourceRef,
+      memberRef: props.member.memberRef,
+      mode: props.mode,
+      limit: 30,
+      ...(beforeSequence === undefined ? {} : { beforeSequence }),
+    }, controller.signal)
+      .then(page => {
+        if (requestRef.current !== controller) return
+        setItems(current => beforeSequence === undefined ? page.items : mergeRecordItems(current, page.items))
+        setCursor(page.nextCursor?.beforeSequence)
+        setHasMore(page.hasMore)
+      })
+      .catch(caught => {
+        if (requestRef.current !== controller || controller.signal.aborted) return
+        setError(errorMessage(caught))
+      })
+      .finally(() => { if (requestRef.current === controller) setLoading(false) })
+  }
+
+  useEffect(() => {
+    initialScrollRef.current = false
+    setItems([])
+    setCursor(undefined)
+    setHasMore(false)
+    load()
+    return () => { requestRef.current?.abort() }
+  }, [props.sourceRef, props.member.memberRef, props.mode])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [props.onClose])
+
+  useEffect(() => {
+    if (items.length === 0 || initialScrollRef.current) return
+    initialScrollRef.current = true
+    window.requestAnimationFrame(() => {
+      if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    })
+  }, [items.length])
+
+  const title = props.mode === 'mentioned'
+    ? (props.member.isSelf ? '@我的快记' : `@${props.member.displayName}的快记`)
+    : (props.member.isSelf ? '我的快记' : `${props.member.displayName}的快记`)
+  const total = arkmeMemberRecordTotal(props.member, props.mode)
+  const timeline = useMemo(() => arkmeMemberRecordTimeline(items), [items])
+  return <>
+    <div style={styles.drawerDismiss} data-arkme-member-records-dismiss="true" onPointerDown={props.onClose} />
+    <aside style={styles.drawer} role="dialog" aria-modal="true" aria-label={title} data-arkme-member-records-panel="true"
+      data-mode={props.mode} data-total={total}>
+    <header style={styles.drawerHeader}>
+      <div style={styles.drawerHeading}>
+        <h3 style={styles.drawerTitle}>{title}</h3>
+        <div style={styles.drawerCount}>{total}条</div>
+      </div>
+      <button type="button" style={styles.drawerClose} aria-label="关闭成员快记" onClick={props.onClose}>
+        <XIcon size={18} weight="regular" aria-hidden />
+      </button>
+    </header>
+    <div ref={bodyRef} style={styles.drawerBody}>
+      {loading && items.length === 0 && <div style={styles.state}>正在加载快记…</div>}
+      {error !== '' && items.length === 0 && <div style={styles.state} role="alert">
+        <div>{error}</div><button type="button" style={styles.retry} onClick={() => { load() }}>重试</button>
+      </div>}
+      {!loading && error === '' && items.length === 0 && <div style={styles.state}>暂无快记</div>}
+      {hasMore && items.length > 0 && <button type="button" style={{ ...styles.more, opacity: loading ? .55 : 1 }} disabled={loading || cursor === undefined}
+        onClick={() => { if (cursor !== undefined) load(cursor) }}>{loading ? '正在加载…' : '加载更早快记'}</button>}
+      {timeline.map(entry => entry.kind === 'time'
+        ? <div key={entry.key} style={styles.recordTime} data-arkme-record-time={entry.timestamp}>{entry.label}</div>
+        : <Fragment key={entry.key}>
+          <article
+            style={{ ...styles.recordRow, justifyContent: entry.item.isMe ? 'flex-end' : 'flex-start' }}
+            data-arkme-member-record-row={entry.item.isMe ? 'self' : 'other'}
+          >
+            {!entry.item.isMe && <ArkmeUserAvatar
+              {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}
+              size={36}
+              label={`${entry.item.senderName} 的头像`}
+            />}
+            <div style={{ ...styles.recordMain, alignItems: entry.item.isMe ? 'flex-end' : 'flex-start' }}>
+              <div style={styles.recordName}>{entry.item.senderName}</div>
+              <div style={{ ...styles.recordBubble, ...(entry.item.isMe ? styles.recordBubbleSelf : {}) }}>
+                <ArkmeMessageContent item={entry.item} sourceRef={props.sourceRef} highlightMentions />
+              </div>
+            </div>
+            {entry.item.isMe && <ArkmeUserAvatar
+              {...(entry.item.avatarRef === undefined ? {} : { avatarRef: entry.item.avatarRef })}
+              size={36}
+              label={`${entry.item.senderName} 的头像`}
+            />}
+          </article>
+        </Fragment>)}
+      {error !== '' && items.length > 0 && <div style={{ ...styles.state, padding: '12px' }} role="alert">{error}</div>}
+    </div>
+  </aside>
+  </>
+}

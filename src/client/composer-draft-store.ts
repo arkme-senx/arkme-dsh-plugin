@@ -5,12 +5,102 @@ export interface ArkmeComposerAttachment {
   previewUrl?: string
 }
 
+export interface ArkmeComposerMention {
+  memberRef: string
+  displayName: string
+  startIndex: number
+  length: number
+}
+
 export interface ArkmeComposerDraftSnapshot {
   text: string
   attachments: readonly ArkmeComposerAttachment[]
+  mentions: readonly ArkmeComposerMention[]
 }
 
-const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({ text: '', attachments: Object.freeze([]) })
+export type ArkmeComposerDeleteDirection = 'backward' | 'forward'
+
+export interface ArkmeComposerAtomicDeletion {
+  text: string
+  caretIndex: number
+}
+
+const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
+  text: '',
+  attachments: Object.freeze([]),
+  mentions: Object.freeze([]),
+})
+
+export function reconcileArkmeComposerMentions(
+  previousText: string,
+  nextText: string,
+  mentions: readonly ArkmeComposerMention[],
+): ArkmeComposerMention[] {
+  if (previousText === nextText || mentions.length === 0) return [...mentions]
+  let prefix = 0
+  const prefixLimit = Math.min(previousText.length, nextText.length)
+  while (prefix < prefixLimit && previousText[prefix] === nextText[prefix]) prefix += 1
+  let suffix = 0
+  const suffixLimit = Math.min(previousText.length - prefix, nextText.length - prefix)
+  while (suffix < suffixLimit
+    && previousText[previousText.length - suffix - 1] === nextText[nextText.length - suffix - 1]) suffix += 1
+  const oldEnd = previousText.length - suffix
+  const newEnd = nextText.length - suffix
+  const delta = newEnd - oldEnd
+  return mentions.flatMap(mention => {
+    const mentionEnd = mention.startIndex + mention.length
+    let nextStart = mention.startIndex
+    if (oldEnd <= mention.startIndex) nextStart += delta
+    else if (prefix >= mentionEnd) nextStart = mention.startIndex
+    else return []
+    const token = `@${mention.displayName}`
+    if (nextStart < 0 || nextText.slice(nextStart, nextStart + mention.length) !== token) return []
+    return [{ ...mention, startIndex: nextStart }]
+  })
+}
+
+function normalizedSelection(text: string, selectionStart: number, selectionEnd: number): [number, number] {
+  const start = Math.max(0, Math.min(text.length, Math.trunc(selectionStart)))
+  const end = Math.max(0, Math.min(text.length, Math.trunc(selectionEnd)))
+  return start <= end ? [start, end] : [end, start]
+}
+
+/** Expands a native text deletion to complete mention ranges so mentions behave as atomic inline objects. */
+export function arkmeComposerAtomicDeletion(
+  text: string,
+  mentions: readonly ArkmeComposerMention[],
+  selectionStart: number,
+  selectionEnd: number,
+  direction: ArkmeComposerDeleteDirection,
+): ArkmeComposerAtomicDeletion | undefined {
+  const [start, end] = normalizedSelection(text, selectionStart, selectionEnd)
+  const collapsed = start === end
+  const affected = mentions.filter(mention => {
+    const mentionStart = mention.startIndex
+    const mentionEnd = mention.startIndex + mention.length
+    if (!collapsed) return start < mentionEnd && end > mentionStart
+    if (direction === 'backward') {
+      return (start > mentionStart && start <= mentionEnd)
+        || (start === mentionEnd + 1 && text[mentionEnd] === ' ')
+    }
+    return start >= mentionStart && start < mentionEnd
+  })
+  if (affected.length === 0) return undefined
+
+  let deleteStart = collapsed ? Math.min(...affected.map(mention => mention.startIndex)) : start
+  let deleteEnd = collapsed
+    ? Math.max(...affected.map(mention => mention.startIndex + mention.length))
+    : end
+  for (const mention of affected) {
+    deleteStart = Math.min(deleteStart, mention.startIndex)
+    deleteEnd = Math.max(deleteEnd, mention.startIndex + mention.length)
+  }
+  if (text[deleteEnd] === ' ') deleteEnd += 1
+  return {
+    text: text.slice(0, deleteStart) + text.slice(deleteEnd),
+    caretIndex: deleteStart,
+  }
+}
 
 export function arkmeComposerCanSend(text: string, attachmentCount: number, busy: boolean): boolean {
   return !busy && (text.trim() !== '' || attachmentCount > 0)
@@ -65,7 +155,58 @@ export class ArkmeComposerDraftStore {
     if (key === undefined) return
     const current = this.get(key)
     if (current.text === text) return
-    this.storeOrDelete(key, { text, attachments: current.attachments })
+    this.storeOrDelete(key, {
+      text,
+      attachments: current.attachments,
+      mentions: reconcileArkmeComposerMentions(current.text, text, current.mentions),
+    })
+  }
+
+  insertMention(
+    key: string | undefined,
+    memberRef: string,
+    displayName: string,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+  ): number | undefined {
+    if (key === undefined || memberRef.trim() === '' || displayName.trim() === '') return undefined
+    const current = this.get(key)
+    const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
+    const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
+    const token = `@${displayName.trim()}`
+    const inserted = `${token} `
+    const text = current.text.slice(0, start) + inserted + current.text.slice(end)
+    const mentions = reconcileArkmeComposerMentions(
+      current.text,
+      current.text.slice(0, start) + current.text.slice(end),
+      current.mentions,
+    ).map(mention => mention.startIndex >= start
+      ? { ...mention, startIndex: mention.startIndex + inserted.length }
+      : mention)
+    mentions.push({ memberRef: memberRef.trim(), displayName: displayName.trim(), startIndex: start, length: token.length })
+    mentions.sort((left, right) => left.startIndex - right.startIndex)
+    this.store(key, { text, attachments: current.attachments, mentions })
+    return start + inserted.length
+  }
+
+  deleteMentionAtSelection(
+    key: string | undefined,
+    selectionStart: number,
+    selectionEnd: number,
+    direction: ArkmeComposerDeleteDirection,
+  ): number | undefined {
+    if (key === undefined) return undefined
+    const current = this.get(key)
+    const deletion = arkmeComposerAtomicDeletion(
+      current.text,
+      current.mentions,
+      selectionStart,
+      selectionEnd,
+      direction,
+    )
+    if (deletion === undefined) return undefined
+    this.setText(key, deletion.text)
+    return deletion.caretIndex
   }
 
   appendAttachments(
@@ -90,7 +231,7 @@ export class ArkmeComposerDraftStore {
       retained.push(attachment)
     }
     if (retained.length === current.attachments.length) return
-    this.store(key, { text: current.text, attachments: retained })
+    this.store(key, { text: current.text, attachments: retained, mentions: current.mentions })
   }
 
   removeAttachment(key: string | undefined, fileAssetUid: string): void {
@@ -103,6 +244,7 @@ export class ArkmeComposerDraftStore {
     this.storeOrDelete(key, {
       text: current.text,
       attachments: current.attachments.filter(item => item.asset.fileAssetUid !== fileAssetUid),
+      mentions: current.mentions,
     })
   }
 
@@ -123,6 +265,7 @@ export class ArkmeComposerDraftStore {
     }
     const current = this.get(key)
     const text = current.text === '' ? snapshot.text : current.text
+    const mentions = current.text === '' ? snapshot.mentions : current.mentions
     const merged = [...snapshot.attachments]
     const mergedIds = new Set(merged.map(item => item.asset.fileAssetUid))
     for (const attachment of current.attachments) {
@@ -135,7 +278,7 @@ export class ArkmeComposerDraftStore {
         releaseArkmeComposerAttachment(attachment)
       }
     }
-    this.storeOrDelete(key, { text, attachments: merged })
+    this.storeOrDelete(key, { text, attachments: merged, mentions })
   }
 
   clear(key: string | undefined): void {
@@ -161,7 +304,7 @@ export class ArkmeComposerDraftStore {
   }
 
   private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
-    if (snapshot.text === '' && snapshot.attachments.length === 0) {
+    if (snapshot.text === '' && snapshot.attachments.length === 0 && snapshot.mentions.length === 0) {
       if (!this.drafts.delete(key)) return
       this.publish()
       return
@@ -173,6 +316,7 @@ export class ArkmeComposerDraftStore {
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
       attachments: Object.freeze([...snapshot.attachments]),
+      mentions: Object.freeze(snapshot.mentions.map(mention => Object.freeze({ ...mention }))),
     }))
     this.publish()
   }

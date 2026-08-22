@@ -26,6 +26,10 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
+    sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
+    openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
+    sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
     updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
@@ -171,6 +175,49 @@ describe('group member Host API dispatch', () => {
     expect(service.groupInvitePreview).toHaveBeenCalledWith('group-ref')
     expect(service.listGroupBots).toHaveBeenCalledWith('group-ref')
     expect(service.addGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref')
+  })
+})
+
+describe('conversation member Host API dispatch', () => {
+  it('forwards only opaque member references and bounded paging fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.members', {
+      sourceRef: 'source-ref', activeOnly: false, userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.member-records', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', mode: 'mentioned', limit: 19, beforeSequence: 44,
+      memberUserId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'chat.member.private.open', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', peerUserId: 999,
+    })
+    expect(service.listSourceMembers).toHaveBeenCalledWith('source-ref', { activeOnly: false })
+    expect(service.sourceMemberRecords).toHaveBeenCalledWith('source-ref', 'member-ref', 'mentioned', {
+      limit: 19,
+      beforeSequence: 44,
+    })
+    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref')
+  })
+
+  it('rejects an unknown member-record mode instead of silently widening it', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.member-records', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', mode: 'all',
+    })).rejects.toMatchObject({ code: 'chat-member-record-mode-invalid' })
+    expect(service.sourceMemberRecords).not.toHaveBeenCalled()
+  })
+
+  it('keeps structured human mention fields while dropping browser-owned ids', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@小林 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
+    })
   })
 })
 

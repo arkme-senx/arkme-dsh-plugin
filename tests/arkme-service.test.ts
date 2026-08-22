@@ -2121,6 +2121,80 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('projects opaque member counts and sends a validated human mention without AI-polish rewriting', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/members/list')) return json({ code: 200, data: {
+        items: [{
+          user_id: 2001, role: 3, status: 1, join_at: 20,
+          display_name_snapshot: '小林', remark: '小林',
+          extra: { record_count: 7, mention_count: 2 },
+        }],
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [{ user_id: 2001, nick_name: 'Lin', name_slug: 'lin', head_img: '' }],
+      } })
+      if (url.endsWith('/api/v1/chats/members/records/page')) return json({ code: 200, data: {
+        items: [{
+          relation: {
+            record_uid: 'member-record-1', rel_uid: 'member-relation-1', sender_user_id: 2001,
+            display_name_snapshot: '小林', attach_at: 1700000000200, seq: 8,
+          },
+          record: { status: 1, payload: { record_uid: 'member-record-1', text_content: '成员快记' } },
+        }],
+        has_more: true,
+        next_before_seq: 8,
+      } })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 18, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const sourceRef = sourceRefFor('group_chat', 'group-mention', '协作群')
+    const members = await service.listSourceMembers(sourceRef)
+    expect(members.items[0]).toMatchObject({
+      displayName: '小林', recordCount: 7, mentionCount: 2, memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+    })
+    const memberRef = members.items[0]!.memberRef
+    await expect(service.sourceMemberRecords(sourceRef, `${memberRef}x`, 'owner'))
+      .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
+    await expect(service.sourceMemberRecords(sourceRefFor('group_chat', 'another-group', '另一个群'), memberRef, 'owner'))
+      .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
+    await expect(service.sourceMemberRecords(sourceRef, memberRef, 'mentioned', { limit: 10 }))
+      .resolves.toMatchObject({
+        member: { memberRef, displayName: '小林' },
+        mode: 'mentioned',
+        items: [{ itemUid: 'member-record-1', memberRef, textContent: '成员快记' }],
+        hasMore: true,
+        nextCursor: { beforeSequence: 8 },
+      })
+
+    const result = await service.sendSourceText(sourceRef, '  @小林 请看  ', {
+      recordUid: 'record-human-mention', relationUid: 'relation-human-mention',
+      humanMentions: [{ memberRef, startIndex: 2, length: 3 }],
+    })
+    expect(result).toMatchObject({ itemUid: 'record-human-mention', sequence: 18 })
+    expect(requests.some(request => request.url.endsWith('/api/v1/chats/ai-polish/settings/query'))).toBe(false)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-mention',
+      text_content: '@小林 请看',
+      content_payload: {
+        payload_kind: 2,
+        schema_version: 1,
+        mention_metadata: {
+          schema_version: 1,
+          source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+          human_mentions: [{ user_id: 2001, display_name_snapshot: '小林', start_index: 0, length: 3 }],
+        },
+      },
+    })
+  })
+
   it('fails open to the unchanged group send when polish settings cannot be read', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

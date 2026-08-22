@@ -6,6 +6,7 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
+  ArkmeConversationMemberRecordMode, ArkmeHumanMentionInput,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -77,6 +78,12 @@ function stringParam(params: Record<string, unknown>, key: string): string {
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function conversationMemberRecordModeParam(params: Record<string, unknown>): ArkmeConversationMemberRecordMode {
+  const mode = stringParam(params, 'mode')
+  if (mode === 'owner' || mode === 'mentioned') return mode
+  throw new ArkmePluginError('chat-member-record-mode-invalid', '成员快记模式无效', false, 400)
 }
 
 function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
@@ -251,6 +258,23 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
+function humanMentionsParam(params: Record<string, unknown>): ArkmeHumanMentionInput[] {
+  const values = params.humanMentions
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return {
+      memberRef: stringParam(item, 'memberRef'),
+      startIndex: numberParam(item, 'startIndex', -1),
+      length: numberParam(item, 'length', 0),
+    }
+  })
+}
+
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
@@ -259,6 +283,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
     textContent: stringParam(params, 'textContent'),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
+    ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
     assets: rawAssets.flatMap(raw => {
       if (raw === null || typeof raw !== 'object') return []
       const asset = raw as Record<string, unknown>
@@ -677,6 +702,19 @@ export async function dispatchArkmeHostOperation(
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
       )
     }
+    case 'source.members': return await service.listSourceMembers(
+      stringParam(params, 'sourceRef'),
+      { activeOnly: params.activeOnly !== false },
+    )
+    case 'source.member-records': return await service.sourceMemberRecords(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'memberRef'),
+      conversationMemberRecordModeParam(params),
+      {
+        limit: numberParam(params, 'limit', 30),
+        beforeSequence: numberParam(params, 'beforeSequence', 0),
+      },
+    )
     case 'source.interwoven-moments': return await service.interwovenMoments(
       requiredInterwovenParam(params, 'sourceRef'),
     )
@@ -695,6 +733,7 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
+        ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
       },
     )
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
@@ -777,6 +816,10 @@ export async function dispatchArkmeHostOperation(
     case 'chat.private.open': return await service.openPrivateChatFromUser(
       numberParam(params, 'peerUserId', 0),
       { displayName: stringParam(params, 'displayName') },
+    )
+    case 'chat.member.private.open': return await service.openPrivateChatFromMember(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'memberRef'),
     )
     case 'source.send-rich': return await service.sendSourceRich(
       stringParam(params, 'sourceRef'),

@@ -10,11 +10,18 @@ import type {
   ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeUploadedAsset, ArkmeForwardRecordPreviewItem, ArkmeUserProfile, ArkmeUserProfileSnapshot,
+  ArkmeConversationMemberItem, ArkmeConversationMemberList, ArkmeConversationMemberRecordMode,
+  ArkmeOpenPrivateChatResult,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { ArkmeSourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeGroupChatControls } from './ArkmeGroupChatControls.js'
+import {
+  ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
+  arkmeMemberActionMenuRowCount, positionArkmeMemberMenu,
+  type ArkmeMemberMenuPosition,
+} from './ArkmeChatMemberActions.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
@@ -23,6 +30,7 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeMentionTextarea } from './ArkmeMentionTextarea.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
@@ -463,10 +471,26 @@ export function arkmeTimelineAvatarRef(item: ArkmeTimelineItem, profile?: ArkmeU
   return profileAvatarRef === '' ? undefined : profileAvatarRef
 }
 
-function MessageAvatar({ avatarRef }: { avatarRef?: string }) {
-  return <span style={styles.messageAvatar} aria-hidden>
-    <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={38} label="消息头像" />
-  </span>
+function MessageAvatar(props: {
+  avatarRef?: string
+  member?: ArkmeConversationMemberItem
+  onOpen: (member: ArkmeConversationMemberItem) => void
+  onContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
+}) {
+  const member = props.member
+  const avatar = <ArkmeUserAvatar {...(props.avatarRef === undefined ? {} : { avatarRef: props.avatarRef })} size={38} label="消息头像" />
+  if (member === undefined) return <span style={styles.messageAvatar} aria-hidden>{avatar}</span>
+  return <button
+    type="button"
+    style={{ ...styles.messageAvatar, padding: 0, border: 0, cursor: member.isSelf ? 'default' : 'pointer' }}
+    aria-label={member.isSelf ? '我的头像' : `查看 ${member.displayName}`}
+    onClick={event => { event.stopPropagation(); if (!member.isSelf) props.onOpen(member) }}
+    onContextMenu={event => {
+      event.preventDefault()
+      event.stopPropagation()
+      props.onContextMenu(member, event.currentTarget.getBoundingClientRect())
+    }}
+  >{avatar}</button>
 }
 
 export function ArkmeTimelineMessageHeader({
@@ -703,6 +727,36 @@ export function ArkmeSurface({
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
+  const [conversationMembers, setConversationMembers] = useState<ArkmeConversationMemberItem[]>([])
+  const [memberMenu, setMemberMenu] = useState<{
+    member: ArkmeConversationMemberItem
+    position: ArkmeMemberMenuPosition
+  }>()
+  const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
+  const [memberRecords, setMemberRecords] = useState<{
+    member: ArkmeConversationMemberItem
+    mode: ArkmeConversationMemberRecordMode
+  }>()
+  const [privateChatBusy, setPrivateChatBusy] = useState(false)
+
+  useEffect(() => {
+    setConversationMembers([])
+    setMemberMenu(undefined)
+    setMemberProfile(undefined)
+    setMemberRecords(undefined)
+    setPrivateChatBusy(false)
+    if (auth?.status !== 'authenticated' || source === undefined || (source.kind !== 'group_chat' && source.kind !== 'private_chat')) return
+    const controller = new AbortController()
+    void callArkme<ArkmeConversationMemberList>('source.members', {
+      sourceRef: source.sourceRef,
+      activeOnly: true,
+    }, controller.signal)
+      .then(snapshot => { setConversationMembers(snapshot.items) })
+      .catch(caught => {
+        if (!controller.signal.aborted) setError(errorMessage(caught))
+      })
+    return () => { controller.abort() }
+  }, [auth?.status, source?.kind, source?.sourceRef])
 
   useEffect(() => {
     const pendingDraftKey = pendingComposerFocusDraftKeyRef.current
@@ -1445,10 +1499,10 @@ export function ArkmeSurface({
       if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
         arkmeComposerDraftStore.appendAttachments(targetDraftKey, uploaded)
       } else {
-        releaseArkmeComposerDraft({ text: '', attachments: uploaded })
+        releaseArkmeComposerDraft({ text: '', attachments: uploaded, mentions: [] })
       }
     } catch (caught) {
-      releaseArkmeComposerDraft({ text: '', attachments: uploaded })
+      releaseArkmeComposerDraft({ text: '', attachments: uploaded, mentions: [] })
       setError(errorMessage(caught))
     }
     finally {
@@ -1483,15 +1537,22 @@ export function ArkmeSurface({
     const pendingAttachments = [...pendingDraft.attachments]
     const pendingAssets = pendingAttachments.map(attachment => attachment.asset)
     pendingViewportRestoreRef.current = { sourceRef: targetSource.sourceRef, viewport: undefined }
+    const pendingMentions = pendingDraft.mentions.map(mention => ({
+      memberRef: mention.memberRef,
+      startIndex: mention.startIndex,
+      length: mention.length,
+    }))
     setItems(current => mergeItems(current, [optimistic])); setBusy(true); setError('')
     try {
       const result = pendingAssets.length > 0
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           sourceRef: targetSource.sourceRef, title: '', textContent, displayKind: 0,
           assets: pendingAssets, recordUid, relationUid,
+          ...(pendingMentions.length === 0 ? {} : { humanMentions: pendingMentions }),
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
           sourceRef: targetSource.sourceRef, textContent, recordUid, relationUid,
+          ...(pendingMentions.length === 0 ? {} : { humanMentions: pendingMentions }),
         })
       setItems(current => current.map(item => {
         if (item.itemUid !== recordUid) return item
@@ -1568,6 +1629,85 @@ export function ArkmeSurface({
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
+  const conversationMemberByRef = useMemo(
+    () => new Map(conversationMembers.map(member => [member.memberRef, member])),
+    [conversationMembers],
+  )
+  const selfConversationMember = useMemo(
+    () => conversationMembers.find(member => member.isSelf),
+    [conversationMembers],
+  )
+  const closeMemberMenu = useCallback(() => { setMemberMenu(undefined) }, [])
+  const openMemberMenu = useCallback((member: ArkmeConversationMemberItem, anchorRect: DOMRect) => {
+    const host = panelRef.current
+    if (host === null || source === undefined) return
+    setMemberProfile(undefined)
+    setMemberRecords(undefined)
+    setMemberMenu({
+      member,
+      position: positionArkmeMemberMenu(
+        anchorRect,
+        host.getBoundingClientRect(),
+        arkmeMemberActionMenuRowCount(member, source.kind),
+      ),
+    })
+  }, [source])
+  const openMemberProfile = useCallback((member: ArkmeConversationMemberItem) => {
+    setMemberMenu(undefined)
+    setMemberRecords(undefined)
+    if (!member.isSelf) setMemberProfile(member)
+  }, [])
+  const openMemberRecords = useCallback((member: ArkmeConversationMemberItem, mode: ArkmeConversationMemberRecordMode) => {
+    setMemberMenu(undefined)
+    setMemberProfile(undefined)
+    setMemberRecords({ member, mode })
+  }, [])
+  const insertMemberMention = useCallback((member: ArkmeConversationMemberItem) => {
+    if (composerDraftKey === undefined || member.isSelf || source?.kind !== 'group_chat') return
+    const textarea = textareaRef.current
+    const start = textarea?.selectionStart ?? draft.length
+    const end = textarea?.selectionEnd ?? start
+    const cursor = arkmeComposerDraftStore.insertMention(
+      composerDraftKey,
+      member.memberRef,
+      member.displayName,
+      start,
+      end,
+    )
+    setMemberMenu(undefined)
+    if (cursor === undefined) return
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(cursor, cursor)
+    })
+  }, [composerDraftKey, draft.length, source?.kind])
+  const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
+    if (source === undefined || member.isSelf || privateChatBusy) return
+    setPrivateChatBusy(true)
+    setError('')
+    void callArkme<ArkmeOpenPrivateChatResult>('chat.member.private.open', {
+      sourceRef: source.sourceRef,
+      memberRef: member.memberRef,
+    })
+      .then(result => {
+        setMemberProfile(undefined)
+        setMemberRecords(undefined)
+        activateSource(result.source)
+      })
+      .catch(caught => { setError(errorMessage(caught)) })
+      .finally(() => { setPrivateChatBusy(false) })
+  }, [activateSource, privateChatBusy, source])
+  useEffect(() => {
+    if (memberMenu === undefined) return
+    const close = () => { setMemberMenu(undefined) }
+    const body = bodyRef.current
+    body?.addEventListener('scroll', close, { passive: true })
+    window.addEventListener('resize', close)
+    return () => {
+      body?.removeEventListener('scroll', close)
+      window.removeEventListener('resize', close)
+    }
+  }, [memberMenu])
   const activateSelfSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
     setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(current, nextSource, selfSourcesRef.current))
     activateSource(nextSource)
@@ -1776,6 +1916,8 @@ export function ArkmeSurface({
             source={source}
             overlayHostRef={panelRef}
             onSourceActivated={activateSource}
+            onMemberOpen={openMemberProfile}
+            onMemberContextMenu={openMemberMenu}
             onError={setError}
           />}
           {shouldShowPrivateChatActions(authenticated, source?.kind) && <div ref={relatedMenuRef} style={{
@@ -1882,6 +2024,9 @@ export function ArkmeSurface({
                 }
                 const item = row.item
                 const avatarRef = arkmeTimelineAvatarRef(item, selfProfile)
+                const messageMember = item.memberRef === undefined
+                  ? (item.isMe ? selfConversationMember : undefined)
+                  : conversationMemberByRef.get(item.memberRef)
                 const polishStatus = aiPolishStatus(item)
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
@@ -1891,7 +2036,12 @@ export function ArkmeSurface({
                       ...(item.isMe ? styles.messageLineMe : {}),
                       ...(item.forwardRecords === undefined ? {} : styles.forwardMessageLine),
                     }}>
-                      {showMessageAvatars && <MessageAvatar {...(avatarRef === undefined ? {} : { avatarRef })} />}
+                      {showMessageAvatars && <MessageAvatar
+                        {...(avatarRef === undefined ? {} : { avatarRef })}
+                        {...(messageMember === undefined ? {} : { member: messageMember })}
+                        onOpen={openMemberProfile}
+                        onContextMenu={openMemberMenu}
+                      />}
                       <div style={{
                         ...styles.messageBody,
                         ...(item.isMe ? styles.messageBodyMe : {}),
@@ -1969,7 +2119,7 @@ export function ArkmeSurface({
             />)}</div>}
             {uploadStatus !== undefined && uploadStatus.key === composerDraftKey
               && <div style={styles.uploadStatus} role="status">{uploadStatus.message}</div>}
-            <textarea className="arkme-conversation-textarea" ref={textareaRef} rows={1} style={styles.textarea} value={draft} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
+            <ArkmeMentionTextarea className="arkme-conversation-textarea" ref={textareaRef} rows={1} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
               onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)
@@ -1977,7 +2127,28 @@ export function ArkmeSurface({
                 event.preventDefault()
                 void selectFiles(imageFiles)
               }}
-              onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (canSend) void send() } }} />
+              onKeyDown={event => {
+                if (!event.nativeEvent.isComposing && (event.key === 'Backspace' || event.key === 'Delete')) {
+                  const caret = arkmeComposerDraftStore.deleteMentionAtSelection(
+                    composerDraftKey,
+                    event.currentTarget.selectionStart,
+                    event.currentTarget.selectionEnd,
+                    event.key === 'Backspace' ? 'backward' : 'forward',
+                  )
+                  if (caret !== undefined) {
+                    event.preventDefault()
+                    requestAnimationFrame(() => {
+                      textareaRef.current?.focus()
+                      textareaRef.current?.setSelectionRange(caret, caret)
+                    })
+                    return
+                  }
+                }
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault()
+                  if (canSend) void send()
+                }
+              }} />
             <div style={styles.tools}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => { setAddMenuOpen(value => !value) }}>+</button><button
               type="button"
               style={{ ...styles.send, opacity: canSend ? 1 : .4 }}
@@ -2000,6 +2171,26 @@ export function ArkmeSurface({
             </button></div>
           </div></footer>
         </>}
+        {source !== undefined && memberMenu !== undefined && <ArkmeMemberActionMenu
+          member={memberMenu.member}
+          sourceKind={source.kind}
+          position={memberMenu.position}
+          onMention={() => { insertMemberMention(memberMenu.member) }}
+          onRecords={mode => { openMemberRecords(memberMenu.member, mode) }}
+          onClose={closeMemberMenu}
+        />}
+        {memberProfile !== undefined && <ArkmeMemberProfileCard
+          member={memberProfile}
+          busy={privateChatBusy}
+          onClose={() => { if (!privateChatBusy) setMemberProfile(undefined) }}
+          onSend={() => { openPrivateChatForMember(memberProfile) }}
+        />}
+        {source !== undefined && memberRecords !== undefined && <ArkmeMemberRecordsPanel
+          sourceRef={source.sourceRef}
+          member={memberRecords.member}
+          mode={memberRecords.mode}
+          onClose={() => { setMemberRecords(undefined) }}
+        />}
         {drawer === 'detail' && detailItem?.forwardRecords !== undefined && <>
           <div
             style={styles.forwardDrawerDismiss}

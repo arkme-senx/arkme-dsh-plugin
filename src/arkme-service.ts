@@ -108,6 +108,9 @@ import type {
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeConversationWriteResult,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeDirectTextSendResult,
   ArkmeFileAssetDisplayItem,
@@ -150,6 +153,7 @@ import type {
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
   ArkmeRichSendInput,
+  ArkmeHumanMentionInput,
   ArkmeSearchHistoryResult,
   ArkmeSearchSceneKind,
   ArkmeSelfRecordItem,
@@ -297,7 +301,7 @@ export class ArkmeService {
       sendChatSourceTextRaw: async (...args) => await this.chat.sendChatSourceTextRaw(...args),
     })
     this.realtime = new ChatRealtimeService(this.runtime, this.source, {
-      chatTimelineItems: async (data, session) => await this.chat.chatTimelineItems(data, session),
+      chatTimelineItems: async (data, session, chatSessionUid) => await this.chat.chatTimelineItems(data, session, chatSessionUid),
     })
     this.chat = new ChatService(
       this.runtime,
@@ -869,6 +873,22 @@ export class ArkmeService {
     return await this.group.listGroupMembers(sourceRef, options)
   }
 
+  async listSourceMembers(
+    sourceRef: string,
+    options: { activeOnly?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeConversationMemberList> {
+    return await this.chat.listSourceMembers(sourceRef, options)
+  }
+
+  async sourceMemberRecords(
+    sourceRef: string,
+    memberRef: string,
+    mode: ArkmeConversationMemberRecordMode,
+    options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeConversationMemberRecordPage> {
+    return await this.chat.sourceMemberRecords(sourceRef, memberRef, mode, options)
+  }
+
   async listGroupMemberCandidates(
     sourceRef: string,
     options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
@@ -935,6 +955,14 @@ export class ArkmeService {
     return await this.chat.openPrivateChatFromUser(peerUserId, options)
   }
 
+  async openPrivateChatFromMember(
+    sourceRef: string,
+    memberRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeOpenPrivateChatResult> {
+    return await this.chat.openPrivateChatFromMember(sourceRef, memberRef, options)
+  }
+
   async readSource(
     sourceRef: string,
     options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
@@ -982,6 +1010,7 @@ export class ArkmeService {
       recordUid?: string
       relationUid?: string
       botRefs?: readonly string[]
+      humanMentions?: readonly ArkmeHumanMentionInput[]
       signal?: AbortSignal
       agentAuthored?: boolean
     } = {},

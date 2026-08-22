@@ -3,11 +3,13 @@ import type { ArkmeUploadedAsset } from '../src/types.js'
 import {
   ArkmeComposerDraftStore,
   arkmeComposerCanSend,
+  arkmeComposerAtomicDeletion,
   arkmeArkoComposerDraftKey,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
   type ArkmeComposerAttachment,
 } from '../src/client/composer-draft-store.js'
+import { arkmeMentionTextRuns } from '../src/client/ArkmeMentionTextarea.js'
 
 function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
   return {
@@ -130,5 +132,68 @@ describe('Arkme composer draft store', () => {
     const pending = store.take(key)
     releaseArkmeComposerDraft(pending)
     expect(revoke).toHaveBeenCalledOnce()
+  })
+
+  it('inserts an opaque member mention at the current selection and tracks later text shifts', () => {
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+    store.setText(key, '请处理')
+
+    expect(store.insertMention(key, 'member-ref', '小林', 1, 1)).toBe(5)
+    expect(store.get(key)).toMatchObject({
+      text: '请@小林 处理',
+      mentions: [{ memberRef: 'member-ref', displayName: '小林', startIndex: 1, length: 3 }],
+    })
+
+    store.setText(key, `好的，${store.get(key).text}`)
+    expect(store.get(key).mentions).toEqual([
+      { memberRef: 'member-ref', displayName: '小林', startIndex: 4, length: 3 },
+    ])
+  })
+
+  it('drops mention metadata when the visible mention token is edited', () => {
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+    store.insertMention(key, 'member-ref', '小林', 0)
+    store.setText(key, '@小李 ')
+    expect(store.get(key).mentions).toEqual([])
+  })
+
+  it('renders structured mention ranges as blue-ready runs without guessing plain @ text', () => {
+    const mentions = [{ memberRef: 'member-ref', displayName: '小林', startIndex: 1, length: 3 }]
+    expect(arkmeMentionTextRuns('请@小林 处理 @普通文字', mentions)).toEqual([
+      { kind: 'text', text: '请' },
+      { kind: 'mention', text: '@小林' },
+      { kind: 'text', text: ' 处理 @普通文字' },
+    ])
+  })
+
+  it('deletes a mention and its separator atomically with Backspace', () => {
+    const text = '请@小林 处理'
+    const mentions = [{ memberRef: 'member-ref', displayName: '小林', startIndex: 1, length: 3 }]
+    expect(arkmeComposerAtomicDeletion(text, mentions, 5, 5, 'backward')).toEqual({
+      text: '请处理',
+      caretIndex: 1,
+    })
+  })
+
+  it('expands forward and range deletion to the whole mention while preserving adjacent text', () => {
+    const text = '前@小林 后@阿周 尾'
+    const mentions = [
+      { memberRef: 'member-a', displayName: '小林', startIndex: 1, length: 3 },
+      { memberRef: 'member-b', displayName: '阿周', startIndex: 6, length: 3 },
+    ]
+    expect(arkmeComposerAtomicDeletion(text, mentions, 1, 1, 'forward')).toEqual({ text: '前后@阿周 尾', caretIndex: 1 })
+    expect(arkmeComposerAtomicDeletion(text, mentions, 2, 8, 'backward')).toEqual({ text: '前尾', caretIndex: 1 })
+  })
+
+  it('keeps the caret stable after the store removes a selected mention', () => {
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+    store.setText(key, '前后')
+    store.insertMention(key, 'member-ref', '小林', 1)
+
+    expect(store.deleteMentionAtSelection(key, 5, 5, 'backward')).toBe(1)
+    expect(store.get(key)).toMatchObject({ text: '前后', mentions: [] })
   })
 })

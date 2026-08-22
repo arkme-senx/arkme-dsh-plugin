@@ -21,6 +21,9 @@ import type {
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidateList,
@@ -30,6 +33,7 @@ import type {
   ArkmeGroupBotCandidateList,
   ArkmeImagePayload,
   ArkmeImageSearchResult,
+  ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
@@ -113,6 +117,10 @@ export type {
   ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeContentKind,
+  ArkmeConversationMemberItem,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
@@ -131,6 +139,7 @@ export type {
   ArkmeImagePayload,
   ArkmeImageSearchItem,
   ArkmeImageSearchResult,
+  ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
@@ -938,6 +947,29 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)
   }
 
+  async listSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme chat source reference must not be empty')
+    return await this.call<ArkmeConversationMemberList>('source.members', { sourceRef, activeOnly: true }, signal)
+  }
+
+  async sourceMemberRecords(
+    sourceRef: string,
+    memberRef: string,
+    mode: ArkmeConversationMemberRecordMode,
+    options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeConversationMemberRecordPage> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '' || !['owner', 'mentioned'].includes(mode)) {
+      throw new TypeError('Arkme source, member reference, and member-record mode must be valid')
+    }
+    return await this.call<ArkmeConversationMemberRecordPage>('source.member-records', {
+      sourceRef,
+      memberRef,
+      mode,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.beforeSequence === undefined ? {} : { beforeSequence: options.beforeSequence }),
+    }, options.signal)
+  }
+
   async listGroupMemberCandidates(
     sourceRef: string,
     options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
@@ -999,6 +1031,7 @@ export class ArkmeSdk {
       recordUid?: string
       relationUid?: string
       agentAuthored?: boolean
+      humanMentions?: readonly ArkmeHumanMentionInput[]
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1011,6 +1044,7 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
+      ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
     }, options.signal)
   }
 
