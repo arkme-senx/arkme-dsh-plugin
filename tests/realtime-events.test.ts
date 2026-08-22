@@ -55,6 +55,8 @@ describe('Arkme local realtime events', () => {
       }],
     })
     expect(response.chunks.join('')).toContain('"revision":2')
+    listener?.({ type: 'projection-invalidated', revision: 3, projection: 'record' })
+    expect(response.chunks.join('')).toContain('"projection":"record"')
 
     events.close()
     expect(unsubscribe).toHaveBeenCalledOnce()

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  ARKME_CHAT_SSE_PATH, ArkmeChatRealtimeRuntime, decodeArkmeChatReceiveDataLine,
+  ARKME_CHAT_SSE_PATH, ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ArkmeChatRealtimeRuntime,
+  decodeArkmeChatReceiveDataLine, decodeArkmeProjectionInvalidatedDataLine,
 } from '../src/chat-realtime.js'
 
 const chatHint = {
@@ -13,6 +14,13 @@ const chatHint = {
   event_at: 123456,
 }
 
+const recordProjectionHint = {
+  t: ARKME_PROJECTION_INVALIDATED_BIZ_TYPE,
+  event_uid: 'projection-event-1',
+  projection: 'record',
+  event_at: 123457,
+}
+
 describe('Arkme Chat realtime', () => {
   it('decodes only complete Chat receive hints and ignores heartbeats', () => {
     expect(decodeArkmeChatReceiveDataLine('data:')).toBeUndefined()
@@ -23,6 +31,18 @@ describe('Arkme Chat realtime', () => {
     })
     expect(decodeArkmeChatReceiveDataLine(`data: ${JSON.stringify({ ...chatHint, t: '17', latest_seq: '9' })}`))
       .toMatchObject({ latestSequence: 9 })
+  })
+
+  it('decodes only metadata-only projection invalidations', () => {
+    expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify(recordProjectionHint)}`)).toEqual({
+      eventUid: 'projection-event-1', projection: 'record', eventAtMillis: 123457,
+    })
+    expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify({
+      ...recordProjectionHint, record_uid: 'must-not-cross-the-realtime-boundary',
+    })}`)).toBeUndefined()
+    expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify({
+      ...recordProjectionHint, projection: 'Record With Spaces',
+    })}`)).toBeUndefined()
   })
 
   it('connects with Host credentials and advances one revision per unique hint', async () => {
@@ -54,8 +74,10 @@ describe('Arkme Chat realtime', () => {
     stream.enqueue(encoder.encode(`data: ${JSON.stringify(chatHint)}\n\n`))
     await new Promise(resolve => setTimeout(resolve, 10))
     expect(runtime.state().revision).toBe(2)
-    expect(observed).toEqual([1, 2])
-    expect(causes).toEqual(['reconcile', 'hint'])
+    stream.enqueue(encoder.encode(`data: ${JSON.stringify(recordProjectionHint)}\n\n`))
+    await vi.waitFor(() => { expect(runtime.state()).toMatchObject({ revision: 3, lastEventAtMillis: 123457 }) })
+    expect(observed).toEqual([1, 2, 3])
+    expect(causes).toEqual(['reconcile', 'hint', 'hint'])
 
     const [input, init] = fetchImpl.mock.calls[0]!
     expect(String(input)).toBe(`https://im.example.test${ARKME_CHAT_SSE_PATH}`)

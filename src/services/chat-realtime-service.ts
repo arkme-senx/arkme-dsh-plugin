@@ -141,6 +141,11 @@ export class ChatRealtimeService {
         refresh: 'none',
       })
       void this.reconcileChatNotificationBaseline(generation)
+      void this.invalidateRecordProjection()
+      return
+    }
+    if (notice.cause === 'hint' && notice.projectionInvalidation?.projection === 'record') {
+      void this.invalidateRecordProjection()
       return
     }
     if (notice.cause === 'hint' && notice.hint !== undefined) {
@@ -149,6 +154,21 @@ export class ChatRealtimeService {
         notice.hint.latestSequence,
         { hint: notice.hint, connectionGeneration: notice.state.connectionGeneration, attempts: 0 },
       )
+    }
+  }
+
+  private async invalidateRecordProjection(): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.emitChatClientEvent({
+        type: 'projection-invalidated',
+        revision: this.nextChatClientRevision(),
+        projection: 'record',
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Record projection invalidation failed:', safeFailureMessage(error))
     }
   }
 

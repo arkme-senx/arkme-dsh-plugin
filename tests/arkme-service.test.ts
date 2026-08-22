@@ -2108,6 +2108,34 @@ describe('ArkmeService', () => {
     expect(events).toEqual([expect.objectContaining({ type: 'reconcile', refresh: 'none', connected: true })])
   })
 
+  it('invalidates send-to-self projections when another client changes Record data', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), vi.fn())
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+    const internal = service as unknown as {
+      source: { invalidateSourceListCache(userId: number, directory?: string): void }
+      handleChatRealtimeNotice(notice: {
+        cause: 'hint'
+        state: { revision: number; connected: boolean; connectionGeneration: number }
+        projectionInvalidation: { eventUid: string; projection: string; eventAtMillis: number }
+      }): void
+    }
+    const invalidate = vi.spyOn(internal.source, 'invalidateSourceListCache')
+
+    internal.handleChatRealtimeNotice({
+      cause: 'hint',
+      state: { revision: 2, connected: true, connectionGeneration: 1 },
+      projectionInvalidation: { eventUid: 'projection-1', projection: 'record', eventAtMillis: 123456 },
+    })
+
+    await vi.waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith(10001, 'send_to_self')
+      expect(events).toEqual([expect.objectContaining({ type: 'projection-invalidated', projection: 'record' })])
+    })
+  })
+
   it('polishes only enabled group text and preserves the original in the initial revision payload', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

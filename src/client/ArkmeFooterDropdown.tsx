@@ -95,6 +95,12 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
           void arkmeDesktopNotifications.show(update.notification)
           return
         }
+        if (update.type === 'projection-invalidated') {
+          if (update.projection !== 'record') return
+          arkmeInterwovenInvalidation.invalidate()
+          arkmeUi.chatChanged()
+          return
+        }
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({
           source: item.source,
           ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),

@@ -1919,6 +1919,10 @@ export type ArkmeChatClientEvent = {
   revision: number
   updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
 } | {
+  type: 'projection-invalidated'
+  revision: number
+  projection: 'record'
+} | {
   type: 'message-notification'
   revision: number
   notification: {
