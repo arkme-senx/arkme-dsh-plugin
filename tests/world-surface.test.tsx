@@ -1,7 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeWorldContent, ArkmeWorldSurface, VoiceprintInviteDialog, voiceprintInvitePromptTitle, type ArkmeWorldViewState } from '../src/client/ArkmeWorldSurface.js'
-import type { ArkmeWorldFeedItem } from '../src/types.js'
+import {
+  ArkmeWorldContent,
+  ArkmeWorldSurface,
+  VoiceprintInviteDialog,
+  WorldInteractionThreadList,
+  voiceprintInvitePromptTitle,
+  worldInteractionThreads,
+  type ArkmeWorldViewState,
+} from '../src/client/ArkmeWorldSurface.js'
+import type { ArkmeWorldFeedItem, ArkmeWorldInteractionItem } from '../src/types.js'
 
 const noop = () => {}
 const actions = {
@@ -27,6 +35,29 @@ const item: ArkmeWorldFeedItem = {
   voiceCount: 0,
   extendCount: 2,
 }
+
+const interactions: ArkmeWorldInteractionItem[] = [
+  {
+    interactionRef: 'comment_1', parentRef: 'world_1', authorName: '阿七', textContent: '第一条评论',
+    createdAtMillis: 1_700_000_001_000, publishedAtMillis: 1_700_000_001_000,
+    imageCount: 0, videoCount: 0, voiceCount: 0,
+  },
+  {
+    interactionRef: 'reply_1', parentRef: 'comment_1', authorName: '小满', textContent: '回复第一条',
+    createdAtMillis: 1_700_000_002_000, publishedAtMillis: 1_700_000_002_000,
+    imageCount: 0, videoCount: 0, voiceCount: 0,
+  },
+  {
+    interactionRef: 'reply_2', parentRef: 'reply_1', authorName: '小周', textContent: '继续回复',
+    createdAtMillis: 1_700_000_003_000, publishedAtMillis: 1_700_000_003_000,
+    imageCount: 0, videoCount: 0, voiceCount: 0,
+  },
+  {
+    interactionRef: 'comment_2', parentRef: 'world_1', authorName: '小林', textContent: '第二条评论',
+    createdAtMillis: 1_700_000_004_000, publishedAtMillis: 1_700_000_004_000,
+    imageCount: 0, videoCount: 0, voiceCount: 0,
+  },
+]
 
 function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = new Set(['world_1']), interactionRecordRef?: string) {
   return renderToStaticMarkup(<ArkmeWorldContent
@@ -116,6 +147,40 @@ describe('Arkme native World surface', () => {
     expect(markup).not.toContain('互动详情')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup.match(/世界正文/g)).toHaveLength(1)
+  })
+
+  it('groups every reply under its top-level comment while preserving the direct reply target', () => {
+    const threads = worldInteractionThreads(item.recordRef, interactions)
+
+    expect(threads).toHaveLength(2)
+    expect(threads[0]?.root.interactionRef).toBe('comment_1')
+    expect(threads[0]?.replies.map(reply => ({ ref: reply.item.interactionRef, replyToName: reply.replyToName }))).toEqual([
+      { ref: 'reply_1', replyToName: '阿七' },
+      { ref: 'reply_2', replyToName: '小满' },
+    ])
+    expect(threads[1]?.root.interactionRef).toBe('comment_2')
+  })
+
+  it('renders smaller indented replies with explicit targets and limits feed previews to three rows', () => {
+    const markup = renderToStaticMarkup(<WorldInteractionThreadList
+      rootRef={item.recordRef}
+      items={interactions}
+      maxVisibleItems={3}
+      compact
+      replyTargetRef="reply_1"
+      onReply={noop}
+    />)
+
+    expect(markup).toContain('data-world-comment-level="root"')
+    expect(markup).toContain('data-world-comment-level="reply"')
+    expect(markup).toContain('font-size:11px')
+    expect(markup).toContain('回复 阿七')
+    expect(markup).toContain('回复 小满')
+    expect(markup).toContain('aria-label="回复小满的评论"')
+    expect(markup).toContain('>取消回复<')
+    expect(markup).not.toContain('第二条评论')
+    expect(markup.indexOf('第一条评论')).toBeLessThan(markup.indexOf('回复第一条'))
+    expect(markup.indexOf('回复第一条')).toBeLessThan(markup.indexOf('继续回复'))
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {

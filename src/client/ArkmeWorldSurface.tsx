@@ -87,6 +87,8 @@ const styles: Record<string, CSSProperties> = {
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButton: { padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButtonActive: { color: colors.accent, fontWeight: 600 },
+  commentPreview: { marginTop: 10, padding: '9px 11px', borderRadius: 10, background: colors.subtle },
+  commentPreviewAction: { width: '100%', marginTop: 6, padding: '4px 0 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10, textAlign: 'left' },
   loadMore: { display: 'flex', justifyContent: 'center', marginTop: 3 },
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
   modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: '#fff', boxShadow: '0 18px 60px rgba(20,22,30,.22)' },
@@ -108,9 +110,22 @@ const styles: Record<string, CSSProperties> = {
   interactionPanel: { margin: '12px -18px -18px', padding: '15px 18px 18px', borderTop: `1px solid ${colors.border}`, borderRadius: '0 0 16px 16px', background: '#fafbfc' },
   interactionPanelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   interactionPanelTitle: { fontSize: 12, fontWeight: 650 },
-  interactionList: { display: 'grid', gap: 8, margin: '12px 0' },
-  interaction: { padding: 11, border: `1px solid ${colors.border}`, borderRadius: 11, background: '#fff' },
-  interactionMeta: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.secondary, fontSize: 10 },
+  interactionList: { display: 'grid', margin: '8px 0' },
+  interactionThread: { padding: '11px 0', borderBottom: `1px solid ${colors.border}` },
+  interactionRoot: { display: 'grid', gridTemplateColumns: '32px minmax(0,1fr)', alignItems: 'start', gap: 9 },
+  interactionReplyList: { display: 'grid', margin: '7px 0 0 41px', paddingLeft: 10, borderLeft: `2px solid ${colors.border}` },
+  interactionReply: { display: 'grid', gridTemplateColumns: '24px minmax(0,1fr)', alignItems: 'start', gap: 7, padding: '7px 0' },
+  interactionAvatar: { width: 32, height: 32, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 11, fontWeight: 650 },
+  interactionReplyAvatar: { width: 24, height: 24, fontSize: 9 },
+  interactionBody: { minWidth: 0 },
+  interactionMeta: { minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: colors.secondary, fontSize: 10 },
+  interactionAuthorLine: { minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5 },
+  interactionAuthor: { color: colors.text, fontSize: 12, fontWeight: 650 },
+  interactionReplyAuthor: { fontSize: 11 },
+  interactionReplyTarget: { color: colors.secondary, fontSize: 11 },
+  interactionText: { margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 12, lineHeight: 1.55 },
+  interactionReplyText: { fontSize: 11, lineHeight: 1.5 },
+  interactionAction: { marginTop: 2, padding: '3px 5px 3px 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
   interactionComposer: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${colors.border}` },
   interactionComposerActions: { marginTop: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   interactionHint: { color: '#969ba5', fontSize: 10 },
@@ -181,6 +196,152 @@ function interactionRegionId(recordRef: string): string {
   return `world-comments-${encodeURIComponent(recordRef)}`
 }
 
+export interface WorldInteractionReplyPresentation {
+  item: ArkmeWorldInteractionItem
+  replyToName: string
+}
+
+export interface WorldInteractionThread {
+  root: ArkmeWorldInteractionItem
+  replies: WorldInteractionReplyPresentation[]
+}
+
+/** Keep replies visually under the top-level comment while retaining their direct addressee. */
+export function worldInteractionThreads(rootRef: string, items: readonly ArkmeWorldInteractionItem[]): WorldInteractionThread[] {
+  const byRef = new Map(items.map(item => [item.interactionRef, item]))
+  const sourceIndex = new Map(items.map((item, index) => [item.interactionRef, index]))
+  const threads = new Map<string, WorldInteractionThread>()
+
+  for (const item of items) {
+    let root = item
+    let cursor = item
+    const visited = new Set<string>()
+    while (cursor.parentRef !== rootRef) {
+      if (visited.has(cursor.interactionRef)) {
+        root = item
+        break
+      }
+      visited.add(cursor.interactionRef)
+      const parent = byRef.get(cursor.parentRef)
+      if (parent === undefined) break
+      root = parent
+      cursor = parent
+    }
+    let thread = threads.get(root.interactionRef)
+    if (thread === undefined) {
+      thread = { root, replies: [] }
+      threads.set(root.interactionRef, thread)
+    }
+    if (item.interactionRef !== root.interactionRef) {
+      thread.replies.push({
+        item,
+        replyToName: byRef.get(item.parentRef)?.authorName ?? root.authorName,
+      })
+    }
+  }
+
+  return [...threads.values()].sort((left, right) =>
+    (sourceIndex.get(left.root.interactionRef) ?? Number.MAX_SAFE_INTEGER)
+      - (sourceIndex.get(right.root.interactionRef) ?? Number.MAX_SAFE_INTEGER))
+}
+
+function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteractionItem; reply: boolean; compact: boolean }) {
+  const size = compact ? (reply ? 20 : 24) : (reply ? 24 : 32)
+  return <span style={{
+    ...styles.interactionAvatar,
+    ...(reply ? styles.interactionReplyAvatar : {}),
+    width: size,
+    height: size,
+    fontSize: reply ? (compact ? 8 : 9) : (compact ? 9 : 11),
+  }}>
+    {item.avatarRef === undefined
+      ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
+      : <WorldImage imageRef={item.avatarRef} alt={`${item.authorName}的头像`} avatar />}
+  </span>
+}
+
+function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }: {
+  item: ArkmeWorldInteractionItem
+  replyToName?: string
+  compact: boolean
+  replyTargetRef?: string
+  onReply?(item: ArkmeWorldInteractionItem): void
+}) {
+  const reply = replyToName !== undefined
+  const active = replyTargetRef === item.interactionRef
+  return <div data-world-comment-level={reply ? 'reply' : 'root'} style={{
+    ...(reply ? styles.interactionReply : styles.interactionRoot),
+    ...(compact ? {
+      gridTemplateColumns: `${String(reply ? 20 : 24)}px minmax(0,1fr)`,
+      gap: reply ? 6 : 7,
+      padding: reply ? '5px 0' : undefined,
+    } : {}),
+  }}>
+    <InteractionAvatar item={item} reply={reply} compact={compact} />
+    <div style={styles.interactionBody}>
+      <header style={styles.interactionMeta}>
+        <span style={styles.interactionAuthorLine}>
+          <strong style={{ ...styles.interactionAuthor, ...(reply ? styles.interactionReplyAuthor : {}), ...(compact ? { fontSize: reply ? 10 : 11 } : {}) }}>{item.authorName}</strong>
+          {replyToName !== undefined && <span style={{ ...styles.interactionReplyTarget, ...(compact ? { fontSize: 10 } : {}) }}>{`回复 ${replyToName}`}</span>}
+        </span>
+        {!compact && <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}
+      </header>
+      <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}), ...(compact ? { marginTop: 2, fontSize: reply ? 10 : 11 } : {}) }}>{item.textContent}</p>
+      {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
+    </div>
+  </div>
+}
+
+export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, compact = false, replyTargetRef, onReply }: {
+  rootRef: string
+  items: readonly ArkmeWorldInteractionItem[]
+  maxVisibleItems?: number
+  compact?: boolean
+  replyTargetRef?: string
+  onReply?(item: ArkmeWorldInteractionItem): void
+}) {
+  const limit = maxVisibleItems === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.trunc(maxVisibleItems))
+  let remaining = limit
+  const visible: WorldInteractionThread[] = []
+  for (const thread of worldInteractionThreads(rootRef, items)) {
+    if (remaining <= 0) break
+    const replies = thread.replies.slice(0, Math.max(0, remaining - 1))
+    visible.push({ root: thread.root, replies })
+    remaining -= 1 + replies.length
+  }
+  return <div style={{ ...styles.interactionList, ...(compact ? { margin: 0 } : {}) }} data-world-comment-preview={compact || undefined}>
+    {visible.map(thread => <section key={thread.root.interactionRef} style={{ ...styles.interactionThread, ...(compact ? { padding: '6px 0', borderBottom: 0 } : {}) }}>
+      <InteractionRow item={thread.root} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />
+      {thread.replies.length > 0 && <div style={{ ...styles.interactionReplyList, ...(compact ? { margin: '3px 0 0 31px', paddingLeft: 8 } : {}) }}>
+        {thread.replies.map(reply => <InteractionRow key={reply.item.interactionRef} item={reply.item} replyToName={reply.replyToName} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />)}
+      </div>}
+    </section>)}
+  </div>
+}
+
+function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(): void }) {
+  const [items, setItems] = useState<ArkmeWorldInteractionItem[]>([])
+  useEffect(() => {
+    if (item.extendCount <= 0) {
+      setItems([])
+      return
+    }
+    const controller = new AbortController()
+    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 3, offset: 0 }, controller.signal)
+      .then(page => { if (!controller.signal.aborted) setItems(page.items) })
+      .catch(() => { if (!controller.signal.aborted) setItems([]) })
+    return () => { controller.abort() }
+  }, [item.extendCount, item.recordRef])
+  if (items.length === 0) return null
+  const visibleCount = Math.min(3, items.length)
+  return <section style={styles.commentPreview} aria-label={`${item.authorName}的精选评论`}>
+    <WorldInteractionThreadList rootRef={item.recordRef} items={items} maxVisibleItems={3} compact />
+    <button type="button" style={styles.commentPreviewAction} aria-label={`查看${item.authorName}的全部评论`} onClick={onOpen}>
+      {item.extendCount > visibleCount ? `查看全部 ${String(item.extendCount)} 条评论` : '查看评论'}
+    </button>
+  </section>
+}
+
 function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint }: {
   item: ArkmeWorldFeedItem
   playable: boolean
@@ -223,6 +384,7 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
         {item.extendCount > 0 ? `评论：${String(item.extendCount)}` : '评论'}
       </button>
     </footer>
+    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} />}
     {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
     {previewIndex !== undefined && item.imageRefs[previewIndex] !== undefined && <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setPreviewIndex(undefined) }}>
       <section style={styles.previewModal}>
@@ -460,7 +622,15 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
     </header>
     {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
     {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
-    <div style={styles.interactionList}>{state.items.map(interaction => <article key={interaction.interactionRef} style={styles.interaction}><header style={styles.interactionMeta}><strong>{interaction.authorName}</strong><time>{dateTimeLabel(interaction.publishedAtMillis || interaction.createdAtMillis)}</time></header><p style={styles.text}>{interaction.textContent}</p><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction); textareaRef.current?.focus() }}>{replyTarget?.interactionRef === interaction.interactionRef ? '取消回复' : '回复'}</button></article>)}</div>
+    <WorldInteractionThreadList
+      rootRef={item.recordRef}
+      items={state.items}
+      {...(replyTarget === undefined ? {} : { replyTargetRef: replyTarget.interactionRef })}
+      onReply={interaction => {
+        setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction)
+        textareaRef.current?.focus()
+      }}
+    />
     {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
     {state.status === 'ready' && state.items.length === 0 && <p style={styles.subtitle}>还没有评论，来写第一条吧。</p>}
     <div style={styles.interactionComposer}>
