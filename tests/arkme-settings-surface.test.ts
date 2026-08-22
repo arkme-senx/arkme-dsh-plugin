@@ -38,6 +38,8 @@ describe('ArkmeSettingsSurface', () => {
     expect(redesignCss).toContain('overflow-y: auto')
     expect(redesignCss).toContain('.arkme-redesign-profile-menu button')
     expect(redesignCss).toContain('background: transparent')
+    expect(redesignCss).toContain('.arkme-native-desktop [data-arkme-owned="persistent-sidebar"] > [data-arkme-owned="product-navigation"]')
+    expect(redesignCss).toContain('padding-top: 28px !important')
     expect(shellSource).toContain("authState.auth.status !== 'authenticated'")
     expect(shellSource).toContain("ui.calendarOpen !== true")
     expect(shellSource).not.toContain("renderSlot('sidebar.settings'")

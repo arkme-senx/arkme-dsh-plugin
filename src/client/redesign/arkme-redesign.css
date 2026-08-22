@@ -24,6 +24,7 @@
 }
 .arkme-native-desktop .arkme-redesign-root { --arkme-native-titlebar: 50px; }
 .arkme-native-desktop .arkme-redesign-root::before { content: ""; position: absolute; z-index: 30; top: 49px; left: 0; right: 0; height: 1px; background: #e8e8ea; pointer-events: none; }
+.arkme-native-desktop [data-arkme-owned="persistent-sidebar"] > [data-arkme-owned="product-navigation"] { padding-top: 28px !important; }
 
 .arkme-redesign-rail {
   position: absolute;
