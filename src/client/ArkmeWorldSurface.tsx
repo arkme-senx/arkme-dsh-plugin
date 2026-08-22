@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -84,7 +84,7 @@ const styles: Record<string, CSSProperties> = {
   text: { margin: '9px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 13, lineHeight: 1.75 },
   imageGrid: { marginTop: 13, display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 },
   image: { width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 10, background: '#eef0f3' },
-  imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 10, overflow: 'hidden', background: '#eef0f3', cursor: 'zoom-in' },
+  imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 10, overflow: 'hidden', background: '#eef0f3', cursor: 'pointer' },
   cardFooter: { minHeight: 28, marginTop: 14, paddingTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${colors.border}` },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButton: { padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
@@ -207,6 +207,21 @@ export function WorldImagePreviewMedia({ imageRef, alt, zoomed = false }: { imag
 
 const worldImagePreviewSingleClickDelayMillis = 280
 
+export interface WorldImagePreviewDragOrigin {
+  pointerId: number
+  clientX: number
+  clientY: number
+  scrollLeft: number
+  scrollTop: number
+}
+
+export function worldImagePreviewDragPosition(origin: WorldImagePreviewDragOrigin, clientX: number, clientY: number): { left: number; top: number } {
+  return {
+    left: origin.scrollLeft + origin.clientX - clientX,
+    top: origin.scrollTop + origin.clientY - clientY,
+  }
+}
+
 export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect }: {
   item: ArkmeWorldFeedItem
   previewIndex: number
@@ -216,7 +231,11 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
   const imageRef = item.imageRefs[previewIndex]
   const viewportRef = useRef<HTMLDivElement>(null)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const dragOriginRef = useRef<WorldImagePreviewDragOrigin | undefined>(undefined)
+  const dragMovedRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
   const [zoomed, setZoomed] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
   const cancelScheduledClose = () => {
     if (closeTimerRef.current === undefined) return
@@ -227,6 +246,10 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
   useEffect(() => {
     cancelScheduledClose()
     setZoomed(false)
+    setDragging(false)
+    dragOriginRef.current = undefined
+    dragMovedRef.current = false
+    suppressNextClickRef.current = false
     const viewport = viewportRef.current
     if (viewport !== null) {
       viewport.scrollLeft = 0
@@ -239,6 +262,11 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
   const multiple = item.imageRefs.length > 1
 
   const handlePreviewClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false
+      cancelScheduledClose()
+      return
+    }
     if (event.detail > 1) {
       cancelScheduledClose()
       return
@@ -257,6 +285,8 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
     if (viewport === null) return
     if (zoomed) {
       setZoomed(false)
+      setDragging(false)
+      dragOriginRef.current = undefined
       window.requestAnimationFrame(() => {
         viewport.scrollLeft = 0
         viewport.scrollTop = 0
@@ -275,9 +305,52 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
     })
   }
 
+  const beginPreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!zoomed || event.button !== 0 || !event.isPrimary) return
+    const viewport = viewportRef.current
+    if (viewport === null) return
+    cancelScheduledClose()
+    dragOriginRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+    }
+    dragMovedRef.current = false
+    suppressNextClickRef.current = false
+    viewport.setPointerCapture(event.pointerId)
+    setDragging(true)
+  }
+
+  const movePreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    const viewport = viewportRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId || viewport === null) return
+    if (Math.abs(event.clientX - origin.clientX) > 2 || Math.abs(event.clientY - origin.clientY) > 2) dragMovedRef.current = true
+    const position = worldImagePreviewDragPosition(origin, event.clientX, event.clientY)
+    viewport.scrollLeft = position.left
+    viewport.scrollTop = position.top
+    event.preventDefault()
+  }
+
+  const endPreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId) return
+    dragOriginRef.current = undefined
+    suppressNextClickRef.current = dragMovedRef.current
+    dragMovedRef.current = false
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setDragging(false)
+  }
+
   const selectImage = (index: number) => {
     cancelScheduledClose()
     setZoomed(false)
+    setDragging(false)
+    dragOriginRef.current = undefined
+    dragMovedRef.current = false
+    suppressNextClickRef.current = false
     const viewport = viewportRef.current
     if (viewport !== null) {
       viewport.scrollLeft = 0
@@ -294,10 +367,14 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
       <div style={styles.previewStage}>
         <div
           ref={viewportRef}
-          style={{ ...styles.previewViewport, overflow: zoomed ? 'auto' : 'hidden', cursor: zoomed ? 'zoom-out' : 'zoom-in' }}
+          style={{ ...styles.previewViewport, overflow: zoomed ? 'auto' : 'hidden', cursor: zoomed ? (dragging ? 'grabbing' : 'grab') : 'default', touchAction: zoomed ? 'none' : 'auto' }}
           data-world-image-preview-zoomed={String(zoomed)}
           onClick={handlePreviewClick}
           onDoubleClick={handlePreviewDoubleClick}
+          onPointerDown={beginPreviewDrag}
+          onPointerMove={movePreviewDrag}
+          onPointerUp={endPreviewDrag}
+          onPointerCancel={endPreviewDrag}
         >
           <WorldImagePreviewMedia imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} zoomed={zoomed} />
         </div>

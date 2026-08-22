@@ -8,6 +8,7 @@ import {
   WorldImagePreviewMedia,
   WorldInteractionThreadList,
   voiceprintInvitePromptTitle,
+  worldImagePreviewDragPosition,
   worldInteractionThreads,
   type ArkmeWorldViewState,
 } from '../src/client/ArkmeWorldSurface.js'
@@ -212,10 +213,25 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('aria-label="上一张图片"')
     expect(markup).toContain('aria-label="下一张图片"')
     expect(markup).toContain('data-world-image-preview-zoomed="false"')
-    expect(markup).toContain('cursor:zoom-in')
+    expect(markup).toContain('cursor:default')
+    expect(markup).not.toContain('cursor:zoom-in')
     expect(markup).not.toContain('陈一涵 ·')
     expect(markup).not.toContain('1 / 2')
     expect(markup).not.toContain('>关闭</button>')
+  })
+
+  it('pans a zoomed image with desktop-style pointer dragging and never exposes a magnifier cursor', () => {
+    expect(worldImagePreviewDragPosition({
+      pointerId: 4,
+      clientX: 300,
+      clientY: 240,
+      scrollLeft: 120,
+      scrollTop: 180,
+    }, 250, 160)).toEqual({ left: 170, top: 260 })
+
+    const feed = render({ status: 'success', items: [{ ...item, imageRefs: ['portrait-3x4'], imageCount: 1 }] })
+    expect(feed).toContain('cursor:pointer')
+    expect(feed).not.toContain('cursor:zoom-in')
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {
