@@ -217,10 +217,11 @@ describe('Arkme native World surface', () => {
     expect(worldInteractionCountLabel(interactions.length, true)).toBe('评论 4+')
   })
 
-  it('places every full comment reply action on the far right', () => {
+  it('places every full comment reply action at the right edge of the final content line', () => {
     const markup = renderToStaticMarkup(<WorldInteractionThreadList rootRef={item.recordRef} items={interactions} onReply={noop} />)
 
-    expect(markup).toContain('justify-content:flex-end')
+    expect(markup).toContain('grid-template-columns:minmax(0,1fr) auto;align-items:end')
+    expect(markup).toContain('align-self:end')
     expect(markup).toContain('aria-label="回复阿七的评论"')
     expect(markup).toContain('aria-label="回复小满的评论"')
   })

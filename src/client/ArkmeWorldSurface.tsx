@@ -134,10 +134,10 @@ const styles: Record<string, CSSProperties> = {
   interactionAuthor: { color: colors.text, fontSize: 12, fontWeight: 650 },
   interactionReplyAuthor: { fontSize: 11 },
   interactionReplyTarget: { color: colors.secondary, fontSize: 11 },
-  interactionText: { margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 12, lineHeight: 1.55 },
+  interactionContentRow: { minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'end', gap: 10 },
+  interactionText: { minWidth: 0, margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 12, lineHeight: 1.55 },
   interactionReplyText: { fontSize: 11, lineHeight: 1.5 },
-  interactionActionRow: { minHeight: 24, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
-  interactionAction: { padding: '3px 0 3px 10px', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
+  interactionAction: { alignSelf: 'end', padding: '2px 0 1px 8px', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10, whiteSpace: 'nowrap' },
   interactionComposer: { padding: '2px 2px 0', background: 'transparent' },
   interactionComposerRow: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'end', gap: 9 },
   interactionInput: { width: '100%', height: 40, minHeight: 40, maxHeight: 96, resize: 'none', overflowY: 'auto', padding: '9px 11px', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, background: '#fff', font: 'inherit', fontSize: 12, lineHeight: 1.65, outline: 0 },
@@ -520,8 +520,10 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
         </span>
         <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
       </header>
-      <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}>{item.textContent}</p>
-      {onReply !== undefined && <div style={styles.interactionActionRow}><button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button></div>}
+      <div style={styles.interactionContentRow}>
+        <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}>{item.textContent}</p>
+        {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
+      </div>
     </div>
   </div>
 }
