@@ -162,6 +162,33 @@ function worldVoiceprintContent(item: Pick<ArkmeWorldFeedItem, 'headline' | 'tex
   return item.textContent.trim() !== '' ? item.textContent : item.headline
 }
 
+export function pendingWorldVoiceprintRecordRefs(
+  items: readonly Pick<ArkmeWorldFeedItem, 'recordRef'>[],
+  resolvedRefs: ReadonlySet<string>,
+): string[] {
+  const pending: string[] = []
+  const seen = new Set<string>()
+  for (const item of items) {
+    const recordRef = item.recordRef.trim()
+    if (recordRef === '' || resolvedRefs.has(recordRef) || seen.has(recordRef)) continue
+    seen.add(recordRef)
+    pending.push(recordRef)
+  }
+  return pending
+}
+
+export function mergeWorldVoiceprintPlayableRefs(
+  current: ReadonlySet<string>,
+  availability: ArkmeWorldVoiceprintAvailability,
+): Set<string> {
+  const next = new Set(current)
+  for (const item of availability.items) {
+    if (item.playable) next.add(item.recordRef)
+    else next.delete(item.recordRef)
+  }
+  return next
+}
+
 export function voiceprintInvitePromptTitle(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>, variantIndex = 0): string {
   return resolveWorldVoiceprintExpectationCopy(worldVoiceprintContent(item), variantIndex).prompt
 }
@@ -853,6 +880,8 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   const invitePresentationIndexesRef = useRef(new Map<string, number>())
   const inviteLoadTokenRef = useRef(0)
   const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
+  const resolvedVoiceprintRefsRef = useRef(new Set<string>())
+  const [voiceprintAvailabilityRevision, setVoiceprintAvailabilityRevision] = useState(0)
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
   const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
@@ -937,16 +966,29 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   }, [loadUser, target?.userId])
   useEffect(() => () => { loadController.current?.abort(); voiceprintTokenRef.current += 1; inviteLoadTokenRef.current += 1; audioRef.current?.pause() }, [])
   useEffect(() => {
-    if (state.status !== 'success' || state.items.length === 0) { setPlayableRefs(new Set()); return }
+    if (state.status !== 'success' || state.items.length === 0) return
+    const pendingRefs = pendingWorldVoiceprintRecordRefs(state.items, resolvedVoiceprintRefsRef.current)
+    if (pendingRefs.length === 0) return
     const controller = new AbortController()
-    void callArkme<ArkmeWorldVoiceprintAvailability>('world.voiceprint.availability', { recordRefs: state.items.map(item => item.recordRef).slice(0, 20) }, controller.signal)
-      .then(result => { setPlayableRefs(new Set(result.items.filter(item => item.playable).map(item => item.recordRef))) })
-      .catch(() => { if (!controller.signal.aborted) setPlayableRefs(new Set()) })
+    void (async () => {
+      for (let offset = 0; offset < pendingRefs.length; offset += 20) {
+        const result = await callArkme<ArkmeWorldVoiceprintAvailability>(
+          'world.voiceprint.availability',
+          { recordRefs: pendingRefs.slice(offset, offset + 20) },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        for (const item of result.items) resolvedVoiceprintRefsRef.current.add(item.recordRef)
+        setPlayableRefs(current => mergeWorldVoiceprintPlayableRefs(current, result))
+      }
+    })().catch(() => {})
     return () => { controller.abort() }
-  }, [state.items, state.status])
+  }, [state.items, state.status, voiceprintAvailabilityRevision])
 
   const refresh = () => {
     setActionMessage(undefined)
+    for (const item of state.items) resolvedVoiceprintRefsRef.current.delete(item.recordRef)
+    setVoiceprintAvailabilityRevision(current => current + 1)
     if (target === undefined) load(scope, 0, true)
     else loadUser(target, 0, true)
   }

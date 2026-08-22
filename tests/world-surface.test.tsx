@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   ArkmeWorldContent,
   ArkmeWorldSurface,
+  mergeWorldVoiceprintPlayableRefs,
+  pendingWorldVoiceprintRecordRefs,
   VoiceprintInviteDialog,
   WorldImagePreviewDialog,
   WorldImagePreviewMedia,
@@ -112,6 +114,27 @@ describe('Arkme native World surface', () => {
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')
     expect(refreshFailure).toContain('世界正文')
+  })
+
+  it('keeps existing voiceprint playback state when loading more World items', () => {
+    const firstPageAvailability = {
+      items: [{ recordRef: 'world_1', playable: true }],
+    }
+    const firstPagePlayableRefs = mergeWorldVoiceprintPlayableRefs(new Set(), firstPageAvailability)
+    const resolvedRefs = new Set(firstPageAvailability.items.map(entry => entry.recordRef))
+    const secondPageItem = { ...item, recordRef: 'world_2', authorName: '新页面作者' }
+
+    expect(pendingWorldVoiceprintRecordRefs([item, secondPageItem], resolvedRefs)).toEqual(['world_2'])
+
+    const afterLoadMore = mergeWorldVoiceprintPlayableRefs(firstPagePlayableRefs, {
+      items: [{ recordRef: 'world_2', playable: false }],
+    })
+    expect([...afterLoadMore]).toEqual(['world_1'])
+
+    const afterRefresh = mergeWorldVoiceprintPlayableRefs(afterLoadMore, {
+      items: [{ recordRef: 'world_1', playable: false }],
+    })
+    expect([...afterRefresh]).toEqual([])
   })
 
   it('renders a target user World homepage with mobile-equivalent back navigation and four states', () => {
