@@ -472,6 +472,12 @@ export function arkmeTimelineAvatarRef(item: ArkmeTimelineItem, profile?: ArkmeU
   return profileAvatarRef === '' ? undefined : profileAvatarRef
 }
 
+/** Every conversation timeline shows avatars, including the aggregate and personal topic views. */
+export function arkmeSourceShowsMessageAvatars(source: ArkmeSourceItem | undefined): boolean {
+  if (source === undefined) return false
+  return isArkmeSelfWorkspaceSource(source) || source.kind === 'private_chat' || source.kind === 'group_chat'
+}
+
 function MessageAvatar(props: {
   avatarRef?: string
   member?: ArkmeConversationMemberItem
@@ -1840,7 +1846,7 @@ export function ArkmeSurface({
       : undefined,
     [chatDirectory, detailState],
   )
-  const showMessageAvatars = source?.kind === 'private_chat' || source?.kind === 'group_chat'
+  const showMessageAvatars = arkmeSourceShowsMessageAvatars(source)
   const selfBreadcrumbLabel = isArkmeSelfWorkspaceSource(selectedSource)
     ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
     : undefined
