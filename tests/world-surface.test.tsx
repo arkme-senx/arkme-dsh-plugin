@@ -4,6 +4,7 @@ import {
   ArkmeWorldContent,
   ArkmeWorldSurface,
   VoiceprintInviteDialog,
+  WorldImagePreviewDialog,
   WorldImagePreviewMedia,
   WorldInteractionThreadList,
   voiceprintInvitePromptTitle,
@@ -187,10 +188,27 @@ describe('Arkme native World surface', () => {
   it('contains a 3:4 portrait image inside the preview stage without cropping it', () => {
     const markup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef="portrait-3x4" alt="3:4 竖图" />)
 
-    expect(markup).toContain('width:100%;height:100%;min-width:0;min-height:0')
-    expect(markup).toContain('overflow:hidden')
-    expect(markup).toContain('width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain')
+    expect(markup).toContain('position:absolute;inset:0;min-width:0;min-height:0;overflow:hidden')
+    expect(markup).toContain('position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain')
     expect(markup).not.toContain('object-fit:cover')
+  })
+
+  it('matches the desktop image viewer chrome without author metadata or a text close button', () => {
+    const markup = renderToStaticMarkup(<WorldImagePreviewDialog
+      item={{ ...item, imageRefs: ['portrait-3x4', 'landscape'], imageCount: 2 }}
+      previewIndex={0}
+      onClose={noop}
+      onSelect={noop}
+    />)
+
+    expect(markup).toContain('aria-label="关闭图片预览"')
+    expect(markup).toContain('title="关闭"')
+    expect(markup).toContain('<svg')
+    expect(markup).toContain('aria-label="上一张图片"')
+    expect(markup).toContain('aria-label="下一张图片"')
+    expect(markup).not.toContain('陈一涵 ·')
+    expect(markup).not.toContain('1 / 2')
+    expect(markup).not.toContain('>关闭</button>')
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {

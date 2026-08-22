@@ -3,6 +3,7 @@ import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwis
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeImagePayload,
   ArkmeUploadedAsset,
@@ -131,12 +132,13 @@ const styles: Record<string, CSSProperties> = {
   interactionComposer: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${colors.border}` },
   interactionComposerActions: { marginTop: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   interactionHint: { color: '#969ba5', fontSize: 10 },
-  previewModal: { width: 'min(960px, 94vw)', height: 'min(720px, 88vh)', padding: 14, boxSizing: 'border-box', display: 'grid', gridTemplateRows: '38px minmax(0,1fr)', borderRadius: 18, background: '#17191f' },
-  previewHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff', fontSize: 12 },
-  previewStage: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateColumns: '44px minmax(0,1fr) 44px', gridTemplateRows: 'minmax(0,1fr)', alignItems: 'center', gap: 10, overflow: 'hidden' },
-  previewMedia: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'hidden' },
-  previewImage: { display: 'block', width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10 },
-  previewButton: { width: 38, height: 38, border: 0, borderRadius: 10, background: 'rgba(255,255,255,.12)', color: '#fff', cursor: 'pointer' },
+  previewBackdrop: { position: 'fixed', inset: 0, zIndex: 1300, display: 'grid', placeItems: 'center', padding: '20px 10px', boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
+  previewModal: { position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
+  previewStage: { position: 'absolute', top: 30, right: 0, bottom: 20, left: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', borderRadius: 12 },
+  previewMedia: { position: 'absolute', inset: 0, minWidth: 0, minHeight: 0, overflow: 'hidden' },
+  previewImage: { position: 'absolute', inset: 0, display: 'block', width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none' },
+  previewClose: { position: 'absolute', top: 0, right: 8, zIndex: 2, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', cursor: 'pointer' },
+  previewNav: { position: 'absolute', top: '50%', zIndex: 2, width: 40, height: 40, marginTop: -20, padding: 0, border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', cursor: 'pointer', fontSize: 24, lineHeight: 1 },
   replyTarget: { marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.accent, fontSize: 12 },
 }
 
@@ -198,6 +200,31 @@ function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageR
 export function WorldImagePreviewMedia({ imageRef, alt }: { imageRef: string; alt: string }) {
   return <div style={styles.previewMedia}>
     <WorldImage imageRef={imageRef} alt={alt} preview />
+  </div>
+}
+
+export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect }: {
+  item: ArkmeWorldFeedItem
+  previewIndex: number
+  onClose(): void
+  onSelect(index: number): void
+}) {
+  const imageRef = item.imageRefs[previewIndex]
+  if (imageRef === undefined) return null
+  const multiple = item.imageRefs.length > 1
+  return <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.previewBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section style={styles.previewModal}>
+      <button type="button" style={styles.previewClose} aria-label="关闭图片预览" title="关闭" onClick={onClose}>
+        <X size={16} weight="bold" aria-hidden />
+      </button>
+      <div style={styles.previewStage}>
+        <WorldImagePreviewMedia imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} />
+        {multiple && <>
+          <button type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label="上一张图片" disabled={previewIndex === 0} onClick={() => { onSelect(Math.max(0, previewIndex - 1)) }}>‹</button>
+          <button type="button" style={{ ...styles.previewNav, right: 10, opacity: previewIndex === item.imageRefs.length - 1 ? 0.3 : 1 }} aria-label="下一张图片" disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { onSelect(Math.min(item.imageRefs.length - 1, previewIndex + 1)) }}>›</button>
+        </>}
+      </div>
+    </section>
   </div>
 }
 
@@ -363,6 +390,12 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
 }) {
   const [previewIndex, setPreviewIndex] = useState<number>()
   const interactionsId = interactionRegionId(item.recordRef)
+  useEffect(() => {
+    if (previewIndex === undefined) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewIndex(undefined) }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => { window.removeEventListener('keydown', closeOnEscape) }
+  }, [previewIndex])
   return <article style={styles.card} data-world-record-ref={item.recordRef}>
     <header style={styles.cardHeader}>
       <span style={styles.avatar}>{item.avatarRef === undefined
@@ -395,16 +428,7 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
     </footer>
     {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} />}
     {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
-    {previewIndex !== undefined && item.imageRefs[previewIndex] !== undefined && <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setPreviewIndex(undefined) }}>
-      <section style={styles.previewModal}>
-        <header style={styles.previewHeader}><span>{item.authorName} · {previewIndex + 1} / {item.imageRefs.length}</span><button type="button" style={styles.previewButton} onClick={() => { setPreviewIndex(undefined) }}>关闭</button></header>
-        <div style={styles.previewStage}>
-          <button type="button" style={styles.previewButton} disabled={previewIndex === 0} onClick={() => { setPreviewIndex(index => Math.max(0, (index ?? 0) - 1)) }}>‹</button>
-          <WorldImagePreviewMedia imageRef={item.imageRefs[previewIndex]!} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} />
-          <button type="button" style={styles.previewButton} disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { setPreviewIndex(index => Math.min(item.imageRefs.length - 1, (index ?? 0) + 1)) }}>›</button>
-        </div>
-      </section>
-    </div>}
+    {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
 
