@@ -7,7 +7,7 @@ import {
 } from '../src/client/ArkmeSettingsSurface.js'
 
 describe('ArkmeSettingsSurface', () => {
-  it('keeps update buttons on their original style hook and reserves the shared trailing alignment column', () => {
+  it('places update buttons before version values and reserves the shared trailing alignment column', () => {
     const appMarkup = renderToStaticMarkup(<VersionSettingsRow
       title="ArkME 客户端"
       version="v0.1.0"
@@ -19,10 +19,7 @@ describe('ArkmeSettingsSurface', () => {
       version="v0.1.0-rc.8"
     />)
 
-    expect(appMarkup).toContain('<span class="arkme-redesign-version-value">v0.1.0</span>')
-    expect(appMarkup).toContain('class="arkme-redesign-version-action-slot"')
-    expect(appMarkup).toContain('class="arkme-redesign-update-button"')
-    expect(appMarkup).toContain('</button></span><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
+    expect(appMarkup).toMatch(/class="arkme-redesign-version-action-slot"[\s\S]*class="arkme-redesign-update-button"[\s\S]*<span class="arkme-redesign-version-value">v0\.1\.0<\/span><span class="arkme-redesign-trailing-slot" aria-hidden="true"><\/span>/)
     expect(harnessMarkup).toContain('arkme-redesign-version-row is-without-action')
     expect(harnessMarkup).toContain('<span class="arkme-redesign-version-value">v0.1.0-rc.8</span><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
     expect(harnessMarkup).not.toContain('arkme-redesign-version-action-slot')
@@ -75,7 +72,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).not.toContain('id="arkme-settings-update"')
     expect(markup).not.toContain('<h2>更新</h2>')
     expect(markup).not.toContain('>关于 Arkme<')
-    expect(markup).toMatch(/ArkME 客户端[\s\S]*v0\.1\.0[\s\S]*检查更新[\s\S]*ArkME 插件[\s\S]*v…[\s\S]*检查更新[\s\S]*DeepSeek Harness[\s\S]*v0\.1\.0-rc\.8/)
+    expect(markup).toMatch(/ArkME 客户端[\s\S]*检查更新[\s\S]*v0\.1\.0[\s\S]*ArkME 插件[\s\S]*检查更新[\s\S]*v…[\s\S]*DeepSeek Harness[\s\S]*v0\.1\.0-rc\.8/)
     expect(markup).toContain('aria-label="检查 ArkME 客户端更新"')
     expect(markup).toContain('aria-label="检查 ArkME 插件更新"')
     expect(markup.match(/>检查更新<\/button>/g)).toHaveLength(2)
