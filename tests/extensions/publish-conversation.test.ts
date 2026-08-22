@@ -107,7 +107,7 @@ describe('extension publish conversation confirmation', () => {
 		}])
 		expect(prepared.question).toContain('https://github.com/example/weather')
 		expect(prepared.question).toContain('V2 沙箱 Bundle')
-		expect(prepared.question).toContain('V2 来源账号资格仍需服务端校验')
+		expect(prepared.question).not.toContain('来源账号资格')
 		expect(preflight).toHaveBeenCalledWith(expect.objectContaining({
 			githubRepositoryUrl: 'https://github.com/example/weather',
 		}), undefined)

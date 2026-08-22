@@ -10,6 +10,7 @@ import type {
   ArkmeExtensionCompleteDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionPreviewItem, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution,
   ArkmeInstalledExtensionView, ArkmeSharedExtensionDetail, ArkmeExtensionAuditResult,
 } from '../extensions/types.js'
+import { effectiveExtensionPublisherRole } from '../extensions/publisher-role.js'
 import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 import type { ArkmeOpenPrivateChatResult, ArkmeSourceItem } from '../types.js'
 import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
@@ -894,7 +895,9 @@ export function formatMarketplaceDate(value: number): string {
 }
 
 export function extensionCommunityAuthor(item: ArkmeExtensionCatalogItem): { name: string; github: boolean } {
-  if (item.source?.type === 'github_repository') return { name: 'GitHub', github: true }
+  if (effectiveExtensionPublisherRole(item) === 'importer' && item.source?.type === 'github_repository') {
+    return { name: 'GitHub', github: true }
+  }
   const ownerName = item.owner_name?.trim() ?? ''
   if (ownerName !== '') return { name: ownerName, github: false }
   return { name: extensionAuthorLabel(item), github: false }
@@ -931,6 +934,11 @@ export function extensionGithubProfileUrl(item: ArkmeExtensionCatalogItem): stri
 }
 
 function ExtensionAuthorAvatar({ item, size }: { item: ArkmeExtensionCatalogItem; size: number }) {
+  if (extensionCommunityAuthor(item).github) {
+    const githubAvatar = safeGithubAvatarUrl(item.source_author?.avatar_url)
+    if (githubAvatar !== undefined) return <img src={githubAvatar} alt="" style={{ width: size, height: size, flex: 'none', borderRadius: '50%', objectFit: 'cover' }} />
+    return <GitHubIdentityAvatar size={size} />
+  }
   const hasOwnerIdentity = (item.owner_user_id ?? 0) > 0
     || (item.owner_name?.trim() ?? '') !== ''
     || (item.owner_arkme_id?.trim() ?? '') !== ''
@@ -1027,8 +1035,9 @@ export function ArkmeExtensionAuthorTrigger({
 }
 
 export function extensionAuthorWorldTarget(
-  item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name' | 'owner_avatar_ref' | 'owner_avatar_fallback'>,
+  item: Pick<ArkmeExtensionCatalogItem, 'publisher_role' | 'source' | 'owner_user_id' | 'owner_name' | 'owner_avatar_ref' | 'owner_avatar_fallback'>,
 ): ArkmeWorldTarget | undefined {
+  if (effectiveExtensionPublisherRole(item) !== 'author') return undefined
   const userId = item.owner_user_id
   if (!Number.isSafeInteger(userId) || (userId ?? 0) <= 0) return undefined
   const displayName = item.owner_name?.replace(/\s+/g, ' ').trim() || '这位用户'

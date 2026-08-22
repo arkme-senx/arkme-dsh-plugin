@@ -891,8 +891,8 @@ function extensionSourceError(error: unknown): unknown {
 	if (!(error instanceof ArkmePluginError)) return error
 	const mapped: Record<string, { code: string; message: string; retryable: boolean; httpStatus: number }> = {
 		'arkme-code-40031': { code: 'extension-source-invalid', message: 'GitHub 来源参数无效', retryable: false, httpStatus: 400 },
-		'arkme-code-40331': { code: 'extension-source-publisher-forbidden', message: '当前账号不能发布 GitHub 来源扩展', retryable: false, httpStatus: 403 },
-		'arkme-code-50331': { code: 'extension-source-eligibility-unavailable', message: 'GitHub 来源发布资格暂时无法校验', retryable: true, httpStatus: 503 },
+		'arkme-code-40331': { code: 'extension-source-publisher-forbidden', message: '当前账号不能使用 GitHub 开源导入链路', retryable: false, httpStatus: 403 },
+		'arkme-code-50331': { code: 'extension-source-eligibility-unavailable', message: 'GitHub 开源导入资格暂时无法校验', retryable: true, httpStatus: 503 },
 		'arkme-code-40931': { code: 'extension-source-conflict', message: 'GitHub 来源与已发布扩展冲突', retryable: false, httpStatus: 409 },
 	}
 	const known = mapped[error.code]

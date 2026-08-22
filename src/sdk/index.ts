@@ -210,6 +210,7 @@ export type {
 	ArkmeExtensionShare,
 	ArkmeSharedExtensionDetail,
 	ArkmeExtensionSource,
+	ArkmeExtensionPublisherRole,
 } from '../extensions/types.js'
 export { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'

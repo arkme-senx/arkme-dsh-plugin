@@ -133,6 +133,10 @@ describe('Arkme extension tools', () => {
 			'properties.items.items.properties.github_repository_url.description',
 			'Optional canonical GitHub repository root used only as publisher-attested source metadata. It never selects an upload route.',
 		)
+    expect(publish?.parameters).not.toHaveProperty('properties.publication_mode')
+    expect(publish?.parameters).not.toHaveProperty('properties.publisher_role')
+    expect(publish?.parameters).not.toHaveProperty('properties.items.items.properties.publication_mode')
+    expect(publish?.parameters).not.toHaveProperty('properties.items.items.properties.publisher_role')
     expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
     expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('1 to 10')

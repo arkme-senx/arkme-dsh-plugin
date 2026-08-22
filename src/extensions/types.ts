@@ -20,6 +20,7 @@ export type ArkmeNativeCapability =
   | 'external_package_reference'
 export type ArkmeExtensionCatalogSort = 'rating' | 'comments' | 'opens' | 'created_at'
 export type ArkmeExtensionClassificationStatus = 'unavailable' | 'building' | 'ready' | 'failed' | 'empty'
+export type ArkmeExtensionPublisherRole = 'author' | 'importer'
 
 export interface ArkmeExtensionRatingSummary {
   average: number
@@ -98,6 +99,7 @@ export interface ArkmeExtensionCatalogItem {
   owner_avatar_ref?: string
   owner_avatar_fallback?: ArkmeExtensionReviewAvatarFallback
   source_author?: ArkmeExtensionSourceAuthor
+  publisher_role?: ArkmeExtensionPublisherRole
   visibility: ArkmeExtensionVisibility
   status?: 'active' | 'suspended' | 'deleted'
   latest_stable_version?: string

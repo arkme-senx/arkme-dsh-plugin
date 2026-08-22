@@ -436,12 +436,27 @@ describe('Arkme marketplace UI', () => {
     expect(extensionCommunityAuthor({
       extension_id: 'github/owned', name: '已绑定作者的 GitHub 扩展', description: '', visibility: 'public',
       owner_user_id: 77, owner_name: 'Quaso', owner_arkme_id: 'quaso',
+      publisher_role: 'author',
       source: { type: 'github_repository', url: 'https://github.com/octocat/weather', label: 'GitHub', verification: 'publisher_attested' },
-    })).toEqual({ name: 'GitHub', github: true })
+    })).toEqual({ name: 'Quaso', github: false })
     expect(formatCompactCount(999)).toBe('999')
     expect(formatCompactCount(2_300)).toBe('2.3k')
     expect(formatCompactCount(2_300_000)).toBe('2.3m')
     expect(formatMarketplaceDate(Date.UTC(2026, 7, 21))).toBe('2026/08/21')
+  })
+
+  it('keeps explicit author identity interactive when GitHub is only a separate source', () => {
+    const item = {
+      extension_id: 'arkme/github-author', name: '作者扩展', description: '', visibility: 'public' as const,
+      owner_user_id: 77, owner_name: 'Quaso', publisher_role: 'author' as const,
+      source: { type: 'github_repository' as const, url: 'https://github.com/quaso/extension', label: 'GitHub', verification: 'publisher_attested' as const },
+    }
+    expect(extensionAuthorWorldTarget(item)).toMatchObject({ userId: 77, displayName: 'Quaso' })
+    const html = renderToStaticMarkup(<ArkmeExtensionAuthorTrigger item={item} expanded onToggle={() => {}} />)
+    expect(html).toContain('data-extension-community-identity-row="author"')
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('Quaso')
+    expect(html).not.toContain('data-extension-author-direct-link="github"')
   })
 
   it('never sends unsupported sort parameters before the backend capability is enabled', () => {

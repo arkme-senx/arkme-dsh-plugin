@@ -200,6 +200,31 @@ describe('marketplace Host BFF', () => {
     expect(service.extensionAuthors).toHaveBeenCalledWith([77])
   })
 
+  it('does not resolve Jotmo author identity for imported or legacy GitHub entries', async () => {
+    const service = { extensionAuthors: vi.fn(async () => new Map()) }
+    const source = {
+      type: 'github_repository' as const,
+      url: 'https://github.com/example/imported',
+      label: 'GitHub',
+      verification: 'publisher_attested' as const,
+    }
+    const searchCatalog = vi.fn(async () => ({
+      items: [
+        { extension_id: 'ext-importer', name: '导入扩展', description: '', visibility: 'public' as const, owner_user_id: 77, publisher_role: 'importer' as const, source },
+        { extension_id: 'ext-legacy', name: '历史导入', description: '', visibility: 'public' as const, owner_user_id: 88, source },
+      ],
+      total: 2,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      service as never, 'extensions.catalog.list', {}, undefined, { searchCatalog } as never,
+    )).resolves.toMatchObject({ items: [
+      { extension_id: 'ext-importer', publisher_role: 'importer' },
+      { extension_id: 'ext-legacy' },
+    ] })
+    expect(service.extensionAuthors).not.toHaveBeenCalled()
+  })
+
   it('routes complete author deletion through the owned-inventory lifecycle owner', async () => {
     const deleteExtension = vi.fn(async () => ({
       extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123, installed: false, active: false,

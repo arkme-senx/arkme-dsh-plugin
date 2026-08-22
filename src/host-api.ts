@@ -16,6 +16,7 @@ import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort } from './extensions/types.js'
+import { effectiveExtensionPublisherRole } from './extensions/publisher-role.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
 import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 
@@ -149,11 +150,13 @@ async function enrichExtensionAuthors(
   items: readonly ArkmeExtensionCatalogItem[],
 ): Promise<ArkmeExtensionCatalogItem[]> {
   const ownerUserIds = [...new Set(items
+    .filter(item => effectiveExtensionPublisherRole(item) === 'author')
     .map(item => item.owner_user_id)
     .filter((userId): userId is number => Number.isSafeInteger(userId) && (userId ?? 0) > 0))]
   if (ownerUserIds.length === 0) return [...items]
   const authors = await service.extensionAuthors(ownerUserIds).catch(() => new Map())
   return items.map(item => {
+    if (effectiveExtensionPublisherRole(item) !== 'author') return item
     if (item.owner_user_id === undefined) return item
     const author = authors.get(item.owner_user_id)
     if (author === undefined) return item
