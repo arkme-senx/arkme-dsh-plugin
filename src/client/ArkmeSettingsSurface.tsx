@@ -68,8 +68,7 @@ export function VersionSettingsRow({
       <strong>{title}</strong>
       {feedback === undefined ? null : <small>{feedback}</small>}
     </span>
-    <span className="arkme-redesign-version-value">{version}</span>
-    {hasAction ? <>
+    {hasAction ?
       <span className="arkme-redesign-version-action-slot">
       <button
         type="button"
@@ -82,9 +81,9 @@ export function VersionSettingsRow({
         {loading ? <CircleNotch className="arkme-icon-spin" size={13} aria-hidden /> : null}
         {actionLabel}
       </button>
-      </span>
-      <span className="arkme-redesign-trailing-slot" aria-hidden />
-    </> : <span className="arkme-redesign-trailing-slot" aria-hidden />}
+      </span> : null}
+    <span className="arkme-redesign-version-value">{version}</span>
+    <span className="arkme-redesign-trailing-slot" aria-hidden />
   </div>
 }
 

@@ -82,4 +82,9 @@ describe('ArkmeSettingsSurface', () => {
     expect(adapterSource).toContain('[data-arkme-owned="persistent-sidebar"]')
     expect(adapterSource).not.toContain("document.querySelector<HTMLButtonElement>('button[aria-haspopup=\"dialog\"]')")
   })
+
+  it('scopes the settings-group heading rule away from nested dialog headings', () => {
+    expect(redesignCss).toContain('.arkme-redesign-settings-group > h2')
+    expect(redesignCss).not.toMatch(/\.arkme-redesign-settings-group h2\s*\{/)
+  })
 })

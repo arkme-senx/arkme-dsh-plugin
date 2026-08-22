@@ -470,7 +470,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-settings-profile p { margin: 0; overflow: hidden; color: #858992; font-size: 13px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-redesign-settings-group { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid #e1e2e5; border-radius: 0; background: transparent; }
 .arkme-redesign-settings-group:last-child { border-bottom: 0; }
-.arkme-redesign-settings-group h2 { margin: 0; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
+.arkme-redesign-settings-group > h2 { margin: 0; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
 .arkme-redesign-settings-group > div { padding: 0; }
 .arkme-redesign-setting-row {
   width: 100%;
