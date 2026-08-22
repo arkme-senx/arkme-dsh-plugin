@@ -34,6 +34,7 @@ function cloudItem() {
   return {
     extension_id: 'ext-owned', name: '天气助手', description: 'cloud description', owner_user_id: 7,
     visibility: 'private' as const, version: '1.0.0', latest_stable_version: '1.0.0',
+    package_name: '@arkme-generated/existing-weather',
     manifest: {
       format: 'arkme-cordis-extension' as const, format_version: 1 as const, name: '天气助手', description: 'cloud description',
       version: '1.0.0', runtime: { dsh: '>=0.1.0-rc.7', arkme_provider_contract: 1 },
@@ -225,11 +226,17 @@ describe('owned extension inventory', () => {
       dsh: { profile: { bundles: [packageName] } },
     })
     const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
-    const publishBundle = vi.fn(async () => ({ extension_id: 'ext-local', version: '1.0.0', status: 'published' as const }))
+    let published = false
+    const publishBundle = vi.fn(async () => {
+      published = true
+      return { extension_id: 'ext-local', version: '1.0.0', status: 'published' as const }
+    })
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
       refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
-      cloudList: async () => ({ items: [], total: 0 }),
+      cloudList: async () => published
+        ? { items: [{ ...cloudItem(), extension_id: 'ext-local', package_name: packageName }], total: 1 }
+        : { items: [], total: 0 },
       runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
       agents: { get: () => undefined }, publish: async () => { throw new Error('not used') }, publishBundle,
     })
@@ -281,11 +288,14 @@ describe('owned extension inventory', () => {
     store.close()
   })
 
-  it('preserves an explicit owned cloud identity when the Tool publishes a new version', async () => {
+  it('preserves an explicit owned cloud identity and package name when a new Cordis source publishes an update', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-tool-publish-'))
     const profile = join(root, 'profiles', 'web')
     writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
     const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const previousSessionSource = 'instance-1\0session-old\0weather-1'
+    store.claim('cordis', previousSessionSource, 7)
+    store.linkCloud('cordis', previousSessionSource, 7, 'ext-existing')
     const publish = vi.fn(async () => ({ extension_id: 'ext-existing', version: '1.1.0', status: 'published' as const }))
     const agent = { id: 'session-1' }
     const inventory = new ArkmeOwnedExtensionInventory({
@@ -314,7 +324,9 @@ describe('owned extension inventory', () => {
     const prepared = await inventory.preparePublish(input)
     await inventory.publish(prepared.input)
 
-    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ extensionId: 'ext-existing' }))
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-existing', packageName: '@arkme-generated/existing-weather',
+    }))
     expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-existing')
     await expect(inventory.preparePublish({ ...input, extensionId: undefined })).resolves.toMatchObject({
       input: expect.objectContaining({ extensionId: 'ext-existing' }),
@@ -328,6 +340,55 @@ describe('owned extension inventory', () => {
     await expect(inventory.publish({ ...input, version: '1.2.0' }))
       .rejects.toMatchObject({ code: 'extension-publish-target-mismatch' })
     expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-existing')
+    store.close()
+  })
+
+  it('rejects a native V3 update whose package.json name differs from the owned cloud package', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-native-package-identity-'))
+    const profile = join(root, 'profiles', 'web')
+    const local = join(root, 'Renamed Native Bundle')
+    const packageName = '@example/renamed-weather'
+    const prefix = createHash('sha256').update(packageName).digest('hex').slice(0, 16)
+    writeJson(join(local, 'package.json'), {
+      name: packageName, version: '1.1.0', description: '本地天气', files: ['lib', 'cordis.patch.yml'],
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    writeFileSync(join(local, 'cordis.patch.yml'), [
+      '- insert:', `    - id: arkme-${prefix}-main`, `      name: '${packageName}'`, '',
+    ].join('\n'))
+    mkdirSync(join(local, 'lib'), { recursive: true })
+    writeFileSync(join(local, 'lib', 'index.js'), 'export function apply() {}\n')
+    writeJson(join(profile, 'package.json'), {
+      dependencies: { [packageName]: 'link:../../Renamed Native Bundle' },
+      dsh: { profile: { bundles: [packageName] } },
+    })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const publishBundle = vi.fn(async () => ({
+      extension_id: 'ext-existing', version: '1.1.0', status: 'published' as const,
+    }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [{
+        ...cloudItem(), extension_id: 'ext-existing', package_name: '@example/original-weather',
+      }], total: 1 }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') }, publishBundle,
+    })
+    const page = await inventory.list()
+    const input = {
+      ownedRef: page.items.find(item => item.states.includes('persisted'))!.ownedRef,
+      extensionId: 'ext-existing', name: '本地天气', description: '', version: '1.1.0', visibility: 'private' as const,
+      clientMutationId: '9872fc8e-982a-49ce-934a-bb30e3b4233e',
+    }
+
+    await expect(inventory.preparePublish(input)).rejects.toMatchObject({
+      code: 'extension-package-identity-mismatch',
+    })
+    await expect(inventory.publish(input)).rejects.toMatchObject({
+      code: 'extension-package-identity-mismatch',
+    })
+    expect(publishBundle).not.toHaveBeenCalled()
     store.close()
   })
 
