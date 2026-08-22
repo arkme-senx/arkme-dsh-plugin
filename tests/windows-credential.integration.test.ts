@@ -11,6 +11,8 @@ describe.skipIf(process.platform !== 'win32')('Windows Credential Locker integra
     }
 
     try {
+      const initial = new ArkmeWindowsCredentialStore(service)
+      await expect(initial.read()).resolves.toBeUndefined()
       const writer = new ArkmeWindowsCredentialStore(service)
       await writer.write(session)
       const reader = new ArkmeWindowsCredentialStore(service)
@@ -19,6 +21,7 @@ describe.skipIf(process.platform !== 'win32')('Windows Credential Locker integra
       const afterDelete = new ArkmeWindowsCredentialStore(service)
       await expect(afterDelete.read()).resolves.toBeUndefined()
     } finally {
+      await new ArkmeWindowsCredentialStore(service).delete()
       await new ArkmeWindowsCredentialStore(service).delete()
     }
   })

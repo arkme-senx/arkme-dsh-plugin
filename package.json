@@ -35,6 +35,7 @@
   "files": [
     "lib",
     "assets/desktop_call",
+    "assets/windows",
     "cordis.patch.yml",
     "README.md",
     "docs/*.md"
@@ -65,13 +66,15 @@
     }
   },
   "scripts": {
-    "build": "pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "build": "pnpm run verify:windows-credential-helper && pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "build:windows-credential-helper": "node scripts/build-windows-credential-helper.mjs",
     "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
     "bundle": "node scripts/clean-bundle.mjs && tsdown",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
+    "verify:windows-credential-helper": "node scripts/verify-windows-credential-helper.mjs",
     "prepare": "pnpm run build"
   },
   "dependencies": {

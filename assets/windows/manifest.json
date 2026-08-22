@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "platform": "win32",
+  "arch": "x64",
+  "file": "arkme-credential-helper.exe",
+  "sha256": "8b598f3f4facb0c785c3fbc29ccddb75a08e90528ba02a55fc6c996442ec4a16",
+  "sourceSha256": "7e2267aa232d4fbe785d2ab88bd707ab6edacd88bd454fda7f8017ddfc0335b6",
+  "goVersion": "go version go1.25.5 darwin/arm64"
+}

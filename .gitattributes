@@ -1,2 +1,3 @@
 assets/desktop_call/** text eol=lf
 assets/icons/*.svg text eol=lf
+assets/windows/*.exe binary
