@@ -1,4 +1,4 @@
-const jotmoEmojiUnicodeById: Readonly<Record<string, string>> = {
+const arkmeEmojiUnicodeById: Readonly<Record<string, string>> = {
   angry_face: '😡',
   awkward_face: '😐',
   heart_eyes: '😍',
@@ -57,10 +57,10 @@ const jotmoEmojiUnicodeById: Readonly<Record<string, string>> = {
   fist_salute: '🙏',
 }
 
-const jotmoEmojiTokenPattern = /\[(?:jm_emoji|im_emoji):([a-z0-9_]+)\]/gu
+const arkmeEmojiTokenPattern = /\[(?:jm_emoji|im_emoji):([a-z0-9_]+)\]/gu
 
-/** Mirrors Jotmo mobile's plain-text fallback: known tokens render as emoji and unknown tokens remain intact. */
-export function jotmoEmojiPlainText(value: string): string {
+/** Mirrors the mobile client's plain-text fallback: known tokens render as emoji and unknown tokens remain intact. */
+export function arkmeEmojiPlainText(value: string): string {
   if (value === '' || !value.includes('_emoji:')) return value
-  return value.replace(jotmoEmojiTokenPattern, (token, emojiId: string) => jotmoEmojiUnicodeById[emojiId] ?? token)
+  return value.replace(arkmeEmojiTokenPattern, (token, emojiId: string) => arkmeEmojiUnicodeById[emojiId] ?? token)
 }

@@ -112,11 +112,11 @@ describe('Arkme rich content presentation', () => {
     }} />)
     expect(emojiHtml).not.toContain('data-arkme-text-collapsible')
 
-    const jotmoEmojiHtml = renderToStaticMarkup(<ArkmeMessageContent item={{
-      itemUid: 'jotmo-emoji', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+    const arkmeEmojiHtml = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'arkme-emoji', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
       title: '', textContent: '[jm_emoji:angry_face]'.repeat(301),
     }} />)
-    expect(jotmoEmojiHtml).not.toContain('data-arkme-text-collapsible')
+    expect(arkmeEmojiHtml).not.toContain('data-arkme-text-collapsible')
   })
 
   it.each([

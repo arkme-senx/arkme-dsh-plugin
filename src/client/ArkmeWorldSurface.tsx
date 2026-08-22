@@ -22,7 +22,7 @@ import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } f
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
-import { jotmoEmojiPlainText } from './jotmo-emoji.js'
+import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type { ArkmeWorldTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
 
@@ -509,7 +509,7 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
         </span>
         {!compact && <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}
       </header>
-      <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}), ...(compact ? { marginTop: 2, fontSize: reply ? 10 : 11 } : {}) }}>{jotmoEmojiPlainText(item.textContent)}</p>
+      <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}), ...(compact ? { marginTop: 2, fontSize: reply ? 10 : 11 } : {}) }}>{arkmeEmojiPlainText(item.textContent)}</p>
       {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
     </div>
   </div>
@@ -602,8 +602,8 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
-    {item.headline !== '' && <h2 style={styles.headline}>{jotmoEmojiPlainText(item.headline)}</h2>}
-    {item.textContent.trim() !== '' && <p style={styles.text}>{jotmoEmojiPlainText(item.textContent)}</p>}
+    {item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
+    {item.textContent.trim() !== '' && <p style={styles.text}>{arkmeEmojiPlainText(item.textContent)}</p>}
     {item.imageRefs.length > 0 && <div style={styles.imageGrid}>{item.imageRefs.slice(0, 3).map((imageRef, index) =>
       <button key={imageRef} type="button" style={styles.imageButton} aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}`} onClick={() => { setPreviewIndex(index) }}>
         <WorldImage imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(index + 1)}`} />
