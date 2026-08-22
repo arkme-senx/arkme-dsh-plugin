@@ -106,13 +106,16 @@ describe('Arkme native World surface', () => {
     expect(success).toContain('陈一涵')
     expect(success).toContain('一段世界标题')
     expect(success).toContain('世界正文')
-    expect(success).toContain('评论 2')
+    expect(success).toContain('2 条评论')
     expect(success).toContain('aria-label="播放陈一涵的声纹"')
     expect(success).not.toContain('用发布者的声音朗读')
     expect(success).not.toContain('查看 2 条互动')
 
     const unavailable = render({ status: 'success', items: [item] }, new Set())
     expect(unavailable).toContain('aria-label="邀请陈一涵开启声纹"')
+
+    const withoutComments = render({ status: 'success', items: [{ ...item, extendCount: 0 }] })
+    expect(withoutComments).toContain('0 条评论')
 
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')

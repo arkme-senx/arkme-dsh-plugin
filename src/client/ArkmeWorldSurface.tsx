@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -89,7 +90,7 @@ const styles: Record<string, CSSProperties> = {
   imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: '#f1f1f3', cursor: 'pointer' },
   cardFooter: { minHeight: 24, marginTop: 9, paddingTop: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  commentButton: { padding: '3px 0', border: 0, background: 'transparent', color: '#7e828b', cursor: 'pointer', font: 'inherit', fontSize: 10 },
+  commentButton: { padding: '3px 0', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: '#7e848e', cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButtonActive: { color: colors.accent, fontWeight: 600 },
   commentPreview: { position: 'relative', marginTop: 6, padding: '8px 12px', overflow: 'hidden', borderRadius: 10, background: colors.subtle },
   commentPreviewHitTarget: { position: 'absolute', inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
@@ -607,8 +608,8 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
   }, [])
   const interactionsId = interactionRegionId(item.recordRef)
   const interactionLabel = interactionCount === undefined
-    ? (item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论')
-    : worldInteractionCountLabel(interactionCount.count, interactionCount.hasMore)
+    ? `${String(Math.max(0, item.extendCount))} 条评论`
+    : `${String(interactionCount.count)}${interactionCount.hasMore ? '+' : ''} 条评论`
   useEffect(() => {
     if (previewIndex === undefined) return
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewIndex(undefined) }
@@ -642,7 +643,7 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
       </button>)}</div>}
     <footer style={styles.cardFooter}>
       <button type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
-        {interactionLabel}
+        <ChatCircleDots size={16} weight="light" aria-hidden />{interactionLabel}
       </button>
     </footer>
     {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} onCountResolved={resolveInteractionCount} />}
