@@ -15,7 +15,7 @@ import {
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
-  extensionNativeInstallWarning, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
+  extensionNativeInstallWarning, filterMarketplaceMenuOptions, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
 } from '../../src/client/ArkmeMarketplace.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
 import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
@@ -98,6 +98,19 @@ describe('Arkme marketplace UI', () => {
     expect(extensionTabLoadMode(new Set(['discover']), 'installed')).toBe('initial')
   })
 
+  it('filters category menu options locally with trimmed case-insensitive text', () => {
+    const options = [
+      { value: 'all', label: '全部 · 307' },
+      { value: 'dev', label: '开发工具 · 44' },
+      { value: 'ai', label: 'AI 工具集成 · 8' },
+    ] as const
+
+    expect(filterMarketplaceMenuOptions(options, '  开发  ')).toEqual([options[1]])
+    expect(filterMarketplaceMenuOptions(options, 'ai')).toEqual([options[2]])
+    expect(filterMarketplaceMenuOptions(options, '不存在')).toEqual([])
+    expect(filterMarketplaceMenuOptions(options, ' ')).toBe(options)
+  })
+
   it('renders the marketplace as a page with separate visible category and sort entries', () => {
     const html = renderToStaticMarkup(<ArkmeMarketplace displayMode="page" />)
     expect(html).toContain('role="region"')
@@ -115,7 +128,7 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('aria-label="扩展分类"')
     expect(html).toContain('分类：全部')
     expect(html).toContain('aria-label="扩展排序"')
-    expect(html).toContain('排序：最新创建')
+    expect(html).toContain('排序：评分最高')
     expect(html.match(/aria-haspopup="listbox"/g)).toHaveLength(2)
     expect(html).not.toContain('排序接口完成后启用')
   })

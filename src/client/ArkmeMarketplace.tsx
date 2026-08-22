@@ -34,6 +34,10 @@ import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, ne
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
+import {
+  DEFAULT_MARKETPLACE_SORT, readMarketplaceSortPreference, writeMarketplaceSortPreference,
+  type MarketplaceSort,
+} from './marketplace-sort-preference.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
@@ -234,10 +238,19 @@ const styles: Record<string, CSSProperties> = {
     background: colors.surface, color: colors.text, font: 'inherit', fontSize: 12, cursor: 'pointer',
   },
   marketplaceMenu: {
-    position: 'absolute', zIndex: 20, top: 46, right: 0, width: 190, padding: 6,
-    maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
+    position: 'absolute', zIndex: 20, top: 46, right: 0, width: 190, maxHeight: 320,
+    display: 'flex', flexDirection: 'column', overflow: 'hidden',
     boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 12,
     background: colors.surface, boxShadow: '0 12px 32px rgba(20, 24, 31, .16)',
+  },
+  marketplaceMenuSearchWrap: { flex: 'none', padding: 6, borderBottom: `1px solid ${colors.border}` },
+  marketplaceMenuSearch: {
+    width: '100%', height: 34, boxSizing: 'border-box', padding: '0 10px',
+    border: `1px solid ${colors.border}`, borderRadius: 8, outline: 0,
+    background: colors.subtle, color: colors.text, font: 'inherit', fontSize: 12,
+  },
+  marketplaceMenuList: {
+    minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 6,
   },
   marketplaceMenuOption: {
     width: '100%', minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
@@ -247,6 +260,10 @@ const styles: Record<string, CSSProperties> = {
   marketplaceMenuHint: {
     margin: '4px 4px 2px', padding: '8px 7px 4px', borderTop: `1px solid ${colors.border}`,
     color: colors.caption, fontSize: 10, lineHeight: '16px',
+  },
+  marketplaceMenuEmpty: {
+    minHeight: 72, display: 'grid', placeItems: 'center', padding: '10px 12px', boxSizing: 'border-box',
+    color: colors.caption, fontSize: 11, lineHeight: '17px', textAlign: 'center',
   },
   communityGrid: {
     display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 220px), 1fr))',
@@ -542,7 +559,6 @@ type MarketplaceAuthorFilter = {
   ownerUserId: number
   ownerName: string
 }
-type MarketplaceSort = 'rating' | 'comments' | 'opens' | 'created_at'
 const MARKET_SORTS: ReadonlyArray<{ value: MarketplaceSort; label: string }> = [
   { value: 'rating', label: '评分最高' },
   { value: 'comments', label: '评论最多' },
@@ -556,7 +572,19 @@ function MarketplaceChevron({ open }: { open: boolean }) {
   </svg>
 }
 
-function MarketplaceMenu<T extends string>({ ariaLabel, triggerLabel, value, options, available = true, hint, unavailableHint, onChange }: {
+export function filterMarketplaceMenuOptions<T extends string>(
+  options: ReadonlyArray<{ value: T; label: string }>,
+  query: string,
+): ReadonlyArray<{ value: T; label: string }> {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  if (normalizedQuery === '') return options
+  return options.filter(option => option.label.toLocaleLowerCase().includes(normalizedQuery))
+}
+
+function MarketplaceMenu<T extends string>({
+  ariaLabel, triggerLabel, value, options, available = true, hint, unavailableHint,
+  searchable = false, searchPlaceholder = '搜索选项', emptySearchLabel = '未找到相关选项', onChange,
+}: {
   ariaLabel: string
   triggerLabel: string
   value: T
@@ -564,18 +592,28 @@ function MarketplaceMenu<T extends string>({ ariaLabel, triggerLabel, value, opt
   available?: boolean
   hint?: string
   unavailableHint?: string
+  searchable?: boolean
+  searchPlaceholder?: string
+  emptySearchLabel?: string
   onChange: (value: T) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
+  const visibleOptions = searchable ? filterMarketplaceMenuOptions(options, menuSearchQuery) : options
+
+  const closeMenu = () => {
+    setOpen(false)
+    setMenuSearchQuery('')
+  }
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return
     const closeOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) closeMenu()
     }
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') closeMenu()
     }
     document.addEventListener('pointerdown', closeOutside, true)
     document.addEventListener('keydown', closeOnEscape)
@@ -592,32 +630,50 @@ function MarketplaceMenu<T extends string>({ ariaLabel, triggerLabel, value, opt
       aria-label={ariaLabel}
       aria-haspopup="listbox"
       aria-expanded={open}
-      onClick={() => { setOpen(current => !current) }}
+      onClick={() => {
+        if (open) closeMenu()
+        else setOpen(true)
+      }}
     >
       <span>{triggerLabel}</span>
       <MarketplaceChevron open={open} />
     </button>
-    {open && <div role="listbox" aria-label={`${ariaLabel}选项`} style={styles.marketplaceMenu}>
-      {options.map(option => {
-        const selected = option.value === value
-        const disabled = !available && !selected
-        return <button
-          key={option.value}
-          type="button"
-          role="option"
-          aria-selected={selected}
-          disabled={disabled}
-          style={{
-            ...styles.marketplaceMenuOption,
-            ...(selected ? { background: colors.subtle, color: colors.text, fontWeight: 600 } : {}),
-            ...(disabled ? { opacity: .45, cursor: 'not-allowed' } : {}),
-          }}
-          onClick={() => { onChange(option.value); setOpen(false) }}
-        >
-          <span>{option.label}</span>
-          {selected && <span aria-hidden>✓</span>}
-        </button>
-      })}
+    {open && <div style={styles.marketplaceMenu}>
+      {searchable && <div style={styles.marketplaceMenuSearchWrap}>
+        <input
+          type="search"
+          autoFocus
+          aria-label={searchPlaceholder}
+          placeholder={searchPlaceholder}
+          value={menuSearchQuery}
+          style={styles.marketplaceMenuSearch}
+          onChange={event => { setMenuSearchQuery(event.currentTarget.value) }}
+        />
+      </div>}
+      <div role="listbox" aria-label={`${ariaLabel}选项`} style={styles.marketplaceMenuList}>
+        {visibleOptions.map(option => {
+          const selected = option.value === value
+          const disabled = !available && !selected
+          return <button
+            key={option.value}
+            type="button"
+            role="option"
+            aria-selected={selected}
+            disabled={disabled}
+            style={{
+              ...styles.marketplaceMenuOption,
+              ...(selected ? { background: colors.subtle, color: colors.text, fontWeight: 600 } : {}),
+              ...(disabled ? { opacity: .45, cursor: 'not-allowed' } : {}),
+            }}
+            onClick={() => { onChange(option.value); closeMenu() }}
+          >
+            <span>{option.label}</span>
+            {selected && <span aria-hidden>✓</span>}
+          </button>
+        })}
+      </div>
+      {menuSearchQuery.trim() !== '' && visibleOptions.length === 0
+        && <div role="status" style={styles.marketplaceMenuEmpty}>{emptySearchLabel}</div>}
       {hint !== undefined && <div role="note" style={styles.marketplaceMenuHint}>{hint}</div>}
       {!available && unavailableHint !== undefined && <div role="note" style={styles.marketplaceMenuHint}>{unavailableHint}</div>}
     </div>}
@@ -1588,7 +1644,7 @@ export function ArkmeMarketplace({
   const [classificationTree, setClassificationTree] = useState<ArkmeExtensionClassificationTree>({
     status: 'unavailable', categories: [], total_extensions: 0, total_categories: 0,
   })
-  const [sort, setSort] = useState<MarketplaceSort>('created_at')
+  const [sort, setSort] = useState<MarketplaceSort>(() => readMarketplaceSortPreference(currentUserId))
   const [catalogTotal, setCatalogTotal] = useState<number>()
   const [discoverNextCursor, setDiscoverNextCursor] = useState<string>()
   const [loadingMoreDiscover, setLoadingMoreDiscover] = useState(false)
@@ -1678,6 +1734,10 @@ export function ArkmeMarketplace({
     setRestarting(false)
     setInstallError('DSH 重启超时，请手动重启后刷新页面。')
   }
+
+  useEffect(() => {
+    setSort(readMarketplaceSortPreference(currentUserId))
+  }, [currentUserId])
 
   useEffect(() => {
     classificationController.current?.abort()
@@ -2430,6 +2490,9 @@ export function ArkmeMarketplace({
           triggerLabel={`分类：${selectedCategoryName}`}
           value={category}
           options={categoryOptions}
+          searchable
+          searchPlaceholder="搜索扩展分类"
+          emptySearchLabel="未找到相关分类"
           {...(classificationHint === undefined ? {} : { hint: classificationHint })}
           onChange={value => {
             setCategory(value)
@@ -2438,12 +2501,17 @@ export function ArkmeMarketplace({
         />
         <MarketplaceMenu
           ariaLabel="扩展排序"
-          triggerLabel={`排序：${MARKET_SORTS.find(option => option.value === sort)?.label ?? '最新创建'}`}
+          triggerLabel={`排序：${MARKET_SORTS.find(option => option.value === sort)?.label
+            ?? MARKET_SORTS.find(option => option.value === DEFAULT_MARKETPLACE_SORT)?.label
+            ?? '评分最高'}`}
           value={sort}
           options={MARKET_SORTS}
           available={sortingEnabled}
           unavailableHint="排序接口暂未同步，当前保持最新创建。"
-          onChange={setSort}
+          onChange={value => {
+            setSort(value)
+            writeMarketplaceSortPreference(currentUserId, value)
+          }}
         />
       </div>
     </div>}
