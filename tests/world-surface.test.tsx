@@ -105,8 +105,7 @@ describe('Arkme native World surface', () => {
     expect(success).toContain('陈一涵')
     expect(success).toContain('一段世界标题')
     expect(success).toContain('世界正文')
-    expect(success).toContain('查看评论')
-    expect(success).not.toContain('评论 2')
+    expect(success).toContain('评论 2')
     expect(success).toContain('aria-label="播放陈一涵的声纹"')
     expect(success).not.toContain('用发布者的声音朗读')
     expect(success).not.toContain('查看 2 条互动')
@@ -182,9 +181,8 @@ describe('Arkme native World surface', () => {
   it('keeps complete comments inline under the selected World item', () => {
     const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
 
-    expect(markup).not.toContain('aria-expanded="true"')
-    expect(markup).not.toContain('aria-controls="world-comments-world_1"')
-    expect(markup).toContain('id="world-comments-world_1"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('aria-controls="world-comments-world_1"')
     expect(markup).toContain('data-world-layout="comments-open"')
     expect(markup).toContain('data-world-feed-pane="true"')
     expect(markup).toContain('data-world-comment-panel="inline"')
@@ -215,8 +213,8 @@ describe('Arkme native World surface', () => {
       { ref: 'reply_2', replyToName: '小满' },
     ])
     expect(threads[1]?.root.interactionRef).toBe('comment_2')
-    expect(worldInteractionCountLabel(interactions.length)).toBe('4 条评论')
-    expect(worldInteractionCountLabel(interactions.length, true)).toBe('4+ 条评论')
+    expect(worldInteractionCountLabel(interactions.length)).toBe('评论 4')
+    expect(worldInteractionCountLabel(interactions.length, true)).toBe('评论 4+')
   })
 
   it('places every full comment reply action at the right edge of the final content line', () => {
@@ -300,25 +298,15 @@ describe('Arkme native World surface', () => {
     expect(feed).not.toContain('cursor:zoom-in')
   })
 
-  it('uses the compact preview as the only comment entry and shows its resolved count inside', () => {
+  it('uses one click target for the compact preview without repeating a view-comments label', () => {
     const markup = renderToStaticMarkup(<WorldInteractionPreviewContent item={{ ...item, extendCount: 8 }} items={interactions} onOpen={noop} />)
 
-    expect(markup).toContain('aria-label="打开陈一涵的评论，共 4 条"')
+    expect(markup).toContain('aria-label="打开陈一涵的评论面板，共 8 条评论"')
     expect(markup).toContain('第一条评论')
     expect(markup).toContain('回复第一条')
     expect(markup).not.toContain('第二条评论')
-    expect(markup).toContain('>共 4 条</span>')
+    expect(markup).not.toContain('查看评论')
     expect(markup).not.toContain('查看全部')
-  })
-
-  it('keeps the right-side comment entry only for posts without comments', () => {
-    const withoutComments = render({ status: 'success', items: [{ ...item, extendCount: 0 }] })
-    const withComments = render({ status: 'success', items: [item] })
-
-    expect(withoutComments).toContain('aria-controls="world-comments-world_1"')
-    expect(withoutComments).toContain('>评论</button>')
-    expect(withComments).not.toContain('aria-controls="world-comments-world_1"')
-    expect(withComments).toContain('>查看评论</span>')
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {
