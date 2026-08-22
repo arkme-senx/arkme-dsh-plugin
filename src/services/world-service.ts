@@ -132,6 +132,10 @@ function integerValue(value: unknown): number {
 function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
+function isTopLevelWorldRecord(raw: unknown): boolean {
+  return stringValue(objectValue(raw).parent_record_uid).trim() === ''
+}
+
 function safeFailureMessage(error: unknown): string {
   if (error instanceof ArkmePluginError) return error.message
   if (error instanceof Error && error.message.trim() !== '') return error.message
@@ -310,18 +314,28 @@ export class WorldService {
   ): Promise<ArkmeWorldFeedPage> {
     const session = await this.runtime.requireSession()
     const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
-    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
-    const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
-      '/api/v1/public-record/my-list', { limit, offset }, session, options.signal,
-    )
-    const rawItems = listValue(data.list)
-    const resolvedAvatars = await this.resolveWorldAvatarUrls(rawItems, session, options.signal)
-    const projected = await Promise.all(rawItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
-    const items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
-    const total = Math.max(0, Math.trunc(numberValue(data.total)))
-    const nextOffset = offset + rawItems.length
-    const hasMore = rawItems.length > 0 && nextOffset < total
-    return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
+    let offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    let total = 0
+    let items: ArkmeWorldFeedItem[] = []
+    let hasMore = false
+    let attempts = 0
+
+    do {
+      const data = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+        '/api/v1/public-record/my-list', { limit, offset }, session, options.signal,
+      )
+      const rawItems = listValue(data.list)
+      const rootItems = rawItems.filter(isTopLevelWorldRecord)
+      const resolvedAvatars = await this.resolveWorldAvatarUrls(rootItems, session, options.signal)
+      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+      items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
+      total = Math.max(0, Math.trunc(numberValue(data.total)))
+      offset += rawItems.length
+      hasMore = rawItems.length > 0 && offset < total
+      attempts += 1
+    } while (items.length === 0 && hasMore && attempts < 4)
+
+    return { items, total, hasMore, ...(hasMore ? { nextOffset: offset } : {}) }
   }
 
   async listUserWorldFeed(
@@ -346,7 +360,7 @@ export class WorldService {
       )
       const rawItems = listValue(data.list)
       total = Math.max(0, Math.trunc(numberValue(data.total)))
-      const rootItems = rawItems.filter(raw => stringValue(objectValue(raw).parent_record_uid).trim() === '')
+      const rootItems = rawItems.filter(isTopLevelWorldRecord)
       const resolvedAvatars = await this.resolveWorldAvatarUrls(rootItems, session, options.signal)
       const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
       items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)

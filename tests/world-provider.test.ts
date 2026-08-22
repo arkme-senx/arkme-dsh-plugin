@@ -50,21 +50,64 @@ describe('world Provider projection', () => {
       expect(String(input)).toBe('https://world.test/api/v1/public-record/my-list')
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
       expect(JSON.parse(String(init?.body))).toEqual({ limit: 10, offset: 20 })
-      return json({ code: 200, data: { list: [{
-        record_uid: 'mine-record-1', user_id: 10001, nick_name: '依涵', text_content: '我的公开快记',
-        images: [], videos: [], voices: [], extend_count: 0,
-      }], total: 21 } })
+      return json({ code: 200, data: { list: [
+        {
+          record_uid: 'mine-record-1', user_id: 10001, nick_name: '依涵', text_content: '我的公开快记',
+          images: [], videos: [], voices: [], extend_count: 0,
+        },
+        {
+          record_uid: 'mine-comment-1', parent_record_uid: 'another-user-record', user_id: 10001,
+          nick_name: '依涵', text_content: '我在别人快记下的评论', images: [], videos: [], voices: [], extend_count: 1,
+        },
+        {
+          record_uid: 'mine-reply-1', parent_record_uid: 'another-user-comment', user_id: 10001,
+          nick_name: '依涵', text_content: '我对别人评论的回复', images: [], videos: [], voices: [], extend_count: 0,
+        },
+      ], total: 23 } })
     })
     const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
 
     const page = await service.listMyWorldFeed({ limit: 10, offset: 20 })
 
     expect(page).toMatchObject({
-      total: 21,
+      total: 23,
       hasMore: false,
       items: [{ authorName: '依涵', textContent: '我的公开快记' }],
     })
     expect(JSON.stringify(page)).not.toContain('mine-record-1')
+    expect(JSON.stringify(page)).not.toContain('我在别人快记下的评论')
+    expect(JSON.stringify(page)).not.toContain('我对别人评论的回复')
+  })
+
+  it('continues past comment-only owner pages until it finds a published World post', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const offsets: number[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { limit: number; offset: number }
+      offsets.push(body.offset)
+      if (body.offset === 0) {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'mine-comment-only', parent_record_uid: 'another-user-record', user_id: 10001,
+          nick_name: '依涵', text_content: '只有评论的第一页', images: [], videos: [], voices: [], extend_count: 0,
+        }], total: 2 } })
+      }
+      return json({ code: 200, data: { list: [{
+        record_uid: 'mine-root-page-2', user_id: 10001, nick_name: '依涵', text_content: '第二页的本人快记',
+        images: [], videos: [], voices: [], extend_count: 0,
+      }], total: 2 } })
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+
+    const page = await service.listMyWorldFeed({ limit: 1 })
+
+    expect(offsets).toEqual([0, 1])
+    expect(page).toMatchObject({
+      total: 2,
+      hasMore: false,
+      items: [{ authorName: '依涵', textContent: '第二页的本人快记' }],
+    })
+    expect(JSON.stringify(page)).not.toContain('只有评论的第一页')
   })
 
   it('lists one user World homepage through the mobile user-list contract and skips comment records', async () => {
