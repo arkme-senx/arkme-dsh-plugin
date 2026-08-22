@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeAuthSnapshot } from '../types.js'
 import { ArkmeAuthChecking, useArkmeAuthFlow, type ArkmeAuthFlowController, type ArkmePhoneBindingGate } from './arkme-auth-flow.js'
 import { ArkmeLogin } from './ArkmeLogin.js'
@@ -55,14 +55,26 @@ export function startupAuthGateScreen(
   auth: ArkmeAuthSnapshot | undefined,
   phoneBindingGate: ArkmePhoneBindingGate,
   error: string,
+  loginRequested = false,
 ): ArkmeStartupGateScreen {
-  if (auth === undefined) return error === '' ? 'checking' : 'error'
-  if (auth.status === 'authenticated') {
+  if (auth?.status === 'authenticated') {
     if (phoneBindingGate === 'ready') return 'authenticated'
     if (phoneBindingGate === 'required') return 'login'
-    return error === '' ? 'checking' : 'error'
+    if (error === '') return 'checking'
+    return loginRequested ? 'login' : 'error'
   }
+  if (loginRequested) return 'login'
+  if (auth === undefined) return error === '' ? 'checking' : 'error'
   return 'login'
+}
+
+export function enterStartupLogin(
+  login: Pick<ArkmeAuthFlowController['loginProps'], 'mode' | 'onModeChange' | 'onWechatLogin'>,
+  requestLogin: () => void,
+): void {
+  requestLogin()
+  login.onModeChange(login.mode)
+  if (login.mode === 'wechat') login.onWechatLogin()
 }
 
 /** Close any Host-owned modal before its AppFrame branch becomes inert. */
@@ -112,12 +124,14 @@ export function ArkmeStartupAuthGateView({
   error,
   busy,
   onRetry,
+  onLogin = onRetry,
   flow,
 }: {
   screen: ArkmeStartupGateScreen
   error: string
   busy: boolean
   onRetry(): void
+  onLogin?(): void
   flow?: ArkmeAuthFlowController
 }) {
   if (screen === 'authenticated') return null
@@ -127,8 +141,8 @@ export function ArkmeStartupAuthGateView({
       <section style={styles.errorCard} role="alert">
         <h1 style={styles.errorTitle}>暂时无法确认登录状态</h1>
         <p style={styles.errorText}>{error}</p>
-        <button type="button" style={styles.retry} disabled={busy} onClick={onRetry}>
-          {busy ? '正在重试…' : '重试'}
+        <button type="button" style={styles.retry} disabled={busy} onClick={onLogin}>
+          前往登录
         </button>
       </section>
     </div>
@@ -143,7 +157,8 @@ export function ArkmeStartupAuthGateView({
 
 export function ArkmeStartupAuthGate() {
   const flow = useArkmeAuthFlow()
-  const screen = startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error)
+  const [loginRequested, setLoginRequested] = useState(false)
+  const screen = startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error, loginRequested)
   const rootRef = useRef<HTMLDivElement>(null)
   const gateActiveRef = useRef(false)
 
@@ -180,6 +195,7 @@ export function ArkmeStartupAuthGate() {
       error={flow.error}
       busy={flow.busy}
       onRetry={flow.retry}
+      onLogin={() => { enterStartupLogin(flow.loginProps, () => { setLoginRequested(true) }) }}
       flow={flow}
     />
   </div>

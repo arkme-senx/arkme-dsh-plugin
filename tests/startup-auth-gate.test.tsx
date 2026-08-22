@@ -1,3 +1,4 @@
+import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as startupAuthGateModule from '../src/client/ArkmeStartupAuthGate.js'
@@ -39,6 +40,33 @@ describe('Arkme startup authentication gate', () => {
     expect(startupAuthGateScreen({ status: 'authenticated', environment: 'prod', userId: 1 }, 'ready', '')).toBe('authenticated')
   })
 
+  it('enters login when the user chooses login from an authentication error', () => {
+    expect(startupAuthGateScreen(undefined, 'unknown', '网络连接失败', true)).toBe('login')
+  })
+
+  it('returns to authentication checking after login succeeds', () => {
+    const authenticated = { status: 'authenticated', environment: 'prod', userId: 1 } as const
+    expect(startupAuthGateScreen(authenticated, 'unknown', '', true)).toBe('checking')
+    expect(startupAuthGateScreen(authenticated, 'checking', '', true)).toBe('checking')
+  })
+
+  it('enters the selected login mode and starts QR login only for WeChat', () => {
+    const enterLogin = Reflect.get(startupAuthGateModule, 'enterStartupLogin') as unknown
+    expect(enterLogin).toBeTypeOf('function')
+    if (typeof enterLogin !== 'function') return
+
+    for (const mode of ['wechat', 'phone', 'test'] as const) {
+      const requestLogin = vi.fn()
+      const onModeChange = vi.fn()
+      const onWechatLogin = vi.fn()
+      enterLogin({ mode, onModeChange, onWechatLogin }, requestLogin)
+
+      expect(requestLogin).toHaveBeenCalledOnce()
+      expect(onModeChange).toHaveBeenCalledWith(mode)
+      expect(onWechatLogin).toHaveBeenCalledTimes(mode === 'wechat' ? 1 : 0)
+    }
+  })
+
   it('renders checking and retry states while authenticated removes the overlay surface', () => {
     expect(renderToStaticMarkup(<ArkmeStartupAuthGateView screen="checking" error="" busy={false} onRetry={() => undefined} />))
       .toContain('正在确认登录状态')
@@ -46,10 +74,25 @@ describe('Arkme startup authentication gate', () => {
       <ArkmeStartupAuthGateView screen="error" error="网络连接失败" busy={false} onRetry={() => undefined} />,
     )
     expect(errorMarkup).toContain('网络连接失败')
-    expect(errorMarkup).toContain('重试')
+    expect(errorMarkup).toContain('前往登录')
     expect(renderToStaticMarkup(
       <ArkmeStartupAuthGateView screen="authenticated" error="" busy={false} onRetry={() => undefined} />,
     )).toBe('')
+  })
+
+  it('routes the authentication error action to login instead of retry', () => {
+    const onRetry = vi.fn()
+    const onLogin = vi.fn()
+    const view = ArkmeStartupAuthGateView({
+      screen: 'error', error: '网络连接失败', busy: false, onRetry, onLogin,
+    }) as ReactElement<{ children: ReactElement<{ children: ReactNode }> }>
+    const button = Children.toArray(view.props.children.props.children)
+      .find(child => isValidElement(child) && child.type === 'button') as ReactElement<{ onClick(): void }>
+
+    button.props.onClick()
+
+    expect(onLogin).toHaveBeenCalledOnce()
+    expect(onRetry).not.toHaveBeenCalled()
   })
 
   it('makes every AppFrame sibling inert and restores its exact accessibility state', () => {
