@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ArkmeWorldContent,
   ArkmeWorldSurface,
+  cachedWorldImageDataUrl,
+  cachedWorldVoiceprintPlayableRefs,
+  cachedWorldVoiceprintResolvedRefs,
+  loadWorldImageDataUrl,
   mergeWorldVoiceprintPlayableRefs,
   pendingWorldVoiceprintRecordRefs,
+  rememberWorldVoiceprintAvailability,
   VoiceprintInviteDialog,
   WorldInfiniteScrollTrigger,
   WorldImagePreviewDialog,
@@ -165,6 +170,29 @@ describe('Arkme native World surface', () => {
       items: [{ recordRef: 'world_1', playable: false }],
     })
     expect([...afterRefresh]).toEqual([])
+  })
+
+  it('reuses confirmed voiceprint availability when the World surface is opened again', () => {
+    const recordRef = 'world_cached_voiceprint'
+    rememberWorldVoiceprintAvailability({ items: [{ recordRef, playable: true }] })
+
+    expect(cachedWorldVoiceprintResolvedRefs()).toContain(recordRef)
+    expect(cachedWorldVoiceprintPlayableRefs()).toContain(recordRef)
+    expect(pendingWorldVoiceprintRecordRefs([{ recordRef }], cachedWorldVoiceprintResolvedRefs())).toEqual([])
+  })
+
+  it('deduplicates World image reads and renders a cached image without a loading placeholder', async () => {
+    const imageRef = 'world_cached_image'
+    const reader = vi.fn(async () => ({ mediaType: 'image/png' as const, bytes: 5, dataBase64: 'aGVsbG8=' }))
+
+    await expect(loadWorldImageDataUrl(imageRef, reader)).resolves.toBe('data:image/png;base64,aGVsbG8=')
+    await expect(loadWorldImageDataUrl(imageRef, reader)).resolves.toBe('data:image/png;base64,aGVsbG8=')
+
+    expect(reader).toHaveBeenCalledOnce()
+    expect(cachedWorldImageDataUrl(imageRef)).toBe('data:image/png;base64,aGVsbG8=')
+    const markup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef={imageRef} alt="缓存图片" />)
+    expect(markup).toContain('src="data:image/png;base64,aGVsbG8="')
+    expect(markup).not.toContain('data-world-image-preview-loading')
   })
 
   it('uses the demo compact white-feed language without introducing demo-only actions', () => {

@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeImageBytes,
@@ -56,8 +56,15 @@ interface ArkmeWorldRecordRefEntry {
   expiresAtMillis: number
 }
 
+interface ArkmeWorldAvatarResolutionCacheEntry {
+  sourceUrl: string
+  expiresAtMillis: number
+}
+
 const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_IMAGE_REFS = 2048
+const ARKME_WORLD_AVATAR_RESOLUTION_CACHE_TTL_MILLIS = 5 * 60 * 1000
+const MAX_ARKME_WORLD_AVATAR_RESOLUTION_CACHE_ENTRIES = 2048
 const ARKME_WORLD_RECORD_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_RECORD_REFS = 4096
 const ARKME_VOICEPRINT_PLAY_SCOPE = 2
@@ -250,8 +257,18 @@ function worldAvatarResolutionKey(ownerUserId: number, avatarRef: string): strin
   return `${String(ownerUserId)}|${normalized}`
 }
 
+function worldImageAssetIdentity(raw: string): string {
+  try {
+    const parsed = new URL(raw.trim())
+    return `${parsed.hostname.toLowerCase()}${parsed.pathname}`
+  } catch {
+    return raw.trim()
+  }
+}
+
 export class WorldService {
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
+  private readonly worldAvatarResolutionCache = new Map<string, ArkmeWorldAvatarResolutionCacheEntry>()
   private readonly worldRecordRefs = new Map<string, ArkmeWorldRecordRefEntry>()
   private readonly voiceprintSocialCache = new Map<string, ArkmeWorldVoiceprintSocialCacheEntry>()
   private readonly voiceprintSocialInFlight = new Map<string, Promise<ArkmeWorldVoiceprintSocialContext>>()
@@ -265,6 +282,7 @@ export class WorldService {
 
   dispose(): void {
     this.worldImageRefs.clear()
+    this.worldAvatarResolutionCache.clear()
     this.worldRecordRefs.clear()
     this.voiceprintSocialCache.clear()
     this.voiceprintSocialInFlight.clear()
@@ -1071,12 +1089,20 @@ export class WorldService {
       : rawAvatar
     const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
     const imageRefs: string[] = []
-    for (const signedUrl of rawImages.slice(0, 9)) {
+    for (const [index, signedUrl] of rawImages.slice(0, 9).entries()) {
       if (!this.isTrustedWorldImageUrl(signedUrl)) continue
-      imageRefs.push(await this.sealWorldImageRef(viewerUserId, signedUrl))
+      imageRefs.push(await this.sealWorldImageRef(
+        viewerUserId,
+        signedUrl,
+        `record:${recordUid}:image:${String(index)}:${worldImageAssetIdentity(signedUrl)}`,
+      ))
     }
     const avatarRef = this.isTrustedWorldImageUrl(avatarUrl)
-      ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
+      ? await this.sealWorldImageRef(
+        viewerUserId,
+        avatarUrl,
+        `avatar:${String(ownerUserId)}:${rawAvatar.startsWith('file_asset://') ? rawAvatar : worldImageAssetIdentity(avatarUrl)}`,
+      )
       : undefined
     return {
       recordRef: await this.worldRecordRef(viewerUserId, recordUid, {
@@ -1128,19 +1154,32 @@ export class WorldService {
       if (key !== '') requested.set(key, { owner_user_id: ownerUserId, avatar_ref: avatarRef })
     }
     if (requested.size === 0) return new Map()
+    const now = Date.now()
+    for (const [key, entry] of this.worldAvatarResolutionCache) {
+      if (entry.expiresAtMillis <= now) this.worldAvatarResolutionCache.delete(key)
+    }
+    const resolved = new Map<string, string>()
+    for (const [key] of requested) {
+      const cached = this.worldAvatarResolutionCache.get(key)
+      if (cached === undefined) continue
+      this.worldAvatarResolutionCache.delete(key)
+      this.worldAvatarResolutionCache.set(key, cached)
+      resolved.set(key, cached.sourceUrl)
+    }
+    const unresolved = [...requested].filter(([key]) => !resolved.has(key)).map(([, value]) => value)
+    if (unresolved.length === 0) return resolved
     let data: Record<string, unknown>
     try {
       data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
         '/api/v1/auth/resolve-avatar-refs',
-        { items: [...requested.values()] },
+        { items: unresolved },
         session,
         signal,
       )
     } catch {
       // Avatar decoration is best-effort; the World feed remains usable with its fallback avatar.
-      return new Map()
+      return resolved
     }
-    const resolved = new Map<string, string>()
     for (const raw of listValue(data.items)) {
       const item = objectValue(raw)
       const ownerUserId = Math.trunc(numberValue(item.owner_user_id))
@@ -1149,6 +1188,16 @@ export class WorldService {
       const url = stringValue(item.url).trim()
       if (!requested.has(key) || !this.isTrustedWorldImageUrl(url)) continue
       resolved.set(key, url)
+      this.worldAvatarResolutionCache.delete(key)
+      this.worldAvatarResolutionCache.set(key, {
+        sourceUrl: url,
+        expiresAtMillis: Date.now() + ARKME_WORLD_AVATAR_RESOLUTION_CACHE_TTL_MILLIS,
+      })
+    }
+    while (this.worldAvatarResolutionCache.size > MAX_ARKME_WORLD_AVATAR_RESOLUTION_CACHE_ENTRIES) {
+      const oldest = this.worldAvatarResolutionCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.worldAvatarResolutionCache.delete(oldest)
     }
     return resolved
   }
@@ -1175,7 +1224,11 @@ export class WorldService {
       : rawAvatar
     const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
     const avatarRef = this.isTrustedWorldImageUrl(avatarUrl)
-      ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
+      ? await this.sealWorldImageRef(
+        viewerUserId,
+        avatarUrl,
+        `avatar:${String(ownerUserId)}:${rawAvatar.startsWith('file_asset://') ? rawAvatar : worldImageAssetIdentity(avatarUrl)}`,
+      )
       : undefined
     return {
       interactionRef: await this.worldRecordRef(viewerUserId, recordUid, {
@@ -1259,11 +1312,14 @@ export class WorldService {
     }
   }
 
-  private async sealWorldImageRef(viewerUserId: number, sourceUrl: string): Promise<string> {
+  private async sealWorldImageRef(viewerUserId: number, sourceUrl: string, stableIdentity: string): Promise<string> {
     const now = Date.now()
     this.pruneWorldImageRefs(now)
-    const token = randomUUID()
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+    const uniqueCode = await this.runtime.stateStore.uniqueCode()
+    const token = createHmac('sha256', uniqueCode)
+      .update(`world-image-token-v1:${String(viewerUserId)}:${stableIdentity}`)
+      .digest('base64url')
+    const signature = createHmac('sha256', uniqueCode)
       .update(`world-image-v1:${String(viewerUserId)}:${token}`)
       .digest('base64url')
     this.worldImageRefs.set(token, {

@@ -180,6 +180,54 @@ function worldVoiceprintContent(item: Pick<ArkmeWorldFeedItem, 'headline' | 'tex
   return item.textContent.trim() !== '' ? item.textContent : item.headline
 }
 
+const WORLD_VOICEPRINT_AVAILABILITY_CACHE_TTL_MILLIS = 5 * 60 * 1000
+const MAX_WORLD_VOICEPRINT_AVAILABILITY_CACHE_ENTRIES = 2048
+
+interface WorldVoiceprintAvailabilityCacheEntry {
+  playable: boolean
+  expiresAtMillis: number
+}
+
+const worldVoiceprintAvailabilityCache = new Map<string, WorldVoiceprintAvailabilityCacheEntry>()
+
+function pruneWorldVoiceprintAvailabilityCache(now = Date.now()): void {
+  for (const [recordRef, entry] of worldVoiceprintAvailabilityCache) {
+    if (entry.expiresAtMillis <= now) worldVoiceprintAvailabilityCache.delete(recordRef)
+  }
+  while (worldVoiceprintAvailabilityCache.size > MAX_WORLD_VOICEPRINT_AVAILABILITY_CACHE_ENTRIES) {
+    const oldest = worldVoiceprintAvailabilityCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    worldVoiceprintAvailabilityCache.delete(oldest)
+  }
+}
+
+export function rememberWorldVoiceprintAvailability(availability: ArkmeWorldVoiceprintAvailability): void {
+  const expiresAtMillis = Date.now() + WORLD_VOICEPRINT_AVAILABILITY_CACHE_TTL_MILLIS
+  for (const item of availability.items) {
+    const recordRef = item.recordRef.trim()
+    if (recordRef === '') continue
+    worldVoiceprintAvailabilityCache.delete(recordRef)
+    worldVoiceprintAvailabilityCache.set(recordRef, { playable: item.playable, expiresAtMillis })
+  }
+  pruneWorldVoiceprintAvailabilityCache()
+}
+
+export function cachedWorldVoiceprintResolvedRefs(): Set<string> {
+  pruneWorldVoiceprintAvailabilityCache()
+  return new Set(worldVoiceprintAvailabilityCache.keys())
+}
+
+export function cachedWorldVoiceprintPlayableRefs(): Set<string> {
+  pruneWorldVoiceprintAvailabilityCache()
+  return new Set([...worldVoiceprintAvailabilityCache]
+    .filter(([, entry]) => entry.playable)
+    .map(([recordRef]) => recordRef))
+}
+
+function invalidateWorldVoiceprintAvailability(recordRefs: readonly string[]): void {
+  for (const recordRef of recordRefs) worldVoiceprintAvailabilityCache.delete(recordRef)
+}
+
 export function pendingWorldVoiceprintRecordRefs(
   items: readonly Pick<ArkmeWorldFeedItem, 'recordRef'>[],
   resolvedRefs: ReadonlySet<string>,
@@ -226,22 +274,140 @@ async function withTimeout<T>(promise: Promise<T>, millis: number, message: stri
   finally { if (timer !== undefined) clearTimeout(timer) }
 }
 
+const WORLD_IMAGE_CACHE_TTL_MILLIS = 10 * 60 * 1000
+const MAX_WORLD_IMAGE_CACHE_ENTRIES = 96
+const MAX_WORLD_IMAGE_CACHE_BYTES = 32 * 1024 * 1024
+
+interface WorldImageCacheEntry {
+  dataUrl: string | undefined
+  pending: Promise<string> | undefined
+  estimatedBytes: number
+  expiresAtMillis: number
+}
+
+const worldImageDataUrlCache = new Map<string, WorldImageCacheEntry>()
+let worldImageCacheBytes = 0
+
+function deleteWorldImageCacheEntry(imageRef: string): void {
+  const entry = worldImageDataUrlCache.get(imageRef)
+  if (entry === undefined) return
+  worldImageCacheBytes = Math.max(0, worldImageCacheBytes - entry.estimatedBytes)
+  worldImageDataUrlCache.delete(imageRef)
+}
+
+function pruneWorldImageCache(now = Date.now()): void {
+  for (const [imageRef, entry] of worldImageDataUrlCache) {
+    if (entry.expiresAtMillis <= now) deleteWorldImageCacheEntry(imageRef)
+  }
+  while (worldImageDataUrlCache.size > MAX_WORLD_IMAGE_CACHE_ENTRIES || worldImageCacheBytes > MAX_WORLD_IMAGE_CACHE_BYTES) {
+    const oldestResolved = [...worldImageDataUrlCache].find(([, entry]) => entry.pending === undefined)?.[0]
+    const oldest = oldestResolved ?? worldImageDataUrlCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    deleteWorldImageCacheEntry(oldest)
+  }
+}
+
+function touchWorldImageCacheEntry(imageRef: string, entry: WorldImageCacheEntry): void {
+  worldImageDataUrlCache.delete(imageRef)
+  worldImageDataUrlCache.set(imageRef, entry)
+}
+
+export function cachedWorldImageDataUrl(imageRef: string): string | undefined {
+  const normalized = imageRef.trim()
+  if (normalized === '') return undefined
+  const entry = worldImageDataUrlCache.get(normalized)
+  if (entry === undefined) return undefined
+  if (entry.expiresAtMillis <= Date.now()) {
+    deleteWorldImageCacheEntry(normalized)
+    return undefined
+  }
+  touchWorldImageCacheEntry(normalized, entry)
+  return entry.dataUrl
+}
+
+type WorldImageReader = (imageRef: string) => Promise<ArkmeImagePayload>
+
+const readWorldImage: WorldImageReader = async imageRef => await callArkme<ArkmeImagePayload>('world.image.read', { imageRef })
+
+export function loadWorldImageDataUrl(imageRef: string, reader: WorldImageReader = readWorldImage): Promise<string> {
+  const normalized = imageRef.trim()
+  if (normalized === '') return Promise.reject(new Error('世界图片引用为空'))
+  const cached = worldImageDataUrlCache.get(normalized)
+  if (cached !== undefined && cached.expiresAtMillis > Date.now()) {
+    touchWorldImageCacheEntry(normalized, cached)
+    if (cached.dataUrl !== undefined) return Promise.resolve(cached.dataUrl)
+    if (cached.pending !== undefined) return cached.pending
+  } else if (cached !== undefined) {
+    deleteWorldImageCacheEntry(normalized)
+  }
+
+  const entry: WorldImageCacheEntry = {
+    dataUrl: undefined,
+    pending: undefined,
+    estimatedBytes: 0,
+    expiresAtMillis: Date.now() + WORLD_IMAGE_CACHE_TTL_MILLIS,
+  }
+  const pending = reader(normalized).then(image => {
+    const dataUrl = `data:${image.mediaType};base64,${image.dataBase64}`
+    if (worldImageDataUrlCache.get(normalized) === entry) {
+      entry.dataUrl = dataUrl
+      entry.pending = undefined
+      entry.estimatedBytes = Math.ceil(image.dataBase64.length * 0.75)
+      entry.expiresAtMillis = Date.now() + WORLD_IMAGE_CACHE_TTL_MILLIS
+      worldImageCacheBytes += entry.estimatedBytes
+      touchWorldImageCacheEntry(normalized, entry)
+      pruneWorldImageCache()
+    }
+    return dataUrl
+  }).catch(error => {
+    if (worldImageDataUrlCache.get(normalized) === entry) deleteWorldImageCacheEntry(normalized)
+    throw error
+  })
+  entry.pending = pending
+  worldImageDataUrlCache.set(normalized, entry)
+  pruneWorldImageCache()
+  return pending
+}
+
 function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
-  const [source, setSource] = useState('')
+  const [source, setSource] = useState(() => cachedWorldImageDataUrl(imageRef) ?? '')
   const [failed, setFailed] = useState(false)
+  const [readyToLoad, setReadyToLoad] = useState(() => avatar || preview || cachedWorldImageDataUrl(imageRef) !== undefined)
+  const placeholderRef = useRef<HTMLSpanElement>(null)
   useEffect(() => {
-    const controller = new AbortController()
-    setSource('')
+    const cached = cachedWorldImageDataUrl(imageRef)
+    setSource(cached ?? '')
     setFailed(false)
-    void callArkme<ArkmeImagePayload>('world.image.read', { imageRef }, controller.signal)
-      .then(image => { setSource(`data:${image.mediaType};base64,${image.dataBase64}`) })
-      .catch(() => { if (!controller.signal.aborted) setFailed(true) })
-    return () => { controller.abort() }
-  }, [imageRef])
+    if (cached !== undefined || avatar || preview) {
+      setReadyToLoad(true)
+      return
+    }
+    setReadyToLoad(false)
+    const target = placeholderRef.current
+    if (target === null || typeof IntersectionObserver === 'undefined') {
+      setReadyToLoad(true)
+      return
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      setReadyToLoad(true)
+      observer.disconnect()
+    }, { rootMargin: '320px 0px' })
+    observer.observe(target)
+    return () => { observer.disconnect() }
+  }, [avatar, imageRef, preview])
+  useEffect(() => {
+    if (!readyToLoad || source !== '' || failed) return
+    let active = true
+    void loadWorldImageDataUrl(imageRef)
+      .then(dataUrl => { if (active) setSource(dataUrl) })
+      .catch(() => { if (active) setFailed(true) })
+    return () => { active = false }
+  }, [failed, imageRef, readyToLoad, source])
   const imageStyle = avatar ? styles.avatarImage : preview ? styles.previewImage : styles.image
-  if (preview && source === '') return <span style={imageStyle} aria-hidden data-world-image-preview-loading={failed ? 'failed' : 'true'} />
   if (failed) return <span style={imageStyle} aria-label={`${alt}加载失败`} />
-  return <img src={source || undefined} alt={preview ? '' : alt} loading={avatar || preview ? 'eager' : 'lazy'} draggable={preview ? false : undefined} style={imageStyle} />
+  if (source === '') return <span ref={placeholderRef} style={imageStyle} aria-hidden data-world-image-loading="true" {...(preview ? { 'data-world-image-preview-loading': 'true' } : {})} />
+  return <img src={source} alt={preview ? '' : alt} loading={avatar || preview ? 'eager' : 'lazy'} draggable={preview ? false : undefined} style={imageStyle} />
 }
 
 export function WorldImagePreviewMedia({ imageRef, alt, zoomed = false }: { imageRef: string; alt: string; zoomed?: boolean }) {
@@ -1012,8 +1178,8 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   const [inviteSocialContext, setInviteSocialContext] = useState<ArkmeWorldVoiceprintSocialContext>()
   const invitePresentationIndexesRef = useRef(new Map<string, number>())
   const inviteLoadTokenRef = useRef(0)
-  const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
-  const resolvedVoiceprintRefsRef = useRef(new Set<string>())
+  const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => cachedWorldVoiceprintPlayableRefs())
+  const resolvedVoiceprintRefsRef = useRef(cachedWorldVoiceprintResolvedRefs())
   const [voiceprintAvailabilityRevision, setVoiceprintAvailabilityRevision] = useState(0)
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
   const [voiceprintLoadingRecordRef, setVoiceprintLoadingRecordRef] = useState<string>()
@@ -1147,6 +1313,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
           controller.signal,
         )
         if (controller.signal.aborted) return
+        rememberWorldVoiceprintAvailability(result)
         for (const item of result.items) resolvedVoiceprintRefsRef.current.add(item.recordRef)
         setPlayableRefs(current => mergeWorldVoiceprintPlayableRefs(current, result))
       }
@@ -1156,6 +1323,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
 
   const refresh = () => {
     setActionMessage(undefined)
+    invalidateWorldVoiceprintAvailability(state.items.map(item => item.recordRef))
     for (const item of state.items) resolvedVoiceprintRefsRef.current.delete(item.recordRef)
     setVoiceprintAvailabilityRevision(current => current + 1)
     if (target === undefined) load(scope, 0, true)

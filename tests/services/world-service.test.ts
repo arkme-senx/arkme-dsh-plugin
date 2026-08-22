@@ -177,6 +177,77 @@ describe('WorldService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('keeps avatar and published-image refs stable across World reloads while refreshing signed URLs', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestIndex = 0
+    const fetchImpl = vi.fn(async () => {
+      requestIndex += 1
+      return new Response(JSON.stringify({ code: 200, data: {
+        list: [{
+          record_uid: 'record-1', user_id: 7, nick_name: '小明', text_content: '带图片的世界',
+          avatar: `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?version=${String(requestIndex)}`,
+          images: [`https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world.png?version=${String(requestIndex)}`],
+        }],
+        total: 1,
+      } }), { status: 200 })
+    }) as typeof fetch
+    const service = new WorldService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      {} as never,
+      {} as never,
+      {} as never,
+    )
+
+    const first = await service.listWorldFeed()
+    const second = await service.listWorldFeed()
+
+    expect(second.items[0]?.avatarRef).toBe(first.items[0]?.avatarRef)
+    expect(second.items[0]?.imageRefs).toEqual(first.items[0]?.imageRefs)
+    const imageRef = second.items[0]?.imageRefs[0]
+    expect(imageRef).toBeDefined()
+    await expect(service.openWorldImageRef(imageRef ?? '', 42)).resolves.toMatchObject({
+      sourceUrl: expect.stringContaining('version=2'),
+    })
+  })
+
+  it('reuses resolved file-asset avatar URLs for a quick World re-entry', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let avatarResolutionRequests = 0
+    const fetchImpl = vi.fn(async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/auth/resolve-avatar-refs')) {
+        avatarResolutionRequests += 1
+        return new Response(JSON.stringify({ code: 200, data: { items: [{
+          owner_user_id: 7,
+          avatar_ref: 'file_asset://avatar-1',
+          url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?version=1',
+        }] } }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 200, data: {
+        list: [{ record_uid: 'record-1', user_id: 7, nick_name: '小明', text_content: '世界正文', avatar: 'file_asset://avatar-1' }],
+        total: 1,
+      } }), { status: 200 })
+    }) as typeof fetch
+    const service = new WorldService(
+      new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore, fetchImpl),
+      {} as never,
+      {} as never,
+      {} as never,
+    )
+
+    const first = await service.listWorldFeed()
+    const second = await service.listWorldFeed()
+
+    expect(avatarResolutionRequests).toBe(1)
+    expect(second.items[0]?.avatarRef).toBe(first.items[0]?.avatarRef)
+  })
+
   it('reconciles a repeated file-asset mutation before creating another Record', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
