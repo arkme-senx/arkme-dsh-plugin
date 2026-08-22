@@ -17,6 +17,7 @@ describe('World consumer SDK', () => {
         calls.push(request)
         if (request.operation === 'world.feed') return success({ items: [], total: 0, hasMore: false })
         if (request.operation === 'world.mine') return success({ items: [], total: 0, hasMore: false })
+        if (request.operation === 'world.user') return success({ items: [], total: 0, hasMore: false })
         if (request.operation === 'world.voiceprint.availability') return success({
           items: [{ recordRef: 'record-ref', playable: true }],
         })
@@ -44,6 +45,10 @@ describe('World consumer SDK', () => {
     await expect(sdk.myWorldFeed({ limit: 10, offset: 20 })).resolves.toEqual({
       items: [], total: 0, hasMore: false,
     })
+    await expect(sdk.userWorldFeed(7, { limit: 20, offset: 0 })).resolves.toEqual({
+      items: [], total: 0, hasMore: false,
+    })
+    await expect(sdk.userWorldFeed(0)).rejects.toThrow('positive integer')
     await expect(sdk.worldVoiceprintPlaybackAvailability(['record-ref'])).resolves.toEqual({
       items: [{ recordRef: 'record-ref', playable: true }],
     })
@@ -64,6 +69,7 @@ describe('World consumer SDK', () => {
     expect(calls).toEqual([
       { operation: 'world.feed', params: { limit: 20, offset: 40 } },
       { operation: 'world.mine', params: { limit: 10, offset: 20 } },
+      { operation: 'world.user', params: { userId: 7, limit: 20, offset: 0 } },
       { operation: 'world.voiceprint.availability', params: { recordRefs: ['record-ref'] } },
       {
         operation: 'world.voiceprint.playback.generate',

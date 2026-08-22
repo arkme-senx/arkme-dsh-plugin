@@ -134,6 +134,41 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('opens one user World homepage and clears the target when returning to the public World', () => {
+    const controller = new ArkmeUiController()
+    const listener = vi.fn()
+    controller.subscribe(listener)
+
+    controller.showUserWorld({
+      userId: 7,
+      displayName: '  Lucis   测试  ',
+      avatarFallback: { kind: 'phone_default', colorIndex: 3, label: 'L' },
+    })
+    expect(controller.getSnapshot()).toMatchObject({
+      open: true,
+      surfaceOpen: true,
+      mode: 'world',
+      worldTarget: {
+        userId: 7,
+        displayName: 'Lucis 测试',
+        avatarFallback: { kind: 'phone_default', colorIndex: 3, label: 'L' },
+      },
+    })
+
+    controller.showUserWorld({
+      userId: 7,
+      displayName: 'Lucis 测试',
+      avatarFallback: { kind: 'phone_default', colorIndex: 3, label: 'L' },
+    })
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    controller.showWorld()
+    expect(controller.getSnapshot()).toEqual({
+      open: true, surfaceOpen: true, authRevision: 0, chatRevision: 0, mode: 'world',
+    })
+    expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
+  })
+
   it('opens calls without retaining a conversation source', () => {
     const controller = new ArkmeUiController()
     controller.selectSource({

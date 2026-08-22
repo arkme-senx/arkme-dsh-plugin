@@ -210,6 +210,40 @@ export class WorldService {
     return { items, total, hasMore, ...(hasMore ? { nextOffset } : {}) }
   }
 
+  async listUserWorldFeed(
+    userId: number,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new ArkmePluginError('world-user-id-invalid', '世界用户 ID 无效，请刷新后重试', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)))
+    let offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    let total = 0
+    let items: ArkmeWorldFeedItem[] = []
+    let hasMore = false
+    let attempts = 0
+
+    do {
+      const data = await this.runtime.post<Record<string, unknown>>(
+        this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/user-list',
+        { user_id: userId, limit, offset }, undefined, [200], options.signal,
+      )
+      const rawItems = listValue(data.list)
+      total = Math.max(0, Math.trunc(numberValue(data.total)))
+      const rootItems = rawItems.filter(raw => stringValue(objectValue(raw).parent_record_uid).trim() === '')
+      const resolvedAvatars = await this.resolveWorldAvatarUrls(rootItems, session, options.signal)
+      const projected = await Promise.all(rootItems.map(raw => this.worldFeedItem(raw, session.userId, resolvedAvatars)))
+      items = projected.filter((item): item is ArkmeWorldFeedItem => item !== undefined)
+      offset += rawItems.length
+      hasMore = rawItems.length > 0 && offset < total
+      attempts += 1
+    } while (items.length === 0 && hasMore && attempts < 4)
+
+    return { items, total, hasMore, ...(hasMore ? { nextOffset: offset } : {}) }
+  }
+
   async worldVoiceprintPlaybackAvailability(
     recordRefs: readonly string[],
     signal?: AbortSignal,

@@ -1542,7 +1542,10 @@ export function ArkmeSurface({ floating = false, initialAuth, currentSessionId, 
           }))}
         />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
-          : ui.mode === 'world' ? <ArkmeWorldSurface />
+          : ui.mode === 'world' ? <ArkmeWorldSurface
+            {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
+            onBackToWorld={() => { arkmeUi.showWorld() }}
+          />
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface /></div>
           : ui.mode === 'extensions' ? <ArkmeMarketplace
             displayMode="page"

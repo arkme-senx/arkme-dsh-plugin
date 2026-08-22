@@ -652,6 +652,19 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Read one user's public World homepage through the authenticated Provider boundary. */
+  async userWorldFeed(
+    userId: number,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new TypeError('Arkme World userId must be a positive integer')
+    return await this.call<ArkmeWorldFeedPage>('world.user', {
+      userId,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.offset === undefined ? {} : { offset: options.offset }),
+    }, options.signal)
+  }
+
   async worldVoiceprintPlaybackAvailability(
     recordRefs: readonly string[],
     signal?: AbortSignal,

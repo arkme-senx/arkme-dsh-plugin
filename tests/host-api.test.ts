@@ -36,6 +36,7 @@ function fakeService() {
     listGroupBots: vi.fn(async () => ({ items: [] })),
     addGroupBot: vi.fn(async () => ({ installed: true })),
     listMyWorldFeed: vi.fn(async (input: unknown) => input),
+    listUserWorldFeed: vi.fn(async (_userId: number, input: unknown) => input),
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
   }
 }
@@ -319,6 +320,21 @@ describe('outgoing call Host API dispatch', () => {
     })
 
     expect(service.listMyWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
+  })
+
+  it('dispatches a bounded target-user World page and rejects invalid identities', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'world.user', {
+      userId: 7,
+      limit: 999,
+      offset: -4,
+      stableRecordId: 'must-not-forward',
+    })
+    expect(service.listUserWorldFeed).toHaveBeenCalledWith(7, { limit: 20, offset: 0 })
+
+    await expect(dispatchArkmeHostOperation(service as never, 'world.user', { userId: 0 }))
+      .rejects.toMatchObject({ code: 'world-user-id-invalid' })
   })
 })
 

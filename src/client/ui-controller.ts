@@ -20,6 +20,20 @@ export interface ArkmeUiState {
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
+  worldTarget?: ArkmeWorldTarget
+}
+
+export interface ArkmeWorldTarget {
+  userId: number
+  displayName: string
+  avatarRef?: string
+  avatarFallback?: { kind: 'phone_default'; colorIndex: number; label: string }
+}
+
+function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTarget | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.userId === right.userId && left.displayName === right.displayName
+    && left.avatarRef === right.avatarRef && JSON.stringify(left.avatarFallback) === JSON.stringify(right.avatarFallback)
 }
 
 export class ArkmeUiController {
@@ -111,8 +125,22 @@ export class ArkmeUiController {
   }
 
   showWorld(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, worldTarget: _worldTarget, ...rest } = this.state
     this.publish({ ...rest, open: true, surfaceOpen: true, mode: 'world' })
+  }
+
+  showUserWorld(target: ArkmeWorldTarget): void {
+    if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw new TypeError('世界用户 ID 必须是正整数')
+    const displayName = target.displayName.replace(/\s+/g, ' ').trim()
+    if (displayName === '') throw new TypeError('世界用户名不能为空')
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, ...rest } = this.state
+    this.publish({
+      ...rest,
+      open: true,
+      surfaceOpen: true,
+      mode: 'world',
+      worldTarget: { ...target, displayName },
+    })
   }
 
   showRecordingTarget(dateStamp: number, startAtMillis: number): void {
@@ -180,6 +208,7 @@ export class ArkmeUiController {
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef
+      && sameWorldTarget(next.worldTarget, this.state.worldTarget)
       && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next
     for (const listener of this.listeners) listener()

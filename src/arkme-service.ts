@@ -1342,6 +1342,13 @@ export class ArkmeService {
     return await this.world.listMyWorldFeed(options)
   }
 
+  async listUserWorldFeed(
+    userId: number,
+    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeWorldFeedPage> {
+    return await this.world.listUserWorldFeed(userId, options)
+  }
+
   async worldVoiceprintPlaybackAvailability(
     recordRefs: readonly string[],
     signal?: AbortSignal,

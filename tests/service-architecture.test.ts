@@ -41,7 +41,7 @@ const expectedPublicMethods = [
   'listWorldRecords',
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
-  'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed',
+  'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
   'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback', 'inviteWorldVoiceprint',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldTextForConversation', 'createText', 'createTextForConversation', 'pendingWrites',

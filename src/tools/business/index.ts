@@ -21,6 +21,7 @@ import { recentRecordsToolModule } from './records/recent.js'
 import { searchRecordsToolModule } from './records/search.js'
 import {
   worldMineToolModule,
+  worldUserToolModule,
   worldPublishTextToolModule,
   worldRecentToolModule,
   worldVoiceprintInviteToolModule,
@@ -45,6 +46,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...botToolModules,
   worldRecentToolModule,
   worldMineToolModule,
+  worldUserToolModule,
   worldVoiceprintInviteToolModule,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,

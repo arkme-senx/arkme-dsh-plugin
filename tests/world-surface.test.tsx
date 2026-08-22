@@ -80,6 +80,30 @@ describe('Arkme native World surface', () => {
     expect(refreshFailure).toContain('世界正文')
   })
 
+  it('renders a target user World homepage with mobile-equivalent back navigation and four states', () => {
+    const target = { userId: 7, displayName: '泡泡', avatarFallback: { kind: 'phone_default' as const, colorIndex: 2, label: '泡' } }
+    const renderTarget = (state: ArkmeWorldViewState) => renderToStaticMarkup(<ArkmeWorldContent
+      state={state}
+      scope="all"
+      target={target}
+      voiceprintPlayableRefs={new Set()}
+      voiceprintRecordRef={undefined}
+      onBackToWorld={noop}
+      {...actions}
+    />)
+
+    const loading = renderTarget({ status: 'loading', items: [] })
+    expect(loading).toContain('泡泡的世界')
+    expect(loading).toContain('aria-label="返回世界"')
+    expect(loading).toContain('正在加载 泡泡 的世界')
+    expect(loading).not.toContain('>发世界<')
+    expect(loading).not.toContain('>我的世界<')
+
+    expect(renderTarget({ status: 'error', items: [], message: '主页加载失败' })).toContain('主页加载失败')
+    expect(renderTarget({ status: 'empty', items: [] })).toContain('TA 的世界暂无公开内容')
+    expect(renderTarget({ status: 'success', items: [item] })).toContain('世界正文')
+  })
+
   it('expands comments inline beneath the selected world card instead of opening a modal', () => {
     const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
 

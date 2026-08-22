@@ -51,6 +51,7 @@ describe('Arkme tool catalog', () => {
       'arkme_group_bot_remove',
       'arkme_world_recent',
       'arkme_world_mine',
+      'arkme_world_user',
       'arkme_world_voiceprint_invite',
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',

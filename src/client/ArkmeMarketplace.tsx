@@ -32,6 +32,7 @@ import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, ne
 } from './my-extension-model.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
 
 type Tab = 'discover' | 'installed' | 'mine' | 'updates'
 const extensionSdk = createArkmeSdk()
@@ -317,11 +318,13 @@ const styles: Record<string, CSSProperties> = {
   },
   authorCardProfileIcon: {
     position: 'absolute', top: -3, right: -3, width: 28, height: 28, display: 'grid', placeItems: 'center',
-    border: 0, borderRadius: 8, background: 'transparent', color: colors.caption, textDecoration: 'none',
+    padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: colors.caption,
+    font: 'inherit', cursor: 'pointer',
   },
   authorCardWorldLink: {
     minHeight: 34, marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
-    color: colors.secondary, fontSize: 12, lineHeight: '18px', textDecoration: 'none',
+    width: '100%', padding: 0, border: 0, background: 'transparent', color: colors.secondary,
+    font: 'inherit', fontSize: 12, lineHeight: '18px', cursor: 'pointer',
   },
   authorCardActions: { display: 'flex', marginTop: 12 },
   authorCardMessageButton: {
@@ -1023,16 +1026,21 @@ export function ArkmeExtensionAuthorTrigger({
   >{identity}</button>
 }
 
-export function extensionAuthorProfileDeepLink(
-  item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name'>,
-): string | undefined {
+export function extensionAuthorWorldTarget(
+  item: Pick<ArkmeExtensionCatalogItem, 'owner_user_id' | 'owner_name' | 'owner_avatar_ref' | 'owner_avatar_fallback'>,
+): ArkmeWorldTarget | undefined {
   const userId = item.owner_user_id
   if (!Number.isSafeInteger(userId) || (userId ?? 0) <= 0) return undefined
-  const params = new URLSearchParams({ type: 'jumpToPersonalProfile', userId: String(userId) })
-  const displayName = item.owner_name?.trim() ?? ''
-  if (displayName !== '') params.set('nickName', displayName)
-  const hostScheme = ['jot', 'mo'].join('')
-  return `${hostScheme}://action?${params.toString()}`
+  const displayName = item.owner_name?.replace(/\s+/g, ' ').trim() || '这位用户'
+  const fallback = item.owner_avatar_fallback?.kind === 'phone_default'
+    ? item.owner_avatar_fallback
+    : undefined
+  return {
+    userId: userId!,
+    displayName,
+    ...(item.owner_avatar_ref === undefined ? {} : { avatarRef: item.owner_avatar_ref }),
+    ...(fallback === undefined ? {} : { avatarFallback: fallback }),
+  }
 }
 
 export function ArkmeExtensionAuthorPopover({
@@ -1043,6 +1051,7 @@ export function ArkmeExtensionAuthorPopover({
   actionError = '',
   onToggle,
   onPrivateChat,
+  onWorld,
   style,
 }: {
   item: ArkmeExtensionCatalogItem
@@ -1052,10 +1061,17 @@ export function ArkmeExtensionAuthorPopover({
   actionError?: string
   onToggle(): void
   onPrivateChat(): void
+  onWorld(): void
   style?: CSSProperties
 }) {
-  const profileLink = extensionAuthorProfileDeepLink(item)
-  const canMessage = profileLink !== undefined && item.owner_user_id !== currentUserId
+  const worldTarget = extensionAuthorWorldTarget(item)
+  const canMessage = worldTarget !== undefined && item.owner_user_id !== currentUserId
+  const navigationPending = useRef(false)
+  const openWorld = () => {
+    if (navigationPending.current || worldTarget === undefined) return
+    navigationPending.current = true
+    onWorld()
+  }
   return <div style={{ ...styles.authorPopoverRoot, ...style }}>
     <ArkmeExtensionAuthorTrigger item={item} expanded={open} onToggle={onToggle} />
     {open && !extensionCommunityAuthor(item).github && <aside
@@ -1069,18 +1085,20 @@ export function ArkmeExtensionAuthorPopover({
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={styles.authorCardName}>{extensionCommunityAuthor(item).name}</div>
         </div>
-        {profileLink !== undefined && <a
-          href={profileLink}
+        {worldTarget !== undefined && <button
+          type="button"
           style={styles.authorCardProfileIcon}
-          aria-label={`进入${extensionCommunityAuthor(item).name}的个人主页`}
+          aria-label={`进入${extensionCommunityAuthor(item).name}的世界`}
           data-extension-author-profile-link="icon"
-        ><ArrowUpRight size={17} aria-hidden /></a>}
+          onClick={openWorld}
+        ><ArrowUpRight size={17} aria-hidden /></button>}
       </div>
-      {profileLink !== undefined && <a
-        href={profileLink}
+      {worldTarget !== undefined && <button
+        type="button"
         style={styles.authorCardWorldLink}
         data-extension-author-world-link="true"
-      >进入 TA 的世界 <CaretRight size={13} weight="bold" aria-hidden /></a>}
+        onClick={openWorld}
+      >进入 TA 的世界 <CaretRight size={13} weight="bold" aria-hidden /></button>}
       {actionError !== '' && <div style={{ ...styles.error, marginTop: 8 }}>{actionError}</div>}
       {canMessage && <div style={styles.authorCardActions}>
         <button
@@ -1534,13 +1552,13 @@ export function ArkmeMarketplace({
     : classificationTree.categories.find(item => item.category_id === category)?.name ?? '全部'
   const classificationHint = classificationStatusHint(classificationTree.status, classificationTree.message)
 
-  const closeDetail = () => {
+  const closeDetail = (restoreFocus = true) => {
     setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setDetailError('')
     setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
     setShareNotice(''); setAuthorCardOpen(false); setAuthorActionError('')
     const target = detailReturnFocus.current
     detailReturnFocus.current = undefined
-    if (target !== undefined && typeof window !== 'undefined') window.setTimeout(() => { target.focus() }, 0)
+    if (restoreFocus && target !== undefined && typeof window !== 'undefined') window.setTimeout(() => { target.focus() }, 0)
   }
 
   const hostInstance = async (): Promise<string | undefined> => {
@@ -2167,6 +2185,15 @@ export function ArkmeMarketplace({
     }
   }
 
+  const openAuthorWorld = () => {
+    if (detail === undefined) return
+    const target = extensionAuthorWorldTarget(detail)
+    if (target === undefined) return
+    setAuthorCardOpen(false)
+    closeDetail(false)
+    arkmeUi.showUserWorld(target)
+  }
+
   const updateCount = actionableExtensionUpdates(updates).length
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const matchesQuery = (name: string, description: string) => normalizedQuery === ''
@@ -2350,7 +2377,7 @@ export function ArkmeMarketplace({
         onBack={() => { setSharedDetail(undefined); onShareExit?.() }}
       />}
       {!busy && error === '' && sharedDetail === undefined && detail !== undefined && displayMode === 'dialog' && <div style={styles.detail}>
-        <button type="button" style={styles.detailBack} onClick={closeDetail}><BackIcon size={14} />返回列表</button>
+        <button type="button" style={styles.detailBack} onClick={() => { closeDetail() }}><BackIcon size={14} />返回列表</button>
         <div style={styles.detailHero}>
           <ArkmeExtensionAvatar extensionId={detail.extension_id} iconRef={detail.icon_ref} size={46} />
           <div style={styles.cardBody}>
@@ -2412,6 +2439,7 @@ export function ArkmeMarketplace({
               actionError={authorActionError}
               onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
               onPrivateChat={() => { void openAuthorPrivateChat() }}
+              onWorld={openAuthorWorld}
             />
           </div>
         </section>
@@ -2592,7 +2620,7 @@ export function ArkmeMarketplace({
           copyAvailable={detail?.share !== undefined}
           copyNotice={shareNotice}
           onCopy={() => { setShareNotice(''); void copyShareLink() }}
-          onClose={closeDetail}
+          onClose={() => { closeDetail() }}
         />
         <div style={styles.detailModalBody}>
           {detailBusy && <div style={styles.detailModalState} aria-label="正在加载扩展详情"><LoadingState /></div>}
@@ -2600,7 +2628,7 @@ export function ArkmeMarketplace({
             <div>
               <div>{detailError}</div>
               <div style={styles.detailModalErrorActions}>
-                <button type="button" style={styles.restartLater} onClick={closeDetail}>关闭</button>
+                <button type="button" style={styles.restartLater} onClick={() => { closeDetail() }}>关闭</button>
                 {detailRequestedExtensionId !== undefined && <button
                   type="button" style={styles.primaryButton}
                   onClick={() => { void inspect(detailRequestedExtensionId) }}
@@ -2632,6 +2660,7 @@ export function ArkmeMarketplace({
                         style={{ marginTop: 10 }}
                         onToggle={() => { setAuthorCardOpen(value => !value); setAuthorActionError('') }}
                         onPrivateChat={() => { void openAuthorPrivateChat() }}
+                        onWorld={openAuthorWorld}
                       />
                     </div>
                   </div>

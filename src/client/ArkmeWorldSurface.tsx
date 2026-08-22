@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import type {
@@ -14,6 +15,8 @@ import type {
   ArkmeWorldVoiceprintPlaybackChunk,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import type { ArkmeWorldTarget } from './ui-controller.js'
 
 type WorldScope = 'all' | 'mine'
 
@@ -42,6 +45,9 @@ const styles: Record<string, CSSProperties> = {
   heading: { margin: 0, fontSize: 22, lineHeight: '30px', fontWeight: 650, letterSpacing: '-.03em' },
   subtitle: { margin: '3px 0 0', color: colors.secondary, fontSize: 12 },
   headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
+  targetHeading: { display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 },
+  targetTitle: { minWidth: 0, display: 'grid', gap: 1 },
+  backButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
   button: { minHeight: 34, padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12 },
   iconButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.secondary, cursor: 'pointer' },
   primaryButton: { borderColor: '#20232d', background: '#20232d', color: '#fff' },
@@ -243,14 +249,16 @@ function VoiceprintInviteDialog({ item, sending, message, onClose, onConfirm }: 
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voiceprintRecordRef, interactionRecordRef, actionMessage, onRefresh, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
+export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs, voiceprintRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
+  target?: ArkmeWorldTarget
   voiceprintPlayableRefs: ReadonlySet<string>
   voiceprintRecordRef: string | undefined
   interactionRecordRef?: string
   actionMessage?: string
   onRefresh(): void
+  onBackToWorld?(): void
   onSelectScope(scope: WorldScope): void
   onOpenComposer(): void
   onOpenInteractions(item: ArkmeWorldFeedItem): void
@@ -261,23 +269,34 @@ export function ArkmeWorldContent({ state, scope, voiceprintPlayableRefs, voicep
 }) {
   return <>
     <header style={styles.header}>
-      <div><h1 style={styles.heading}>世界</h1><p style={styles.subtitle}>看看大家此刻正在记录什么</p></div>
+      {target === undefined
+        ? <div><h1 style={styles.heading}>世界</h1><p style={styles.subtitle}>看看大家此刻正在记录什么</p></div>
+        : <div style={styles.targetHeading}>
+          <button type="button" style={styles.backButton} aria-label="返回世界" onClick={onBackToWorld}><ArrowLeft size={18} weight="bold" /></button>
+          <ArkmeUserAvatar
+            {...(target.avatarRef === undefined ? {} : { avatarRef: target.avatarRef })}
+            {...(target.avatarFallback === undefined ? {} : { fallback: target.avatarFallback })}
+            size={40}
+            label={`${target.displayName}的头像`}
+          />
+          <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}的世界</h1><p style={styles.subtitle}>TA 公开分享的内容</p></div>
+        </div>}
       <div style={styles.headerActions}>
         <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
           <ArrowsClockwise size={16} weight="bold" />
         </button>
-        <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>
+        {target === undefined && <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>}
       </div>
     </header>
-    <nav style={styles.tabs} aria-label="世界范围">
+    {target === undefined && <nav style={styles.tabs} aria-label="世界范围">
       <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
       <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
-    </nav>
+    </nav>}
     <div style={styles.body}>
       {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
-      {state.status === 'loading' && <div role="status" style={styles.notice}>正在加载世界…</div>}
+      {state.status === 'loading' && <div role="status" style={styles.notice}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
       {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
-      {state.status === 'empty' && <div style={styles.notice}>这里还没有世界动态。你可以先发一条，或者稍后再刷新。</div>}
+      {state.status === 'empty' && <div style={styles.notice}>{target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}</div>}
       {state.status === 'success' && <div style={styles.feed}>
         {state.message !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error, width: '100%', margin: 0 }}>{state.message}</div>}
         {state.items.map(item => <WorldCard
@@ -420,7 +439,7 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
 const loadingState = (): ArkmeWorldViewState => ({ status: 'loading', items: [] })
 
 /** First-party World page owned by the same product surface as recordings. */
-export function ArkmeWorldSurface() {
+export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWorldTarget; onBackToWorld?(): void } = {}) {
   const [scope, setScope] = useState<WorldScope>('all')
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
@@ -432,10 +451,11 @@ export function ArkmeWorldSurface() {
   const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
+  const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
   const loadController = useRef<AbortController>()
   const audioRef = useRef<HTMLAudioElement>()
   const voiceprintTokenRef = useRef(0)
-  const state = views[scope]
+  const state = target === undefined ? views[scope] : targetView
 
   const load = useCallback((target: WorldScope, offset = 0, preserveItems = false) => {
     loadController.current?.abort()
@@ -473,7 +493,44 @@ export function ArkmeWorldSurface() {
     })
   }, [])
 
-  useEffect(() => { if (!loaded[scope]) load(scope) }, [load, loaded, scope])
+  const loadUser = useCallback((profile: ArkmeWorldTarget, offset = 0, preserveItems = false) => {
+    loadController.current?.abort()
+    const controller = new AbortController()
+    loadController.current = controller
+    setTargetView(current => {
+      const { message: _message, ...rest } = current
+      return offset === 0
+        ? preserveItems && current.items.length > 0
+          ? { ...rest, refreshing: true }
+          : loadingState()
+        : { ...rest, loadingMore: true }
+    })
+    void callArkme<ArkmeWorldFeedPage>('world.user', { userId: profile.userId, limit: 20, offset }, controller.signal)
+      .then(page => {
+        if (controller.signal.aborted) return
+        setTargetView(current => {
+          const items = offset === 0 ? page.items : [...current.items, ...page.items]
+          return { status: items.length === 0 ? 'empty' : 'success', items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }
+        })
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return
+        setTargetView(current => {
+          const message = messageOf(error, `${profile.displayName}的世界暂时无法加载`)
+          return current.items.length > 0
+            ? { ...current, status: 'success', refreshing: false, loadingMore: false, message }
+            : { status: 'error', items: [], message }
+        })
+      })
+  }, [])
+
+  useEffect(() => { if (target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target])
+  useEffect(() => {
+    if (target === undefined) return
+    setInteractionRecordRef(undefined)
+    setActionMessage(undefined)
+    loadUser(target)
+  }, [loadUser, target?.userId])
   useEffect(() => () => { loadController.current?.abort(); voiceprintTokenRef.current += 1; audioRef.current?.pause() }, [])
   useEffect(() => {
     if (state.status !== 'success' || state.items.length === 0) { setPlayableRefs(new Set()); return }
@@ -484,7 +541,11 @@ export function ArkmeWorldSurface() {
     return () => { controller.abort() }
   }, [state.items, state.status])
 
-  const refresh = () => { setActionMessage(undefined); load(scope, 0, true) }
+  const refresh = () => {
+    setActionMessage(undefined)
+    if (target === undefined) load(scope, 0, true)
+    else loadUser(target, 0, true)
+  }
   const selectScope = (next: WorldScope) => { setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
   const toggleInteractions = (item: ArkmeWorldFeedItem) => {
     setInteractionRecordRef(current => current === item.recordRef ? undefined : item.recordRef)
@@ -495,6 +556,7 @@ export function ArkmeWorldSurface() {
       items: view.items.map(item => item.recordRef === recordRef ? { ...item, extendCount: item.extendCount + 1 } : item),
     })
     setViews(current => ({ all: update(current.all), mine: update(current.mine) }))
+    setTargetView(update)
   }
   const toggleVoiceprint = async (recordRef: string) => {
     if (voiceprintRecordRef === recordRef) { voiceprintTokenRef.current += 1; audioRef.current?.pause(); audioRef.current = undefined; setVoiceprintRecordRef(undefined); return }
@@ -544,12 +606,16 @@ export function ArkmeWorldSurface() {
   }
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
-    <ArkmeWorldContent state={state} scope={scope} voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
+    <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })} voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
       {...(interactionRecordRef === undefined ? {} : { interactionRecordRef })}
       {...(actionMessage === undefined ? {} : { actionMessage })}
-      onRefresh={refresh} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
+      onRefresh={refresh} {...(onBackToWorld === undefined ? {} : { onBackToWorld })} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
       onOpenInteractions={toggleInteractions} onInteractionCreated={recordInteractionCreated} onToggleVoiceprint={recordRef => { void toggleVoiceprint(recordRef) }}
-      onInviteVoiceprint={openVoiceprintInvite} onLoadMore={() => { if (state.nextOffset !== undefined) load(scope, state.nextOffset) }} />
+      onInviteVoiceprint={openVoiceprintInvite} onLoadMore={() => {
+        if (state.nextOffset === undefined) return
+        if (target === undefined) load(scope, state.nextOffset)
+        else loadUser(target, state.nextOffset)
+      }} />
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={() => { setLoaded(current => ({ ...current, all: false, mine: false })); setScope('mine') }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={() => { if (!inviteSending) setInviteItem(undefined) }} onConfirm={item => { void inviteVoiceprint(item) }} />}
   </main>

@@ -10,7 +10,7 @@ import {
   actionableExtensionUpdates, ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger,
   ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionLifecycleRow, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
-  extensionAuthorProfileDeepLink, extensionGithubProfileUrl,
+  extensionAuthorWorldTarget, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
@@ -309,9 +309,11 @@ describe('Arkme marketplace UI', () => {
       owner_user_id: 7, owner_name: 'Lucis 测试', owner_arkme_id: '@lucis',
       owner_avatar_fallback: { kind: 'phone_default' as const, colorIndex: 3, label: 'L' },
     }
-    expect(extensionAuthorProfileDeepLink(item)).toBe(
-      'jotmo://action?type=jumpToPersonalProfile&userId=7&nickName=Lucis+%E6%B5%8B%E8%AF%95',
-    )
+    expect(extensionAuthorWorldTarget(item)).toEqual({
+      userId: 7,
+      displayName: 'Lucis 测试',
+      avatarFallback: { kind: 'phone_default', colorIndex: 3, label: 'L' },
+    })
 
     const html = renderToStaticMarkup(<ArkmeExtensionAuthorPopover
       item={item}
@@ -319,11 +321,14 @@ describe('Arkme marketplace UI', () => {
       currentUserId={99}
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onWorld={() => {}}
+      onWorld={() => {}}
     />)
     expect(html).toContain('data-extension-author-popover="profile"')
     expect(html).toContain('data-extension-author-world-link="true"')
     expect(html).toContain('data-extension-author-profile-link="icon"')
-    expect(html).toContain('href="jotmo://action?type=jumpToPersonalProfile&amp;userId=7&amp;nickName=Lucis+%E6%B5%8B%E8%AF%95"')
+    expect(html).not.toContain('jotmo://')
+    expect(html.match(/<button/g)).toHaveLength(4)
     expect(html).toContain('进入 TA 的世界')
     expect(html).toContain('发送消息')
     expect(html).not.toContain('Arkme 作者')
@@ -340,6 +345,8 @@ describe('Arkme marketplace UI', () => {
       currentUserId={7}
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onWorld={() => {}}
+      onWorld={() => {}}
     />)
     expect(html).toContain('进入 TA 的世界')
     expect(html).not.toContain('发送消息')
@@ -351,8 +358,9 @@ describe('Arkme marketplace UI', () => {
       open
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onWorld={() => {}}
     />)
-    expect(extensionAuthorProfileDeepLink({ owner_user_id: 0, owner_name: '未知作者' })).toBeUndefined()
+    expect(extensionAuthorWorldTarget({ owner_user_id: 0, owner_name: '未知作者' })).toBeUndefined()
     expect(html).toContain('data-extension-author-popover="profile"')
     expect(html).not.toContain('进入 TA 的世界')
     expect(html).not.toContain('发送消息')
@@ -369,6 +377,7 @@ describe('Arkme marketplace UI', () => {
       open={false}
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onWorld={() => {}}
     />)
     expect(closed).not.toContain('data-extension-author-popover="profile"')
 
@@ -378,6 +387,7 @@ describe('Arkme marketplace UI', () => {
       actionBusy
       onToggle={() => {}}
       onPrivateChat={() => {}}
+      onWorld={() => {}}
     />)
     expect(busy).toContain('正在打开…')
     expect(busy).toContain('disabled=""')

@@ -552,6 +552,16 @@ export async function dispatchArkmeHostOperation(
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
     })
+    case 'world.user': {
+      const userId = Math.trunc(numberParam(params, 'userId', 0))
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        throw new ArkmePluginError('world-user-id-invalid', '世界用户 ID 无效，请刷新后重试', false, 400)
+      }
+      return await service.listUserWorldFeed(userId, {
+        limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      })
+    }
     case 'world.voiceprint.availability': return await service.worldVoiceprintPlaybackAvailability(
       [...new Set(stringListParam(params, 'recordRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
     )

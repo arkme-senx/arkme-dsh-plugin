@@ -1702,6 +1702,7 @@ export type ArkmePluginOperation =
   | 'images.list'
   | 'world.feed'
   | 'world.mine'
+  | 'world.user'
   | 'world.voiceprint.availability'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.invite'
