@@ -50,8 +50,8 @@ const colors = {
 
 const styles: Record<string, CSSProperties> = {
   root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#fff', color: colors.text },
-  header: { width: 'min(1040px, calc(100% - 72px))', minHeight: 68, margin: '0 auto', padding: '26px 0 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
-  heading: { margin: 0, fontSize: 23, lineHeight: '30px', fontWeight: 600, letterSpacing: '-.035em' },
+  header: { width: 'min(980px, 100%)', minHeight: 90, margin: '0 auto', padding: '34px 48px 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
+  heading: { margin: 0, fontSize: 26, lineHeight: '34px', fontWeight: 650, letterSpacing: '-.035em' },
   subtitle: { margin: '2px 0 0', color: colors.secondary, fontSize: 11 },
   headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
   targetHeading: { display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 },

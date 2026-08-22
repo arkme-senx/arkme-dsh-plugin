@@ -142,6 +142,8 @@ describe('Arkme native World surface', () => {
   it('uses the demo compact white-feed language without introducing demo-only actions', () => {
     const markup = render({ status: 'success', items: [item] })
 
+    expect(markup).toContain('width:min(980px, 100%);min-height:90px;margin:0 auto;padding:34px 48px 0')
+    expect(markup).toContain('font-size:26px;line-height:34px;font-weight:650')
     expect(markup).toContain('width:min(1040px, calc(100% - 72px))')
     expect(markup).toContain('width:min(780px, calc(100% - 64px))')
     expect(markup).toContain('overflow-x:hidden')
