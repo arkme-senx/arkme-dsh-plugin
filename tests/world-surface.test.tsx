@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
@@ -6,6 +7,7 @@ import {
   mergeWorldVoiceprintPlayableRefs,
   pendingWorldVoiceprintRecordRefs,
   VoiceprintInviteDialog,
+  WorldInfiniteScrollTrigger,
   WorldImagePreviewDialog,
   WorldImagePreviewMedia,
   WorldInteractionThreadList,
@@ -157,6 +159,40 @@ describe('Arkme native World surface', () => {
       items: [{ recordRef: 'world_1', playable: false }],
     })
     expect([...afterRefresh]).toEqual([])
+  })
+
+  it('loads the next World page from an intersection sentinel and shows an animated loading icon', () => {
+    const idle = renderToStaticMarkup(<WorldInfiniteScrollTrigger
+      scrollRootRef={{ current: null }}
+      loading={false}
+      error={false}
+      onLoadMore={noop}
+    />)
+    expect(idle).toContain('data-world-load-more-sentinel="true"')
+    expect(idle).not.toContain('<button')
+    expect(idle).not.toContain('加载更多')
+
+    const loading = renderToStaticMarkup(<WorldInfiniteScrollTrigger
+      scrollRootRef={{ current: null }}
+      loading
+      error={false}
+      onLoadMore={noop}
+    />)
+    expect(loading).toContain('aria-label="正在加载更多世界动态"')
+    expect(loading).toContain('data-world-load-more-spinner="true"')
+    expect(loading).toContain('<animateTransform')
+
+    const failed = renderToStaticMarkup(<WorldInfiniteScrollTrigger
+      scrollRootRef={{ current: null }}
+      loading={false}
+      error
+      onLoadMore={noop}
+    />)
+    expect(failed).toContain('>重试</button>')
+
+    const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
+    expect(source).toContain('new IntersectionObserver(entries =>')
+    expect(source).toContain("rootMargin: '0px 0px 180px 0px'")
   })
 
   it('renders a target user World homepage with mobile-equivalent back navigation and four states', () => {

@@ -92,6 +92,10 @@ const styles: Record<string, CSSProperties> = {
   commentButtonActive: { color: colors.accent, fontWeight: 600 },
   commentPreview: { marginTop: 10, padding: '9px 11px', borderRadius: 10, background: colors.subtle },
   commentPreviewAction: { width: '100%', marginTop: 6, padding: '4px 0 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10, textAlign: 'left' },
+  feedLoadMore: { minHeight: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.secondary },
+  feedLoadMoreStatus: { width: 30, height: 30, display: 'grid', placeItems: 'center' },
+  feedLoadMoreSpinner: { width: 22, height: 22, display: 'block' },
+  feedLoadMoreRetry: { minHeight: 30, padding: '0 12px', border: 0, borderRadius: 8, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   loadMore: { display: 'flex', justifyContent: 'center', marginTop: 3 },
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
   modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: '#fff', boxShadow: '0 18px 60px rgba(20,22,30,.22)' },
@@ -647,6 +651,57 @@ export function VoiceprintInviteDialog({ item, variantIndex, socialContext, send
   </div>
 }
 
+function WorldLoadMoreSpinner() {
+  return <svg viewBox="0 0 24 24" fill="none" style={styles.feedLoadMoreSpinner} aria-hidden data-world-load-more-spinner="true">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity=".2" />
+    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur=".8s" repeatCount="indefinite" />
+    </path>
+  </svg>
+}
+
+export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLoadMore }: {
+  scrollRootRef: { readonly current: HTMLElement | null }
+  loading: boolean
+  error: boolean
+  onLoadMore(): void
+}) {
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const loadingRef = useRef(loading)
+  const requestedForVisitRef = useRef(false)
+  const onLoadMoreRef = useRef(onLoadMore)
+  loadingRef.current = loading
+  onLoadMoreRef.current = onLoadMore
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (sentinel === null || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.some(entry => entry.isIntersecting)
+      if (!visible) {
+        requestedForVisitRef.current = false
+        return
+      }
+      if (loadingRef.current || requestedForVisitRef.current) return
+      requestedForVisitRef.current = true
+      onLoadMoreRef.current()
+    }, { root: scrollRootRef.current, rootMargin: '0px 0px 180px 0px', threshold: 0.01 })
+    observer.observe(sentinel)
+    return () => { observer.disconnect() }
+  }, [scrollRootRef])
+
+  const retry = () => {
+    if (loadingRef.current) return
+    requestedForVisitRef.current = true
+    onLoadMoreRef.current()
+  }
+
+  return <div ref={sentinelRef} style={styles.feedLoadMore} data-world-load-more-sentinel="true" aria-hidden={!loading && !error}>
+    {loading && <span role="status" aria-label="正在加载更多世界动态" style={styles.feedLoadMoreStatus}><WorldLoadMoreSpinner /></span>}
+    {!loading && error && <button type="button" style={styles.feedLoadMoreRetry} onClick={retry}>重试</button>}
+  </div>
+}
+
 export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs, voiceprintRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
@@ -665,6 +720,7 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
   onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
   onLoadMore?(): void
 }) {
+  const scrollRootRef = useRef<HTMLDivElement>(null)
   return <>
     <header style={styles.header}>
       {target === undefined
@@ -690,7 +746,7 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
       <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
       <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
     </nav>}
-    <div style={styles.body}>
+    <div ref={scrollRootRef} style={styles.body} data-world-scroll-container="true">
       {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
       {state.status === 'loading' && <div role="status" style={styles.notice}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
       {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
@@ -708,7 +764,13 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
           onToggleVoiceprint={onToggleVoiceprint}
           onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
         />)}
-        {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={onLoadMore}>{state.loadingMore ? '加载中…' : '加载更多'}</button></div>}
+        {state.hasMore && onLoadMore !== undefined && <WorldInfiniteScrollTrigger
+          key={`${String(state.nextOffset ?? 'more')}:${String(state.items.length)}`}
+          scrollRootRef={scrollRootRef}
+          loading={state.loadingMore === true}
+          error={state.message !== undefined}
+          onLoadMore={onLoadMore}
+        />}
       </div>}
     </div>
   </>
