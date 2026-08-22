@@ -133,8 +133,9 @@ const styles: Record<string, CSSProperties> = {
   interactionHint: { color: '#969ba5', fontSize: 10 },
   previewModal: { width: 'min(960px, 94vw)', height: 'min(720px, 88vh)', padding: 14, boxSizing: 'border-box', display: 'grid', gridTemplateRows: '38px minmax(0,1fr)', borderRadius: 18, background: '#17191f' },
   previewHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff', fontSize: 12 },
-  previewStage: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateColumns: '44px minmax(0,1fr) 44px', alignItems: 'center', gap: 10 },
-  previewImage: { width: '100%', height: '100%', objectFit: 'contain', borderRadius: 10 },
+  previewStage: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateColumns: '44px minmax(0,1fr) 44px', gridTemplateRows: 'minmax(0,1fr)', alignItems: 'center', gap: 10, overflow: 'hidden' },
+  previewMedia: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'hidden' },
+  previewImage: { display: 'block', width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10 },
   previewButton: { width: 38, height: 38, border: 0, borderRadius: 10, background: 'rgba(255,255,255,.12)', color: '#fff', cursor: 'pointer' },
   replyTarget: { marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.accent, fontSize: 12 },
 }
@@ -192,6 +193,12 @@ function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageR
   const imageStyle = avatar ? styles.avatarImage : preview ? styles.previewImage : styles.image
   if (failed) return <span style={imageStyle} aria-label={`${alt}加载失败`} />
   return <img src={source || undefined} alt={alt} loading={avatar || preview ? 'eager' : 'lazy'} style={imageStyle} />
+}
+
+export function WorldImagePreviewMedia({ imageRef, alt }: { imageRef: string; alt: string }) {
+  return <div style={styles.previewMedia}>
+    <WorldImage imageRef={imageRef} alt={alt} preview />
+  </div>
 }
 
 function interactionRegionId(recordRef: string): string {
@@ -393,7 +400,7 @@ function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenI
         <header style={styles.previewHeader}><span>{item.authorName} · {previewIndex + 1} / {item.imageRefs.length}</span><button type="button" style={styles.previewButton} onClick={() => { setPreviewIndex(undefined) }}>关闭</button></header>
         <div style={styles.previewStage}>
           <button type="button" style={styles.previewButton} disabled={previewIndex === 0} onClick={() => { setPreviewIndex(index => Math.max(0, (index ?? 0) - 1)) }}>‹</button>
-          <WorldImage imageRef={item.imageRefs[previewIndex]!} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} preview />
+          <WorldImagePreviewMedia imageRef={item.imageRefs[previewIndex]!} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} />
           <button type="button" style={styles.previewButton} disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { setPreviewIndex(index => Math.min(item.imageRefs.length - 1, (index ?? 0) + 1)) }}>›</button>
         </div>
       </section>

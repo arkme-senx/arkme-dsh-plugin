@@ -4,6 +4,7 @@ import {
   ArkmeWorldContent,
   ArkmeWorldSurface,
   VoiceprintInviteDialog,
+  WorldImagePreviewMedia,
   WorldInteractionThreadList,
   voiceprintInvitePromptTitle,
   worldInteractionThreads,
@@ -181,6 +182,15 @@ describe('Arkme native World surface', () => {
     expect(markup).not.toContain('第二条评论')
     expect(markup.indexOf('第一条评论')).toBeLessThan(markup.indexOf('回复第一条'))
     expect(markup.indexOf('回复第一条')).toBeLessThan(markup.indexOf('继续回复'))
+  })
+
+  it('contains a 3:4 portrait image inside the preview stage without cropping it', () => {
+    const markup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef="portrait-3x4" alt="3:4 竖图" />)
+
+    expect(markup).toContain('width:100%;height:100%;min-width:0;min-height:0')
+    expect(markup).toContain('overflow:hidden')
+    expect(markup).toContain('width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain')
+    expect(markup).not.toContain('object-fit:cover')
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {
