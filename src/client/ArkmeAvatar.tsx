@@ -247,19 +247,31 @@ export function ArkmeSourceAvatar({
     return (avatarRefs ?? (avatarRef === undefined ? [] : [avatarRef])).slice(0, 5).map(ref => ({ avatarRef: ref }))
   }, [avatarRef, avatarRefs, groupAvatar])
   const slotsKey = JSON.stringify([sourceSlots, groupAvatar?.computedAtMillis ?? 0])
-  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
+  const [visible, setVisible] = useState(() => typeof globalThis.IntersectionObserver !== 'function')
   const [slots, setSlots] = useState<ResolvedGroupAvatarSlot[]>(sourceSlots)
 
   useEffect(() => {
     const target = container.current
     if (target === null || visible) return
-    const observer = new IntersectionObserver(entries => {
+    const Observer = globalThis.IntersectionObserver
+    if (typeof Observer !== 'function') {
+      setVisible(true)
+      return
+    }
+    // Some embedded DSH WebViews expose IntersectionObserver but do not deliver the initial entry.
+    // Preserve lazy loading where available while guaranteeing that visible avatars cannot stay placeholders forever.
+    const fallbackTimer = globalThis.setTimeout(() => { setVisible(true) }, 250)
+    const observer = new Observer(entries => {
       if (entries[0]?.isIntersecting !== true) return
       setVisible(true)
+      globalThis.clearTimeout(fallbackTimer)
       observer.disconnect()
     }, { rootMargin: '160px 0px' })
     observer.observe(target)
-    return () => { observer.disconnect() }
+    return () => {
+      globalThis.clearTimeout(fallbackTimer)
+      observer.disconnect()
+    }
   }, [visible])
 
   useEffect(() => {

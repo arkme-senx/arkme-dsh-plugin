@@ -3,9 +3,11 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeConversationMemberItem } from '../src/types.js'
 import {
+  ARKME_MEMBER_RECORDS_DEFAULT_WIDTH,
   ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
+  arkmeMemberActionMenuRowCount, arkmeMemberConversationAction,
   arkmeMemberRecordTimeline, arkmeMemberRecordTotal, formatArkmeMemberRecordTime,
-  positionArkmeMemberMenu,
+  clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
 } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichContent.js'
 
@@ -64,6 +66,51 @@ describe('chat member action menu placement', () => {
     }))
     expect(card).toContain('小林')
     expect(card).toContain('发送消息')
+    expect(card).toContain('data-arkme-profile-send-state="idle"')
+  })
+
+  it('shows only the matching owner-record action with its count in private chats', () => {
+    const otherMenu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
+      member,
+      sourceKind: 'private_chat',
+      position: { left: 10, top: 20, placement: 'below' },
+      onMention: () => undefined,
+      onRecords: () => undefined,
+      onClose: () => undefined,
+    }))
+    expect(otherMenu).toContain('看TA的快记')
+    expect(otherMenu).toContain('>7<')
+    expect(otherMenu).not.toContain('@TA的快记')
+    expect(arkmeMemberActionMenuRowCount(member, 'private_chat')).toBe(1)
+
+    const self = { ...member, isSelf: true, displayName: '颜格蕾', recordCount: 70, mentionCount: 9 }
+    const selfMenu = renderToStaticMarkup(createElement(ArkmeMemberActionMenu, {
+      member: self,
+      sourceKind: 'private_chat',
+      position: { left: 10, top: 20, placement: 'below' },
+      onMention: () => undefined,
+      onRecords: () => undefined,
+      onClose: () => undefined,
+    }))
+    expect(selfMenu).toContain('看我的快记')
+    expect(selfMenu).toContain('>70<')
+    expect(selfMenu).not.toContain('@我的快记')
+    expect(arkmeMemberActionMenuRowCount(self, 'private_chat')).toBe(1)
+  })
+
+  it('routes self and other profile cards to their existing conversation owners', () => {
+    expect(arkmeMemberConversationAction(member)).toBe('private_chat')
+    const self = { ...member, isSelf: true, displayName: '颜格蕾' }
+    expect(arkmeMemberConversationAction(self)).toBe('send_to_self')
+    const card = renderToStaticMarkup(createElement(ArkmeMemberProfileCard, {
+      member: self,
+      busy: true,
+      onClose: () => undefined,
+      onSend: () => undefined,
+    }))
+    expect(card).toContain('颜格蕾')
+    expect(card).toContain('data-arkme-profile-send-state="loading"')
+    expect(card).toContain('disabled=""')
   })
 
   it('uses the projected mode count instead of the loaded page length', () => {
@@ -79,6 +126,16 @@ describe('chat member action menu placement', () => {
     expect(panel).toContain('2条')
     expect(panel).toContain('data-total="2"')
     expect(panel).toContain('data-arkme-member-records-dismiss="true"')
+    expect(panel).toContain('data-arkme-member-records-resize-handle="true"')
+    expect(panel).toContain(`data-width="${ARKME_MEMBER_RECORDS_DEFAULT_WIDTH}"`)
+  })
+
+  it('clamps the shared records drawer width like the desktop client', () => {
+    expect(clampArkmeMemberRecordsWidth(520, 1_200)).toBe(520)
+    expect(clampArkmeMemberRecordsWidth(900, 1_200)).toBe(720)
+    expect(clampArkmeMemberRecordsWidth(520, 600)).toBe(428)
+    expect(clampArkmeMemberRecordsWidth(520, 320)).toBe(320)
+    expect(clampArkmeMemberRecordsWidth(Number.NaN, 1_200)).toBe(428)
   })
 
   it('builds the same chronological 30-minute time segmentation as the desktop client', () => {

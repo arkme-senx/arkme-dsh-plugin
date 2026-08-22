@@ -19,7 +19,7 @@ import { ArkmeSourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeGroupChatControls } from './ArkmeGroupChatControls.js'
 import {
   ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
-  arkmeMemberActionMenuRowCount, positionArkmeMemberMenu,
+  arkmeMemberActionMenuRowCount, arkmeMemberConversationAction, positionArkmeMemberMenu,
   type ArkmeMemberMenuPosition,
 } from './ArkmeChatMemberActions.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
@@ -474,6 +474,7 @@ export function arkmeTimelineAvatarRef(item: ArkmeTimelineItem, profile?: ArkmeU
 function MessageAvatar(props: {
   avatarRef?: string
   member?: ArkmeConversationMemberItem
+  profileEnabled: boolean
   onOpen: (member: ArkmeConversationMemberItem) => void
   onContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
 }) {
@@ -482,9 +483,14 @@ function MessageAvatar(props: {
   if (member === undefined) return <span style={styles.messageAvatar} aria-hidden>{avatar}</span>
   return <button
     type="button"
-    style={{ ...styles.messageAvatar, padding: 0, border: 0, cursor: member.isSelf ? 'default' : 'pointer' }}
-    aria-label={member.isSelf ? '我的头像' : `查看 ${member.displayName}`}
-    onClick={event => { event.stopPropagation(); if (!member.isSelf) props.onOpen(member) }}
+    style={{ ...styles.messageAvatar, padding: 0, border: 0, cursor: props.profileEnabled ? 'pointer' : 'default' }}
+    aria-label={props.profileEnabled
+      ? member.isSelf ? '查看我的用户卡片' : `查看 ${member.displayName}`
+      : `${member.displayName} 的消息头像`}
+    onClick={event => {
+      event.stopPropagation()
+      if (props.profileEnabled) props.onOpen(member)
+    }}
     onContextMenu={event => {
       event.preventDefault()
       event.stopPropagation()
@@ -1653,10 +1659,11 @@ export function ArkmeSurface({
     })
   }, [source])
   const openMemberProfile = useCallback((member: ArkmeConversationMemberItem) => {
+    if (source?.kind !== 'group_chat') return
     setMemberMenu(undefined)
     setMemberRecords(undefined)
-    if (!member.isSelf) setMemberProfile(member)
-  }, [])
+    setMemberProfile(member)
+  }, [source?.kind])
   const openMemberRecords = useCallback((member: ArkmeConversationMemberItem, mode: ArkmeConversationMemberRecordMode) => {
     setMemberMenu(undefined)
     setMemberProfile(undefined)
@@ -1682,9 +1689,21 @@ export function ArkmeSurface({
     })
   }, [composerDraftKey, draft.length, source?.kind])
   const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
-    if (source === undefined || member.isSelf || privateChatBusy) return
+    if (source === undefined || privateChatBusy) return
     setPrivateChatBusy(true)
     setError('')
+    if (arkmeMemberConversationAction(member) === 'send_to_self') {
+      if (aggregateSource === undefined) {
+        setError('发给自己暂不可用，请稍后重试')
+        setPrivateChatBusy(false)
+        return
+      }
+      setMemberProfile(undefined)
+      setMemberRecords(undefined)
+      activateSource(aggregateSource)
+      setPrivateChatBusy(false)
+      return
+    }
     void callArkme<ArkmeOpenPrivateChatResult>('chat.member.private.open', {
       sourceRef: source.sourceRef,
       memberRef: member.memberRef,
@@ -1696,7 +1715,7 @@ export function ArkmeSurface({
       })
       .catch(caught => { setError(errorMessage(caught)) })
       .finally(() => { setPrivateChatBusy(false) })
-  }, [activateSource, privateChatBusy, source])
+  }, [activateSource, aggregateSource, privateChatBusy, source])
   useEffect(() => {
     if (memberMenu === undefined) return
     const close = () => { setMemberMenu(undefined) }
@@ -2039,6 +2058,7 @@ export function ArkmeSurface({
                       {showMessageAvatars && <MessageAvatar
                         {...(avatarRef === undefined ? {} : { avatarRef })}
                         {...(messageMember === undefined ? {} : { member: messageMember })}
+                        profileEnabled={source?.kind === 'group_chat'}
                         onOpen={openMemberProfile}
                         onContextMenu={openMemberMenu}
                       />}

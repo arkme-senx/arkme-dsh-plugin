@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   cachedSelectedSource, clearLastNavigationCache, readLastNavigationCache,
-  readNavigationCache, reconcileSelectedSource, writeNavigationCache, type ArkmeNavigationCache,
+  forgetNavigationProviderInstance, readNavigationCache, reconcileNavigationProviderInstance, reconcileSelectedSource,
+  writeNavigationCache, type ArkmeNavigationCache,
 } from '../src/client/navigation-cache.js'
 
 class MemoryStorage implements Storage {
@@ -110,5 +111,46 @@ describe('Arkme navigation cache', () => {
       { ...current, sourceRef: 'new-ref-1' },
       { ...current, sourceRef: 'new-ref-2' },
     ])).toBeUndefined()
+  })
+
+  it('invalidates legacy navigation caches when the Provider instance is first observed', () => {
+    const storage = new MemoryStorage()
+    writeNavigationCache({
+      version: 1, userId: 10001, directory: 'root', sources: { root: [] }, updatedAtMillis: 2,
+    }, storage)
+
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(true)
+    expect(readLastNavigationCache(storage)).toBeUndefined()
+    expect(readNavigationCache(10001, storage)).toBeUndefined()
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(false)
+  })
+
+  it('keeps current-instance caches and clears every account cache after an instance change', () => {
+    const storage = new MemoryStorage()
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(true)
+    for (const userId of [10001, 10002]) {
+      writeNavigationCache({
+        version: 1, userId, directory: 'root', sources: { root: [] }, updatedAtMillis: 2,
+      }, storage)
+    }
+
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(false)
+    expect(readNavigationCache(10001, storage)).toBeDefined()
+    expect(readNavigationCache(10002, storage)).toBeDefined()
+
+    expect(reconcileNavigationProviderInstance('instance-b', storage)).toBe(true)
+    expect(readLastNavigationCache(storage)).toBeUndefined()
+    expect(readNavigationCache(10001, storage)).toBeUndefined()
+    expect(readNavigationCache(10002, storage)).toBeUndefined()
+    expect(reconcileNavigationProviderInstance('instance-b', storage)).toBe(false)
+  })
+
+  it('allows a failed Provider recovery to be retried', () => {
+    const storage = new MemoryStorage()
+
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(true)
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(false)
+    forgetNavigationProviderInstance(storage)
+    expect(reconcileNavigationProviderInstance('instance-a', storage)).toBe(true)
   })
 })

@@ -15,6 +15,10 @@ import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
 } from './chat-directory-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
+import {
+  reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
+} from './provider-instance-runtime.js'
+import { forgetNavigationProviderInstance } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -41,17 +45,36 @@ export function ArkmePersistentClientRuntime() {
   }, [ui.authRevision])
 
   useEffect(() => {
-    if (auth?.status !== 'authenticated') {
+    if (auth?.status !== 'authenticated' || auth.userId === undefined) {
       arkmeChatDirectory.activateAccount(undefined)
       return
     }
-    arkmeChatDirectory.activateAccount(auth.userId)
+    const authenticatedUserId = auth.userId
+    arkmeChatDirectory.activateAccount(authenticatedUserId)
     let stopped = false
     let observedRevision: number | undefined
     const refreshUnread = async (force = false) => {
       await arkmeChatDirectory.refreshRoot({ force })
     }
     const events = new EventSource('/arkme-self/api/events')
+    events.onopen = () => {
+      void reconcileArkmeProviderInstance()
+        .then(async changed => {
+          if (!changed || stopped) return
+          try {
+            await recoverArkmeProviderInstanceDirectory({
+              userId: authenticatedUserId,
+              activateAccount: userId => { arkmeChatDirectory.activateAccount(userId) },
+              refreshRoot: async force => { await refreshUnread(force) },
+              onRefreshed: () => { if (!stopped) arkmeUi.chatChanged() },
+            })
+          } catch (error) {
+            forgetNavigationProviderInstance()
+            throw error
+          }
+        })
+        .catch(() => undefined)
+    }
     events.onmessage = event => {
       if (stopped) return
       try {

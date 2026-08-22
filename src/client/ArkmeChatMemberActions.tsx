@@ -1,4 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  Fragment, useEffect, useMemo, useRef, useState, type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { XIcon } from '@phosphor-icons/react/dist/csr/X'
 import type {
   ArkmeConversationMemberItem,
@@ -17,6 +20,57 @@ const MENU_ROW_HEIGHT = 44
 const MENU_EDGE_PADDING = 8
 const MENU_ANCHOR_GAP = 4
 const RECORD_TIME_GAP_MILLIS = 30 * 60 * 1000
+export const ARKME_MEMBER_RECORDS_DEFAULT_WIDTH = 428
+export const ARKME_MEMBER_RECORDS_RESIZE_HANDLE_WIDTH = 10
+export const ARKME_MEMBER_RECORDS_RESIZE_INDICATOR_WIDTH = 3
+export const ARKME_MEMBER_RECORDS_MAX_WIDTH_FACTOR = 0.6
+const MEMBER_RECORDS_WIDTH_STORAGE_KEY = 'arkme.member-records-sidebar-width.v1'
+let cachedMemberRecordsWidth: number | undefined
+
+export function clampArkmeMemberRecordsWidth(preferredWidth: number, availableWidth: number): number {
+  const available = Number.isFinite(availableWidth) ? Math.max(0, availableWidth) : 0
+  if (available === 0) return 0
+  if (available < ARKME_MEMBER_RECORDS_DEFAULT_WIDTH) return available
+  const maximum = Math.min(
+    available,
+    Math.max(ARKME_MEMBER_RECORDS_DEFAULT_WIDTH, available * ARKME_MEMBER_RECORDS_MAX_WIDTH_FACTOR),
+  )
+  const preferred = Number.isFinite(preferredWidth) && preferredWidth > 0
+    ? preferredWidth
+    : ARKME_MEMBER_RECORDS_DEFAULT_WIDTH
+  return Math.min(maximum, Math.max(ARKME_MEMBER_RECORDS_DEFAULT_WIDTH, preferred))
+}
+
+function readPreferredMemberRecordsWidth(): number {
+  if (cachedMemberRecordsWidth !== undefined) return cachedMemberRecordsWidth
+  if (typeof window === 'undefined') return ARKME_MEMBER_RECORDS_DEFAULT_WIDTH
+  try {
+    const stored = Number(window.localStorage.getItem(MEMBER_RECORDS_WIDTH_STORAGE_KEY))
+    cachedMemberRecordsWidth = Number.isFinite(stored) && stored > 0
+      ? stored
+      : ARKME_MEMBER_RECORDS_DEFAULT_WIDTH
+  } catch {
+    cachedMemberRecordsWidth = ARKME_MEMBER_RECORDS_DEFAULT_WIDTH
+  }
+  return cachedMemberRecordsWidth
+}
+
+export function arkmeMemberConversationAction(
+  member: Pick<ArkmeConversationMemberItem, 'isSelf'>,
+): 'send_to_self' | 'private_chat' {
+  return member.isSelf ? 'send_to_self' : 'private_chat'
+}
+
+function persistPreferredMemberRecordsWidth(width: number): void {
+  if (!Number.isFinite(width) || width <= 0) return
+  cachedMemberRecordsWidth = width
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(MEMBER_RECORDS_WIDTH_STORAGE_KEY, String(width))
+  } catch {
+    // Local storage is best-effort; an unavailable store must not block the drawer.
+  }
+}
 
 export interface ArkmeMemberMenuPosition {
   left: number
@@ -97,14 +151,23 @@ const styles: Record<string, CSSProperties> = {
   cardButton: {
     width: '100%', height: 50, marginTop: 'auto', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
     background: arkmeTheme.foreground, color: arkmeTheme.text, fontSize: 16, fontWeight: 600, cursor: 'pointer',
+    transition: 'background-color 120ms ease, border-color 120ms ease, opacity 120ms ease',
   },
   drawer: {
-    position: 'absolute', zIndex: 36, top: 68, right: 0, bottom: 0, width: 428, maxWidth: '92%',
+    position: 'absolute', zIndex: 36, top: 68, right: 0, bottom: 0, width: ARKME_MEMBER_RECORDS_DEFAULT_WIDTH,
     display: 'flex', flexDirection: 'column', background: arkmeTheme.layer2,
     borderLeft: `1px solid ${arkmeTheme.border}`, borderRadius: '12px 0 0 0', overflow: 'hidden',
     boxShadow: '-8px 14px 28px rgba(24, 29, 36, .1)',
   },
   drawerDismiss: { position: 'absolute', inset: 0, zIndex: 35, background: 'transparent' },
+  drawerResizeHandle: {
+    position: 'absolute', zIndex: 37, top: 68, bottom: 0,
+    width: ARKME_MEMBER_RECORDS_RESIZE_HANDLE_WIDTH, cursor: 'col-resize', touchAction: 'none',
+  },
+  drawerResizeIndicator: {
+    position: 'absolute', top: 0, bottom: 0, width: ARKME_MEMBER_RECORDS_RESIZE_INDICATOR_WIDTH,
+    background: arkmeTheme.accent, transition: 'opacity 120ms ease', pointerEvents: 'none',
+  },
   drawerHeader: {
     minHeight: 88, flex: 'none', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '16px 12px 14px 20px',
     borderBottom: `1px solid ${arkmeTheme.border}`, boxSizing: 'border-box',
@@ -146,7 +209,8 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function menuRows(member: ArkmeConversationMemberItem, sourceKind: ArkmeSourceItem['kind']): number {
-  return member.isSelf || sourceKind !== 'group_chat' ? 2 : 3
+  if (sourceKind !== 'group_chat') return 1
+  return member.isSelf ? 2 : 3
 }
 
 export function arkmeMemberActionMenuRowCount(
@@ -197,12 +261,14 @@ export function ArkmeMemberActionMenu(props: {
       </button>
       <div style={styles.divider} />
     </>}
-    <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('mentioned') }}
-      onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
-      <span style={styles.menuLabel}>{mentionedLabel}</span><span style={styles.menuCount}>{props.member.mentionCount}</span>
-    </button>
-    <div style={styles.divider} />
+    {props.sourceKind === 'group_chat' && <>
+      <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('mentioned') }}
+        onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
+        <span style={styles.menuLabel}>{mentionedLabel}</span><span style={styles.menuCount}>{props.member.mentionCount}</span>
+      </button>
+      <div style={styles.divider} />
+    </>}
     <button type="button" role="menuitem" style={styles.menuRow} onClick={() => { props.onRecords('owner') }}
       onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.subtle }}
       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}>
@@ -218,6 +284,7 @@ export function ArkmeMemberProfileCard(props: {
   onSend: () => void
 }) {
   const [backdrop, setBackdrop] = useState('')
+  const [buttonState, setButtonState] = useState<'idle' | 'hover' | 'active'>('idle')
   useEffect(() => {
     let active = true
     setBackdrop('')
@@ -232,6 +299,14 @@ export function ArkmeMemberProfileCard(props: {
     window.addEventListener('keydown', onKey)
     return () => { window.removeEventListener('keydown', onKey) }
   }, [props.onClose])
+  const visualButtonState = props.busy ? 'loading' : buttonState
+  const buttonBackground = props.busy
+    ? arkmeTheme.layer1
+    : buttonState === 'active'
+      ? arkmeTheme.active
+      : buttonState === 'hover'
+        ? arkmeTheme.hover
+        : arkmeTheme.foreground
   return <div style={styles.cardScrim} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget) props.onClose()
   }}>
@@ -241,7 +316,24 @@ export function ArkmeMemberProfileCard(props: {
         <ArkmeUserAvatar {...(props.member.avatarRef === undefined ? {} : { avatarRef: props.member.avatarRef })}
           size={100} label={`${props.member.displayName} 的头像`} />
         <h3 style={styles.cardName}>{props.member.displayName}</h3>
-        <button type="button" style={{ ...styles.cardButton, opacity: props.busy ? .55 : 1 }} disabled={props.busy} onClick={props.onSend}>
+        <button
+          type="button"
+          style={{
+            ...styles.cardButton,
+            background: buttonBackground,
+            borderColor: buttonState === 'idle' || props.busy ? arkmeTheme.border : arkmeTheme.accent,
+            cursor: props.busy ? 'default' : 'pointer',
+            opacity: props.busy ? .55 : 1,
+          }}
+          disabled={props.busy}
+          aria-busy={props.busy}
+          data-arkme-profile-send-state={visualButtonState}
+          onPointerEnter={() => { if (!props.busy) setButtonState('hover') }}
+          onPointerLeave={() => { setButtonState('idle') }}
+          onPointerDown={() => { if (!props.busy) setButtonState('active') }}
+          onPointerUp={() => { if (!props.busy) setButtonState('hover') }}
+          onClick={props.onSend}
+        >
           {props.busy ? '正在打开…' : '发送消息'}
         </button>
       </div>
@@ -320,7 +412,14 @@ export function ArkmeMemberRecordsPanel(props: {
   const [error, setError] = useState('')
   const requestRef = useRef<AbortController>()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const dismissRef = useRef<HTMLDivElement>(null)
   const initialScrollRef = useRef(false)
+  const preferredWidthRef = useRef(readPreferredMemberRecordsWidth())
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number }>()
+  const [preferredWidth, setPreferredWidth] = useState(preferredWidthRef.current)
+  const [availableWidth, setAvailableWidth] = useState<number>()
+  const [resizeHovered, setResizeHovered] = useState(false)
+  const [resizing, setResizing] = useState(false)
 
   const load = (beforeSequence?: number) => {
     requestRef.current?.abort()
@@ -364,6 +463,20 @@ export function ArkmeMemberRecordsPanel(props: {
   }, [props.onClose])
 
   useEffect(() => {
+    const host = dismissRef.current?.parentElement
+    if (host === undefined || host === null) return
+    const measure = () => { setAvailableWidth(host.getBoundingClientRect().width) }
+    measure()
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measure)
+      observer.observe(host)
+      return () => { observer.disconnect() }
+    }
+    window.addEventListener('resize', measure)
+    return () => { window.removeEventListener('resize', measure) }
+  }, [])
+
+  useEffect(() => {
     if (items.length === 0 || initialScrollRef.current) return
     initialScrollRef.current = true
     window.requestAnimationFrame(() => {
@@ -376,10 +489,78 @@ export function ArkmeMemberRecordsPanel(props: {
     : (props.member.isSelf ? '我的快记' : `${props.member.displayName}的快记`)
   const total = arkmeMemberRecordTotal(props.member, props.mode)
   const timeline = useMemo(() => arkmeMemberRecordTimeline(items), [items])
+  const effectiveWidth = availableWidth === undefined
+    ? preferredWidth
+    : clampArkmeMemberRecordsWidth(preferredWidth, availableWidth)
+  const drawerUsesAllAvailableWidth = availableWidth !== undefined && effectiveWidth >= availableWidth
+  const handleRight = drawerUsesAllAvailableWidth
+    ? Math.max(0, (availableWidth ?? 0) - ARKME_MEMBER_RECORDS_RESIZE_HANDLE_WIDTH)
+    : effectiveWidth
+  const updatePreferredWidth = (width: number) => {
+    const nextWidth = availableWidth === undefined
+      ? width
+      : clampArkmeMemberRecordsWidth(width, availableWidth)
+    preferredWidthRef.current = nextWidth
+    setPreferredWidth(nextWidth)
+  }
+  const finishResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    dragRef.current = undefined
+    setResizing(false)
+    persistPreferredMemberRecordsWidth(preferredWidthRef.current)
+  }
   return <>
-    <div style={styles.drawerDismiss} data-arkme-member-records-dismiss="true" onPointerDown={props.onClose} />
-    <aside style={styles.drawer} role="dialog" aria-modal="true" aria-label={title} data-arkme-member-records-panel="true"
-      data-mode={props.mode} data-total={total}>
+    <div ref={dismissRef} style={styles.drawerDismiss} data-arkme-member-records-dismiss="true" onPointerDown={props.onClose} />
+    <div
+      role="separator"
+      aria-label="调整成员快记侧栏宽度"
+      aria-orientation="vertical"
+      aria-valuenow={Math.round(effectiveWidth)}
+      tabIndex={0}
+      data-arkme-member-records-resize-handle="true"
+      data-resizing={resizing ? 'true' : 'false'}
+      style={{ ...styles.drawerResizeHandle, right: handleRight }}
+      onPointerEnter={() => { setResizeHovered(true) }}
+      onPointerLeave={() => { if (!resizing) setResizeHovered(false) }}
+      onPointerDown={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: effectiveWidth }
+        preferredWidthRef.current = effectiveWidth
+        setResizing(true)
+      }}
+      onPointerMove={event => {
+        const drag = dragRef.current
+        if (drag === undefined || drag.pointerId !== event.pointerId) return
+        event.preventDefault()
+        event.stopPropagation()
+        updatePreferredWidth(drag.startWidth + drag.startX - event.clientX)
+      }}
+      onPointerUp={finishResize}
+      onPointerCancel={finishResize}
+      onKeyDown={event => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        event.stopPropagation()
+        updatePreferredWidth(preferredWidth + (event.key === 'ArrowLeft' ? 16 : -16))
+        persistPreferredMemberRecordsWidth(preferredWidthRef.current)
+      }}
+    >
+      <span aria-hidden style={{
+        ...styles.drawerResizeIndicator,
+        ...(drawerUsesAllAvailableWidth ? { left: 0 } : { right: 0 }),
+        opacity: resizeHovered || resizing ? 1 : 0,
+      }} />
+    </div>
+    <aside style={{ ...styles.drawer, width: effectiveWidth }} role="dialog" aria-modal="true" aria-label={title}
+      data-arkme-member-records-panel="true" data-mode={props.mode} data-total={total}
+      data-width={Math.round(effectiveWidth)} data-resizing={resizing ? 'true' : 'false'}>
     <header style={styles.drawerHeader}>
       <div style={styles.drawerHeading}>
         <h3 style={styles.drawerTitle}>{title}</h3>

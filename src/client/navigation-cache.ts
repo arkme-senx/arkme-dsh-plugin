@@ -8,6 +8,7 @@ import type {
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
+const PROVIDER_INSTANCE_KEY = 'dsh-arkme:navigation:v1:provider-instance'
 const MAX_CACHED_SOURCES = 200
 
 export interface ArkmeNavigationCache {
@@ -164,6 +165,34 @@ export function clearLastNavigationCache(storage?: Storage): void {
   if (target === undefined) return
   try { target.removeItem(POINTER_KEY) }
   catch { /* Ignore unavailable browser storage. */ }
+}
+
+/** Signed source/image references are valid only inside the Provider instance that issued them. */
+export function reconcileNavigationProviderInstance(instanceId: string, storage?: Storage): boolean {
+  const normalized = instanceId.trim()
+  const target = storageOrUndefined(storage)
+  if (normalized === '' || target === undefined) return false
+  try {
+    if (target.getItem(PROVIDER_INSTANCE_KEY) === normalized) return false
+    const staleKeys: string[] = []
+    for (let index = 0; index < target.length; index += 1) {
+      const key = target.key(index)
+      if (key === POINTER_KEY || key?.startsWith(CACHE_KEY_PREFIX) === true) staleKeys.push(key)
+    }
+    for (const key of staleKeys) target.removeItem(key)
+    target.setItem(PROVIDER_INSTANCE_KEY, normalized)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Remove the success marker after current-instance projections failed to load so reconnect can retry. */
+export function forgetNavigationProviderInstance(storage?: Storage): void {
+  const target = storageOrUndefined(storage)
+  if (target === undefined) return
+  try { target.removeItem(PROVIDER_INSTANCE_KEY) }
+  catch { /* Browser storage is an optional acceleration layer. */ }
 }
 
 export function cachedSelectedSource(cache: ArkmeNavigationCache): ArkmeSourceItem | undefined {
