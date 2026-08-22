@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 import { SecretValue } from '../src/secret-value.js'
 import {
   createOpenClawProvisioner,
@@ -74,7 +75,9 @@ describe('OpenClawProvisioner', () => {
     expect(JSON.stringify(result)).not.toContain('top-secret')
     expect(calls.join('\n')).not.toContain('top-secret')
     expect(captured).toHaveLength(1)
-    expect(calls[2]).toMatch(/^agent:arkme-bot-[a-f0-9]{16}:\/owned\/workspaces\/arkme-bot-[a-f0-9]{16}$/)
+    const agentId = calls[2]?.split(':')[1]
+    expect(agentId).toMatch(/^arkme-bot-[a-f0-9]{16}$/)
+    expect(calls[2]).toBe(`agent:${agentId}:${join('/owned/workspaces', agentId as string)}`)
   })
 
   it('reuses complete resources without retrieving or rewriting the secret', async () => {

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { ArkmeExtensionManifest, ArkmeInstalledExtension, ArkmeNativeCapability } from './types.js'
+import { securePrivateDirectorySync, securePrivateFileSync } from '../private-filesystem.js'
 
 interface ExtensionRow {
   extension_id: string
@@ -31,10 +32,11 @@ interface ExtensionRow {
 export class ArkmeExtensionInstallStore {
   private readonly path: string
   private readonly database: DatabaseSync
+  private readonly securedWindowsFiles = new Set<string>()
 
   constructor(directory: string) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
-    chmodSync(directory, 0o700)
+    securePrivateDirectorySync(directory)
     this.path = join(directory, 'extensions.sqlite3')
     this.database = new DatabaseSync(this.path)
     this.database.exec(`
@@ -222,7 +224,11 @@ export class ArkmeExtensionInstallStore {
 
   private secureFiles(): void {
     for (const path of [this.path, `${this.path}-wal`, `${this.path}-shm`]) {
-      try { chmodSync(path, 0o600) } catch (error) {
+      if (process.platform === 'win32' && this.securedWindowsFiles.has(path)) continue
+      try {
+        securePrivateFileSync(path)
+        if (process.platform === 'win32') this.securedWindowsFiles.add(path)
+      } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,6 +15,7 @@ import {
   profilePluginCommandErrorDetail,
 } from '../../src/extensions/profile-installer.js'
 import type { ArkmeInstalledExtension } from '../../src/extensions/types.js'
+import { expectPrivatePath } from '../helpers/private-path.js'
 
 const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -330,7 +331,7 @@ describe('persistent extension profile bundle', () => {
       expect(standaloneRestart).not.toHaveBeenCalled()
       expect(standaloneShutdown).not.toHaveBeenCalled()
       expect(requestProcessExit).toHaveBeenCalledWith(75)
-      expect(statSync(supervisedPlanPath).mode & 0o777).toBe(0o600)
+      expectPrivatePath(supervisedPlanPath, 0o600)
       expect(JSON.parse(readFileSync(supervisedPlanPath, 'utf8'))).toMatchObject({
         extensionId: 'ext-test',
         packageName: '@arkme-local/ext-0123456789abcdef',

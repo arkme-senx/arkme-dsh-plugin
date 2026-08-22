@@ -595,12 +595,13 @@ if (args[0] === 'web') {
     let serverPid: number | undefined
     try {
       await runPluginUpdater(planPath)
+      serverPid = Number(await readFile(pidPath, 'utf8'))
       const install = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(install).toMatchObject({ phase: 'succeeded', targetVersion: '0.1.4' })
-      const trace = await readFile(tracePath, 'utf8')
-      expect(trace).toContain(`file:${targetArtifactPath}`)
-      expect(trace).not.toContain('@senguoyun/dsh-arkme@0.1.4')
-      serverPid = Number(await readFile(pidPath, 'utf8'))
+      const trace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
+        .map(line => JSON.parse(line) as string[])
+      expect(trace.some(args => args.includes(`file:${targetArtifactPath}`))).toBe(true)
+      expect(trace.flat()).not.toContain('@senguoyun/dsh-arkme@0.1.4')
 
       process.kill(serverPid, 'SIGTERM')
       serverPid = undefined
@@ -620,11 +621,13 @@ if (args[0] === 'web') {
         parentPid: rollbackParentPid,
       }))
       await runPluginUpdater(rollbackPlanPath)
+      serverPid = Number(await readFile(pidPath, 'utf8'))
       const rolledBack = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(rolledBack).toMatchObject({ phase: 'rolled-back', previousVersion: '0.1.3' })
       expect(await readFile(versionPath, 'utf8')).toBe('0.1.3')
-      expect(await readFile(tracePath, 'utf8')).toContain(`file:${previousArtifactPath}`)
-      serverPid = Number(await readFile(pidPath, 'utf8'))
+      const rollbackTrace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
+        .map(line => JSON.parse(line) as string[])
+      expect(rollbackTrace.some(args => args.includes(`file:${previousArtifactPath}`))).toBe(true)
     } finally {
       if (serverPid !== undefined && Number.isSafeInteger(serverPid)) {
         try { process.kill(serverPid, 'SIGTERM') } catch { /* already stopped */ }

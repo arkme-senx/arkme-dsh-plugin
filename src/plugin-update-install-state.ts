@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
+import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 const PHASES = new Set<ArkmePluginUpdateInstallPhase>([
   'idle', 'preparing', 'downloading', 'verifying', 'installing', 'restarting', 'succeeded', 'failed', 'rolled-back',
@@ -55,11 +56,11 @@ export class PluginUpdateInstallStateStore {
   async write(snapshot: ArkmePluginUpdateInstallSnapshot): Promise<void> {
     const directory = dirname(this.path)
     await mkdir(directory, { recursive: true, mode: 0o700 })
-    await chmod(directory, 0o700)
+    await securePrivateDirectory(directory)
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`
     await writeFile(temporary, `${JSON.stringify(snapshot, undefined, 2)}\n`, { mode: 0o600 })
-    await chmod(temporary, 0o600)
+    await securePrivateFile(temporary)
     await rename(temporary, this.path)
-    await chmod(this.path, 0o600)
+    await securePrivateFile(this.path)
   }
 }

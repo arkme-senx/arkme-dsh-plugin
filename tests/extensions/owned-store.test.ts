@@ -1,8 +1,9 @@
-import { mkdtempSync, statSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ArkmeOwnedExtensionStore } from '../../src/extensions/owned-store.js'
+import { expectPrivatePath } from '../helpers/private-path.js'
 
 function temporaryDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'arkme-owned-extension-store-'))
@@ -26,7 +27,7 @@ describe('owned extension provenance store', () => {
     expect(reopened.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-weather')
     reopened.close()
 
-    expect(statSync(join(directory, 'owned-extensions.sqlite3')).mode & 0o777).toBe(0o600)
+    expectPrivatePath(join(directory, 'owned-extensions.sqlite3'), 0o600)
   })
 
   it('keeps profile ownership stable while a local dependency spec changes', () => {
