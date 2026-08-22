@@ -18,7 +18,7 @@ export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 
 const ARKME_MANAGED_PROVIDER_NAME = 'Arkme'
 const ARKME_MANAGED_MODEL_DESCRIPTION = '使用 Arkme 登录，无需 API Key'
-const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请充值后重试'
+const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
 const ARKME_MANAGED_MODELS = new Set([ARKME_MANAGED_MODEL])
 const ARKME_AUTH_FAILURE_CODES = new Set([
   'login-required',

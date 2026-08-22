@@ -9,7 +9,7 @@ import type {
   ArkmeExtensionReviewPage,
 } from './extensions/types.js'
 import type { ArkmeSessionStore } from './keychain-store.js'
-import { managedAccessTokenExpiresWithin } from './managed-ai/credential.js'
+import { resolveManagedAccessCredential } from './managed-ai/credential.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from './openclaw/index.js'
 import { ArkmeOutgoingCallBroker } from './outgoing-call-broker.js'
 import {
@@ -381,7 +381,7 @@ export class ArkmeService {
     return this.realtime.chatRealtimeState()
   }
 
-  async resolveManagedAccessCredential(): Promise<SecretValue> { const session = await this.runtime.requireSession(); return new SecretValue(managedAccessTokenExpiresWithin(session.accessToken, 60_000) ? (await this.runtime.refreshAccessToken(session)).accessToken : session.accessToken) }
+  async resolveManagedAccessCredential(): Promise<SecretValue> { return await resolveManagedAccessCredential(this.runtime) }
 
   subscribeChatRealtime(listener: (event: ArkmeChatClientEvent) => void): () => void {
     return this.realtime.subscribeChatRealtime(listener)
