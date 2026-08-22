@@ -7,7 +7,7 @@ import './composer-draft-auth-binding.js'
 import { callArkme } from './api.js'
 import { ArkmeFooterAction } from './ArkmeFooterAction.js'
 import { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
-import { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
+import { ArkmeSettingsSection } from './ArkmeSettingsSection.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
@@ -139,12 +139,12 @@ export function apply(ctx: ClientContext): void {
     }),
   }, ArkmeFooterDropdown))
 
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
-    id: 'arkme-account',
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'arkme',
     order: 80,
     label: 'Arkme',
-  }, ArkmeSettingsRow))
+  }, ArkmeSettingsSection))
 
   if (startupAuthGateEnabled()) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
@@ -160,7 +160,7 @@ export { ArkmeFooterAction } from './ArkmeFooterAction.js'
 export { ArkmeFooterDropdown } from './ArkmeFooterDropdown.js'
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
-export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
+export { ArkmeSettingsSection } from './ArkmeSettingsSection.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'

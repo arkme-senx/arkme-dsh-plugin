@@ -16,12 +16,12 @@ function installDesktopGateMarker(): () => void {
 
 describe('official DSH client adapter', () => {
   it('keeps the native conversation mounted while the Footer owns a floating Arkme surface', () => {
-    const registered: Array<{ name: string; id?: string; inject?: () => unknown }> = []
+    const registered: Array<{ name: string; id?: string; order?: number; label?: string; inject?: () => unknown }> = []
     const inject = vi.fn((_key: string, register: () => unknown) => {
       register()
       return () => {}
     })
-    const register = vi.fn((options: { name: string; id?: string; inject?: () => unknown }) => {
+    const register = vi.fn((options: { name: string; id?: string; order?: number; label?: string; inject?: () => unknown }) => {
       registered.push(options)
       return vi.fn()
     })
@@ -32,8 +32,14 @@ describe('official DSH client adapter', () => {
 
     expect(registered.map(item => item.name)).toEqual([
       'sidebar.footer.action',
-      'settings.general.item',
+      'settings.section',
     ])
+    expect(registered).toContainEqual(expect.objectContaining({
+      name: 'settings.section', id: 'arkme', order: 80, label: 'Arkme',
+    }))
+    expect(registered).not.toContainEqual(expect.objectContaining({
+      name: 'settings.general.item', id: 'arkme-account',
+    }))
     const footer = registered.find(item => item.name === 'sidebar.footer.action')!
     const face = footer.inject?.() as {
       toggle(sessionId: string | undefined, authenticated: boolean): void

@@ -84,6 +84,11 @@ function withoutOfficialCommunityProductCopy(file: string, content: string): str
   return content
 }
 
+function withoutHarnessBuildInfrastructure(file: string, content: string): string {
+  if (file !== join(root, 'src/client/ArkmeSettingsSection.tsx')) return content
+  return content.replaceAll('jotmo-harness', '')
+}
+
 describe('Arkme plugin identity', () => {
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
@@ -95,9 +100,12 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutOfficialCommunityProductCopy(
+      const source = withoutHarnessBuildInfrastructure(
         file,
-        withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+        withoutOfficialCommunityProductCopy(
+          file,
+          withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+        ),
       )
       const content = withoutInfrastructureNames(withoutOpenClawProtocolNames(file, source))
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []

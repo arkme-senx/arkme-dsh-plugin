@@ -5,6 +5,7 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent,
+  ArkmeBillingPaymentMethod,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
 } from './types.js'
@@ -68,6 +69,38 @@ function writeJson(res: ServerResponse, status: number, body: ArkmePluginRespons
 
 function stringParam(params: Record<string, unknown>, key: string): string {
   return typeof params[key] === 'string' ? params[key] : ''
+}
+
+function billingIdentifierParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  message: string,
+): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > 256) throw new ArkmePluginError(code, message, false, 400)
+  return value
+}
+
+function billingUuidParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  message: string,
+): string {
+  const value = stringParam(params, key).trim().toLowerCase()
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+    throw new ArkmePluginError(code, message, false, 400)
+  }
+  return value
+}
+
+function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillingPaymentMethod {
+  const value = stringParam(params, 'paymentMethod')
+  if (value !== 'alipay_pc_web' && value !== 'wechat_native') {
+    throw new ArkmePluginError('billing-payment-method-invalid', '支付方式无效', false, 400)
+  }
+  return value
 }
 
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
@@ -362,6 +395,18 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'billing.quota': return await service.billingQuota()
+    case 'billing.products': return await service.billingProducts()
+    case 'billing.order.create': return await service.createBillingOrder({
+      productId: billingIdentifierParam(params, 'productId', 'billing-product-id-invalid', '购买套餐无效'),
+      paymentMethod: billingPaymentMethodParam(params),
+      clientRequestId: billingUuidParam(
+        params, 'clientRequestId', 'billing-client-request-id-invalid', '支付请求标识无效',
+      ),
+    })
+    case 'billing.order.status': return await service.billingOrderStatus(billingUuidParam(
+      params, 'orderId', 'billing-order-id-invalid', '支付订单标识无效',
+    ))
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
