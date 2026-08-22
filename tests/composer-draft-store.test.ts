@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeUploadedAsset } from '../src/types.js'
 import {
   ArkmeComposerDraftStore,
+  arkmeComposerCanSend,
   arkmeArkoComposerDraftKey,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
@@ -17,6 +18,13 @@ function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
 
 describe('Arkme composer draft store', () => {
   beforeEach(() => { vi.restoreAllMocks() })
+
+  it('allows keyboard submission when either text or an attachment is ready', () => {
+    expect(arkmeComposerCanSend('文字', 0, false)).toBe(true)
+    expect(arkmeComposerCanSend('', 1, false)).toBe(true)
+    expect(arkmeComposerCanSend('   ', 0, false)).toBe(false)
+    expect(arkmeComposerCanSend('文字', 1, true)).toBe(false)
+  })
 
   it('builds stable, account/source isolated keys and rejects incomplete targets', () => {
     const a = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })

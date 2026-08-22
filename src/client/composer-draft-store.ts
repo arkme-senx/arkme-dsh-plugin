@@ -12,6 +12,10 @@ export interface ArkmeComposerDraftSnapshot {
 
 const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({ text: '', attachments: Object.freeze([]) })
 
+export function arkmeComposerCanSend(text: string, attachmentCount: number, busy: boolean): boolean {
+  return !busy && (text.trim() !== '' || attachmentCount > 0)
+}
+
 function validUserId(userId: number | undefined): userId is number {
   return userId !== undefined && Number.isSafeInteger(userId) && userId > 0
 }
