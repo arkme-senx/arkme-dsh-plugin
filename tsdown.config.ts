@@ -37,7 +37,7 @@ export default defineConfig([
     fixedExtension: false,
     dts: false,
     clean: false,
-    loader: { '.svg': 'base64' },
+    loader: { '.svg': 'base64', '.png': 'base64' },
     sourcemap: true,
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,

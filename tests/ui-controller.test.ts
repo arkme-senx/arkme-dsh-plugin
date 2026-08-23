@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 
 describe('ArkmeUiController', () => {
+  it('opens voiceprint management as its own utility surface', () => {
+    const controller = new ArkmeUiController()
+    controller.authChanged(true)
+
+    controller.showVoiceprint()
+
+    expect(controller.getSnapshot().mode).toBe('voiceprint')
+  })
   it('isolates the recording view from message source selection and login changes', () => {
     const controller = new ArkmeUiController()
     const source = {
@@ -154,6 +162,19 @@ describe('ArkmeUiController', () => {
       authRevision: 0, chatRevision: 0, mode: 'world',
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
+  })
+
+  it('opens calls without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    controller.selectSource({
+      sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 1, unreadCount: 0,
+    })
+
+    controller.showCalls()
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0, chatRevision: 0, mode: 'calls',
+    })
   })
 
   it('clears the previous account selection when authentication changes accounts', () => {

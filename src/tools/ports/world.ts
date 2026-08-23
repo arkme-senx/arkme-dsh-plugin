@@ -1,4 +1,5 @@
 import type {
+  ArkmeOpenPrivateChatResult,
   ArkmeWorldFeedPage,
   ArkmeWorldPublishResult,
   ArkmeWorldRecordList,
@@ -11,6 +12,7 @@ export interface ArkmeWorldToolPort {
   listWorldFeed(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
   listMyWorldFeed(options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
   listUserWorldFeed(userId: number, options?: { limit?: number; offset?: number; signal?: AbortSignal }): Promise<ArkmeWorldFeedPage>
+  openPrivateChatFromWorldAuthor(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult>
   inviteWorldVoiceprint(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldVoiceprintInviteResult>
   worldVoiceprintSocialContext(
     recordRef: string,

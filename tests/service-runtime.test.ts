@@ -122,6 +122,40 @@ describe('ServiceRuntime', () => {
     expect(authorizations).toEqual(['Bearer expired-access', 'Bearer new-access'])
   })
 
+  it('posts audio multipart bodies without overriding the boundary and refreshes auth once', async () => {
+    let stored = { accessToken: 'expired-access', refreshToken: 'refresh-token', userId: 42 }
+    const sessionStore: ArkmeSessionStore = {
+      async read() { return stored },
+      async write(session) { stored = session },
+      async delete() {},
+    }
+    const requests: Array<{ authorization: string; contentType: string | null; body: BodyInit | null | undefined }> = []
+    const runtime = runtimeFixture(vi.fn(async (input, init) => {
+      if (String(input).endsWith('/api/public/v1/auth/new-short')) {
+        return new Response(JSON.stringify({ code: 200, data: { access_token: 'new-access' } }), { status: 200 })
+      }
+      const headers = new Headers(init?.headers)
+      requests.push({
+        authorization: headers.get('Authorization') ?? '',
+        contentType: headers.get('Content-Type'),
+        body: init?.body,
+      })
+      if (headers.get('Authorization') === 'Bearer expired-access') return new Response('', { status: 401 })
+      return new Response(JSON.stringify({ code: 200, data: { enrolled: true } }), { status: 200 })
+    }), sessionStore)
+    const form = new FormData()
+    form.set('audio', new Blob(['RIFF'], { type: 'audio/wav' }), 'voiceprint.wav')
+
+    await expect(runtime.authenticatedAudioMultipartPost<{ enrolled: boolean }>(
+      '/api/v1/audio/voiceprint/enroll-from-audio', form, stored,
+    )).resolves.toEqual({ enrolled: true })
+    expect(requests.map(request => request.authorization)).toEqual([
+      'Bearer expired-access', 'Bearer new-access',
+    ])
+    expect(requests.every(request => request.contentType === null)).toBe(true)
+    expect(requests.every(request => request.body === form)).toBe(true)
+  })
+
   it('fails explicitly when the extension service is disabled', async () => {
     const runtime = runtimeFixture(vi.fn() as typeof fetch)
     await expect(runtime.extensionPost('/api/test', {})).rejects.toMatchObject({

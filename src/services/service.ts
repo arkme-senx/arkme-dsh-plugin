@@ -83,6 +83,8 @@ interface ArkmeEnvelope<T> {
   data?: T
 }
 
+type ArkmePostBody = Record<string, unknown> | FormData
+
 export interface ArkmeRemoteRequestOptions {
   lane?: ArkmeRequestLane
   service?: ArkmeRequestService
@@ -290,7 +292,7 @@ export class ServiceRuntime {
   async post<T>(
     baseUrl: string,
     path: string,
-    body: Record<string, unknown>,
+    body: ArkmePostBody,
     bearer: string | undefined,
     successCodes: readonly number[],
     signal?: AbortSignal,
@@ -321,7 +323,7 @@ export class ServiceRuntime {
   async postDirect<T>(
     baseUrl: string,
     path: string,
-    body: Record<string, unknown>,
+    body: ArkmePostBody,
     bearer: string | undefined,
     successCodes: readonly number[],
     signal: AbortSignal = new AbortController().signal,
@@ -335,15 +337,16 @@ export class ServiceRuntime {
     else signal.addEventListener('abort', abort, { once: true })
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs)
     try {
+      const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          ...(multipart ? {} : { 'Content-Type': 'application/json' }),
           'Accept-Language': 'zh-CN',
           Usersource: '3',
           ...(bearer === undefined ? {} : { Authorization: `Bearer ${bearer}` }),
         },
-        body: JSON.stringify(body),
+        body: multipart ? body : JSON.stringify(body),
         signal: controller.signal,
       })
       if (response.status === 401 || (response.status === 403 && !preserveForbiddenError)) {
@@ -680,6 +683,26 @@ export class ServiceRuntime {
   ): Promise<T> {
     let session = initialSession ?? await this.requireSession()
     const requestOptions = () => this.authenticatedRequestOptions(session, 'audio', 'interactive-read', options)
+    try {
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedAudioMultipartPost<T>(
+    path: string,
+    body: FormData,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'audio', 'write', options)
     try {
       return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     } catch (error) {

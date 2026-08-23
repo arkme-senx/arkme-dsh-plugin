@@ -1,12 +1,15 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmePluginUpdateManager } from '../src/plugin-update.js'
 import {
+  assertTargetArtifactIntegrity,
   buildTargetInstallArgs,
+  buildTargetRemoveArgs,
   finalizeManagedPluginUpdate,
   parsePluginUpdaterPlan,
   rollbackManagedPluginUpdate,
@@ -85,6 +88,9 @@ describe('companion plugin updater', () => {
         previousSpec: fixture.spec,
         targetVersion: '0.1.4',
         targetArtifactPath: join(fixture.root, 'state', 'plugin-cache', '0.1.4', 'dsh-arkme-0.1.4.tgz'),
+        targetArtifactSha512: createHash('sha512').update(update.artifactBytes).digest('hex'),
+        appVersion: '1.2.0',
+        dshVersion: '0.1.0-rc.8',
         execArgv: ['--import', 'tsx/esm'],
         restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
       })
@@ -249,6 +255,81 @@ describe('companion plugin updater', () => {
     expect(requestProcessExit).toHaveBeenCalledWith(75)
   })
 
+  it('removes a stale linked installation when the profile declares a cached file artifact', async () => {
+    vi.useFakeTimers()
+    const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
+    const previousArtifactPath = join(fixture.root, 'previous', 'dsh-arkme-0.1.3.tgz')
+    await mkdir(dirname(previousArtifactPath), { recursive: true })
+    await writeFile(previousArtifactPath, pluginPackageTgz('0.1.3'))
+    await writeFile(join(fixture.root, 'profiles', 'web', 'package.json'), JSON.stringify({
+      packageManager: 'pnpm@11.19.0',
+      dependencies: { '@senguoyun/dsh-arkme': `file:${previousArtifactPath}` },
+    }))
+    await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
+
+    const update = privateUpdateFixture('0.1.4')
+    const supervisedPlanPath = join(fixture.root, 'state', 'desktop-managed-profile-restart.json')
+    const calls: string[] = []
+    let removed = false
+    const runProfilePluginRemove = vi.fn(async () => {
+      calls.push('remove')
+      removed = true
+      await rm(join(fixture.root, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme'), {
+        recursive: true,
+        force: true,
+      })
+    })
+    const runProfilePluginAdd = vi.fn(async () => {
+      calls.push('add')
+      if (removed) await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
+    })
+    const requestProcessExit = vi.fn()
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      execArgv: ['--import', 'tsx/esm'],
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+      preparePackageManager: () => undefined,
+      supervisedExitCode: 75,
+      supervisedPlanPath,
+      requestProcessExit,
+      runProfilePluginAdd,
+    }
+    Object.assign(installRuntime, { runProfilePluginRemove })
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://releases.jotmo.test',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: update.fetchImpl,
+      installRuntime,
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).resolves.toMatchObject({ phase: 'restarting', targetVersion: '0.1.4' })
+
+    expect(calls).toEqual(['remove', 'add'])
+    expect(JSON.parse(await readFile(join(
+      fixture.root,
+      'profiles',
+      'web',
+      'node_modules',
+      '@senguoyun',
+      'dsh-arkme',
+      'package.json',
+    ), 'utf8'))).toMatchObject({ version: '0.1.4' })
+    await vi.advanceTimersByTimeAsync(800)
+    expect(requestProcessExit).toHaveBeenCalledWith(75)
+  })
+
   it('treats downloading and verifying install phases as active work', async () => {
     const fixture = await runtimeFixture('link:/Applications/Arkme.app/plugin')
     const update = privateUpdateFixture('0.1.4')
@@ -351,6 +432,7 @@ describe('companion plugin updater', () => {
       previousSpec: 'link:/Applications/Arkme.app/plugin',
       targetVersion: '0.1.4',
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('tgz').digest('hex'),
       stateDirectory: join(root, 'state'),
       healthUrl: 'http://127.0.0.1:3080/api',
       logPath: join(root, 'update.log'),
@@ -360,6 +442,13 @@ describe('companion plugin updater', () => {
       '--import', 'tsx/esm', '/tmp/dsh.js',
       'plugin', '--profile', 'web', 'add', `file:${targetArtifactPath}`,
     ])
+    expect(buildTargetRemoveArgs(plan)).toEqual([
+      '--import', 'tsx/esm', '/tmp/dsh.js',
+      'plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme',
+    ])
+    expect(() => assertTargetArtifactIntegrity(plan)).not.toThrow()
+    await writeFile(targetArtifactPath, 'tampered tgz')
+    expect(() => assertTargetArtifactIntegrity(plan)).toThrow(/digest/i)
   })
 
   it('does not stop DSH when the Profile package manager preflight fails', async () => {
@@ -578,6 +667,9 @@ if (args[0] === 'web') {
       previousArtifactPath,
       targetVersion: '0.1.4',
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
       stateDirectory,
       healthUrl: `http://127.0.0.1:${String(port)}/arkme-self/api`,
       logPath: join(root, 'helper.log'),
@@ -595,12 +687,20 @@ if (args[0] === 'web') {
     let serverPid: number | undefined
     try {
       await runPluginUpdater(planPath)
+      serverPid = Number(await readFile(pidPath, 'utf8'))
       const install = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(install).toMatchObject({ phase: 'succeeded', targetVersion: '0.1.4' })
-      const trace = await readFile(tracePath, 'utf8')
-      expect(trace).toContain(`file:${targetArtifactPath}`)
-      expect(trace).not.toContain('@senguoyun/dsh-arkme@0.1.4')
-      serverPid = Number(await readFile(pidPath, 'utf8'))
+      const trace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
+        .map(line => JSON.parse(line) as string[])
+      const profileCommands = trace.filter(args => args[0] === 'plugin')
+      expect(profileCommands[0]).toEqual([
+        'plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme',
+      ])
+      expect(profileCommands[1]).toEqual([
+        'plugin', '--profile', 'web', 'add', `file:${targetArtifactPath}`,
+      ])
+      expect(trace.some(args => args.includes(`file:${targetArtifactPath}`))).toBe(true)
+      expect(trace.flat()).not.toContain('@senguoyun/dsh-arkme@0.1.4')
 
       process.kill(serverPid, 'SIGTERM')
       serverPid = undefined
@@ -620,11 +720,18 @@ if (args[0] === 'web') {
         parentPid: rollbackParentPid,
       }))
       await runPluginUpdater(rollbackPlanPath)
+      serverPid = Number(await readFile(pidPath, 'utf8'))
       const rolledBack = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(rolledBack).toMatchObject({ phase: 'rolled-back', previousVersion: '0.1.3' })
       expect(await readFile(versionPath, 'utf8')).toBe('0.1.3')
-      expect(await readFile(tracePath, 'utf8')).toContain(`file:${previousArtifactPath}`)
-      serverPid = Number(await readFile(pidPath, 'utf8'))
+      const rollbackTrace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
+        .map(line => JSON.parse(line) as string[])
+      const rollbackProfileCommands = rollbackTrace.filter(args => args[0] === 'plugin')
+      expect(rollbackProfileCommands.slice(-2)).toEqual([
+        ['plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme'],
+        ['plugin', '--profile', 'web', 'add', `file:${previousArtifactPath}`],
+      ])
+      expect(rollbackTrace.some(args => args.includes(`file:${previousArtifactPath}`))).toBe(true)
     } finally {
       if (serverPid !== undefined && Number.isSafeInteger(serverPid)) {
         try { process.kill(serverPid, 'SIGTERM') } catch { /* already stopped */ }
@@ -639,6 +746,106 @@ if (args[0] === 'web') {
       else process.env.FAKE_FAIL_VERSION = previousEnv.fail
     }
   }, 15_000)
+
+  it('migrates a legacy managed plan into a durable receipt on first fixed-version update', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-legacy-plan-'))
+    const stateDirectory = join(root, 'state')
+    const targetArtifactPath = join(root, 'cache', '0.1.4', 'dsh-arkme-0.1.4.tgz')
+    const dshBinPath = join(root, 'dsh', 'lib', 'bin.js')
+    await mkdir(dirname(targetArtifactPath), { recursive: true })
+    await mkdir(dirname(dshBinPath), { recursive: true })
+    await writeFile(targetArtifactPath, 'target tgz')
+    await writeFile(dshBinPath, '')
+    await writeFile(join(root, 'dsh', 'package.json'), JSON.stringify({ version: '0.1.0-rc.8' }))
+    const planPath = join(root, 'managed-plan.json')
+    await writeFile(planPath, JSON.stringify({
+      schemaVersion: 1,
+      jobId: 'legacy-managed-plan',
+      parentPid: process.pid,
+      execPath: process.execPath,
+      execArgv: [],
+      dshBinPath,
+      restartArgv: [dshBinPath, 'web'],
+      dshHome: root,
+      profileName: 'web',
+      previousVersion: '0.1.3',
+      previousSpec: 'file:/previous.tgz',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      stateDirectory,
+      healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
+      logPath: join(root, 'helper.log'),
+    }))
+    const previousAppVersion = process.env.ARKME_APP_VERSION
+    process.env.ARKME_APP_VERSION = '1.2.0'
+    try {
+      await finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', {
+        waitForHealthy: async () => true,
+      })
+    } finally {
+      if (previousAppVersion === undefined) delete process.env.ARKME_APP_VERSION
+      else process.env.ARKME_APP_VERSION = previousAppVersion
+    }
+
+    await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(
+      join(dirname(targetArtifactPath), 'plugin-update-install-receipt.json'),
+      'utf8',
+    )).resolves.toContain(createHash('sha512').update('target tgz').digest('hex'))
+    await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
+      phase: 'succeeded',
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+    })
+  })
+
+  it('does not publish succeeded or delete the plan when receipt persistence fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-managed-receipt-failure-'))
+    const stateDirectory = join(root, 'state')
+    const targetArtifactPath = join(root, 'cache', '0.1.4', 'dsh-arkme-0.1.4.tgz')
+    await mkdir(dirname(targetArtifactPath), { recursive: true })
+    await writeFile(targetArtifactPath, 'target tgz')
+    const planPath = join(root, 'managed-plan.json')
+    await writeFile(planPath, JSON.stringify({
+      schemaVersion: 1,
+      jobId: 'managed-receipt-failure',
+      parentPid: process.pid,
+      execPath: process.execPath,
+      execArgv: [],
+      dshBinPath: join(root, 'dsh-bin.js'),
+      restartArgv: [join(root, 'dsh-bin.js'), 'web'],
+      dshHome: root,
+      profileName: 'web',
+      previousVersion: '0.1.3',
+      previousSpec: 'file:/previous.tgz',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      stateDirectory,
+      healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
+      logPath: join(root, 'helper.log'),
+    }))
+    const store = new PluginUpdateInstallStateStore(stateDirectory)
+    await store.write({
+      schemaVersion: 1,
+      jobId: 'managed-receipt-failure',
+      phase: 'restarting',
+      previousVersion: '0.1.3',
+      targetVersion: '0.1.4',
+      message: 'restarting',
+      updatedAtMillis: Date.now(),
+    })
+
+    await expect(finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', {
+      waitForHealthy: async () => true,
+      writeInstallReceipt: async () => { throw new Error('disk full') },
+    })).rejects.toThrow('disk full')
+    await expect(store.read()).resolves.toMatchObject({ phase: 'restarting' })
+    await expect(readFile(planPath, 'utf8')).resolves.toContain('managed-receipt-failure')
+  })
 
   it('finalizes and rolls back plugin updates under the desktop managed restart helper', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-managed-helper-'))
@@ -665,6 +872,9 @@ if (args[0] === 'web') {
       previousArtifactPath,
       targetVersion: '0.1.4',
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
       stateDirectory,
       healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
       logPath: join(root, 'helper.log'),
@@ -677,9 +887,26 @@ if (args[0] === 'web') {
 
     await finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', { waitForHealthy })
     await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    const receipt = JSON.parse(await readFile(
+      join(dirname(targetArtifactPath), 'plugin-update-install-receipt.json'),
+      'utf8',
+    )) as unknown
+    expect(receipt).toMatchObject({
+      schemaVersion: 1,
+      packageName: '@senguoyun/dsh-arkme',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+    })
     await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
       phase: 'succeeded',
       targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
     })
 
     await writeFile(planPath, JSON.stringify({

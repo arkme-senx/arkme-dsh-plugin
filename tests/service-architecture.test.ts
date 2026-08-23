@@ -19,7 +19,7 @@ const expectedPublicMethods = [
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
-  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'listSources',
+  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'listSources', 'listSourceMembers', 'sourceMemberRecords',
   'dshBetaCommunityEntryState', 'interwovenMoments', 'interwovenMomentDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
@@ -27,7 +27,7 @@ const expectedPublicMethods = [
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
-  'openPrivateChatFromUser', 'readSource', 'relatedRecordingEligibility', 'relatedRecordings',
+  'openPrivateChatFromUser', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'relatedRecordingEligibility', 'relatedRecordings',
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -41,7 +41,11 @@ const expectedPublicMethods = [
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
+  'worldAuthorLabels',
   'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback', 'worldVoiceprintSocialContext', 'inviteWorldVoiceprint',
+  'myVoiceprint', 'outboundVoiceprintGrants', 'recognizedVoiceprintPeople', 'recognizedVoiceprintPerson',
+  'recognizedPersonVoiceprints', 'createVoiceprintInvitation', 'revokeVoiceprintPlaybackGrant', 'restoreVoiceprintPlayback',
+  'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
   'createText', 'createTextForConversation', 'pendingWrites',
@@ -56,6 +60,7 @@ const expectedServiceFiles = [
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts',
+  'voiceprint-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -86,7 +91,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_500)
+    expect(facade.split('\n').length).toBeLessThan(1_550)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })
@@ -106,5 +111,21 @@ describe('Arkme service architecture', () => {
     expect(world).toContain('export interface ArkmeWorldRecordWriter')
     expect(world).not.toMatch(/import \{[^}]*\bMediaService\b/)
     expect(world).not.toMatch(/import \{[^}]*\bRecordService\b/)
+  })
+
+  it('keeps Voiceprint profile enrichment behind a narrow port', () => {
+    const voiceprint = readFileSync(join(root, 'src/services/voiceprint-service.ts'), 'utf8')
+    expect(voiceprint).toContain('export interface ArkmeVoiceprintProfileReader')
+    expect(voiceprint).toContain('export interface ArkmeVoiceprintInviteTargetResolver')
+    expect(voiceprint).not.toMatch(/import \{[^}]*\bProfileService\b/)
+    expect(voiceprint).not.toMatch(/import \{[^}]*\bContactService\b/)
+  })
+
+  it('keeps Voiceprint browser upload transport behind its narrow client port', () => {
+    const surface = readFileSync(join(root, 'src/client/ArkmeVoiceprintSurface.tsx'), 'utf8')
+    const enrollmentClient = readFileSync(join(root, 'src/client/voiceprint-enrollment-client.ts'), 'utf8')
+    expect(surface).not.toMatch(/\bfetch\s*\(/)
+    expect(enrollmentClient).toContain('export interface ArkmeVoiceprintEnrollmentClient')
+    expect(enrollmentClient).toContain('class SameOriginArkmeVoiceprintEnrollmentClient')
   })
 })

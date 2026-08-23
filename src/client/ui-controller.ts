@@ -13,7 +13,7 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
 export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
-  mode: 'login' | 'source' | 'recordings' | 'world' | 'search' | 'extensions' | 'contact-add' | 'arko'
+  mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
     | 'settings' | 'harness'
   settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
@@ -99,6 +99,11 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'recordings' })
   }
 
+  showCalls(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'calls' })
+  }
+
   showCalendar(): void {
     if (this.state.calendarOpen === true) {
       const { calendarOpen: _calendarOpen, ...rest } = this.state
@@ -138,6 +143,11 @@ export class ArkmeUiController {
   showSearch(): void {
     const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
     this.publish({ ...rest, mode: 'search' })
+  }
+
+  showVoiceprint(): void {
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'voiceprint' })
   }
 
   showExtensions(): void {

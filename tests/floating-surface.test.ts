@@ -5,11 +5,11 @@ import { ArkmeConversationSurface } from '../src/client/ArkmeConversationSurface
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
   aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader,
-  arkmeTimelineAvatarRef, arkmeTimelineDetailSenderText, arkmeTimelineSenderName,
+  arkmeSourceShowsMessageAvatars, arkmeTimelineAvatarRef, arkmeTimelineDetailSenderText, arkmeTimelineSenderName,
   arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
-import type { ArkmeTimelineItem, ArkmeUserProfile } from '../src/types.js'
+import type { ArkmeSourceItem, ArkmeTimelineItem, ArkmeUserProfile } from '../src/types.js'
 
 describe('Arkme persistent conversation frame', () => {
   it('renders inline without the former floating portal geometry', () => {
@@ -121,6 +121,23 @@ describe('Arkme persistent conversation frame', () => {
     expect(arkmeTimelineAvatarRef(item, profile)).toBe('profile-avatar-ref')
     expect(arkmeTimelineAvatarRef({ ...item, avatarRef: 'timeline-avatar-ref' }, profile)).toBe('timeline-avatar-ref')
     expect(arkmeTimelineSenderName({ ...item, isMe: false, senderName: '小林' }, profile)).toBe('小林')
+  })
+
+  it('shows message avatars in aggregate, default-category, private-topic, and chat timelines', () => {
+    const source = (kind: ArkmeSourceItem['kind']): ArkmeSourceItem => ({
+      sourceRef: kind,
+      kind,
+      displayName: kind,
+      activeAtMillis: 0,
+      unreadCount: 0,
+    })
+
+    expect(arkmeSourceShowsMessageAvatars(source('send_to_self'))).toBe(true)
+    expect(arkmeSourceShowsMessageAvatars(source('default_category'))).toBe(true)
+    expect(arkmeSourceShowsMessageAvatars(source('topic'))).toBe(true)
+    expect(arkmeSourceShowsMessageAvatars(source('private_chat'))).toBe(true)
+    expect(arkmeSourceShowsMessageAvatars(source('group_chat'))).toBe(true)
+    expect(arkmeSourceShowsMessageAvatars(undefined)).toBe(false)
   })
 
   it('puts time before nickname for own messages and keeps nickname before time for received messages', () => {

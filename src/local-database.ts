@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { ArkmeStateStore } from './state-store.js'
@@ -15,6 +15,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from './types.js'
 import type { ArkmeExtensionReviewOperation } from './extensions/types.js'
+import { securePrivateDirectorySync, securePrivateFileSync } from './private-filesystem.js'
 
 type CacheState = 'synced' | 'pending' | 'failed'
 
@@ -66,10 +67,11 @@ export class ArkmeLocalDatabase {
   private readonly path: string
   private readonly database: DatabaseSync
   private readonly migrations = new Map<number, Promise<void>>()
+  private readonly securedWindowsFiles = new Set<string>()
 
   constructor(directory: string, private readonly legacy: ArkmeStateStore) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
-    chmodSync(directory, 0o700)
+    securePrivateDirectorySync(directory)
     this.path = join(directory, 'records.sqlite3')
     this.database = new DatabaseSync(this.path)
     this.database.exec(`
@@ -605,8 +607,10 @@ export class ArkmeLocalDatabase {
 
   private secureDatabaseFiles(): void {
     for (const path of [this.path, `${this.path}-wal`, `${this.path}-shm`]) {
+      if (process.platform === 'win32' && this.securedWindowsFiles.has(path)) continue
       try {
-        chmodSync(path, 0o600)
+        securePrivateFileSync(path)
+        if (process.platform === 'win32') this.securedWindowsFiles.add(path)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }

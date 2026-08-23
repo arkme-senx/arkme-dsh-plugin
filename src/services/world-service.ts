@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeImageBytes,
@@ -7,6 +7,7 @@ import type {
   ArkmeUploadedAsset,
   ArkmeUserProfile,
   ArkmeWorldAvatarFallback,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
@@ -24,13 +25,20 @@ import type {
   ArkmeWorldRecordList,
   ArkmeWorldVisibility,
 } from '../types.js'
-import { MAX_ARKME_IMAGE_BYTES, type ArkmeWorldImageEntry } from './media-service.js'
+import type { ArkmeWorldImageEntry } from './media-service.js'
 import type { ArkmeUserProfileSnapshot } from '../types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeWorldProfileReader {
   refreshProfile(): Promise<ArkmeUserProfileSnapshot>
+}
+
+export interface ArkmeWorldViewerLabelReader {
+  privateDisplayNamesByUserIds(
+    userIds: readonly number[],
+    options?: { signal?: AbortSignal },
+  ): Promise<Map<number, string>>
 }
 
 export interface ArkmeWorldMediaReader {
@@ -56,8 +64,15 @@ interface ArkmeWorldRecordRefEntry {
   expiresAtMillis: number
 }
 
+interface ArkmeWorldAvatarResolutionCacheEntry {
+  sourceUrl: string
+  expiresAtMillis: number
+}
+
 const ARKME_WORLD_IMAGE_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_IMAGE_REFS = 2048
+const ARKME_WORLD_AVATAR_RESOLUTION_CACHE_TTL_MILLIS = 5 * 60 * 1000
+const MAX_ARKME_WORLD_AVATAR_RESOLUTION_CACHE_ENTRIES = 2048
 const ARKME_WORLD_RECORD_REF_TTL_MILLIS = 15 * 60 * 1000
 const MAX_ARKME_WORLD_RECORD_REFS = 4096
 const ARKME_VOICEPRINT_PLAY_SCOPE = 2
@@ -250,8 +265,18 @@ function worldAvatarResolutionKey(ownerUserId: number, avatarRef: string): strin
   return `${String(ownerUserId)}|${normalized}`
 }
 
+function worldImageAssetIdentity(raw: string): string {
+  try {
+    const parsed = new URL(raw.trim())
+    return `${parsed.hostname.toLowerCase()}${parsed.pathname}`
+  } catch {
+    return raw.trim()
+  }
+}
+
 export class WorldService {
   private readonly worldImageRefs = new Map<string, ArkmeWorldImageEntry>()
+  private readonly worldAvatarResolutionCache = new Map<string, ArkmeWorldAvatarResolutionCacheEntry>()
   private readonly worldRecordRefs = new Map<string, ArkmeWorldRecordRefEntry>()
   private readonly voiceprintSocialCache = new Map<string, ArkmeWorldVoiceprintSocialCacheEntry>()
   private readonly voiceprintSocialInFlight = new Map<string, Promise<ArkmeWorldVoiceprintSocialContext>>()
@@ -261,10 +286,12 @@ export class WorldService {
     private readonly profile: ArkmeWorldProfileReader,
     private readonly media: ArkmeWorldMediaReader,
     private readonly record: ArkmeWorldRecordWriter,
+    private readonly viewerLabels?: ArkmeWorldViewerLabelReader,
   ) {}
 
   dispose(): void {
     this.worldImageRefs.clear()
+    this.worldAvatarResolutionCache.clear()
     this.worldRecordRefs.clear()
     this.voiceprintSocialCache.clear()
     this.voiceprintSocialInFlight.clear()
@@ -428,6 +455,7 @@ export class WorldService {
         source_scene: 4,
         source_id: entry.recordUid,
         source_chunk_index: chunkIndex,
+        source_chunk_max_runes: 120,
       },
       session,
       input.signal,
@@ -873,8 +901,8 @@ export class WorldService {
     const session = await this.runtime.requireSession()
     const entry = await this.openWorldImageRef(imageRef, session.userId)
     const byteLimit = Math.min(
-      MAX_ARKME_IMAGE_BYTES,
-      Math.max(1, Math.trunc(options.maxBytes ?? MAX_ARKME_IMAGE_BYTES)),
+      ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES,
+      Math.max(1, Math.trunc(options.maxBytes ?? ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)),
     )
     return await this.media.downloadSignedImage(
       trustedWorldImageUrl(this.runtime.config.environment, entry.sourceUrl),
@@ -1070,23 +1098,34 @@ export class WorldService {
       : rawAvatar
     const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
     const imageRefs: string[] = []
-    for (const signedUrl of rawImages.slice(0, 9)) {
+    for (const [index, signedUrl] of rawImages.slice(0, 9).entries()) {
       if (!this.isTrustedWorldImageUrl(signedUrl)) continue
-      imageRefs.push(await this.sealWorldImageRef(viewerUserId, signedUrl))
+      imageRefs.push(await this.sealWorldImageRef(
+        viewerUserId,
+        signedUrl,
+        `record:${recordUid}:image:${String(index)}:${worldImageAssetIdentity(signedUrl)}`,
+      ))
     }
     const avatarRef = this.isTrustedWorldImageUrl(avatarUrl)
-      ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
+      ? await this.sealWorldImageRef(
+        viewerUserId,
+        avatarUrl,
+        `avatar:${String(ownerUserId)}:${rawAvatar.startsWith('file_asset://') ? rawAvatar : worldImageAssetIdentity(avatarUrl)}`,
+      )
       : undefined
-    return {
-      recordRef: await this.worldRecordRef(viewerUserId, recordUid, {
+    const authorName = stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户'
+    const recordRef = await this.worldRecordRef(viewerUserId, recordUid, {
         ownerUserId,
-        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        authorName,
         ...(() => {
           const textPreview = optionalTrimmedText(headline || textContent, 80)
           return textPreview === undefined ? {} : { textPreview }
         })(),
-      }),
-      authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+      })
+    return {
+      recordRef,
+      ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: recordRef } : {}),
+      authorName,
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       headline,
@@ -1127,19 +1166,32 @@ export class WorldService {
       if (key !== '') requested.set(key, { owner_user_id: ownerUserId, avatar_ref: avatarRef })
     }
     if (requested.size === 0) return new Map()
+    const now = Date.now()
+    for (const [key, entry] of this.worldAvatarResolutionCache) {
+      if (entry.expiresAtMillis <= now) this.worldAvatarResolutionCache.delete(key)
+    }
+    const resolved = new Map<string, string>()
+    for (const [key] of requested) {
+      const cached = this.worldAvatarResolutionCache.get(key)
+      if (cached === undefined) continue
+      this.worldAvatarResolutionCache.delete(key)
+      this.worldAvatarResolutionCache.set(key, cached)
+      resolved.set(key, cached.sourceUrl)
+    }
+    const unresolved = [...requested].filter(([key]) => !resolved.has(key)).map(([, value]) => value)
+    if (unresolved.length === 0) return resolved
     let data: Record<string, unknown>
     try {
       data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
         '/api/v1/auth/resolve-avatar-refs',
-        { items: [...requested.values()] },
+        { items: unresolved },
         session,
         signal,
       )
     } catch {
       // Avatar decoration is best-effort; the World feed remains usable with its fallback avatar.
-      return new Map()
+      return resolved
     }
-    const resolved = new Map<string, string>()
     for (const raw of listValue(data.items)) {
       const item = objectValue(raw)
       const ownerUserId = Math.trunc(numberValue(item.owner_user_id))
@@ -1148,6 +1200,16 @@ export class WorldService {
       const url = stringValue(item.url).trim()
       if (!requested.has(key) || !this.isTrustedWorldImageUrl(url)) continue
       resolved.set(key, url)
+      this.worldAvatarResolutionCache.delete(key)
+      this.worldAvatarResolutionCache.set(key, {
+        sourceUrl: url,
+        expiresAtMillis: Date.now() + ARKME_WORLD_AVATAR_RESOLUTION_CACHE_TTL_MILLIS,
+      })
+    }
+    while (this.worldAvatarResolutionCache.size > MAX_ARKME_WORLD_AVATAR_RESOLUTION_CACHE_ENTRIES) {
+      const oldest = this.worldAvatarResolutionCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.worldAvatarResolutionCache.delete(oldest)
     }
     return resolved
   }
@@ -1174,19 +1236,26 @@ export class WorldService {
       : rawAvatar
     const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
     const avatarRef = this.isTrustedWorldImageUrl(avatarUrl)
-      ? await this.sealWorldImageRef(viewerUserId, avatarUrl)
+      ? await this.sealWorldImageRef(
+        viewerUserId,
+        avatarUrl,
+        `avatar:${String(ownerUserId)}:${rawAvatar.startsWith('file_asset://') ? rawAvatar : worldImageAssetIdentity(avatarUrl)}`,
+      )
       : undefined
-    return {
-      interactionRef: await this.worldRecordRef(viewerUserId, recordUid, {
+    const authorName = stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户'
+    const interactionRef = await this.worldRecordRef(viewerUserId, recordUid, {
         ownerUserId,
-        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        authorName,
         ...(() => {
           const textPreview = optionalTrimmedText(textContent, 80)
           return textPreview === undefined ? {} : { textPreview }
         })(),
-      }),
+      })
+    return {
+      interactionRef,
       parentRef: await this.worldRecordRef(viewerUserId, parentRecordUid),
-      authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+      ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: interactionRef } : {}),
+      authorName,
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       textContent,
@@ -1224,6 +1293,38 @@ export class WorldService {
     return recordRef
   }
 
+  /** Resolve an opaque World author reference only inside the trusted Provider. */
+  async worldAuthorFromRef(recordRef: string): Promise<{ userId: number; displayName: string }> {
+    const session = await this.runtime.requireSession()
+    const entry = this.openWorldRecordRef(recordRef, session.userId)
+    const userId = entry.ownerUserId ?? 0
+    if (!Number.isSafeInteger(userId) || userId <= 0 || userId === session.userId) {
+      throw new ArkmePluginError('world-author-target-invalid', '无法确认这位用户，请刷新世界后重试', false, 403)
+    }
+    const labels = this.viewerLabels === undefined
+      ? new Map<number, string>()
+      : await this.viewerLabels.privateDisplayNamesByUserIds([userId]).catch(() => new Map<number, string>())
+    return { userId, displayName: labels.get(userId) ?? entry.authorName ?? 'Arkme用户' }
+  }
+
+  /** Resolve viewer-local labels after World content has already been rendered. */
+  async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
+    const session = await this.runtime.requireSession()
+    const refs = [...new Set(recordRefs.map(value => value.trim()).filter(value => value !== ''))].slice(0, 20)
+    const entries = refs.map(authorRef => ({ authorRef, entry: this.openWorldRecordRef(authorRef, session.userId) }))
+      .filter(({ entry }) => entry.ownerUserId !== undefined && entry.ownerUserId > 0 && entry.ownerUserId !== session.userId)
+    if (entries.length === 0) return []
+    const userIds = [...new Set(entries.map(({ entry }) => entry.ownerUserId!))]
+    const labels = this.viewerLabels === undefined
+      ? new Map<number, string>()
+      : await this.viewerLabels.privateDisplayNamesByUserIds(userIds, { ...(signal === undefined ? {} : { signal }) })
+        .catch(() => new Map<number, string>())
+    return entries.map(({ authorRef, entry }) => ({
+      authorRef,
+      authorName: labels.get(entry.ownerUserId!) ?? entry.authorName ?? 'Arkme用户',
+    }))
+  }
+
   private pruneWorldRecordRefs(now: number): void {
     for (const [recordRef, entry] of this.worldRecordRefs) {
       if (entry.expiresAtMillis <= now) this.worldRecordRefs.delete(recordRef)
@@ -1258,11 +1359,14 @@ export class WorldService {
     }
   }
 
-  private async sealWorldImageRef(viewerUserId: number, sourceUrl: string): Promise<string> {
+  private async sealWorldImageRef(viewerUserId: number, sourceUrl: string, stableIdentity: string): Promise<string> {
     const now = Date.now()
     this.pruneWorldImageRefs(now)
-    const token = randomUUID()
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+    const uniqueCode = await this.runtime.stateStore.uniqueCode()
+    const token = createHmac('sha256', uniqueCode)
+      .update(`world-image-token-v1:${String(viewerUserId)}:${stableIdentity}`)
+      .digest('base64url')
+    const signature = createHmac('sha256', uniqueCode)
       .update(`world-image-v1:${String(viewerUserId)}:${token}`)
       .digest('base64url')
     this.worldImageRefs.set(token, {

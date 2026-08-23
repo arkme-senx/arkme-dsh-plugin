@@ -1,4 +1,4 @@
-import { mkdtemp, stat } from 'node:fs/promises'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -7,6 +7,7 @@ import { ArkmeLocalDatabase } from '../src/local-database.js'
 import { ArkmeStateStore } from '../src/state-store.js'
 import type { ArkmePendingWrite, ArkmeSelfRecordItem, ArkmeUserProfile } from '../src/types.js'
 import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
+import { expectPrivatePath } from './helpers/private-path.js'
 
 function pending(recordUid: string, textContent: string): ArkmePendingWrite {
   return {
@@ -85,8 +86,7 @@ describe('ArkmeLocalDatabase', () => {
     expect(await legacy.listPending(10001)).toEqual([])
     expect((await database.cachedSnapshot(10002)).items).toEqual([])
 
-    const mode = (await stat(join(directory, 'records.sqlite3'))).mode & 0o777
-    expect(mode).toBe(0o600)
+    expectPrivatePath(join(directory, 'records.sqlite3'), 0o600)
     database.close()
   })
 

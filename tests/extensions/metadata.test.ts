@@ -8,14 +8,20 @@ import { ArkmeExtensionManager } from '../../src/extensions/manager.js'
 import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
 
 const directories: string[] = []
-afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
+const stores: ArkmeExtensionInstallStore[] = []
+afterEach(() => {
+  for (const store of stores.splice(0)) store.close()
+  for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true })
+})
 
 function managerWith(post: ConstructorParameters<typeof ExtensionPublishClient>[0]): ArkmeExtensionManager {
   const root = mkdtempSync(join(tmpdir(), 'arkme-extension-metadata-'))
   directories.push(root)
+  const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+  stores.push(store)
   return new ArkmeExtensionManager(
     new ExtensionPublishClient(post),
-    new ArkmeExtensionInstallStore(join(root, 'store')),
+    store,
     {} as never,
     { artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}' },
   )

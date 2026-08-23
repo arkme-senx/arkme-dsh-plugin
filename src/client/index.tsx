@@ -48,7 +48,13 @@ async function resolveNotificationSource(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
-	if (deepSeekHarnessEmbedRequested()) return
+	if (deepSeekHarnessEmbedRequested()) {
+		ctx.slots.inject('sidebar.settings', () => ctx.slots.register({
+			name: 'sidebar.settings',
+			priority: -100,
+		}, () => null))
+		return
+	}
 	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
 		const shareRef = consumeExtensionShareDeepLink(window.location, window.history)
 		if (shareRef !== undefined) arkmeUi.openExtensionShare(shareRef)
@@ -222,6 +228,7 @@ export {
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
+export { ArkmePluginUpdateDialog } from './ArkmePluginUpdateDialog.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export {
@@ -230,6 +237,7 @@ export {
 } from './ArkmePersistentShell.js'
 export { ArkmeConversationSurface } from './ArkmeConversationSurface.js'
 export { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
+export { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 export { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 export { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 export { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
@@ -253,7 +261,7 @@ export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 export { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
 export { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
-export { ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
+export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'
 export { ArkmeRootFrame } from './redesign/ArkmeRootFrame.js'
 export { ArkmeLayoutController } from './redesign/layout-controller.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'

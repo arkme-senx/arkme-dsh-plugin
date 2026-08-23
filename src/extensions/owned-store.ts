@@ -1,6 +1,7 @@
-import { chmodSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { securePrivateDirectorySync, securePrivateFileSync } from '../private-filesystem.js'
 
 export type ArkmeOwnedExtensionSourceKind = 'cordis' | 'profile'
 
@@ -19,10 +20,11 @@ interface OwnedSourceRow {
 export class ArkmeOwnedExtensionStore {
   private readonly path: string
   private readonly database: DatabaseSync
+  private readonly securedWindowsFiles = new Set<string>()
 
   constructor(directory: string) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
-    chmodSync(directory, 0o700)
+    securePrivateDirectorySync(directory)
     this.path = join(directory, 'owned-extensions.sqlite3')
     this.database = new DatabaseSync(this.path)
     this.database.exec(`
@@ -152,7 +154,11 @@ export class ArkmeOwnedExtensionStore {
 
   private secureFiles(): void {
     for (const path of [this.path, `${this.path}-wal`, `${this.path}-shm`]) {
-      try { chmodSync(path, 0o600) } catch (error) {
+      if (process.platform === 'win32' && this.securedWindowsFiles.has(path)) continue
+      try {
+        securePrivateFileSync(path)
+        if (process.platform === 'win32') this.securedWindowsFiles.add(path)
+      } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
     }

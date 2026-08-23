@@ -111,6 +111,14 @@ describe('registerArkmeTools', () => {
       'arkme_world_user',
       'arkme_world_voiceprint_social_context',
       'arkme_world_voiceprint_invite',
+      'arkme_world_private_chat_open',
+      'arkme_voiceprint_status',
+      'arkme_voiceprint_grants',
+      'arkme_voiceprint_recognized_people',
+      'arkme_voiceprint_recognized_person_invite',
+      'arkme_voiceprint_invite',
+      'arkme_voiceprint_revoke',
+      'arkme_voiceprint_restore_playback',
       'arkme_world_publish_text',
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
@@ -128,6 +136,8 @@ describe('registerArkmeTools', () => {
       'arkme_group_member_candidates',
       'arkme_group_member_add',
       'arkme_source_read',
+      'arkme_source_members',
+      'arkme_source_member_records',
       'arkme_message_report',
       'arkme_related_recordings_read',
       'arkme_group_ai_polish_manage',
@@ -205,6 +215,117 @@ describe('registerArkmeTools', () => {
     })
     expect(confirmed.isError).toBe(false)
     expect(inviteWorldVoiceprint).toHaveBeenCalledWith('arkme-world-record-v1.opaque', signal)
+  })
+
+  it('requires a later direct confirmation for a targeted recognized-person invitation', async () => {
+    const ctx = await setup()
+    const createRecognizedPersonVoiceprintInvitation = vi.fn(async () => ({
+      inviteUrl: 'https://example.test/v#t=target', expiresAtMillis: 1_900_000_000_000,
+    }))
+    await mountArkmeTools(ctx, 'business', {
+      ...ports, createRecognizedPersonVoiceprintInvitation,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '邀请小林认领这个声音并授权' }], source: { kind: 'user' } } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_voiceprint_recognized_person_invite', arguments: '{}' } },
+    ]
+    const agent = {
+      id: SessionId('session-recognized-person-invite'), session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = {
+      person_ref: 'arkme-voiceprint-person-v1.opaque', target_contact_ref: 'arkme-contact-v1.opaque',
+    }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('prepare'), name: 'arkme_voiceprint_recognized_person_invite', arguments: args, agent, signal,
+    })
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(prepared.isError ? '' : prepared.value).toContain('刚才搜索到的 Arkme 用户')
+    expect(createRecognizedPersonVoiceprintInvitation).not.toHaveBeenCalled()
+
+    events.push(
+      { seq: 3, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
+      { seq: 4, type: 'turn/start', data: { turn: 2 } },
+      { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '确认，生成专属邀请' }], source: { kind: 'user' } } },
+    )
+    await ctx.tools.execute({
+      callId: CallId('confirmed'), name: 'arkme_voiceprint_recognized_person_invite', arguments: args, agent, signal,
+    })
+    expect(createRecognizedPersonVoiceprintInvitation).toHaveBeenCalledWith(
+      'arkme-voiceprint-person-v1.opaque', 'arkme-contact-v1.opaque', { signal },
+    )
+  })
+
+  it('confirms a bound recognized-person invitation without inventing a contact target', async () => {
+    const ctx = await setup()
+    const createRecognizedPersonVoiceprintInvitation = vi.fn(async () => ({
+      inviteUrl: 'https://example.test/v#t=bound', expiresAtMillis: 1_900_000_000_000,
+    }))
+    await mountArkmeTools(ctx, 'business', {
+      ...ports, createRecognizedPersonVoiceprintInvitation,
+    } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '给这个已绑定的人生成邀请' }], source: { kind: 'user' } } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_voiceprint_recognized_person_invite', arguments: '{}' } },
+    ]
+    const agent = {
+      id: SessionId('session-bound-person-invite'), session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { person_ref: 'arkme-voiceprint-person-v1.bound' }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('prepare'), name: 'arkme_voiceprint_recognized_person_invite', arguments: args, agent, signal,
+    })
+    expect(prepared.isError ? '' : prepared.value).toContain('当前绑定用户')
+    events.push(
+      { seq: 3, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
+      { seq: 4, type: 'turn/start', data: { turn: 2 } },
+      { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '确认生成' }], source: { kind: 'user' } } },
+    )
+    await ctx.tools.execute({
+      callId: CallId('confirmed'), name: 'arkme_voiceprint_recognized_person_invite', arguments: args, agent, signal,
+    })
+    expect(createRecognizedPersonVoiceprintInvitation).toHaveBeenCalledWith(
+      'arkme-voiceprint-person-v1.bound', undefined, { signal },
+    )
+  })
+
+  it.each([
+    {
+      name: 'arkme_voiceprint_invite', args: {}, prompt: '24 小时有效', port: 'createVoiceprintInvitation',
+    },
+    {
+      name: 'arkme_voiceprint_revoke', args: { grant_ref: 'arkme-voiceprint-grant-v1.opaque' },
+      prompt: '不会删除已有识别数据', port: 'revokeVoiceprintPlaybackGrant',
+    },
+    {
+      name: 'arkme_voiceprint_restore_playback', args: {}, prompt: '留底参考音频', port: 'restoreVoiceprintPlayback',
+    },
+  ] as const)('keeps $name behind the later-confirmation boundary', async ({ name, args, prompt, port }) => {
+    const ctx = await setup()
+    const write = vi.fn(async () => ({ ok: true }))
+    await mountArkmeTools(ctx, 'business', { ...ports, [port]: write } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '执行这项声纹操作' }], source: { kind: 'user' } } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name, arguments: '{}' } },
+    ]
+    const agent = {
+      id: SessionId(`session-${name}`), session: { get events() { return events } },
+    } as unknown as Agent
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('prepare'), name, arguments: args, agent, signal: new AbortController().signal,
+    })
+
+    expect(prepared.isError).toBe(false)
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(prepared.isError ? '' : prepared.value).toContain(prompt)
+    expect(write).not.toHaveBeenCalled()
   })
 
   it('reads World voiceprint social context without entering the write confirmation flow', async () => {

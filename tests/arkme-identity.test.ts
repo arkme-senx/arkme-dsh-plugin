@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { arkmeToolCatalog } from '../src/tools/index.js'
 
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 
 function textFiles(path: string): string[] {
   return readdirSync(path).flatMap(name => {
@@ -77,6 +78,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
     join(root, 'src/services/contact-service.ts'),
   ])

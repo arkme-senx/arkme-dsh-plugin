@@ -12,6 +12,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
+import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSessionStores } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import {
@@ -343,6 +344,10 @@ export function apply(ctx: Context, config: Config): void {
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
+  const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
+    expectedPort: ctx.webServer.port,
+    allowNonLoopback: config.allowNonLoopback,
+  })
   const extensionIconOptions = {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -388,6 +393,11 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/media`,
     handler: mediaHandler,
   }), 'dsh-arkme: rich content media route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/voiceprint/enroll`,
+    handler: voiceprintEnrollmentHandler,
+  }), 'dsh-arkme: voiceprint enrollment route')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: `${config.routePath}/extension-icon/upload`,

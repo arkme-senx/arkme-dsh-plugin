@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-const root = new URL('../..', import.meta.url).pathname
+const root = fileURLToPath(new URL('../..', import.meta.url))
 
 function sourceFiles(path: string): string[] {
   return readdirSync(path).flatMap(name => {

@@ -363,18 +363,18 @@ export function ArkmeTopicDirectoryPopover({
 
   return <>
     <button
-      ref={triggerRef} type="button" aria-label="打开分类目录" title="分类目录" aria-haspopup="dialog" aria-expanded={open}
+      ref={triggerRef} type="button" aria-label="打开主题" title="主题" aria-haspopup="dialog" aria-expanded={open}
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
       onClick={() => { setOpen(value => !value) }}
     ><ListBullets size={17} aria-hidden /></button>
-    {open && <div ref={popoverRef} role="dialog" aria-label="目录" style={styles.popover}>
+    {open && <div ref={popoverRef} role="dialog" aria-label="主题" style={styles.popover}>
       <div style={styles.head}>
-        <h3 style={styles.heading}>目录</h3>
+        <h3 style={styles.heading}>主题</h3>
         <ArkmeSourceSortControl value={sourceSort} onChange={value => {
           setSourceSort(value)
           setHoveredSourceRef(undefined)
         }} />
-        <button type="button" aria-label="关闭目录" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
+        <button type="button" aria-label="关闭主题" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
       </div>
       <label style={styles.search}>
         <svg aria-hidden viewBox="0 0 16 16" width="14" height="14" fill="none">
@@ -386,7 +386,7 @@ export function ArkmeTopicDirectoryPopover({
           onChange={event => { setQuery(event.currentTarget.value) }}
         />
       </label>
-      <div role={cardMode ? 'list' : 'tree'} aria-label="主题目录" style={styles.tree}>
+      <div role={cardMode ? 'list' : 'tree'} aria-label="主题列表" style={styles.tree}>
         {!cardMode && rows.map(row => {
           const source = row.source
           return <ArkmeTopicTreeRow
@@ -407,7 +407,7 @@ export function ArkmeTopicDirectoryPopover({
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onSelect={() => { selectSource(source) }}
         />)}
-        {busy && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div role="status" style={styles.status}>正在加载目录…</div>}
+        {busy && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div role="status" style={styles.status}>正在加载主题…</div>}
         {!busy && error === '' && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div style={styles.status}>{query.trim() === '' ? '暂无主题' : '没有匹配的主题'}</div>}
         {error !== '' && <div role="alert" style={{ ...styles.status, ...styles.error }}>
           <div>{error}</div>

@@ -1,6 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,10 +18,11 @@ import {
   type PluginUpdateManifestV1,
 } from './plugin-update-artifact.js'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
+import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from './plugin-update-policy.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
-import { buildTargetInstallArgs } from './plugin-updater-helper.js'
+import { assertTargetArtifactIntegrity, buildTargetInstallArgs } from './plugin-updater-helper.js'
 import type {
   ArkmePluginUpdateAvailability,
   ArkmePluginUpdateLevel,
@@ -39,6 +40,7 @@ const STARTUP_JITTER_MIN_MS = 5_000
 const STARTUP_JITTER_SPAN_MS = 25_000
 const LOCAL_DEVELOPMENT_SPEC = /^(?:link:|file:)/
 const ACTIVE_INSTALL_PHASES = new Set(['preparing', 'downloading', 'verifying', 'installing', 'restarting'])
+const TERMINAL_INSTALL_PHASES = new Set(['succeeded', 'failed', 'rolled-back'])
 const execFileAsync = promisify(execFile)
 
 function localPackageSpecPath(spec: string, profileDirectory: string): string | undefined {
@@ -274,7 +276,16 @@ export class ArkmePluginUpdateManager {
   }
 
   async installStatus(): Promise<ArkmePluginUpdateInstallSnapshot | undefined> {
-    return await this.installStore.read()
+    const install = await this.installStore.read()
+    if (install === undefined || !TERMINAL_INSTALL_PHASES.has(install.phase)) return install
+    const update = await this.status({ refreshIfStale: false })
+    const expired = this.now() - install.updatedAtMillis > PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS
+    const targetsOlderUpdate = update.latestVersion !== undefined && install.targetVersion !== update.latestVersion
+    if (expired || targetsOlderUpdate) {
+      await this.installStore.clear()
+      return undefined
+    }
+    return install
   }
 
   async install(): Promise<ArkmePluginUpdateInstallSnapshot> {
@@ -398,6 +409,9 @@ export class ArkmePluginUpdateManager {
       previousSpec: capability.previousSpec ?? this.installedVersion,
       targetVersion: status.latestVersion,
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update(readFileSync(targetArtifactPath)).digest('hex'),
+      ...(this.appVersion === undefined ? {} : { appVersion: this.appVersion }),
+      ...(this.dshVersion === undefined ? {} : { dshVersion: this.dshVersion }),
       ...(previousArtifactPath === undefined ? {} : { previousArtifactPath }),
       stateDirectory: this.stateDirectory,
       healthUrl: runtime.healthUrl,
@@ -483,6 +497,11 @@ export class ArkmePluginUpdateManager {
     const fallbackSpec = plan.previousArtifactPath === undefined
       ? plan.previousSpec
       : `file:${plan.previousArtifactPath}`
+    try {
+      await this.runProfilePluginRemove(plan)
+    } catch (error) {
+      this.logger?.warn?.('dsh-arkme: failed to clean partial plugin install before rollback', error)
+    }
     await this.runProfilePluginCommand(plan, [
       ...plan.execArgv,
       plan.dshBinPath,
@@ -517,9 +536,9 @@ export class ArkmePluginUpdateManager {
   ): Promise<void> {
     const add = runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this)
     const remove = runtime.runProfilePluginRemove ?? this.runProfilePluginRemove.bind(this)
-    const replacesEmbeddedLink = plan.previousSpec.startsWith('link:')
     try {
-      if (replacesEmbeddedLink) await remove(plan)
+      assertTargetArtifactIntegrity(plan)
+      await remove(plan)
       await add(plan)
       const installedVersion = this.readInstalledProfilePluginVersion(plan)
       if (installedVersion !== plan.targetVersion) {

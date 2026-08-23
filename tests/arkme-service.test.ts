@@ -746,6 +746,7 @@ describe('ArkmeService', () => {
       environment: 'test',
       testLoginEnabled: true,
       callAssetBasePath: '/arkme-self/api/call',
+      voiceprintEnrollmentPath: '/arkme-self/api/voiceprint/enroll',
       shareWebsite: 'https://app.arkme.ai',
     })
   })
@@ -1492,11 +1493,14 @@ describe('ArkmeService', () => {
       calls.push({ url, body })
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
-        summary: { record_count: 2, latest_send_at: 99 },
-        latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 99 },
+        summary: { record_count: 2, latest_send_at: 109 },
+        latest_record_core: { record_uid: 'record-latest', text_content: '最近内容', send_at: 109 },
       }, {
         topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 98 },
         summary: { record_count: 1, latest_send_at: 97 },
+      }, {
+        topic_core: { topic_uid: 'topic-empty', title: '空主题', update_at: 999 },
+        summary: { record_count: 0 },
       }] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [{
         rel_uid: 'relation-1', parent_topic_uid: 'topic-1', child_topic_uid: 'topic-child',
@@ -1539,8 +1543,12 @@ describe('ArkmeService', () => {
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
       ['send_to_self', '发给自己', undefined], ['default_category', '默认分类', 7],
-      ['topic', '工作', 2], ['topic', '周报', 1],
+      ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '空主题', 0],
     ])
+    expect(sources.items[0]).toMatchObject({
+      activeAtMillis: 109,
+      latestPreview: '最近内容',
+    })
     expect(sources.items[1]).toMatchObject({
       activeAtMillis: 101,
       latestPreview: '默认分类最近内容',
@@ -1574,6 +1582,8 @@ describe('ArkmeService', () => {
       itemUid: 'record-create-1', localState: 'synced',
     })
     expect(calls.at(-1)?.body).toMatchObject({ topic_uid: 'topic-1', text_content: '写进主题' })
+    await service.listSources('send_to_self')
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
   })
 
   it('creates root topics and binds child topics without exposing server topic UIDs', async () => {
@@ -2108,6 +2118,80 @@ describe('ArkmeService', () => {
       initial_ai_polish: {
         original_text: '帮我看一下', polished_text: '你好，方便帮我看一下吗？',
         rule_uid: 'rule-1', rule_name: '友好表达', model: 'qwen-flash',
+      },
+    })
+  })
+
+  it('projects opaque member counts and sends a validated human mention without AI-polish rewriting', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/api/v1/chats/members/list')) return json({ code: 200, data: {
+        items: [{
+          user_id: 2001, role: 3, status: 1, join_at: 20,
+          display_name_snapshot: '小林', remark: '小林',
+          extra: { record_count: 7, mention_count: 2 },
+        }],
+      } })
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
+        items: [{ user_id: 2001, nick_name: 'Lin', name_slug: 'lin', head_img: '' }],
+      } })
+      if (url.endsWith('/api/v1/chats/members/records/page')) return json({ code: 200, data: {
+        items: [{
+          relation: {
+            record_uid: 'member-record-1', rel_uid: 'member-relation-1', sender_user_id: 2001,
+            display_name_snapshot: '小林', attach_at: 1700000000200, seq: 8,
+          },
+          record: { status: 1, payload: { record_uid: 'member-record-1', text_content: '成员快记' } },
+        }],
+        has_more: true,
+        next_before_seq: 8,
+      } })
+      if (url.endsWith('/api/v1/chats/records/send')) return json({ code: 200, data: {
+        record_uid: body.record_uid, rel_uid: body.rel_uid, seq: 18, audit_status: 1,
+      } })
+      throw new Error(`unexpected ${url}`)
+    })
+    const sourceRef = sourceRefFor('group_chat', 'group-mention', '协作群')
+    const members = await service.listSourceMembers(sourceRef)
+    expect(members.items[0]).toMatchObject({
+      displayName: '小林', recordCount: 7, mentionCount: 2, memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+    })
+    const memberRef = members.items[0]!.memberRef
+    await expect(service.sourceMemberRecords(sourceRef, `${memberRef}x`, 'owner'))
+      .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
+    await expect(service.sourceMemberRecords(sourceRefFor('group_chat', 'another-group', '另一个群'), memberRef, 'owner'))
+      .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
+    await expect(service.sourceMemberRecords(sourceRef, memberRef, 'mentioned', { limit: 10 }))
+      .resolves.toMatchObject({
+        member: { memberRef, displayName: '小林' },
+        mode: 'mentioned',
+        items: [{ itemUid: 'member-record-1', memberRef, textContent: '成员快记' }],
+        hasMore: true,
+        nextCursor: { beforeSequence: 8 },
+      })
+
+    const result = await service.sendSourceText(sourceRef, '  @小林 请看  ', {
+      recordUid: 'record-human-mention', relationUid: 'relation-human-mention',
+      humanMentions: [{ memberRef, startIndex: 2, length: 3 }],
+    })
+    expect(result).toMatchObject({ itemUid: 'record-human-mention', sequence: 18 })
+    expect(requests.some(request => request.url.endsWith('/api/v1/chats/ai-polish/settings/query'))).toBe(false)
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-mention',
+      text_content: '@小林 请看',
+      content_payload: {
+        payload_kind: 2,
+        schema_version: 1,
+        mention_metadata: {
+          schema_version: 1,
+          source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+          human_mentions: [{ user_id: 2001, display_name_snapshot: '小林', start_index: 0, length: 3 }],
+        },
       },
     })
   })

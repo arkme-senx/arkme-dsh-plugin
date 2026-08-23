@@ -70,3 +70,13 @@ export function arkmeSourceTimeLabel(value: number, nowMillis = Date.now()): str
   }
   return `${date.getMonth() + 1}月${date.getDate()}日`
 }
+
+export function arkmeSendToSelfDirectoryPresentation(
+  source: ArkmeSourceItem | undefined,
+  nowMillis = Date.now(),
+): { preview: string; time: string } {
+  return {
+    preview: source?.latestPreview?.trim() || '全部个人消息',
+    time: arkmeSourceTimeLabel(source?.activeAtMillis ?? 0, nowMillis),
+  }
+}

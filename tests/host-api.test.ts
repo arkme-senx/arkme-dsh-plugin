@@ -1,5 +1,7 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchArkmeHostOperation } from '../src/host-api.js'
+import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 function fakeService() {
   return {
@@ -24,6 +26,10 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
+    sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
+    openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
+    sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
     updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
@@ -45,6 +51,52 @@ function fakeService() {
 }
 
 describe('World publish Host API dispatch', () => {
+  it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    const generationStarted = Promise.withResolvers<void>()
+    const generationAborted = Promise.withResolvers<void>()
+    const service = {
+      generateWorldVoiceprintPlayback: vi.fn(async (input: { signal?: AbortSignal }) => {
+        upstreamSignal = input.signal
+        generationStarted.resolve()
+        await new Promise<void>(resolve => {
+          if (input.signal?.aborted === true) resolve()
+          else input.signal?.addEventListener('abort', () => { resolve() }, { once: true })
+        })
+        generationAborted.resolve()
+        throw new Error('cancelled')
+      }),
+    }
+    const server = createServer(createArkmeHostApi(service as never, {
+      expectedPort: 0,
+      allowNonLoopback: false,
+    }))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    const controller = new AbortController()
+    try {
+      const request = fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'world.voiceprint.playback.generate',
+          params: { recordRef: 'record-ref', chunkIndex: 0 },
+        }),
+        signal: controller.signal,
+      })
+      await generationStarted.promise
+      controller.abort()
+      await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+      await generationAborted.promise
+      expect(upstreamSignal?.aborted).toBe(true)
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
+  })
+
   it('keeps text publishing separate and drops Browser-owned fields', async () => {
     const service = fakeService()
 
@@ -123,6 +175,49 @@ describe('group member Host API dispatch', () => {
     expect(service.groupInvitePreview).toHaveBeenCalledWith('group-ref')
     expect(service.listGroupBots).toHaveBeenCalledWith('group-ref')
     expect(service.addGroupBot).toHaveBeenCalledWith('group-ref', 'bot-ref')
+  })
+})
+
+describe('conversation member Host API dispatch', () => {
+  it('forwards only opaque member references and bounded paging fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.members', {
+      sourceRef: 'source-ref', activeOnly: false, userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.member-records', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', mode: 'mentioned', limit: 19, beforeSequence: 44,
+      memberUserId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'chat.member.private.open', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', peerUserId: 999,
+    })
+    expect(service.listSourceMembers).toHaveBeenCalledWith('source-ref', { activeOnly: false })
+    expect(service.sourceMemberRecords).toHaveBeenCalledWith('source-ref', 'member-ref', 'mentioned', {
+      limit: 19,
+      beforeSequence: 44,
+    })
+    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref')
+  })
+
+  it('rejects an unknown member-record mode instead of silently widening it', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.member-records', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', mode: 'all',
+    })).rejects.toMatchObject({ code: 'chat-member-record-mode-invalid' })
+    expect(service.sourceMemberRecords).not.toHaveBeenCalled()
+  })
+
+  it('keeps structured human mention fields while dropping browser-owned ids', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@小林 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
+    })
   })
 })
 

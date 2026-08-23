@@ -91,7 +91,7 @@ const styles: Record<string, CSSProperties> = {
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
     padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit',
-    boxSizing: 'border-box', transition: 'background 120ms ease, color 120ms ease',
+    boxSizing: 'border-box', transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
   },
   dayDisabled: { color: colors.caption, opacity: .4, cursor: 'default' },
   daySelected: {
@@ -99,8 +99,11 @@ const styles: Record<string, CSSProperties> = {
   },
   dayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
   dayCount: { height: 9, color: '#8b91a1', fontSize: 9, lineHeight: '9px', fontWeight: 400 },
-  dayCountPopulated: { minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878' },
-  selectedDayCount: { color: colors.selectedText, opacity: .8 },
+  dayCountPopulated: {
+    minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878',
+    transition: 'background 120ms ease, color 120ms ease',
+  },
+  selectedDayCount: { background: 'transparent', color: colors.selectedText, opacity: 1 },
   status: { marginTop: 10, minHeight: 18, color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   error: { color: colors.danger },
   recordsPanel: {
@@ -244,7 +247,7 @@ export function ArkmeCalendarCell({
     onClick={onClick}
   >
     <span style={styles.dayNumber}>{date.getDate()}</span>
-    <span style={{ ...styles.dayCount, ...(count > 0 && !selected ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? count : ''}</span>
+    <span style={{ ...styles.dayCount, ...(count > 0 ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? count : ''}</span>
   </button>
 }
 

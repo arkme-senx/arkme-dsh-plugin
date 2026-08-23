@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 import type { ArkmePluginUpdateLevel, ArkmePluginUpdateNotice } from './types.js'
 
 export interface PersistedPluginUpdateState {
@@ -154,12 +155,12 @@ export class PluginUpdateStateStore {
   private async write(state: PersistedPluginUpdateState): Promise<void> {
     const directory = dirname(this.path)
     await mkdir(directory, { recursive: true, mode: 0o700 })
-    await chmod(directory, 0o700)
+    await securePrivateDirectory(directory)
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`
     await writeFile(temporary, `${JSON.stringify(state, undefined, 2)}\n`, { mode: 0o600 })
-    await chmod(temporary, 0o600)
+    await securePrivateFile(temporary)
     await rename(temporary, this.path)
-    await chmod(this.path, 0o600)
+    await securePrivateFile(this.path)
     this.state = state
   }
 }

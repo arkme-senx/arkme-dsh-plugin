@@ -1,10 +1,11 @@
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, statSync } from 'node:fs'
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { localExtensionPnpmArgs, prepareProfilePackageManager } from '../profile-package-manager.js'
+import { securePrivateDirectory, securePrivateFile, securePrivateFileSync } from '../private-filesystem.js'
 import type { ArkmeExtensionProfileRestartPlan } from './profile-restart-helper.js'
 import type { ArkmeInstalledExtension } from './types.js'
 
@@ -96,11 +97,11 @@ export class ArkmeExtensionProfileInstaller {
       const temporary = join(profileDirectory, `.package.${randomUUID()}.tmp`)
       try {
         await writeFile(temporary, `${JSON.stringify(manifest, undefined, 2)}\n`, { mode: 0o600, flag: 'wx' })
-        await chmod(temporary, 0o600)
+        await securePrivateFile(temporary)
         await rename(temporary, manifestPath)
       } finally {
         await rm(temporary, { force: true }).catch(() => undefined)
-        try { await chmod(manifestPath, 0o600) } catch { /* Preserve the original error when replacement failed. */ }
+        try { await securePrivateFile(manifestPath) } catch { /* Preserve the original error when replacement failed. */ }
       }
     })
   }
@@ -148,12 +149,14 @@ export class ArkmeExtensionProfileInstaller {
       if (this.options.supervisedPlanPath === undefined) {
         throw new Error('受监督重启计划路径缺失')
       }
-      await mkdir(dirname(this.options.supervisedPlanPath), { recursive: true, mode: 0o700 })
+      const planDirectory = dirname(this.options.supervisedPlanPath)
+      await mkdir(planDirectory, { recursive: true, mode: 0o700 })
+      await securePrivateDirectory(planDirectory)
       await writeFile(this.options.supervisedPlanPath, `${JSON.stringify(plan, undefined, 2)}\n`, {
         flag: 'wx',
         mode: 0o600,
       })
-      await chmod(this.options.supervisedPlanPath, 0o600)
+      await securePrivateFile(this.options.supervisedPlanPath)
       const exitProcess = this.options.requestProcessExit ?? ((code: number) => process.exit(code))
       const timer = setTimeout(() => exitProcess(this.options.supervisedExitCode as number), 800)
       timer.unref?.()
@@ -163,16 +166,20 @@ export class ArkmeExtensionProfileInstaller {
     else {
       const planPath = join(this.options.stateDirectory, `extension-profile-restart-${randomUUID()}.json`)
       await writeFile(planPath, `${JSON.stringify(plan, undefined, 2)}\n`, { mode: 0o600 })
-      await chmod(planPath, 0o600)
+      await securePrivateFile(planPath)
       const log = openSync(plan.logPath, 'a', 0o600)
-      const child = spawn(this.options.execPath, [this.options.helperPath, planPath], {
-        detached: true,
-        env: { ...process.env, DSH_HOME: this.options.dshHome },
-        stdio: ['ignore', log, log],
-        shell: false,
-      })
-      child.unref()
-      closeSync(log)
+      try {
+        securePrivateFileSync(plan.logPath)
+        const child = spawn(this.options.execPath, [this.options.helperPath, planPath], {
+          detached: true,
+          env: { ...process.env, DSH_HOME: this.options.dshHome },
+          stdio: ['ignore', log, log],
+          shell: false,
+        })
+        child.unref()
+      } finally {
+        closeSync(log)
+      }
     }
     const shutdown = this.options.requestShutdown ?? (() => {
       const timer = setTimeout(() => process.kill(process.pid, 'SIGTERM'), 800)

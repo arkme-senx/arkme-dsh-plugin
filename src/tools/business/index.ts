@@ -6,6 +6,7 @@ import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule } from './conversation/list-sources.js'
 import { groupAiPolishToolModule } from './conversation/group-ai-polish.js'
 import { readSourceToolModule } from './conversation/read-source.js'
+import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
@@ -26,12 +27,14 @@ import {
   worldRecentToolModule,
   worldVoiceprintSocialContextToolModule,
   worldVoiceprintInviteToolModule,
+  worldOpenPrivateChatToolModule,
 } from './world/index.js'
 import { wechatToolModules } from './wechat/index.js'
 import { extensionReviewToolModules } from './extensions/reviews.js'
 import { groupMemberToolModules } from './groups/index.js'
 import { contactToolModules } from './contacts/index.js'
 import { groupToolModules } from './groups/index.js'
+import { voiceprintToolModules } from './voiceprint/index.js'
 
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
@@ -50,6 +53,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   worldUserToolModule,
   worldVoiceprintSocialContextToolModule,
   worldVoiceprintInviteToolModule,
+  worldOpenPrivateChatToolModule,
+  ...voiceprintToolModules,
   worldPublishTextToolModule,
   ...extensionReviewToolModules,
   ...recordingToolModules,
@@ -57,6 +62,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listSourcesToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
+  sourceMembersToolModule,
+  sourceMemberRecordsToolModule,
   reportMessageToolModule,
   relatedRecordingsToolModule,
   groupAiPolishToolModule,

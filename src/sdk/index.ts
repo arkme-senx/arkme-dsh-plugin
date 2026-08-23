@@ -21,6 +21,9 @@ import type {
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidateList,
@@ -30,8 +33,10 @@ import type {
   ArkmeGroupBotCandidateList,
   ArkmeImagePayload,
   ArkmeImageSearchResult,
+  ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
@@ -51,6 +56,7 @@ import type {
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
@@ -113,6 +119,10 @@ export type {
   ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeContentKind,
+  ArkmeConversationMemberItem,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
@@ -131,6 +141,7 @@ export type {
   ArkmeImagePayload,
   ArkmeImageSearchItem,
   ArkmeImageSearchResult,
+  ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
@@ -695,6 +706,19 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Open or reuse a private chat with a non-self World author from an unchanged authorRef. */
+  async openWorldAuthorPrivateChat(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    if (authorRef.trim() === '') throw new TypeError('Arkme World author reference must not be empty')
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.world.private.open', { authorRef }, signal)
+  }
+
+  /** Resolve viewer-local labels for visible World authors without exposing their user IDs. */
+  async worldAuthorLabels(authorRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
+    const normalized = [...new Set(authorRefs.map(value => value.trim()).filter(value => value !== ''))]
+    if (normalized.length === 0) return []
+    return await this.call<ArkmeWorldAuthorLabel[]>('world.author-labels', { authorRefs: normalized.slice(0, 20) }, signal)
+  }
+
   async worldVoiceprintPlaybackAvailability(
     recordRefs: readonly string[],
     signal?: AbortSignal,
@@ -938,6 +962,29 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)
   }
 
+  async listSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme chat source reference must not be empty')
+    return await this.call<ArkmeConversationMemberList>('source.members', { sourceRef, activeOnly: true }, signal)
+  }
+
+  async sourceMemberRecords(
+    sourceRef: string,
+    memberRef: string,
+    mode: ArkmeConversationMemberRecordMode,
+    options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeConversationMemberRecordPage> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '' || !['owner', 'mentioned'].includes(mode)) {
+      throw new TypeError('Arkme source, member reference, and member-record mode must be valid')
+    }
+    return await this.call<ArkmeConversationMemberRecordPage>('source.member-records', {
+      sourceRef,
+      memberRef,
+      mode,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.beforeSequence === undefined ? {} : { beforeSequence: options.beforeSequence }),
+    }, options.signal)
+  }
+
   async listGroupMemberCandidates(
     sourceRef: string,
     options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
@@ -999,6 +1046,7 @@ export class ArkmeSdk {
       recordUid?: string
       relationUid?: string
       agentAuthored?: boolean
+      humanMentions?: readonly ArkmeHumanMentionInput[]
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1011,6 +1059,7 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
+      ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
     }, options.signal)
   }
 

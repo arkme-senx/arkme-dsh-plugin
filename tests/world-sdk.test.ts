@@ -18,6 +18,10 @@ describe('World consumer SDK', () => {
         if (request.operation === 'world.feed') return success({ items: [], total: 0, hasMore: false })
         if (request.operation === 'world.mine') return success({ items: [], total: 0, hasMore: false })
         if (request.operation === 'world.user') return success({ items: [], total: 0, hasMore: false })
+        if (request.operation === 'world.author-labels') return success([{ authorRef: 'author-ref', authorName: '小王' }])
+        if (request.operation === 'chat.world.private.open') return success({
+          source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
+        })
         if (request.operation === 'world.voiceprint.availability') return success({
           items: [{ recordRef: 'record-ref', playable: true }],
         })
@@ -55,6 +59,11 @@ describe('World consumer SDK', () => {
       items: [], total: 0, hasMore: false,
     })
     await expect(sdk.userWorldFeed(0)).rejects.toThrow('positive integer')
+    await expect(sdk.openWorldAuthorPrivateChat('author-ref')).resolves.toMatchObject({
+      source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '小林' },
+    })
+    await expect(sdk.openWorldAuthorPrivateChat('  ')).rejects.toThrow('author reference must not be empty')
+    await expect(sdk.worldAuthorLabels(['author-ref'])).resolves.toEqual([{ authorRef: 'author-ref', authorName: '小王' }])
     await expect(sdk.worldVoiceprintPlaybackAvailability(['record-ref'])).resolves.toEqual({
       items: [{ recordRef: 'record-ref', playable: true }],
     })
@@ -82,6 +91,8 @@ describe('World consumer SDK', () => {
       { operation: 'world.feed', params: { limit: 20, offset: 40 } },
       { operation: 'world.mine', params: { limit: 10, offset: 20 } },
       { operation: 'world.user', params: { userId: 7, limit: 20, offset: 0 } },
+      { operation: 'chat.world.private.open', params: { authorRef: 'author-ref' } },
+      { operation: 'world.author-labels', params: { authorRefs: ['author-ref'] } },
       { operation: 'world.voiceprint.availability', params: { recordRefs: ['record-ref'] } },
       {
         operation: 'world.voiceprint.playback.generate',

@@ -19,6 +19,11 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_contact_add',
   'arkme_group_create',
   'arkme_world_voiceprint_invite',
+  'arkme_world_private_chat_open',
+  'arkme_voiceprint_invite',
+  'arkme_voiceprint_recognized_person_invite',
+  'arkme_voiceprint_revoke',
+  'arkme_voiceprint_restore_playback',
 ])
 
 function validateMaterializedTool(module: ArkmeToolModule, definition: ToolDefinition): ToolDefinition {
@@ -68,6 +73,23 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   }
   if (name === 'arkme_world_voiceprint_invite') {
     return '是否确认给这条世界动态的发布者发送一条私聊，邀请对方开启声纹？'
+  }
+  if (name === 'arkme_world_private_chat_open') {
+    return '是否确认打开与这条世界动态作者的私聊？'
+  }
+  if (name === 'arkme_voiceprint_invite') {
+    return '是否确认生成一条 24 小时有效的声纹播放授权邀请链接？链接会显示给你，但不会自动发送给任何人。'
+  }
+  if (name === 'arkme_voiceprint_recognized_person_invite') {
+    return cleanArgument(args.target_contact_ref, 256) === ''
+      ? '是否确认为这个已识别声音的当前绑定用户生成播放授权邀请？链接会显示给你，但不会自动发送。'
+      : '是否确认针对这个尚未绑定的已识别声音，为刚才搜索到的 Arkme 用户生成认领与播放授权邀请？链接会显示给你，但不会自动发送。'
+  }
+  if (name === 'arkme_voiceprint_revoke') {
+    return '是否确认撤销这位用户的声纹播放授权？这不会删除已有识别数据；如需恢复，必须由对方重新接受邀请。'
+  }
+  if (name === 'arkme_voiceprint_restore_playback') {
+    return '是否确认使用留底参考音频恢复你的声纹播放能力？这可能调用当前配置的声音复刻服务。'
   }
   if (name === 'arkme_bot_openclaw_connect') {
     return '是否确认连接这个 Bot 到本机 OpenClaw？这会读取该 Bot 凭据、安装固定版本 Channel、创建独立 Agent；如有待应用配置，还会重启指定 profile 的 Gateway 并短暂影响其中全部 Agent。同一 Bot 已在别处在线时可能发生接管。'

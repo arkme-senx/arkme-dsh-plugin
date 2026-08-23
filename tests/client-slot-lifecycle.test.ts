@@ -7,9 +7,10 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 
 type RuntimeModule = {
   SlotRegistry: new (ctx: Context) => {
-    entries(key: string): readonly unknown[]
+    entries(key: string): ReadonlyArray<{ component: unknown; options: { priority?: number } }>
+    entriesOfSlot(key: string): ReadonlyArray<{ component: unknown; options: { priority?: number } }>
     inject(key: string, callback: () => (() => void)): () => void
-    register(options: unknown, component: () => null): () => void
+    register(options: unknown, component: () => unknown): () => void
     spec(key: string): unknown
   }
 }
@@ -151,6 +152,54 @@ describe('Arkme directory slot lifecycle', () => {
       disposeFrame()
       restoreGlobalProperty('window', previousWindow)
       restoreGlobalProperty('document', previousDocument)
+    }
+  })
+})
+
+describe('embedded DSH settings slot lifecycle', () => {
+  it('restores the native settings entry when the Arkme shadow is disposed', async () => {
+    const SlotRegistry = await loadSlotRegistry()
+    const registry = new SlotRegistry(new Context())
+    const disposeFrame = registry.register({
+      name: 'root',
+      children: {
+        'sidebar.settings': { kind: 'single', scope: 'root' },
+      },
+    }, () => null)
+    const NativeSettings = () => 'native settings'
+    const disposeNativeSettings = registry.register({ name: 'sidebar.settings' }, NativeSettings)
+    const injectionCleanups: Array<() => void> = []
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { search: '?arkme-harness-embed=1' } },
+    })
+
+    try {
+      apply({
+        slots: {
+          inject: (key: string, callback: () => (() => void)) => {
+            const cleanup = registry.inject(key, callback)
+            injectionCleanups.push(cleanup)
+            return cleanup
+          },
+          register: (options: unknown, component: () => unknown) => registry.register(options, component),
+        },
+        effect: vi.fn(),
+      } as never)
+
+      expect(registry.entries('sidebar.settings').map(entry => entry.options.priority ?? 0)).toEqual([-100, 0])
+      expect(registry.entriesOfSlot('sidebar.settings')).toEqual([
+        expect.objectContaining({ options: expect.objectContaining({ priority: -100 }) }),
+      ])
+
+      injectionCleanups.splice(0).reverse().forEach(cleanup => { cleanup() })
+      expect(registry.entriesOfSlot('sidebar.settings').map(entry => entry.component)).toEqual([NativeSettings])
+    } finally {
+      injectionCleanups.splice(0).reverse().forEach(cleanup => { cleanup() })
+      disposeNativeSettings()
+      disposeFrame()
+      restoreGlobalProperty('window', previousWindow)
     }
   })
 })

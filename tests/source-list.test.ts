@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
-  arkmeSelfDirectorySources, arkmeSourceTimeLabel, isArkmeSelfWorkspaceSource, sortArkmeSources,
+  arkmeSelfDirectorySources, arkmeSendToSelfDirectoryPresentation, arkmeSourceTimeLabel,
+  isArkmeSelfWorkspaceSource, sortArkmeSources,
 } from '../src/client/source-list.js'
 
 function source(
@@ -59,5 +60,23 @@ describe('Arkme send-to-self source list', () => {
     expect(arkmeSourceTimeLabel(new Date(2026, 7, 18, 20, 49).getTime(), now)).toBe('20:49')
     expect(arkmeSourceTimeLabel(new Date(2026, 7, 17, 8, 0).getTime(), now)).toBe('昨天 08:00')
     expect(arkmeSourceTimeLabel(new Date(2026, 7, 5, 8, 0).getTime(), now)).toBe('8月5日')
+  })
+
+  it('presents the aggregate latest message and time in the conversation directory', () => {
+    const now = new Date(2026, 7, 18, 21, 30).getTime()
+    const aggregate: ArkmeSourceItem = {
+      ...source('aggregate', '发给自己', new Date(2026, 7, 18, 20, 49).getTime(), 0),
+      kind: 'send_to_self',
+      latestPreview: '最新发给自己的消息',
+    }
+
+    expect(arkmeSendToSelfDirectoryPresentation(aggregate, now)).toEqual({
+      preview: '最新发给自己的消息',
+      time: '20:49',
+    })
+    expect(arkmeSendToSelfDirectoryPresentation(undefined, now)).toEqual({
+      preview: '全部个人消息',
+      time: '',
+    })
   })
 })

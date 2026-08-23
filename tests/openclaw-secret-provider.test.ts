@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SecretValue } from '../src/secret-value.js'
 import { createOpenClawFileSecretStore } from '../src/openclaw/index.js'
+import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('OpenClaw file SecretRef store', () => {
   it('refuses to adopt an existing resource without its owner marker', async () => {
@@ -31,7 +32,7 @@ describe('OpenClaw file SecretRef store', () => {
     })
     expect(JSON.stringify(ref)).not.toContain('private-token')
     await expect(readFile(ref.providerPath, 'utf8')).resolves.toBe('private-token')
-    expect((await stat(ref.providerPath)).mode & 0o777).toBe(0o600)
+    expectPrivatePath(ref.providerPath, 0o600)
     await expect(store.matchesPreview('0123456789abcdef', 'private...oken')).resolves.toBe(true)
     await expect(store.matchesPreview('0123456789abcdef', 'private-...xxxx')).resolves.toBe(false)
   })

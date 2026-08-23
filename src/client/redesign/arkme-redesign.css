@@ -11,6 +11,7 @@
 [data-arkme-workspace], [data-arkme-workspace] * { box-sizing: border-box; }
 [data-arkme-workspace] button, [data-arkme-workspace] input, [data-arkme-workspace] textarea { font: inherit; }
 [data-arkme-workspace] button { border: 0; background: none; color: inherit; cursor: pointer; }
+[data-arkme-owned="product-brand"] [data-arkme-theme-image="dark"] { display: none !important; }
 
 .arkme-redesign-root {
   --arkme-native-titlebar: 0px;
@@ -87,7 +88,6 @@
 .arkme-redesign-rail-footer > button:hover, .arkme-redesign-rail-footer > button.is-active { background: #f1f2f5; }
 .arkme-redesign-profile { position: relative; }
 .arkme-redesign-profile > span { width: 32px !important; height: 32px !important; }
-.arkme-redesign-profile::after { content: ""; position: absolute; right: 7px; bottom: 6px; width: 8px; height: 8px; border: 2px solid #fbfbfc; border-radius: 50%; background: #8e93a0; }
 .arkme-redesign-profile-popover { position: fixed; z-index: 10000; left: 64px; bottom: 14px; width: 264px; padding: 10px; border: 1px solid rgba(216,217,221,.9); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 20px 50px rgba(26,28,35,.15), 0 2px 8px rgba(26,28,35,.05); backdrop-filter: blur(20px); }
 .arkme-redesign-profile-head { padding: 9px 9px 13px; display: flex; align-items: center; gap: 11px; }
 .arkme-redesign-profile-head > span { min-width: 0; display: grid; gap: 4px; text-align: left; }
@@ -203,6 +203,14 @@
 .arkme-redesign-route-chats .arkme-conversation-header h2 { font-size: 15px !important; font-weight: 600 !important; }
 .arkme-redesign-route-chats .arkme-conversation-body { padding: 22px 22px 12px !important; }
 .arkme-redesign-route-chats .arkme-conversation-records { width: 100% !important; gap: 0 !important; }
+.arkme-conversation-records-reveal { animation: arkme-conversation-records-reveal 120ms ease-out both; }
+@keyframes arkme-conversation-records-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arkme-conversation-records-reveal { animation: none; }
+}
 .arkme-redesign-route-chats [aria-label="打开快记详情"] { border-radius: 5px 16px 16px 16px !important; }
 .arkme-redesign-route-chats [data-arkme-message-content] p { font-size: 14px !important; line-height: 22px !important; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }
@@ -486,6 +494,12 @@ body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] {
   background: var(--dsw-specific-sidebar-fill) !important;
   color: var(--dsw-alias-label-secondary) !important;
 }
+body[data-ds-dark-theme] [data-arkme-owned="product-brand"] {
+  background: transparent !important;
+  box-shadow: none;
+}
+body[data-ds-dark-theme] [data-arkme-owned="product-brand"] [data-arkme-theme-image="light"] { display: none !important; }
+body[data-ds-dark-theme] [data-arkme-owned="product-brand"] [data-arkme-theme-image="dark"] { display: block !important; }
 body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"] > div {
   border-color: var(--dsw-alias-border-l1) !important;
   background: var(--dsw-alias-bg-layer-1) !important;
@@ -741,11 +755,6 @@ body[data-ds-dark-theme] .arkme-workspace-dialog > nav,
 body[data-ds-dark-theme] .arkme-workspace-dialog > footer {
   border-color: var(--dsw-alias-border-l1) !important;
 }
-body[data-ds-dark-theme] .arkme-redesign-profile::after {
-  border-color: var(--dsw-specific-sidebar-fill);
-  background: var(--dsw-alias-label-tertiary);
-}
-
 body[data-ds-dark-theme] .arkme-redesign-profile-popover,
 body[data-ds-dark-theme] .arkme-workspace-dialog {
   border-color: var(--dsw-alias-border-l2);
@@ -903,6 +912,8 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
   .arkme-redesign-task-start { padding: 28px; }
   .arkme-redesign-starters { grid-template-columns: 1fr; gap: 6px; }
   .arkme-redesign-starters > button { border-right: 0; }
+  .arkme-voiceprint-relationships { grid-template-columns: minmax(0, 1fr) !important; gap: 28px !important; }
+  .arkme-voiceprint-outbound { padding-left: 0 !important; padding-top: 28px !important; border-left: 0 !important; border-top: 1px solid var(--dsw-alias-border-subtle, #e6e7eb) !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -15,24 +15,33 @@ function installDesktopGateMarker(): () => void {
 }
 
 describe('official DSH client adapter', () => {
-  it('does not replace any native DSH slot inside the embedded Harness document', () => {
+  it('shadows only the native settings seat inside the embedded Harness document', () => {
     const previousWindow = globalThis.window
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: { location: { search: '?arkme-harness-embed=1' } },
     })
-    const register = vi.fn()
+    const registered: Array<{ name: string; priority?: number }> = []
+    const register = vi.fn((options: { name: string; priority?: number }, component: () => unknown) => {
+      registered.push(options)
+      expect(component()).toBeNull()
+      return vi.fn()
+    })
+    const inject = vi.fn((_key: string, registerEntry: () => unknown) => registerEntry())
     const effect = vi.fn()
 
     try {
-      apply({ slots: { inject: vi.fn(), register }, effect } as never)
+      apply({ slots: { inject, register }, effect } as never)
     } finally {
       if (previousWindow === undefined) delete (globalThis as { window?: Window }).window
       else Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow })
     }
 
+    expect(inject).toHaveBeenCalledOnce()
+    expect(inject.mock.calls[0]?.[0]).toBe('sidebar.settings')
     expect(effect).not.toHaveBeenCalled()
-    expect(register).not.toHaveBeenCalled()
+    expect(register).toHaveBeenCalledOnce()
+    expect(registered).toEqual([{ name: 'sidebar.settings', priority: -100 }])
   })
 
   it('owns Arkme seats normally without redeclaring the DSH settings slot', () => {
@@ -107,6 +116,7 @@ describe('official DSH client adapter', () => {
       id: 'arkme-app-update-dialog',
     }))
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
+    expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
     expect(registered.map(item => item.name)).not.toContain('settings.general.item')
     expect(registered.find(item => item.name === 'conversation')?.children).toBeUndefined()
     cleanups.forEach(cleanup => { cleanup() })

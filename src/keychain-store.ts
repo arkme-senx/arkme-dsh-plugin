@@ -1,70 +1,13 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { chmod, lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { ArkmeWindowsCredentialManagerBackend } from './windows-credential-helper.js'
 
 const execFileAsync = promisify(execFile)
 const WINDOWS_CREDENTIAL_BLOB_MAX_BYTES = 5 * 512
-const WINDOWS_CREDENTIAL_OPERATION_TIMEOUT_MS = 10000
-const WINDOWS_CREDENTIAL_OUTPUT_LIMIT_BYTES = 1024 * 1024
-
-const WINDOWS_CREDENTIAL_VAULT_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-[Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, ContentType = WindowsRuntime] | Out-Null
-[Windows.Security.Credentials.PasswordCredential, Windows.Security.Credentials, ContentType = WindowsRuntime] | Out-Null
-
-function Get-CredentialOrNull([object]$Vault, [string]$Resource, [string]$UserName) {
-  try {
-    return $Vault.Retrieve($Resource, $UserName)
-  } catch {
-    $inner = $_.Exception.InnerException
-    if ($null -ne $inner -and $inner.HResult -eq -2147023728) { return $null }
-    throw
-  }
-}
-
-$requestText = [Console]::In.ReadToEnd()
-$request = $requestText | ConvertFrom-Json
-if ([string]::IsNullOrWhiteSpace($request.service) -or [string]::IsNullOrWhiteSpace($request.account)) {
-  throw 'Credential service and account are required'
-}
-$vault = New-Object Windows.Security.Credentials.PasswordVault
-
-switch ($request.operation) {
-  'read' {
-    $credential = Get-CredentialOrNull $vault $request.service $request.account
-    if ($null -eq $credential) {
-      $response = [ordered]@{ ok = $true; found = $false }
-    } else {
-      $credential.RetrievePassword()
-      $response = [ordered]@{ ok = $true; found = $true; value = $credential.Password }
-    }
-  }
-  'write' {
-    if ($null -eq $request.payload) { throw 'Credential payload is required' }
-    $credential = New-Object Windows.Security.Credentials.PasswordCredential(
-      $request.service, $request.account, [string]$request.payload
-    )
-    $vault.Add($credential)
-    $response = [ordered]@{ ok = $true }
-  }
-  'delete' {
-    $credential = Get-CredentialOrNull $vault $request.service $request.account
-    if ($null -ne $credential) { $vault.Remove($credential) }
-    $response = [ordered]@{ ok = $true }
-  }
-  default { throw 'Unsupported credential operation' }
-}
-
-[Console]::Out.Write(($response | ConvertTo-Json -Compress -Depth 3))
-`
-
-const WINDOWS_CREDENTIAL_VAULT_SCRIPT_BASE64 = Buffer
-  .from(WINDOWS_CREDENTIAL_VAULT_SCRIPT, 'utf16le')
-  .toString('base64')
 
 export interface ArkmeSessionCredentials {
   accessToken: string
@@ -184,105 +127,7 @@ export interface ArkmeWindowsCredentialBackend {
   delete(service: string, account: string): Promise<void>
 }
 
-interface ArkmeWindowsCredentialRequest {
-  operation: 'read' | 'write' | 'delete'
-  service: string
-  account: string
-  payload?: string
-}
-
-interface ArkmeWindowsCredentialResponse {
-  ok: true
-  found?: boolean
-  value?: string
-}
-
-function windowsPowerShellPath(): string {
-  return join(
-    process.env.SystemRoot?.trim() || 'C:\\Windows',
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  )
-}
-
-function invokeWindowsCredentialVault(
-  request: ArkmeWindowsCredentialRequest,
-): Promise<ArkmeWindowsCredentialResponse> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(windowsPowerShellPath(), [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-EncodedCommand',
-      WINDOWS_CREDENTIAL_VAULT_SCRIPT_BASE64,
-    ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
-    let settled = false
-    let stdout = ''
-    let stderrBytes = 0
-
-    const finish = (error?: Error, response?: ArkmeWindowsCredentialResponse): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      if (error !== undefined) reject(error)
-      else resolve(response as ArkmeWindowsCredentialResponse)
-    }
-    const failForOutputLimit = (): void => {
-      child.kill()
-      finish(new Error('Windows Credential Locker 返回内容过大'))
-    }
-    const timeout = setTimeout(() => {
-      child.kill()
-      finish(new Error('Windows Credential Locker 操作超时'))
-    }, WINDOWS_CREDENTIAL_OPERATION_TIMEOUT_MS)
-
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
-      if (Buffer.byteLength(stdout, 'utf8') > WINDOWS_CREDENTIAL_OUTPUT_LIMIT_BYTES) failForOutputLimit()
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.length
-      if (stderrBytes > WINDOWS_CREDENTIAL_OUTPUT_LIMIT_BYTES) failForOutputLimit()
-    })
-    child.stdin.on('error', () => undefined)
-    child.on('error', error => { finish(new Error('无法启动 Windows Credential Locker', { cause: error })) })
-    child.on('close', code => {
-      if (settled) return
-      if (code !== 0) {
-        finish(new Error(`Windows Credential Locker 操作失败，退出码 ${String(code)}`))
-        return
-      }
-      try {
-        const response = JSON.parse(stdout.trim()) as Partial<ArkmeWindowsCredentialResponse>
-        if (response.ok !== true) throw new Error('Credential Locker response is invalid')
-        finish(undefined, response as ArkmeWindowsCredentialResponse)
-      } catch (error) {
-        finish(new Error('Windows Credential Locker 返回无效', { cause: error }))
-      }
-    })
-    child.stdin.end(JSON.stringify(request), 'utf8')
-  })
-}
-
-export class ArkmeWindowsCredentialVaultBackend implements ArkmeWindowsCredentialBackend {
-  async read(service: string, account: string): Promise<string | undefined> {
-    const response = await invokeWindowsCredentialVault({ operation: 'read', service, account })
-    if (response.found !== true) return undefined
-    if (typeof response.value !== 'string') throw new Error('Windows Credential Locker 缺少凭据内容')
-    return response.value
-  }
-
-  async write(service: string, account: string, payload: string): Promise<void> {
-    await invokeWindowsCredentialVault({ operation: 'write', service, account, payload })
-  }
-
-  async delete(service: string, account: string): Promise<void> {
-    await invokeWindowsCredentialVault({ operation: 'delete', service, account })
-  }
-}
+export class ArkmeWindowsCredentialVaultBackend extends ArkmeWindowsCredentialManagerBackend {}
 
 export class ArkmeWindowsCredentialStore implements ArkmeSessionStore {
   private readonly account = 'session'
@@ -292,7 +137,7 @@ export class ArkmeWindowsCredentialStore implements ArkmeSessionStore {
 
   constructor(
     private readonly service: string,
-    private readonly backend: ArkmeWindowsCredentialBackend = new ArkmeWindowsCredentialVaultBackend(),
+    private readonly backend: ArkmeWindowsCredentialBackend = new ArkmeWindowsCredentialManagerBackend(),
   ) {}
 
   async read(): Promise<ArkmeSessionCredentials | undefined> {

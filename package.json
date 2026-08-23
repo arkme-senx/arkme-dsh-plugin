@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.14",
+  "version": "0.1.20",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -35,6 +35,7 @@
   "files": [
     "lib",
     "assets/desktop_call",
+    "assets/windows",
     "cordis.patch.yml",
     "README.md",
     "docs/*.md"
@@ -58,20 +59,22 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.14 更新",
-      "summary": "重构 Arkme 桌面客户端并嵌入原生 DSH，完善世界评论、声纹提醒、图片预览与扩展市场，并回退通话录音桌面改版。",
-      "publishedAt": "2026-08-22T07:24:00.000Z",
+      "title": "Arkme 插件 0.1.20 更新",
+      "summary": "DeepSeek Harness 现会优先预热，切换回来无需重复加载。",
+      "publishedAt": "2026-08-23T12:33:00.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },
   "scripts": {
-    "build": "pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "build": "pnpm run verify:windows-credential-helper && pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "build:windows-credential-helper": "node scripts/build-windows-credential-helper.mjs",
     "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
     "bundle": "node scripts/clean-bundle.mjs && tsdown",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
+    "verify:windows-credential-helper": "node scripts/verify-windows-credential-helper.mjs",
     "prepare": "pnpm run build"
   },
   "dependencies": {

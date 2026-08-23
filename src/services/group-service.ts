@@ -482,6 +482,7 @@ export class GroupService {
         isOwner: role === 'owner',
         joinedAtMillis: numberValue(item.join_at),
         recordCount: Math.max(0, Math.trunc(numberValue(objectValue(item.extra).record_count))),
+        mentionCount: Math.max(0, Math.trunc(numberValue(objectValue(item.extra).mention_count))),
       })
     }
     const roleRank = (role: ArkmeGroupMemberRole) => role === 'owner' ? 0 : role === 'admin' ? 1 : role === 'member' ? 2 : 3

@@ -35,6 +35,30 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(cell.get('height')).toBe('45px')
     expect(cell.get('border-color')).toBe('var(--dsw-alias-button-primary-fill, #17191c)')
     expect(cell.get('background')).toBe('var(--dsw-alias-button-primary-fill, #17191c)')
+    expect(cell.get('transition')).toBe('background 120ms ease, border-color 120ms ease, color 120ms ease')
+  })
+
+  it('keeps the record badge geometry and transition stable while selection changes', () => {
+    const renderCount = (selected: boolean) => {
+      const markup = renderToStaticMarkup(<ArkmeCalendarCell
+        date={new Date(2026, 7, 21)}
+        meta={{ bucketDate: '2026-08-21', count: 41, protectedCount: 0, hasRecords: true }}
+        selected={selected}
+        disabled={false}
+        onClick={() => {}}
+      />)
+      return matchStyle(markup, /<span style="([^"]+)">41<\/span>/)
+    }
+    const unselectedCount = renderCount(false)
+    const selectedCount = renderCount(true)
+
+    for (const count of [unselectedCount, selectedCount]) {
+      expect(count.get('min-width')).toBe('15px')
+      expect(count.get('padding')).toBe('0 4px')
+      expect(count.get('transition')).toBe('background 120ms ease, color 120ms ease')
+    }
+    expect(selectedCount.get('background')).toBe('transparent')
+    expect(selectedCount.get('opacity')).toBe('1')
   })
 
   it('does not show a numeric marker for empty days', () => {

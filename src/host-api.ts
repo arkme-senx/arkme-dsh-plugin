@@ -6,6 +6,7 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
+  ArkmeConversationMemberRecordMode, ArkmeHumanMentionInput,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -77,6 +78,12 @@ function stringParam(params: Record<string, unknown>, key: string): string {
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function conversationMemberRecordModeParam(params: Record<string, unknown>): ArkmeConversationMemberRecordMode {
+  const mode = stringParam(params, 'mode')
+  if (mode === 'owner' || mode === 'mentioned') return mode
+  throw new ArkmePluginError('chat-member-record-mode-invalid', '成员快记模式无效', false, 400)
 }
 
 function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
@@ -251,6 +258,23 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
+function humanMentionsParam(params: Record<string, unknown>): ArkmeHumanMentionInput[] {
+  const values = params.humanMentions
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return {
+      memberRef: stringParam(item, 'memberRef'),
+      startIndex: numberParam(item, 'startIndex', -1),
+      length: numberParam(item, 'length', 0),
+    }
+  })
+}
+
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
@@ -259,6 +283,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
     textContent: stringParam(params, 'textContent'),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
+    ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
     assets: rawAssets.flatMap(raw => {
       if (raw === null || typeof raw !== 'object') return []
       const asset = raw as Record<string, unknown>
@@ -324,6 +349,11 @@ export interface ArkmeHostApiOptions {
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController()
+    const abortDisconnectedRequest = () => {
+      if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
+    }
+    res.once('close', abortDisconnectedRequest)
     try {
       if (req.method !== 'POST') {
         throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
@@ -358,9 +388,11 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.extensionManager?.(),
         options.extensionInstallTasks?.(),
         options.ownedExtensionInventory?.(),
+        controller.signal,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
+      if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
         ? error
         : error instanceof ArkmePluginUpdateError
@@ -372,6 +404,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable },
       })
+    } finally {
+      res.off('close', abortDisconnectedRequest)
     }
   }
 }
@@ -387,6 +421,7 @@ export async function dispatchArkmeHostOperation(
   extensionManager?: ArkmeExtensionManager,
   extensionInstallTasks?: ArkmeExtensionInstallTasks,
   ownedExtensionInventory?: ArkmeOwnedExtensionInventory,
+  requestSignal?: AbortSignal,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -418,6 +453,29 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'voiceprint.status': return await service.myVoiceprint()
+    case 'voiceprint.grants': return await service.outboundVoiceprintGrants({
+      cursor: stringParam(params, 'cursor').trim(),
+      limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+    })
+    case 'voiceprint.people': return await service.recognizedVoiceprintPeople({
+      cursor: stringParam(params, 'cursor').trim(),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+    })
+    case 'voiceprint.person': return await service.recognizedVoiceprintPerson(
+      stringParam(params, 'personRef').trim(),
+    )
+    case 'voiceprint.person.voiceprints': return await service.recognizedPersonVoiceprints(
+      stringParam(params, 'personRef').trim(),
+    )
+    case 'voiceprint.person.invite': return await service.createRecognizedPersonVoiceprintInvitation(
+      stringParam(params, 'personRef').trim(), stringParam(params, 'targetContactRef').trim() || undefined,
+    )
+    case 'voiceprint.invite': return await service.createVoiceprintInvitation()
+    case 'voiceprint.revoke': return await service.revokeVoiceprintPlaybackGrant(
+      stringParam(params, 'grantRef').trim(),
+    )
+    case 'voiceprint.restore': return await service.restoreVoiceprintPlayback()
     case 'contacts.search': return await service.searchContact(stringParam(params, 'identifier'))
     case 'contacts.add': return await service.addContact(stringParam(params, 'contactRef'), {
       ...(stringParam(params, 'remark').trim() === '' ? {} : { remark: stringParam(params, 'remark') }),
@@ -602,12 +660,21 @@ export async function dispatchArkmeHostOperation(
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
       })
     }
+    case 'world.author-labels': return await service.worldAuthorLabels(
+      [...new Set(stringListParam(params, 'authorRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
+      requestSignal,
+    )
+    case 'chat.world.private.open': return await service.openPrivateChatFromWorldAuthor(
+      stringParam(params, 'authorRef').trim(),
+      requestSignal,
+    )
     case 'world.voiceprint.availability': return await service.worldVoiceprintPlaybackAvailability(
       [...new Set(stringListParam(params, 'recordRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
     )
     case 'world.voiceprint.playback.generate': return await service.generateWorldVoiceprintPlayback({
       recordRef: stringParam(params, 'recordRef').trim(),
       chunkIndex: Math.min(333, Math.max(0, Math.trunc(numberParam(params, 'chunkIndex', 0)))),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'world.voiceprint.social-context': return await service.worldVoiceprintSocialContext(
       stringParam(params, 'recordRef').trim(),
@@ -666,6 +733,19 @@ export async function dispatchArkmeHostOperation(
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
       )
     }
+    case 'source.members': return await service.listSourceMembers(
+      stringParam(params, 'sourceRef'),
+      { activeOnly: params.activeOnly !== false },
+    )
+    case 'source.member-records': return await service.sourceMemberRecords(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'memberRef'),
+      conversationMemberRecordModeParam(params),
+      {
+        limit: numberParam(params, 'limit', 30),
+        beforeSequence: numberParam(params, 'beforeSequence', 0),
+      },
+    )
     case 'source.interwoven-moments': return await service.interwovenMoments(
       requiredInterwovenParam(params, 'sourceRef'),
     )
@@ -684,6 +764,7 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
+        ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
       },
     )
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
@@ -766,6 +847,10 @@ export async function dispatchArkmeHostOperation(
     case 'chat.private.open': return await service.openPrivateChatFromUser(
       numberParam(params, 'peerUserId', 0),
       { displayName: stringParam(params, 'displayName') },
+    )
+    case 'chat.member.private.open': return await service.openPrivateChatFromMember(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'memberRef'),
     )
     case 'source.send-rich': return await service.sendSourceRich(
       stringParam(params, 'sourceRef'),

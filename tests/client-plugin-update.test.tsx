@@ -105,4 +105,35 @@ describe('ArkmePluginUpdateStore', () => {
     expect(call).toHaveBeenCalledWith('plugin.update.install')
     store.stop()
   })
+
+  it('removes a terminal install result when its ten-minute display window expires', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    const terminal = {
+      schemaVersion: 1 as const,
+      jobId: 'job-rollback',
+      phase: 'rolled-back' as const,
+      previousVersion: '0.1.3',
+      targetVersion: '0.1.4',
+      message: '新版本安装失败，已自动恢复旧版本。',
+      updatedAtMillis: 1_000_000,
+    }
+    let installStatusReads = 0
+    const store = new ArkmePluginUpdateStore((async (operation: string) => {
+      if (operation !== 'plugin.update.install-status') return updateStatus()
+      installStatusReads += 1
+      return installStatusReads === 1 ? terminal : undefined
+    }) as never)
+    try {
+      await store.refreshInstallStatus(false)
+      expect(store.getSnapshot().install).toEqual(terminal)
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 1)
+
+      expect(store.getSnapshot().install).toBeUndefined()
+    } finally {
+      store.stop()
+      vi.useRealTimers()
+    }
+  })
 })
