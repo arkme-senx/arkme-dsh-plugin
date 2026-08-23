@@ -6,7 +6,7 @@ import {
 } from '../src/index.js'
 
 describe('production plugin configuration', () => {
-  it('routes each owner API and the update service to production infrastructure', () => {
+  it('routes every external API and update endpoint to production infrastructure', () => {
     const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 
     expect(patch).toContain('environment: prod')
@@ -22,6 +22,7 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('intelligentBaseUrl: https://intelligent.jotmo.cc')
     expect(patch).toContain('audioBaseUrl: https://audio.jotmo.cc')
     expect(patch).toContain('extensionPublishBaseUrl: https://extension-publish.jotmo.cc')
+    expect(patch).toContain('shareWebsite: https://jiwo.cc')
     expect(patch).toContain('prod-ed25519-20260819-1')
     expect(JSON.parse(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS)).toEqual({
       'prod-ed25519-20260819-1': 'm1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs=',

@@ -21,6 +21,10 @@ export function parsePluginUpdateInstallSnapshot(value: unknown): ArkmePluginUpd
   const jobId = boundedString(source.jobId, 128)
   const previousVersion = boundedString(source.previousVersion, 128)
   const targetVersion = boundedString(source.targetVersion, 128)
+  const targetArtifactPath = boundedString(source.targetArtifactPath, 4096)
+  const targetArtifactSha512 = boundedString(source.targetArtifactSha512, 128)
+  const appVersion = boundedString(source.appVersion, 128)
+  const dshVersion = boundedString(source.dshVersion, 128)
   const message = boundedString(source.message, 500)
   const updatedAtMillis = source.updatedAtMillis
   if (source.schemaVersion !== 1 || !PHASES.has(phase) || jobId === ''
@@ -32,6 +36,10 @@ export function parsePluginUpdateInstallSnapshot(value: unknown): ArkmePluginUpd
     phase,
     previousVersion,
     targetVersion,
+    ...(targetArtifactPath === '' ? {} : { targetArtifactPath }),
+    ...(!/^[a-f0-9]{128}$/.test(targetArtifactSha512) ? {} : { targetArtifactSha512 }),
+    ...(appVersion === '' ? {} : { appVersion }),
+    ...(dshVersion === '' ? {} : { dshVersion }),
     message,
     updatedAtMillis,
   }

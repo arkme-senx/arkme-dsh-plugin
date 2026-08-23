@@ -1,6 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,7 +22,7 @@ import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from './plugin-update-policy.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
-import { buildTargetInstallArgs } from './plugin-updater-helper.js'
+import { assertTargetArtifactIntegrity, buildTargetInstallArgs } from './plugin-updater-helper.js'
 import type {
   ArkmePluginUpdateAvailability,
   ArkmePluginUpdateLevel,
@@ -409,6 +409,9 @@ export class ArkmePluginUpdateManager {
       previousSpec: capability.previousSpec ?? this.installedVersion,
       targetVersion: status.latestVersion,
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update(readFileSync(targetArtifactPath)).digest('hex'),
+      ...(this.appVersion === undefined ? {} : { appVersion: this.appVersion }),
+      ...(this.dshVersion === undefined ? {} : { dshVersion: this.dshVersion }),
       ...(previousArtifactPath === undefined ? {} : { previousArtifactPath }),
       stateDirectory: this.stateDirectory,
       healthUrl: runtime.healthUrl,
@@ -494,6 +497,11 @@ export class ArkmePluginUpdateManager {
     const fallbackSpec = plan.previousArtifactPath === undefined
       ? plan.previousSpec
       : `file:${plan.previousArtifactPath}`
+    try {
+      await this.runProfilePluginRemove(plan)
+    } catch (error) {
+      this.logger?.warn?.('dsh-arkme: failed to clean partial plugin install before rollback', error)
+    }
     await this.runProfilePluginCommand(plan, [
       ...plan.execArgv,
       plan.dshBinPath,
@@ -528,9 +536,9 @@ export class ArkmePluginUpdateManager {
   ): Promise<void> {
     const add = runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this)
     const remove = runtime.runProfilePluginRemove ?? this.runProfilePluginRemove.bind(this)
-    const replacesEmbeddedLink = plan.previousSpec.startsWith('link:')
     try {
-      if (replacesEmbeddedLink) await remove(plan)
+      assertTargetArtifactIntegrity(plan)
+      await remove(plan)
       await add(plan)
       const installedVersion = this.readInstalledProfilePluginVersion(plan)
       if (installedVersion !== plan.targetVersion) {

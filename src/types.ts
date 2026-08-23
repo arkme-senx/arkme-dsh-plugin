@@ -1802,6 +1802,10 @@ export interface ArkmePluginUpdateInstallSnapshot {
   phase: ArkmePluginUpdateInstallPhase
   previousVersion: string
   targetVersion: string
+  targetArtifactPath?: string
+  targetArtifactSha512?: string
+  appVersion?: string
+  dshVersion?: string
   message: string
   updatedAtMillis: number
 }
