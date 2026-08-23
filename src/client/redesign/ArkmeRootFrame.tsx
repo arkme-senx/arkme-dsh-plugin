@@ -1,5 +1,5 @@
 import {
-  useEffect, useMemo, useRef, useState, useSyncExternalStore,
+  useEffect, useRef, useState, useSyncExternalStore,
   type FormEvent,
 } from 'react'
 import { ArrowUp } from '@phosphor-icons/react/ArrowUp'
@@ -14,11 +14,10 @@ import { GlobeHemisphereWest } from '@phosphor-icons/react/GlobeHemisphereWest'
 import { MagnifyingGlass } from '@phosphor-icons/react/MagnifyingGlass'
 import { Microphone } from '@phosphor-icons/react/Microphone'
 import { Paperclip } from '@phosphor-icons/react/Paperclip'
-import { Plus } from '@phosphor-icons/react/Plus'
 import { SquaresFour } from '@phosphor-icons/react/SquaresFour'
 import { Waveform } from '@phosphor-icons/react/Waveform'
 import type { Icon } from '@phosphor-icons/react/lib'
-import type { DirectoryListing, SessionId, SessionSummary, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { DirectoryListing, SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../../types.js'
@@ -81,61 +80,6 @@ const NAV_ITEMS: readonly NavItem[] = [
   { id: 'calendar', label: '日历', icon: CalendarBlank },
   { id: 'plugins', label: '插件', icon: SquaresFour },
 ]
-
-function taskTime(updatedAt: number): string {
-  const delta = Date.now() - updatedAt
-  if (delta < 60_000) return '刚刚'
-  if (delta < 3_600_000) return `${String(Math.max(1, Math.floor(delta / 60_000)))} 分钟前`
-  const date = new Date(updatedAt)
-  const today = new Date()
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  }
-  const yesterday = new Date(today)
-  yesterday.setDate(today.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return '昨天'
-  return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-}
-
-function TaskDirectorySection({
-  sessions,
-  selected,
-  onNew,
-  onOpen,
-}: {
-  sessions: readonly SessionSummary[]
-  selected: SessionId | undefined
-  onNew(): void
-  onOpen(sessionId: SessionId): void
-}) {
-  return <section className="arkme-redesign-task-section" aria-label="与 Arkme 沟通任务" tabIndex={0}>
-    <div className="arkme-redesign-task-section-title">
-      <strong>与 Arkme 沟通任务</strong>
-      <button type="button" aria-label="新任务" onClick={onNew}><Plus size={16} /></button>
-    </div>
-    {sessions.length === 0
-      ? <button type="button" className="arkme-redesign-task-first" onClick={onNew}>+ 开始第一个任务</button>
-      : <div className="arkme-redesign-task-list">{sessions.map(session => {
-        const active = session.running || session.pendingInteraction !== undefined
-        return <button
-          type="button"
-          key={session.id}
-          className={selected === session.id ? 'is-selected' : ''}
-          onClick={() => { onOpen(session.id) }}
-        >
-          <span className={`arkme-redesign-task-state${active ? ' is-running' : ' is-complete'}`} aria-hidden>
-            {active
-              ? <span className="arkme-redesign-task-matrix">{Array.from({ length: 8 }, (_, index) => <i key={index} />)}</span>
-              : <i />}
-          </span>
-          <span className="arkme-redesign-task-copy">
-            <strong>{session.displayTitle}</strong>
-            <small>{taskTime(session.updatedAt)}</small>
-          </span>
-        </button>
-      })}</div>}
-  </section>
-}
 
 function TaskStart({ busy, error, onChooseWorkspace, onBrowsePlugins, onRun }: {
   busy: boolean
@@ -222,11 +166,6 @@ export function ArkmeRootFrame({
   const layoutState = useSyncExternalStore(layout.subscribe, layout.getSnapshot, layout.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot)
   const sessionState = useSessions(state => state)
-  const current = sessionState.current === undefined ? undefined : sessionState.byId[sessionState.current]
-  const taskSessions = useMemo(() => sessionState.ids
-    .map(id => sessionState.byId[id])
-    .filter((session): session is SessionSummary => session !== undefined
-      && session.blank === false && session.origin !== 'subagent'), [sessionState.byId, sessionState.ids])
 
   useEffect(() => {
     if (authState.auth?.status !== 'authenticated') {
@@ -381,12 +320,6 @@ export function ArkmeRootFrame({
           wide
           embeddedProductShell
           currentSessionId={sessionState.current}
-          directoryLead={<TaskDirectorySection
-            sessions={taskSessions.slice(0, 3)}
-            selected={taskConversationOpen && current?.blank !== true ? sessionState.current : undefined}
-            onNew={showNewTask}
-            onOpen={openTask}
-          />}
           onCreateTask={showNewTask}
           onActivateSurface={() => { setTaskStartOpen(false); setTaskConversationOpen(false) }}
           renderSlot={renderSlot}
