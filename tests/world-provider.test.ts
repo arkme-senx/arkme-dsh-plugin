@@ -313,6 +313,53 @@ describe('world Provider projection', () => {
     expect(JSON.stringify(page)).not.toContain('public-record-1')
   })
 
+  it('uses the current viewer\'s private remark in World and in the chat opened from that World author', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = {
+      ...stateStore,
+      async cachedProfile() { return { status: 'empty', profile: null } },
+    }
+    const service = new ArkmeService(config, sessions, state as never, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-remark', user_id: 20002, nick_name: '公开昵称A', text_content: '世界正文',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/list') {
+        expect(body).toEqual({ limit: 50 })
+        return json({ code: 200, data: { items: [{
+          session: { chat_session_uid: 'private-20002', session_kind: 1 },
+          private_counterpart: { user_id: 20002, display_name_snapshot: '公开昵称A' },
+          private_supplement: { remark: '小王' },
+        }], has_more: false } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '公开昵称A' }] } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/create-private') {
+        expect(body).toMatchObject({ peer_user_id: 20002, title: '小王', peer_display_name_snapshot: '小王' })
+        return json({ code: 200, data: {
+          session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 1 },
+          unread_snapshot: { unread_count: 0, session_last_seq: 0 },
+        } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const page = await service.listWorldFeed()
+    expect(page.items[0]).toMatchObject({ authorName: '公开昵称A', authorRef: expect.any(String) })
+    await expect(service.worldAuthorLabels([page.items[0]!.authorRef!])).resolves.toEqual([
+      { authorRef: page.items[0]!.authorRef, authorName: '小王' },
+    ])
+
+    const opened = await service.openPrivateChatFromWorldAuthor(page.items[0]!.authorRef!)
+    expect(opened.source.displayName).toBe('小王')
+  })
+
   it('lists the signed-in account World feed through the private owner endpoint', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -821,7 +868,7 @@ describe('world Provider projection', () => {
     const page = await service.listWorldFeed()
 
     expect(page.items).toMatchObject([
-      { authorName: '文件头像', avatarRef: expect.stringMatching(/^arkme-world-image-v1\./) },
+      { authorName: '文件头像', authorRef: expect.stringMatching(/^arkme-world-record-v1\./), avatarRef: expect.stringMatching(/^arkme-world-image-v1\./) },
       { authorName: '手机默认头像', avatarFallback: { kind: 'phone_default', colorIndex: 3, label: '61' } },
       {
         authorName: '公开头像',
@@ -833,6 +880,7 @@ describe('world Provider projection', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(JSON.stringify(page)).not.toContain('file_asset://')
     expect(JSON.stringify(page)).not.toContain('jotmo-userfiles')
+    expect(JSON.stringify(page)).not.toContain('20002')
   })
 
   it('dispatches only bounded world feed and image inputs through the Host API', async () => {
@@ -840,6 +888,8 @@ describe('world Provider projection', () => {
       listWorldFeed: vi.fn(async (options: unknown) => options),
       listMyWorldFeed: vi.fn(async (options: unknown) => options),
       listUserWorldFeed: vi.fn(async (_userId: number, options: unknown) => options),
+      worldAuthorLabels: vi.fn(async (authorRefs: string[]) => ({ authorRefs })),
+      openPrivateChatFromWorldAuthor: vi.fn(async (authorRef: string) => ({ authorRef })),
       worldVoiceprintPlaybackAvailability: vi.fn(async (recordRefs: string[]) => ({ recordRefs })),
       generateWorldVoiceprintPlayback: vi.fn(async (input: unknown) => input),
       inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, recordRef })),
@@ -855,6 +905,10 @@ describe('world Provider projection', () => {
     await dispatchArkmeHostOperation(service as never, 'world.feed', { limit: 999, offset: -4, userId: 900 })
     await dispatchArkmeHostOperation(service as never, 'world.mine', { limit: 999, offset: -4, userId: 900 })
     await dispatchArkmeHostOperation(service as never, 'world.user', { userId: 900, limit: 999, offset: -4 })
+    await dispatchArkmeHostOperation(service as never, 'world.author-labels', {
+      authorRefs: [' first ', '', 'second', ...Array.from({ length: 30 }, (_, index) => `extra-${String(index)}`)],
+    })
+    await dispatchArkmeHostOperation(service as never, 'chat.world.private.open', { authorRef: ' author-ref ', userId: 900 })
     await dispatchArkmeHostOperation(service as never, 'world.voiceprint.availability', {
       recordRefs: [' first ', '', 'second', ...Array.from({ length: 30 }, (_, index) => `extra-${String(index)}`)],
       userIds: [900],
@@ -876,6 +930,10 @@ describe('world Provider projection', () => {
     expect(service.listWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
     expect(service.listMyWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
     expect(service.listUserWorldFeed).toHaveBeenCalledWith(900, { limit: 20, offset: 0 })
+    expect(service.worldAuthorLabels).toHaveBeenCalledWith([
+      'first', 'second', ...Array.from({ length: 18 }, (_, index) => `extra-${String(index)}`),
+    ], undefined)
+    expect(service.openPrivateChatFromWorldAuthor).toHaveBeenCalledWith('author-ref', undefined)
     expect(service.worldVoiceprintPlaybackAvailability).toHaveBeenCalledWith([
       'first', 'second', ...Array.from({ length: 18 }, (_, index) => `extra-${String(index)}`),
     ])

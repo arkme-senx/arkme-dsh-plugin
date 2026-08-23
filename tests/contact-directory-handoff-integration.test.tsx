@@ -89,7 +89,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
     matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
-    location: { search: '', hash: '', pathname: '/' }, history: { replaceState: vi.fn() },
+    location: { origin: 'http://localhost', search: '', hash: '', pathname: '/' }, history: { replaceState: vi.fn() },
   })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 101 })
   arkmeContactsTab.activateAccount('test:101')

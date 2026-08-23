@@ -7,6 +7,7 @@ import type {
   ArkmeUploadedAsset,
   ArkmeUserProfile,
   ArkmeWorldAvatarFallback,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
@@ -31,6 +32,13 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 
 export interface ArkmeWorldProfileReader {
   refreshProfile(): Promise<ArkmeUserProfileSnapshot>
+}
+
+export interface ArkmeWorldViewerLabelReader {
+  privateDisplayNamesByUserIds(
+    userIds: readonly number[],
+    options?: { signal?: AbortSignal },
+  ): Promise<Map<number, string>>
 }
 
 export interface ArkmeWorldMediaReader {
@@ -278,6 +286,7 @@ export class WorldService {
     private readonly profile: ArkmeWorldProfileReader,
     private readonly media: ArkmeWorldMediaReader,
     private readonly record: ArkmeWorldRecordWriter,
+    private readonly viewerLabels?: ArkmeWorldViewerLabelReader,
   ) {}
 
   dispose(): void {
@@ -1104,16 +1113,19 @@ export class WorldService {
         `avatar:${String(ownerUserId)}:${rawAvatar.startsWith('file_asset://') ? rawAvatar : worldImageAssetIdentity(avatarUrl)}`,
       )
       : undefined
-    return {
-      recordRef: await this.worldRecordRef(viewerUserId, recordUid, {
+    const authorName = stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户'
+    const recordRef = await this.worldRecordRef(viewerUserId, recordUid, {
         ownerUserId,
-        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        authorName,
         ...(() => {
           const textPreview = optionalTrimmedText(headline || textContent, 80)
           return textPreview === undefined ? {} : { textPreview }
         })(),
-      }),
-      authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+      })
+    return {
+      recordRef,
+      ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: recordRef } : {}),
+      authorName,
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       headline,
@@ -1230,17 +1242,20 @@ export class WorldService {
         `avatar:${String(ownerUserId)}:${rawAvatar.startsWith('file_asset://') ? rawAvatar : worldImageAssetIdentity(avatarUrl)}`,
       )
       : undefined
-    return {
-      interactionRef: await this.worldRecordRef(viewerUserId, recordUid, {
+    const authorName = stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户'
+    const interactionRef = await this.worldRecordRef(viewerUserId, recordUid, {
         ownerUserId,
-        authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+        authorName,
         ...(() => {
           const textPreview = optionalTrimmedText(textContent, 80)
           return textPreview === undefined ? {} : { textPreview }
         })(),
-      }),
+      })
+    return {
+      interactionRef,
       parentRef: await this.worldRecordRef(viewerUserId, parentRecordUid),
-      authorName: stringValue(item.nick_name ?? item.nickname).trim() || 'Arkme用户',
+      ...(ownerUserId > 0 && ownerUserId !== viewerUserId ? { authorRef: interactionRef } : {}),
+      authorName,
       ...(avatarRef === undefined ? {} : { avatarRef }),
       ...(avatarRef === undefined && avatarFallback !== undefined ? { avatarFallback } : {}),
       textContent,
@@ -1276,6 +1291,38 @@ export class WorldService {
       expiresAtMillis: now + ARKME_WORLD_RECORD_REF_TTL_MILLIS,
     })
     return recordRef
+  }
+
+  /** Resolve an opaque World author reference only inside the trusted Provider. */
+  async worldAuthorFromRef(recordRef: string): Promise<{ userId: number; displayName: string }> {
+    const session = await this.runtime.requireSession()
+    const entry = this.openWorldRecordRef(recordRef, session.userId)
+    const userId = entry.ownerUserId ?? 0
+    if (!Number.isSafeInteger(userId) || userId <= 0 || userId === session.userId) {
+      throw new ArkmePluginError('world-author-target-invalid', '无法确认这位用户，请刷新世界后重试', false, 403)
+    }
+    const labels = this.viewerLabels === undefined
+      ? new Map<number, string>()
+      : await this.viewerLabels.privateDisplayNamesByUserIds([userId]).catch(() => new Map<number, string>())
+    return { userId, displayName: labels.get(userId) ?? entry.authorName ?? 'Arkme用户' }
+  }
+
+  /** Resolve viewer-local labels after World content has already been rendered. */
+  async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
+    const session = await this.runtime.requireSession()
+    const refs = [...new Set(recordRefs.map(value => value.trim()).filter(value => value !== ''))].slice(0, 20)
+    const entries = refs.map(authorRef => ({ authorRef, entry: this.openWorldRecordRef(authorRef, session.userId) }))
+      .filter(({ entry }) => entry.ownerUserId !== undefined && entry.ownerUserId > 0 && entry.ownerUserId !== session.userId)
+    if (entries.length === 0) return []
+    const userIds = [...new Set(entries.map(({ entry }) => entry.ownerUserId!))]
+    const labels = this.viewerLabels === undefined
+      ? new Map<number, string>()
+      : await this.viewerLabels.privateDisplayNamesByUserIds(userIds, { ...(signal === undefined ? {} : { signal }) })
+        .catch(() => new Map<number, string>())
+    return entries.map(({ authorRef, entry }) => ({
+      authorRef,
+      authorName: labels.get(entry.ownerUserId!) ?? entry.authorName ?? 'Arkme用户',
+    }))
   }
 
   private pruneWorldRecordRefs(now: number): void {

@@ -33,7 +33,10 @@ const styles: Record<string, CSSProperties> = {
   taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
   workspace: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
-    overflow: 'hidden', background: '#fff',
+    overflow: 'hidden', background: '#fff', position: 'relative',
+  },
+  conversationLayer: {
+    position: 'absolute', inset: 0, minWidth: 0, minHeight: 0,
   },
   details: { width: 0, height: 0, overflow: 'hidden' },
 }
@@ -60,6 +63,8 @@ export function ArkmePersistentClientRuntime() {
     const refreshUnread = async (force = false) => {
       await arkmeChatDirectory.refreshRoot({ force })
     }
+    // Establish the directory baseline before a navigation surface happens to mount.
+    void refreshUnread().catch(() => undefined)
     const events = new EventSource('/arkme-self/api/events')
     events.onopen = () => {
       void reconcileArkmeProviderInstance()
@@ -298,6 +303,7 @@ export function ArkmePersistentWorkspace({
 
   return <main data-arkme-owned="persistent-workspace" data-arkme-workspace {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})} style={styles.workspace} aria-label="Arkme 主界面">
     <ArkmePersistentClientRuntime />
+    <DeepSeekHarnessSurface visible={ui.mode === 'harness'} />
     {contactsMode ? <div className="arkme-directory-detail-pane" data-arkme-contacts-workspace>
       {scopedContacts.selection.kind !== 'none' && <button type="button" className="arkme-directory-mobile-back" onClick={() => { arkmeContactsTab.clear() }}>返回联系人目录</button>}
       <DirectoryDetailPane
@@ -316,18 +322,27 @@ export function ArkmePersistentWorkspace({
           onCandidateCleared={() => { arkmeContactsTab.clear() }} onDirectoryRefresh={() => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.refresh() }}
         />}
       />
-    </div> : ui.mode === 'harness'
-      ? <DeepSeekHarnessSurface />
-      : ui.mode === 'settings'
+    </div> : ui.mode === 'settings'
       ? <div className="arkme-redesign-route-surface arkme-redesign-settings-page">
         <ArkmeSettingsSurface />
       </div>
-      : <ArkmeSurface
-        productChrome={false}
-        productNavigation={false}
-        currentSessionId={sessionId}
-        onActivateSurface={() => undefined}
-      />}
+      : <div
+        data-arkme-owned="arkme-conversation-layer"
+        style={{
+          ...styles.conversationLayer,
+          visibility: ui.mode === 'harness' ? 'hidden' : 'visible',
+          pointerEvents: ui.mode === 'harness' ? 'none' : 'auto',
+          zIndex: ui.mode === 'harness' ? 0 : 1,
+        }}
+        aria-hidden={ui.mode === 'harness' ? true : undefined}
+      >
+        <ArkmeSurface
+          productChrome={false}
+          productNavigation={false}
+          currentSessionId={sessionId}
+          onActivateSurface={() => undefined}
+        />
+      </div>}
   </main>
 }
 

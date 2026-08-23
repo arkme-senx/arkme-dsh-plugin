@@ -16,10 +16,6 @@ const styles: Record<string, CSSProperties> = {
     border: 0, borderRadius: 14, background: 'transparent', cursor: 'pointer', font: 'inherit',
   },
   triggerActive: { background: '#f1f2f6' },
-  presence: {
-    position: 'absolute', right: 7, bottom: 6, width: 9, height: 9, borderRadius: '50%',
-    border: '2px solid #fbfbfc', background: '#8e93a0', boxSizing: 'content-box', pointerEvents: 'none',
-  },
   menu: {
     position: 'absolute', zIndex: 80, left: 52, bottom: 0, width: 264, padding: 10,
     boxSizing: 'border-box', border: '1px solid #e3e4e8', borderRadius: 18,
@@ -106,7 +102,6 @@ export function ArkmeAccountMenu({ compact }: { compact: boolean }) {
       onClick={() => { setOpen(value => !value) }}
     >
       <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={32} label="当前用户头像" />
-      <span style={styles.presence} aria-hidden />
     </button>
     {open && <div role="menu" aria-label="Arkme 账户菜单" style={{ ...styles.menu, ...(compact ? styles.compactMenu : {}) }}>
       <div style={styles.profile}>

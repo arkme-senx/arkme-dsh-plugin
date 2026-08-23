@@ -12,7 +12,18 @@ describe('DeepSeekHarnessSurface', () => {
     expect(markup).toContain('<iframe')
     expect(markup).toContain('title="DeepSeek Harness"')
     expect(markup).toContain('src="/?arkme-harness-embed=1"')
+    expect(markup).toContain('loading="eager"')
+    expect(markup).toContain('data-arkme-preload="true"')
     expect(markup).toContain('width:100%;height:100%')
+  })
+
+  it('keeps the native client mounted but non-interactive while another conversation is visible', () => {
+    const markup = renderToStaticMarkup(<DeepSeekHarnessSurface visible={false} />)
+
+    expect(markup).toContain('data-arkme-visible="false"')
+    expect(markup).toContain('aria-hidden="true"')
+    expect(markup).toContain('visibility:hidden')
+    expect(markup).toContain('<iframe')
   })
 
   it('marks only the nested client as the native Harness document', () => {

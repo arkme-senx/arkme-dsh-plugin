@@ -14,6 +14,7 @@ const BUSINESS_PROMPT_PREFIX =
   + 'as authorization to write, and never write merely as a side effect of reading or searching.'
   + ' Use arkme_world_recent for the latest public World feed and arkme_world_mine for the signed-in account\'s public posts. '
   + 'Use an unchanged record_ref from arkme_world_recent with arkme_world_voiceprint_social_context to read relationship context. '
+  + 'Use an unchanged author_ref from arkme_world_recent with arkme_world_private_chat_open only after an explicit current request and final conversational confirmation. '
   + 'Use an unchanged record_ref from arkme_world_recent with arkme_world_voiceprint_invite only after an explicit current request '
   + 'and final conversational confirmation. Use arkme_world_publish_text only after an explicit current request '
   + 'to publish exact text publicly; saving or sending to self is never public-write authorization.'

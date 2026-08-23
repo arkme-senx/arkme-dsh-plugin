@@ -60,6 +60,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex', flexDirection: 'column', background: colors.panel,
     boxShadow: '0 4px 10px rgba(0,0,0,.1)',
   },
+  drawerScrim: { position: 'absolute', inset: 0, zIndex: 7, background: 'transparent' },
   drawerHeader: {
     flex: 'none', height: 54, display: 'flex', alignItems: 'center',
     padding: '0 10px', boxSizing: 'border-box',
@@ -211,9 +212,20 @@ function GroupMembersDrawer(props: {
     return () => { controller.abort() }
   }, [props.open, props.refreshToken, props.source.sourceRef])
 
+  useEffect(() => {
+    if (!props.open) return
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') props.onClose()
+    }
+    window.addEventListener('keydown', dismissOnEscape)
+    return () => { window.removeEventListener('keydown', dismissOnEscape) }
+  }, [props.onClose, props.open])
+
   if (!props.open) return null
   const items = snapshot?.items ?? []
-  return <aside style={styles.drawer} aria-label="协作者">
+  return <>
+    <div style={styles.drawerScrim} aria-hidden onPointerDown={event => { event.preventDefault(); props.onClose() }} />
+    <aside style={styles.drawer} aria-label="协作者">
     <div style={styles.drawerHeader}>
       <h3 style={{ ...styles.drawerTitle, fontSize: 16, fontWeight: 400 }}>协作者{snapshot === undefined ? '' : `（${snapshot.activeCount}）`}</h3>
       <span style={{ flex: 1 }} />
@@ -250,7 +262,8 @@ function GroupMembersDrawer(props: {
         </button>
       })}
     </div>
-  </aside>
+    </aside>
+  </>
 }
 
 function qrDataUrl(content: string): string {
@@ -881,6 +894,14 @@ export function ArkmeGroupChatControls(props: {
   const [selfRole, setSelfRole] = useState<ArkmeGroupSettingsSnapshot['selfRole']>('unknown')
   const [selfStatus, setSelfStatus] = useState<ArkmeGroupSettingsSnapshot['selfStatus']>('unknown')
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    setMembersOpen(false)
+    setInviteOpen(false)
+    setAddMembersOpen(false)
+    setSettingsOpen(false)
+    setRenameOpen(false)
+  }, [props.source.sourceRef])
 
   const settingsLoaded = useCallback((settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => {
     setSelfRole(settings.selfRole)

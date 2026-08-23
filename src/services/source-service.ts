@@ -129,6 +129,55 @@ export class SourceService {
     this.chatSourceCache.set(cacheKey, source)
   }
 
+  /**
+   * Resolve the current viewer's private-chat labels for the supplied people.
+   * The result is deliberately keyed only inside the Provider; callers project
+   * the resolved label into their own viewer-bound response.
+   */
+  async privateDisplayNamesByUserIds(
+    userIds: readonly number[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<Map<number, string>> {
+    const session = await this.runtime.requireSession()
+    const remaining = new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0 && userId !== session.userId))
+    const displayNames = new Map<number, string>()
+    let pageCursor: Record<string, unknown> | undefined
+
+    // The chat directory is paged newest-first. Bound the scan so an unusually
+    // large history cannot make rendering a World page unbounded.
+    for (let page = 0; page < 20 && remaining.size > 0; page += 1) {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/list',
+        { limit: 50, ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }) },
+        session,
+        options.signal,
+        { lane: 'background-read', key: `world-author-labels:${pageCursor === undefined ? 'first' : String(page)}` },
+      )
+      for (const raw of listValue(data.items)) {
+        const bundle = objectValue(raw)
+        const chatSession = objectValue(bundle.session)
+        const sessionKind = numberValue(chatSession.session_kind)
+        if (sessionKind !== 1 && sessionKind !== 3) continue
+        const targetUserId = numberValue(objectValue(bundle.private_counterpart).user_id)
+        if (!remaining.has(targetUserId)) continue
+        const supplement = objectValue(bundle.private_supplement)
+        const counterpart = objectValue(bundle.private_counterpart)
+        const displayName = stringValue(supplement.remark).trim()
+          || stringValue(supplement.counterpart_name_snapshot).trim()
+          || stringValue(counterpart.display_name_snapshot).trim()
+          || stringValue(supplement.pending_name).trim()
+          || stringValue(counterpart.visible_phone).trim()
+        if (displayName !== '') displayNames.set(targetUserId, displayName)
+        remaining.delete(targetUserId)
+      }
+      if (data.has_more !== true) break
+      const next = objectValue(data.next_page_cursor)
+      if (Object.keys(next).length === 0) break
+      pageCursor = next
+    }
+    return displayNames
+  }
+
   invalidateGroupAvatar(userId: number, chatSessionUid: string): void {
     this.groupAvatarSnapshotCache.delete(`${String(userId)}:${chatSessionUid}`)
   }

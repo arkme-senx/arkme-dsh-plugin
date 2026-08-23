@@ -55,6 +55,30 @@ export interface ArkmeNavigationProps {
 
 export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
 
+export function arkmeRootDirectoryLoadState({
+  authenticated, directory, baselineReady, isRefreshing, hasSources, error,
+}: {
+  authenticated: boolean
+  directory: ArkmeSourceDirectory
+  baselineReady: boolean
+  isRefreshing: boolean
+  hasSources: boolean
+  error: string
+}): 'idle' | 'loading' | 'updating' | 'error' {
+  if (!authenticated || directory !== 'root') return 'idle'
+  if (error.trim() !== '') return 'error'
+  if (!isRefreshing && baselineReady) return 'idle'
+  return hasSources ? 'updating' : 'loading'
+}
+
+function ArkmeDirectoryRefreshIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur=".8s" repeatCount="indefinite" />
+    </path>
+  </svg>
+}
+
 const colors = {
   panel: '#fff',
   text: arkmeTheme.text,
@@ -110,6 +134,15 @@ const styles: Record<string, CSSProperties> = {
     boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
   },
   conversationToolbar: { flex: 'none', margin: '24px 16px 16px', display: 'flex', alignItems: 'center', gap: 8 },
+  rootDirectoryStatus: {
+    height: 14, flex: 'none', margin: '-10px 16px 6px', display: 'flex', alignItems: 'center', gap: 4,
+    color: colors.caption, fontSize: 10, lineHeight: '14px',
+  },
+  rootDirectoryStatusError: { color: '#c2413b' },
+  rootDirectoryStatusRetry: {
+    padding: 0, border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: 10,
+    lineHeight: '14px', textDecoration: 'underline',
+  },
   embeddedSearchField: { flex: 1, minWidth: 0, margin: 0 },
   createTaskButton: {
     width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
@@ -245,6 +278,16 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer', font: 'inherit', fontSize: 14, pointerEvents: 'auto',
   },
   status: { padding: '20px 18px', color: colors.secondary, fontSize: 12, textAlign: 'center' },
+  rootDirectoryRetry: {
+    minHeight: 32, margin: '0 auto 16px', padding: '0 12px', display: 'flex', alignItems: 'center',
+    border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: colors.secondary,
+    cursor: 'pointer', font: 'inherit', fontSize: 12,
+  },
+  rootDirectorySkeleton: { display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 16px' },
+  rootDirectorySkeletonRow: {
+    height: 44, borderRadius: 8,
+    background: '#f1f2f5',
+  },
   loginButton: {
     margin: '16px', minHeight: 40, border: 0, borderRadius: 10, background: colors.active,
     color: '#176d3d', cursor: 'pointer', font: 'inherit', fontWeight: 600,
@@ -689,6 +732,7 @@ export function ArkmeNavigation({
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
+  const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
   const topicRowElementsRef = useRef(new Map<string, HTMLDivElement>())
   const createdHighlightTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const createdHighlightFramesRef = useRef<number[]>([])
@@ -722,6 +766,14 @@ export function ArkmeNavigation({
   const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
   const activateNativeEntry = useCallback(() => { setActiveDirectoryEntryId(undefined) }, [])
   const authenticated = auth?.status === 'authenticated'
+  const rootDirectoryState = arkmeRootDirectoryLoadState({
+    authenticated,
+    directory,
+    baselineReady: chatDirectory.baselineReady,
+    isRefreshing: chatDirectory.isRefreshing,
+    hasSources: sources.length > 0,
+    error,
+  })
   const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
     ? arkoProfileSnapshot.profile
     : undefined
@@ -820,6 +872,7 @@ export function ArkmeNavigation({
   const loadDirectory = useCallback(async (
     next: ArkmeSourceDirectory,
     ensuredSource?: ArkmeSourceItem,
+    force = false,
   ) => {
     const controller = new AbortController()
     directoryRequestAbortRef.current?.abort()
@@ -827,7 +880,7 @@ export function ArkmeNavigation({
     setError('')
     try {
       const loaded: ArkmeSourceItem[] = next === 'root'
-        ? await arkmeChatDirectory.refreshRoot()
+        ? await arkmeChatDirectory.refreshRoot({ force })
         : []
       if (next !== 'root') {
         let cursor: string | undefined
@@ -836,6 +889,7 @@ export function ArkmeNavigation({
             directory: next,
             limit: 100,
             ...(cursor === undefined ? {} : { cursor }),
+            ...(force ? { refresh: true } : {}),
           }, controller.signal)
           const known = new Set(loaded.map(item => item.sourceRef))
           loaded.push(...page.items.filter(item => !known.has(item.sourceRef)))
@@ -878,6 +932,10 @@ export function ArkmeNavigation({
     if (authenticated) void loadDirectory(directory)
     else { directoryRequestAbortRef.current?.abort(); setSources([]) }
     return () => { directoryRequestAbortRef.current?.abort() }
+  }, [authenticated, directory, loadDirectory])
+  useEffect(() => {
+    if (!authenticated || directory !== 'send_to_self' || ui.chatRevision === 0) return
+    void loadDirectory('send_to_self')
   }, [authenticated, directory, loadDirectory, ui.chatRevision])
   useEffect(() => {
     if (!authenticated || directory !== 'root') return
@@ -971,6 +1029,21 @@ export function ArkmeNavigation({
       return next
     })
   }, [sources, ui.selectedSource])
+  useEffect(() => {
+    if (directory !== 'root' || activeDirectoryEntryId !== undefined || ui.mode !== 'source' || ui.selectedSource === undefined
+      || typeof window === 'undefined') return
+    const element = rootRowElementsRef.current.get(ui.selectedSource.sourceRef)
+    if (element === undefined) return
+    const listElement = element.parentElement
+    const alreadyVisible = listElement !== null && isTopicRowFullyVisible(
+      element.getBoundingClientRect(),
+      listElement.getBoundingClientRect(),
+    )
+    if (!alreadyVisible) {
+      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+      element.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' })
+    }
+  }, [activeDirectoryEntryId, directory, rootSources, ui.mode, ui.selectedSource])
   useEffect(() => {
     if (directory !== 'send_to_self' || pendingRevealSourceRef === undefined || typeof window === 'undefined') return
     const element = topicRowElementsRef.current.get(pendingRevealSourceRef)
@@ -1176,6 +1249,15 @@ export function ArkmeNavigation({
       />}
       {onCreateTask !== undefined && <button type="button" style={styles.createTaskButton} aria-label="新任务" onClick={onCreateTask}><Plus size={19} /></button>}
     </div>}
+    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'loading' && <div style={styles.rootDirectoryStatus} role="status">
+      <ArkmeDirectoryRefreshIcon /><span>加载中</span>
+    </div>}
+    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'updating' && <div style={styles.rootDirectoryStatus} role="status">
+      <ArkmeDirectoryRefreshIcon /><span>更新中</span>
+    </div>}
+    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'error' && <div style={{ ...styles.rootDirectoryStatus, ...styles.rootDirectoryStatusError }} role="alert">
+      <span aria-hidden>!</span><span>加载失败</span><button type="button" style={styles.rootDirectoryStatusRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重试</button>
+    </div>}
 
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
@@ -1239,10 +1321,21 @@ export function ArkmeNavigation({
           activateEntry: activateDirectoryEntry,
           renderRow: renderArkmeDirectoryRow,
         })}
+        {rootDirectoryState === 'loading' && <div style={styles.rootDirectorySkeleton} aria-label="正在加载会话">
+          {Array.from({ length: 3 }, (_, index) => <div key={index} style={styles.rootDirectorySkeletonRow} aria-hidden="true" />)}
+        </div>}
+        {rootDirectoryState === 'error' && !embeddedProductShell && <>
+          <div style={{ ...styles.status, color: '#c2413b' }}>会话加载失败，请重试</div>
+          <button type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重新加载</button>
+        </>}
         {rootSources.map(source => {
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
+            ref={node => {
+              if (node === null) rootRowElementsRef.current.delete(source.sourceRef)
+              else rootRowElementsRef.current.set(source.sourceRef, node)
+            }}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
           >
             <ArkmeSourceAvatar
@@ -1300,7 +1393,7 @@ export function ArkmeNavigation({
         />
       })}
 
-      {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
+      {error !== '' && rootDirectoryState !== 'error' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
     </div>
     {directory === 'send_to_self' && authenticated && <ArkmeTopicCreateFooter onCreate={() => { openTopicCreate(null) }} />}
     </>}

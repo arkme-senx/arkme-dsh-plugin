@@ -113,6 +113,18 @@ describe('private plugin update artifacts', () => {
     })).toThrowError(expect.objectContaining({ code: 'plugin-update-artifact-origin-invalid' }))
   })
 
+  it('accepts multiline release notes from the update service', () => {
+    const manifest = parsePluginUpdateManifest({
+      version: '0.1.17',
+      releaseNotes: '新增功能1\n新增功能2\t详情\r\n完成',
+      downloadUrl: 'https://d.jiwo.cc/app/arkme/test/plugin/senguoyun-dsh-arkme-0.1.17.tgz',
+    }, {
+      updateServiceOrigin: 'https://jotmo.senguo.me', artifactOrigin: 'https://d.jiwo.cc',
+    })
+
+    expect(manifest.notice.summary).toBe('新增功能1\n新增功能2\t详情\r\n完成')
+  })
+
   it('rejects control characters in remote release notes', () => {
     expect(() => parsePluginUpdateManifest({
       version: '0.1.11',

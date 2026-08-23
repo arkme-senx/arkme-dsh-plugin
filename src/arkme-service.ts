@@ -191,6 +191,7 @@ import type {
   ArkmeWechatMoneyFlowPage,
   ArkmeWechatPhonePage,
   ArkmeWorldFeedPage,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
   ArkmeWorldVoiceprintPlaybackChunk,
@@ -298,6 +299,7 @@ export class ArkmeService {
       { refreshProfile: async () => await this.refreshProfile() },
       this.media,
       this.record,
+      this.source,
     )
     this.arko = new ArkoService(this.runtime, this.profile)
     this.group = new GroupService(this.runtime, this.source, this.profile, {
@@ -591,20 +593,9 @@ export class ArkmeService {
     this.world.dispose()
   }
 
-  requestStats(): Record<string, ArkmeRequestStats> {
-    return this.runtime.requestStats()
-  }
-
-  async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
-    return await this.profile.cachedProfile()
-  }
-
-  async searchContact(
-    identifier: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<ArkmeContactSearchResult> {
-    return await this.contact.search(identifier, options)
-  }
+  requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
+  async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
+  async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
   async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
     return section === 'unmarked-speakers' ? await this.unmarkedSpeaker.list(options) : await this.contactDirectory.list(section, options)
@@ -972,6 +963,16 @@ export class ArkmeService {
   ): Promise<ArkmeOpenPrivateChatResult> {
     return await this.chat.openPrivateChatFromUser(peerUserId, options)
   }
+
+  async openPrivateChatFromWorldAuthor(recordRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    const author = await this.world.worldAuthorFromRef(recordRef)
+    return await this.chat.openPrivateChatFromUser(author.userId, {
+      displayName: author.displayName,
+      ...(signal === undefined ? {} : { signal }),
+    })
+  }
+
+  async worldAuthorLabels(recordRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> { return await this.world.worldAuthorLabels(recordRefs, signal) }
 
   async openPrivateChatFromMember(
     sourceRef: string,

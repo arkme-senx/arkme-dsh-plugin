@@ -744,6 +744,14 @@ export async function dispatchArkmeHostOperation(
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
       })
     }
+    case 'world.author-labels': return await service.worldAuthorLabels(
+      [...new Set(stringListParam(params, 'authorRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
+      requestSignal,
+    )
+    case 'chat.world.private.open': return await service.openPrivateChatFromWorldAuthor(
+      stringParam(params, 'authorRef').trim(),
+      requestSignal,
+    )
     case 'world.voiceprint.availability': return await service.worldVoiceprintPlaybackAvailability(
       [...new Set(stringListParam(params, 'recordRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
     )

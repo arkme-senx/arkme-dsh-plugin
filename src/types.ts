@@ -385,6 +385,8 @@ export interface ArkmeWorldAvatarFallback {
 
 export interface ArkmeWorldFeedItem {
   recordRef: string
+  /** Opaque, viewer-bound reference for opening this non-self author's card. */
+  authorRef?: string
   authorName: string
   avatarRef?: string
   avatarFallback?: ArkmeWorldAvatarFallback
@@ -406,6 +408,12 @@ export interface ArkmeWorldFeedPage {
   total: number
   hasMore: boolean
   nextOffset?: number
+}
+
+/** Viewer-specific display label for one opaque World author reference. */
+export interface ArkmeWorldAuthorLabel {
+  authorRef: string
+  authorName: string
 }
 
 export interface ArkmeWorldVoiceprintAvailabilityItem {
@@ -459,6 +467,8 @@ export interface ArkmeWorldVoiceprintInviteResult {
 export interface ArkmeWorldInteractionItem {
   interactionRef: string
   parentRef: string
+  /** Opaque, viewer-bound reference for opening this non-self author's card. */
+  authorRef?: string
   authorName: string
   avatarRef?: string
   avatarFallback?: ArkmeWorldAvatarFallback
@@ -1883,6 +1893,10 @@ export interface ArkmePluginUpdateInstallSnapshot {
   phase: ArkmePluginUpdateInstallPhase
   previousVersion: string
   targetVersion: string
+  targetArtifactPath?: string
+  targetArtifactSha512?: string
+  appVersion?: string
+  dshVersion?: string
   message: string
   updatedAtMillis: number
 }
@@ -1958,6 +1972,8 @@ export type ArkmePluginOperation =
   | 'world.feed'
   | 'world.mine'
   | 'world.user'
+  | 'world.author-labels'
+  | 'chat.world.private.open'
   | 'world.voiceprint.availability'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.social-context'
