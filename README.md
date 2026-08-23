@@ -11,8 +11,8 @@ Arkme 的 DeepSeek Harness 集成插件，为 DSH 提供账号、记录、聊天
 ## 版本与发布
 
 - 项目首页顶部的 **npm 版本** 徽章显示当前可通过 npm 安装的正式版本。
-- 每个正式版本均应创建同版本号的 GitHub Release（如 `v0.1.18`），并在[发布记录](https://github.com/arkme-senx/arkme-dsh-plugin/releases)中说明变更内容。
-- 发布顺序：合并版本提交 → 发布 npm 包 → 创建同版本 GitHub Release。这样首页展示的版本始终可安装。
+- 功能分支只提交功能代码；版本号、更新说明和 GitHub Release 由合并后的发版流程统一处理。
+- 发版负责人通过 GitHub Actions 的“准备插件发版”创建发版 PR；合并后自动发布 npm、创建同版本 Git Tag 和 GitHub Release。详见[插件自动发版](docs/plugin-release.md)。
 
 ## 功能
 

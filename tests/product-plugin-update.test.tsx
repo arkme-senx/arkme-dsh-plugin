@@ -27,6 +27,7 @@ vi.mock('../src/client/plugin-update-store.js', () => ({
 
 import * as productNavigation from '../src/client/ArkmeProductNavigation.js'
 import { ArkmePluginUpdateDialog } from '../src/client/ArkmePluginUpdateDialog.js'
+import pluginManifest from '../package.json' with { type: 'json' }
 
 function status(patch: Partial<ArkmePluginUpdateStatus> = {}): ArkmePluginUpdateStatus {
   return {
@@ -87,8 +88,8 @@ describe('Arkme product plugin update entry', () => {
       <productNavigation.ArkmeProductNavigation compact={false} currentSessionId="session-1" />,
     )
 
-    expect(markup).toContain('data-arkme-plugin-version="0.1.19"')
-    expect(markup).toContain('>v0.1.19</span>')
+    expect(markup).toContain(`data-arkme-plugin-version="${pluginManifest.version}"`)
+    expect(markup).toContain(`>v${pluginManifest.version}</span>`)
   })
 
   it('presents release content and the confirmed update-and-restart action in the dialog', () => {
