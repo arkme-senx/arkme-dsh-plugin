@@ -1,9 +1,18 @@
 # Arkme DSH Plugin
 
+[![npm 版本](https://img.shields.io/npm/v/%40senguoyun/dsh-arkme?label=npm%20%E7%89%88%E6%9C%AC)](https://www.npmjs.com/package/@senguoyun/dsh-arkme)
+[![发布记录](https://img.shields.io/badge/%E5%8F%91%E5%B8%83%E8%AE%B0%E5%BD%95-GitHub-blue)](https://github.com/arkme-senx/arkme-dsh-plugin/releases)
+
 Arkme 的 DeepSeek Harness 集成插件，为 DSH 提供账号、记录、聊天、Bot、社区、通话和市集能力。
 
 - npm：[`@senguoyun/dsh-arkme`](https://www.npmjs.com/package/@senguoyun/dsh-arkme)
 - 源码：[`arkme-senx/arkme-dsh-plugin`](https://github.com/arkme-senx/arkme-dsh-plugin)
+
+## 版本与发布
+
+- 项目首页顶部的 **npm 版本** 徽章显示当前可通过 npm 安装的正式版本。
+- 每个正式版本均应创建同版本号的 GitHub Release（如 `v0.1.18`），并在[发布记录](https://github.com/arkme-senx/arkme-dsh-plugin/releases)中说明变更内容。
+- 发布顺序：合并版本提交 → 发布 npm 包 → 创建同版本 GitHub Release。这样首页展示的版本始终可安装。
 
 ## 功能
 
