@@ -14,6 +14,7 @@ export interface ArkmeChatDirectorySnapshot {
   revision: number
   sources: ArkmeSourceItem[]
   baselineReady: boolean
+  isRefreshing: boolean
 }
 
 export interface ArkmeChatDirectorySourceUpdate {
@@ -194,7 +195,7 @@ function applyDirectoryMutations(
 }
 
 export class ArkmeChatDirectoryStore {
-  private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [], baselineReady: false }
+  private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [], baselineReady: false, isRefreshing: false }
   private readonly listeners = new Set<() => void>()
   private readonly loadPage: (cursor?: string, force?: boolean) => Promise<ArkmeSourceList>
   private readonly maxAgeMs: number
@@ -204,6 +205,7 @@ export class ArkmeChatDirectoryStore {
   private accountUserId: number | undefined
   private generation = 0
   private baselineReady = false
+  private isRefreshing = false
   private pendingMutations: ArkmeChatDirectoryMutation[] = []
   private readonly readWatermarks = new Map<string, ArkmeChatReadWatermark>()
   private readonly optimisticReadWatermarks = new Map<string, ArkmeChatReadWatermark>()
@@ -233,18 +235,20 @@ export class ArkmeChatDirectoryStore {
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
     this.baselineReady = false
+    this.isRefreshing = false
     this.pendingMutations = []
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing) this.commit([])
   }
 
   async refreshRoot(options: { force?: boolean } = {}): Promise<ArkmeSourceItem[]> {
     if (options.force !== true && this.refreshedAtMillis > 0
       && this.now() - this.refreshedAtMillis < this.maxAgeMs) return [...this.snapshot.sources]
     if (this.refreshInFlight !== undefined) return await this.refreshInFlight
+    this.setRefreshing(true)
     const generation = this.generation
     const pending = (async () => {
       const loaded: ArkmeSourceItem[] = []
@@ -269,7 +273,10 @@ export class ArkmeChatDirectoryStore {
     try {
       return await pending
     } finally {
-      if (this.refreshInFlight === pending) this.refreshInFlight = undefined
+      if (this.refreshInFlight === pending) {
+        this.refreshInFlight = undefined
+        this.setRefreshing(false)
+      }
     }
   }
 
@@ -290,6 +297,7 @@ export class ArkmeChatDirectoryStore {
       revision: this.snapshot.revision + 1,
       sources: [...sources],
       baselineReady: this.baselineReady,
+      isRefreshing: this.isRefreshing,
     }
     for (const listener of this.listeners) listener()
   }
@@ -441,12 +449,19 @@ export class ArkmeChatDirectoryStore {
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
     this.baselineReady = false
+    this.isRefreshing = false
     this.pendingMutations = []
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing) this.commit([])
+  }
+
+  private setRefreshing(isRefreshing: boolean): void {
+    if (this.isRefreshing === isRefreshing) return
+    this.isRefreshing = isRefreshing
+    this.commit(this.snapshot.sources)
   }
 
   private combinedReadWatermarks(): Map<string, ArkmeChatReadWatermark> {

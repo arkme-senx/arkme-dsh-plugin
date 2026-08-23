@@ -56,15 +56,27 @@ export interface ArkmeNavigationProps {
 export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
 
 export function arkmeRootDirectoryLoadState({
-  authenticated, directory, baselineReady, error,
+  authenticated, directory, baselineReady, isRefreshing, hasSources, error,
 }: {
   authenticated: boolean
   directory: ArkmeSourceDirectory
   baselineReady: boolean
+  isRefreshing: boolean
+  hasSources: boolean
   error: string
-}): 'idle' | 'loading' | 'error' {
-  if (!authenticated || directory !== 'root' || baselineReady) return 'idle'
-  return error.trim() === '' ? 'loading' : 'error'
+}): 'idle' | 'loading' | 'updating' | 'error' {
+  if (!authenticated || directory !== 'root') return 'idle'
+  if (error.trim() !== '') return 'error'
+  if (!isRefreshing && baselineReady) return 'idle'
+  return hasSources ? 'updating' : 'loading'
+}
+
+function ArkmeDirectoryRefreshIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur=".8s" repeatCount="indefinite" />
+    </path>
+  </svg>
 }
 
 const colors = {
@@ -122,6 +134,15 @@ const styles: Record<string, CSSProperties> = {
     boxSizing: 'border-box', border: '1px solid #e2e3e6', borderRadius: 11, color: '#92959e', background: '#fff',
   },
   conversationToolbar: { flex: 'none', margin: '24px 16px 16px', display: 'flex', alignItems: 'center', gap: 8 },
+  rootDirectoryStatus: {
+    height: 14, flex: 'none', margin: '-10px 16px 6px', display: 'flex', alignItems: 'center', gap: 4,
+    color: colors.caption, fontSize: 10, lineHeight: '14px',
+  },
+  rootDirectoryStatusError: { color: '#c2413b' },
+  rootDirectoryStatusRetry: {
+    padding: 0, border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: 10,
+    lineHeight: '14px', textDecoration: 'underline',
+  },
   embeddedSearchField: { flex: 1, minWidth: 0, margin: 0 },
   createTaskButton: {
     width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', padding: 0,
@@ -749,6 +770,8 @@ export function ArkmeNavigation({
     authenticated,
     directory,
     baselineReady: chatDirectory.baselineReady,
+    isRefreshing: chatDirectory.isRefreshing,
+    hasSources: sources.length > 0,
     error,
   })
   const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
@@ -1226,6 +1249,15 @@ export function ArkmeNavigation({
       />}
       {onCreateTask !== undefined && <button type="button" style={styles.createTaskButton} aria-label="新任务" onClick={onCreateTask}><Plus size={19} /></button>}
     </div>}
+    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'loading' && <div style={styles.rootDirectoryStatus} role="status">
+      <ArkmeDirectoryRefreshIcon /><span>加载中</span>
+    </div>}
+    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'updating' && <div style={styles.rootDirectoryStatus} role="status">
+      <ArkmeDirectoryRefreshIcon /><span>更新中</span>
+    </div>}
+    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'error' && <div style={{ ...styles.rootDirectoryStatus, ...styles.rootDirectoryStatusError }} role="alert">
+      <span aria-hidden>!</span><span>加载失败</span><button type="button" style={styles.rootDirectoryStatusRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重试</button>
+    </div>}
 
     {!authenticated && auth !== undefined ? <button type="button" style={styles.loginButton} onClick={showLogin}>
       {bindingRequired ? '完成登录' : '登录 Arkme'}
@@ -1292,7 +1324,7 @@ export function ArkmeNavigation({
         {rootDirectoryState === 'loading' && <div style={styles.rootDirectorySkeleton} aria-label="正在加载会话">
           {Array.from({ length: 3 }, (_, index) => <div key={index} style={styles.rootDirectorySkeletonRow} aria-hidden="true" />)}
         </div>}
-        {rootDirectoryState === 'error' && <>
+        {rootDirectoryState === 'error' && !embeddedProductShell && <>
           <div style={{ ...styles.status, color: '#c2413b' }}>会话加载失败，请重试</div>
           <button type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重新加载</button>
         </>}

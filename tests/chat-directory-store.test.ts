@@ -14,14 +14,14 @@ describe('ArkmeChatDirectoryStore', () => {
     }
 
     store.publish([source])
-    expect(store.getSnapshot()).toEqual({ revision: 1, sources: [source], baselineReady: true })
+    expect(store.getSnapshot()).toEqual({ revision: 1, sources: [source], baselineReady: true, isRefreshing: false })
     expect(listener).toHaveBeenCalledOnce()
 
     store.upsert({ ...source, unreadCount: 3, activeAtMillis: 2 })
     expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 3, activeAtMillis: 2 })
 
     store.clear()
-    expect(store.getSnapshot()).toEqual({ revision: 3, sources: [], baselineReady: false })
+    expect(store.getSnapshot()).toEqual({ revision: 3, sources: [], baselineReady: false, isRefreshing: false })
   })
 
   it('keeps stable server order for unread-only updates and equal activity times', () => {
@@ -68,6 +68,25 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(loadPage).toHaveBeenCalledTimes(4)
   })
 
+  it('publishes refresh state while a directory request is in flight', async () => {
+    const page = {
+      directory: 'root' as const,
+      items: [{ sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '第一', activeAtMillis: 1, unreadCount: 0 }],
+      hasMore: false,
+    }
+    let resolvePage!: (page: typeof page) => void
+    const store = new ArkmeChatDirectoryStore({
+      loadPage: async () => await new Promise<typeof page>(resolve => { resolvePage = resolve }),
+    })
+
+    const pending = store.refreshRoot()
+    expect(store.getSnapshot()).toMatchObject({ baselineReady: false, isRefreshing: true, sources: [] })
+
+    resolvePage(page)
+    await pending
+    expect(store.getSnapshot()).toMatchObject({ baselineReady: true, isRefreshing: false, sources: page.items })
+  })
+
   it('holds realtime mutations until the authoritative directory baseline is available', () => {
     const store = new ArkmeChatDirectoryStore()
     const listener = vi.fn()
@@ -87,7 +106,7 @@ describe('ArkmeChatDirectoryStore', () => {
     store.upsert(latestRealtime)
     expect(store.unreadCount('source-2')).toBe(2)
     store.updateReadAck('source-1', 'chat:source-1', 10, 0)
-    expect(store.getSnapshot()).toEqual({ revision: 0, sources: [], baselineReady: false })
+    expect(store.getSnapshot()).toEqual({ revision: 0, sources: [], baselineReady: false, isRefreshing: false })
     expect(listener).not.toHaveBeenCalled()
 
     store.publish([baseline])
@@ -95,6 +114,7 @@ describe('ArkmeChatDirectoryStore', () => {
       revision: 1,
       sources: [latestRealtime, { ...baseline, unreadCount: 0 }],
       baselineReady: true,
+      isRefreshing: false,
     })
     expect(listener).toHaveBeenCalledOnce()
   })
