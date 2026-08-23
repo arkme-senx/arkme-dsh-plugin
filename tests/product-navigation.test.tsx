@@ -13,6 +13,14 @@ const rootFrameSource = readFileSync(
   new URL('../src/client/redesign/ArkmeRootFrame.tsx', import.meta.url),
   'utf8',
 )
+const redesignCss = readFileSync(
+  new URL('../src/client/redesign/arkme-redesign.css', import.meta.url),
+  'utf8',
+)
+const accountMenuSource = readFileSync(
+  new URL('../src/client/ArkmeAccountMenu.tsx', import.meta.url),
+  'utf8',
+)
 
 describe('Arkme product navigation', () => {
   it('opens voiceprint management from the profile menu without removing the account entry', () => {
@@ -28,6 +36,11 @@ describe('Arkme product navigation', () => {
       expect(source).toContain('profileTriggerRef.current?.contains(event.target)')
       expect(source).toContain('profilePopoverRef.current?.contains(event.target)')
     }
+  })
+
+  it('does not imply an account presence state without real presence data', () => {
+    expect(redesignCss).not.toContain('.arkme-redesign-profile::after')
+    expect(accountMenuSource).not.toContain('styles.presence')
   })
 
   it('renders only inside an explicitly Arkme-owned boundary', () => {

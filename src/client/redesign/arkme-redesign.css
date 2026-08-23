@@ -88,7 +88,6 @@
 .arkme-redesign-rail-footer > button:hover, .arkme-redesign-rail-footer > button.is-active { background: #f1f2f5; }
 .arkme-redesign-profile { position: relative; }
 .arkme-redesign-profile > span { width: 32px !important; height: 32px !important; }
-.arkme-redesign-profile::after { content: ""; position: absolute; right: 7px; bottom: 6px; width: 8px; height: 8px; border: 2px solid #fbfbfc; border-radius: 50%; background: #8e93a0; }
 .arkme-redesign-profile-popover { position: fixed; z-index: 10000; left: 64px; bottom: 14px; width: 264px; padding: 10px; border: 1px solid rgba(216,217,221,.9); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: 0 20px 50px rgba(26,28,35,.15), 0 2px 8px rgba(26,28,35,.05); backdrop-filter: blur(20px); }
 .arkme-redesign-profile-head { padding: 9px 9px 13px; display: flex; align-items: center; gap: 11px; }
 .arkme-redesign-profile-head > span { min-width: 0; display: grid; gap: 4px; text-align: left; }
@@ -756,11 +755,6 @@ body[data-ds-dark-theme] .arkme-workspace-dialog > nav,
 body[data-ds-dark-theme] .arkme-workspace-dialog > footer {
   border-color: var(--dsw-alias-border-l1) !important;
 }
-body[data-ds-dark-theme] .arkme-redesign-profile::after {
-  border-color: var(--dsw-specific-sidebar-fill);
-  background: var(--dsw-alias-label-tertiary);
-}
-
 body[data-ds-dark-theme] .arkme-redesign-profile-popover,
 body[data-ds-dark-theme] .arkme-workspace-dialog {
   border-color: var(--dsw-alias-border-l2);
