@@ -4,6 +4,9 @@ import { ArkmePluginError, ArkmeService, type ArkmeServiceConfig } from '../src/
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
 import type { ArkmeLongArticleDraft, ArkmePendingWrite } from '../src/types.js'
 import type { ArkmeExtensionReviewOperation } from '../src/extensions/types.js'
+import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
+import { MediaService } from '../src/services/media-service.js'
+import { UnmarkedSpeakerService } from '../src/services/unmarked-speaker-service.js'
 import type {
   ArkmeRecordCursor, ArkmeSelfRecordItem, ArkmeSelfRecordList, ArkmeSelfSummary,
   ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -181,6 +184,37 @@ function sourceRefFor(
 }
 
 describe('ArkmeService', () => {
+  it('owns directory services, routes unmarked lists separately, injects media, and clears their refs', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const contactList = vi.spyOn(ContactDirectoryService.prototype, 'list')
+      .mockImplementation(async section => ({ section, items: [], total: 0, hasMore: false }))
+    const unmarkedList = vi.spyOn(UnmarkedSpeakerService.prototype, 'list')
+      .mockResolvedValue({ section: 'unmarked-speakers', items: [], total: 0, hasMore: false })
+    const unmarkedSegments = vi.spyOn(UnmarkedSpeakerService.prototype, 'segments')
+      .mockImplementation(async function () {
+        expect((this as unknown as { media?: unknown }).media).toBeInstanceOf(MediaService)
+        return { items: [], total: 0, hasMore: false }
+      })
+    const contactDispose = vi.spyOn(ContactDirectoryService.prototype, 'dispose')
+    const unmarkedDispose = vi.spyOn(UnmarkedSpeakerService.prototype, 'dispose')
+    const service = new ArkmeService(config, sessions, new MemoryStateStore())
+
+    await expect(service.listDirectory('contacts')).resolves.toMatchObject({ section: 'contacts' })
+    await expect(service.listDirectory('unmarked-speakers')).resolves.toMatchObject({ section: 'unmarked-speakers' })
+    await expect(service.unmarkedSpeakerSegments('candidate-ref')).resolves.toMatchObject({ hasMore: false })
+    expect(contactList).toHaveBeenCalledOnce()
+    expect(unmarkedList).toHaveBeenCalledOnce()
+
+    await service.logout()
+    expect(contactDispose).toHaveBeenCalledOnce()
+    expect(unmarkedDispose).toHaveBeenCalledOnce()
+
+    service.dispose()
+    expect(contactDispose).toHaveBeenCalledTimes(2)
+    expect(unmarkedDispose).toHaveBeenCalledTimes(2)
+  })
+
   it('resolves extension authors with safe real and default avatar projections', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

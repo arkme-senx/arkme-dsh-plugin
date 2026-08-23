@@ -1,4 +1,5 @@
 import type { ArkmeSourceItem } from '../types.js'
+import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 
 function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
@@ -15,6 +16,7 @@ export interface ArkmeUiState {
   chatRevision: number
   mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
     | 'settings' | 'harness'
+  productMode?: 'conversations' | 'contacts'
   settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
@@ -59,15 +61,18 @@ export class ArkmeUiController {
   }
 
   focusSendToSelf(): void {
+    this.leaveContacts()
     this.lastConversationSource = undefined
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source' })
   }
 
   authChanged(authenticated = false, resetSelection = false): void {
+    this.leaveContacts()
     if (authenticated) {
-      const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...stateWithoutSelection } = this.state
-      const { calendarOpen: _activeCalendar, ...stateWithoutCalendar } = this.state
+      if (resetSelection) this.lastConversationSource = undefined
+      const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...stateWithoutSelection } = this.state
+      const { calendarOpen: _activeCalendar, productMode: _activeProductMode, ...stateWithoutCalendar } = this.state
       const state = resetSelection ? stateWithoutSelection : stateWithoutCalendar
       this.publish({
         ...state,
@@ -77,7 +82,7 @@ export class ArkmeUiController {
       return
     }
     this.lastConversationSource = undefined
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'login',
@@ -90,27 +95,32 @@ export class ArkmeUiController {
   }
 
   showLogin(): void {
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'login' })
   }
 
   showRecordings(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings' })
   }
 
   showCalls(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'calls' })
   }
 
   showCalendar(): void {
+    this.leaveContacts()
     if (this.state.calendarOpen === true) {
-      const { calendarOpen: _calendarOpen, ...rest } = this.state
+      const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
       this.publish(rest)
       return
     }
-    this.publish({ ...this.state, calendarOpen: true })
+    const { productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, calendarOpen: true })
   }
 
   hideCalendar(): void {
@@ -119,15 +129,17 @@ export class ArkmeUiController {
   }
 
   showWorld(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, worldTarget: _worldTarget, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'world' })
   }
 
   showUserWorld(target: ArkmeWorldTarget): void {
+    this.leaveContacts()
     if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw new TypeError('世界用户 ID 必须是正整数')
     const displayName = target.displayName.replace(/\s+/g, ' ').trim()
     if (displayName === '') throw new TypeError('世界用户名不能为空')
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'world',
@@ -136,28 +148,33 @@ export class ArkmeUiController {
   }
 
   showRecordingTarget(dateStamp: number, startAtMillis: number): void {
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp, startAtMillis } })
   }
 
   showSearch(): void {
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'search' })
   }
 
   showVoiceprint(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'voiceprint' })
   }
 
   showExtensions(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     const { extensionShareRef: _extensionShareRef, ...withoutShare } = rest
     this.publish({ ...withoutShare, mode: 'extensions' })
   }
 
   showConversations(): void {
-    const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({
       ...rest,
       mode: 'source',
@@ -165,27 +182,38 @@ export class ArkmeUiController {
     })
   }
 
+  showContacts(): void {
+    const { recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.publish({ ...rest, mode: 'source', productMode: 'contacts' })
+  }
+
   showContactAdd(): void {
-    this.publish({ ...this.state, mode: 'contact-add' })
+    this.leaveContacts()
+    const { productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'contact-add' })
   }
 
   showArko(): void {
-    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'arko' })
   }
 
   showSettings(section: 'account' | 'general' | 'about' = 'account'): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'settings', settingsSection: section })
   }
 
   showHarness(): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'harness' })
   }
 
   openExtensionShare(shareRef: string): void {
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, ...rest } = this.state
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'extensions', extensionShareRef: shareRef })
   }
 
@@ -195,8 +223,9 @@ export class ArkmeUiController {
   }
 
   selectSource(source: ArkmeSourceItem): void {
+    this.leaveContacts()
     this.lastConversationSource = source
-    const { calendarOpen: _calendarOpen, ...rest } = this.state
+    const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', selectedSource: source })
   }
 
@@ -204,6 +233,7 @@ export class ArkmeUiController {
     if (next.authRevision === this.state.authRevision
       && next.chatRevision === this.state.chatRevision
       && next.mode === this.state.mode
+      && next.productMode === this.state.productMode
       && next.settingsSection === this.state.settingsSection
       && next.calendarOpen === this.state.calendarOpen
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
@@ -213,6 +243,10 @@ export class ArkmeUiController {
       && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next
     for (const listener of this.listeners) listener()
+  }
+
+  private leaveContacts(): void {
+    if (this.state.productMode === 'contacts') arkmeContactsTab.clear()
   }
 }
 

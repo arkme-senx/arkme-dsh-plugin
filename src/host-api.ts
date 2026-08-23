@@ -6,7 +6,7 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
-  ArkmeConversationMemberRecordMode, ArkmeHumanMentionInput,
+  ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind, ArkmeHumanMentionInput,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -78,6 +78,45 @@ function stringParam(params: Record<string, unknown>, key: string): string {
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+const ARKME_DIRECTORY_SECTIONS = new Set<ArkmeDirectorySectionKind>([
+  'groups', 'bots', 'unmarked-speakers', 'teams', 'contacts',
+])
+
+function directorySectionParam(params: Record<string, unknown>): ArkmeDirectorySectionKind {
+  const section = stringParam(params, 'section')
+  if (!ARKME_DIRECTORY_SECTIONS.has(section as ArkmeDirectorySectionKind)) {
+    throw new ArkmePluginError('directory-section-invalid', '联系人目录分组无效', false, 400)
+  }
+  return section as ArkmeDirectorySectionKind
+}
+
+function directoryLimitParam(params: Record<string, unknown>, fallback = 30): number {
+  return Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', fallback))))
+}
+
+function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
+  candidateRef: string
+  candidateVersion: string
+  speakerRef?: string
+  newSpeakerName?: string
+} {
+  const candidateRef = stringParam(params, 'candidateRef').trim()
+  const candidateVersion = stringParam(params, 'candidateVersion').trim()
+  const speakerRef = stringParam(params, 'speakerRef').trim()
+  const newSpeakerName = stringParam(params, 'newSpeakerName').trim()
+  if ((speakerRef === '') === (newSpeakerName === '') || newSpeakerName.length > 100) {
+    throw new ArkmePluginError(
+      'unmarked-mark-target-invalid', '请选择一个现有说话人或填写 1 至 100 个字符的新名称', false, 400,
+    )
+  }
+  return {
+    candidateRef,
+    candidateVersion,
+    ...(speakerRef === '' ? {} : { speakerRef }),
+    ...(newSpeakerName === '' ? {} : { newSpeakerName }),
+  }
 }
 
 function conversationMemberRecordModeParam(params: Record<string, unknown>): ArkmeConversationMemberRecordMode {
@@ -481,6 +520,51 @@ export async function dispatchArkmeHostOperation(
       ...(stringParam(params, 'remark').trim() === '' ? {} : { remark: stringParam(params, 'remark') }),
       ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid') }),
     })
+    case 'directory.list': {
+      const countOnly = booleanParam(params, 'countOnly')
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.listDirectory(directorySectionParam(params), {
+        limit: countOnly ? 0 : directoryLimitParam(params),
+        ...(countOnly ? { countOnly: true } : {}),
+        ...(!countOnly && cursor !== '' ? { cursor } : {}),
+      })
+    }
+    case 'directory.contact.profile': return await service.directoryContactProfile(
+      stringParam(params, 'contactRef').trim(),
+    )
+    case 'directory.contact.world': return await service.directoryContactWorld(
+      stringParam(params, 'contactRef').trim(),
+      {
+        limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      },
+    )
+    case 'directory.contact.open-chat': return await service.openDirectoryContactChat(
+      stringParam(params, 'contactRef').trim(),
+    )
+    case 'directory.group.open-chat': return await service.openDirectoryGroupChat(
+      stringParam(params, 'sourceRef').trim(),
+      requestSignal,
+    )
+    case 'directory.bot.open-chat': return await service.openBotChat(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'unmarked-speakers.options': return await service.unmarkedSpeakerOptions(
+      stringParam(params, 'candidateRef').trim(),
+    )
+    case 'unmarked-speakers.retry-inference': return await service.retryUnmarkedSpeakerInference(
+      stringParam(params, 'candidateRef').trim(),
+    )
+    case 'unmarked-speakers.segments': {
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.unmarkedSpeakerSegments(
+        stringParam(params, 'candidateRef').trim(),
+        { limit: directoryLimitParam(params), ...(cursor === '' ? {} : { cursor }) },
+      )
+    }
+    case 'unmarked-speakers.mark': return await service.markUnmarkedSpeaker(
+      unmarkedSpeakerMarkInputParam(params),
+    )
     case 'group.create': return await service.createGroup(
       stringParam(params, 'title'),
       stringParam(params, 'clientMutationId'),

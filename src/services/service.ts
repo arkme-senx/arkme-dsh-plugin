@@ -126,6 +126,10 @@ export function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+export function knownStringValue<T extends string>(value: unknown, allowed: ReadonlySet<T>): T | undefined {
+  return typeof value === 'string' && allowed.has(value as T) ? value as T : undefined
+}
+
 export function clippedText(value: unknown, limit = 4_000): string {
   const text = stringValue(value).trim()
   return text.length > limit ? `${text.slice(0, limit)}…[已截断]` : text
@@ -287,6 +291,10 @@ export class ServiceRuntime {
       return Math.max(1_000, error.retryAfterMillis ?? 5_000)
     }
     return 0
+  }
+
+  private teamServiceBaseUrl(): string {
+    return this.config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
   }
 
   async post<T>(
@@ -731,6 +739,27 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedTeamPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const baseUrl = this.teamServiceBaseUrl()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'other', 'interactive-read', options)
+    try {
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 

@@ -262,11 +262,30 @@ export class SourceService {
     }
   }
 
+  async listGroupSources(
+    options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
+  ): Promise<ArkmeSourceList> {
+    const session = await this.runtime.requireSession()
+    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
+    const page = await this.listSourcesUncached(session, 'root', options, limit, 2)
+    return { ...page, items: page.items.filter(item => item.kind === 'group_chat') }
+  }
+
+  async countGroupSources(signal?: AbortSignal): Promise<number> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/list', { limit: 0, session_kind: 2 }, session, signal,
+      { lane: 'interactive-read', key: 'directory:groups:count', failureCooldownMs: 2_000 },
+    )
+    return Math.max(0, numberValue(data.total ?? data.total_count))
+  }
+
   private async listSourcesUncached(
     session: ArkmeSessionCredentials,
     directory: ArkmeSourceDirectory,
     options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean },
     limit: number,
+    sessionKind?: number,
   ): Promise<ArkmeSourceList> {
     if (directory === 'send_to_self') {
       if (options.cursor !== undefined && options.cursor.trim() !== '') {
@@ -414,12 +433,16 @@ export class SourceService {
       : this.decodeCursor(options.cursor)
     const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
       '/api/v1/chats/list',
-      { limit, ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }) },
+      {
+        limit,
+        ...(sessionKind === undefined ? {} : { session_kind: sessionKind }),
+        ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }),
+      },
       session,
       options.signal,
       {
         lane: 'interactive-read',
-        key: `directory:root:${String(limit)}:${options.cursor?.trim() ?? ''}`,
+        key: `directory:root:${sessionKind === undefined ? 'all' : String(sessionKind)}:${String(limit)}:${options.cursor?.trim() ?? ''}`,
         failureCooldownMs: 2_000,
         bypassCache: options.refresh === true,
       },
@@ -483,10 +506,13 @@ export class SourceService {
       console.warn('dsh-arkme: Chat avatar hydration failed:', safeFailureMessage(error))
     }
     const hasMore = data.has_more === true
+    const totalValue = data.total ?? data.total_count
+    const total = totalValue === undefined ? undefined : Math.max(0, numberValue(totalValue))
     const nextPageCursor = objectValue(data.next_page_cursor)
     return {
       directory,
       items,
+      ...(total === undefined ? {} : { total }),
       hasMore,
       ...(hasMore && Object.keys(nextPageCursor).length > 0
         ? { nextCursor: this.encodeCursor(nextPageCursor) }

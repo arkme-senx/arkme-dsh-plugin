@@ -50,6 +50,96 @@ export interface ArkmeContactAddResult {
   source: ArkmeSourceItem
 }
 
+export type ArkmeDirectorySectionKind =
+  | 'groups' | 'bots' | 'unmarked-speakers' | 'teams' | 'contacts'
+
+/** Browser-safe directory row. Provider-private identifiers never cross this boundary. */
+export type ArkmeDirectoryItem =
+  | { kind: 'group'; sourceRef: string; displayName: string; avatarRef?: string; groupAvatar?: ArkmeGroupAvatarPresentation }
+  | { kind: 'bot'; botRef: string; displayName: string; avatarRef?: string }
+  | { kind: 'unmarked-speaker'; candidateRef: string; speakerToken?: string; displayName: string; subtitle: string }
+  | { kind: 'team'; rowKey: string; displayName: string; publicId?: string; avatarRef?: string }
+  | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; letter: string }
+
+export interface ArkmeDirectoryPage {
+  section: ArkmeDirectorySectionKind
+  items: ArkmeDirectoryItem[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+  projectionState?: 'fresh' | 'stale' | 'building' | 'failed'
+  retryAfterMillis?: number
+  cursorStale?: boolean
+}
+
+export interface ArkmeDirectoryContactProfile {
+  contactRef: string
+  displayName: string
+  nickname: string
+  remark: string
+  avatarRef?: string
+}
+
+export type ArkmeUnmarkedSpeakerInferenceState = 'pending' | 'ready' | 'failed' | 'unavailable'
+
+export interface ArkmeUnmarkedSpeakerInference {
+  state: ArkmeUnmarkedSpeakerInferenceState
+  recommendedSpeakerRef?: string
+  recommendedDisplayName?: string
+  retryable?: boolean
+}
+
+export interface ArkmeUnmarkedSpeakerChoice {
+  speakerRef: string
+  displayName: string
+  source: 'recommended' | 'manual'
+}
+
+/** Browser-safe detail projection for one opaque unmarked-speaker candidate ref. */
+export interface ArkmeUnmarkedSpeakerOptions {
+  candidateRef: string
+  candidateVersion: string
+  speakerToken?: string
+  appearanceDays: number
+  validAudioDurationMillis: number
+  segmentCount: number
+  latestAtMillis: number
+  conversationSummaryState?: 'ready' | 'pending' | 'unavailable'
+  conversationSummary?: string
+  inference: ArkmeUnmarkedSpeakerInference
+  speakerChoices: ArkmeUnmarkedSpeakerChoice[]
+}
+
+export interface ArkmeUnmarkedSpeakerInferenceRetry {
+  candidateRef: string
+  inference: ArkmeUnmarkedSpeakerInference
+}
+
+export interface ArkmeUnmarkedSpeakerSegment {
+  segmentRef: string
+  date: string
+  sessionLabel: string
+  timeRange: string
+  durationMillis: number
+  transcript: string
+  mediaRef?: string
+}
+
+export interface ArkmeUnmarkedSpeakerSegmentPage {
+  items: ArkmeUnmarkedSpeakerSegment[]
+  total: number
+  hasMore: boolean
+  nextCursor?: string
+  cursorStale?: boolean
+}
+
+export type ArkmeUnmarkedSpeakerMarkOutcome =
+  | 'marked' | 'stale' | 'conflict' | 'candidate_not_found' | 'speaker_not_found'
+
+export interface ArkmeUnmarkedSpeakerMarkResult {
+  outcome: ArkmeUnmarkedSpeakerMarkOutcome
+}
+
 export interface ArkmeMyVoiceprint {
   hasVoiceprint: boolean
   nickname: string
@@ -818,6 +908,7 @@ export interface ArkmeSourceItem {
 export interface ArkmeSourceList {
   directory: ArkmeSourceDirectory
   items: ArkmeSourceItem[]
+  total?: number
   hasMore: boolean
   nextCursor?: string
 }
@@ -1950,6 +2041,16 @@ export type ArkmePluginOperation =
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
+  | 'directory.list'
+  | 'directory.contact.profile'
+  | 'directory.contact.world'
+  | 'directory.contact.open-chat'
+  | 'directory.group.open-chat'
+  | 'directory.bot.open-chat'
+  | 'unmarked-speakers.options'
+  | 'unmarked-speakers.retry-inference'
+  | 'unmarked-speakers.segments'
+  | 'unmarked-speakers.mark'
   | 'voiceprint.status'
   | 'voiceprint.grants'
   | 'voiceprint.people'

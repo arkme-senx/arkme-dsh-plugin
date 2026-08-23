@@ -342,7 +342,9 @@ describe('Arkme native World surface', () => {
     expect(loading).not.toContain('>我的世界<')
 
     expect(renderTarget({ status: 'error', items: [], message: '主页加载失败' })).toContain('主页加载失败')
-    expect(renderTarget({ status: 'empty', items: [] })).toContain('TA 的世界暂无公开内容')
+    const empty = renderTarget({ status: 'empty', items: [] })
+    expect(empty).toContain('TA 的世界暂无公开内容。')
+    expect(empty).toContain('data-arkme-world-empty-state="true"')
     expect(renderTarget({ status: 'success', items: [item] })).toContain('世界正文')
   })
 

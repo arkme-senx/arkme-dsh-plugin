@@ -178,7 +178,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot, acceptOptions: { forcePhoneCheck?: boolean } = {}) => {
     const previous = arkmeAuthStore.getSnapshot().auth
     const accountChanged = snapshot.status === 'authenticated'
-      && (previous?.status !== 'authenticated' || previous.userId !== snapshot.userId)
+      && (previous?.status !== 'authenticated' || previous.userId !== snapshot.userId || previous.environment !== snapshot.environment)
     arkmeAuthStore.setAuth(snapshot)
     if (snapshot.status === 'binding-required') {
       checkedUserIdRef.current = snapshot.userId

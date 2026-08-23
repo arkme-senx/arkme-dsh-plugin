@@ -38,7 +38,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('>市集<')
     expect(markup).toContain('aria-current="page"')
     expect(markup).toContain('background:#f1f2f6')
-    expect(markup).toContain('outline:0')
+    expect(markup).not.toContain('outline:0')
     expect(markup).toContain('height:33px')
     expect(markup).not.toContain('data-slot="conversation"')
     expect(markup).not.toContain('data-slot="sidebar.footer.action"')

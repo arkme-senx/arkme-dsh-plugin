@@ -304,7 +304,7 @@ export function arkmeAuthenticatedAccountChanged(
   next: ArkmeAuthSnapshot,
 ): boolean {
   return next.status === 'authenticated'
-    && (previous?.status !== 'authenticated' || previous.userId !== next.userId)
+    && (previous?.status !== 'authenticated' || previous.userId !== next.userId || previous.environment !== next.environment)
 }
 
 export function arkmeArkoSurfaceKey(auth: ArkmeAuthSnapshot | undefined): number | 'authenticated' | 'logged-out' {

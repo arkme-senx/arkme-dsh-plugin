@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ArkmeConversationSurface } from '../src/client/ArkmeConversationSurface.js'
+import { ArkmeUiController } from '../src/client/ui-controller.js'
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
   aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader,
@@ -41,12 +42,31 @@ describe('Arkme persistent conversation frame', () => {
   it('treats authenticated user changes as account switches and remounts Arko per account', () => {
     const first = { status: 'authenticated' as const, environment: 'prod' as const, userId: 1001 }
     const second = { status: 'authenticated' as const, environment: 'prod' as const, userId: 2002 }
+    const sameUserOtherEnvironment = { status: 'authenticated' as const, environment: 'test' as const, userId: 1001 }
 
     expect(arkmeAuthenticatedAccountChanged(first, first)).toBe(false)
     expect(arkmeAuthenticatedAccountChanged(first, second)).toBe(true)
+    expect(arkmeAuthenticatedAccountChanged(first, sameUserOtherEnvironment)).toBe(true)
     expect(arkmeArkoSurfaceKey(first)).toBe(1001)
     expect(arkmeArkoSurfaceKey(second)).toBe(2002)
     expect(arkmeArkoSurfaceKey({ status: 'logged-out', environment: 'prod' })).toBe('logged-out')
+  })
+
+  it('drops the retained source when the same user switches environments', () => {
+    const controller = new ArkmeUiController()
+    const previous = { status: 'authenticated' as const, environment: 'test' as const, userId: 1001 }
+    const next = { status: 'authenticated' as const, environment: 'prod' as const, userId: 1001 }
+    controller.selectSource({
+      sourceRef: 'test-source', kind: 'private_chat', displayName: '旧环境会话', activeAtMillis: 1, unreadCount: 0,
+    })
+    controller.showContacts()
+
+    if (arkmeAuthenticatedAccountChanged(previous, next)) controller.authChanged(true, true)
+    controller.showConversations()
+
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+    expect(controller.getSnapshot().selectedSource).toBeUndefined()
   })
 
   it('does not restart WeChat login while a QR login attempt is pending', () => {

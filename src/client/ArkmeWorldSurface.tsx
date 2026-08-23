@@ -24,6 +24,7 @@ import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } f
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import type { ArkmeWorldTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
@@ -71,6 +72,7 @@ const styles: Record<string, CSSProperties> = {
   worldLayout: { flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', position: 'relative', background: '#fff' },
   body: { flex: 1, minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', overscrollBehavior: 'contain', background: '#fff' },
   notice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0', padding: '13px 15px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: '#f6f6f7', color: colors.secondary, fontSize: 12 },
+  emptyNotice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0' },
   error: { borderColor: 'rgba(185,66,59,.25)', background: 'rgba(185,66,59,.06)', color: colors.danger },
   errorRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
   feed: { width: 'min(884px, calc(100% - 96px))', maxWidth: '100%', minWidth: 0, margin: '10px auto 48px', boxSizing: 'border-box', display: 'grid', gap: 16 },
@@ -1110,7 +1112,9 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
         {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
         {state.status === 'loading' && <div role="status" style={styles.notice}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
         {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
-        {state.status === 'empty' && <div style={styles.notice}>{target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}</div>}
+        {state.status === 'empty' && <ArkmeWorldEmptyNotice style={styles.emptyNotice}>
+          {target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}
+        </ArkmeWorldEmptyNotice>}
         {state.status === 'success' && <div style={styles.feed}>
           {state.message !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error, width: '100%', margin: 0 }}>{state.message}</div>}
           {state.items.map(item => <WorldCard

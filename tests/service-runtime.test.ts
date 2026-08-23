@@ -156,6 +156,27 @@ describe('ServiceRuntime', () => {
     expect(requests.every(request => request.body === form)).toBe(true)
   })
 
+  it('uses the mobile Team owner with interactive-read coordination', async () => {
+    const activeSession = { accessToken: 'team-access', refreshToken: 'refresh-token', userId: 42 }
+    const sessionStore: ArkmeSessionStore = {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      code: 200, data: { teams: [] },
+    }), { status: 200 })) as typeof fetch
+    const runtime = runtimeFixture(fetchImpl, sessionStore)
+
+    await expect(runtime.authenticatedTeamPost('/api/v1/team/list-mine', {}, activeSession, undefined, {
+      lane: 'interactive-read', key: 'directory:teams',
+    })).resolves.toEqual({ teams: [] })
+    expect(fetchImpl).toHaveBeenCalledWith('https://jotmo-team.senguo.me/api/v1/team/list-mine', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer team-access' }),
+    }))
+    expect(runtime.requestStats()).toMatchObject({
+      'interactive-read:other': expect.objectContaining({ started: 1 }),
+    })
+  })
+
   it('fails explicitly when the extension service is disabled', async () => {
     const runtime = runtimeFixture(vi.fn() as typeof fetch)
     await expect(runtime.extensionPost('/api/test', {})).rejects.toMatchObject({

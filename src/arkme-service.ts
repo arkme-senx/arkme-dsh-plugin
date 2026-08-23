@@ -29,6 +29,7 @@ import { CalendarService } from './services/calendar-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
 import { ChatService } from './services/chat-service.js'
 import { ContactService } from './services/contact-service.js'
+import { ContactDirectoryService } from './services/contact-directory-service.js'
 import { CommunityService } from './services/community-service.js'
 import {
   ExtensionReviewService,
@@ -62,6 +63,7 @@ import {
   type StateStore,
 } from './services/service.js'
 import { SourceService } from './services/source-service.js'
+import { UnmarkedSpeakerService } from './services/unmarked-speaker-service.js'
 import { WechatService } from './services/wechat-service.js'
 import { VoiceprintService } from './services/voiceprint-service.js'
 import { WorldService } from './services/world-service.js'
@@ -108,6 +110,9 @@ import type {
   ArkmeClientConfig,
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
+  ArkmeDirectoryContactProfile,
+  ArkmeDirectoryPage,
+  ArkmeDirectorySectionKind,
   ArkmeConversationWriteResult,
   ArkmeConversationMemberList,
   ArkmeConversationMemberRecordMode,
@@ -169,6 +174,10 @@ import type {
   ArkmeTimelinePage,
   ArkmeTopicCreateResult,
   ArkmeUploadedAsset,
+  ArkmeUnmarkedSpeakerInferenceRetry,
+  ArkmeUnmarkedSpeakerMarkResult,
+  ArkmeUnmarkedSpeakerOptions,
+  ArkmeUnmarkedSpeakerSegmentPage,
   ArkmeUserCardSnapshot,
   ArkmeUserProfileSnapshot,
   ArkmeWechatCallFilter,
@@ -246,6 +255,8 @@ export class ArkmeService {
   private readonly aiPolish: GroupAiPolishService
   private readonly chat: ChatService
   private readonly contact: ContactService
+  private readonly contactDirectory: ContactDirectoryService
+  private readonly unmarkedSpeaker: UnmarkedSpeakerService
   private readonly voiceprint: VoiceprintService
 
   constructor(
@@ -316,6 +327,10 @@ export class ArkmeService {
       this.aiPolish,
       this.realtime,
     )
+    this.contactDirectory = new ContactDirectoryService(
+      this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
+    )
+    this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.contact = new ContactService(this.runtime, this.source, this.profile, this.realtime)
     this.voiceprint = new VoiceprintService(this.runtime, this.profile, {
       resolveRegisteredContactUserId: async (contactRef, session, signal) => await this.contact.resolveRegisteredContactUserId(
@@ -337,6 +352,9 @@ export class ArkmeService {
     this.world.dispose()
     this.arrangement.dispose()
     this.contact.dispose()
+    this.contactDirectory.dispose()
+    this.unmarkedSpeaker.dispose()
+    this.bot.clearAccountRefs()
   }
 
   startChatRealtime(): () => void {
@@ -556,6 +574,8 @@ export class ArkmeService {
 
   dispose(): void {
     this.contact.dispose()
+    this.contactDirectory.dispose()
+    this.unmarkedSpeaker.dispose()
     this.realtime.dispose()
     this.arko.dispose()
     this.auth.dispose()
@@ -586,33 +606,22 @@ export class ArkmeService {
     return await this.contact.search(identifier, options)
   }
 
-  async addContact(
-    contactRef: string,
-    options: { remark?: string; requestUid?: string; signal?: AbortSignal } = {},
-  ): Promise<ArkmeContactAddResult> {
-    return await this.contact.add(contactRef, options)
+  async listDirectory(section: ArkmeDirectorySectionKind, options: { limit?: number; cursor?: string; countOnly?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeDirectoryPage> {
+    return section === 'unmarked-speakers' ? await this.unmarkedSpeaker.list(options) : await this.contactDirectory.list(section, options)
   }
+  async directoryContactProfile(contactRef: string, signal?: AbortSignal): Promise<ArkmeDirectoryContactProfile> { return await this.contactDirectory.contactProfile(contactRef, signal) }
+  async directoryContactWorld(contactRef: string, options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<ArkmeWorldFeedPage> { return await this.contactDirectory.contactWorld(contactRef, options) }
+  async openDirectoryContactChat(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> { return await this.contactDirectory.openContactChat(contactRef, signal) }
+  async openDirectoryGroupChat(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem> { return await this.contactDirectory.openGroupChat(sourceRef, signal) }
+  async unmarkedSpeakerOptions(candidateRef: string, signal?: AbortSignal): Promise<ArkmeUnmarkedSpeakerOptions> { return await this.unmarkedSpeaker.markOptions(candidateRef, signal) }
+  async retryUnmarkedSpeakerInference(candidateRef: string, signal?: AbortSignal): Promise<ArkmeUnmarkedSpeakerInferenceRetry> { return await this.unmarkedSpeaker.retryInference(candidateRef, signal) }
+  async unmarkedSpeakerSegments(candidateRef: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<ArkmeUnmarkedSpeakerSegmentPage> { return await this.unmarkedSpeaker.segments(candidateRef, options) }
+  async markUnmarkedSpeaker(input: { candidateRef: string; candidateVersion: string; speakerRef?: string; newSpeakerName?: string }, signal?: AbortSignal): Promise<ArkmeUnmarkedSpeakerMarkResult> { return await this.unmarkedSpeaker.mark(input, signal) }
 
-  async extensionAuthors(
-    userIds: readonly number[],
-    signal?: AbortSignal,
-  ): Promise<Map<number, ArkmeExtensionAuthorProjection>> {
-    return await this.extensionReview.extensionAuthors(userIds, signal)
-  }
-
-  async listExtensionReviews(
-    extensionIdValue: string,
-    options: { limit?: number; offset?: number; signal?: AbortSignal } = {},
-  ): Promise<ArkmeExtensionReviewPage> {
-    return await this.extensionReview.listExtensionReviews(extensionIdValue, options)
-  }
-
-  async createExtensionReview(
-    input: ArkmeExtensionReviewCreateInput,
-    signal?: AbortSignal,
-  ): Promise<ArkmeExtensionReviewCreateResult> {
-    return await this.extensionReview.createExtensionReview(input, signal)
-  }
+  async addContact(contactRef: string, options: { remark?: string; requestUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeContactAddResult> { return await this.contact.add(contactRef, options) }
+  async extensionAuthors(userIds: readonly number[], signal?: AbortSignal): Promise<Map<number, ArkmeExtensionAuthorProjection>> { return await this.extensionReview.extensionAuthors(userIds, signal) }
+  async listExtensionReviews(extensionIdValue: string, options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<ArkmeExtensionReviewPage> { return await this.extensionReview.listExtensionReviews(extensionIdValue, options) }
+  async createExtensionReview(input: ArkmeExtensionReviewCreateInput, signal?: AbortSignal): Promise<ArkmeExtensionReviewCreateResult> { return await this.extensionReview.createExtensionReview(input, signal) }
 
   /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
   async recordingCalendar(

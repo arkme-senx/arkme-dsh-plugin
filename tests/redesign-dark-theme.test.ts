@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const redesignCss = readFileSync(
@@ -11,6 +12,62 @@ const redesignStylesSource = readFileSync(
 )
 
 describe('Arkme redesign dark theme', () => {
+  it('keeps Contact World media on the existing fixed three-column thumbnail grid', () => {
+    const imageGridRule = redesignCss.match(/\.arkme-contact-world-images\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const imageRule = redesignCss.match(/\.arkme-contact-world-image\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const imagePlaceholderRule = redesignCss.match(/\.arkme-contact-world-image-error,\s*\.arkme-contact-world-image-loading\s*\{([^{}]+)\}/)?.[1] ?? ''
+
+    expect(imageGridRule).toContain('width: 100%')
+    expect(imageGridRule).toContain('max-width: 620px')
+    expect(imageGridRule).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))')
+    expect(imageGridRule).not.toContain('auto-fit')
+    expect(imageRule).toContain('aspect-ratio: 1')
+    expect(imageRule).not.toContain('max-height: 240px')
+    expect(imagePlaceholderRule).toContain('aspect-ratio: 1')
+  })
+
+  it('keeps the contact profile fixed while only the lower World pane scrolls', () => {
+    const detailPaneRule = redesignCss.match(/\.arkme-directory-detail-pane\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const contactDetailRule = redesignCss.match(/\.arkme-contact-detail\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const directoryRule = redesignCss.match(/\.arkme-contact-directory\s*\{([^{}]+)\}/)?.[1] ?? ''
+    const worldContainerRule = redesignCss.match(/\.arkme-contact-world-container\s*\{([^{}]+)\}/)?.[1] ?? ''
+
+    expect(detailPaneRule).toContain('overflow: hidden')
+    expect(contactDetailRule).toContain('height: 100%')
+    expect(contactDetailRule).toContain('overflow: hidden')
+    expect(directoryRule).toContain('overflow-y: auto')
+    expect(worldContainerRule).toContain('overflow-y: auto')
+  })
+
+  it('gives every production Contacts class a substantive scoped rule', () => {
+    const contactsDir = new URL('../src/client/redesign/contacts/', import.meta.url).pathname
+    const contactsClasses = new Set<string>()
+    for (const file of readdirSync(contactsDir).filter(name => name.endsWith('.tsx'))) {
+      const source = readFileSync(join(contactsDir, file), 'utf8')
+      for (const match of source.matchAll(/className=(?:"([^"]+)"|\{`([^`]+)`\})/g)) {
+        for (const token of (match[1] ?? match[2] ?? '').split('${')[0].split(/\s+/)) {
+          if (/^arkme-(?:contact|directory|unmarked)-/.test(token)) contactsClasses.add(token)
+        }
+      }
+    }
+    expect(contactsClasses.size).toBe(83)
+    for (const className of contactsClasses) {
+      const rule = redesignCss.match(new RegExp(`\\.${className}(?:[\\s,:.#\\[>+~-][^{}]*)?\\{([^{}]+)\\}`))
+      expect(rule, `${className} must have a CSS rule with declarations`).not.toBeNull()
+      expect(rule?.[1].trim(), `${className} must not use an empty rule`).not.toBe('')
+    }
+    expect(redesignCss).toContain('.arkme-contact-directory-row:not(.is-static):hover')
+    expect(redesignCss).not.toContain('.arkme-contact-directory-row.is-static:hover')
+    expect(redesignCss).toContain('.arkme-contact-directory-section-header[aria-expanded="true"] .arkme-contact-directory-caret { transform: rotate(90deg); }')
+  })
+  it('reassigns the real AppFrame grid tracks for Contacts narrow directory and detail seats', () => {
+    expect(redesignCss).toContain('div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="directory"])')
+    expect(redesignCss).toContain('grid-template-columns: minmax(0, 1fr) 0px 0px !important')
+    expect(redesignCss).toContain('div:has(> [data-shell-overlay]):has([data-arkme-directory-mode="contacts"]):has([data-arkme-contacts-mobile-view="content"])')
+    expect(redesignCss).toContain('grid-template-columns: 0px minmax(0, 1fr) 0px !important')
+    expect(redesignCss).not.toContain('.pI_x6G_frame')
+    expect(redesignCss).not.toContain('data-details-collapsed]):has([data-arkme-owned="persistent')
+  })
   it('keeps the existing light rules and scopes dark colors to the DSH theme attribute', () => {
     expect(redesignCss).toContain('.arkme-redesign-root {')
     expect(redesignCss).toContain('background: #fff;')
@@ -19,6 +76,10 @@ describe('Arkme redesign dark theme', () => {
     const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
     expect(darkCss).toContain('--arkme-line: var(--dsw-alias-border-l1);')
     expect(darkCss).toContain('color: var(--dsw-alias-label-primary);')
+    expect(darkCss).toContain('.arkme-unmarked-speaker-gone')
+    expect(darkCss).toContain('.arkme-unmarked-speaker-success')
+    expect(darkCss).toContain('var(--dsw-alias-state-success-tertiary)')
+    expect(darkCss).toContain('var(--dsw-alias-state-error-primary)')
   })
 
   it('maps every redesign surface family to DSH semantic backgrounds', () => {
@@ -132,6 +193,70 @@ describe('Arkme redesign dark theme', () => {
     ]) expect(darkCss).toContain(selector)
     expect(darkCss).toMatch(/\.arkme-redesign-starter-icon[^}]*background: var\(--dsw-alias-button-elevated-fill\) !important/)
     expect(darkCss).toMatch(/\.arkme-redesign-send-task:disabled \{[^}]*background: var\(--dsw-alias-button-elevated-fill\) !important;[^}]*color: var\(--dsw-alias-label-secondary\) !important;/)
+  })
+
+  it('styles the confirmed directory, Logo, contact World, and speaker layouts with bounded wrapping', () => {
+    for (const selector of [
+      '.arkme-contact-directory',
+      '.arkme-contact-directory-section-header',
+      '.arkme-contact-directory-letter',
+      '.arkme-contact-directory-row.is-selected',
+      '.arkme-directory-detail-empty',
+      '.arkme-directory-detail-logo',
+      '.arkme-contact-detail',
+      '.arkme-contact-profile',
+      '.arkme-contact-world-card',
+      '.arkme-unmarked-speaker-summary',
+      '.arkme-unmarked-speaker-audio',
+      '.arkme-unmarked-speaker-choice',
+    ]) expect(redesignCss).toContain(selector)
+
+    expect(redesignCss).toMatch(/\.arkme-contact-directory, \.arkme-directory-detail-pane \{[^}]*min-width: 0;[^}]*min-height: 0;[^}]*height: 100%;[^}]*overflow: hidden;/)
+    expect(redesignCss).toContain('overflow-wrap: anywhere;')
+    expect(redesignCss).toContain('.arkme-contact-directory-row:not(.is-static):hover')
+    expect(redesignCss).not.toContain('.arkme-contact-directory-row.is-static:hover')
+    expect(redesignCss).toMatch(/\[data-arkme-workspace\] \.arkme-contact-profile-message \{[^}]*background: var\(--dsw-alias-button-primary-fill/)
+  })
+
+  it('styles the mobile-derived speaker identity, inference, action, audio, and choice hierarchy', () => {
+    for (const selector of [
+      '.arkme-unmarked-speaker-token-avatar',
+      '.arkme-unmarked-speaker-identity',
+      '.arkme-unmarked-speaker-stats',
+      '.arkme-unmarked-speaker-inference',
+      '.arkme-unmarked-speaker-action',
+      '.arkme-unmarked-speaker-subview-header',
+      '.arkme-unmarked-speaker-segment-card',
+      '.arkme-unmarked-speaker-choice-option',
+      '.arkme-unmarked-speaker-confirm',
+    ]) expect(redesignCss).toContain(selector)
+
+    expect(redesignCss).toMatch(/\.arkme-unmarked-speaker-summary \{[^}]*border: 0;[^}]*background: transparent;/)
+    expect(redesignCss).toMatch(/\.arkme-unmarked-speaker-action \{[^}]*grid-template-columns: 42px minmax\(0, 1fr\);/)
+    expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[\s\S]*\.arkme-unmarked-speaker-stats/)
+    const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
+    expect(darkCss).toContain('body[data-ds-dark-theme] .arkme-unmarked-speaker-inference')
+    expect(darkCss).toContain('body[data-ds-dark-theme] .arkme-unmarked-speaker-segment-card')
+  })
+
+  it('keeps directory actions visibly focused, motion-safe, dark themed, and narrow-window safe', () => {
+    expect(redesignCss).toContain('[data-arkme-directory-mode="contacts"]')
+    expect(redesignCss).toContain('.arkme-contact-directory button:focus-visible')
+    expect(redesignCss).toContain('.arkme-directory-detail-pane button:focus-visible')
+    expect(redesignCss).toMatch(/@media \(max-width: 1024px\) \{[\s\S]*data-arkme-directory-mode="contacts"/)
+    expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[^}]*\.arkme-redesign-chat-panel \{ display: none;/)
+    expect(redesignCss).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.arkme-contact-directory-caret/)
+
+    const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
+    expect(darkCss).toContain('body[data-ds-dark-theme] .arkme-contact-directory')
+    expect(darkCss).toContain('body[data-ds-dark-theme] .arkme-contact-directory-row.is-selected')
+    expect(darkCss).toContain('body[data-ds-dark-theme] .arkme-contact-world-card')
+    expect(darkCss).toContain('body[data-ds-dark-theme] .arkme-unmarked-speaker-choice')
+  })
+
+  it('keeps both Contacts seats bounded at narrow widths', () => {
+    expect(redesignCss).toMatch(/@media \(max-width: 820px\) \{[\s\S]*data-arkme-directory-mode="contacts"/)
+    expect(redesignCss).toContain('.arkme-directory-detail-pane')
   })
 
   it('covers the complete World body, dialogs, comments, and readable copy', () => {

@@ -27,6 +27,19 @@ export interface ArkmeRecordIdentity {
   recordUid(raw: unknown): string
 }
 
+export interface ArkmeUnmarkedSpeakerMediaTuple {
+  viewerUserId: number
+  candidateId: string
+  segmentId: string
+  sessionId: string
+  childId: string
+  audioFileName: string
+}
+
+export interface ArkmeUnmarkedSpeakerSegmentResolver {
+  resolveSegmentForMedia(segmentRef: string, candidateRef: string): Promise<ArkmeUnmarkedSpeakerMediaTuple>
+}
+
 export interface ArkmeMediaDescriptor {
   viewerUserId: number
   remoteUrl: string
@@ -134,6 +147,31 @@ function worldVoiceprintFileName(mimeType: string): string {
     flac: 'flac',
   } as Record<string, string>)[subtype]
   return extension === undefined ? '世界声纹' : `世界声纹.${extension}`
+}
+
+function unmarkedSpeakerAudioType(audioFileName: string): { mimeType: string; fileName: string } {
+  const extension = /\.([A-Za-z0-9]{1,10})$/.exec(audioFileName)?.[1]?.toLowerCase() ?? ''
+  const mimeType = ({
+    wav: 'audio/wav',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    mp4: 'audio/mp4',
+    aac: 'audio/aac',
+    ogg: 'audio/ogg',
+    opus: 'audio/ogg',
+    webm: 'audio/webm',
+    flac: 'audio/flac',
+    pcm: 'audio/L16',
+  } as Record<string, string>)[extension] ?? 'audio/wav'
+  return { mimeType, fileName: extension === '' ? '说话片段' : `说话片段.${extension}` }
+}
+
+function audioObjectPathPart(value: string): string | undefined {
+  const normalized = value.trim()
+  return normalized !== '' && normalized.length <= 512 && normalized !== '.' && normalized !== '..'
+    && !/[\\/\u0000-\u001f\u007f]/.test(normalized)
+    ? normalized
+    : undefined
 }
 
 function trustedSignedImageUrl(environment: 'test' | 'prod', raw: string): URL {
@@ -388,6 +426,76 @@ export class MediaService {
       fileName: worldVoiceprintFileName(mimeType),
       size: 0,
     })
+  }
+
+  async issueUnmarkedSpeakerMediaRef(
+    resolver: ArkmeUnmarkedSpeakerSegmentResolver,
+    candidateRef: string,
+    segmentRef: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const tuple = await resolver.resolveSegmentForMedia(segmentRef, candidateRef)
+    const session = await this.runtime.requireSession()
+    if (!Number.isSafeInteger(tuple.viewerUserId) || tuple.viewerUserId <= 0 || tuple.viewerUserId !== session.userId) {
+      throw new ArkmePluginError('unmarked-audio-account-mismatch', '说话片段与当前账号不匹配', false, 403)
+    }
+    const sessionId = audioObjectPathPart(tuple.sessionId)
+    const childId = audioObjectPathPart(tuple.childId)
+    const audioFileName = audioObjectPathPart(tuple.audioFileName)
+    if (sessionId === undefined || childId === undefined || audioFileName === undefined) {
+      throw new ArkmePluginError('unmarked-audio-path-invalid', '说话片段音频路径无效', false, 502)
+    }
+    const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/audio_output/${sessionId}/${childId}/${audioFileName}`
+    const credentials = await this.audioOssCredentials(session, signal)
+    const bucket = this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test'
+    let signedUrlText: string
+    try {
+      const client = new OSS({
+        region: 'oss-cn-hangzhou',
+        bucket,
+        secure: true,
+        accessKeyId: credentials.accessKeyId,
+        accessKeySecret: credentials.accessKeySecret,
+        stsToken: credentials.stsToken,
+        refreshSTSTokenInterval: 10 * 60 * 1000,
+        refreshSTSToken: async () => {
+          const refreshed = await this.audioOssCredentials(await this.runtime.requireSession(), signal)
+          return {
+            accessKeyId: refreshed.accessKeyId,
+            accessKeySecret: refreshed.accessKeySecret,
+            stsToken: refreshed.stsToken,
+          }
+        },
+      })
+      signedUrlText = client.signatureUrl(objectPath, { method: 'GET', expires: 120 })
+    } catch (error) {
+      throw new ArkmePluginError('unmarked-audio-sign-failed', '说话片段音频授权失败', true, 502, { cause: error })
+    }
+    let signedUrl: URL
+    try {
+      signedUrl = new URL(signedUrlText)
+    } catch (error) {
+      throw new ArkmePluginError('unmarked-audio-sign-contract-invalid', '说话片段音频授权响应无效', true, 502, { cause: error })
+    }
+    let signedPath: string
+    try {
+      signedPath = decodeURIComponent(signedUrl.pathname).replace(/^\/+/, '')
+    } catch (error) {
+      throw new ArkmePluginError('unmarked-audio-sign-contract-invalid', '说话片段音频授权路径无效', true, 502, { cause: error })
+    }
+    const hasSignature = (signedUrl.searchParams.get('Signature') ?? signedUrl.searchParams.get('x-oss-signature') ?? '').trim() !== ''
+    if (signedUrl.protocol !== 'https:' || signedUrl.username !== '' || signedUrl.password !== ''
+      || signedUrl.port !== '' || signedUrl.hash !== '' || !hasSignature
+      || !allowedSignedAudioHost(this.runtime.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
+      throw new ArkmePluginError('unmarked-audio-sign-target-rejected', '说话片段音频授权目标不受信任', false, 502)
+    }
+    const display = unmarkedSpeakerAudioType(audioFileName)
+    return this.issueMediaRef(session.userId, {
+      remoteUrl: signedUrl.toString(),
+      mimeType: display.mimeType,
+      fileName: display.fileName,
+      size: 0,
+    }, undefined, 110_000)
   }
 
   async readImage(
@@ -652,6 +760,7 @@ export class MediaService {
     viewerUserId: number,
     descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
     stableIdentity?: string,
+    lifetimeMillis?: number,
   ): string {
     const now = Date.now()
     for (const [key, value] of this.mediaRefs) {
@@ -673,8 +782,8 @@ export class MediaService {
     const cachedRef = stableKey === undefined ? undefined : this.stableMediaRefs.get(stableKey)
     const ref = cachedRef ?? `arkme-media-v1.${randomUUID()}`
     this.mediaRefs.delete(ref)
-    const lifetimeMillis = stableKey === undefined ? 30 * 60_000 : 24 * 60 * 60_000
-    this.mediaRefs.set(ref, { ...descriptor, viewerUserId, expiresAtMillis: now + lifetimeMillis, ...(stableKey === undefined ? {} : { stableKey }) })
+    const resolvedLifetimeMillis = lifetimeMillis ?? (stableKey === undefined ? 30 * 60_000 : 24 * 60 * 60_000)
+    this.mediaRefs.set(ref, { ...descriptor, viewerUserId, expiresAtMillis: now + resolvedLifetimeMillis, ...(stableKey === undefined ? {} : { stableKey }) })
     if (stableKey !== undefined) this.stableMediaRefs.set(stableKey, ref)
     return ref
   }
@@ -748,6 +857,27 @@ export class MediaService {
       || normalized.expiration === '' || !Number.isFinite(Date.parse(normalized.expiration))
       || Date.parse(normalized.expiration) <= Date.now()) {
       throw new ArkmePluginError('image-sts-contract-invalid', 'Arkme 图片授权凭据无效或已过期', true, 502)
+    }
+    return normalized
+  }
+
+  private async audioOssCredentials(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeOssCredentials> {
+    const credentials = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-sts-token', {}, session, signal, { lane: 'interactive-read', bypassCache: true },
+    )
+    const normalized = {
+      accessKeyId: stringValue(credentials.access_key_id).trim(),
+      accessKeySecret: stringValue(credentials.access_key_secret).trim(),
+      stsToken: stringValue(credentials.security_token).trim(),
+      expiration: stringValue(credentials.expiration).trim(),
+    }
+    if (normalized.accessKeyId === '' || normalized.accessKeySecret === '' || normalized.stsToken === ''
+      || normalized.expiration === '' || !Number.isFinite(Date.parse(normalized.expiration))
+      || Date.parse(normalized.expiration) <= Date.now()) {
+      throw new ArkmePluginError('unmarked-audio-sts-contract-invalid', '说话片段音频授权凭据无效或已过期', true, 502)
     }
     return normalized
   }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeGroupAvatarFallback,
   ArkmeGroupAvatarPresentation,
@@ -97,16 +97,20 @@ function avatarStyles(size: number): Record<string, CSSProperties> {
   }
 }
 
-function DefaultUserAvatar({ size }: { size: number }) {
+export function ArkmeDefaultAvatarFrame({ children }: { children: ReactNode }) {
   return <span style={{
     width: '100%', height: '100%', display: 'grid', placeItems: 'center', borderRadius: '50%',
     background: arkmeTheme.subtle, color: arkmeTheme.caption,
-  }}>
+  }}>{children}</span>
+}
+
+function DefaultUserAvatar({ size }: { size: number }) {
+  return <ArkmeDefaultAvatarFrame>
     <svg width={size * .68} height={size * .68} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <circle cx="12" cy="8" r="4" />
       <path d="M4.5 20c.7-4.1 3.2-6.2 7.5-6.2s6.8 2.1 7.5 6.2H4.5Z" />
     </svg>
-  </span>
+  </ArkmeDefaultAvatarFrame>
 }
 
 function PhoneDefaultAvatar({ fallback, size }: { fallback: Extract<ArkmeGroupAvatarFallback, { kind: 'phone_default' }>; size: number }) {

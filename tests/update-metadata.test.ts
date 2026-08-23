@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('published update metadata', () => {
-  it('keeps the current release metadata unchanged while update transport moves off npm', () => {
+  it('publishes the 0.1.21 release metadata while update transport moves off npm', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       name: string
       version: string
@@ -14,10 +14,10 @@ describe('published update metadata', () => {
     }
 
     expect(manifest.name).toBe('@senguoyun/dsh-arkme')
-    expect(manifest.version).toBe('0.1.16')
+    expect(manifest.version).toBe('0.1.21')
     expect(manifest.arkme?.updateNotice).toMatchObject({
       schemaVersion: 1,
-      title: 'Arkme 插件 0.1.16 更新',
+      title: 'Arkme 插件 0.1.21 更新',
       releaseNotesUrl: 'https://www.npmjs.com/package/@senguoyun/dsh-arkme',
     })
   })

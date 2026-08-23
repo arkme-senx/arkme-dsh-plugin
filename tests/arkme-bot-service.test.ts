@@ -45,6 +45,22 @@ function groupSourceRef(userId: number, subjectUid: string, displayName: string)
 }
 
 describe('ArkmeService Bot owner adapter', () => {
+  it('invalidates Provider-held Bot handles on logout before the same account can reuse them', async () => {
+    const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
+    const service = new ArkmeService(config, sessions, stateStore, async input => {
+      if (String(input).endsWith('/api/v1/bot/list')) return json({ code: 200, data: { bots: [{
+        bot_id: 'logout-private-bot', name: '退出测试', provider: 'webhook', status: 'online',
+      }] } })
+      throw new Error(`unexpected request ${String(input)}`)
+    })
+    const botRef = (await service.listBots()).items[0]!.botRef
+
+    await service.logout()
+    sessions.session = { userId: 10001, accessToken: 'next-access', refreshToken: 'next-refresh' }
+
+    await expect(service.openBotChat(botRef)).rejects.toMatchObject({ code: 'bot-ref-expired' })
+  })
+
   it('lists owner Bots as account-bound opaque references without exposing owner IDs or token previews', async () => {
     const requests: Array<{ url: string; authorization: string; body: unknown }> = []
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
@@ -74,7 +90,7 @@ describe('ArkmeService Bot owner adapter', () => {
     }])
     expect(result).toEqual({
       items: [{
-        botRef: expect.stringMatching(/^arkme-bot-v1\./),
+        botRef: expect.stringMatching(/^arkme-bot-v2\./),
         name: '群聊总结',
         provider: 'openclaw',
         description: '总结群聊',
@@ -140,7 +156,7 @@ describe('ArkmeService Bot owner adapter', () => {
       name: '八卦雷达', provider: 'openclaw', description: '高亮八卦', avatar: 'file_asset://avatar-asset-1',
     } }])
     expect(result.bot).toMatchObject({
-      botRef: expect.stringMatching(/^arkme-bot-v1\./),
+      botRef: expect.stringMatching(/^arkme-bot-v2\./),
       name: '八卦雷达',
       provider: 'openclaw',
     })
@@ -190,7 +206,7 @@ describe('ArkmeService Bot owner adapter', () => {
       name: '回调测试', provider: 'webhook', description: '验证回调', avatar: '',
     } }])
     expect(result.bot).toMatchObject({
-      botRef: expect.stringMatching(/^arkme-bot-v1\./),
+      botRef: expect.stringMatching(/^arkme-bot-v2\./),
       name: '回调测试',
       provider: 'webhook',
     })
@@ -235,7 +251,7 @@ describe('ArkmeService Bot owner adapter', () => {
       code: 'bot-ref-invalid',
     })
     sessions.session = { userId: 20002, accessToken: 'other-access', refreshToken: 'other-refresh' }
-    await expect(service.revealBotSecret(botRef)).rejects.toMatchObject({ code: 'bot-ref-invalid' })
+    await expect(service.revealBotSecret(botRef)).rejects.toMatchObject({ code: 'bot-ref-account-mismatch' })
     expect(requests).toHaveLength(1)
   })
 

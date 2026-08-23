@@ -45,4 +45,30 @@ describe('ProfileService', () => {
     })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
+
+  it('projects public jotmo_id as accountName without changing legacy displayName semantics', async () => {
+    const activeSession = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sessions: ArkmeSessionStore = {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 200, data: { items: [{
+      user_id: 88,
+      nick_name: '',
+      display_name: '',
+      name_slug: '',
+      arkme_id: '',
+      jotmo_id: 'public-account-88',
+      head_img: '',
+    }] } }), { status: 200 })) as typeof fetch
+    const service = new ProfileService(new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl))
+
+    const profiles = await service.publicProfileSummariesByUserIds([88], activeSession)
+
+    expect(profiles.get(88)).toEqual({
+      userId: 88,
+      displayName: '',
+      nickname: '',
+      accountName: 'public-account-88',
+    })
+  })
 })

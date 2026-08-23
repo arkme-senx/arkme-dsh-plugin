@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../openclaw/index.js'
 import { SecretValue } from '../secret-value.js'
@@ -17,7 +17,18 @@ import type {
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
-export interface ArkmeBotRefPayload { version: 1; userId: number; botId: string }
+export interface ArkmeBotRefPayload {
+  version: 2
+  userId: number
+  botId: string
+  provider: 'openclaw' | 'webhook'
+}
+
+interface ArkmeBotRefEntry extends ArkmeBotRefPayload { key: string; expiresAtMillis: number }
+
+const BOT_REF_TTL_MILLIS = 30 * 60_000
+const BOT_REF_CAP = 2_000
+const BOT_REF_PATTERN = /^arkme-bot-v2\.[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -26,24 +37,30 @@ function numberValue(value: unknown): number {
 function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
-function encodeOpaqueJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
-}
-
-function decodeOpaqueJson(value: string): unknown {
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
-}
-
 export class BotService {
   private openClawProvisioner: ReturnType<typeof createOpenClawProvisioner> | undefined
+  private readonly botRefs = new Map<string, ArkmeBotRefEntry>()
+  private readonly botRefByKey = new Map<string, string>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly source: SourceService,
+    private readonly refOptions: {
+      ttlMillis?: number
+      maxEntries?: number
+      now?: () => number
+      randomId?: () => string
+    } = {},
   ) {}
 
   dispose(): void {
     this.openClawProvisioner = undefined
+    this.clearAccountRefs()
+  }
+
+  clearAccountRefs(): void {
+    this.botRefs.clear()
+    this.botRefByKey.clear()
   }
 
   attachOpenClawProvisioner(provisioner: ReturnType<typeof createOpenClawProvisioner>): void {
@@ -79,9 +96,21 @@ export class BotService {
       const raw = objectValue(value)
       const provider = stringValue(raw.provider).trim()
       if (provider !== 'openclaw' && provider !== 'webhook') continue
-      items.push(await this.botSummaryFromData(raw, session.userId))
+      try {
+        items.push(await this.botSummaryFromData(raw, session.userId))
+      } catch (error) {
+        if (!(error instanceof ArkmePluginError) || error.code !== 'bot-contract-invalid') throw error
+      }
     }
     return { items }
+  }
+
+  async countBots(options: { signal?: AbortSignal } = {}): Promise<number> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/list', { limit: 0 }, session, options.signal,
+    )
+    return Math.max(0, numberValue(data.total ?? data.total_count))
   }
 
   async createBot(
@@ -296,7 +325,7 @@ export class BotService {
     const rawStatus = stringValue(raw.status).trim()
     const status: ArkmeBotStatus = rawStatus === 'online' || rawStatus === 'offline' ? rawStatus : 'unknown'
     return {
-      botRef: await this.sealBotRef(userId, botId),
+      botRef: this.sealBotRef(userId, botId, provider),
       name,
       provider,
       description: stringValue(raw.description).trim(),
@@ -306,36 +335,72 @@ export class BotService {
     }
   }
 
-  private async sealBotRef(userId: number, botId: string): Promise<string> {
-    const payload = encodeOpaqueJson({ version: 1, userId, botId } satisfies ArkmeBotRefPayload)
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
-    return `arkme-bot-v1.${payload}.${signature}`
+  private sealBotRef(userId: number, botId: string, provider: 'openclaw' | 'webhook'): string {
+    this.pruneBotRefs()
+    const key = `${String(userId)}\u0000${provider}\u0000${botId}`
+    const existingRef = this.botRefByKey.get(key)
+    const existing = existingRef === undefined ? undefined : this.botRefs.get(existingRef)
+    if (existing !== undefined) {
+      this.botRefs.set(existingRef!, {
+        ...existing,
+        expiresAtMillis: this.now() + (this.refOptions.ttlMillis ?? BOT_REF_TTL_MILLIS),
+      })
+      return existingRef!
+    }
+    const botRef = `arkme-bot-v2.${(this.refOptions.randomId ?? randomUUID)()}`
+    this.botRefs.set(botRef, {
+      version: 2,
+      userId,
+      botId,
+      provider,
+      key,
+      expiresAtMillis: this.now() + (this.refOptions.ttlMillis ?? BOT_REF_TTL_MILLIS),
+    })
+    this.botRefByKey.set(key, botRef)
+    this.pruneBotRefs()
+    return botRef
   }
 
   async openBotRef(botRef: string, expectedUserId: number): Promise<ArkmeBotRefPayload> {
-    const parts = botRef.trim().split('.')
-    if (parts.length !== 3 || parts[0] !== 'arkme-bot-v1') {
+    const normalized = botRef.trim()
+    if (!BOT_REF_PATTERN.test(normalized)) {
       throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false)
     }
-    const payload = parts[1] ?? ''
-    const supplied = Buffer.from(parts[2] ?? '', 'base64url')
-    const expected = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest()
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false)
+    const entry = this.botRefs.get(normalized)
+    if (entry === undefined) {
+      throw new ArkmePluginError('bot-ref-expired', 'Bot 引用已过期，请刷新 Bot 列表', false, 410)
     }
-    let raw: Record<string, unknown>
-    try { raw = objectValue(decodeOpaqueJson(payload)) }
-    catch (error) {
-      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用无效', false, 400, { cause: error })
+    if (entry.expiresAtMillis <= this.now()) {
+      this.deleteBotRef(normalized, entry)
+      throw new ArkmePluginError('bot-ref-expired', 'Bot 引用已过期，请刷新 Bot 列表', false, 410)
     }
-    const reference: ArkmeBotRefPayload = {
-      version: 1,
-      userId: numberValue(raw.userId),
-      botId: stringValue(raw.botId).trim(),
+    if (entry.userId !== expectedUserId) {
+      throw new ArkmePluginError('bot-ref-account-mismatch', 'Bot 引用与当前账号不匹配', false, 403)
     }
-    if (raw.version !== 1 || reference.userId !== expectedUserId || reference.botId === '') {
-      throw new ArkmePluginError('bot-ref-invalid', 'Bot 引用与当前账号不匹配', false, 403)
+    const { expiresAtMillis: _expiresAtMillis, key: _key, ...reference } = entry
+    return { ...reference }
+  }
+
+  private pruneBotRefs(): void {
+    const now = this.now()
+    for (const [ref, entry] of this.botRefs) {
+      if (entry.expiresAtMillis <= now) this.deleteBotRef(ref, entry)
     }
-    return reference
+    const cap = this.refOptions.maxEntries ?? BOT_REF_CAP
+    while (this.botRefs.size > cap) {
+      const oldest = this.botRefs.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.deleteBotRef(oldest)
+    }
+  }
+
+  private deleteBotRef(ref: string, knownEntry?: ArkmeBotRefEntry): void {
+    const entry = knownEntry ?? this.botRefs.get(ref)
+    if (entry !== undefined && this.botRefByKey.get(entry.key) === ref) this.botRefByKey.delete(entry.key)
+    this.botRefs.delete(ref)
+  }
+
+  private now(): number {
+    return (this.refOptions.now ?? Date.now)()
   }
 }

@@ -1,0 +1,21 @@
+<svg width="140" height="100" viewBox="0 0 140 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g clip-path="url(#contact-world-empty-clip)">
+    <g opacity="0.5">
+      <ellipse opacity="0.1" cx="70.5" cy="96" rx="69.5" ry="30.5" fill="url(#contact-world-empty-shadow)"/>
+      <ellipse cx="71" cy="78" rx="24" ry="1.5" fill="#E6E6E6"/>
+      <rect opacity="0.21" x="39.6875" y="15" width="63.7195" height="51.6463" rx="5" fill="url(#contact-world-empty-back)"/>
+      <path d="M42.2865 20.1953H54.6888C56.3023 20.1953 57.8344 20.9038 58.8794 22.1332L60.9867 24.6123C62.2217 26.0653 64.0324 26.9026 65.9393 26.9026H100.527C103.647 26.9026 106.143 29.4958 106.023 32.614L104.808 64.2116C104.694 67.1647 102.267 69.5002 99.3117 69.5002H44.0741C41.1362 69.5002 38.717 67.1913 38.5801 64.2566L36.7925 25.9517C36.6462 22.8169 39.1483 20.1953 42.2865 20.1953Z" fill="url(#contact-world-empty-folder)" stroke="url(#contact-world-empty-stroke)" stroke-linecap="round"/>
+      <circle opacity="0.3" cx="114.5" cy="16.5" r="7" fill="url(#contact-world-empty-dot)"/>
+      <circle opacity="0.5" cx="29.5" cy="39.5" r="4" fill="url(#contact-world-empty-dot)"/>
+      <circle opacity="0.5" cx="33.5" cy="8.5" r="3" fill="url(#contact-world-empty-dot)"/>
+    </g>
+  </g>
+  <defs>
+    <linearGradient id="contact-world-empty-shadow" x1="70.5" y1="65.5" x2="70.5" y2="96.5" gradientUnits="userSpaceOnUse"><stop/><stop offset="1" stop-opacity="0"/></linearGradient>
+    <linearGradient id="contact-world-empty-back" x1="71.5" y1="15" x2="71.5" y2="42" gradientUnits="userSpaceOnUse"><stop/><stop offset="1" stop-opacity="0"/></linearGradient>
+    <linearGradient id="contact-world-empty-folder" x1="71.4" y1="19.7" x2="71.4" y2="70" gradientUnits="userSpaceOnUse"><stop stop-color="#A4A4A4"/><stop offset="1" stop-color="#D2D2D2"/></linearGradient>
+    <linearGradient id="contact-world-empty-stroke" x1="71.4" y1="19.7" x2="71.4" y2="70" gradientUnits="userSpaceOnUse"><stop stop-opacity="0.08"/><stop offset="1" stop-opacity="0"/></linearGradient>
+    <linearGradient id="contact-world-empty-dot" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#A4A4A4"/><stop offset="1" stop-color="#C2C2C2"/></linearGradient>
+    <clipPath id="contact-world-empty-clip"><rect width="140" height="100" fill="white"/></clipPath>
+  </defs>
+</svg>

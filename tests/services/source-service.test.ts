@@ -36,4 +36,53 @@ describe('SourceService', () => {
       },
     })
   })
+
+  it('does not join concurrent root and group-only reads or share their failure state', async () => {
+    const activeSession = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const sessions: ArkmeSessionStore = {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    }
+    let releaseRequests = (): void => {}
+    const requestGate = new Promise<void>(resolve => { releaseRequests = resolve })
+    const listBodies: Array<Record<string, unknown>> = []
+    const fetchImpl = vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (path === '/api/v1/chats/group-avatar-snapshots') {
+        return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+      }
+      if (path !== '/api/v1/chats/list') throw new Error(`unexpected path: ${path}`)
+      listBodies.push(body)
+      await requestGate
+      if (body.session_kind !== 2) {
+        return new Response(JSON.stringify({ code: 500, message: 'root unavailable' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 200, data: {
+        items: [{ session: { chat_session_uid: 'group-1', session_kind: 2, title: '项目群' } }],
+        has_more: false,
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const rootRead = service.listSources('root', { refresh: true })
+    const groupRead = service.listGroupSources({ refresh: true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    releaseRequests()
+    const [rootResult, groupResult] = await Promise.allSettled([rootRead, groupRead])
+
+    expect(rootResult.status).toBe('rejected')
+    expect(groupResult).toMatchObject({
+      status: 'fulfilled', value: { items: [{ kind: 'group_chat', displayName: '项目群' }] },
+    })
+    expect(listBodies).toEqual([
+      { limit: 30 },
+      { limit: 30, session_kind: 2 },
+    ])
+  })
 })

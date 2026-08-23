@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 
 describe('ArkmeUiController', () => {
+  it('clears Contacts mode on every non-Contacts route and authenticated account reset', () => {
+    const controller = new ArkmeUiController()
+
+    controller.showContacts()
+    controller.showContactAdd()
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+
+    controller.showContacts()
+    controller.openExtensionShare('extension:share')
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+
+    controller.showContacts()
+    controller.authChanged(true)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+  })
+
   it('opens voiceprint management as its own utility surface', () => {
     const controller = new ArkmeUiController()
     controller.authChanged(true)
