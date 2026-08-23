@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
@@ -62,5 +62,11 @@ export class PluginUpdateInstallStateStore {
     await securePrivateFile(temporary)
     await rename(temporary, this.path)
     await securePrivateFile(this.path)
+  }
+
+  async clear(): Promise<void> {
+    await unlink(this.path).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    })
   }
 }

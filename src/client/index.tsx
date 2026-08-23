@@ -228,6 +228,7 @@ export {
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
+export { ArkmePluginUpdateDialog } from './ArkmePluginUpdateDialog.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export {

@@ -18,6 +18,7 @@ import {
   type PluginUpdateManifestV1,
 } from './plugin-update-artifact.js'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
+import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from './plugin-update-policy.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
@@ -39,6 +40,7 @@ const STARTUP_JITTER_MIN_MS = 5_000
 const STARTUP_JITTER_SPAN_MS = 25_000
 const LOCAL_DEVELOPMENT_SPEC = /^(?:link:|file:)/
 const ACTIVE_INSTALL_PHASES = new Set(['preparing', 'downloading', 'verifying', 'installing', 'restarting'])
+const TERMINAL_INSTALL_PHASES = new Set(['succeeded', 'failed', 'rolled-back'])
 const execFileAsync = promisify(execFile)
 
 function localPackageSpecPath(spec: string, profileDirectory: string): string | undefined {
@@ -274,7 +276,16 @@ export class ArkmePluginUpdateManager {
   }
 
   async installStatus(): Promise<ArkmePluginUpdateInstallSnapshot | undefined> {
-    return await this.installStore.read()
+    const install = await this.installStore.read()
+    if (install === undefined || !TERMINAL_INSTALL_PHASES.has(install.phase)) return install
+    const update = await this.status({ refreshIfStale: false })
+    const expired = this.now() - install.updatedAtMillis > PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS
+    const targetsOlderUpdate = update.latestVersion !== undefined && install.targetVersion !== update.latestVersion
+    if (expired || targetsOlderUpdate) {
+      await this.installStore.clear()
+      return undefined
+    }
+    return install
   }
 
   async install(): Promise<ArkmePluginUpdateInstallSnapshot> {

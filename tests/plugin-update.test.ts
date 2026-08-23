@@ -8,6 +8,7 @@ import {
   readInstalledPluginVersion,
   validatePluginUpdateServiceOrigin,
 } from '../src/plugin-update.js'
+import { PluginUpdateInstallStateStore } from '../src/plugin-update-install-state.js'
 const artifactUrl = 'https://releases.jotmo.test/arkme-releases/plugin/0.1.4/dsh-arkme-0.1.4.tgz'
 
 function updateResponse(version = '0.1.4'): Response {
@@ -58,6 +59,80 @@ describe('plugin update metadata', () => {
 })
 
 describe('ArkmePluginUpdateManager', () => {
+  it('clears a terminal install result for an older update target', async () => {
+    const now = 1_000_000
+    const { value, root } = await manager({ now: () => now })
+    await value.check({ manual: true })
+    await new PluginUpdateInstallStateStore(root).write({
+      schemaVersion: 1,
+      jobId: 'old-update',
+      phase: 'rolled-back',
+      previousVersion: '0.1.2',
+      targetVersion: '0.1.3',
+      message: '已恢复旧版本文件，正在由 Arkme 重启 DSH…',
+      updatedAtMillis: now,
+    })
+
+    await expect(value.installStatus()).resolves.toBeUndefined()
+    await expect(readFile(join(root, 'plugin-update-install-state.json'), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('clears a terminal install result after ten minutes', async () => {
+    const now = 1_000_000
+    const { value, root } = await manager({ now: () => now })
+    await value.check({ manual: true })
+    await new PluginUpdateInstallStateStore(root).write({
+      schemaVersion: 1,
+      jobId: 'expired-update',
+      phase: 'failed',
+      previousVersion: '0.1.3',
+      targetVersion: '0.1.4',
+      message: '新版本安装失败，已自动恢复旧版本。',
+      updatedAtMillis: now - 10 * 60_000 - 1,
+    })
+
+    await expect(value.installStatus()).resolves.toBeUndefined()
+    await expect(readFile(join(root, 'plugin-update-install-state.json'), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps a recent terminal result for the current update target', async () => {
+    const now = 1_000_000
+    const { value, root } = await manager({ now: () => now })
+    await value.check({ manual: true })
+    const currentRollback = {
+      schemaVersion: 1 as const,
+      jobId: 'current-rollback',
+      phase: 'rolled-back' as const,
+      previousVersion: '0.1.3',
+      targetVersion: '0.1.4',
+      message: '新版本安装失败，已自动恢复旧版本。',
+      updatedAtMillis: now,
+    }
+    await new PluginUpdateInstallStateStore(root).write(currentRollback)
+
+    await expect(value.installStatus()).resolves.toEqual(currentRollback)
+  })
+
+  it('keeps an active install regardless of its age or target', async () => {
+    const now = 1_000_000
+    const { value, root } = await manager({ now: () => now })
+    await value.check({ manual: true })
+    const activeInstall = {
+      schemaVersion: 1 as const,
+      jobId: 'active-install',
+      phase: 'installing' as const,
+      previousVersion: '0.1.2',
+      targetVersion: '0.1.3',
+      message: '正在安装 0.1.3…',
+      updatedAtMillis: 1,
+    }
+    await new PluginUpdateInstallStateStore(root).write(activeInstall)
+
+    await expect(value.installStatus()).resolves.toEqual(activeInstall)
+  })
+
   it('checks the Jotmo private update endpoint with app/dsh/current version query params', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input))

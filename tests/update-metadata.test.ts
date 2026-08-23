@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('published update metadata', () => {
-  it('keeps the current release metadata unchanged while update transport moves off npm', () => {
+  it('describes the 0.1.16 plugin release', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       name: string
       version: string
