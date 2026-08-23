@@ -29,7 +29,10 @@ const styles: Record<string, CSSProperties> = {
   taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
   workspace: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
-    overflow: 'hidden', background: '#fff',
+    overflow: 'hidden', background: '#fff', position: 'relative',
+  },
+  conversationLayer: {
+    position: 'absolute', inset: 0, minWidth: 0, minHeight: 0,
   },
   details: { width: 0, height: 0, overflow: 'hidden' },
 }
@@ -221,18 +224,28 @@ export function ArkmePersistentWorkspace({
 
   return <main data-arkme-owned="persistent-workspace" data-arkme-workspace style={styles.workspace} aria-label="Arkme 主界面">
     <ArkmePersistentClientRuntime />
-    {ui.mode === 'harness'
-      ? <DeepSeekHarnessSurface />
-      : ui.mode === 'settings'
+    <DeepSeekHarnessSurface visible={ui.mode === 'harness'} />
+    {ui.mode === 'settings'
       ? <div className="arkme-redesign-route-surface arkme-redesign-settings-page">
         <ArkmeSettingsSurface />
       </div>
-      : <ArkmeSurface
-        productChrome={false}
-        productNavigation={false}
-        currentSessionId={sessionId}
-        onActivateSurface={() => undefined}
-      />}
+      : <div
+        data-arkme-owned="arkme-conversation-layer"
+        style={{
+          ...styles.conversationLayer,
+          visibility: ui.mode === 'harness' ? 'hidden' : 'visible',
+          pointerEvents: ui.mode === 'harness' ? 'none' : 'auto',
+          zIndex: ui.mode === 'harness' ? 0 : 1,
+        }}
+        aria-hidden={ui.mode === 'harness' ? true : undefined}
+      >
+        <ArkmeSurface
+          productChrome={false}
+          productNavigation={false}
+          currentSessionId={sessionId}
+          onActivateSurface={() => undefined}
+        />
+      </div>}
   </main>
 }
 

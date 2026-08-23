@@ -88,6 +88,8 @@ describe('Arkme persistent DSH shell', () => {
 
     expect(markup).toContain('data-arkme-owned="persistent-workspace"')
     expect(markup).toContain('data-arkme-owned="product-surface"')
+    expect(markup).toContain('data-arkme-owned="deepseek-harness-surface"')
+    expect(markup).toContain('data-arkme-visible="false"')
     expect(markup).not.toContain('data-arkme-owned="product-navigation"')
     expect(markup).not.toContain('workspace-card')
     expect(markup).not.toContain('position:fixed')
@@ -106,7 +108,10 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-owned="persistent-workspace"')
     expect(markup).toContain('data-arkme-owned="deepseek-harness-surface"')
     expect(markup).toContain('src="/?arkme-harness-embed=1"')
-    expect(markup).not.toContain('data-arkme-owned="product-surface"')
+    expect(markup).toContain('data-arkme-visible="true"')
+    expect(markup).toContain('data-arkme-owned="product-surface"')
+    expect(markup).toContain('data-arkme-owned="arkme-conversation-layer"')
+    expect(markup).toContain('aria-hidden="true"')
     arkmeUi.showConversations()
   })
 
