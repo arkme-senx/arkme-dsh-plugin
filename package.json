@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -59,7 +59,7 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.16 更新",
+      "title": "Arkme 插件 0.1.17 更新",
       "summary": "恢复通话历史入口与记录浏览体验，补充通话记录详情、联系人操作和演示音频资源。",
       "publishedAt": "2026-08-22T10:46:46.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
