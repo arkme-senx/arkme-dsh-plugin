@@ -9,12 +9,25 @@ const productNavigationSource = readFileSync(
   new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url),
   'utf8',
 )
+const rootFrameSource = readFileSync(
+  new URL('../src/client/redesign/ArkmeRootFrame.tsx', import.meta.url),
+  'utf8',
+)
 
 describe('Arkme product navigation', () => {
   it('opens voiceprint management from the profile menu without removing the account entry', () => {
     expect(productNavigationSource).toContain('arkmeUi.showVoiceprint()')
     expect(productNavigationSource).toContain('<strong>声纹管理</strong>')
     expect(productNavigationSource).toContain('<strong>我的账户</strong>')
+  })
+
+  it('dismisses the profile menu when pressing Escape or clicking outside it in every desktop layout', () => {
+    for (const source of [productNavigationSource, rootFrameSource]) {
+      expect(source).toContain("document.addEventListener('pointerdown', dismiss, true)")
+      expect(source).toContain("document.addEventListener('keydown', dismissOnEscape)")
+      expect(source).toContain('profileTriggerRef.current?.contains(event.target)')
+      expect(source).toContain('profilePopoverRef.current?.contains(event.target)')
+    }
   })
 
   it('renders only inside an explicitly Arkme-owned boundary', () => {

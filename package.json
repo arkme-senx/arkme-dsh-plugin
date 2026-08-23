@@ -60,7 +60,7 @@
       "schemaVersion": 1,
       "level": "normal",
       "title": "Arkme 插件 0.1.18 更新",
-      "summary": "优化对话列表加载反馈与首屏布局，修复会话目录首次加载和刷新提示体验。",
+      "summary": "优化对话列表加载反馈与首屏布局，修复会话目录首次加载，并支持个人菜单点击外部区域收起。",
       "publishedAt": "2026-08-23T10:43:10.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }

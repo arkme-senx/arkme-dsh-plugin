@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
@@ -138,6 +138,8 @@ export function ArkmeProductNavigation({
   const [profileOpen, setProfileOpen] = useState(false)
   const [pluginUpdateOpen, setPluginUpdateOpen] = useState(false)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
+  const profileTriggerRef = useRef<HTMLButtonElement>(null)
+  const profilePopoverRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (authState.auth?.status !== 'authenticated') { setProfile(undefined); return }
     let active = true
@@ -150,6 +152,23 @@ export function ArkmeProductNavigation({
       .catch(() => undefined)
     return () => { active = false; controller.abort() }
   }, [authState.auth?.status, authState.auth?.status === 'authenticated' ? authState.auth.userId : undefined])
+  useEffect(() => {
+    if (!profileOpen) return
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return
+      if (profileTriggerRef.current?.contains(event.target) || profilePopoverRef.current?.contains(event.target)) return
+      setProfileOpen(false)
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileOpen(false)
+    }
+    document.addEventListener('pointerdown', dismiss, true)
+    document.addEventListener('keydown', dismissOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true)
+      document.removeEventListener('keydown', dismissOnEscape)
+    }
+  }, [profileOpen])
   const activeId = ui.mode === 'settings' || ui.mode === 'login' ? undefined
     : ui.calendarOpen === true ? 'calendar'
     : ui.mode === 'extensions' ? 'extensions'
@@ -255,7 +274,7 @@ export function ArkmeProductNavigation({
         document.body,
       )}
       {!compact && authState.auth?.status === 'authenticated' && <div className="arkme-redesign-rail-footer">
-        {profileOpen && typeof document !== 'undefined' && createPortal(<div className="arkme-redesign-profile-popover" role="menu" aria-label="个人菜单">
+        {profileOpen && typeof document !== 'undefined' && createPortal(<div ref={profilePopoverRef} className="arkme-redesign-profile-popover" role="menu" aria-label="个人菜单">
           <div className="arkme-redesign-profile-head">
             <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label="当前用户头像" />
             <span><strong>{profile?.displayName || profile?.nickname || 'Arkme 用户'}</strong><small>{profile?.arkmeId ? `@${profile.arkmeId}` : 'Arkme 账号'}</small></span>
@@ -267,7 +286,7 @@ export function ArkmeProductNavigation({
             <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>设置</strong><small>打开 DSH 应用设置</small></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
-        <button type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" onClick={() => { setProfileOpen(value => !value) }}>
+        <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" onClick={() => { setProfileOpen(value => !value) }}>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={32} label="当前用户头像" />
         </button>
       </div>}
