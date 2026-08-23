@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -59,9 +59,9 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.19 更新",
-      "summary": "优化个人菜单体验：支持点击外部区域或按 Esc 收起，并移除无状态的头像灰点。",
-      "publishedAt": "2026-08-23T11:07:17.000Z",
+      "title": "Arkme 插件 0.1.20 更新",
+      "summary": "DeepSeek Harness 现会优先预热，切换回来无需重复加载。",
+      "publishedAt": "2026-08-23T12:33:00.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },
