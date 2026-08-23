@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -59,9 +59,9 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.18 更新",
-      "summary": "优化对话列表加载反馈与首屏布局，修复会话目录首次加载，并支持个人菜单点击外部区域收起。",
-      "publishedAt": "2026-08-23T10:43:10.000Z",
+      "title": "Arkme 插件 0.1.19 更新",
+      "summary": "优化个人菜单体验：支持点击外部区域或按 Esc 收起，并移除无状态的头像灰点。",
+      "publishedAt": "2026-08-23T11:07:17.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },
