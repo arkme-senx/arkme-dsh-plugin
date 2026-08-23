@@ -13,6 +13,7 @@ interface ArkmeChatDirectoryStoreOptions {
 export interface ArkmeChatDirectorySnapshot {
   revision: number
   sources: ArkmeSourceItem[]
+  baselineReady: boolean
 }
 
 export interface ArkmeChatDirectorySourceUpdate {
@@ -193,7 +194,7 @@ function applyDirectoryMutations(
 }
 
 export class ArkmeChatDirectoryStore {
-  private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [] }
+  private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [], baselineReady: false }
   private readonly listeners = new Set<() => void>()
   private readonly loadPage: (cursor?: string, force?: boolean) => Promise<ArkmeSourceList>
   private readonly maxAgeMs: number
@@ -237,7 +238,7 @@ export class ArkmeChatDirectoryStore {
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady) this.commit([])
   }
 
   async refreshRoot(options: { force?: boolean } = {}): Promise<ArkmeSourceItem[]> {
@@ -285,7 +286,11 @@ export class ArkmeChatDirectoryStore {
   }
 
   private commit(sources: ArkmeSourceItem[]): void {
-    this.snapshot = { revision: this.snapshot.revision + 1, sources: [...sources] }
+    this.snapshot = {
+      revision: this.snapshot.revision + 1,
+      sources: [...sources],
+      baselineReady: this.baselineReady,
+    }
     for (const listener of this.listeners) listener()
   }
 
@@ -441,7 +446,7 @@ export class ArkmeChatDirectoryStore {
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady) this.commit([])
   }
 
   private combinedReadWatermarks(): Map<string, ArkmeChatReadWatermark> {

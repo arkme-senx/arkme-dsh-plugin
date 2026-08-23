@@ -14,14 +14,14 @@ describe('ArkmeChatDirectoryStore', () => {
     }
 
     store.publish([source])
-    expect(store.getSnapshot()).toEqual({ revision: 1, sources: [source] })
+    expect(store.getSnapshot()).toEqual({ revision: 1, sources: [source], baselineReady: true })
     expect(listener).toHaveBeenCalledOnce()
 
     store.upsert({ ...source, unreadCount: 3, activeAtMillis: 2 })
     expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 3, activeAtMillis: 2 })
 
     store.clear()
-    expect(store.getSnapshot()).toEqual({ revision: 3, sources: [] })
+    expect(store.getSnapshot()).toEqual({ revision: 3, sources: [], baselineReady: false })
   })
 
   it('keeps stable server order for unread-only updates and equal activity times', () => {
@@ -87,13 +87,14 @@ describe('ArkmeChatDirectoryStore', () => {
     store.upsert(latestRealtime)
     expect(store.unreadCount('source-2')).toBe(2)
     store.updateReadAck('source-1', 'chat:source-1', 10, 0)
-    expect(store.getSnapshot()).toEqual({ revision: 0, sources: [] })
+    expect(store.getSnapshot()).toEqual({ revision: 0, sources: [], baselineReady: false })
     expect(listener).not.toHaveBeenCalled()
 
     store.publish([baseline])
     expect(store.getSnapshot()).toEqual({
       revision: 1,
       sources: [latestRealtime, { ...baseline, unreadCount: 0 }],
+      baselineReady: true,
     })
     expect(listener).toHaveBeenCalledOnce()
   })

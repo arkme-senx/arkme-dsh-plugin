@@ -56,6 +56,8 @@ export function ArkmePersistentClientRuntime() {
     const refreshUnread = async (force = false) => {
       await arkmeChatDirectory.refreshRoot({ force })
     }
+    // Establish the directory baseline before a navigation surface happens to mount.
+    void refreshUnread().catch(() => undefined)
     const events = new EventSource('/arkme-self/api/events')
     events.onopen = () => {
       void reconcileArkmeProviderInstance()
