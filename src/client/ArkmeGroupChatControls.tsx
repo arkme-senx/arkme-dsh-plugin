@@ -895,6 +895,14 @@ export function ArkmeGroupChatControls(props: {
   const [selfStatus, setSelfStatus] = useState<ArkmeGroupSettingsSnapshot['selfStatus']>('unknown')
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
 
+  useEffect(() => {
+    setMembersOpen(false)
+    setInviteOpen(false)
+    setAddMembersOpen(false)
+    setSettingsOpen(false)
+    setRenameOpen(false)
+  }, [props.source.sourceRef])
+
   const settingsLoaded = useCallback((settings: Pick<ArkmeGroupSettingsSnapshot, 'selfRole' | 'selfStatus'>) => {
     setSelfRole(settings.selfRole)
     setSelfStatus(settings.selfStatus)
