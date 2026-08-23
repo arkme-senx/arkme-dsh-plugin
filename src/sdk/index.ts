@@ -36,6 +36,7 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
@@ -55,6 +56,7 @@ import type {
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
@@ -702,6 +704,19 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
     }, options.signal)
+  }
+
+  /** Open or reuse a private chat with a non-self World author from an unchanged authorRef. */
+  async openWorldAuthorPrivateChat(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    if (authorRef.trim() === '') throw new TypeError('Arkme World author reference must not be empty')
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.world.private.open', { authorRef }, signal)
+  }
+
+  /** Resolve viewer-local labels for visible World authors without exposing their user IDs. */
+  async worldAuthorLabels(authorRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
+    const normalized = [...new Set(authorRefs.map(value => value.trim()).filter(value => value !== ''))]
+    if (normalized.length === 0) return []
+    return await this.call<ArkmeWorldAuthorLabel[]>('world.author-labels', { authorRefs: normalized.slice(0, 20) }, signal)
   }
 
   async worldVoiceprintPlaybackAvailability(

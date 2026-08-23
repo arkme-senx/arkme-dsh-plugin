@@ -19,6 +19,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_contact_add',
   'arkme_group_create',
   'arkme_world_voiceprint_invite',
+  'arkme_world_private_chat_open',
   'arkme_voiceprint_invite',
   'arkme_voiceprint_recognized_person_invite',
   'arkme_voiceprint_revoke',
@@ -72,6 +73,9 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   }
   if (name === 'arkme_world_voiceprint_invite') {
     return '是否确认给这条世界动态的发布者发送一条私聊，邀请对方开启声纹？'
+  }
+  if (name === 'arkme_world_private_chat_open') {
+    return '是否确认打开与这条世界动态作者的私聊？'
   }
   if (name === 'arkme_voiceprint_invite') {
     return '是否确认生成一条 24 小时有效的声纹播放授权邀请链接？链接会显示给你，但不会自动发送给任何人。'

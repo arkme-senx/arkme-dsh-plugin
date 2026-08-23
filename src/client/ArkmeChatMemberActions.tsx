@@ -7,6 +7,7 @@ import type {
   ArkmeConversationMemberItem,
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
+  ArkmeGroupAvatarFallback,
   ArkmeSourceItem,
   ArkmeTimelineItem,
 } from '../types.js'
@@ -278,7 +279,7 @@ export function ArkmeMemberActionMenu(props: {
 }
 
 export function ArkmeMemberProfileCard(props: {
-  member: ArkmeConversationMemberItem
+  member: ArkmeConversationMemberItem & { avatarFallback?: ArkmeGroupAvatarFallback }
   busy: boolean
   onClose: () => void
   onSend: () => void
@@ -314,6 +315,7 @@ export function ArkmeMemberProfileCard(props: {
       {backdrop !== '' && <div aria-hidden style={{ ...styles.cardBackdrop, backgroundImage: `url(${JSON.stringify(backdrop).slice(1, -1)})` }} />}
       <div style={styles.cardContent}>
         <ArkmeUserAvatar {...(props.member.avatarRef === undefined ? {} : { avatarRef: props.member.avatarRef })}
+          {...(props.member.avatarFallback === undefined ? {} : { fallback: props.member.avatarFallback })}
           size={100} label={`${props.member.displayName} 的头像`} />
         <h3 style={styles.cardName}>{props.member.displayName}</h3>
         <button

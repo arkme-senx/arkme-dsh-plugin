@@ -689,6 +689,7 @@ export function ArkmeNavigation({
   const avatarCacheUserIdRef = useRef<number | undefined>(initialCache?.userId)
   const directoryRequestAbortRef = useRef<AbortController>()
   const topicCreateRequestRef = useRef(false)
+  const rootRowElementsRef = useRef(new Map<string, HTMLButtonElement>())
   const topicRowElementsRef = useRef(new Map<string, HTMLDivElement>())
   const createdHighlightTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const createdHighlightFramesRef = useRef<number[]>([])
@@ -972,6 +973,21 @@ export function ArkmeNavigation({
     })
   }, [sources, ui.selectedSource])
   useEffect(() => {
+    if (directory !== 'root' || activeDirectoryEntryId !== undefined || ui.mode !== 'source' || ui.selectedSource === undefined
+      || typeof window === 'undefined') return
+    const element = rootRowElementsRef.current.get(ui.selectedSource.sourceRef)
+    if (element === undefined) return
+    const listElement = element.parentElement
+    const alreadyVisible = listElement !== null && isTopicRowFullyVisible(
+      element.getBoundingClientRect(),
+      listElement.getBoundingClientRect(),
+    )
+    if (!alreadyVisible) {
+      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+      element.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' })
+    }
+  }, [activeDirectoryEntryId, directory, rootSources, ui.mode, ui.selectedSource])
+  useEffect(() => {
     if (directory !== 'send_to_self' || pendingRevealSourceRef === undefined || typeof window === 'undefined') return
     const element = topicRowElementsRef.current.get(pendingRevealSourceRef)
     if (element === undefined) return
@@ -1243,6 +1259,10 @@ export function ArkmeNavigation({
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
+            ref={node => {
+              if (node === null) rootRowElementsRef.current.delete(source.sourceRef)
+              else rootRowElementsRef.current.set(source.sourceRef, node)
+            }}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
           >
             <ArkmeSourceAvatar

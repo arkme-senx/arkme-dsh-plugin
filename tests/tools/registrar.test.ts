@@ -111,6 +111,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_user',
       'arkme_world_voiceprint_social_context',
       'arkme_world_voiceprint_invite',
+      'arkme_world_private_chat_open',
       'arkme_voiceprint_status',
       'arkme_voiceprint_grants',
       'arkme_voiceprint_recognized_people',

@@ -1640,6 +1640,10 @@ export function ArkmeSurface({
 
   const detailItem = items.find(item => item.itemUid === detailItemUid)
   const activateSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
+    // The directory owns the middle conversation list. Update it before selecting
+    // the source so sources opened outside that list (for example, from World)
+    // have an entry to select immediately instead of waiting for its cached refresh.
+    arkmeChatDirectory.upsert(nextSource)
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
@@ -2003,6 +2007,7 @@ export function ArkmeSurface({
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
             onBackToWorld={() => { arkmeUi.showWorld() }}
+            onSourceActivated={activateSource}
           />
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface /></div>
           : ui.mode === 'extensions' ? <ArkmeMarketplace

@@ -27,6 +27,7 @@ import {
   worldInteractionThreads,
   type ArkmeWorldViewState,
 } from '../src/client/ArkmeWorldSurface.js'
+import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import type { ArkmeWorldFeedItem, ArkmeWorldInteractionItem } from '../src/types.js'
 
 const noop = () => {}
@@ -162,6 +163,43 @@ describe('Arkme native World surface', () => {
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')
     expect(refreshFailure).toContain('世界正文')
+  })
+
+  it('makes non-self World authors open the same profile-card flow used by group members', () => {
+    const authorMarkup = render({ status: 'success', items: [{ ...item, authorRef: 'opaque-world-author-ref' }] })
+    expect(authorMarkup).toContain('aria-label="查看陈一涵的用户卡片"')
+
+    const ownMarkup = render({ status: 'success', items: [item] })
+    expect(ownMarkup).not.toContain('aria-label="查看陈一涵的用户卡片"')
+
+    const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
+    expect(source).toContain("import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'")
+    expect(source).toContain("'chat.world.private.open'")
+    expect(source).toContain('onSourceActivated?.(result.source)')
+  })
+
+  it('publishes a World-opened private chat to the shared directory before selecting it', () => {
+    const sidebar = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+    const workspace = readFileSync(new URL('../src/client/ArkmeVirtualWorkspace.tsx', import.meta.url), 'utf8')
+
+    const activateSource = sidebar.slice(sidebar.indexOf('const activateSource = useCallback'), sidebar.indexOf('const conversationMemberByRef'))
+    expect(activateSource.indexOf('arkmeChatDirectory.upsert(nextSource)')).toBeGreaterThanOrEqual(0)
+    expect(activateSource.indexOf('arkmeChatDirectory.upsert(nextSource)')).toBeLessThan(activateSource.indexOf('arkmeUi.selectSource(nextSource)'))
+    expect(workspace).toContain('rootRowElementsRef')
+    expect(workspace).toContain("element.scrollIntoView?.({ block: 'nearest'")
+  })
+
+  it('uses the World phone-default avatar in the reused profile card', () => {
+    const markup = renderToStaticMarkup(<ArkmeMemberProfileCard
+      member={{
+        memberRef: 'opaque-world-author-ref', displayName: '小王', role: 'member', status: 'active',
+        isSelf: false, isOwner: false, joinedAtMillis: 0, recordCount: 0, mentionCount: 0,
+        avatarFallback: { kind: 'phone_default', colorIndex: 3, label: '61' },
+      }}
+      busy={false} onClose={noop} onSend={noop}
+    />)
+    expect(markup).toContain('aria-label="小王 的头像"')
+    expect(markup).toContain('>61</span>')
   })
 
   it('renders mobile-compatible emoji tokens in world posts and comments', () => {
