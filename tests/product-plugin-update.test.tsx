@@ -87,8 +87,8 @@ describe('Arkme product plugin update entry', () => {
       <productNavigation.ArkmeProductNavigation compact={false} currentSessionId="session-1" />,
     )
 
-    expect(markup).toContain('data-arkme-plugin-version="0.1.17"')
-    expect(markup).toContain('>v0.1.17</span>')
+    expect(markup).toContain('data-arkme-plugin-version="0.1.18"')
+    expect(markup).toContain('>v0.1.18</span>')
   })
 
   it('presents release content and the confirmed update-and-restart action in the dialog', () => {
