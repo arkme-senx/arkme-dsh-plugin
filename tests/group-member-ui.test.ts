@@ -45,5 +45,8 @@ describe('group member add UI', () => {
     expect(source).toContain("action('save', '保存', saveQr, qrUrl === '' || saving, saving)")
     expect(source).toContain("callArkme<ArkmeGroupInvitePreview>('group.invite-preview'")
     expect(source).toContain('{member.recordCount}条快记')
+    expect(source).toContain('drawerScrim')
+    expect(source).toContain('onPointerDown={event => { event.preventDefault(); props.onClose() }}')
+    expect(source).toContain("window.addEventListener('keydown', dismissOnEscape)")
   })
 })
