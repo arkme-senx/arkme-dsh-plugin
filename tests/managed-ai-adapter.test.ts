@@ -8,6 +8,7 @@ import {
   ARKME_MANAGED_MODEL,
   ARKME_MANAGED_PROVIDER,
   createManagedAiLlmAdapter,
+  localizeManagedAiError,
   registerManagedAiProvider,
 } from '../src/managed-ai/adapter.js'
 import { SecretValue } from '../src/secret-value.js'
@@ -181,6 +182,88 @@ describe('Arkme managed model adapter', () => {
     }
   })
 
+  it.each([
+    {
+      code: 'QUOTA', status: 402,
+      expectedCode: 'INSUFFICIENT_BALANCE',
+      expectedMessage: 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试',
+    },
+    {
+      code: 'AUTH', status: 401,
+      expectedCode: 'AUTH',
+      expectedMessage: '请先登录或重新登录 Arkme 后再使用托管模型',
+    },
+    {
+      code: 'RATE_LIMIT', status: 429,
+      expectedCode: 'RATE_LIMIT',
+      expectedMessage: 'Arkme AI 请求过于频繁，请稍后重试',
+    },
+    {
+      code: 'TIMEOUT', status: 504,
+      expectedCode: 'TIMEOUT',
+      expectedMessage: 'Arkme AI 响应超时，请稍后重试',
+    },
+    {
+      code: 'TRANSPORT',
+      expectedCode: 'TRANSPORT',
+      expectedMessage: '无法连接 Arkme AI 服务，请检查网络后重试',
+    },
+    {
+      code: 'CONTEXT_WINDOW_EXCEEDED', status: 400,
+      expectedCode: 'CONTEXT_WINDOW_EXCEEDED',
+      expectedMessage: '对话内容过长，请新建对话或减少上下文后重试',
+    },
+    {
+      code: 'INVALID_REQUEST', status: 400,
+      expectedCode: 'INVALID_REQUEST',
+      expectedMessage: '请求内容不符合 Arkme AI 要求，请调整后重试',
+    },
+    {
+      code: 'UNKNOWN_MODEL',
+      expectedCode: 'UNKNOWN_MODEL',
+      expectedMessage: '当前 Arkme 模型不可用，请重新选择模型后重试',
+    },
+    {
+      code: 'STREAM_CLOSED',
+      expectedCode: 'STREAM_CLOSED',
+      expectedMessage: 'Arkme AI 返回异常，请重新发送消息',
+    },
+    {
+      code: 'SERVER', status: 503,
+      expectedCode: 'SERVER',
+      expectedMessage: 'Arkme AI 服务暂不可用，请稍后重试',
+    },
+    {
+      code: 'UNEXPECTED_PROVIDER_ERROR',
+      expectedCode: 'UNEXPECTED_PROVIDER_ERROR',
+      expectedMessage: 'Arkme AI 请求失败，请稍后重试',
+    },
+  ])('localizes cross-module $code failures without relying on instanceof', ({
+    code, status, expectedCode, expectedMessage,
+  }) => {
+    const localized = localizeManagedAiError({
+      message: 'English provider error',
+      code,
+      failure: {
+        message: 'English provider error',
+        code,
+        ...(status === undefined ? {} : { status }),
+        requestId: 'managed_req_localize',
+      },
+    })
+
+    expect(localized).toMatchObject({
+      code: expectedCode,
+      message: expectedMessage,
+      failure: {
+        code: expectedCode,
+        message: expectedMessage,
+        ...(status === undefined ? {} : { status }),
+        requestId: 'managed_req_localize',
+      },
+    })
+  })
+
   it('preserves the backend HTTP 504 timeout contract as a DSH timeout', async () => {
     const server = createServer(async (req, res) => {
       for await (const _chunk of req) { /* Drain the request before responding. */ }
@@ -221,8 +304,10 @@ describe('Arkme managed model adapter', () => {
 
       await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
         code: 'TIMEOUT',
+        message: 'Arkme AI 响应超时，请稍后重试',
         failure: {
           code: 'TIMEOUT',
+          message: 'Arkme AI 响应超时，请稍后重试',
           status: 504,
           requestId: 'mai_req_timeout',
         },
@@ -281,7 +366,7 @@ describe('Arkme managed model adapter', () => {
 
       await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
         code: 'AUTH',
-        message: '请先登录 Arkme',
+        message: '请先登录或重新登录 Arkme 后再使用托管模型',
         failure: { code: 'AUTH', status: 401 },
       })
     },
@@ -291,19 +376,21 @@ describe('Arkme managed model adapter', () => {
     {
       sourceCode: 'arkme-network-error',
       status: 502,
-      message: '无法连接 Arkme 服务',
+      sourceMessage: '无法连接 Arkme 服务',
+      expectedMessage: '无法连接 Arkme AI 服务，请检查网络后重试',
       expectedCode: 'TRANSPORT',
     },
     {
       sourceCode: 'arkme-http-error',
       status: 503,
-      message: 'Arkme 服务暂不可用',
+      sourceMessage: 'Arkme 服务暂不可用',
+      expectedMessage: 'Arkme AI 服务暂不可用，请稍后重试',
       expectedCode: 'SERVER',
     },
   ])('preserves $sourceCode credential failures as $expectedCode', async ({
-    sourceCode, status, message, expectedCode,
+    sourceCode, status, sourceMessage, expectedMessage, expectedCode,
   }) => {
-    const sourceError = Object.assign(new Error(message), {
+    const sourceError = Object.assign(new Error(sourceMessage), {
       code: sourceCode,
       httpStatus: status,
     })
@@ -325,7 +412,7 @@ describe('Arkme managed model adapter', () => {
 
     await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
       code: expectedCode,
-      message,
+      message: expectedMessage,
       failure: { code: expectedCode, status },
     })
   })

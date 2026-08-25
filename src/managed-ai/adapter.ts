@@ -1,6 +1,6 @@
 import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import type { Context } from '@deepseek-ai/cordis'
-import { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, LlmError, ProviderRequestId } from '@deepseek-ai/dsh-llm'
 import type {
   AdapterRegistrationHandle,
   GenerateOptions,
@@ -19,6 +19,7 @@ export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 const ARKME_MANAGED_PROVIDER_NAME = 'Arkme'
 const ARKME_MANAGED_MODEL_DESCRIPTION = '使用 Arkme 登录，无需 API Key'
 const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
+const ARKME_LOGIN_MESSAGE = '请先登录或重新登录 Arkme 后再使用托管模型'
 const ARKME_MANAGED_MODELS = new Set([ARKME_MANAGED_MODEL])
 const ARKME_AUTH_FAILURE_CODES = new Set([
   'login-required',
@@ -41,12 +42,103 @@ function managedAiBaseUrl(intelligentBaseUrl: string): string {
   return `${intelligentBaseUrl.replace(/\/+$/, '')}/api/v1/managed-ai`
 }
 
+interface ManagedAiFailureFacts {
+  code: string
+  status?: number
+  providerRetryAfterMs?: number
+  requestId?: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : undefined
+}
+
+function validHttpStatus(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function managedAiFailureFacts(error: unknown): ManagedAiFailureFacts {
+  const source = asRecord(error)
+  const failure = asRecord(source?.failure)
+  const code = typeof failure?.code === 'string' && failure.code !== ''
+    ? failure.code
+    : typeof source?.code === 'string' && source.code !== '' ? source.code : 'MANAGED_AI_FAILED'
+  const status = validHttpStatus(failure?.status) ?? validHttpStatus(source?.status) ?? validHttpStatus(source?.httpStatus)
+  const providerRetryAfterMs = positiveNumber(failure?.providerRetryAfterMs)
+    ?? positiveNumber(source?.providerRetryAfterMs)
+    ?? positiveNumber(source?.retryAfterMillis)
+  const requestId = typeof failure?.requestId === 'string' && failure.requestId !== ''
+    ? failure.requestId
+    : typeof source?.requestId === 'string' && source.requestId !== '' ? source.requestId : undefined
+  return {
+    code,
+    ...(status === undefined ? {} : { status }),
+    ...(providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs }),
+    ...(requestId === undefined ? {} : { requestId }),
+  }
+}
+
+function managedAiLocalizedFailure(facts: ManagedAiFailureFacts): { code: string; message: string } {
+  if (facts.status === 402 || ['QUOTA', 'INSUFFICIENT_BALANCE'].includes(facts.code)) {
+    return { code: 'INSUFFICIENT_BALANCE', message: ARKME_INSUFFICIENT_BALANCE_MESSAGE }
+  }
+  if (facts.status === 401 || facts.status === 403 || ['AUTH', 'CREDENTIAL_UNAVAILABLE'].includes(facts.code)) {
+    return { code: 'AUTH', message: ARKME_LOGIN_MESSAGE }
+  }
+  if (facts.status === 429 || facts.code === 'RATE_LIMIT') {
+    return { code: 'RATE_LIMIT', message: 'Arkme AI 请求过于频繁，请稍后重试' }
+  }
+  if ([408, 504].includes(facts.status ?? 0) || facts.code === 'TIMEOUT') {
+    return { code: 'TIMEOUT', message: 'Arkme AI 响应超时，请稍后重试' }
+  }
+  if (facts.code === 'TRANSPORT') {
+    return { code: 'TRANSPORT', message: '无法连接 Arkme AI 服务，请检查网络后重试' }
+  }
+  if (facts.code === 'CONTEXT_WINDOW_EXCEEDED') {
+    return { code: facts.code, message: '对话内容过长，请新建对话或减少上下文后重试' }
+  }
+  if (['UNKNOWN_MODEL', 'NO_ADAPTER'].includes(facts.code)) {
+    return { code: facts.code, message: '当前 Arkme 模型不可用，请重新选择模型后重试' }
+  }
+  if (facts.status === 400 || facts.status === 413 || facts.code === 'INVALID_REQUEST') {
+    return { code: 'INVALID_REQUEST', message: '请求内容不符合 Arkme AI 要求，请调整后重试' }
+  }
+  if (facts.code === 'ABORTED') {
+    return { code: facts.code, message: '本轮运行已取消' }
+  }
+  if (['EMPTY_RESPONSE', 'MALFORMED_RESPONSE', 'STREAM_CLOSED'].includes(facts.code)) {
+    return { code: facts.code, message: 'Arkme AI 返回异常，请重新发送消息' }
+  }
+  if ((facts.status !== undefined && facts.status >= 500) || facts.code === 'SERVER') {
+    return { code: 'SERVER', message: 'Arkme AI 服务暂不可用，请稍后重试' }
+  }
+  return { code: facts.code, message: 'Arkme AI 请求失败，请稍后重试' }
+}
+
+/** Convert provider and cross-module structured failures into stable Chinese user copy. */
+export function localizeManagedAiError(error: unknown): LlmError {
+  const facts = managedAiFailureFacts(error)
+  const localized = managedAiLocalizedFailure(facts)
+  return new LlmError(localized.message, localized.code, {
+    cause: error,
+    ...(facts.status === undefined ? {} : { status: facts.status }),
+    ...(facts.providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs: facts.providerRetryAfterMs }),
+    ...(facts.requestId === undefined ? {} : { requestId: ProviderRequestId(facts.requestId) }),
+  })
+}
+
 function assertManagedRoute(provider: string, model?: string): void {
   if (provider !== ARKME_MANAGED_PROVIDER) {
-    throw new LlmError(`Arkme managed adapter does not own provider "${provider}"`, 'NO_ADAPTER')
+    throw new LlmError(`当前 Arkme 托管模型不支持提供商“${provider}”`, 'NO_ADAPTER')
   }
   if (model !== undefined && !ARKME_MANAGED_MODELS.has(model)) {
-    throw new LlmError(`Arkme managed provider does not support model "${model}"`, 'UNKNOWN_MODEL')
+    throw new LlmError(`当前 Arkme 托管服务不支持模型“${model}”，请重新选择模型`, 'UNKNOWN_MODEL')
   }
 }
 
@@ -61,9 +153,6 @@ async function resolveBearer(owner: ManagedAccessCredentialOwner): Promise<strin
       message?: unknown
       retryAfterMillis?: unknown
     }
-    const message = typeof source.message === 'string' && source.message !== ''
-      ? source.message
-      : '请先登录 Arkme'
     const sourceCode = typeof source.code === 'string' ? source.code : ''
     const status = typeof source.httpStatus === 'number'
       && Number.isInteger(source.httpStatus)
@@ -87,13 +176,13 @@ async function resolveBearer(owner: ManagedAccessCredentialOwner): Promise<strin
       && source.retryAfterMillis > 0
       ? source.retryAfterMillis
       : undefined
-    throw new LlmError(message, code, {
+    throw localizeManagedAiError(new LlmError('Arkme 托管模型凭据不可用', code, {
       cause: error,
       ...(status === undefined ? {} : { status }),
       ...(providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs }),
-    })
+    }))
   }
-  throw new LlmError('请先登录 Arkme', 'AUTH')
+  throw new LlmError(ARKME_LOGIN_MESSAGE, 'AUTH')
 }
 
 class ManagedAiLlmAdapter extends LlmAdapter {
@@ -128,21 +217,7 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     try {
       yield* this.delegate.stream(options)
     } catch (error) {
-      if (error instanceof LlmError && error.failure.status === 402) {
-        throw new LlmError(ARKME_INSUFFICIENT_BALANCE_MESSAGE, 'INSUFFICIENT_BALANCE', {
-          cause: error,
-          status: 402,
-          ...(error.failure.requestId === undefined ? {} : { requestId: error.failure.requestId }),
-        })
-      }
-      if (error instanceof LlmError && error.failure.status === 504) {
-        throw new LlmError(error.message, 'TIMEOUT', {
-          cause: error,
-          status: 504,
-          ...(error.failure.requestId === undefined ? {} : { requestId: error.failure.requestId }),
-        })
-      }
-      throw error
+      throw localizeManagedAiError(error)
     }
   }
 }
