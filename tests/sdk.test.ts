@@ -456,6 +456,11 @@ describe('Arkme SDK', () => {
         })
         if (request.operation === 'source.members') return success({
           source: { sourceRef: 'source-1' }, items: [{ memberRef: 'member-1', displayName: '小林' }], total: 1, activeCount: 1,
+          joinEvents: [{
+            eventId: 'join-1', action: 'invite', occurredAtMillis: 1,
+            inviter: { memberRef: 'member-1', displayName: '小林', isSelf: false },
+            invitees: [{ memberRef: 'member-2', displayName: '小张', isSelf: false }],
+          }],
         })
         if (request.operation === 'source.member-records') return success({
           source: { sourceRef: 'source-1' }, member: { memberRef: 'member-1', displayName: '小林' },
@@ -470,7 +475,9 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.listSources('root')).resolves.toMatchObject({ directory: 'root' })
     await expect(sdk.readSource('source-1')).resolves.toMatchObject({ source: { displayName: '小林' } })
-    await expect(sdk.listSourceMembers('source-1')).resolves.toMatchObject({ activeCount: 1 })
+    await expect(sdk.listSourceMembers('source-1')).resolves.toMatchObject({
+      activeCount: 1, joinEvents: [{ eventId: 'join-1', action: 'invite' }],
+    })
     await expect(sdk.sourceMemberRecords('source-1', 'member-1', 'mentioned', { limit: 12, beforeSequence: 44 }))
       .resolves.toMatchObject({ mode: 'mentioned' })
     await expect(sdk.sendText('source-1', '你好', { recordUid: 'record-1', relationUid: 'rel-1' }))

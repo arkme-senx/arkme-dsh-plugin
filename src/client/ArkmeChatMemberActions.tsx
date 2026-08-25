@@ -149,6 +149,10 @@ const styles: Record<string, CSSProperties> = {
     margin: '10px 0 0', color: arkmeTheme.text, fontSize: 20, lineHeight: '28px', fontWeight: 600,
     maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
+  cardSecondaryName: {
+    margin: '4px 0 0', color: arkmeTheme.secondary, fontSize: 13, lineHeight: '20px',
+    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
   cardButton: {
     width: '100%', height: 50, marginTop: 'auto', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
     background: arkmeTheme.foreground, color: arkmeTheme.text, fontSize: 16, fontWeight: 600, cursor: 'pointer',
@@ -278,8 +282,29 @@ export function ArkmeMemberActionMenu(props: {
   </div>
 }
 
+export function arkmeMemberProfileNames(
+  member: Pick<ArkmeConversationMemberItem, 'displayName' | 'memberName' | 'secondaryName'>,
+  showTopicNickname: boolean,
+): { displayName: string; topicNickname: string } {
+  const fallbackDisplayName = member.displayName.trim() || '群成员'
+  if (!showTopicNickname) return { displayName: fallbackDisplayName, topicNickname: '' }
+  const memberName = member.memberName?.trim() ?? ''
+  const secondaryName = member.secondaryName?.trim() ?? ''
+  const displayName = memberName !== ''
+    && fallbackDisplayName === memberName
+    && secondaryName !== ''
+    && secondaryName !== memberName
+    ? secondaryName
+    : fallbackDisplayName
+  return {
+    displayName,
+    topicNickname: memberName !== '' && memberName !== displayName ? memberName : '',
+  }
+}
+
 export function ArkmeMemberProfileCard(props: {
   member: ArkmeConversationMemberItem & { avatarFallback?: ArkmeGroupAvatarFallback }
+  showTopicNickname?: boolean
   busy: boolean
   onClose: () => void
   onSend: () => void
@@ -308,16 +333,18 @@ export function ArkmeMemberProfileCard(props: {
       : buttonState === 'hover'
         ? arkmeTheme.hover
         : arkmeTheme.foreground
+  const names = arkmeMemberProfileNames(props.member, props.showTopicNickname === true)
   return <div style={styles.cardScrim} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget) props.onClose()
   }}>
-    <section style={styles.card} role="dialog" aria-modal="true" aria-label={`${props.member.displayName} 的用户卡片`}>
+    <section style={styles.card} role="dialog" aria-modal="true" aria-label={`${names.displayName} 的用户卡片`}>
       {backdrop !== '' && <div aria-hidden style={{ ...styles.cardBackdrop, backgroundImage: `url(${JSON.stringify(backdrop).slice(1, -1)})` }} />}
       <div style={styles.cardContent}>
         <ArkmeUserAvatar {...(props.member.avatarRef === undefined ? {} : { avatarRef: props.member.avatarRef })}
           {...(props.member.avatarFallback === undefined ? {} : { fallback: props.member.avatarFallback })}
-          size={100} label={`${props.member.displayName} 的头像`} />
-        <h3 style={styles.cardName}>{props.member.displayName}</h3>
+          size={100} label={`${names.displayName} 的头像`} />
+        <h3 style={styles.cardName}>{names.displayName}</h3>
+        {names.topicNickname !== '' && <p style={styles.cardSecondaryName}>主题内昵称：{names.topicNickname}</p>}
         <button
           type="button"
           style={{

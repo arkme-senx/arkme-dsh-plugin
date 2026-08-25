@@ -2196,7 +2196,10 @@ describe('ArkmeService', () => {
         items: [{
           user_id: 2001, role: 3, status: 1, join_at: 20,
           display_name_snapshot: '小林', remark: '小林',
-          extra: { record_count: 7, mention_count: 2 },
+          extra: {
+            record_count: 7, mention_count: 2, join_batch_at: 1_700_000_000_000,
+            inviter_user_id: 10001, inviter_display_name: '我', invitee_display_name: '小林',
+          },
         }],
       } })
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
@@ -2223,6 +2226,14 @@ describe('ArkmeService', () => {
     expect(members.items[0]).toMatchObject({
       displayName: '小林', recordCount: 7, mentionCount: 2, memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
     })
+    expect(members.joinEvents).toMatchObject([{
+      eventId: expect.stringMatching(/^arkme-chat-join-v1\./),
+      action: 'invite', occurredAtMillis: 1_700_000_000_000,
+      inviter: { displayName: '我', isSelf: true },
+      invitees: [{ memberRef: members.items[0]?.memberRef, displayName: '小林', isSelf: false }],
+    }])
+    expect(requests.find(request => request.url.endsWith('/api/v1/chats/members/list'))?.body)
+      .toMatchObject({ active_only: false })
     const memberRef = members.items[0]!.memberRef
     await expect(service.sourceMemberRecords(sourceRef, `${memberRef}x`, 'owner'))
       .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
@@ -2256,6 +2267,37 @@ describe('ArkmeService', () => {
         },
       },
     })
+  })
+
+  it('keeps the ordinary member projection when group join events are disabled', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let memberRequestBody: Record<string, unknown> | undefined
+    const service = new ArkmeService(
+      { ...config, chatMemberJoinEventsEnabled: false },
+      sessions,
+      new MemoryStateStore(),
+      async (input, init) => {
+        const url = String(input)
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        if (url.endsWith('/api/v1/chats/members/list')) {
+          memberRequestBody = body
+          return json({ code: 200, data: { items: [{
+            user_id: 2001, role: 3, status: 1, join_at: 20, display_name_snapshot: '小林',
+            extra: { inviter_user_id: 10001, inviter_display_name: '我' },
+          }] } })
+        }
+        if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+          return json({ code: 200, data: { items: [{ user_id: 2001, nick_name: 'Lin', head_img: '' }] } })
+        }
+        throw new Error(`unexpected ${url}`)
+      },
+    )
+
+    const members = await service.listSourceMembers(sourceRefFor('group_chat', 'group-join-disabled', '协作群'))
+    expect(members.items).toHaveLength(1)
+    expect(members).not.toHaveProperty('joinEvents')
+    expect(memberRequestBody).toMatchObject({ active_only: true })
   })
 
   it('fails open to the unchanged group send when polish settings cannot be read', async () => {

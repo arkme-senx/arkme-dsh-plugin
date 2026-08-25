@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ArkoService } from '../../src/services/arko-service.js'
 import { BotService } from '../../src/services/bot-service.js'
-import { ChatService } from '../../src/services/chat-service.js'
+import { ChatService, projectArkmeConversationMemberJoinEvents } from '../../src/services/chat-service.js'
 import { GroupAiPolishService } from '../../src/services/group-ai-polish-service.js'
 import { MediaService } from '../../src/services/media-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
@@ -20,6 +20,72 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatService', () => {
+  it('projects, groups, and redacts group member join metadata', async () => {
+    const events = await projectArkmeConversationMemberJoinEvents([
+      {
+        user_id: 2, status: 1, display_name_snapshot: '小乙', join_at: 1_700_000_000_000,
+        extra: JSON.stringify({ inviter_user_id: 1, inviter_display_name: '群主', join_batch_at: 1_700_000_001_000 }),
+      },
+      {
+        user_id: 3, status: 1, display_name_snapshot: '小丙', join_at: 1_700_000_000_000,
+        extra: { inviter_user_id: 1, inviter_display_name: '群主', join_batch_at: 1_700_000_001_000 },
+      },
+      {
+        user_id: 1, status: 1, display_name_snapshot: '群主', join_at: 1_600_000_000_000,
+        extra: {},
+      },
+    ], {
+      viewerUserId: 3,
+      async memberRefForUserId(userId) { return `sealed-${String(userId)}` },
+      async eventIdForStableKey(stableKey) { return `event-${stableKey.length}` },
+    })
+
+    expect(events).toEqual([{
+      eventId: expect.stringMatching(/^event-/), action: 'invite', occurredAtMillis: 1_700_000_001_000,
+      inviter: { memberRef: 'sealed-1', displayName: '群主', isSelf: false },
+      invitees: [
+        { memberRef: 'sealed-3', displayName: '小丙', isSelf: true },
+        { memberRef: 'sealed-2', displayName: '小乙', isSelf: false },
+      ],
+    }])
+    expect(JSON.stringify(events)).not.toContain('user_id')
+    expect(JSON.stringify(events)).not.toContain('join_batch_at')
+  })
+
+  it('maps direct additions and normalizes second timestamps', async () => {
+    const events = await projectArkmeConversationMemberJoinEvents([{
+      user_id: 8,
+      display_name_snapshot: '新成员',
+      join_at: 1_700_000_000,
+      extra: {
+        join_source_type: 'direct_add',
+        inviter: { user_id: 7, display_name: '管理员' },
+      },
+    }], {
+      viewerUserId: 7,
+      async memberRefForUserId(userId) { return `member-${String(userId)}` },
+      async eventIdForStableKey() { return 'join-event' },
+    })
+
+    expect(events).toMatchObject([{
+      eventId: 'join-event', action: 'direct_add', occurredAtMillis: 1_700_000_000_000,
+      inviter: { displayName: '管理员', isSelf: true },
+    }])
+  })
+
+  it('omits malformed join metadata without inventing an inviter', async () => {
+    const events = await projectArkmeConversationMemberJoinEvents([
+      { user_id: 2, display_name_snapshot: '成员', join_at: 1_700_000_000_000, extra: {} },
+      { user_id: 3, display_name_snapshot: '成员三', join_at: 1_700_000_000_000, extra: { inviter_user_id: 0 } },
+      { user_id: 4, join_at: 1_700_000_000_000, extra: { inviter_display_name: '群主' } },
+    ], {
+      viewerUserId: 1,
+      async memberRefForUserId(userId) { return `member-${String(userId)}` },
+      async eventIdForStableKey() { return 'unused' },
+    })
+    expect(events).toEqual([])
+  })
+
   it('rejects opening a private chat with the current user', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

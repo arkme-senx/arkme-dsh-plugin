@@ -882,6 +882,7 @@ export function ArkmeGroupChatControls(props: {
   onSourceActivated: (source: ArkmeSourceItem) => void
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
+  onMembersChanged?: () => void
   onError: (message: string) => void
 }) {
   const [membersOpen, setMembersOpen] = useState(false)
@@ -976,7 +977,10 @@ export function ArkmeGroupChatControls(props: {
         source={props.source}
         open={addMembersOpen}
         onClose={() => { setAddMembersOpen(false) }}
-        onAdded={() => { setRefreshToken(value => value + 1) }}
+        onAdded={() => {
+          setRefreshToken(value => value + 1)
+          props.onMembersChanged?.()
+        }}
         onError={props.onError}
       />
       <RenameDialog

@@ -11,7 +11,7 @@ import type {
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeUploadedAsset, ArkmeForwardRecordPreviewItem, ArkmeUserProfile, ArkmeUserProfileSnapshot,
   ArkmeConversationMemberItem, ArkmeConversationMemberList, ArkmeConversationMemberRecordMode,
-  ArkmeOpenPrivateChatResult,
+  ArkmeConversationMemberJoinEvent, ArkmeConversationMemberJoinPerson, ArkmeOpenPrivateChatResult,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { verifyPhoneCaptcha } from './geetest.js'
@@ -240,6 +240,17 @@ const styles: Record<string, CSSProperties> = {
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
   retry: { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', fontSize: 11 },
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
+  memberJoinNotice: { alignSelf: 'center', width: '100%', boxSizing: 'border-box', color: arkmeTheme.caption, textAlign: 'center' },
+  memberJoinTime: {
+    width: 'fit-content', margin: '0 auto', padding: '4px 6px', boxSizing: 'border-box',
+    color: arkmeTheme.caption, fontSize: 12, lineHeight: '14.4px', textAlign: 'center',
+  },
+  memberJoinLine: {
+    width: 'clamp(240px, calc(100% - 120px), 640px)', maxWidth: 'calc(100% - 24px)', margin: '0 auto',
+    paddingTop: 8, overflow: 'hidden', color: arkmeTheme.caption, fontSize: 13, lineHeight: '15.6px',
+    textAlign: 'center', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box',
+  },
+  memberJoinLink: { display: 'inline', padding: 0, border: 0, background: 'transparent', color: arkmeTheme.info, cursor: 'pointer', font: 'inherit', fontWeight: 500, lineHeight: 'inherit' },
   sentinel: { width: '100%', height: 1 },
   loading: { textAlign: 'center', color: colors.secondary, fontSize: 12, padding: 6 },
   composer: { ...arkmeConversationComposerLayout.composer, background: '#fff' },
@@ -372,6 +383,51 @@ function dayLabel(value: number): string {
 
 function timeLabel(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+}
+
+export function arkmeConversationJoinEventsInLoadedWindow(
+  events: readonly ArkmeConversationMemberJoinEvent[],
+  items: readonly ArkmeTimelineItem[],
+  hasMore: boolean,
+): ArkmeConversationMemberJoinEvent[] {
+  if (!hasMore) return [...events]
+  if (items.length === 0) return []
+  const oldestLoadedMillis = Math.min(...items.map(item => item.sendAtMillis).filter(value => value > 0))
+  if (!Number.isFinite(oldestLoadedMillis)) return []
+  return events.filter(event => event.occurredAtMillis >= oldestLoadedMillis)
+}
+
+export function arkmeMemberJoinDisplayName(person: ArkmeConversationMemberJoinPerson, maxCount: number): string {
+  if (person.isSelf) return '你'
+  const normalized = person.displayName.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim()
+  const characters = [...new Intl.Segmenter('zh-CN', { granularity: 'grapheme' }).segment(normalized)]
+    .map(item => item.segment)
+  if (characters.length <= maxCount) return normalized
+  return `${characters.slice(0, maxCount).join('')}...`
+}
+
+export function arkmeMemberJoinTimeLabel(value: number, nowMillis = Date.now()): string {
+  const date = new Date(value)
+  const now = new Date(nowMillis)
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const dayOffset = Math.round((start - target) / 86_400_000)
+  const time = timeLabel(value)
+  if (dayOffset === 0) return time
+  if (dayOffset === 1) return `昨天 ${time}`
+  if (dayOffset === 2) return `前天 ${time}`
+  return `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日 ${time}`
+}
+
+export function arkmeVisibleMemberJoinInvitees(
+  event: ArkmeConversationMemberJoinEvent,
+): ArkmeConversationMemberJoinPerson[] {
+  if (event.invitees.length <= 2) return [...event.invitees]
+  const visible = event.invitees.slice(0, 2)
+  if (visible.some(person => person.isSelf)) return visible
+  const self = event.invitees.find(person => person.isSelf)
+  if (self !== undefined) visible[visible.length - 1] = self
+  return visible
 }
 
 export function arkmeSourceDestinationLabel(source: ArkmeSourceItem | undefined): string {
@@ -509,6 +565,43 @@ function MessageAvatar(props: {
       props.onContextMenu(member, event.currentTarget.getBoundingClientRect())
     }}
   >{avatar}</button>
+}
+
+export function ArkmeMemberJoinNotice(props: {
+  rowId: string
+  event: ArkmeConversationMemberJoinEvent
+  membersByRef: ReadonlyMap<string, ArkmeConversationMemberItem>
+  startsGroup?: boolean
+  onOpenMember: (member: ArkmeConversationMemberItem) => void
+}) {
+  const visibleInvitees = arkmeVisibleMemberJoinInvitees(props.event)
+  const inviteeMaxCount = visibleInvitees.length > 1 ? 10 : 14
+  const renderPerson = (person: ArkmeConversationMemberJoinPerson, maxCount: number, key: string) => {
+    const label = arkmeMemberJoinDisplayName(person, maxCount)
+    const member = person.memberRef === undefined ? undefined : props.membersByRef.get(person.memberRef)
+    return member === undefined
+      ? <span key={key}>{label}</span>
+      : <button key={key} type="button" style={styles.memberJoinLink}
+        aria-label={`查看 ${label}`} onClick={() => { props.onOpenMember(member) }}>{label}</button>
+  }
+  return <li
+    data-arkme-conversation-row={props.rowId}
+    data-arkme-member-join-event={props.event.eventId}
+    data-arkme-member-join-group-start={props.startsGroup === false ? 'false' : 'true'}
+    style={{ ...styles.memberJoinNotice, marginTop: props.startsGroup === false ? 20 : 26 }}
+  >
+    <div style={styles.memberJoinTime}>{arkmeMemberJoinTimeLabel(props.event.occurredAtMillis)}</div>
+    <div style={styles.memberJoinLine}>
+      {renderPerson(props.event.inviter, 14, 'inviter')}
+      <span>{` ${props.event.action === 'direct_add' ? '添加' : '邀请'} `}</span>
+      {visibleInvitees.map((person, index) => <Fragment key={`${person.memberRef ?? person.displayName}:${index}`}>
+        {index > 0 && <span>、</span>}
+        {renderPerson(person, inviteeMaxCount, `invitee:${person.memberRef ?? person.displayName}:${index}`)}
+      </Fragment>)}
+      {props.event.invitees.length > 2 && <span>{`等${String(props.event.invitees.length)}人`}</span>}
+      <span> 加入群聊</span>
+    </div>
+  </li>
 }
 
 export function ArkmeTimelineMessageHeader({
@@ -747,6 +840,8 @@ export function ArkmeSurface({
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
   const [conversationMembers, setConversationMembers] = useState<ArkmeConversationMemberItem[]>([])
+  const [conversationJoinEvents, setConversationJoinEvents] = useState<ArkmeConversationMemberJoinEvent[]>([])
+  const [conversationMembersRefreshRevision, setConversationMembersRefreshRevision] = useState(0)
   const [memberMenu, setMemberMenu] = useState<{
     member: ArkmeConversationMemberItem
     position: ArkmeMemberMenuPosition
@@ -760,6 +855,7 @@ export function ArkmeSurface({
 
   useEffect(() => {
     setConversationMembers([])
+    setConversationJoinEvents([])
     setMemberMenu(undefined)
     setMemberProfile(undefined)
     setMemberRecords(undefined)
@@ -770,12 +866,22 @@ export function ArkmeSurface({
       sourceRef: source.sourceRef,
       activeOnly: true,
     }, controller.signal)
-      .then(snapshot => { setConversationMembers(snapshot.items) })
+      .then(snapshot => {
+        setConversationMembers(snapshot.items)
+        setConversationJoinEvents(source.kind === 'group_chat' ? snapshot.joinEvents ?? [] : [])
+      })
       .catch(caught => {
         if (!controller.signal.aborted) setError(errorMessage(caught))
       })
     return () => { controller.abort() }
-  }, [auth?.status, source?.kind, source?.sourceRef])
+  }, [auth?.status, conversationMembersRefreshRevision, source?.kind, source?.sourceRef])
+
+  useEffect(() => {
+    if (auth?.status !== 'authenticated') return
+    const refreshOnFocus = () => { setConversationMembersRefreshRevision(value => value + 1) }
+    window.addEventListener('focus', refreshOnFocus)
+    return () => { window.removeEventListener('focus', refreshOnFocus) }
+  }, [auth?.status])
 
   useEffect(() => {
     const pendingDraftKey = pendingComposerFocusDraftKeyRef.current
@@ -1822,8 +1928,16 @@ export function ArkmeSurface({
   }
 
   const displayItems = useMemo(() => [...items].sort((a, b) => a.sendAtMillis - b.sendAtMillis), [items])
+  const visibleConversationJoinEvents = useMemo(
+    () => source?.kind === 'group_chat'
+      ? arkmeConversationJoinEventsInLoadedWindow(conversationJoinEvents, displayItems, hasMore)
+      : [],
+    [conversationJoinEvents, displayItems, hasMore, source?.kind],
+  )
   const displayRows = useMemo<Array<ArkmeConversationRow | {
     kind: 'notice'; id: string; occurredAtMillis: number; item: ArkmeGroupAiPolishNotice
+  } | {
+    kind: 'member-join'; id: string; occurredAtMillis: number; item: ArkmeConversationMemberJoinEvent
   }>>(
     () => [
       ...mergeConversationRows(displayItems, interwovenMoments),
@@ -1833,8 +1947,14 @@ export function ArkmeSurface({
         occurredAtMillis: notice.createdAtMillis,
         item: notice,
       })),
+      ...visibleConversationJoinEvents.map(event => ({
+        kind: 'member-join' as const,
+        id: `member-join:${event.eventId}`,
+        occurredAtMillis: event.occurredAtMillis,
+        item: event,
+      })),
     ].sort((left, right) => left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id)),
-    [aiPolishNotices, displayItems, interwovenMoments],
+    [aiPolishNotices, displayItems, interwovenMoments, visibleConversationJoinEvents],
   )
   useLayoutEffect(() => {
     const pending = pendingViewportRestoreRef.current
@@ -1967,6 +2087,7 @@ export function ArkmeSurface({
             onSourceActivated={activateSource}
             onMemberOpen={openMemberProfile}
             onMemberContextMenu={openMemberMenu}
+            onMembersChanged={() => { setConversationMembersRefreshRevision(value => value + 1) }}
             onError={setError}
           />}
           {shouldShowPrivateChatActions(authenticated, source?.kind) && <div ref={relatedMenuRef} style={{
@@ -2064,6 +2185,14 @@ export function ArkmeSurface({
                 const previous = index === 0 ? undefined : displayRows[index - 1]
                 const startsDay = previous === undefined
                   || dayKey(previous.occurredAtMillis) !== dayKey(row.occurredAtMillis)
+                if (row.kind === 'member-join') return <ArkmeMemberJoinNotice
+                  key={row.id}
+                  rowId={row.id}
+                  event={row.item}
+                  membersByRef={conversationMemberByRef}
+                  startsGroup={previous?.kind !== 'member-join'}
+                  onOpenMember={openMemberProfile}
+                />
                 if (row.kind === 'notice') return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(row.occurredAtMillis)}</li>}
                   <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
@@ -2234,6 +2363,7 @@ export function ArkmeSurface({
         />}
         {memberProfile !== undefined && <ArkmeMemberProfileCard
           member={memberProfile}
+          showTopicNickname={source?.kind === 'group_chat'}
           busy={privateChatBusy}
           onClose={() => { if (!privateChatBusy) setMemberProfile(undefined) }}
           onSend={() => { openPrivateChatForMember(memberProfile) }}

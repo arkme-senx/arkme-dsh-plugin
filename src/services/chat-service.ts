@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
+  ArkmeConversationMemberJoinEvent,
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
   ArkmeConversationMemberRecordMode,
@@ -87,6 +88,141 @@ function integerLikeValue(value: unknown): number {
 function optionalString(value: unknown): string | undefined {
   const text = stringValue(value).trim()
   return text === '' ? undefined : text
+}
+
+function parsedObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string') return objectValue(value)
+  const raw = value.trim()
+  if (raw === '') return {}
+  try { return objectValue(JSON.parse(raw)) }
+  catch { return {} }
+}
+
+function firstInteger(source: Record<string, unknown>, keys: readonly string[]): number {
+  for (const key of keys) {
+    const value = integerLikeValue(source[key])
+    if (value > 0) return value
+  }
+  return 0
+}
+
+function normalizedJoinDisplayName(value: unknown): string {
+  const text = stringValue(value).replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim()
+  return text.length <= 128 ? text : text.slice(0, 128).trimEnd()
+}
+
+function firstJoinDisplayName(source: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = normalizedJoinDisplayName(source[key])
+    if (value !== '') return value
+  }
+  return ''
+}
+
+function normalizedJoinTimestamp(value: unknown): number {
+  const raw = integerLikeValue(value)
+  if (raw <= 0) return 0
+  return raw < 100_000_000_000 ? raw * 1_000 : raw
+}
+
+function rawMemberDisplayName(item: Record<string, unknown>): string {
+  return firstJoinDisplayName(item, ['remark', 'display_name_snapshot', 'displayNameSnapshot', 'display_name', 'displayName'])
+}
+
+interface ArkmeJoinEventProjectionOptions {
+  viewerUserId: number
+  memberRefForUserId(userId: number): Promise<string>
+  eventIdForStableKey(stableKey: string): Promise<string>
+}
+
+interface MutableJoinEventGroup {
+  action: ArkmeConversationMemberJoinEvent['action']
+  occurredAtMillis: number
+  inviterUserId: number
+  inviterDisplayName: string
+  inviteesByUserId: Map<number, string>
+}
+
+/** Converts allowlisted member join metadata into a Browser-safe projection. */
+export async function projectArkmeConversationMemberJoinEvents(
+  rawItems: readonly Record<string, unknown>[],
+  options: ArkmeJoinEventProjectionOptions,
+): Promise<ArkmeConversationMemberJoinEvent[]> {
+  const membersByUserId = new Map<number, Record<string, unknown>>()
+  for (const item of rawItems) {
+    const userId = integerLikeValue(item.user_id ?? item.userId)
+    if (userId > 0) membersByUserId.set(userId, item)
+  }
+  const groups = new Map<string, MutableJoinEventGroup>()
+  for (const item of rawItems) {
+    const inviteeUserId = integerLikeValue(item.user_id ?? item.userId)
+    if (inviteeUserId <= 0) continue
+    const extra = parsedObject(item.extra)
+    if (Object.keys(extra).length === 0) continue
+    const nestedInviter = ['inviter', 'invite_source', 'join_source']
+      .map(key => parsedObject(extra[key])).find(value => Object.keys(value).length > 0) ?? {}
+    const inviterUserId = firstInteger(extra, [
+      'inviter_user_id', 'inviter_id', 'invite_from_user_id', 'creator_user_id', 'creator',
+    ]) || firstInteger(nestedInviter, ['user_id', 'owner_id', 'sid', 'id', 'creator_user_id'])
+    const inviterDisplayName = firstJoinDisplayName(extra, [
+      'inviter_display_name', 'inviter_name', 'invite_from_display_name', 'creator_display_name', 'creator_name',
+    ]) || firstJoinDisplayName(nestedInviter, ['display_name', 'nick_name', 'nickname', 'name'])
+      || rawMemberDisplayName(membersByUserId.get(inviterUserId) ?? {})
+    if (inviterUserId <= 0 && inviterDisplayName === '') continue
+    const occurredAtMillis = normalizedJoinTimestamp(
+      extra.join_batch_at ?? extra.join_tip_at ?? extra.join_event_at ?? item.join_at ?? item.joinAt,
+    )
+    if (occurredAtMillis <= 0) continue
+    const inviteeDisplayName = firstJoinDisplayName(extra, [
+      'invitee_display_name', 'joined_display_name', 'join_display_name',
+    ]) || rawMemberDisplayName(item)
+    if (inviteeDisplayName === '') continue
+    const sourceType = firstJoinDisplayName(extra, [
+      'join_source_type', 'join_action', 'source_type', 'action',
+    ]).toLowerCase()
+    const action: ArkmeConversationMemberJoinEvent['action'] = new Set([
+      'direct_add', 'add_member', 'add_members', 'manual_add', 'added_by_member',
+    ]).has(sourceType) ? 'direct_add' : 'invite'
+    const inviterKey = inviterUserId > 0 ? `id:${String(inviterUserId)}` : `name:${inviterDisplayName}`
+    const groupKey = `${String(occurredAtMillis)}|${action}|${inviterKey}`
+    const group = groups.get(groupKey) ?? {
+      action,
+      occurredAtMillis,
+      inviterUserId,
+      inviterDisplayName,
+      inviteesByUserId: new Map<number, string>(),
+    }
+    group.inviteesByUserId.set(inviteeUserId, inviteeDisplayName)
+    groups.set(groupKey, group)
+  }
+  const projected: ArkmeConversationMemberJoinEvent[] = []
+  for (const [groupKey, group] of groups) {
+    const invitees = [...group.inviteesByUserId.entries()]
+      .sort((left, right) => (left[1] < right[1] ? -1 : left[1] > right[1] ? 1 : left[0] - right[0]))
+    if (invitees.length === 0) continue
+    const stableKey = `${groupKey}|${invitees.map(([userId]) => userId).join(',')}`
+    projected.push({
+      eventId: await options.eventIdForStableKey(stableKey),
+      action: group.action,
+      occurredAtMillis: group.occurredAtMillis,
+      inviter: {
+        ...(group.inviterUserId > 0 && membersByUserId.has(group.inviterUserId)
+          ? { memberRef: await options.memberRefForUserId(group.inviterUserId) }
+          : {}),
+        displayName: group.inviterDisplayName,
+        isSelf: group.inviterUserId > 0 && group.inviterUserId === options.viewerUserId,
+      },
+      invitees: await Promise.all(invitees.map(async ([userId, displayName]) => ({
+        memberRef: await options.memberRefForUserId(userId),
+        displayName,
+        isSelf: userId === options.viewerUserId,
+      }))),
+    })
+  }
+  projected.sort((left, right) => left.occurredAtMillis - right.occurredAtMillis
+    || (left.inviter.displayName < right.inviter.displayName ? -1 : left.inviter.displayName > right.inviter.displayName ? 1 : 0)
+    || left.eventId.localeCompare(right.eventId))
+  return projected
 }
 
 function isAgentAuthoredChatSend(options: { agentAuthored?: boolean }): boolean {
@@ -194,13 +330,28 @@ export class ChatService {
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') {
       throw new ArkmePluginError('chat-members-source-invalid', '仅支持查看群聊或私聊成员', false)
     }
-    const rawItems = await this.rawChatMembers(source.ownerRef, options.activeOnly !== false, session, options.signal)
-    const members = await this.projectChatMembers(source.ownerRef, rawItems, session, options.signal)
+    const activeOnly = options.activeOnly !== false
+    const joinEventsEnabled = source.kind === 'group_chat' && this.runtime.config.chatMemberJoinEventsEnabled !== false
+    const rawItems = await this.rawChatMembers(source.ownerRef, joinEventsEnabled ? false : activeOnly, session, options.signal)
+    const visibleRawItems = activeOnly
+      ? rawItems.filter(item => chatMemberStatus(item.status) === 'active')
+      : rawItems
+    const members = await this.projectChatMembers(source.ownerRef, visibleRawItems, session, options.signal)
+    const signingKey = joinEventsEnabled ? await this.runtime.stateStore.uniqueCode() : ''
+    const joinEvents = joinEventsEnabled
+      ? await projectArkmeConversationMemberJoinEvents(rawItems, {
+        viewerUserId: session.userId,
+        memberRefForUserId: async userId => await this.sealChatMemberRef(session.userId, source.ownerRef, userId),
+        eventIdForStableKey: async stableKey => `arkme-chat-join-v1.${createHmac('sha256', signingKey)
+          .update(`${String(session.userId)}|${source.ownerRef}|${stableKey}`).digest('base64url')}`,
+      })
+      : undefined
     return {
       source: await this.source.sourceItem(source),
       items: members,
       total: members.length,
       activeCount: members.filter(item => item.status === 'active').length,
+      ...(joinEvents === undefined ? {} : { joinEvents }),
     }
   }
 
@@ -1161,7 +1312,7 @@ export class ChatService {
         .find(value => value !== '' && value !== '成员' && value !== '群成员' && value !== displayName) ?? ''
       const role = chatMemberRole(item.role)
       const status = chatMemberStatus(item.status)
-      const extra = objectValue(item.extra)
+      const extra = parsedObject(item.extra)
       members.push({
         memberRef: await this.sealChatMemberRef(session.userId, chatSessionUid, userId),
         displayName,

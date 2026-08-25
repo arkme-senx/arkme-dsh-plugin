@@ -1388,11 +1388,28 @@ export interface ArkmeConversationMemberItem {
   mentionCount: number
 }
 
+export type ArkmeConversationMemberJoinAction = 'invite' | 'direct_add'
+
+export interface ArkmeConversationMemberJoinPerson {
+  memberRef?: string
+  displayName: string
+  isSelf: boolean
+}
+
+export interface ArkmeConversationMemberJoinEvent {
+  eventId: string
+  action: ArkmeConversationMemberJoinAction
+  occurredAtMillis: number
+  inviter: ArkmeConversationMemberJoinPerson
+  invitees: ArkmeConversationMemberJoinPerson[]
+}
+
 export interface ArkmeConversationMemberList {
   source: ArkmeSourceItem
   items: ArkmeConversationMemberItem[]
   total: number
   activeCount: number
+  joinEvents?: ArkmeConversationMemberJoinEvent[]
 }
 
 export type ArkmeConversationMemberRecordMode = 'owner' | 'mentioned'

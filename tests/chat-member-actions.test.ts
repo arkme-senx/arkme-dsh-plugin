@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ArkmeConversationMemberItem } from '../src/types.js'
+import type { ArkmeConversationMemberItem, ArkmeConversationMemberJoinEvent } from '../src/types.js'
 import {
   ARKME_MEMBER_RECORDS_DEFAULT_WIDTH,
   ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
   arkmeMemberActionMenuRowCount, arkmeMemberConversationAction,
+  arkmeMemberProfileNames,
   arkmeMemberRecordTimeline, arkmeMemberRecordTotal, formatArkmeMemberRecordTime,
   clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
 } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichContent.js'
+import {
+  ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
+  arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees,
+} from '../src/client/ArkmeSidebar.js'
 
 const member: ArkmeConversationMemberItem = {
   memberRef: 'member-ref', displayName: '小林', role: 'member', status: 'active',
@@ -113,6 +118,34 @@ describe('chat member action menu placement', () => {
     expect(card).toContain('disabled=""')
   })
 
+  it('matches the client profile name after a member changes their public nickname', () => {
+    const renamed = {
+      ...member,
+      displayName: '即我用户3038',
+      memberName: '即我用户3038',
+      secondaryName: '芝士小狗',
+    }
+    expect(arkmeMemberProfileNames(renamed, true)).toEqual({
+      displayName: '芝士小狗',
+      topicNickname: '即我用户3038',
+    })
+    const card = renderToStaticMarkup(createElement(ArkmeMemberProfileCard, {
+      member: renamed,
+      showTopicNickname: true,
+      busy: false,
+      onClose: () => undefined,
+      onSend: () => undefined,
+    }))
+    expect(card).toContain('aria-label="芝士小狗 的用户卡片"')
+    expect(card).toContain('>芝士小狗</h3>')
+    expect(card).toContain('主题内昵称：')
+    expect(card).toContain('即我用户3038</p>')
+    expect(arkmeMemberProfileNames(renamed, false)).toEqual({
+      displayName: '即我用户3038',
+      topicNickname: '',
+    })
+  })
+
   it('uses the projected mode count instead of the loaded page length', () => {
     expect(arkmeMemberRecordTotal(member, 'mentioned')).toBe(2)
     expect(arkmeMemberRecordTotal(member, 'owner')).toBe(7)
@@ -165,5 +198,55 @@ describe('chat member action menu placement', () => {
       { kind: 'mention', text: '@Ye' },
       { kind: 'text', text: ' 首席UI设计师分配下，联系a@b.com' },
     ])
+  })
+
+  it('reveals member join events only after they enter the loaded timeline window', () => {
+    const event = (eventId: string, occurredAtMillis: number): ArkmeConversationMemberJoinEvent => ({
+      eventId, action: 'invite', occurredAtMillis,
+      inviter: { memberRef: 'member-1', displayName: '群主', isSelf: false },
+      invitees: [{ memberRef: 'member-2', displayName: '成员', isSelf: false }],
+    })
+    const events = [event('old', 100), event('visible', 300), event('new', 500)]
+    const items = [{ itemUid: 'one', senderName: '群主', isMe: false, sendAtMillis: 250, title: '', textContent: '', status: 1 }]
+    expect(arkmeConversationJoinEventsInLoadedWindow(events, items, true).map(item => item.eventId))
+      .toEqual(['visible', 'new'])
+    expect(arkmeConversationJoinEventsInLoadedWindow(events, items, false).map(item => item.eventId))
+      .toEqual(['old', 'visible', 'new'])
+  })
+
+  it('matches the client join notice time, name, self, and two-person rules', () => {
+    const now = new Date(2026, 7, 25, 12, 0).getTime()
+    expect(arkmeMemberJoinTimeLabel(new Date(2026, 7, 24, 17, 39).getTime(), now)).toBe('昨天 17:39')
+    expect(arkmeMemberJoinDisplayName({ displayName: '即我用户3038', isSelf: false }, 14)).toBe('即我用户3038')
+    expect(arkmeMemberJoinDisplayName({ displayName: 'jw-XeSL8sjm-fuQEiXxDwCKR', isSelf: false }, 14))
+      .toBe('jw-XeSL8sjm-fu...')
+    expect(arkmeMemberJoinDisplayName({ displayName: '12345678901', isSelf: false }, 10)).toBe('1234567890...')
+    expect(arkmeMemberJoinDisplayName({ displayName: '👨‍👩‍👧‍👦家庭用户名字很长', isSelf: false }, 4)).toBe('👨‍👩‍👧‍👦家庭用...')
+    expect(arkmeMemberJoinDisplayName({ displayName: '任意姓名', isSelf: true }, 10)).toBe('你')
+    const event: ArkmeConversationMemberJoinEvent = {
+      eventId: 'join', action: 'invite', occurredAtMillis: now,
+      inviter: { memberRef: 'member-ref', displayName: '群主', isSelf: false },
+      invitees: [
+        { displayName: '甲', isSelf: false },
+        { displayName: '乙', isSelf: false },
+        { displayName: '我', isSelf: true },
+      ],
+    }
+    expect(arkmeVisibleMemberJoinInvitees(event).map(item => item.displayName)).toEqual(['甲', '我'])
+    const html = renderToStaticMarkup(createElement(ArkmeMemberJoinNotice, {
+      rowId: 'member-join:join', event,
+      membersByRef: new Map([['member-ref', member]]), startsGroup: true, onOpenMember: () => undefined,
+    }))
+    expect(html).toContain('data-arkme-member-join-event="join"')
+    expect(html).toContain('邀请')
+    expect(html).toContain('等3人')
+    expect(html).toContain('加入群聊')
+    expect(html).toContain('font-size:13px')
+    expect(html).toContain('font-weight:500')
+    expect(html).toContain('data-arkme-member-join-group-start="true"')
+    expect(html).toContain('margin-top:26px')
+    expect(html).toContain('padding:4px 6px')
+    expect(html).toContain('padding-top:8px')
+    expect(html).toContain('640px')
   })
 })
