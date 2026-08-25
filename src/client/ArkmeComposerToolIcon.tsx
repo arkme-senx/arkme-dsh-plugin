@@ -15,13 +15,6 @@ function ArkmeComposerToolIcon({ children }: { children: ReactNode }) {
   >{children}</svg>
 }
 
-/** Pixel-aligned 1.5px paths keep both composer tools equally crisp at 20px. */
-export function ArkmeComposerPlusIcon() {
-  return <ArkmeComposerToolIcon>
-    <path d="M4 10H16M10 4V16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </ArkmeComposerToolIcon>
-}
-
 /** Matches the desktop sentiment icon without scaling a 256px glyph into a fractional stroke. */
 export function ArkmeComposerEmojiIcon() {
   return <ArkmeComposerToolIcon>

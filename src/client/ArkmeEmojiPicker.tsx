@@ -11,6 +11,7 @@ const recentStorageKey = 'arkme:composer:recent-emojis:v1'
 
 const styles: Record<string, CSSProperties> = {
   host: { flex: 'none' },
+  triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' },
   panel: {
     position: 'absolute', left: 0, bottom: 'calc(100% + 8px)', zIndex: 30,
     width: 'min(372px, calc(100vw - 48px))', maxHeight: 'min(410px, calc(100vh - 180px))',
@@ -138,6 +139,6 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, onSelect }: {
       data-arkme-composer-tool="emoji"
       onMouseDown={event => { event.preventDefault() }}
       onClick={() => { setOpen(value => !value) }}
-    ><ArkmeComposerEmojiIcon /></ArkmeComposerToolButton>
+    ><span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span></ArkmeComposerToolButton>
   </div>
 }
