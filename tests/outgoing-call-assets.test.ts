@@ -57,7 +57,7 @@ describe('outgoing call assets', () => {
     const manifest = await request('/arkme-self/api/call/manifest.json')
     const demoPeer = await request('/arkme-self/api/call/call-demo-peer.png')
     const demoSelf = await request('/arkme-self/api/call/call-demo-self.png')
-    const demoVideoIcon = await request('/arkme-self/api/call/jotmo-video-linear.svg')
+    const demoVideoIcon = await request('/arkme-self/api/call/arkme-video-linear.svg')
 
     expect(bundle).toMatchObject({ status: 200, headers: expect.objectContaining({
       'Content-Type': 'text/javascript; charset=utf-8',

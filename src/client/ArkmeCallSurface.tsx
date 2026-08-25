@@ -546,7 +546,7 @@ function cleanAvatarRef(value: string | undefined): string | undefined {
 
 function CallVideoIcon({ size = 16, style }: { size?: number; style?: CSSProperties }) {
   return <img
-    src={`${CALL_ASSET_ROOT}/jotmo-video-linear.svg`}
+    src={`${CALL_ASSET_ROOT}/arkme-video-linear.svg`}
     alt=""
     width={size}
     height={size}

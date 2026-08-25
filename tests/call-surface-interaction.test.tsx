@@ -613,7 +613,7 @@ describe('ArkmeCallSurface interactions', () => {
     })
 
     expect(buttonByLabel(renderer, '直接和lucis视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.src)
-      .toBe('/arkme-self/api/call/jotmo-video-linear.svg')
+      .toBe('/arkme-self/api/call/arkme-video-linear.svg')
 
     await act(async () => {
       buttonByLabel(renderer, '直接和lucis视频通话').props.onClick()

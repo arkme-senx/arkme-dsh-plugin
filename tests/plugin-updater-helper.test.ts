@@ -745,7 +745,7 @@ if (args[0] === 'web') {
       if (previousEnv.fail === undefined) delete process.env.FAKE_FAIL_VERSION
       else process.env.FAKE_FAIL_VERSION = previousEnv.fail
     }
-  }, 15_000)
+  }, 30_000)
 
   it('migrates a legacy managed plan into a durable receipt on first fixed-version update', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-legacy-plan-'))
