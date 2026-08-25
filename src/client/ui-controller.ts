@@ -14,6 +14,7 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
 export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
+  recordRevision: number
   mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness'
   productMode?: 'conversations' | 'contacts'
@@ -46,7 +47,7 @@ function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTa
 }
 
 export class ArkmeUiController {
-  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, mode: 'login' }
+  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' }
   private lastConversationSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
   private settingsOpener: (() => void) | undefined
@@ -100,6 +101,10 @@ export class ArkmeUiController {
 
   chatChanged(): void {
     this.publish({ ...this.state, chatRevision: this.state.chatRevision + 1 })
+  }
+
+  recordChanged(): void {
+    this.publish({ ...this.state, recordRevision: this.state.recordRevision + 1 })
   }
 
   showLogin(): void {
@@ -288,6 +293,7 @@ export class ArkmeUiController {
   private publish(next: ArkmeUiState): void {
     if (next.authRevision === this.state.authRevision
       && next.chatRevision === this.state.chatRevision
+      && next.recordRevision === this.state.recordRevision
       && next.mode === this.state.mode
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen

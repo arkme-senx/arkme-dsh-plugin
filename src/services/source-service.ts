@@ -444,9 +444,11 @@ export class SourceService {
     this.sourceListInFlight.set(cacheKey, pending)
     try {
       const result = await pending
-      this.sourceListCache.delete(cacheKey)
-      this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
-      this.pruneSourceListCache()
+      if (this.sourceListInFlight.get(cacheKey) === pending) {
+        this.sourceListCache.delete(cacheKey)
+        this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
+        this.pruneSourceListCache()
+      }
       return cloneSourceList(result)
     } finally {
       if (this.sourceListInFlight.get(cacheKey) === pending) this.sourceListInFlight.delete(cacheKey)
@@ -487,21 +489,26 @@ export class SourceService {
           '/api/v1/topics/display/list',
           { limit: Math.min(100, Math.max(1, limit)) },
           session,
+          options.signal,
         ),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/hierarchy/relations/list',
           {},
           session,
+          options.signal,
         ).catch(() => undefined),
       ])
+      options.signal?.throwIfAborted()
       const [summaryResult, latestRecordsResult] = await Promise.allSettled([
         this.recordReader.summary(),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/records/uncategorized/query',
           { limit: 10 },
           session,
+          options.signal,
         ),
       ])
+      options.signal?.throwIfAborted()
       const cached = summaryResult.status === 'rejected' || latestRecordsResult.status === 'rejected'
         ? await this.runtime.stateStore.cachedSnapshot(session.userId).catch(() => undefined)
         : undefined
@@ -718,10 +725,15 @@ export class SourceService {
 
   invalidateSourceListCache(userId: number, directory?: ArkmeSourceDirectory): void {
     const prefix = `${String(userId)}:`
+    const matches = (key: string): boolean => (
+      key.startsWith(prefix)
+      && (directory === undefined || key.startsWith(`${prefix}${directory}:`))
+    )
     for (const key of this.sourceListCache.keys()) {
-      if (!key.startsWith(prefix)) continue
-      if (directory !== undefined && !key.startsWith(`${prefix}${directory}:`)) continue
-      this.sourceListCache.delete(key)
+      if (matches(key)) this.sourceListCache.delete(key)
+    }
+    for (const key of this.sourceListInFlight.keys()) {
+      if (matches(key)) this.sourceListInFlight.delete(key)
     }
   }
 
