@@ -123,6 +123,22 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('opens calls without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人', activeAtMillis: 1, unreadCount: 0,
+    }
+    controller.selectSource(source)
+
+    controller.showCalls()
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0, chatRevision: 0, mode: 'calls',
+    })
+    controller.showConversations()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+  })
+
   it('opens contact add above the current conversation and restores that conversation when closed', () => {
     const controller = new ArkmeUiController()
     const source = {

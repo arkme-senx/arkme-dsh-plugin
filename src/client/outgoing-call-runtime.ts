@@ -19,6 +19,7 @@ export type OutgoingCallPhase = 'idle' | 'preparing' | 'bootstrapping' | 'callin
 
 export interface OutgoingCallRuntimeSnapshot {
   visible: boolean
+  retainFrame: boolean
   phase: OutgoingCallPhase
   assetBasePath: string
   callRequestId: string
@@ -54,6 +55,7 @@ const FAILURE_CODES = new Set<ArkmeOutgoingCallFailureCode>([
 
 const INITIAL_SNAPSHOT: OutgoingCallRuntimeSnapshot = {
   visible: false,
+  retainFrame: false,
   phase: 'idle',
   assetBasePath: '/arkme-self/api/call',
   callRequestId: '',
@@ -64,6 +66,8 @@ const INITIAL_SNAPSHOT: OutgoingCallRuntimeSnapshot = {
   compact: false,
   fullscreen: false,
 }
+
+const TERMINATE_GRACE_MS = 1_800
 
 function failureFrom(error: unknown): { code: ArkmeOutgoingCallFailureCode; message: string } {
   const body = error !== null && typeof error === 'object' && 'body' in error
@@ -195,11 +199,11 @@ export class OutgoingCallRuntime {
       return
     }
     if (message.type === 'permission_denied') {
-      void this.fail('call-permission-denied', message.message ?? '请允许麦克风权限后重试')
+      void this.finish('call-permission-denied', message.message ?? '请允许麦克风权限后重试')
       return
     }
     if (message.type === 'fatal_error') {
-      void this.fail('call-engine-failed', message.message ?? '呼叫引擎启动失败')
+      void this.finish('call-engine-failed', message.message ?? '呼叫引擎启动失败')
       return
     }
     if (TERMINAL_TYPES.has(message.type)) this.finishTerminal(message.message ?? '')
@@ -224,13 +228,18 @@ export class OutgoingCallRuntime {
 
   cancel(): void {
     if (this.snapshot.phase === 'idle') return
-    if (this.snapshot.phase === 'calling' || this.snapshot.phase === 'active') {
-      this.update({ phase: 'ending', statusText: '正在结束通话…' })
-      if (this.frame !== null) sendDesktopCallCommand(this.frame, 'terminate')
-      this.startTimeout(() => { void this.finish('call-cancelled', '通话已结束') }, 1_200)
+    const frame = this.frame
+    const shouldTerminateFrame = frame !== null && (
+      this.snapshot.phase === 'bootstrapping' || this.snapshot.phase === 'calling' || this.snapshot.phase === 'active' ||
+      this.bootstrapSent || this.callSent
+    )
+    if (shouldTerminateFrame) {
+      sendDesktopCallCommand(frame, 'terminate')
+      this.hideTerminalOverlay('通话已结束', true)
+      this.scheduleFinish('call-cancelled', '通话已结束', TERMINATE_GRACE_MS)
       return
     }
-    this.update({ visible: false, phase: 'ending', statusText: '已取消呼叫' })
+    this.hideTerminalOverlay('已取消呼叫', false)
     void this.finish('call-cancelled', '已取消呼叫')
   }
 
@@ -273,7 +282,7 @@ export class OutgoingCallRuntime {
     this.bootstrapSent = false
     this.callSent = false
     this.update({
-      visible: true, phase: 'preparing', callRequestId, displayName: request.displayName,
+      visible: true, retainFrame: false, phase: 'preparing', callRequestId, displayName: request.displayName,
       mediaType: request.mediaType, statusText: '正在准备呼叫…', error: '', compact: false, fullscreen: false,
     })
     try {
@@ -359,12 +368,31 @@ export class OutgoingCallRuntime {
   }
 
   private finishTerminal(message: string): void {
-    this.update({ phase: 'ending', statusText: message || '通话已结束' })
-    this.startTimeout(() => { void this.finish('call-cancelled', message || '通话已结束') }, 650)
+    const terminalMessage = message || '通话已结束'
+    this.hideTerminalOverlay(terminalMessage, this.frame !== null)
+    this.scheduleFinish('call-cancelled', terminalMessage, 650)
+  }
+
+  private hideTerminalOverlay(message: string, retainFrame: boolean): void {
+    this.update({ visible: false, retainFrame, phase: 'ending', statusText: message, compact: false, fullscreen: false })
+  }
+
+  private scheduleFinish(code: ArkmeOutgoingCallFailureCode, message: string, delayMs: number): void {
+    const generation = this.generation
+    this.startTimeout(() => {
+      if (this.generation !== generation) return
+      void this.finish(code, message)
+    }, delayMs)
   }
 
   private async finish(code: ArkmeOutgoingCallFailureCode, message: string): Promise<void> {
     this.generation += 1
+    const settled = this.leaseCallRequestId === '' ? undefined : {
+      callRequestId: this.leaseCallRequestId,
+      displayName: this.snapshot.displayName,
+      mediaType: this.snapshot.mediaType,
+      status: code === 'call-cancelled' ? 'ended' as const : 'failed' as const,
+    }
     const intent = this.intent
     this.intent = undefined
     if (intent !== undefined) await this.api('calls.outgoing.intent.resolve', {
@@ -376,9 +404,10 @@ export class OutgoingCallRuntime {
     this.bootstrapSent = false
     this.callSent = false
     this.update({
-      visible: false, phase: 'idle', callRequestId: '', displayName: '', mediaType: 'audio',
+      visible: false, retainFrame: false, phase: 'idle', callRequestId: '', displayName: '', mediaType: 'audio',
       statusText: '', error: '', compact: false, fullscreen: false,
     })
+    if (settled !== undefined) this.controller.notifySettled(settled)
   }
 
   private async releaseLease(): Promise<void> {

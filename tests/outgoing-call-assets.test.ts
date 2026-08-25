@@ -55,6 +55,9 @@ describe('outgoing call assets', () => {
     const bundle = await request('/arkme-self/api/call/bundle.js')
     const icon = await request('/arkme-self/api/call/call-linear-strong.svg')
     const manifest = await request('/arkme-self/api/call/manifest.json')
+    const demoPeer = await request('/arkme-self/api/call/call-demo-peer.png')
+    const demoSelf = await request('/arkme-self/api/call/call-demo-self.png')
+    const demoVideoIcon = await request('/arkme-self/api/call/jotmo-video-linear.svg')
 
     expect(bundle).toMatchObject({ status: 200, headers: expect.objectContaining({
       'Content-Type': 'text/javascript; charset=utf-8',
@@ -72,6 +75,19 @@ describe('outgoing call assets', () => {
     const searchBack = await request('/arkme-self/api/call/arrow_left.svg')
     expect(searchClose.status).toBe(200)
     expect(searchBack.status).toBe(200)
+    expect(demoPeer).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    expect(demoSelf).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    expect(demoVideoIcon).toMatchObject({ status: 200, headers: expect.objectContaining({
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }) })
+    expect(demoVideoIcon.body.toString('utf8')).toContain('M12.53 20.4201H6.21')
   })
 
   it('supports HEAD and rejects methods, unknown files, and traversal', async () => {
@@ -102,5 +118,43 @@ describe('outgoing call assets', () => {
     expect(createHash('sha256').update(bundle).digest('hex')).toBe(manifest.bundleSha256)
     expect(createHash('sha256').update(icon).digest('hex')).toBe(manifest.iconSha256)
     expect(bundle.toString('utf8')).toContain('payload.outgoingOnly !== true')
+  })
+
+  it('keeps the local hangup fallback that closes the host overlay when the SDK omits ON_CALL_END', async () => {
+    const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
+    const hangup = bundle.slice(bundle.indexOf('async function hangupCall()'), bundle.indexOf('async function requestToggleFullscreen()'))
+
+    expect(hangup).toContain('const engine = state.engine;')
+    expect(hangup).toContain('postLocalTerminalToWebHost("end", "\\u901A\\u8BDD\\u5DF2\\u7ED3\\u675F");')
+    expect(hangup).toContain('void engine.hangup().catch(() => {')
+    expect(hangup).toContain('state.pendingLocalTerminalAction = "";')
+    expect(hangup).toContain('await finalizeTerminalState("end", {}, "\\u901A\\u8BDD\\u5DF2\\u7ED3\\u675F");')
+    expect(hangup.indexOf('postLocalTerminalToWebHost("end"')).toBeLessThan(hangup.indexOf('void engine.hangup()'))
+  })
+
+  it('posts terminal events to the DSH web iframe parent when native bridges are unavailable', async () => {
+    const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
+    const bridge = bundle.slice(bundle.indexOf('function resolveWebHostCallRequestId()'), bundle.indexOf('function escapeHtml(value)'))
+    const post = bundle.slice(bundle.indexOf('function postToFlutter(type, extra = {})'), bundle.indexOf('function setStatusText(text)'))
+
+    expect(bridge).toContain('JSON.parse(String(window.name || "{}"))')
+    expect(bridge).toContain('channel: "jotmo-desktop-call"')
+    expect(bridge).toContain('window.parent.postMessage')
+    expect(post).toContain('const postedToWebHost = postToWebHostBridge(payload);')
+    expect(post).toContain('if (postedToWebHost) {')
+    expect(post).toContain('return true;')
+  })
+
+  it('sends a web host terminal hint before video SDK cleanup can block hangup close', async () => {
+    const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
+    const hint = bundle.slice(bundle.indexOf('function postLocalTerminalToWebHost(type, message)'), bundle.indexOf('function setStatusText(text)'))
+
+    expect(hint).toContain('phase: CALL_PHASE.ending')
+    expect(hint).toContain('hasActiveCall: false')
+    expect(hint).toContain('elapsedLabel: state.elapsedLabel')
+    expect(hint).toContain('reason: "local_hangup_hint"')
+    expect(hint).toContain('const posted = postToWebHostBridge(payload);')
+    expect(hint).toContain('diagLog("local_terminal_web_host_hint"')
+    expect(bundle).not.toContain('getElapsedLabel')
   })
 })

@@ -27,8 +27,8 @@ import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
-import { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
+import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeMentionTextarea } from './ArkmeMentionTextarea.js'
@@ -1856,6 +1856,7 @@ export function ArkmeSurface({
     ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
     : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
+    : ui.mode === 'calls' ? '通话'
     : ui.mode === 'world' ? '世界'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '市集'
@@ -1867,7 +1868,7 @@ export function ArkmeSurface({
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
     && (ui.mode === 'recordings' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions'
-      || ui.mode === 'settings' || ui.mode === 'voiceprint')
+      || ui.mode === 'settings' || ui.mode === 'voiceprint' || ui.mode === 'calls')
 
   return (
     <div
@@ -1995,14 +1996,7 @@ export function ArkmeSurface({
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : ui.mode === 'calls' ? <ArkmeCallHistorySurface
-          assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
-          contacts={chatDirectory.sources.filter(source => source.kind === 'private_chat' && source.displayName !== '林小满' && source.displayName !== '妈妈').map(source => ({
-            sourceRef: source.sourceRef,
-            displayName: source.displayName,
-            ...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef }),
-          }))}
-        />
+        /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}

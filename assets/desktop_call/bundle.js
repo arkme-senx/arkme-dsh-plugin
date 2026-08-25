@@ -46334,6 +46334,29 @@ function safeJsonStringify(value) {
     return "{}";
   }
 }
+function resolveWebHostCallRequestId() {
+  try {
+    const parsed = JSON.parse(String(window.name || "{}"));
+    return safeString(parsed?.callRequestId);
+  } catch (_) {
+    return "";
+  }
+}
+function postToWebHostBridge(message) {
+  if (!window.parent || window.parent === window) {
+    return false;
+  }
+  const callRequestId = resolveWebHostCallRequestId();
+  if (!callRequestId) {
+    return false;
+  }
+  window.parent.postMessage({
+    channel: "jotmo-desktop-call",
+    callRequestId,
+    message
+  }, window.location.origin);
+  return true;
+}
 function escapeHtml(value) {
   return safeString(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
@@ -46443,9 +46466,11 @@ function postToFlutter(type, extra = {}) {
     message: safeString(extra.message)
   });
   const bridge = resolveFlutterBridge();
+  const postedToWebHost = postToWebHostBridge(payload);
   diagLog("post_to_flutter", {
     type,
     hasBridge: Boolean(bridge),
+    postedToWebHost,
     roomId: statePayload.roomId,
     callId: statePayload.callId,
     mediaType: statePayload.mediaType,
@@ -46455,11 +46480,51 @@ function postToFlutter(type, extra = {}) {
     connectionRole: state.connectionRole
   });
   if (!bridge) {
+    if (postedToWebHost) {
+      return true;
+    }
     console.warn("[DesktopCall] flutter bridge unavailable", payload);
     return false;
   }
   bridge.postMessage(payload);
   return true;
+}
+function postLocalTerminalToWebHost(type, message) {
+  const peer = getFlutterPeer();
+  const payload = safeJsonStringify({
+    type,
+    roomId: state.activeRoomId,
+    callId: state.activeCallId,
+    mediaType: state.activeMediaType,
+    statusText: safeString(message),
+    phase: CALL_PHASE.ending,
+    hasActiveCall: false,
+    audioEnabled: state.audioEnabled,
+    videoEnabled: state.videoEnabled,
+    speakerEnabled: state.speakerEnabled,
+    elapsedLabel: state.elapsedLabel,
+    caller: {
+      name: state.caller.name,
+      avatar: state.caller.avatar
+    },
+    peer: {
+      name: peer.name,
+      avatar: peer.avatar
+    },
+    userData: state.lastUserData,
+    reason: "local_hangup_hint",
+    message: safeString(message)
+  });
+  const posted = postToWebHostBridge(payload);
+  diagLog("local_terminal_web_host_hint", {
+    type,
+    posted,
+    roomId: state.activeRoomId,
+    callId: state.activeCallId,
+    mediaType: state.activeMediaType,
+    phase: state.phase
+  });
+  return posted;
 }
 function setStatusText(text) {
   state.lastStatusText = safeString(text);
@@ -49696,13 +49761,13 @@ async function hangupCall() {
   if (!state.engine) {
     return;
   }
+  const engine = state.engine;
   state.pendingLocalTerminalAction = "hangup";
-  try {
-    await state.engine.hangup();
-  } catch (error) {
+  postLocalTerminalToWebHost("end", "\u901A\u8BDD\u5DF2\u7ED3\u675F");
+  void engine.hangup().catch(() => {
     state.pendingLocalTerminalAction = "";
-    throw error;
-  }
+  });
+  await finalizeTerminalState("end", {}, "\u901A\u8BDD\u5DF2\u7ED3\u675F");
 }
 async function requestToggleFullscreen() {
   state.activeDevicePopover = "";

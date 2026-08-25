@@ -14,6 +14,7 @@ import { GlobeHemisphereWest } from '@phosphor-icons/react/GlobeHemisphereWest'
 import { MagnifyingGlass } from '@phosphor-icons/react/MagnifyingGlass'
 import { Microphone } from '@phosphor-icons/react/Microphone'
 import { Paperclip } from '@phosphor-icons/react/Paperclip'
+import { PhoneCall } from '@phosphor-icons/react/PhoneCall'
 import { SquaresFour } from '@phosphor-icons/react/SquaresFour'
 import { Waveform } from '@phosphor-icons/react/Waveform'
 import type { Icon } from '@phosphor-icons/react/lib'
@@ -26,6 +27,7 @@ import { ArkmeUserAvatar } from '../ArkmeAvatar.js'
 import { ARKME_WORDMARK_DATA_URL } from '../arkme-wordmark.js'
 import { ArkmeMarketplace } from '../ArkmeMarketplace.js'
 import { ArkmeCalendarSurface } from '../ArkmeCalendarSurface.js'
+import { ArkmeCallSurface } from '../ArkmeCallSurface.js'
 import { ArkmeRecordingSurface } from '../ArkmeRecordingSurface.js'
 import { ArkmeSearchSurface } from '../ArkmeSearchSurface.js'
 import { ArkmeSettingsRow } from '../ArkmeSettingsRow.js'
@@ -52,7 +54,7 @@ export function installArkmeRedesignStyles(): () => void {
   return () => { style.remove() }
 }
 
-export type ArkmeRoute = 'chats' | 'recordings' | 'search' | 'plugins' | 'settings' | 'voiceprint'
+export type ArkmeRoute = 'chats' | 'calls' | 'recordings' | 'search' | 'plugins' | 'settings' | 'voiceprint'
 
 export interface ArkmeRootInjected {
   layout: ArkmeLayoutController
@@ -75,6 +77,7 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { id: 'chats', label: '对话', icon: ChatCircleText },
+  { id: 'calls', label: '通话', icon: PhoneCall },
   { id: 'recordings', label: '录音', icon: Waveform },
   { id: 'search', label: '搜索', icon: MagnifyingGlass },
   { id: 'calendar', label: '日历', icon: CalendarBlank },
@@ -232,6 +235,7 @@ export function ArkmeRootFrame({
     setCalendarOpen(false)
     setProfileOpen(false)
     if (next === 'chats') arkmeUi.focusSendToSelf()
+    if (next === 'calls') arkmeUi.showCalls()
     if (next === 'recordings') arkmeUi.showRecordings()
     if (next === 'search') arkmeUi.showSearch()
     if (next === 'plugins') arkmeUi.showExtensions()
@@ -360,7 +364,9 @@ export function ArkmeRootFrame({
           : taskConversationOpen
             ? <div className="arkme-redesign-route-surface arkme-redesign-task-conversation">{renderSlot('conversation', {})}</div>
             : <div className="arkme-redesign-route-surface arkme-redesign-route-chats"><ArkmeSurface productChrome={false} /></div>
-          : route === 'recordings'
+          : route === 'calls'
+            ? <div className="arkme-redesign-route-surface arkme-redesign-calls-page"><ArkmeCallSurface /></div>
+            : route === 'recordings'
             ? <div className="arkme-redesign-route-surface arkme-redesign-recordings-page"><ArkmeRecordingSurface /></div>
             : route === 'search'
               ? <section className="arkme-redesign-feature-page arkme-redesign-search-page">

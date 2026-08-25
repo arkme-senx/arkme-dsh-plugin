@@ -15,6 +15,7 @@ const AVATAR_DOWNLOAD_CONCURRENCY = 6
 interface AvatarCacheEntry {
   expiresAtMillis: number
   pending: Promise<string>
+  value?: string
 }
 
 const avatarDataUrlCache = new Map<string, AvatarCacheEntry>()
@@ -46,16 +47,34 @@ export function clearArkmeAvatarCache(): void {
   avatarDataUrlCache.clear()
 }
 
-export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
+function getFreshAvatarCacheEntry(imageRef: string): AvatarCacheEntry | undefined {
   const cached = avatarDataUrlCache.get(imageRef)
-  if (cached !== undefined && cached.expiresAtMillis > Date.now()) return cached.pending
-  if (cached !== undefined) avatarDataUrlCache.delete(imageRef)
+  if (cached === undefined) return undefined
+  if (cached.expiresAtMillis > Date.now()) return cached
+  avatarDataUrlCache.delete(imageRef)
+  return undefined
+}
+
+export function getCachedArkmeImageDataUrl(imageRef: string): string | undefined {
+  return getFreshAvatarCacheEntry(imageRef)?.value
+}
+
+export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
+  const cached = getFreshAvatarCacheEntry(imageRef)
+  if (cached !== undefined) {
+    if (cached.value !== undefined) return Promise.resolve(cached.value)
+    return cached.pending
+  }
   const entry: AvatarCacheEntry = {
     expiresAtMillis: Date.now() + AVATAR_CACHE_TTL_MS + Math.floor(Math.random() * AVATAR_CACHE_JITTER_MS),
     pending: Promise.resolve(''),
   }
   entry.pending = scheduleAvatarDownload(async () => await callArkme<ArkmeImagePayload>('image.read', { imageRef }))
-    .then(image => `data:${image.mediaType};base64,${image.dataBase64}`)
+    .then(image => {
+      const value = `data:${image.mediaType};base64,${image.dataBase64}`
+      entry.value = value
+      return value
+    })
     .catch(error => {
       if (avatarDataUrlCache.get(imageRef) === entry) avatarDataUrlCache.delete(imageRef)
       throw error
@@ -66,6 +85,14 @@ export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
 
 interface ResolvedGroupAvatarSlot extends ArkmeGroupAvatarSlot {
   imageUrl?: string
+}
+
+function applyCachedAvatarSlots(sourceSlots: readonly ArkmeGroupAvatarSlot[]): ResolvedGroupAvatarSlot[] {
+  return sourceSlots.map(slot => {
+    if (slot.avatarRef === undefined) return slot
+    const imageUrl = getCachedArkmeImageDataUrl(slot.avatarRef)
+    return imageUrl === undefined ? slot : { ...slot, imageUrl }
+  })
 }
 
 interface AvatarLayoutSlot {
@@ -134,12 +161,19 @@ export function ArkmeUserAvatar({
   label?: string
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
-  const [imageUrl, setImageUrl] = useState<string>()
+  const [imageUrl, setImageUrl] = useState<string | undefined>(() => normalizedRef === ''
+    ? undefined
+    : getCachedArkmeImageDataUrl(normalizedRef))
 
   useEffect(() => {
     let active = true
-    setImageUrl(undefined)
-    if (normalizedRef === '') return () => { active = false }
+    if (normalizedRef === '') {
+      setImageUrl(undefined)
+      return () => { active = false }
+    }
+    const cached = getCachedArkmeImageDataUrl(normalizedRef)
+    setImageUrl(cached)
+    if (cached !== undefined) return () => { active = false }
     void loadArkmeImageDataUrl(normalizedRef)
       .then(value => { if (active) setImageUrl(value) })
       .catch(() => undefined)
@@ -252,7 +286,7 @@ export function ArkmeSourceAvatar({
   }, [avatarRef, avatarRefs, groupAvatar])
   const slotsKey = JSON.stringify([sourceSlots, groupAvatar?.computedAtMillis ?? 0])
   const [visible, setVisible] = useState(() => typeof globalThis.IntersectionObserver !== 'function')
-  const [slots, setSlots] = useState<ResolvedGroupAvatarSlot[]>(sourceSlots)
+  const [slots, setSlots] = useState<ResolvedGroupAvatarSlot[]>(() => applyCachedAvatarSlots(sourceSlots))
 
   useEffect(() => {
     const target = container.current
@@ -280,7 +314,7 @@ export function ArkmeSourceAvatar({
 
   useEffect(() => {
     let active = true
-    setSlots(sourceSlots)
+    setSlots(applyCachedAvatarSlots(sourceSlots))
     if (!visible || sourceSlots.length === 0) return () => { active = false }
     sourceSlots.forEach((slot, index) => {
       if (slot.avatarRef === undefined) return

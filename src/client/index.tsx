@@ -259,6 +259,7 @@ export {
 } from './ArkmeExtensionReviews.js'
 export { ArkmeSurface } from './ArkmeSidebar.js'
 export { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
+export { ArkmeCallSurface } from './ArkmeCallSurface.js'
 export { ArkmeAccountMenu } from './ArkmeAccountMenu.js'
 export { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, renderArkmeDirectoryRow } from './ArkmeVirtualWorkspace.js'

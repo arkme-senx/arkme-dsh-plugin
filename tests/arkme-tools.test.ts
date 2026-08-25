@@ -35,6 +35,9 @@ function fakeService(): ArkmeCoreToolPorts & {
   arkoProfile: ReturnType<typeof vi.fn>
   arkoRunStatus: ReturnType<typeof vi.fn>
   requestOutgoingCall: ReturnType<typeof vi.fn>
+  listCallHistory: ReturnType<typeof vi.fn>
+  callDetail: ReturnType<typeof vi.fn>
+  retryCallSummary: ReturnType<typeof vi.fn>
 } {
   return {
     providerCapabilities: () => ({
@@ -50,6 +53,7 @@ function fakeService(): ArkmeCoreToolPorts & {
         recordCalendar: true as const,
         sourceDirectory: true as const, sourceTimeline: true as const, sourceTextSend: true as const,
         outgoingCall: true as const,
+        callHistory: true as const,
       },
       limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
     }),
@@ -242,6 +246,67 @@ function fakeService(): ArkmeCoreToolPorts & {
       status: 'calling' as const,
       displayName: '小林',
       mediaType,
+    })),
+    listCallHistory: vi.fn(async () => ({
+      items: [{
+        callRef: 'arkme-call-v1.payload.sig',
+        stableId: 'trtc:room-1',
+        peerDisplayName: '小林',
+        mediaType: 'audio' as const,
+        startedAtMillis: 1_787_310_000_000,
+        acceptedAtMillis: 1_787_310_003_000,
+        endedAtMillis: 1_787_310_063_000,
+        durationSeconds: 60,
+        callResult: 'NormalEnd',
+        resultLabel: '已接通',
+        summaryStatus: 'done' as const,
+        summaryPreview: '确认了排期',
+        canOpenDetail: true,
+        canRedial: true,
+      }],
+      hasMore: false,
+    })),
+    callDetail: vi.fn(async () => ({
+      callRef: 'arkme-call-v1.payload.sig',
+      title: '和小林的通话',
+      mediaType: 'video' as const,
+      startedAtMillis: 1_787_310_000_000,
+      acceptedAtMillis: 1_787_310_003_000,
+      endedAtMillis: 1_787_310_063_000,
+      durationSeconds: 60,
+      callResult: 'NormalEnd',
+      resultLabel: '已接通',
+      summaryStatus: 'done' as const,
+      summaryText: '确认了排期',
+      transcriptPending: false,
+      transcriptFailed: false,
+      videoRecord: {
+        available: true,
+        source: 'real' as const,
+        videoUrl: 'https://media.example/real-call.mp4',
+        posterUrl: 'https://media.example/real-call.jpg',
+      },
+      participants: [{ displayName: '小林' }],
+      transcriptSegments: [{ segmentId: 'seg-1', speakerDisplayName: '小林', text: '周五上线。', startMillis: 0, endMillis: 0 }],
+    })),
+    retryCallSummary: vi.fn(async () => ({
+      status: 'submitted' as const,
+      detail: {
+        callRef: 'arkme-call-v1.payload.sig',
+        title: '和小林的通话',
+        mediaType: 'audio' as const,
+        startedAtMillis: 0,
+        acceptedAtMillis: 0,
+        endedAtMillis: 0,
+        durationSeconds: 0,
+        callResult: '',
+        resultLabel: '未知状态',
+        summaryStatus: 'pending' as const,
+        transcriptPending: false,
+        transcriptFailed: false,
+        participants: [],
+        transcriptSegments: [],
+      },
     })),
     aiVideoPreflight: vi.fn(async () => ({
       allowed: true,
@@ -793,6 +858,53 @@ describe('Arkme conversation tools', () => {
     expect(tool.description).toContain('arkme_sources_list')
     expect(ARKME_TOOL_PROMPT).toContain('arkme_call_start')
     expect(ARKME_TOOL_PROMPT).toContain('outgoing')
+  })
+
+  it('reads call history and detail through opaque call refs', async () => {
+    const service = fakeService()
+    const tools = createArkmeCoreToolDefinitions(service)
+    const history = tools.find(definition => definition.name === 'arkme_call_history')!
+    const detail = tools.find(definition => definition.name === 'arkme_call_detail')!
+    const signal = new AbortController().signal
+
+    const historyOutput = await history.execute(
+      { limit: 5, cursor: 'next', include_recent_contacts: false },
+      { signal } as never,
+    ) as string
+    const detailOutput = await detail.execute(
+      { call_ref: 'arkme-call-v1.payload.sig' },
+      { signal } as never,
+    ) as string
+
+    expect(service.listCallHistory).toHaveBeenCalledWith({
+      limit: 5,
+      cursor: 'next',
+      includeRecentContacts: false,
+    }, signal)
+    expect(service.callDetail).toHaveBeenCalledWith('arkme-call-v1.payload.sig', signal)
+    expect(historyOutput).toContain('"summaryPreview": "确认了排期"')
+    expect(detailOutput).toContain('"text": "周五上线。"')
+    expect(detailOutput).toContain('"videoRecord":')
+    expect(detailOutput).not.toContain('media.example')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_call_history')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_call_detail')
+  })
+
+  it('registers call summary retry as an explicit write tool', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_call_summary_retry')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { call_ref: 'arkme-call-v1.payload.sig' },
+      { signal } as never,
+    ) as string
+
+    expect(service.retryCallSummary).toHaveBeenCalledWith('arkme-call-v1.payload.sig', signal)
+    expect(output).toContain('"status": "submitted"')
+    expect(tool.description).toContain('explicitly asks')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_call_summary_retry')
   })
 
   it('registers AI video creation in the business profile', () => {

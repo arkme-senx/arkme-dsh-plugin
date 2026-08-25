@@ -6,6 +6,7 @@ function productionConfig(): Config {
     environment: 'prod',
     authBaseUrl: 'https://api.jotmo.cc',
     recordBaseUrl: 'https://record.jotmo.cc',
+    dataBaseUrl: 'https://data.jotmo.cc',
     chatBaseUrl: 'https://chat.jotmo.cc',
     botBaseUrl: 'https://bot.jotmo.cc',
     imBaseUrl: 'https://im.jotmo.cc',

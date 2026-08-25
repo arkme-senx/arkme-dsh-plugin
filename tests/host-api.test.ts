@@ -6,6 +6,9 @@ import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.
 function fakeService() {
   return {
     prepareOutgoingCall: vi.fn(async (input: unknown) => input),
+    listCallHistory: vi.fn(async (input: unknown) => input),
+    callDetail: vi.fn(async (callRef: string) => ({ callRef })),
+    retryCallSummary: vi.fn(async (callRef: string) => ({ callRef, status: 'submitted' })),
     claimOutgoingCallIntent: vi.fn(async () => null),
     resolveOutgoingCallIntent: vi.fn(async () => undefined),
     heartbeatOutgoingCall: vi.fn(async () => ({ expiresAtMillis: 1 })),
@@ -327,6 +330,34 @@ describe('outgoing call Host API dispatch', () => {
       callRequestId: 'request-1', userId: 999,
     })
     expect(service.releaseOutgoingCall).toHaveBeenCalledWith('request-1')
+  })
+
+  it('dispatches call history operations through opaque refs only', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'calls.history.list', {
+      limit: 12,
+      cursor: ' next ',
+      includeRecentContacts: false,
+      roomId: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'calls.history.detail', {
+      callRef: 'call-ref-1',
+      roomId: 'must-not-forward',
+      accessToken: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'calls.history.summary.retry', {
+      callRef: 'call-ref-1',
+      roomId: 'must-not-forward',
+    })
+
+    expect(service.listCallHistory).toHaveBeenCalledWith({
+      limit: 12,
+      cursor: 'next',
+      includeRecentContacts: false,
+    })
+    expect(service.callDetail).toHaveBeenCalledWith('call-ref-1')
+    expect(service.retryCallSummary).toHaveBeenCalledWith('call-ref-1')
   })
 
   it('dispatches strict UI-only interwoven operations', async () => {

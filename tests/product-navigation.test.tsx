@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
@@ -58,6 +59,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('background:#9eadff')
     expect(markup).toContain('aria-label="Arkme 功能导航"')
     expect(markup).toContain('>对话<')
+    expect(markup).toContain('>通话<')
     expect(markup).toContain('>录音<')
     expect(markup).toContain('>搜索<')
     expect(markup).toContain('>日历<')
@@ -164,5 +166,30 @@ describe('Arkme product navigation', () => {
     />)
     expect(voiceprintMarkup).toContain('data-arkme-owned="voiceprint-surface"')
     expect(voiceprintMarkup).not.toContain('data-arkme-owned="directory-pane"')
+  })
+
+  it('renders the call surface empty state and call browser controls', () => {
+    const markup = renderToStaticMarkup(<ArkmeCallSurface />)
+
+    expect(markup).toContain('aria-label="通话"')
+    expect(markup).toContain('>通话<')
+    expect(markup).toContain('让每一次重要的声音与相见，都能被好好记住。')
+    expect(markup).toContain('placeholder="搜索通话记录"')
+    expect(markup).toContain('>最近联系人<')
+    expect(markup).toContain('>从一次问候开始<')
+    expect(markup).toContain('找一位想联系的人，聊过的声音和画面会留在这里。')
+    expect(markup).toContain('>发起通话<')
+  })
+
+  it('renders the call contact picker as the start-call recovery path', () => {
+    const markup = renderToStaticMarkup(<ArkmeCallSurface initialPickerOpen />)
+
+    expect(markup).toContain('aria-label="选择通话联系人"')
+    expect(markup).toContain('placeholder="搜索私聊联系人"')
+    expect(markup).toContain('>最近联系人<')
+    expect(markup).toContain('没有可呼叫联系人')
+    expect(markup).toContain('先在对话里建立私聊后，就可以从这里发起通话。')
+    expect(markup).not.toContain('和阿森语音通话')
+    expect(markup).not.toContain('和阿森视频通话')
   })
 })
