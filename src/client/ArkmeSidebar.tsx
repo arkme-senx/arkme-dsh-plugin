@@ -764,6 +764,9 @@ export function ArkmeSurface({
     ))
   }, [authenticatedUserId, selectedSource, selfSources])
   const source = conversationBackdropVisible ? selectedSource ?? aggregateSource : undefined
+  const sourceProjectionRevision = source?.kind === 'private_chat' || source?.kind === 'group_chat'
+    ? ui.chatRevision
+    : ui.recordRevision
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
   useSyncExternalStore(
     arkmeComposerDraftStore.subscribe,
@@ -1290,7 +1293,7 @@ export function ArkmeSurface({
       aiPolishNotices: cursor === undefined ? page.aiPolishNotices ?? [] : cached?.aiPolishNotices ?? [],
       hasMore: page.hasMore,
       fetchedAtMillis: Date.now(),
-      refreshRevision: ui.chatRevision,
+      refreshRevision: sourceProjectionRevision,
       latestSequence: Math.max(source.latestSequence ?? 0, ...page.items.map(item => item.sequence ?? 0)),
       ...(nextAiPolishSettings === undefined ? {} : { aiPolishSettings: nextAiPolishSettings }),
       ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
@@ -1323,7 +1326,7 @@ export function ArkmeSurface({
       if (!hadCachedTimeline && snapshot.items.length > 0) setTimelineRevealSourceRef(sourceRef)
       await acknowledgeRead(snapshot.items)
     }
-  }, [acknowledgeRead, interwovenMoments, source, ui.chatRevision])
+  }, [acknowledgeRead, interwovenMoments, source, sourceProjectionRevision])
 
   useEffect(() => {
     if (!authStoreSnapshot.checked) void refreshAuth()
@@ -1385,7 +1388,7 @@ export function ArkmeSurface({
     const hasCachedTimeline = cachedTimeline !== undefined
     if (!arkmeShouldRefreshConversationTimeline(cachedTimeline, {
       nowMillis: Date.now(),
-      refreshRevision: ui.chatRevision,
+      refreshRevision: sourceProjectionRevision,
       ...(source.latestSequence === undefined ? {} : { latestSequence: source.latestSequence }),
     })) {
       setTimelineLoadingSourceRef(current => current === source.sourceRef ? '' : current)
@@ -1401,7 +1404,7 @@ export function ArkmeSurface({
         if (!hasCachedTimeline) setError(errorMessage(caught))
       }
     })
-  }, [acknowledgeRead, authenticated, loadTimeline, source, ui.chatRevision])
+  }, [acknowledgeRead, authenticated, loadTimeline, source, sourceProjectionRevision])
   useEffect(() => {
     if (!authenticated || source === undefined || timelineStateSourceRef !== source.sourceRef) return
     if (conversationCacheRef.current.getTimeline(source.sourceRef) === undefined) return

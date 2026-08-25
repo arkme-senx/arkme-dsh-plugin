@@ -42,6 +42,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'recordings',
     })
 
@@ -50,6 +51,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'source',
       selectedSource: source,
       calendarOpen: true,
@@ -61,6 +63,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'world',
     })
 
@@ -69,6 +72,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'arko',
     })
     controller.authChanged(true)
@@ -97,16 +101,20 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.focusSendToSelf()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, mode: 'source' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'source' })
     controller.showLogin()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, mode: 'login' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' })
     controller.authChanged(true)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
     expect(controller.getSnapshot().authRevision).toBe(1)
     controller.chatChanged()
     expect(controller.getSnapshot().chatRevision).toBe(1)
-    expect(listener).toHaveBeenCalledTimes(5)
+    expect(controller.getSnapshot().recordRevision).toBe(0)
+    controller.recordChanged()
+    expect(controller.getSnapshot().chatRevision).toBe(1)
+    expect(controller.getSnapshot().recordRevision).toBe(1)
+    expect(listener).toHaveBeenCalledTimes(6)
     unsubscribe()
   })
 
@@ -119,7 +127,7 @@ describe('ArkmeUiController', () => {
     controller.showSearch()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'search',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'search',
     })
   })
 
@@ -133,7 +141,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
     })
     controller.showConversations()
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
@@ -147,7 +155,7 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     controller.showContactAdd()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'contact-add',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'contact-add',
       selectedSource: source,
     })
     controller.showConversations()
@@ -160,7 +168,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
     })
   })
 
@@ -192,7 +200,7 @@ describe('ArkmeUiController', () => {
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'world',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'world',
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
@@ -206,7 +214,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
     })
   })
 
@@ -232,7 +240,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
     })
   })
 

@@ -949,9 +949,9 @@ export function ArkmeNavigation({
     return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory])
   useEffect(() => {
-    if (!authenticated || directory !== 'send_to_self' || ui.chatRevision === 0) return
+    if (!authenticated || directory !== 'send_to_self' || ui.recordRevision === 0) return
     void loadDirectory('send_to_self')
-  }, [authenticated, directory, loadDirectory, ui.chatRevision])
+  }, [authenticated, directory, loadDirectory, ui.recordRevision])
   useEffect(() => {
     if (!authenticated || directory !== 'root') return
     let active = true
