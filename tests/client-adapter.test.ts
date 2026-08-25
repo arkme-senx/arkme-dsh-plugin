@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { createClientLocaleStub } from './client-locale-stub.js'
 
 function installDesktopGateMarker(): () => void {
   const previousWindow = globalThis.window
@@ -73,6 +74,7 @@ describe('official DSH client adapter', () => {
     apply({
       slots: { inject, register },
       layout: { toggleSidebar, closeDetails },
+      locale: createClientLocaleStub(),
       sessions: { open: vi.fn() },
       effect: vi.fn((factory: () => unknown, label: string) => {
         if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
@@ -127,6 +129,7 @@ describe('official DSH client adapter', () => {
     apply({
       slots: { inject, register },
       layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+      locale: createClientLocaleStub(),
       sessions: { open: vi.fn() },
       effect: vi.fn((factory: () => unknown, label: string) => {
         if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
@@ -161,6 +164,7 @@ describe('official DSH client adapter', () => {
       apply({
         slots: { inject, register },
         layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+        locale: createClientLocaleStub(),
         effect: vi.fn(),
       } as never)
     } finally {
@@ -181,6 +185,7 @@ describe('official DSH client adapter', () => {
         inject: vi.fn(() => () => {}),
         register: vi.fn(),
       },
+      locale: createClientLocaleStub(),
       effect,
     } as never)
 

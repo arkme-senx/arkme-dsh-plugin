@@ -4,6 +4,7 @@ import * as slotsModule from '@deepseek-ai/dsh-client-ui-slots'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { createClientLocaleStub } from './client-locale-stub.js'
 
 type RuntimeModule = {
   SlotRegistry: new (ctx: Context) => {
@@ -114,6 +115,7 @@ describe('Arkme directory slot lifecycle', () => {
       apply({
         slots: registry,
         layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+        locale: createClientLocaleStub(),
         effect: (factory: () => unknown, label: string) => {
           if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return () => {}
           const cleanup = factory()

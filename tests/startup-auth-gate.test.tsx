@@ -8,6 +8,11 @@ import {
   startupAuthGateEnabled,
   startupAuthGateScreen,
 } from '../src/client/ArkmeStartupAuthGate.js'
+import {
+  arkmeLoginEn, type ArkmeLoginLocaleKey, type ArkmeLoginTranslate,
+} from '../src/client/arkme-login-locales.js'
+
+const english: ArkmeLoginTranslate = ((key: ArkmeLoginLocaleKey) => arkmeLoginEn[key]) as ArkmeLoginTranslate
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -78,6 +83,20 @@ describe('Arkme startup authentication gate', () => {
     expect(renderToStaticMarkup(
       <ArkmeStartupAuthGateView screen="authenticated" error="" busy={false} onRetry={() => undefined} />,
     )).toBe('')
+  })
+
+  it('renders startup authentication states in the injected system language', () => {
+    const checking = renderToStaticMarkup(
+      <ArkmeStartupAuthGateView screen="checking" error="" busy={false} onRetry={() => undefined} t={english} />,
+    )
+    const error = renderToStaticMarkup(
+      <ArkmeStartupAuthGateView screen="error" error="Network unavailable" busy={false} onRetry={() => undefined} t={english} />,
+    )
+
+    expect(checking).toContain('Checking sign-in status')
+    expect(error).toContain('Unable to check sign-in status')
+    expect(error).toContain('Go to sign in')
+    expect(`${checking}${error}`).not.toMatch(/[\u3400-\u9fff]/)
   })
 
   it('routes the authentication error action to login instead of retry', () => {
