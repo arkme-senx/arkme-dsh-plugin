@@ -1619,6 +1619,16 @@ export function ArkmeSurface({
           }),
         }
       }))
+      if (result.localState !== 'failed' && isArkmeChatDirectorySource(targetSource)
+        && result.sequence !== undefined) {
+        arkmeChatDirectory.recordSent(targetSource, {
+          latestPreview: result.aiPolish?.state === 'polished' && result.aiPolish.polishedText !== undefined
+            ? result.aiPolish.polishedText
+            : textContent || '非文本内容',
+          activeAtMillis: now,
+          latestSequence: result.sequence,
+        })
+      }
       releaseArkmeComposerDraft(pendingDraft)
       if (result.localState === 'failed') setError(result.error ?? '内容已保存在本地，远端同步失败')
       if (result.localState !== 'failed' && isArkmeSelfWorkspaceSource(targetSource)) arkmeUi.chatChanged()

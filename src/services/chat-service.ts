@@ -742,11 +742,13 @@ export class ChatService {
         session,
         signal,
       )
+      const sequence = numberValue(result.seq)
+      this.realtime.scheduleChatSessionProjection(chatSessionUid, sequence)
       return {
         sourceRef,
         itemUid: stringValue(result.record_uid).trim() || recordUid,
         status: numberValue(result.audit_status),
-        sequence: numberValue(result.seq),
+        sequence,
         localState: 'synced',
       }
     }
@@ -848,11 +850,13 @@ export class ChatService {
         { chat_session_uid: source.ownerRef, rel_uid: relationUid, ...commonBody },
         session,
       )
+      const sequence = numberValue(result.seq)
+      this.realtime.scheduleChatSessionProjection(source.ownerRef, sequence)
       return {
         sourceRef,
         itemUid: stringValue(result.record_uid).trim() || recordUid,
         status: numberValue(result.audit_status ?? result.status),
-        sequence: numberValue(result.seq),
+        sequence,
         localState: 'synced',
       }
     }
