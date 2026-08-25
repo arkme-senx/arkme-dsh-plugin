@@ -11,12 +11,12 @@ export function myExtensionBadges(states: readonly ArkmeMyExtensionState[]): str
 }
 
 export function myExtensionPrimaryAction(item: ArkmeMyExtensionItem):
-  | { kind: 'publish'; label: '发布' }
+  | { kind: 'publish'; label: '发布' | '发布新版本' }
   | { kind: 'edit'; label: '编辑' }
   | undefined {
+  if (item.publish.allowed) return { kind: 'publish', label: item.publish.mode === 'version' ? '发布新版本' : '发布' }
   if (item.states.includes('published')) return { kind: 'edit', label: '编辑' }
-  if (!item.publish.allowed) return undefined
-  return { kind: 'publish', label: '发布' }
+  return undefined
 }
 
 export function myExtensionWarningText(warnings: readonly ArkmeMyExtensionWarning[]): string {

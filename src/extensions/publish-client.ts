@@ -4,7 +4,8 @@ import { ARKME_EXTENSION_FORMAT, ARKME_EXTENSION_FORMAT_VERSION,
   type ArkmeExtensionArtifact, type ArkmeExtensionCatalogItem,
   type ArkmeExtensionCatalogPage, type ArkmeExtensionCatalogSort,
   type ArkmeExtensionClassificationPage, type ArkmeExtensionClassificationTree,
-  type ArkmeExtensionDeleteResult, type ArkmeExtensionIconMediaType,
+  type ArkmeExtensionDeleteResult, type ArkmeExtensionUnpublishResult, type ArkmeExtensionPublicationCapabilities,
+  type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResolution, type ArkmeExtensionIconResult, type ArkmeExtensionIconUploadSession,
   type ArkmeExtensionPreviewGallery, type ArkmeExtensionPreviewMediaType,
   type ArkmeExtensionPreviewResolution, type ArkmeExtensionPreviewUploadSession,
@@ -141,7 +142,7 @@ export class ExtensionPublishClient {
 				idempotency_key: input.idempotency_key,
 			}, signal)
 		} catch (error) {
-			throw extensionSourceError(error)
+			throw extensionPublicationError(extensionSourceError(error))
 		}
   }
 
@@ -181,7 +182,7 @@ export class ExtensionPublishClient {
         idempotency_key: input.idempotency_key,
       }, signal)
     } catch (error) {
-      throw extensionSourceError(error)
+      throw extensionPublicationError(extensionSourceError(error))
     }
   }
 
@@ -305,7 +306,7 @@ export class ExtensionPublishClient {
           { cause: error, upstreamStatus: error.upstreamStatus, ...(error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }) },
         )
       }
-      throw error
+      throw extensionPublicationError(error)
     }
   }
 
@@ -489,6 +490,14 @@ export class ExtensionPublishClient {
 
   async deleteExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.post('/api/v1/extensions/delete', { extension_id: extensionId }, signal)
+  }
+
+  async unpublishExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionUnpublishResult> {
+    return await this.post('/api/v1/extensions/unpublish', { extension_id: extensionId }, signal)
+  }
+
+  async publicationCapabilities(signal?: AbortSignal): Promise<ArkmeExtensionPublicationCapabilities> {
+    return await this.post('/api/v1/extensions/publication-capabilities', {}, signal)
   }
 
   async createIconUploadSession(input: {
@@ -871,6 +880,25 @@ export class ExtensionPublishClient {
       signal?.removeEventListener('abort', abort)
     }
   }
+}
+
+function extensionPublicationError(error: unknown): unknown {
+  if (!(error instanceof ArkmePluginError)) return error
+  const mapped: Record<string, { code: string; message: string; retryable: boolean }> = {
+    'arkme-code-40911': { code: 'extension-package-identity-missing', message: '扩展缺少可采用的 package identity', retryable: false },
+    'arkme-code-40912': { code: 'extension-package-identity-mismatch', message: 'Bundle package identity 与已有扩展不一致', retryable: false },
+    'arkme-code-40913': { code: 'extension-version-already-exists', message: '该版本已存在，请修改版本号后重试', retryable: false },
+    'arkme-code-40914': { code: 'extension-version-terminal', message: '该版本已进入终态，请修改版本号后重新发布', retryable: false },
+    'arkme-code-40915': { code: 'extension-publish-idempotency-mismatch', message: '发布重试内容与原请求不一致', retryable: false },
+    'arkme-code-40916': { code: 'extension-publish-session-conflict', message: '发布会话状态正在变化，请查询发布状态', retryable: true },
+    'arkme-code-40917': { code: 'extension-permanently-deleted', message: '扩展已被彻底删除，不能继续发布', retryable: false },
+  }
+  const known = mapped[error.code]
+  return known === undefined
+    ? error
+    : new ArkmePluginError(known.code, known.message, known.retryable, 409, {
+        cause: error, ...(error.upstreamStatus === undefined ? {} : { upstreamStatus: error.upstreamStatus }),
+      })
 }
 
 function extensionMetadataError(error: unknown): unknown {

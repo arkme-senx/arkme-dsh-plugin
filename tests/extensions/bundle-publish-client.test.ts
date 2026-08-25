@@ -215,6 +215,30 @@ describe('Bundle v2 publish client', () => {
     })
   })
 
+  it.each([
+    ['arkme-code-40911', 'extension-package-identity-missing', false],
+    ['arkme-code-40912', 'extension-package-identity-mismatch', false],
+    ['arkme-code-40913', 'extension-version-already-exists', false],
+    ['arkme-code-40914', 'extension-version-terminal', false],
+    ['arkme-code-40915', 'extension-publish-idempotency-mismatch', false],
+    ['arkme-code-40916', 'extension-publish-session-conflict', true],
+    ['arkme-code-40917', 'extension-permanently-deleted', false],
+  ])('maps publication lifecycle error %s to %s', async (upstreamCode, expectedCode, retryable) => {
+    const root = fixture()
+    try {
+      const source = packLocalBundleDirectory(root)
+      const client = new ExtensionPublishClient(async (): Promise<never> => {
+        throw new ArkmePluginError(upstreamCode, 'registry rejected', false, 409, { upstreamStatus: 409 })
+      })
+      await expect(client.createBundlePublishSession({
+        name: '兼容测试', description: '', visibility: 'private', idempotency_key: 'publication-error-test',
+        bundle: source.bundle, source: source.source,
+      })).rejects.toMatchObject({ code: expectedCode, retryable, httpStatus: 409 })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
 	it.each([
 		['arkme-code-40031', 'extension-source-invalid', false],
 		['arkme-code-40331', 'extension-source-publisher-forbidden', false],

@@ -84,7 +84,7 @@ import type {
 import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort,
   ArkmeExtensionClassificationPage, ArkmeExtensionClassificationTree,
-  ArkmeExtensionCompleteDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
+  ArkmeExtensionCompleteDeleteResult, ArkmeExtensionUnpublishResult, ArkmeExtensionEnabledResult, ArkmeExtensionEnabledState, ArkmeExtensionIconMediaType,
   ArkmeExtensionIconResult, ArkmeExtensionInstallPreview, ArkmeExtensionPublishResult, ArkmeInstalledExtensionView,
   ArkmeNativeCapability,
   ArkmeExtensionAuditResult,
@@ -234,6 +234,7 @@ export type {
   ArkmeExtensionCatalogPage,
   ArkmeExtensionAuditResult,
   ArkmeExtensionCompleteDeleteResult,
+  ArkmeExtensionUnpublishResult,
   ArkmeExtensionEnabledResult,
   ArkmeExtensionEnabledState,
   ArkmeExtensionIconMediaType,
@@ -378,13 +379,24 @@ export class ArkmeSdk {
   }
 
   /**
-   * Delete an owned marketplace extension and remove its current local runtime/Profile/source references.
-   * Consumers must call this only from an explicit current human delete action.
+   * Permanently delete an owned marketplace extension and remove its current local runtime/Profile/source references.
+   * This cannot be undone. Consumers must first discover extensionPublicationLifecycle and call it only from
+   * an explicit current human permanent-delete action.
    */
   async deleteExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionCompleteDeleteResult> {
     const normalized = extensionId.trim()
     if (normalized === '') throw new TypeError('Arkme extension ID must not be empty')
     return await this.call<ArkmeExtensionCompleteDeleteResult>('extensions.delete', { extensionId: normalized }, signal)
+  }
+
+  /**
+   * Hide an owned extension from catalog/install/update resolution while retaining local installations and publish lineage.
+   * Consumers must first discover extensionPublicationLifecycle and call it only from an explicit current human action.
+   */
+  async unpublishExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionUnpublishResult> {
+    const normalized = extensionId.trim()
+    if (normalized === '') throw new TypeError('Arkme extension ID must not be empty')
+    return await this.call<ArkmeExtensionUnpublishResult>('extensions.unpublish', { extensionId: normalized }, signal)
   }
 
   /** Build the same-origin URL used by every extension list/detail avatar surface. */

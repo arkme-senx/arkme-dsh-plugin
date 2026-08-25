@@ -64,6 +64,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'extensions.audit.check'
   | 'extensions.my-list'
   | 'extensions.delete'
+  | 'extensions.unpublish'
   | 'extensions.installed-list'
   | 'extensions.updates'
   | 'extensions.install.preview'

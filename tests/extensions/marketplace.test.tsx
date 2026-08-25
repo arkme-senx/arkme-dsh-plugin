@@ -953,7 +953,7 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('已持久化')
     expect(html).toContain('V2 沙箱')
     expect(html).toContain('已发布')
-    expect(html).not.toContain('发布新版本')
+    expect(html).toContain('发布新版本')
     expect(html).toContain('>编辑</button>')
 		expect(html).toContain('>详情</button>')
     expect(html.indexOf('天气助手')).toBeLessThan(html.indexOf('Cordis 临时'))

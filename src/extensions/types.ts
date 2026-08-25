@@ -21,6 +21,16 @@ export type ArkmeNativeCapability =
 export type ArkmeExtensionCatalogSort = 'rating' | 'comments' | 'opens' | 'created_at'
 export type ArkmeExtensionClassificationStatus = 'unavailable' | 'building' | 'ready' | 'failed' | 'empty'
 export type ArkmeExtensionPublisherRole = 'author' | 'importer'
+export type ArkmeExtensionPackageIdentityState = 'legacy_missing' | 'adopting' | 'stable' | 'conflicted'
+
+export interface ArkmeExtensionPublicationCapabilities {
+  protocol_version: number
+  accepted_artifact_contracts: number[]
+  legacy_identity_adoption: boolean
+  v1_new_writes: boolean
+  identity_owner: 'server'
+  lifecycle_actions: Array<'unpublish' | 'permanent_delete'>
+}
 
 export interface ArkmeExtensionRatingSummary {
   average: number
@@ -115,6 +125,7 @@ export interface ArkmeExtensionCatalogItem {
   installed_version?: string
   update_available?: boolean
   package_name?: string
+  package_identity_state?: ArkmeExtensionPackageIdentityState
   artifact_contract_version?: 2 | 3
   artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
@@ -148,6 +159,7 @@ export interface ArkmeExtensionCatalogPage {
     sorts: ArkmeExtensionCatalogSort[]
     cursor: boolean
   }
+  publication_capabilities?: ArkmeExtensionPublicationCapabilities
 }
 
 export interface ArkmeExtensionClassificationCategory {
@@ -315,6 +327,8 @@ export interface ArkmeBundlePublishSession {
   idempotent_replay?: boolean
   bundle_upload?: ArkmeExtensionUploadSlot
   source_upload?: ArkmeExtensionUploadSlot
+  package_name?: string
+  package_identity_state?: ArkmeExtensionPackageIdentityState
 }
 
 export interface ArkmeExtensionPublishResult {
@@ -326,6 +340,7 @@ export interface ArkmeExtensionPublishResult {
   artifact_contract_version?: 2 | 3
   artifact_kind?: 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
   package_name?: string
+  package_identity_state?: ArkmeExtensionPackageIdentityState
   execution_model?: 'arkme-sandboxed' | 'dsh-native'
   bundle_sha256?: string
   package_json_sha256?: string
@@ -343,7 +358,13 @@ export interface ArkmeExtensionDeleteResult {
   deleted_at: number
 }
 
-/** Complete user-visible deletion result after cloud soft-delete and local reference cleanup. */
+export interface ArkmeExtensionUnpublishResult {
+  extension_id: string
+  status: 'suspended'
+  unpublished_at: number
+}
+
+/** Complete user-visible permanent deletion result after cloud deletion and local reference cleanup. */
 export interface ArkmeExtensionCompleteDeleteResult extends ArkmeExtensionDeleteResult {
   installed: false
   active: false

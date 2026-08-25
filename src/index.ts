@@ -290,6 +290,7 @@ export function apply(ctx: Context, rawConfig: Config): void {
       publishBundle: async input => await manager.publishNativeBundleSource(input),
       lifecycle: {
         deleteCloud: async (extensionId, signal) => await manager.delete(extensionId, signal),
+        unpublishCloud: async (extensionId, signal) => await manager.unpublish(extensionId, signal),
         uninstall: async input => await manager.uninstall(input),
         canUninstallWithoutAgent: extensionId => manager.canUninstallWithoutAgent(extensionId),
         installedProfilePackageName: extensionId => manager.installedProfilePackageName(extensionId),

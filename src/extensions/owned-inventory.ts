@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { ArkmePluginError } from '../arkme-service.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCompleteDeleteResult,
   ArkmeExtensionDeleteResult, ArkmeExtensionPublishResult,
+  ArkmeExtensionPublicationCapabilities, ArkmeExtensionUnpublishResult,
   ArkmeExtensionVisibility, DynamicCordisInventoryPackageLike, DynamicCordisInventoryRowLike,
   DynamicCordisRunnerLike,
 } from './types.js'
@@ -41,6 +42,11 @@ interface ProviderStateLike {
 interface ExistingPublishIdentity {
   extensionId?: string
   packageName?: string
+}
+
+interface CloudOwnedSnapshot {
+  items: ArkmeExtensionCatalogItem[]
+  capabilities?: ArkmeExtensionPublicationCapabilities
 }
 
 interface PublishInput {
@@ -85,6 +91,7 @@ interface PublishNativeBundleInput {
 
 interface ArkmeOwnedExtensionLifecycle {
   deleteCloud(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult>
+  unpublishCloud(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionUnpublishResult>
   uninstall(input: { agent: unknown; extensionId: string }): Promise<{
     extension_id: string
     installed: false
@@ -251,8 +258,9 @@ export class ArkmeOwnedExtensionInventory {
   }
 
   /**
-   * Preserve registry rows/artifacts for rollback, while removing every current-account runtime,
+   * Permanently delete the product entry and remove every current-account runtime,
    * Profile dependency, install row, lineage row, and short-lived source reference.
+   * The registry may retain only identity and security-audit records.
    */
   async delete(input: { extensionId: string; agent?: unknown; signal?: AbortSignal }): Promise<ArkmeExtensionCompleteDeleteResult> {
     const extensionId = requiredExtensionId(input.extensionId)
@@ -322,9 +330,27 @@ export class ArkmeOwnedExtensionInventory {
       removed_source_count: removedSources.length,
       restart_required: restartRequired,
       message: restartRequired
-        ? '扩展已删除；服务端保留可恢复数据，当前 DSH 重启后完成本地移除'
-        : '扩展已删除；服务端保留可恢复数据，本地引用和运行状态已完全移除',
+        ? '扩展已彻底删除；服务端仅保留身份与安全审计记录，当前 DSH 重启后完成本地移除'
+        : '扩展已彻底删除；服务端仅保留身份与安全审计记录，本地引用和运行状态已完全移除',
     }
+  }
+
+  async unpublish(input: { extensionId: string; signal?: AbortSignal }): Promise<ArkmeExtensionUnpublishResult> {
+    const extensionId = requiredExtensionId(input.extensionId)
+    await this.currentUserId()
+    const lifecycle = this.options.lifecycle
+    if (lifecycle === undefined) {
+      throw new ArkmePluginError('extension-unpublish-unavailable', '当前 Arkme 版本不支持下架扩展', false, 503)
+    }
+    const ownedCloudItems = await this.cloudItems(input.signal)
+    if (!ownedCloudItems.some(item => item.extension_id === extensionId)) {
+      throw new ArkmePluginError('extension-unpublish-target-not-owned', '待下架扩展不属于当前 Arkme 账号', false, 404)
+    }
+    const result = await lifecycle.unpublishCloud(extensionId, input.signal)
+    if (result.extension_id !== extensionId || result.status !== 'suspended') {
+      throw new ArkmePluginError('extension-unpublish-contract-invalid', '市集返回了不一致的下架结果', false, 502)
+    }
+    return result
   }
 
   async preparePublish(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmePreparedExtensionPublish> {
@@ -426,9 +452,10 @@ export class ArkmeOwnedExtensionInventory {
       throw new ArkmePluginError('extension-cordis-stale', 'Cordis 扩展已失效，请刷新列表', false, 409)
     }
     const extensionId = this.publishExtensionId('cordis', target.sourceKey, userId, input.extensionId)
-    const packageName = extensionId === undefined
-      ? `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`
+    const cloudPackageName = extensionId === undefined
+      ? undefined
       : await this.ownedCloudPackageName(extensionId, input.signal)
+    const packageName = cloudPackageName ?? publicationCandidatePackageName(userId, input.clientMutationId)
     if (this.options.persistCordis !== undefined && this.options.publishSandboxBundle !== undefined) {
       const saved = await this.persistCordisTarget(userId, target, agent, input, packageName)
       let result: ArkmeExtensionPublishResult
@@ -442,7 +469,7 @@ export class ArkmeOwnedExtensionInventory {
           ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
 		  ...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
           idempotencyKey: createHash('sha256')
-            .update(`my-extension-publish\0${String(userId)}\0${target.sourceKey}\0${input.version}\0${input.clientMutationId}`)
+            .update(`my-extension-publish-v2\0${String(userId)}\0${input.version}\0${input.clientMutationId}`)
             .digest('hex'),
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         })
@@ -474,7 +501,7 @@ export class ArkmeOwnedExtensionInventory {
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
 		...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
       idempotencyKey: createHash('sha256')
-        .update(`my-extension-publish\0${String(userId)}\0${target.sourceKey}\0${input.version}\0${input.clientMutationId}`)
+        .update(`my-extension-publish-v2\0${String(userId)}\0${input.version}\0${input.clientMutationId}`)
         .digest('hex'),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     })
@@ -521,7 +548,7 @@ export class ArkmeOwnedExtensionInventory {
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
 		...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
       idempotencyKey: createHash('sha256')
-        .update(`my-extension-bundle-publish\0${String(userId)}\0${target.sourceKey}\0${input.version}\0${input.clientMutationId}`)
+        .update(`my-extension-bundle-publish-v2\0${String(userId)}\0${input.version}\0${input.clientMutationId}`)
         .digest('hex'),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     })
@@ -535,7 +562,7 @@ export class ArkmeOwnedExtensionInventory {
     userId: number,
     target: { sourceKey: string; agentId: string; pluginId: string; packageId: string },
     agent: unknown,
-    input: Pick<ArkmeMyExtensionProfileSaveInput, 'name' | 'description' | 'version'>,
+    input: Pick<ArkmeMyExtensionProfileSaveInput, 'name' | 'description' | 'version' | 'clientMutationId'>,
     resolvedPackageName?: string,
   ): Promise<{
     profile: Awaited<ReturnType<NonNullable<ArkmeOwnedExtensionInventoryOptions['persistCordis']>>>
@@ -549,9 +576,10 @@ export class ArkmeOwnedExtensionInventory {
       throw new ArkmePluginError('extension-profile-save-unavailable', '当前 Arkme 版本不支持保存插件到 Profile', false, 503)
     }
     const linkedExtensionId = this.options.store.cloudLink('cordis', target.sourceKey, userId)
-    const packageName = resolvedPackageName ?? (linkedExtensionId === undefined
-      ? `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`
-      : await this.ownedCloudPackageName(linkedExtensionId))
+    const cloudPackageName = linkedExtensionId === undefined
+      ? undefined
+      : await this.ownedCloudPackageName(linkedExtensionId)
+    const packageName = resolvedPackageName ?? cloudPackageName ?? publicationCandidatePackageName(userId, input.clientMutationId)
     const profileSourceKey = `${this.options.profileName}\0${packageName}`
     const profileOwner = this.options.store.owner('profile', profileSourceKey)
     if (profileOwner !== undefined && profileOwner !== userId) {
@@ -572,13 +600,19 @@ export class ArkmeOwnedExtensionInventory {
   }
 
   private async cloudItems(signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem[]> {
+    return (await this.cloudSnapshot(signal)).items
+  }
+
+  private async cloudSnapshot(signal?: AbortSignal): Promise<CloudOwnedSnapshot> {
     const items: ArkmeExtensionCatalogItem[] = []
+    let capabilities: ArkmeExtensionPublicationCapabilities | undefined
     const cursors = new Set<string>()
     let cursor: string | undefined
     for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
       const page = await this.options.cloudList({ limit: 50, ...(cursor === undefined ? {} : { cursor }) }, signal)
       items.push(...page.items)
-      if (page.next_cursor === undefined) return items
+      capabilities ??= page.publication_capabilities
+      if (page.next_cursor === undefined) return { items, ...(capabilities === undefined ? {} : { capabilities }) }
       if (cursors.has(page.next_cursor)) throw new Error('cloud extension cursor loop')
       cursors.add(page.next_cursor)
       cursor = page.next_cursor
@@ -618,12 +652,13 @@ export class ArkmeOwnedExtensionInventory {
   ): Promise<ExistingPublishIdentity> {
     const extensionId = this.publishExtensionId(kind, sourceKey, userId, requestedExtensionId)
     if (extensionId === undefined) return {}
-    return { extensionId, packageName: await this.ownedCloudPackageName(extensionId, signal) }
+    const packageName = await this.ownedCloudPackageName(extensionId, signal)
+    return { extensionId, ...(packageName === undefined ? {} : { packageName }) }
   }
 
-  private async ownedCloudPackageName(extensionId: string, signal?: AbortSignal): Promise<string> {
-    const owned = await this.cloudItems(signal)
-    const item = owned.find(candidate => candidate.extension_id === extensionId)
+  private async ownedCloudPackageName(extensionId: string, signal?: AbortSignal): Promise<string | undefined> {
+    const owned = await this.cloudSnapshot(signal)
+    const item = owned.items.find(candidate => candidate.extension_id === extensionId)
     if (item === undefined) {
       throw new ArkmePluginError(
         'extension-target-not-owned',
@@ -634,6 +669,9 @@ export class ArkmeOwnedExtensionInventory {
     }
     const packageName = item.package_name?.trim()
     if (packageName === undefined || packageName === '') {
+      if (owned.capabilities?.legacy_identity_adoption === true && owned.capabilities.identity_owner === 'server') {
+        return undefined
+      }
       throw new ArkmePluginError(
         'extension-package-identity-unavailable',
         '目标云端扩展缺少 package identity，不能安全发布新版本',
@@ -677,9 +715,7 @@ export class ArkmeOwnedExtensionInventory {
     if (row.cordis !== undefined) states.push('cordis')
     if (row.persisted !== undefined) states.push('persisted')
     if (row.published !== undefined) states.push('published')
-	const target = row.published !== undefined
-	  ? undefined
-	  : row.cordis === undefined ? row.persisted?.target : {
+	const target = row.cordis === undefined ? row.persisted?.target : {
           kind: 'cordis', sourceKey: row.cordis.sourceKey, agentId: row.cordis.row.agentId,
           pluginId: row.cordis.row.pluginId, packageId: row.cordis.packageId,
 	    } satisfies ArkmeOwnedExtensionTarget
@@ -710,6 +746,7 @@ export class ArkmeOwnedExtensionInventory {
             ? {}
             : { version: row.published.version ?? row.published.latest_stable_version }),
           visibility: row.published.visibility,
+          ...(row.published.status === undefined ? {} : { status: row.published.status }),
           ...(row.published.icon_ref === undefined ? {} : { iconRef: row.published.icon_ref }),
           ...(row.published.preview_images === undefined ? {} : { previewImages: row.published.preview_images }),
           ...(row.published.preview_revision === undefined ? {} : { previewRevision: row.published.preview_revision }),
@@ -717,15 +754,15 @@ export class ArkmeOwnedExtensionInventory {
 			...(row.published.share === undefined ? {} : { share: row.published.share }),
         },
       }),
-	  publish: row.published !== undefined
-	    ? { allowed: false, reason: '该扩展已发布' }
-	    : target !== undefined
+	  publish: target !== undefined
 	      ? {
 	          allowed: true,
-	          mode: 'new',
+	          mode: row.published === undefined ? 'new' : 'version',
 	          ...publishContractForTarget(target),
 	        }
-	      : { allowed: false, reason: row.persisted?.publishReason ?? '当前没有可读取的发布源' },
+	      : { allowed: false, reason: row.persisted?.publishReason ?? (row.published === undefined
+	          ? '当前没有可读取的发布源'
+	          : '当前没有可读取的新版本发布源') },
     }
   }
 
@@ -740,6 +777,16 @@ export class ArkmeOwnedExtensionInventory {
   private cordisSourceKey(agentId: string, pluginId: string): string {
     return `${this.options.hostInstanceId}\0${agentId}\0${pluginId}`
   }
+}
+
+export function publicationCandidatePackageName(userId: number, clientMutationId: string): string {
+  const mutation = clientMutationId.trim()
+  if (!Number.isSafeInteger(userId) || userId <= 0 || mutation === '') {
+    throw new ArkmePluginError('extension-client-mutation-invalid', '发布请求缺少稳定的 client mutation identity', false, 400)
+  }
+  return `@arkme-generated/${createHash('sha256')
+    .update(`publication-identity-v3\0${String(userId)}\0${mutation}`)
+    .digest('hex').slice(0, 24)}`
 }
 
 function publishContractForTarget(target: ArkmeOwnedExtensionTarget): {

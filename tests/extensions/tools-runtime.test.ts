@@ -27,6 +27,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
       'arkme_extension_list_mine',
       'arkme_extension_save_profile',
       'arkme_extension_publish',
+      'arkme_extension_unpublish',
       'arkme_extension_edit',
       'arkme_extension_preview_add',
       'arkme_extension_preview_delete',

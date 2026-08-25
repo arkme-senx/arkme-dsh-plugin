@@ -612,6 +612,7 @@ export class ArkmeService {
         arrangements: true,
         myExtensions: true,
         extensionPublish: true,
+        extensionPublicationLifecycle: true,
         extensionReviews: true,
         ...(this.relatedRecording.isEnabled() ? { relatedRecordings: true as const } : {}),
       },
