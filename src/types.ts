@@ -238,6 +238,7 @@ export interface ArkmeSelfRecordItem {
   templateKind: number
   status: number
   version: number
+  creationSource?: number
   localState?: 'synced' | 'pending' | 'failed'
   lastError?: string
   displayKind?: number
@@ -1088,7 +1089,7 @@ export interface ArkmeForwardRecordPreviewItem {
 }
 
 export interface ArkmeTimelineAgentSource {
-  kind: 'agent'
+  kind: 'agent' | 'dsh_agent_input'
   displayName: string
   label: string
 }

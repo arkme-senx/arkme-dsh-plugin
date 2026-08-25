@@ -85,4 +85,74 @@ describe('SourceService', () => {
       { limit: 30, session_kind: 2 },
     ])
   })
+
+  it('skips DSH Agent input records when decorating the default category preview', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const stateStore = { async uniqueCode() { return 'device-secret' } } as StateStore
+    const fetchImpl = vi.fn(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/topics/display/list')) {
+        return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })
+      }
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) {
+        return new Response(JSON.stringify({ code: 0, data: { relations: [] } }), { status: 200 })
+      }
+      if (url.endsWith('/api/v1/records/uncategorized/query')) {
+        return new Response(JSON.stringify({ code: 0, data: {
+          items: [{
+            record_uid: 'dsh-input-1',
+            send_at: 200,
+            record_core: {
+              record_uid: 'dsh-input-1',
+              text_content: '不该作为默认分类预览',
+              creation_source: 3,
+              send_at: 200,
+            },
+          }, {
+            record_uid: 'normal-1',
+            send_at: 190,
+            record_core: {
+              record_uid: 'normal-1',
+              text_content: '普通发给自己',
+              creation_source: 0,
+              send_at: 190,
+            },
+          }],
+        } }), { status: 200 })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, stateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 2, wordsCount: 0, totalSec: 0 } },
+      isDSHAgentInput(raw) {
+        const item = raw as { record_core?: { creation_source?: number } }
+        return item.record_core?.creation_source === 3
+      },
+      recordItem(raw) {
+        const item = raw as { record_uid: string; send_at: number; record_core: { text_content: string } }
+        return {
+          recordUid: item.record_uid,
+          sendAtMillis: item.send_at,
+          title: '',
+          textContent: item.record_core.text_content,
+          templateKind: 1,
+          status: 1,
+          version: 1,
+        }
+      },
+    })
+
+    const result = await service.listSources('send_to_self', { refresh: true })
+    const defaultCategory = result.items.find(item => item.kind === 'default_category')
+
+    expect(defaultCategory).toMatchObject({
+      displayName: '默认分类',
+      latestPreview: '普通发给自己',
+      activeAtMillis: 190,
+    })
+  })
 })

@@ -10,6 +10,14 @@ const productNavigationSource = readFileSync(
   new URL('../src/client/ArkmeProductNavigation.tsx', import.meta.url),
   'utf8',
 )
+const persistentShellSource = readFileSync(
+  new URL('../src/client/ArkmePersistentShell.tsx', import.meta.url),
+  'utf8',
+)
+const realtimeClientEventsSource = readFileSync(
+  new URL('../src/client/realtime-client-events.ts', import.meta.url),
+  'utf8',
+)
 const redesignCss = readFileSync(
   new URL('../src/client/redesign/arkme-redesign.css', import.meta.url),
   'utf8',
@@ -28,6 +36,13 @@ describe('Arkme product navigation', () => {
     expect(productNavigationSource).toContain("document.addEventListener('keydown', dismissOnEscape)")
     expect(productNavigationSource).toContain('profileTriggerRef.current?.contains(event.target)')
     expect(productNavigationSource).toContain('profilePopoverRef.current?.contains(event.target)')
+  })
+
+  it('keeps the persistent client runtime subscribed to record projection invalidations', () => {
+    expect(persistentShellSource).toContain('useArkmeRealtimeClientEvents(auth, ui.authRevision, true)')
+    expect(realtimeClientEventsSource).toContain("if (update.type === 'projection-invalidated')")
+    expect(realtimeClientEventsSource).toContain("if (update.projection !== 'record') return")
+    expect(realtimeClientEventsSource).toContain('arkmeUi.chatChanged()')
   })
 
   it('does not imply an account presence state without real presence data', () => {

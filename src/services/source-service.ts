@@ -34,6 +34,7 @@ interface CacheEntry<T> { value: T; expiresAtMillis: number }
 export interface ArkmeSourceRecordReader {
   summary(): Promise<ArkmeSelfSummary>
   recordItem(raw: unknown): ArkmeSelfRecordItem | undefined
+  isDSHAgentInput?(raw: unknown): boolean
 }
 
 const SOURCE_LIST_CACHE_TTL_MS = 30_000
@@ -356,7 +357,7 @@ export class SourceService {
         this.recordReader.summary(),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/records/uncategorized/query',
-          { limit: 1 },
+          { limit: 10 },
           session,
         ),
       ])
@@ -368,9 +369,13 @@ export class SourceService {
         ? summaryResult.value.recordCount
         : cached?.summary?.recordCount
       const defaultLatestRecord = latestRecordsResult.status === 'fulfilled'
-        ? listValue(latestRecordsResult.value.items).map(raw => this.recordReader.recordItem(raw)).find(item => item !== undefined)
+        ? listValue(latestRecordsResult.value.items)
+          .map(raw => this.recordReader.isDSHAgentInput?.(raw) === true ? undefined : this.recordReader.recordItem(raw))
+          .find(item => item !== undefined)
         : cached?.items.reduce<ArkmeSelfRecordItem | undefined>((latest, item) => (
-          latest === undefined || item.sendAtMillis > latest.sendAtMillis ? item : latest
+          item.creationSource === 3
+            ? latest
+            : latest === undefined || item.sendAtMillis > latest.sendAtMillis ? item : latest
         ), undefined)
       const defaultLatestPreview = defaultLatestRecord === undefined
         ? ''

@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeCalendarCell, ArkmeCalendarSurface } from '../src/client/ArkmeCalendarSurface.js'
+import {
+  ArkmeCalendarCell,
+  ArkmeCalendarSurface,
+  arkmeCalendarRecordIsDSHAgentInput,
+  arkmeCalendarRecordSourceLabel,
+} from '../src/client/ArkmeCalendarSurface.js'
+
+const surfaceSource = readFileSync(new URL('../src/client/ArkmeCalendarSurface.tsx', import.meta.url), 'utf8')
 
 function styleMap(value: string): Map<string, string> {
   return new Map(value.split(';').filter(Boolean).map(rule => {
@@ -98,5 +106,56 @@ describe('ArkmeCalendarSurface layout', () => {
     expect(backdrop.get('backdrop-filter')).toBe('none')
     expect(card.get('left')).toBe('12px')
     expect(card.get('top')).toBe('88px')
+  })
+
+  it('labels only DSH Agent input records distinctly in the calendar', () => {
+    const item = {
+      recordUid: 'record-dsh',
+      sendAtMillis: 1,
+      accessState: 'available',
+      title: '',
+      textContent: '你好',
+      preview: '你好',
+      sourceKind: 'self',
+      creationSource: 3,
+      templateKind: 1,
+      displayKind: 0,
+      protected: false,
+      isUncategorized: true,
+    } as const
+
+    expect(arkmeCalendarRecordSourceLabel(item)).toBe('DSH Agent 输入')
+    expect(arkmeCalendarRecordIsDSHAgentInput(item)).toBe(true)
+    expect(surfaceSource).toContain('function DeepSeekLogoMark()')
+    expect(surfaceSource).toContain('fill="currentColor"')
+  })
+
+  it('keeps ordinary and Agent-created records without a DSH calendar source label', () => {
+    const ordinary = {
+      recordUid: 'record-ordinary',
+      sendAtMillis: 1,
+      accessState: 'available',
+      title: '',
+      textContent: '测试',
+      preview: '测试',
+      sourceKind: 'self',
+      creationSource: 0,
+      templateKind: 1,
+      displayKind: 0,
+      protected: false,
+      isUncategorized: true,
+    } as const
+    const agentCreated = { ...ordinary, recordUid: 'record-agent', creationSource: 1 } as const
+
+    expect(arkmeCalendarRecordSourceLabel(ordinary)).toBe('')
+    expect(arkmeCalendarRecordIsDSHAgentInput(ordinary)).toBe(false)
+    expect(arkmeCalendarRecordSourceLabel(agentCreated)).toBe('')
+    expect(arkmeCalendarRecordIsDSHAgentInput(agentCreated)).toBe(false)
+  })
+
+  it('refreshes open calendar data when the shared record projection changes', () => {
+    expect(surfaceSource).toContain('useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)')
+    expect(surfaceSource).toContain('}, [timezone, visibleMonth, ui.chatRevision])')
+    expect(surfaceSource).toContain('}, [selectedDate, timezone, ui.chatRevision])')
   })
 })

@@ -535,6 +535,63 @@ describe('ArkmeService', () => {
     ])
   })
 
+  it('invalidates calendar cache and notifies clients after DSH Agent input is created', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    let calendarText = '旧缓存'
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url: String(input), body })
+      if (String(input).endsWith('/api/v1/calendar/records/query')) {
+        return json({ code: 200, data: {
+          timezone: 'Asia/Shanghai',
+          items: [{
+            record_uid: 'record-calendar',
+            send_at: 1_787_623_692_290,
+            record_core: {
+              record_uid: 'record-calendar',
+              send_at: 1_787_623_692_290,
+              content_access_state: 1,
+              title: '',
+              text_content: calendarText,
+              creation_source: calendarText === '旧缓存' ? 0 : 3,
+              template_kind: 1,
+              display_kind: 0,
+            },
+          }],
+          has_more: false,
+        } })
+      }
+      if (String(input).endsWith('/api/v1/records/dsh-agent-input/create')) {
+        calendarText = String(body.text_content)
+        return json({ code: 0, data: { record_uid: body.record_uid, status: 1 } })
+      }
+      throw new Error(`unexpected ${String(input)}`)
+    })
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    await expect(service.calendarRecords({
+      bucketDate: '2026-08-25',
+      timezone: 'Asia/Shanghai',
+      limit: 20,
+    })).resolves.toMatchObject({ items: [{ textContent: '旧缓存', creationSource: 0 }] })
+    await expect(service.createDSHAgentInputText(
+      'dc6eb132-1c9d-501d-a0d0-2fae884de198',
+      '你好',
+      1_787_623_692_290,
+    )).resolves.toMatchObject({ recordUid: 'dc6eb132-1c9d-501d-a0d0-2fae884de198', status: 1 })
+    await expect(service.calendarRecords({
+      bucketDate: '2026-08-25',
+      timezone: 'Asia/Shanghai',
+      limit: 20,
+    })).resolves.toMatchObject({ items: [{ textContent: '你好', creationSource: 3 }] })
+
+    expect(requests.filter(item => item.url.endsWith('/api/v1/calendar/records/query'))).toHaveLength(2)
+    expect(events).toEqual([expect.objectContaining({ type: 'projection-invalidated', projection: 'record' })])
+  })
+
   it('loads recording day sections independently and refreshes an expired Audio bearer', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'expired', refreshToken: 'refresh' }

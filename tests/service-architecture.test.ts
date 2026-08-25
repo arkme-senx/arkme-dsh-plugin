@@ -51,7 +51,7 @@ const expectedPublicMethods = [
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
-  'createText', 'createTextForConversation', 'pendingWrites',
+  'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
   'retryPending', 'extensionPost',
 ].sort()
 

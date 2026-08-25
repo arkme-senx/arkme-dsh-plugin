@@ -290,6 +290,7 @@ export class ArkmeService {
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
       recordItem: raw => this.recordItem(raw),
+      isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
     })
     this.record = new RecordService(this.runtime, this.media, this.source)
     this.search = new SearchService(this.runtime, this.record, this.media)
@@ -1521,6 +1522,16 @@ export class ArkmeService {
     textContent: string,
   ): Promise<ArkmeConversationWriteResult> {
     return await this.record.createTextForConversation(recordUid, textContent)
+  }
+
+  async createDSHAgentInputText(recordUid: string, textContent: string, sendAtMillis: number): Promise<ArkmeCreateTextResult> {
+    const result = await this.record.createDSHAgentInputText(recordUid, textContent, sendAtMillis)
+    this.realtime.emitChatClientEvent({
+      type: 'projection-invalidated',
+      revision: this.realtime.nextChatClientRevision(),
+      projection: 'record',
+    })
+    return result
   }
 
   async pendingWrites(): Promise<ArkmePendingWrite[]> {
