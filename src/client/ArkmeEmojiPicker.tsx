@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Smiley } from '@phosphor-icons/react/dist/icons/Smiley'
 import { Heart } from '@phosphor-icons/react/dist/icons/Heart'
 import { arkmeTheme } from './arkme-theme.js'
+import { ARKME_COMPOSER_TOOL_ICON_SIZE, ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import {
   arkmeDefaultEmojis, arkmeEmojiById, nextArkmeRecentEmojiIds, type ArkmeEmoji,
 } from './arkme-emoji.js'
@@ -10,11 +11,6 @@ const recentStorageKey = 'arkme:composer:recent-emojis:v1'
 
 const styles: Record<string, CSSProperties> = {
   host: { position: 'relative', flex: 'none' },
-  trigger: {
-    width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0,
-    border: 0, borderRadius: 9, background: 'transparent', color: arkmeTheme.secondary,
-    cursor: 'pointer', transition: 'background-color 120ms ease, color 120ms ease',
-  },
   panel: {
     position: 'absolute', left: 0, bottom: 42, zIndex: 30,
     width: 'min(372px, calc(100vw - 48px))', maxHeight: 'min(410px, calc(100vh - 180px))',
@@ -134,17 +130,14 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, onSelect }: {
         <button type="button" style={{ ...styles.tab, ...styles.disabledTab }} aria-label="收藏表情（暂不可用）" disabled><Heart size={20} weight="regular" /></button>
       </div>
     </section>}
-    <button
-      type="button"
-      style={{ ...styles.trigger, ...(open ? { background: arkmeTheme.active, color: arkmeTheme.text } : {}) }}
+    <ArkmeComposerToolButton
       disabled={disabled}
       aria-label="选择表情"
       aria-haspopup="dialog"
       aria-expanded={open}
+      data-arkme-composer-tool="emoji"
       onMouseDown={event => { event.preventDefault() }}
-      onMouseEnter={event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = arkmeTheme.hover }}
-      onMouseLeave={event => { event.currentTarget.style.background = open ? arkmeTheme.active : 'transparent' }}
       onClick={() => { setOpen(value => !value) }}
-    ><Smiley size={21} weight="regular" aria-hidden /></button>
+    ><Smiley size={ARKME_COMPOSER_TOOL_ICON_SIZE} weight="regular" aria-hidden /></ArkmeComposerToolButton>
   </div>
 }

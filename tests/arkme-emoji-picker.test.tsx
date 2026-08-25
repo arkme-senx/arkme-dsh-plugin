@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
+import { arkmeComposerToolButtonStyle } from '../src/client/ArkmeComposerToolButton.js'
 import {
   arkmeDefaultEmojis, insertArkmeEmojiAtSelection, nextArkmeRecentEmojiIds,
 } from '../src/client/arkme-emoji.js'
@@ -43,7 +44,13 @@ describe('Arkme emoji composer', () => {
     })
 
     const trigger = renderer.root.findByProps({ 'aria-label': '选择表情' })
+    const triggerButton = renderer.root.findAllByType('button')
+      .find(node => node.props['data-arkme-composer-tool'] === 'emoji')!
+    expect(triggerButton.props.style).toEqual(arkmeComposerToolButtonStyle)
+    expect(triggerButton.props.onMouseEnter).toBeUndefined()
+    expect(triggerButton.props.onMouseLeave).toBeUndefined()
     act(() => { trigger.props.onClick() })
+    expect(triggerButton.props.style).toEqual(arkmeComposerToolButtonStyle)
     expect(renderer.root.findByProps({ 'data-arkme-emoji-panel': true })).toBeDefined()
     expect(renderer.root.findAllByProps({ 'data-arkme-emoji-id': 'angry_face' })).toHaveLength(1)
     expect(renderer.root.findByProps({ 'data-arkme-emoji-id': 'angry_face' }).findByType('img').props.src)
