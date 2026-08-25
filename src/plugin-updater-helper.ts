@@ -2,8 +2,7 @@ import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'nod
 import { readFile, unlink } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import semver from 'semver'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
 import { writePluginUpdateInstallReceipt } from './plugin-update-install-receipt.js'
@@ -481,8 +480,7 @@ export async function rollbackManagedPluginUpdate(
   await unlink(planPath)
 }
 
-async function main(): Promise<void> {
-  const planPath = process.argv[2]
+export async function runPluginUpdaterCli(planPath: string | undefined): Promise<void> {
   if (planPath === undefined) throw new Error('updater plan path is required')
   const plan = parsePluginUpdaterPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
   const logFd = openSync(plan.logPath, 'a', 0o600)
@@ -494,8 +492,4 @@ async function main(): Promise<void> {
     const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
     await writePhase(store, plan, 'failed', error instanceof Error ? error.message : String(error))
   }
-}
-
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await main()
 }

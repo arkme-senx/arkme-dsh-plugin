@@ -70,7 +70,7 @@
     "build:windows-credential-helper": "node scripts/build-windows-credential-helper.mjs",
     "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "bundle": "node scripts/clean-bundle.mjs && tsdown",
+    "bundle": "node scripts/clean-bundle.mjs && tsdown && node scripts/verify-executable-entrypoints.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",

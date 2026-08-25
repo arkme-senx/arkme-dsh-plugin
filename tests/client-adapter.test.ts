@@ -85,7 +85,6 @@ describe('official DSH client adapter', () => {
       'sidebar',
       'conversation',
       'details',
-      'shell.overlay',
     ])
     expect(registered).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -111,10 +110,7 @@ describe('official DSH client adapter', () => {
     expect(toggleSidebar).toHaveBeenCalledOnce()
     expect(closeDetails).toHaveBeenCalledOnce()
 
-    expect(registered).toContainEqual(expect.objectContaining({
-      name: 'shell.overlay',
-      id: 'arkme-app-update-dialog',
-    }))
+    expect(registered).not.toContainEqual(expect.objectContaining({ id: 'arkme-app-update-dialog' }))
     expect(registered.map(item => item.name)).not.toContain('sidebar.footer.action')
     expect(registered.map(item => item.name)).not.toContain('sidebar.settings')
     expect(registered.map(item => item.name)).not.toContain('settings.general.item')

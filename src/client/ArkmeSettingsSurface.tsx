@@ -14,6 +14,7 @@ import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { arkmeUpdateUi } from './update-ui-controller.js'
 
 interface SettingsRowProps {
   title: string
@@ -206,11 +207,11 @@ export function ArkmeSettingsSurface({ onOpenModels }: ArkmeSettingsSurfaceProps
   const runUpdateAction = (row: ArkmeUpdateCenterRow) => {
     if (row.action === 'busy') return
     if (row.key === 'plugin') {
-      if (row.action === 'install') void arkmePluginUpdateStore.install()
+      if (row.action === 'install') arkmeUpdateUi.open('plugin')
       else void arkmePluginUpdateStore.refresh(true)
       return
     }
-    if (row.action === 'download') void arkmeAppUpdateStore.download()
+    if (row.action === 'download') arkmeUpdateUi.open('app')
     else if (row.action === 'open') void arkmeAppUpdateStore.showDownloadedFile()
     else void arkmeAppUpdateStore.refresh(true)
   }

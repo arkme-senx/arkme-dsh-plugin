@@ -14,7 +14,7 @@ export default defineConfig([
     name: '@senguoyun/dsh-arkme',
     entry: {
       index: 'src/index.ts',
-      'plugin-updater-helper': 'src/plugin-updater-helper.ts',
+      'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',
       'extension-profile-restart-helper': 'src/extensions/profile-restart-helper.ts',

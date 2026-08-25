@@ -20,7 +20,7 @@ import arkmeNavigationLogoDarkBase64 from '../../assets/branding/arkme-navigatio
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
-import { ArkmePluginUpdateDialog } from './ArkmePluginUpdateDialog.js'
+import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -86,11 +86,6 @@ const styles: Record<string, CSSProperties> = {
   },
   brandImage: { display: 'block', width: 48, height: 28, objectFit: 'cover' },
   brandVersion: { color: '#a5a8af', fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
-  updateBadge: {
-    minHeight: 20, marginTop: 3, padding: '1px 8px', border: 0, borderRadius: 999,
-    background: '#ef4444', color: '#fff', cursor: 'pointer', font: 'inherit',
-    fontSize: 10, lineHeight: '18px', fontWeight: 600, whiteSpace: 'nowrap',
-  },
   primary: { minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 },
   button: {
     position: 'relative',
@@ -137,7 +132,6 @@ export function ArkmeProductNavigation({
     arkmePluginUpdateStore.getSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
-  const [pluginUpdateOpen, setPluginUpdateOpen] = useState(false)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const profileTriggerRef = useRef<HTMLButtonElement>(null)
   const profilePopoverRef = useRef<HTMLDivElement>(null)
@@ -180,13 +174,6 @@ export function ArkmeProductNavigation({
         : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
   const pluginUpdate = pluginUpdateState.status
   const installedPluginVersion = pluginUpdate?.installedVersion ?? pluginManifest.version
-  const pluginUpdateAvailable = pluginUpdate?.availability === 'available'
-  const pluginInstalling = pluginUpdateState.install !== undefined
-    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(pluginUpdateState.install.phase)
-  const pluginInstallError = pluginUpdateState.installError
-    || (pluginUpdateState.install !== undefined && ['failed', 'rolled-back'].includes(pluginUpdateState.install.phase)
-      ? pluginUpdateState.install.message
-      : pluginUpdateState.error)
 
   const activate = (id: NavigationItem['id']) => {
     if (id === 'extensions') {
@@ -230,9 +217,6 @@ export function ArkmeProductNavigation({
         <span data-arkme-plugin-version={installedPluginVersion} style={styles.brandVersion}>
           v{installedPluginVersion}
         </span>
-        {pluginUpdateAvailable && <button type="button" style={styles.updateBadge}
-          aria-label={`查看插件新版本 ${pluginUpdate.latestVersion ?? '最新版本'}`}
-          onClick={() => { setPluginUpdateOpen(true) }}>新版本</button>}
       </div>}
       <div style={{ ...styles.primary, ...(compact ? { flexDirection: 'row' as const } : {}) }}>
       {items.map(item => {
@@ -264,18 +248,9 @@ export function ArkmeProductNavigation({
         anchor="product-rail"
         onClose={() => { arkmeUi.hideCalendar() }}
       />, document.body)}
-      {pluginUpdateOpen && pluginUpdateAvailable && typeof document !== 'undefined' && createPortal(
-        <ArkmePluginUpdateDialog
-          status={pluginUpdate}
-          {...(pluginUpdateState.install === undefined ? {} : { install: pluginUpdateState.install })}
-          busy={pluginUpdateState.busy || pluginInstalling}
-          error={pluginInstallError}
-          onDismiss={() => { if (!pluginInstalling && !pluginUpdateState.busy) setPluginUpdateOpen(false) }}
-          onInstall={() => { void arkmePluginUpdateStore.install() }}
-        />,
-        document.body,
-      )}
-      {!compact && authState.auth?.status === 'authenticated' && <div className="arkme-redesign-rail-footer">
+      {!compact && <div className="arkme-redesign-rail-footer">
+        <ArkmeUpdateRailSlot />
+        {authState.auth?.status === 'authenticated' && <>
         {profileOpen && typeof document !== 'undefined' && createPortal(<div ref={profilePopoverRef} className="arkme-redesign-profile-popover" role="menu" aria-label="个人菜单">
           <div className="arkme-redesign-profile-head">
             <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label="当前用户头像" />
@@ -291,6 +266,7 @@ export function ArkmeProductNavigation({
         <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" onClick={() => { setProfileOpen(value => !value) }}>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={32} label="当前用户头像" />
         </button>
+        </>}
       </div>}
     </nav>
 }

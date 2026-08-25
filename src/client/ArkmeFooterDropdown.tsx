@@ -14,6 +14,7 @@ import {
 import { forgetNavigationProviderInstance } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
+import { arkmeUpdateUi } from './update-ui-controller.js'
 
 const styles: Record<string, CSSProperties> = {
   root: { width: '100%', minWidth: 0 },
@@ -28,6 +29,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
   const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot, arkmePluginUpdateStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const auth = authState.auth
+  const currentSession = props.useSessions(state => state.current)
   const unreadCount = auth?.status === 'authenticated' && chatDirectory.revision > 0
     ? arkmeChatDirectory.totalUnreadCount()
     : 0
@@ -130,7 +132,10 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
       unreadCount={unreadCount}
       {...(updateState.status === undefined ? {} : { updateStatus: updateState.status })}
       updateBusy={updateState.busy || updateInstalling}
-      onUpdate={() => { void arkmePluginUpdateStore.install() }}
+      onUpdate={() => {
+        props.activate(currentSession)
+        arkmeUpdateUi.open('plugin')
+      }}
     />
     </div>
   </>

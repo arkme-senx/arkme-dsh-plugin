@@ -5,7 +5,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import './composer-draft-auth-binding.js'
 import { callArkme } from './api.js'
-import { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import {
   ArkmePersistentDetails, ArkmePersistentSidebar, ArkmePersistentWorkspace,
@@ -199,13 +198,6 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: keep Arkme conversation seats around the embedded DeepSeek Harness')
 
-  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-    name: 'shell.overlay',
-    id: 'arkme-app-update-dialog',
-    order: 90,
-    label: 'Arkme APP 更新提示',
-  }, ArkmeAppUpdateDialog))
-
   if (startupAuthGateEnabled()) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay',
@@ -228,6 +220,7 @@ export {
 export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingCallHost.js'
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
+export { ArkmeUpdateRailSlot, ArkmeUpdateTopCapsule, deriveArkmeUpdatePresentation } from './ArkmeUpdateSurfaces.js'
 export { ArkmePluginUpdateDialog } from './ArkmePluginUpdateDialog.js'
 export { ArkmeSettingsRow } from './ArkmeSettingsRow.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
