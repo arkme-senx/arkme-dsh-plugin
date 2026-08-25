@@ -98,7 +98,7 @@ export const Config: Schema<Config> = Schema.object({
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
-  dataBaseUrl: Schema.string().default('https://jotmo-data.senguo.me'),
+  dataBaseUrl: Schema.string().default(''),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -178,7 +178,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  validateConfig(ctx, config)
+  config = resolveArkmeConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
@@ -433,6 +433,19 @@ export function apply(ctx: Context, config: Config): void {
     }
   }, 'dsh-arkme: local realtime events route')
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
+}
+
+export function resolveArkmeConfig(ctx: Context, config: Config): Config {
+  const resolved = config.dataBaseUrl.trim() === ''
+    ? {
+        ...config,
+        dataBaseUrl: config.environment === 'prod'
+          ? 'https://data.jotmo.cc'
+          : 'https://jotmo-data.senguo.me',
+      }
+    : config
+  validateConfig(ctx, resolved)
+  return resolved
 }
 
 function validateConfig(ctx: Context, config: Config): void {
