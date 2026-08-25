@@ -30,10 +30,10 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
-import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
+import { ArkmeAttachmentDraftTile, ArkmeMessageContent, ArkmeRichText } from './ArkmeRichContent.js'
 import { ArkmeMentionTextarea } from './ArkmeMentionTextarea.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
-import { insertArkmeEmojiAtSelection, type ArkmeEmoji } from './arkme-emoji.js'
+import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
@@ -64,6 +64,7 @@ import {
   arkmeComposerDraftStore,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
+  serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
 } from './composer-draft-store.js'
 import {
@@ -1657,10 +1658,10 @@ export function ArkmeSurface({
       if (currentAuth?.status === 'authenticated' && currentAuth.userId === targetUserId) {
         arkmeComposerDraftStore.appendAttachments(targetDraftKey, uploaded)
       } else {
-        releaseArkmeComposerDraft({ text: '', attachments: uploaded, mentions: [] })
+        releaseArkmeComposerDraft({ text: '', attachments: uploaded, mentions: [], emojis: [] })
       }
     } catch (caught) {
-      releaseArkmeComposerDraft({ text: '', attachments: uploaded, mentions: [] })
+      releaseArkmeComposerDraft({ text: '', attachments: uploaded, mentions: [], emojis: [] })
       setError(errorMessage(caught))
     }
     finally {
@@ -1677,7 +1678,8 @@ export function ArkmeSurface({
     const targetDraftKey = composerDraftKey
     const targetUserId = authenticatedUserId
     if (targetUserId === undefined) return
-    const textContent = draft.trim()
+    const serializedDraft = serializeArkmeComposerDraft(composerDraft)
+    const textContent = serializedDraft.text.trim()
     if (textContent === '' && attachments.length === 0) return
     const recordUid = crypto.randomUUID(); const relationUid = crypto.randomUUID(); const now = Date.now()
     const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
@@ -1695,7 +1697,7 @@ export function ArkmeSurface({
     const pendingAttachments = [...pendingDraft.attachments]
     const pendingAssets = pendingAttachments.map(attachment => attachment.asset)
     pendingViewportRestoreRef.current = { sourceRef: targetSource.sourceRef, viewport: undefined }
-    const pendingMentions = pendingDraft.mentions.map(mention => ({
+    const pendingMentions = serializedDraft.mentions.map(mention => ({
       memberRef: mention.memberRef,
       startIndex: mention.startIndex,
       length: mention.length,
@@ -1852,12 +1854,11 @@ export function ArkmeSurface({
     const textarea = textareaRef.current
     const start = textarea?.selectionStart ?? draft.length
     const end = textarea?.selectionEnd ?? start
-    const insertion = insertArkmeEmojiAtSelection(draft, emoji, start, end)
-    if (insertion === undefined) return
-    arkmeComposerDraftStore.setText(composerDraftKey, insertion.text)
+    const caretIndex = arkmeComposerDraftStore.insertEmoji(composerDraftKey, emoji, start, end)
+    if (caretIndex === undefined) return
     requestAnimationFrame(() => {
       textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(insertion.caretIndex, insertion.caretIndex)
+      textareaRef.current?.setSelectionRange(caretIndex, caretIndex)
     })
   }, [busy, composerDraftKey, draft])
   const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
@@ -2338,7 +2339,7 @@ export function ArkmeSurface({
             />)}</div>}
             {uploadStatus !== undefined && uploadStatus.key === composerDraftKey
               && <div style={styles.uploadStatus} role="status">{uploadStatus.message}</div>}
-            <ArkmeMentionTextarea className="arkme-conversation-textarea" ref={textareaRef} rows={1} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
+            <ArkmeMentionTextarea className="arkme-conversation-textarea" ref={textareaRef} rows={1} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
               onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)
@@ -2441,11 +2442,11 @@ export function ArkmeSurface({
               && <button type="button" style={styles.toggle} onClick={() => { setShowOriginal(value => !value) }}>
                 {showOriginal ? '👁️显示润色' : '👁️显示原文'}
               </button>}
-            <p style={styles.detailText}>{showOriginal && detailItem.aiPolish?.originalText !== undefined
+            <p style={styles.detailText}><ArkmeRichText text={showOriginal && detailItem.aiPolish?.originalText !== undefined
               ? detailItem.aiPolish.originalText
               : detailItem.aiPolish?.state === 'polished' && detailItem.aiPolish.polishedText !== undefined
                 ? detailItem.aiPolish.polishedText
-                : detailItem.textContent || detailItem.title || '非文本内容'}</p>
+                : detailItem.textContent || detailItem.title || '非文本内容'} /></p>
           </div>
         </aside>}
         {authView === 'content' && ui.mode === 'contact-add' && <div

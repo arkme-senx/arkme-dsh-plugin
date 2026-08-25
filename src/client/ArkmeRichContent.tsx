@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as Rea
 import { createPortal } from 'react-dom'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
+import { arkmeEmojiTextRuns } from './arkme-emoji.js'
 
 const mediaRoute = '/arkme-self/api/media'
 const textCollapseCharacterThreshold = 300
@@ -12,6 +13,7 @@ const mediaGap = 5
 const styles: Record<string, CSSProperties> = {
   stack: { width: 'max-content', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 },
   text: { width: 'max-content', maxWidth: '100%', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px' },
+  emojiInline: { display: 'inline-block', width: 22, height: 22, objectFit: 'contain', verticalAlign: '-6px' },
   collapsedText: { display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: textCollapseMaxLines },
   textFrame: { position: 'relative', width: '100%', maxWidth: '100%' },
   textFade: { position: 'absolute', right: 0, bottom: 22, left: 0, height: 28, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(255,255,255,0), var(--arkme-bubble-fade, rgba(238,243,255,.96)))' },
@@ -68,13 +70,13 @@ function durationLabel(durationSec?: number): string {
 }
 
 function normalizedTextLength(value: string): number {
-  return Array.from(value.replace(/\[jm_emoji:[^\]\r\n]+\]/gu, '●').trim()).length
+  return Array.from(value.replace(/\[(?:jm_emoji|im_emoji):[^\]\r\n]+\]/gu, '●').trim()).length
 }
 
 function isEmojiOnly(value: string): boolean {
   const compact = value.replace(/\s/gu, '')
   if (compact === '') return false
-  const withoutCustomEmoji = compact.replace(/\[jm_emoji:[^\]\r\n]+\]/gu, '')
+  const withoutCustomEmoji = compact.replace(/\[(?:jm_emoji|im_emoji):[^\]\r\n]+\]/gu, '')
   return withoutCustomEmoji.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\u200D\uFE0F\u20E3]/gu, '') === ''
 }
 
@@ -112,10 +114,24 @@ function HighlightedText({ text }: { text: string }) {
   >{run.text}</span>)}</>
 }
 
+export function ArkmeRichText({ text, highlightMentions = false }: { text: string; highlightMentions?: boolean }) {
+  return <>{arkmeEmojiTextRuns(text).map((run, index) => run.kind === 'emoji' && run.emoji !== undefined
+    ? <img
+      key={`${String(index)}:emoji:${run.emoji.id}`}
+      src={run.emoji.assetUrl}
+      alt={run.emoji.label}
+      title={run.emoji.label}
+      style={styles.emojiInline}
+      draggable={false}
+      data-arkme-rich-emoji={run.emoji.id}
+    />
+    : <span key={`${String(index)}:text`}>{highlightMentions ? <HighlightedText text={run.text} /> : run.text}</span>)}</>
+}
+
 function LongText({ text, highlightMentions = false }: { text: string; highlightMentions?: boolean }) {
   const collapsible = shouldCollapseText(text)
   const [collapsed, setCollapsed] = useState(collapsible)
-  const content = highlightMentions ? <HighlightedText text={text} /> : text
+  const content = <ArkmeRichText text={text} highlightMentions={highlightMentions} />
   if (!collapsible) return <p style={styles.text}>{content}</p>
   return <div style={styles.textFrame} data-arkme-text-collapsible="true">
     <p style={{ ...styles.text, ...(collapsed ? styles.collapsedText : {}) }}>{content}</p>

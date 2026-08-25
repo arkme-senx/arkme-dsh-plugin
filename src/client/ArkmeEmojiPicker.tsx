@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Smiley } from '@phosphor-icons/react/dist/icons/Smiley'
+import { Heart } from '@phosphor-icons/react/dist/icons/Heart'
 import { arkmeTheme } from './arkme-theme.js'
 import {
   arkmeDefaultEmojis, arkmeEmojiById, nextArkmeRecentEmojiIds, type ArkmeEmoji,
@@ -16,21 +17,24 @@ const styles: Record<string, CSSProperties> = {
   },
   panel: {
     position: 'absolute', left: 0, bottom: 42, zIndex: 30,
-    width: 'min(344px, calc(100vw - 48px))', maxHeight: 'min(380px, calc(100vh - 180px))',
-    overflowY: 'auto', padding: 12, boxSizing: 'border-box',
+    width: 'min(372px, calc(100vw - 48px))', maxHeight: 'min(410px, calc(100vh - 180px))',
+    overflowY: 'auto', padding: '14px 14px 10px', boxSizing: 'border-box',
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 13,
     background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow,
   },
-  title: { margin: '0 2px 10px', fontSize: 12, lineHeight: '18px', fontWeight: 600, color: arkmeTheme.secondary },
-  sectionTitle: { margin: '0 2px 7px', fontSize: 11, lineHeight: '16px', fontWeight: 500, color: arkmeTheme.tertiary },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 3 },
+  sectionHeader: { margin: '0 2px 8px', display: 'flex', alignItems: 'center', gap: 10 },
+  sectionTitle: { flex: 1, fontSize: 12, lineHeight: '18px', fontWeight: 500, color: arkmeTheme.secondary },
+  attribution: { color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 4 },
   emoji: {
     minWidth: 0, width: '100%', aspectRatio: '1', display: 'grid', placeItems: 'center', padding: 0,
     border: 0, borderRadius: 8, background: 'transparent', cursor: 'pointer',
-    fontFamily: '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
-    fontSize: 22, lineHeight: 1,
   },
-  divider: { height: 1, margin: '10px 2px', background: arkmeTheme.borderSoft },
+  emojiImage: { width: 24, height: 24, display: 'block', objectFit: 'contain', pointerEvents: 'none' },
+  sectionGap: { height: 16 },
+  tabs: { display: 'flex', alignItems: 'center', gap: 4, height: 38, marginTop: 12, paddingTop: 8, borderTop: `1px solid ${arkmeTheme.borderSoft}` },
+  tab: { width: 34, height: 30, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: arkmeTheme.active, color: arkmeTheme.secondary },
+  disabledTab: { background: 'transparent', color: arkmeTheme.tertiary, opacity: 0.48 },
 }
 
 function loadRecentEmojiIds(): string[] {
@@ -66,7 +70,7 @@ function ArkmeEmojiGrid({ emojis, onSelect }: {
       onMouseEnter={event => { event.currentTarget.style.background = arkmeTheme.hover }}
       onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
       onClick={() => { onSelect(emoji) }}
-    >{emoji.unicode}</button>)}
+    ><img src={emoji.assetUrl} alt="" style={styles.emojiImage} /></button>)}
   </div>
 }
 
@@ -115,14 +119,20 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, onSelect }: {
 
   return <div ref={hostRef} style={styles.host} data-arkme-emoji-picker>
     {open && <section role="dialog" style={styles.panel} aria-label="表情选择器" data-arkme-emoji-panel>
-      <h3 style={styles.title}>表情</h3>
       {recent.length > 0 && <>
-        <div style={styles.sectionTitle}>最近使用</div>
+        <div style={styles.sectionHeader}><span style={styles.sectionTitle}>最近使用</span></div>
         <ArkmeEmojiGrid emojis={recent} onSelect={select} />
-        <div style={styles.divider} />
+        <div style={styles.sectionGap} />
       </>}
-      <div style={styles.sectionTitle}>全部表情</div>
+      <div style={styles.sectionHeader}>
+        <span style={styles.sectionTitle}>默认表情</span>
+        <span style={styles.attribution}>创作者：牛mo王</span>
+      </div>
       <ArkmeEmojiGrid emojis={arkmeDefaultEmojis} onSelect={select} />
+      <div style={styles.tabs} aria-label="表情分类">
+        <button type="button" style={styles.tab} aria-label="默认表情" aria-pressed="true"><Smiley size={20} weight="regular" /></button>
+        <button type="button" style={{ ...styles.tab, ...styles.disabledTab }} aria-label="收藏表情（暂不可用）" disabled><Heart size={20} weight="regular" /></button>
+      </div>
     </section>}
     <button
       type="button"

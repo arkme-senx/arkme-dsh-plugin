@@ -1,11 +1,18 @@
+import { arkmeEmojiAssetUrls } from './arkme-emoji-assets.js'
+
 export interface ArkmeEmoji {
+  assetIndex: number
   id: string
+  token: string
   unicode: string
   label: string
+  assetUrl: string
 }
 
-/** The desktop client's default catalog, projected as portable Unicode for the DSH composer. */
-export const arkmeDefaultEmojis: readonly ArkmeEmoji[] = Object.freeze([
+type ArkmeEmojiSeed = Pick<ArkmeEmoji, 'id' | 'unicode' | 'label'>
+
+/** The desktop client's default catalog in the exact asset order used by Jotmo. */
+const arkmeDefaultEmojiSeeds: readonly ArkmeEmojiSeed[] = Object.freeze([
   { id: 'angry_face', unicode: '😡', label: '生气' },
   { id: 'awkward_face', unicode: '😐', label: '尴尬' },
   { id: 'heart_eyes', unicode: '😍', label: '喜欢' },
@@ -64,11 +71,38 @@ export const arkmeDefaultEmojis: readonly ArkmeEmoji[] = Object.freeze([
   { id: 'fist_salute', unicode: '🙏', label: '抱拳' },
 ])
 
+export const arkmeDefaultEmojis: readonly ArkmeEmoji[] = Object.freeze(arkmeDefaultEmojiSeeds.map((emoji, index) => ({
+  ...emoji,
+  assetIndex: index + 1,
+  token: `[jm_emoji:${emoji.id}]`,
+  assetUrl: arkmeEmojiAssetUrls[index]!,
+})))
+
 export const arkmeEmojiById: Readonly<Record<string, ArkmeEmoji>> = Object.freeze(Object.fromEntries(
   arkmeDefaultEmojis.map(emoji => [emoji.id, emoji]),
 ))
 
 const arkmeEmojiTokenPattern = /\[(?:jm_emoji|im_emoji):([a-z0-9_]+)\]/gu
+
+export interface ArkmeEmojiTextRun {
+  kind: 'text' | 'emoji'
+  text: string
+  emoji?: ArkmeEmoji
+}
+
+export function arkmeEmojiTextRuns(value: string): ArkmeEmojiTextRun[] {
+  const runs: ArkmeEmojiTextRun[] = []
+  let cursor = 0
+  for (const match of value.matchAll(arkmeEmojiTokenPattern)) {
+    const emoji = arkmeEmojiById[match[1] ?? '']
+    if (emoji === undefined || match.index === undefined) continue
+    if (match.index > cursor) runs.push({ kind: 'text', text: value.slice(cursor, match.index) })
+    runs.push({ kind: 'emoji', text: match[0], emoji })
+    cursor = match.index + match[0].length
+  }
+  if (cursor < value.length) runs.push({ kind: 'text', text: value.slice(cursor) })
+  return runs.length === 0 && value !== '' ? [{ kind: 'text', text: value }] : runs
+}
 
 /** Mirrors the mobile client's plain-text fallback: known tokens render as emoji and unknown tokens remain intact. */
 export function arkmeEmojiPlainText(value: string): string {
@@ -81,19 +115,19 @@ export interface ArkmeEmojiInsertion {
   caretIndex: number
 }
 
-/** Inserts a portable emoji at the native textarea selection without exceeding its text limit. */
+/** Inserts the desktop client's portable rich-emoji token at the native selection. */
 export function insertArkmeEmojiAtSelection(
   text: string,
-  emoji: Pick<ArkmeEmoji, 'unicode'>,
+  emoji: Pick<ArkmeEmoji, 'token'>,
   selectionStart: number,
   selectionEnd = selectionStart,
   maxLength = 20_000,
 ): ArkmeEmojiInsertion | undefined {
   const start = Math.max(0, Math.min(text.length, Math.trunc(selectionStart)))
   const end = Math.max(start, Math.min(text.length, Math.trunc(selectionEnd)))
-  const nextText = text.slice(0, start) + emoji.unicode + text.slice(end)
+  const nextText = text.slice(0, start) + emoji.token + text.slice(end)
   if (nextText.length > maxLength) return undefined
-  return { text: nextText, caretIndex: start + emoji.unicode.length }
+  return { text: nextText, caretIndex: start + emoji.token.length }
 }
 
 export function nextArkmeRecentEmojiIds(

@@ -2,14 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeUploadedAsset } from '../src/types.js'
 import {
   ArkmeComposerDraftStore,
+  ARKME_COMPOSER_EMOJI_PLACEHOLDER,
   arkmeComposerCanSend,
   arkmeComposerAtomicDeletion,
   arkmeArkoComposerDraftKey,
   arkmeSourceComposerDraftKey,
   releaseArkmeComposerDraft,
+  serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
 } from '../src/client/composer-draft-store.js'
 import { arkmeMentionTextRuns } from '../src/client/ArkmeMentionTextarea.js'
+import { arkmeDefaultEmojis } from '../src/client/arkme-emoji.js'
 
 function attachment(uid: string, previewUrl?: string): ArkmeComposerAttachment {
   return {
@@ -149,6 +152,27 @@ describe('Arkme composer draft store', () => {
     expect(store.get(key).mentions).toEqual([
       { memberRef: 'member-ref', displayName: '小林', startIndex: 4, length: 3 },
     ])
+  })
+
+  it('stores rich emoji as an inline object and serializes desktop tokens with shifted mentions', () => {
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+    store.setText(key, '请处理')
+    expect(store.insertEmoji(key, arkmeDefaultEmojis[0]!, 1)).toBe(2)
+    expect(store.insertMention(key, 'member-ref', '小林', 2)).toBe(6)
+
+    const snapshot = store.get(key)
+    expect(snapshot.text).toBe(`请${ARKME_COMPOSER_EMOJI_PLACEHOLDER}@小林 处理`)
+    expect(snapshot.emojis).toEqual([{ emojiId: 'angry_face', startIndex: 1 }])
+    expect(serializeArkmeComposerDraft(snapshot)).toEqual({
+      text: '请[jm_emoji:angry_face]@小林 处理',
+      mentions: [{
+        memberRef: 'member-ref',
+        displayName: '小林',
+        startIndex: 1 + '[jm_emoji:angry_face]'.length,
+        length: 3,
+      }],
+    })
   })
 
   it('drops mention metadata when the visible mention token is edited', () => {

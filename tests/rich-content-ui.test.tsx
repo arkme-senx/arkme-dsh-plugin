@@ -117,6 +117,9 @@ describe('Arkme rich content presentation', () => {
       title: '', textContent: '[jm_emoji:angry_face]'.repeat(301),
     }} />)
     expect(arkmeEmojiHtml).not.toContain('data-arkme-text-collapsible')
+    expect(arkmeEmojiHtml).toContain('data-arkme-rich-emoji="angry_face"')
+    expect(arkmeEmojiHtml).toContain('data:image/svg+xml;base64,')
+    expect(arkmeEmojiHtml).not.toContain('[jm_emoji:angry_face]')
   })
 
   it.each([

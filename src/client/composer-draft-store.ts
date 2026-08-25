@@ -1,4 +1,5 @@
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
+import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 
 export interface ArkmeComposerAttachment {
   asset: ArkmeUploadedAsset
@@ -12,10 +13,16 @@ export interface ArkmeComposerMention {
   length: number
 }
 
+export interface ArkmeComposerEmoji {
+  emojiId: string
+  startIndex: number
+}
+
 export interface ArkmeComposerDraftSnapshot {
   text: string
   attachments: readonly ArkmeComposerAttachment[]
   mentions: readonly ArkmeComposerMention[]
+  emojis: readonly ArkmeComposerEmoji[]
 }
 
 export type ArkmeComposerDeleteDirection = 'backward' | 'forward'
@@ -29,7 +36,10 @@ const EMPTY_DRAFT: ArkmeComposerDraftSnapshot = Object.freeze({
   text: '',
   attachments: Object.freeze([]),
   mentions: Object.freeze([]),
+  emojis: Object.freeze([]),
 })
+
+export const ARKME_COMPOSER_EMOJI_PLACEHOLDER = '\uFFFC'
 
 export function reconcileArkmeComposerMentions(
   previousText: string,
@@ -57,6 +67,65 @@ export function reconcileArkmeComposerMentions(
     if (nextStart < 0 || nextText.slice(nextStart, nextStart + mention.length) !== token) return []
     return [{ ...mention, startIndex: nextStart }]
   })
+}
+
+export function reconcileArkmeComposerEmojis(
+  previousText: string,
+  nextText: string,
+  emojis: readonly ArkmeComposerEmoji[],
+): ArkmeComposerEmoji[] {
+  if (previousText === nextText || emojis.length === 0) return [...emojis]
+  let prefix = 0
+  const prefixLimit = Math.min(previousText.length, nextText.length)
+  while (prefix < prefixLimit && previousText[prefix] === nextText[prefix]) prefix += 1
+  let suffix = 0
+  const suffixLimit = Math.min(previousText.length - prefix, nextText.length - prefix)
+  while (suffix < suffixLimit
+    && previousText[previousText.length - suffix - 1] === nextText[nextText.length - suffix - 1]) suffix += 1
+  const oldEnd = previousText.length - suffix
+  const newEnd = nextText.length - suffix
+  const delta = newEnd - oldEnd
+  return emojis.flatMap(emoji => {
+    let nextStart = emoji.startIndex
+    if (oldEnd <= emoji.startIndex) nextStart += delta
+    else if (prefix > emoji.startIndex) nextStart = emoji.startIndex
+    else return []
+    if (nextStart < 0 || nextText[nextStart] !== ARKME_COMPOSER_EMOJI_PLACEHOLDER) return []
+    return [{ ...emoji, startIndex: nextStart }]
+  })
+}
+
+export interface ArkmeSerializedComposerDraft {
+  text: string
+  mentions: readonly ArkmeComposerMention[]
+}
+
+export function serializeArkmeComposerDraft(snapshot: ArkmeComposerDraftSnapshot): ArkmeSerializedComposerDraft {
+  if (snapshot.emojis.length === 0) return { text: snapshot.text, mentions: snapshot.mentions }
+  const emojis = [...snapshot.emojis].sort((left, right) => left.startIndex - right.startIndex)
+  const buffer: string[] = []
+  let cursor = 0
+  let offsetDelta = 0
+  const mentionDeltas = new Map<number, number>()
+  for (const emoji of emojis) {
+    if (emoji.startIndex < cursor || snapshot.text[emoji.startIndex] !== ARKME_COMPOSER_EMOJI_PLACEHOLDER) continue
+    const token = arkmeEmojiById[emoji.emojiId]?.token
+    if (token === undefined) continue
+    buffer.push(snapshot.text.slice(cursor, emoji.startIndex), token)
+    cursor = emoji.startIndex + 1
+    offsetDelta += token.length - 1
+    mentionDeltas.set(emoji.startIndex, offsetDelta)
+  }
+  buffer.push(snapshot.text.slice(cursor))
+  const mentions = snapshot.mentions.map(mention => {
+    let delta = 0
+    for (const [emojiStart, nextDelta] of mentionDeltas) {
+      if (emojiStart >= mention.startIndex) break
+      delta = nextDelta
+    }
+    return { ...mention, startIndex: mention.startIndex + delta }
+  })
+  return { text: buffer.join(''), mentions }
 }
 
 function normalizedSelection(text: string, selectionStart: number, selectionEnd: number): [number, number] {
@@ -159,7 +228,38 @@ export class ArkmeComposerDraftStore {
       text,
       attachments: current.attachments,
       mentions: reconcileArkmeComposerMentions(current.text, text, current.mentions),
+      emojis: reconcileArkmeComposerEmojis(current.text, text, current.emojis),
     })
+  }
+
+  insertEmoji(
+    key: string | undefined,
+    emoji: Pick<ArkmeEmoji, 'id' | 'token'>,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+    maxSerializedLength = 20_000,
+  ): number | undefined {
+    if (key === undefined || arkmeEmojiById[emoji.id] === undefined) return undefined
+    const current = this.get(key)
+    const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
+    const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
+    const textWithoutSelection = current.text.slice(0, start) + current.text.slice(end)
+    const mentions = reconcileArkmeComposerMentions(current.text, textWithoutSelection, current.mentions)
+    const emojis = reconcileArkmeComposerEmojis(current.text, textWithoutSelection, current.emojis)
+      .map(item => item.startIndex >= start ? { ...item, startIndex: item.startIndex + 1 } : item)
+    emojis.push({ emojiId: emoji.id, startIndex: start })
+    emojis.sort((left, right) => left.startIndex - right.startIndex)
+    const next: ArkmeComposerDraftSnapshot = {
+      text: textWithoutSelection.slice(0, start) + ARKME_COMPOSER_EMOJI_PLACEHOLDER + textWithoutSelection.slice(start),
+      attachments: current.attachments,
+      mentions: mentions.map(mention => mention.startIndex >= start
+        ? { ...mention, startIndex: mention.startIndex + 1 }
+        : mention),
+      emojis,
+    }
+    if (serializeArkmeComposerDraft(next).text.length > maxSerializedLength) return undefined
+    this.store(key, next)
+    return start + 1
   }
 
   insertMention(
@@ -185,7 +285,14 @@ export class ArkmeComposerDraftStore {
       : mention)
     mentions.push({ memberRef: memberRef.trim(), displayName: displayName.trim(), startIndex: start, length: token.length })
     mentions.sort((left, right) => left.startIndex - right.startIndex)
-    this.store(key, { text, attachments: current.attachments, mentions })
+    const emojis = reconcileArkmeComposerEmojis(
+      current.text,
+      current.text.slice(0, start) + current.text.slice(end),
+      current.emojis,
+    ).map(emoji => emoji.startIndex >= start
+      ? { ...emoji, startIndex: emoji.startIndex + inserted.length }
+      : emoji)
+    this.store(key, { text, attachments: current.attachments, mentions, emojis })
     return start + inserted.length
   }
 
@@ -231,7 +338,7 @@ export class ArkmeComposerDraftStore {
       retained.push(attachment)
     }
     if (retained.length === current.attachments.length) return
-    this.store(key, { text: current.text, attachments: retained, mentions: current.mentions })
+    this.store(key, { text: current.text, attachments: retained, mentions: current.mentions, emojis: current.emojis })
   }
 
   removeAttachment(key: string | undefined, fileAssetUid: string): void {
@@ -245,6 +352,7 @@ export class ArkmeComposerDraftStore {
       text: current.text,
       attachments: current.attachments.filter(item => item.asset.fileAssetUid !== fileAssetUid),
       mentions: current.mentions,
+      emojis: current.emojis,
     })
   }
 
@@ -266,6 +374,7 @@ export class ArkmeComposerDraftStore {
     const current = this.get(key)
     const text = current.text === '' ? snapshot.text : current.text
     const mentions = current.text === '' ? snapshot.mentions : current.mentions
+    const emojis = current.text === '' ? snapshot.emojis : current.emojis
     const merged = [...snapshot.attachments]
     const mergedIds = new Set(merged.map(item => item.asset.fileAssetUid))
     for (const attachment of current.attachments) {
@@ -278,7 +387,7 @@ export class ArkmeComposerDraftStore {
         releaseArkmeComposerAttachment(attachment)
       }
     }
-    this.storeOrDelete(key, { text, attachments: merged, mentions })
+    this.storeOrDelete(key, { text, attachments: merged, mentions, emojis })
   }
 
   clear(key: string | undefined): void {
@@ -304,7 +413,7 @@ export class ArkmeComposerDraftStore {
   }
 
   private storeOrDelete(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
-    if (snapshot.text === '' && snapshot.attachments.length === 0 && snapshot.mentions.length === 0) {
+    if (snapshot.text === '' && snapshot.attachments.length === 0 && snapshot.mentions.length === 0 && snapshot.emojis.length === 0) {
       if (!this.drafts.delete(key)) return
       this.publish()
       return
@@ -317,6 +426,7 @@ export class ArkmeComposerDraftStore {
       text: snapshot.text,
       attachments: Object.freeze([...snapshot.attachments]),
       mentions: Object.freeze(snapshot.mentions.map(mention => Object.freeze({ ...mention }))),
+      emojis: Object.freeze(snapshot.emojis.map(emoji => Object.freeze({ ...emoji }))),
     }))
     this.publish()
   }

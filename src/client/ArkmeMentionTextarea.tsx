@@ -1,5 +1,7 @@
 import { forwardRef, useImperativeHandle, useRef, type CSSProperties, type TextareaHTMLAttributes } from 'react'
-import type { ArkmeComposerMention } from './composer-draft-store.js'
+import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
+import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
+import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 
 const mentionColor = 'var(--dsw-alias-state-business-primary, #3964fe)'
 
@@ -11,12 +13,14 @@ const styles: Record<string, CSSProperties> = {
   },
   mirrorText: { minHeight: '100%', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' },
   mention: { color: mentionColor },
+  emoji: { display: 'inline-block', width: '1em', height: '1.5em', objectFit: 'contain', verticalAlign: '-0.35em' },
   placeholder: { color: 'var(--dsw-alias-label-tertiary, #9097a1)' },
 }
 
 export interface ArkmeMentionTextRun {
-  kind: 'text' | 'mention'
+  kind: 'text' | 'mention' | 'emoji'
   text: string
+  emoji?: ArkmeEmoji
 }
 
 export function arkmeMentionTextRuns(
@@ -37,13 +41,48 @@ export function arkmeMentionTextRuns(
   return runs.length === 0 && text !== '' ? [{ kind: 'text', text }] : runs
 }
 
+export function arkmeComposerTextRuns(
+  text: string,
+  mentions: readonly ArkmeComposerMention[],
+  emojis: readonly ArkmeComposerEmoji[],
+): ArkmeMentionTextRun[] {
+  const objects: Array<
+    | { kind: 'mention'; start: number; end: number }
+    | { kind: 'emoji'; start: number; end: number; emoji: ArkmeEmoji }
+  > = []
+  for (const mention of mentions) {
+    const end = mention.startIndex + mention.length
+    if (mention.startIndex < 0 || end > text.length || text.slice(mention.startIndex, end) !== `@${mention.displayName}`) continue
+    objects.push({ kind: 'mention', start: mention.startIndex, end })
+  }
+  for (const item of emojis) {
+    const emoji = arkmeEmojiById[item.emojiId]
+    if (emoji === undefined || text[item.startIndex] !== ARKME_COMPOSER_EMOJI_PLACEHOLDER) continue
+    objects.push({ kind: 'emoji', start: item.startIndex, end: item.startIndex + 1, emoji })
+  }
+  objects.sort((left, right) => left.start - right.start || left.end - right.end)
+  const runs: ArkmeMentionTextRun[] = []
+  let cursor = 0
+  for (const object of objects) {
+    if (object.start < cursor) continue
+    if (object.start > cursor) runs.push({ kind: 'text', text: text.slice(cursor, object.start) })
+    runs.push(object.kind === 'emoji'
+      ? { kind: 'emoji', text: text.slice(object.start, object.end), emoji: object.emoji }
+      : { kind: 'mention', text: text.slice(object.start, object.end) })
+    cursor = object.end
+  }
+  if (cursor < text.length) runs.push({ kind: 'text', text: text.slice(cursor) })
+  return runs.length === 0 && text !== '' ? [{ kind: 'text', text }] : runs
+}
+
 export interface ArkmeMentionTextareaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'style'> {
   mentions: readonly ArkmeComposerMention[]
+  emojis?: readonly ArkmeComposerEmoji[]
   style: CSSProperties
 }
 
 export const ArkmeMentionTextarea = forwardRef<HTMLTextAreaElement, ArkmeMentionTextareaProps>(function ArkmeMentionTextarea(
-  { mentions, style, value, placeholder, onScroll, ...props },
+  { mentions, emojis = [], style, value, placeholder, onScroll, ...props },
   forwardedRef,
 ) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -60,10 +99,12 @@ export const ArkmeMentionTextarea = forwardRef<HTMLTextAreaElement, ArkmeMention
       <div ref={mirrorTextRef} style={styles.mirrorText}>
         {text === ''
           ? <span style={styles.placeholder}>{placeholder}</span>
-          : arkmeMentionTextRuns(text, mentions).map((run, index) => <span
-            key={`${String(index)}:${run.kind}:${run.text}`}
-            style={run.kind === 'mention' ? styles.mention : undefined}
-          >{run.text}</span>)}
+          : arkmeComposerTextRuns(text, mentions, emojis).map((run, index) => run.kind === 'emoji' && run.emoji !== undefined
+            ? <img key={`${String(index)}:emoji:${run.emoji.id}`} src={run.emoji.assetUrl} alt={run.emoji.label} style={styles.emoji} />
+            : <span
+              key={`${String(index)}:${run.kind}:${run.text}`}
+              style={run.kind === 'mention' ? styles.mention : undefined}
+            >{run.text}</span>)}
         {text.endsWith('\n') && '\u200b'}
       </div>
     </div>
