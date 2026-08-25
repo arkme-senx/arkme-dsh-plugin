@@ -282,6 +282,18 @@ describe('marketplace Host BFF', () => {
     expect(deleteExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned' })
   })
 
+  it('routes author unpublish without invoking the permanent delete lifecycle', async () => {
+    const unpublishExtension = vi.fn(async () => ({
+      extension_id: 'ext-owned', status: 'suspended', unpublished_at: 1780000001123,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.unpublish', { extensionId: 'ext-owned' }, undefined, undefined, undefined,
+      { unpublish: unpublishExtension } as never,
+    )).resolves.toMatchObject({ extension_id: 'ext-owned', status: 'suspended' })
+    expect(unpublishExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned' })
+  })
+
   it('routes metadata editing through the authenticated Host manager', async () => {
     const updateMetadata = vi.fn(async () => ({
       extension_id: 'ext-owned', name: '新名称', description: '', visibility: 'public', updated_at: 2,

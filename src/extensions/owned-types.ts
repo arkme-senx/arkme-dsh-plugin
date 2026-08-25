@@ -46,6 +46,7 @@ export interface ArkmeMyExtensionItem {
     extensionId: string
     version?: string
     visibility: ArkmeExtensionVisibility
+    status?: 'active' | 'suspended' | 'deleted'
     iconRef?: string
     previewImages?: ArkmeExtensionPreviewItem[]
     previewRevision?: number

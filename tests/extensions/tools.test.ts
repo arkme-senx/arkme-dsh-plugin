@@ -80,6 +80,9 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-1', status: 'deleted', installed: false, active: false,
       references_removed: true, removed_source_count: 1, restart_required: false, message: '扩展已完全移除',
     }))
+    const unpublishExtension = vi.fn(async () => ({
+      extension_id: 'ext-1', status: 'suspended', unpublished_at: 1780000000123,
+    }))
     const saveToProfile = vi.fn(async () => ({
       packageName: '@arkme-generated/weather', version: '1.0.0', artifactContractVersion: 2,
       artifactKind: 'dsh-bundle-tgz', installed: true, active: false, restartRequired: true, message: 'saved',
@@ -111,10 +114,10 @@ describe('Arkme extension tools', () => {
       auditExtension,
       searchCatalog,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
-    } as never, { delete: deleteExtension, saveToProfile } as never, { readImage }, 'business')
+    } as never, { delete: deleteExtension, unpublish: unpublishExtension, saveToProfile } as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_save_profile', 'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
+      'arkme_extension_save_profile', 'arkme_extension_publish', 'arkme_extension_unpublish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
 		'arkme_extension_share', 'arkme_extension_share_read',
@@ -209,6 +212,7 @@ describe('Arkme extension tools', () => {
       extensionId: 'ext-1', trigger: 'tool', signal: expect.any(AbortSignal),
     })
     const deleteTool = definitions.find(item => item.name === 'arkme_extension_delete')
+    const unpublishTool = definitions.find(item => item.name === 'arkme_extension_unpublish')
     expect(deleteTool?.parameters).toEqual({
       type: 'object',
       properties: {
@@ -216,7 +220,9 @@ describe('Arkme extension tools', () => {
       },
       required: ['extension_id'],
     })
-    expect(deleteTool?.description).toContain('explicitly asks to delete it')
+    expect(deleteTool?.description).toContain('explicitly asks to permanently delete it')
+    expect(deleteTool?.description).toContain('irreversible')
+    expect(unpublishTool?.description).toContain('later new-version publish')
     const enabledTool = definitions.find(item => item.name === 'arkme_extension_set_enabled')
     const enabledAgent = confirmationAgent('session-enabled', '关闭这个扩展')
     await expect(enabledTool?.execute?.(
@@ -346,6 +352,18 @@ describe('Arkme extension tools', () => {
       extensionId: 'ext-1', orderedPreviewRefs: [previewRef], expectedRevision: 2,
     }))
     const deleteAgent = confirmationAgent('session-delete', '删除扩展')
+    const unpublishAgent = confirmationAgent('session-unpublish', '下架扩展')
+    await expect(unpublishTool?.execute?.(
+      { extension_id: 'ext-1' }, toolExec(unpublishAgent, 'call-unpublish-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(unpublishExtension).not.toHaveBeenCalled()
+    addNaturalConfirmation(unpublishAgent, '是的，先下架')
+    await expect(unpublishTool?.execute?.(
+      { extension_id: 'ext-1' }, toolExec(unpublishAgent, 'call-unpublish-confirm'),
+    )).resolves.toContain('"status": "suspended"')
+    expect(unpublishExtension).toHaveBeenCalledWith({
+      extensionId: 'ext-1', signal: expect.any(AbortSignal),
+    })
     await expect(deleteTool?.execute?.(
       { extension_id: 'ext-1' }, toolExec(deleteAgent, 'call-delete-prepare'),
     )).resolves.toContain('"status": "confirmation_required"')

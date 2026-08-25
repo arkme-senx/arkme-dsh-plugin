@@ -7,7 +7,7 @@ import type {
   ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionClassificationPage,
   ArkmeExtensionClassificationStatus, ArkmeExtensionClassificationTree,
   ArkmeExtensionInstallPreview, ArkmeExtensionInstallTaskSnapshot,
-  ArkmeExtensionCompleteDeleteResult, ArkmeExtensionEnabledResult, ArkmeExtensionPreviewItem, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution,
+  ArkmeExtensionCompleteDeleteResult, ArkmeExtensionUnpublishResult, ArkmeExtensionEnabledResult, ArkmeExtensionPreviewItem, ArkmeExtensionPublishResult, ArkmeExtensionUpdateResolution,
   ArkmeInstalledExtensionView, ArkmeSharedExtensionDetail, ArkmeExtensionAuditResult,
 } from '../extensions/types.js'
 import { effectiveExtensionPublisherRole } from '../extensions/publisher-role.js'
@@ -1389,6 +1389,7 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPersist
         <span style={styles.name}>{item.name}</span>
         <span style={styles.stateBadges}>
           {myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}
+          {item.published?.status === 'suspended' && <span style={styles.stateBadge}>已下架</span>}
           {item.persisted?.artifactContractVersion === 2 && <span style={styles.stateBadge}>V2 沙箱</span>}
           {item.persisted?.artifactContractVersion === 3 && <span style={styles.stateBadge}>V3 原生</span>}
         </span>
@@ -1401,6 +1402,9 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPersist
       {item.states.includes('cordis') && !item.states.includes('persisted') && <button
         type="button" style={styles.restartLater} disabled={onPersist === undefined} onClick={onPersist}
       >保存到 Profile</button>}
+      {item.published !== undefined && action?.kind === 'publish' && <button
+        type="button" style={styles.restartLater} disabled={onEdit === undefined} onClick={onEdit}
+      >编辑</button>}
       {action !== undefined && <button
         type="button"
         style={{ ...styles.installSmall, ...((action.kind === 'publish' ? onPublish : onEdit) === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
@@ -1652,6 +1656,7 @@ export function ArkmeMarketplace({
   const [auditResult, setAuditResult] = useState<ArkmeExtensionAuditResult>()
   const [auditError, setAuditError] = useState('')
   const [deleteConfirmExtensionId, setDeleteConfirmExtensionId] = useState<string>()
+  const [unpublishConfirmExtensionId, setUnpublishConfirmExtensionId] = useState<string>()
   const [loadedTabs, setLoadedTabs] = useState<ReadonlySet<Tab>>(new Set())
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -1692,7 +1697,7 @@ export function ArkmeMarketplace({
 
   const closeDetail = (restoreFocus = true) => {
     setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setDetailError('')
-    setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
+    setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined); setUnpublishConfirmExtensionId(undefined)
     setShareNotice(''); setAuthorCardOpen(false); setAuthorActionError('')
     const target = detailReturnFocus.current
     detailReturnFocus.current = undefined
@@ -1955,7 +1960,7 @@ export function ArkmeMarketplace({
     const selection = extensionTabSelection(tab, target, loadedTabs)
     if (selection.changed) {
       setTab(target); setError(''); setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError('')
-      setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
+      setInstallError(''); setInstallTask(undefined); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined); setUnpublishConfirmExtensionId(undefined)
       setAuditResult(undefined); setAuditError('')
     }
     void load(target, selection.mode)
@@ -1967,7 +1972,7 @@ export function ArkmeMarketplace({
     }
     setDetailRequestedExtensionId(extensionId); setDetail(undefined); setDetailBusy(true); setDetailError('')
     setInstallError(''); setInstallTask(undefined); setAuthorCardOpen(false); setAuthorActionError('')
-    setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined); setShareNotice('')
+    setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined); setUnpublishConfirmExtensionId(undefined); setShareNotice('')
     setAuditResult(undefined); setAuditError('')
     try {
       let listed = [...publishedItems, ...discoverItems].find(item => item.extension_id === extensionId)
@@ -2117,6 +2122,27 @@ export function ArkmeMarketplace({
     }
   }
 
+  const unpublishPublishedExtension = async (extensionId: string) => {
+    setActionBusyExtensionId(extensionId); setInstallError(''); setRestartNotice('')
+    try {
+      const result = await callArkme<ArkmeExtensionUnpublishResult>('extensions.unpublish', { extensionId })
+      setDiscoverItems(current => current.filter(item => item.extension_id !== extensionId))
+      setPublishedItems(current => current.map(item => item.extension_id === extensionId
+        ? { ...item, status: 'suspended' }
+        : item))
+      setMyExtensions(current => current.map(item => item.published?.extensionId === extensionId
+        ? { ...item, published: { ...item.published, status: 'suspended' } }
+        : item))
+      setDetail(current => current?.extension_id === extensionId ? { ...current, status: 'suspended' } : current)
+      setUnpublishConfirmExtensionId(undefined)
+      setRestartNotice(`扩展已下架（${new Date(result.unpublished_at).toLocaleString()}）；本地安装不受影响，发布新版本后会重新上架。`)
+    } catch (caught) {
+      setInstallError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setActionBusyExtensionId(undefined)
+    }
+  }
+
   const deletePublishedExtension = async (extensionId: string) => {
     setActionBusyExtensionId(extensionId); setInstallError(''); setRestartNotice('')
     try {
@@ -2245,6 +2271,7 @@ export function ArkmeMarketplace({
       const { iconFile, ...publishValue } = value
       const result = await callArkme<ArkmeExtensionPublishResult>('extensions.mine.publish', {
         ownedRef: item.ownedRef,
+        ...(item.published === undefined ? {} : { extensionId: item.published.extensionId }),
         ...publishValue,
         clientMutationId: mutation.id,
       })
@@ -2434,6 +2461,7 @@ export function ArkmeMarketplace({
   const detailHasPreviews = extensionDetailHasPreviews(detail?.preview_images)
   const canDeleteDetail = detail !== undefined && tab === 'mine'
     && myExtensions.some(item => item.published?.extensionId === detail.extension_id)
+  const canUnpublishDetail = canDeleteDetail && detail?.status !== 'suspended'
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
@@ -2667,6 +2695,7 @@ export function ArkmeMarketplace({
 					name: item.name,
 					description: item.description,
 					visibility: published.visibility,
+					...(published.status === undefined ? {} : { status: published.status }),
 					...(published.version === undefined ? {} : { version: published.version, latest_stable_version: published.version }),
 					...(published.iconRef === undefined ? {} : { icon_ref: published.iconRef }),
 					...(published.previewImages === undefined ? {} : { preview_images: published.previewImages }),
@@ -2876,20 +2905,32 @@ export function ArkmeMarketplace({
                     </div>
                     : <button
                       type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
-                      onClick={() => { setDeleteConfirmExtensionId(undefined); setUninstallConfirmExtensionId(detail.extension_id) }}
+                      onClick={() => { setDeleteConfirmExtensionId(undefined); setUnpublishConfirmExtensionId(undefined); setUninstallConfirmExtensionId(detail.extension_id) }}
                     >卸载本地扩展</button>)}
-                  {canDeleteDetail && (deleteConfirmExtensionId === detail.extension_id
+                  {canUnpublishDetail && (unpublishConfirmExtensionId === detail.extension_id
                     ? <div style={styles.detailConfirm} role="alert">
-                      删除会将这个扩展从市集中移除，但不会自动卸载当前设备中的本地副本。
+                      下架后，扩展会从市集、安装和更新入口隐藏；现有本地安装与发布身份会保留，发布新版本可重新上架。
                       <div style={styles.detailConfirmActions}>
-                        <button type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>取消</button>
-                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>确认删除</button>
+                        <button type="button" style={styles.restartLater} onClick={() => { setUnpublishConfirmExtensionId(undefined) }}>取消</button>
+                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void unpublishPublishedExtension(detail.extension_id) }}>确认下架</button>
                       </div>
                     </div>
                     : <button
                       type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
-                      onClick={() => { setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(detail.extension_id) }}
-                    >删除市集扩展</button>)}
+                      onClick={() => { setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined); setUnpublishConfirmExtensionId(detail.extension_id) }}
+                    >下架市集扩展</button>)}
+                  {canDeleteDetail && (deleteConfirmExtensionId === detail.extension_id
+                    ? <div style={styles.detailConfirm} role="alert">
+                      彻底删除会撤销市集版本并清理当前设备的安装、Profile 与来源引用，之后不能恢复或继续发布；服务端仅保留防止身份抢占与安全追溯所需的审计记录。
+                      <div style={styles.detailConfirmActions}>
+                        <button type="button" style={styles.restartLater} onClick={() => { setDeleteConfirmExtensionId(undefined) }}>取消</button>
+                        <button type="button" style={{ ...styles.detailDanger, marginTop: 0 }} disabled={actionBusyExtensionId === detail.extension_id} onClick={() => { void deletePublishedExtension(detail.extension_id) }}>确认彻底删除</button>
+                      </div>
+                    </div>
+                    : <button
+                      type="button" style={styles.detailDanger} disabled={actionBusyExtensionId === detail.extension_id}
+                      onClick={() => { setUninstallConfirmExtensionId(undefined); setUnpublishConfirmExtensionId(undefined); setDeleteConfirmExtensionId(detail.extension_id) }}
+                    >彻底删除扩展</button>)}
                 </div>}
               </aside>
             </div>

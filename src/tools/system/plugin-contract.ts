@@ -26,7 +26,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
     },
     features: capabilities.features,
     availableMethods: [
-      'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
+      'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe', 'unpublishExtension', 'deleteExtension',
     ],
     limits: capabilities.limits,
     securityRules: [
@@ -41,6 +41,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
       'Call history uses opaque callRef values; do not persist them across account switches or expect raw room/media identifiers.',
       'Retrying a call summary requires an explicit current human action.',
       'Require human confirmation before installing generated executable plugin code.',
+      'Require an explicit current human action before unpublishing an extension, and a separate explicit irreversible confirmation before permanent deletion.',
     ],
     lifecycle: [
       'Declare @senguoyun/dsh-arkme as a dependency.',

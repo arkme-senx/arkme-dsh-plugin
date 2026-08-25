@@ -319,8 +319,31 @@ export function registerArkmeExtensionTools(
   }))
 
   ctx.tools.register(defineTool({
+    name: 'arkme_extension_unpublish',
+    description: 'Unpublish one exact extension owned by the current Arkme user. Use only after the current human explicitly asks to unpublish it. The extension is hidden from marketplace discovery, install, and update discovery, while its package identity, published versions, local installs, Profile package, and author-source lineage remain available for a later new-version publish.',
+    parameters: {
+      extension_id: { type: 'string', required: true, description: 'Exact extension_id owned by the current Arkme user.' },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const agent = requireAgent(exec) as Agent
+      const extensionId = clean(args.extension_id).slice(0, 100)
+      const result = await actionConversation.prepareOrExecute({
+        agent,
+        operationKey: 'arkme_extension_unpublish',
+        arguments: args,
+        question: `是否确认下架扩展 ${extensionId}？下架后它会从市集发现、安装和更新入口隐藏，但本地安装、Profile 与发布身份会保留，发布新版本可重新上架。`,
+        execute: async () => await ownedInventory.unpublish({
+          extensionId: args.extension_id, signal: exec.signal,
+        }),
+      })
+      return JSON.stringify(result, undefined, 2)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'arkme_extension_delete',
-    description: 'Delete one exact extension owned by the current Arkme user. Use only after the current human explicitly asks to delete it. The registry retains recoverable data internally, but the extension is removed from marketplace lists, local install/runtime state, Profile dependencies, and author-source references. Use only an exact extension_id from a trusted publish result or the current user\'s own extension list.',
+    description: 'Permanently delete one exact extension owned by the current Arkme user. Use only after the current human explicitly asks to permanently delete it. This is irreversible: published versions are revoked and the extension is removed from marketplace lists, local install/runtime state, Profile dependencies, and author-source references. The server retains only identity and security-audit records, so the package identity cannot be reused. Use only an exact extension_id from a trusted publish result or the current user\'s own extension list.',
     parameters: {
       extension_id: { type: 'string', required: true, description: 'Exact extension_id owned by the current Arkme user.' },
     },
@@ -332,7 +355,7 @@ export function registerArkmeExtensionTools(
         agent,
         operationKey: 'arkme_extension_delete',
         arguments: args,
-        question: `是否确认删除扩展 ${extensionId}？删除后它会从市集、当前 DSH 运行态、Profile 和本地引用中消失；服务端仅保留用于恢复的数据。`,
+        question: `是否确认彻底删除扩展 ${extensionId}？该操作不可恢复；扩展会从市集、当前 DSH 运行态、Profile 和本地引用中消失，服务端仅保留身份与安全审计记录。`,
         execute: async () => await ownedInventory.delete({
           agent, extensionId: args.extension_id, signal: exec.signal,
         }),

@@ -310,6 +310,21 @@ describe('Arkme SDK', () => {
     await expect(sdk.deleteExtension(' ')).rejects.toThrow('must not be empty')
   })
 
+  it('unpublishes an owned extension without invoking permanent deletion', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({ extension_id: 'ext-owned', status: 'suspended', unpublished_at: 1780000001123 })
+      },
+    })
+
+    await expect(sdk.unpublishExtension(' ext-owned ')).resolves.toMatchObject({ status: 'suspended' })
+    expect(calls).toEqual([{ operation: 'extensions.unpublish', params: { extensionId: 'ext-owned' } }])
+    await expect(sdk.unpublishExtension(' ')).rejects.toThrow('must not be empty')
+  })
+
   it('queries V3 market detail and native install capabilities through the public SDK', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -389,6 +404,7 @@ describe('Arkme SDK', () => {
               messageReadReceipts: true,
               extensionManagement: true,
               extensionIcons: true,
+              extensionPublicationLifecycle: true,
             },
             limits: {
               maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152,
@@ -425,7 +441,13 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true },
+      features: {
+        outgoingCall: true,
+        extensionManagement: true,
+        extensionIcons: true,
+        messageReadReceipts: true,
+        extensionPublicationLifecycle: true,
+      },
       limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })

@@ -823,6 +823,7 @@ describe('ArkmeService', () => {
         conversationQuickAdd: true,
         myExtensions: true,
         extensionPublish: true,
+        extensionPublicationLifecycle: true,
         extensionManagement: true,
         extensionMetadataEdit: true,
         extensionIcons: true,

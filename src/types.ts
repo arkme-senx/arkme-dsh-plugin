@@ -927,6 +927,8 @@ export interface ArkmeProviderCapabilities {
     myExtensions?: true
     /** Optional additive publication of an exact owned live Cordis Package. */
     extensionPublish?: true
+    /** Optional additive author lifecycle with recoverable unpublish and irreversible permanent delete. */
+    extensionPublicationLifecycle?: true
     /** Optional additive capability for extension reviews, replies, and rating summaries. */
     extensionReviews?: true
   }
@@ -2278,6 +2280,7 @@ export type ArkmePluginOperation =
   | 'extensions.catalog.detail'
   | 'extensions.install.preview'
   | 'extensions.delete'
+  | 'extensions.unpublish'
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'
@@ -2347,6 +2350,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.audit.check'
   | 'extensions.my-list'
   | 'extensions.delete'
+  | 'extensions.unpublish'
   | 'extensions.updates'
   | 'extensions.install.preview'
   | 'extensions.install.start'

@@ -23,7 +23,7 @@ describe('my-extension view model', () => {
     expect(myExtensionPrimaryAction({ ...base, states: ['published'], publish: { allowed: false } }))
       .toEqual({ kind: 'edit', label: '编辑' })
     expect(myExtensionPrimaryAction({ ...base, states: ['cordis', 'published'], publish: { allowed: true, mode: 'version', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' } }))
-      .toEqual({ kind: 'edit', label: '编辑' })
+      .toEqual({ kind: 'publish', label: '发布新版本' })
   })
 
   it('turns source degradation into one non-blocking user message', () => {

@@ -29,7 +29,7 @@ export { verifyExtensionResolutionSignature } from './signature.js'
 import {
   type ArkmeExtensionCatalogItem, type ArkmeExtensionCatalogPage,
   type ArkmeExtensionCatalogSort, type ArkmeExtensionClassificationPage, type ArkmeExtensionClassificationTree,
-  type ArkmeExtensionDeleteResult, type ArkmeExtensionEnabledResult, type ArkmeExtensionEnabledState,
+  type ArkmeExtensionDeleteResult, type ArkmeExtensionUnpublishResult, type ArkmeExtensionEnabledResult, type ArkmeExtensionEnabledState,
   ARKME_EXTENSION_ICON_MAX_BYTES, type ArkmeExtensionIconBytes, type ArkmeExtensionIconMediaType,
   type ArkmeExtensionIconResult, type ArkmeExtensionInstallPreview, type ArkmeExtensionInstallResolution,
   type ArkmeExtensionPublishResult,
@@ -166,7 +166,14 @@ function completedPublishSession(
   fallbackVersion: string,
 ): ArkmeExtensionPublishResult | undefined {
   return session.status === 'published'
-    ? { extension_id: session.extension_id, version: session.version ?? fallbackVersion, status: 'published' }
+    ? {
+        extension_id: session.extension_id,
+        version: session.version ?? fallbackVersion,
+        status: 'published',
+        ...(session.publish_session_id === '' ? {} : { publish_session_id: session.publish_session_id }),
+        ...(session.package_name === undefined ? {} : { package_name: session.package_name }),
+        ...(session.package_identity_state === undefined ? {} : { package_identity_state: session.package_identity_state }),
+      }
     : undefined
 }
 
@@ -831,6 +838,10 @@ export class ArkmeExtensionManager {
 
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.client.deleteExtension(requiredId(extensionId, 'extension_id'), signal)
+  }
+
+  async unpublish(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionUnpublishResult> {
+    return await this.client.unpublishExtension(requiredId(extensionId, 'extension_id'), signal)
   }
 
   async setIcon(input: {

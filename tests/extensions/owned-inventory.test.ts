@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { ArkmeOwnedExtensionInventory, selectPublishPackage } from '../../src/extensions/owned-inventory.js'
+import { ArkmeOwnedExtensionInventory, publicationCandidatePackageName, selectPublishPackage } from '../../src/extensions/owned-inventory.js'
 import { ArkmeOwnedExtensionRefs } from '../../src/extensions/owned-refs.js'
 import { ArkmeOwnedExtensionStore } from '../../src/extensions/owned-store.js'
 import { createHash } from 'node:crypto'
@@ -78,7 +78,7 @@ describe('owned extension inventory', () => {
       cordis: { packageCount: 1, active: true },
       persisted: { packageName: '@arkme-local/ext-aaaaaaaaaaaaaaaa', active: true },
       published: { extensionId: 'ext-owned', version: '1.0.0', visibility: 'private' },
-      publish: { allowed: false, reason: '该扩展已发布' },
+      publish: { allowed: true, mode: 'version', artifactContractVersion: 2 },
     })
     expect(JSON.stringify(page)).not.toContain(profileDirectory)
     expect(JSON.stringify(page)).not.toContain('session-1')
@@ -153,7 +153,7 @@ describe('owned extension inventory', () => {
     expect(result.status).toBe('published')
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({
       agent, pluginId: 'weather-1', packageId: 'pkg-1',
-      packageName: '@arkme-generated/03ff558573117308370085b8',
+      packageName: publicationCandidatePackageName(7, '9f445b4f-55aa-45c1-9250-25161832d432'),
       idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
     expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBe('ext-new')
@@ -165,7 +165,7 @@ describe('owned extension inventory', () => {
     const profile = join(root, 'profiles', 'web')
     writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
     const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
-    const packageName = '@arkme-generated/03ff558573117308370085b8'
+    const packageName = publicationCandidatePackageName(7, '2de27a1a-8f49-4fb7-b819-00eb523f4df4')
     const source = materializeCordisBundle({
       packageName, name: '天气助手', description: '天气', version: '1.0.0', hostCode: 'return {}',
     })
@@ -212,7 +212,7 @@ describe('owned extension inventory', () => {
     const profile = join(root, 'profiles', 'web')
     writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
     const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
-    const packageName = '@arkme-generated/03ff558573117308370085b8'
+    const packageName = publicationCandidatePackageName(7, '6f80000a-23f5-48cd-8923-41d9ba60a44a')
     const source = materializeCordisBundle({
       packageName, name: '天气助手', description: '天气', version: '1.0.0', hostCode: 'return {}',
     })
@@ -483,6 +483,49 @@ describe('owned extension inventory', () => {
     store.close()
   })
 
+  it('submits a stable candidate when the server supports adopting a historical missing package identity', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-identity-adoption-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const mutationId = '9f445b4f-55aa-45c1-9250-25161832d432'
+    const candidate = publicationCandidatePackageName(7, mutationId)
+    const publish = vi.fn(async () => ({
+      extension_id: 'ext-legacy-missing', version: '1.1.0', status: 'published' as const,
+      package_name: candidate, package_identity_state: 'stable' as const,
+    }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'new-instance', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({
+        items: [{ ...cloudItem(), extension_id: 'ext-legacy-missing', package_name: undefined, package_identity_state: 'legacy_missing' }],
+        total: 1,
+        publication_capabilities: {
+          protocol_version: 3, accepted_artifact_contracts: [1, 2, 3], legacy_identity_adoption: true,
+          v1_new_writes: true, identity_owner: 'server', lifecycle_actions: ['unpublish', 'permanent_delete'],
+        },
+      }),
+      runner: {
+        inventory: () => [{
+          agentId: 'new-session', pluginId: 'new-plugin', currentPackageId: 'pkg-1',
+          packages: [{ packageId: 'pkg-1', name: '天气助手', purpose: '天气', hasHostHalf: true, hasClientHalf: false }],
+        }],
+        inspectPackage: () => ({ pluginId: 'new-plugin', packageId: 'pkg-1', name: '天气助手', purpose: '天气', code: { host: 'return {}' } }),
+      },
+      agents: { get: () => ({ id: 'new-session' }) }, publish,
+    })
+
+    await expect(inventory.publishCordisPackage({
+      agent: { id: 'new-session' }, pluginId: 'new-plugin', packageId: 'pkg-1', extensionId: 'ext-legacy-missing',
+      name: '天气助手', description: '天气', version: '1.1.0', visibility: 'private', clientMutationId: mutationId,
+    })).resolves.toMatchObject({ package_name: candidate, package_identity_state: 'stable' })
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-legacy-missing', packageName: candidate,
+    }))
+    expect(publicationCandidatePackageName(7, mutationId)).toBe(candidate)
+    store.close()
+  })
+
   it('rejects a native V3 update whose package.json name differs from the owned cloud package', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-native-package-identity-'))
     const profile = join(root, 'profiles', 'web')
@@ -532,7 +575,7 @@ describe('owned extension inventory', () => {
     store.close()
   })
 
-  it('soft-deletes cloud data while removing every local runtime, Profile, lineage, and opaque reference', async () => {
+  it('permanently deletes cloud data while removing every local runtime, Profile, lineage, and opaque reference', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-delete-'))
     const profile = join(root, 'profiles', 'web')
     writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
@@ -588,7 +631,7 @@ describe('owned extension inventory', () => {
     await expect(inventory.delete({ extensionId: 'ext-owned' })).resolves.toEqual({
       extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
       installed: false, active: false, references_removed: true, removed_source_count: 2,
-      restart_required: true, message: '扩展已删除；服务端保留可恢复数据，当前 DSH 重启后完成本地移除',
+      restart_required: true, message: '扩展已彻底删除；服务端仅保留身份与安全审计记录，当前 DSH 重启后完成本地移除',
     })
     expect(order).toEqual(['uninstall', 'undefine', 'profile-remove', 'cloud-delete'])
     expect(uninstall).toHaveBeenCalledWith({ agent: undefined, extensionId: 'ext-owned' })
@@ -601,7 +644,43 @@ describe('owned extension inventory', () => {
     store.close()
   })
 
-  it('keeps lineage available for a safe retry when the final cloud soft-delete fails', async () => {
+  it('unpublishes only the cloud listing and preserves local lineage for a later version', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-unpublish-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const sourceKey = 'instance-1\0session-1\0weather-1'
+    store.claim('cordis', sourceKey, 7)
+    store.linkCloud('cordis', sourceKey, 7, 'ext-owned')
+    const unpublishCloud = vi.fn(async () => ({
+      extension_id: 'ext-owned', status: 'suspended' as const, unpublished_at: 1780000001123,
+    }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [cloudItem()], total: 1 }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') },
+      lifecycle: {
+        unpublishCloud,
+        deleteCloud: async () => { throw new Error('must not permanently delete') },
+        uninstall: async () => { throw new Error('must not uninstall') },
+        canUninstallWithoutAgent: () => true,
+        installedProfilePackageName: () => undefined,
+        removeProfilePackage: async () => { throw new Error('must not remove Profile package') },
+      },
+    })
+
+    await expect(inventory.unpublish({ extensionId: 'ext-owned' })).resolves.toEqual({
+      extension_id: 'ext-owned', status: 'suspended', unpublished_at: 1780000001123,
+    })
+    expect(unpublishCloud).toHaveBeenCalledWith('ext-owned', undefined)
+    expect(store.cloudLink('cordis', sourceKey, 7)).toBe('ext-owned')
+    expect(store.owner('cordis', sourceKey)).toBe(7)
+    store.close()
+  })
+
+  it('keeps lineage available for a safe retry when the final permanent cloud delete fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-delete-retry-'))
     const profile = join(root, 'profiles', 'web')
     writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
