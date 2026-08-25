@@ -61,6 +61,9 @@ interface ArkmeWorldRecordRefEntry {
   ownerUserId?: number
   authorName?: string
   textPreview?: string
+  imageCount?: number
+  videoCount?: number
+  voiceCount?: number
   expiresAtMillis: number
 }
 
@@ -131,6 +134,9 @@ export interface ArkmeWorldVoiceprintInviteIntent {
   inviteUrl: string
   expiresAtMillis: number
   textPreview?: string
+  imageCount?: number
+  videoCount?: number
+  voiceCount?: number
 }
 
 function numberValue(value: unknown): number {
@@ -551,6 +557,9 @@ export class WorldService {
       inviteUrl: buildVoiceprintInviteShareUrl(this.runtime.config.environment, token),
       expiresAtMillis,
       ...(entry.textPreview === undefined ? {} : { textPreview: entry.textPreview }),
+      ...(entry.imageCount === undefined ? {} : { imageCount: entry.imageCount }),
+      ...(entry.videoCount === undefined ? {} : { videoCount: entry.videoCount }),
+      ...(entry.voiceCount === undefined ? {} : { voiceCount: entry.voiceCount }),
     }
   }
 
@@ -1117,6 +1126,9 @@ export class WorldService {
     const recordRef = await this.worldRecordRef(viewerUserId, recordUid, {
         ownerUserId,
         authorName,
+        imageCount: rawImages.length,
+        videoCount,
+        voiceCount,
         ...(() => {
           const textPreview = optionalTrimmedText(headline || textContent, 80)
           return textPreview === undefined ? {} : { textPreview }
@@ -1270,7 +1282,14 @@ export class WorldService {
   private async worldRecordRef(
     viewerUserId: number,
     recordUid: string,
-    metadata: { ownerUserId?: number; authorName?: string; textPreview?: string } = {},
+    metadata: {
+      ownerUserId?: number
+      authorName?: string
+      textPreview?: string
+      imageCount?: number
+      videoCount?: number
+      voiceCount?: number
+    } = {},
   ): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`world-record-v1:${String(viewerUserId)}:${recordUid}`)
@@ -1282,12 +1301,18 @@ export class WorldService {
     const resolvedOwnerUserId = metadata.ownerUserId ?? previous?.ownerUserId
     const authorName = optionalTrimmedText(metadata.authorName, 64) ?? previous?.authorName
     const textPreview = optionalTrimmedText(metadata.textPreview, 80) ?? previous?.textPreview
+    const imageCount = Math.max(0, Math.trunc(metadata.imageCount ?? previous?.imageCount ?? 0))
+    const videoCount = Math.max(0, Math.trunc(metadata.videoCount ?? previous?.videoCount ?? 0))
+    const voiceCount = Math.max(0, Math.trunc(metadata.voiceCount ?? previous?.voiceCount ?? 0))
     this.worldRecordRefs.set(recordRef, {
       viewerUserId,
       recordUid,
       ...(resolvedOwnerUserId === undefined || resolvedOwnerUserId <= 0 ? {} : { ownerUserId: resolvedOwnerUserId }),
       ...(authorName === undefined ? {} : { authorName }),
       ...(textPreview === undefined ? {} : { textPreview }),
+      ...(imageCount === 0 ? {} : { imageCount }),
+      ...(videoCount === 0 ? {} : { videoCount }),
+      ...(voiceCount === 0 ? {} : { voiceCount }),
       expiresAtMillis: now + ARKME_WORLD_RECORD_REF_TTL_MILLIS,
     })
     return recordRef
