@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeSearchSurface } from '../src/client/ArkmeSearchSurface.js'
+import { ArkmeSearchSurface, RecordRow } from '../src/client/ArkmeSearchSurface.js'
+import type { ArkmeSearchRecordItem } from '../src/types.js'
 
 describe('Arkme search surface', () => {
   it('starts with quick-note search and exposes desktop image and AI video quick entries', () => {
@@ -36,5 +37,36 @@ describe('Arkme search surface', () => {
     expect(source).toContain("src={`${assetRoot}/arrow_left.svg`}")
     expect(mediaRouteSource).toContain("'private, max-age=86400, immutable'")
     expect(mediaRouteSource).toContain("contentType.toLowerCase().startsWith('image/')")
+  })
+
+  it('renders DSH Agent input search records with the shared marker instead of the hidden topic name', () => {
+    const item: ArkmeSearchRecordItem = {
+      recordUid: 'record-dsh-input',
+      sourceKind: 1,
+      routeTargetKind: 'topic',
+      sendAtMillis: new Date(2026, 7, 25, 11, 9).getTime(),
+      title: '',
+      textContent: '测试搜索',
+      snippet: '测试搜索',
+      creationSource: 3,
+      sourceTitle: 'DSH Agent Input',
+      media: [],
+      files: [],
+    }
+
+    const markup = renderToStaticMarkup(<RecordRow item={item} onClick={() => {}} />)
+
+    expect(markup).toContain('data-arkme-dsh-agent-input-marker="true"')
+    expect(markup).toContain('DSH Agent 输入')
+    expect(markup).toContain('fill="currentColor"')
+    expect(markup).not.toContain('DSH Agent Input')
+
+    const legacyItem: ArkmeSearchRecordItem = { ...item }
+    delete legacyItem.creationSource
+    const legacyMarkup = renderToStaticMarkup(<RecordRow item={legacyItem} onClick={() => {}} />)
+
+    expect(legacyMarkup).toContain('data-arkme-dsh-agent-input-marker="true"')
+    expect(legacyMarkup).toContain('DSH Agent 输入')
+    expect(legacyMarkup).not.toContain('DSH Agent Input')
   })
 })

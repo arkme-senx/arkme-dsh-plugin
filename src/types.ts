@@ -689,6 +689,7 @@ export interface ArkmeSearchRecordItem {
   nickname?: string
   templateKind?: number
   displayKind?: number
+  creationSource?: number
   sourceTitle?: string
   media: ArkmeSearchAssetItem[]
   files: ArkmeSearchAssetItem[]

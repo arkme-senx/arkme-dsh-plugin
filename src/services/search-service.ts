@@ -15,6 +15,7 @@ import type {
 import { MediaService } from './media-service.js'
 import { RecordService } from './record-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
+import { ARKME_DSH_AGENT_INPUT_CREATION_SOURCE, isDshAgentInputSourceTitle } from '../dsh-agent-input-source.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -306,6 +307,13 @@ export class SearchService {
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
     const linkMatch = textContent.match(/https:\/\/[^\s<>()]+/u)
+    const sourceTitle = stringValue(topic.title ?? chat.title).trim()
+    const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
+    const normalizedCreationSource = creationSource > 0
+      ? creationSource
+      : isDshAgentInputSourceTitle(sourceTitle)
+        ? ARKME_DSH_AGENT_INPUT_CREATION_SOURCE
+        : 0
     return {
       recordUid,
       sourceKind: Math.trunc(numberValue(item.source_kind)),
@@ -319,7 +327,8 @@ export class SearchService {
       ...(stringValue(core.nickname).trim() === '' ? {} : { nickname: stringValue(core.nickname).trim() }),
       ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
       ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
-      ...(stringValue(topic.title ?? chat.title).trim() === '' ? {} : { sourceTitle: stringValue(topic.title ?? chat.title).trim() }),
+      ...(normalizedCreationSource <= 0 ? {} : { creationSource: normalizedCreationSource }),
+      ...(sourceTitle === '' ? {} : { sourceTitle }),
       media,
       files,
       ...(voice === undefined ? {} : { voice }),

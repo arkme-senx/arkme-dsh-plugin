@@ -8,6 +8,7 @@ import type {
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
 
 const assetRoot = '/arkme-self/api/call'
 const mediaRoute = '/arkme-self/api/media'
@@ -40,6 +41,9 @@ const styles: Record<string, CSSProperties> = {
   title: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '21px', fontWeight: 600 },
   text: { margin: '4px 0 0', display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: colors.secondary, fontSize: 13, lineHeight: '20px' },
   meta: { display: 'block', marginTop: 6, color: arkmeTheme.caption, fontSize: 11, lineHeight: '16px' },
+  metaLine: { display: 'flex', marginTop: 6, alignItems: 'center', gap: 4, color: arkmeTheme.caption, fontSize: 11, lineHeight: '16px' },
+  dshAgentInputMarker: { fontSize: 11, lineHeight: '16px' },
+  dshAgentInputIcon: { width: 10, height: 10, opacity: .72 },
   sourceLayout: { minHeight: 0, flex: 1, display: 'grid', gridTemplateColumns: 'minmax(180px, 36%) minmax(0, 1fr)', gap: 18, overflow: 'hidden' }, sourceList: { overflowY: 'auto', borderRight: `1px solid ${colors.border}`, paddingRight: 8 }, sourceResults: { overflowY: 'auto' },
   quickShell: { width: '100%' },
   quickHeader: { width: '100%' }, quickTopRow: { display: 'flex', alignItems: 'center', gap: 8 },
@@ -76,8 +80,22 @@ function imageMonthLabel(value: number): string {
   if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()) return '这个月'
   return `${String(date.getFullYear())}年${String(date.getMonth() + 1).padStart(2, '0')}月`
 }
-function RecordRow({ item, onClick }: { item: ArkmeSearchRecordItem; onClick(): void }) {
-  return <button type="button" style={styles.row} onClick={onClick}><p style={styles.title}>{item.title || item.nickname || '快记'}</p><p style={styles.text}>{item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')}</p><span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateTimeLabel(item.sendAtMillis)}</span></button>
+function RecordMeta({ item }: { item: ArkmeSearchRecordItem }) {
+  const dateLabel = dateTimeLabel(item.sendAtMillis)
+  if (isDshAgentInputRecord(item)) {
+    return <span style={styles.metaLine}>
+      <ArkmeDshAgentInputMarker
+        style={styles.dshAgentInputMarker}
+        iconStyle={styles.dshAgentInputIcon}
+      />
+      {dateLabel === '' ? null : <span aria-hidden>·</span>}
+      {dateLabel === '' ? null : <time>{dateLabel}</time>}
+    </span>
+  }
+  return <span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
+}
+export function RecordRow({ item, onClick }: { item: ArkmeSearchRecordItem; onClick(): void }) {
+  return <button type="button" style={styles.row} onClick={onClick}><p style={styles.title}>{item.title || item.nickname || '快记'}</p><p style={styles.text}>{item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')}</p><RecordMeta item={item} /></button>
 }
 function Status({ loading, error, empty }: { loading: boolean; error?: string; empty?: boolean }) {
   if (loading) return <div style={styles.status} role="status">正在加载…</div>
@@ -246,7 +264,7 @@ export function ArkmeSearchSurface() {
       <main style={styles.quickBody}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</> : quickBody}</main>
     </div>}
 
-    {selectedRecord !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setSelectedRecord(undefined)}><article style={styles.detail} onClick={event => event.stopPropagation()}><h3 style={styles.title}>{selectedRecord.title || selectedRecord.nickname || '快记'}</h3>{selectedRecord.textContent !== '' && <p style={{ ...styles.text, display: 'block', color: colors.text, whiteSpace: 'pre-wrap' }}>{selectedRecord.textContent}</p>}<span style={styles.meta}>{selectedRecord.sourceTitle === undefined ? '' : `${selectedRecord.sourceTitle} · `}{dateTimeLabel(selectedRecord.sendAtMillis)}</span><button type="button" style={styles.closeText} onClick={() => setSelectedRecord(undefined)}>返回搜索结果</button></article></div>}
+    {selectedRecord !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setSelectedRecord(undefined)}><article style={styles.detail} onClick={event => event.stopPropagation()}><h3 style={styles.title}>{selectedRecord.title || selectedRecord.nickname || '快记'}</h3>{selectedRecord.textContent !== '' && <p style={{ ...styles.text, display: 'block', color: colors.text, whiteSpace: 'pre-wrap' }}>{selectedRecord.textContent}</p>}<RecordMeta item={selectedRecord} /><button type="button" style={styles.closeText} onClick={() => setSelectedRecord(undefined)}>返回搜索结果</button></article></div>}
     {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>
 }

@@ -9,6 +9,7 @@ import {
 } from '../src/client/ArkmeCalendarSurface.js'
 
 const surfaceSource = readFileSync(new URL('../src/client/ArkmeCalendarSurface.tsx', import.meta.url), 'utf8')
+const dshAgentInputMarkerSource = readFileSync(new URL('../src/client/ArkmeDshAgentInputMarker.tsx', import.meta.url), 'utf8')
 
 function styleMap(value: string): Map<string, string> {
   return new Map(value.split(';').filter(Boolean).map(rule => {
@@ -126,8 +127,9 @@ describe('ArkmeCalendarSurface layout', () => {
 
     expect(arkmeCalendarRecordSourceLabel(item)).toBe('DSH Agent 输入')
     expect(arkmeCalendarRecordIsDSHAgentInput(item)).toBe(true)
-    expect(surfaceSource).toContain('function DeepSeekLogoMark()')
-    expect(surfaceSource).toContain('fill="currentColor"')
+    expect(surfaceSource).toContain('ArkmeDshAgentInputMarker')
+    expect(dshAgentInputMarkerSource).toContain('function DeepSeekLogoMark')
+    expect(dshAgentInputMarkerSource).toContain('fill="currentColor"')
   })
 
   it('keeps ordinary and Agent-created records without a DSH calendar source label', () => {
