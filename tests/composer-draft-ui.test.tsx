@@ -95,5 +95,8 @@ describe('composer draft UI projection', () => {
     expect(richComposerSource).toContain("atom.contentEditable = 'false'")
     expect(richComposerSource).toContain('atom.dataset.arkmeEditableEmoji = run.emoji.id')
     expect(richComposerSource).toContain('root.replaceChildren(fragment)')
+    expect(richComposerSource).toContain("height: '1.45em', margin: 0")
+    expect(richComposerSource).not.toContain("margin: '0 0.12em'")
+    expect(richComposerSource).not.toContain("padding: '0 0.12em'")
   })
 })

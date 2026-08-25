@@ -17,7 +17,7 @@ const styles: Record<string, CSSProperties> = {
   },
   mention: { color: mentionColor },
   emoji: {
-    display: 'inline-flex', width: '1.45em', height: '1.45em', margin: '0 0.12em',
+    display: 'inline-flex', width: '1.45em', height: '1.45em', margin: 0,
     alignItems: 'center', justifyContent: 'center', verticalAlign: '-0.34em',
     userSelect: 'all', cursor: 'text',
   },
