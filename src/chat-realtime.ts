@@ -43,7 +43,7 @@ export interface ArkmeChatReadCursorAdvancedHint {
 
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
-  cause: 'reconcile' | 'hint' | 'local'
+  cause: 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
@@ -443,7 +443,11 @@ export class ArkmeChatRealtimeRuntime {
     this.lastEventAtMillis = projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
       ?? hint?.eventAtMillis
-    this.advanceRevision('hint', hint, readCursorAdvanced, projectionInvalidation)
+    if (projectionInvalidation !== undefined) {
+      this.advanceRevision('projection-invalidation', undefined, undefined, projectionInvalidation)
+    } else {
+      this.advanceRevision('chat-hint', hint, readCursorAdvanced)
+    }
   }
 
   private advanceRevision(
