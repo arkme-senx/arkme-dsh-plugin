@@ -66,6 +66,16 @@ export interface ArkmeExtensionManagerOptions {
   persistentRuntimeState?: (extensionId: string) => PersistentArkmeExtensionRuntimeState | undefined
 }
 
+export interface ArkmeCordisProfileSave {
+  source: ArkmeBundlePublishSource
+  packageName: string
+  version: string
+  installed: true
+  active: false
+  restartRequired: true
+  message: string
+}
+
 export interface ArkmePersistentClientState {
   extension_id: string
   version: string
@@ -470,6 +480,57 @@ export class ArkmeExtensionManager {
 
   inspectPackage(agent: unknown, pluginId: string, packageId: string): DynamicCordisPackageInspectionLike {
     return this.runner.inspectPackage(agent, requiredId(pluginId, 'plugin_id'), requiredId(packageId, 'package_id'))
+  }
+
+  /** Materialize one live Cordis package into an immutable V2 Bundle and register it through the official DSH Profile CLI. */
+  async persistCordisProfile(input: {
+    agent: unknown
+    pluginId: string
+    packageId: string
+    packageName: string
+    name: string
+    description: string
+    version: string
+  }): Promise<ArkmeCordisProfileSave> {
+    if (this.options.profileInstaller === undefined || this.options.profileDirectory === undefined) {
+      throw new ArkmePluginError('extension-profile-install-unavailable', '当前 DSH 运行方式不支持保存插件到 Profile', false, 503)
+    }
+    const inspected = this.inspectPackage(input.agent, input.pluginId, input.packageId)
+    const source = materializeCordisBundle({
+      packageName: input.packageName,
+      name: input.name.trim() || inspected.name,
+      description: input.description.trim() || inspected.purpose,
+      version: input.version,
+      ...(inspected.code.host === undefined ? {} : { hostCode: inspected.code.host }),
+      ...(inspected.code.client === undefined ? {} : { clientCode: inspected.code.client }),
+    })
+    const persisted = this.persistAuthoredBundle(source)
+    let installed = false
+    try {
+      await this.options.profileInstaller.installTarball(persisted.path)
+      installed = true
+      await this.restoreDisabledProfileLayers('')
+    } catch (error) {
+      if (persisted.created && !installed) this.removeArtifact(persisted.path)
+      throw new ArkmePluginError(
+        installed ? 'extension-profile-postinstall-failed' : 'extension-profile-save-failed',
+        installed
+          ? `插件已加入 DSH Profile，但无法恢复其他插件的停用状态：${error instanceof Error ? error.message : String(error)}`
+          : `插件 Bundle 已生成，但无法加入 DSH Profile：${error instanceof Error ? error.message : String(error)}`,
+        true,
+        500,
+        { cause: error },
+      )
+    }
+    return {
+      source,
+      packageName: source.bundle.packageName,
+      version: source.bundle.version,
+      installed: true,
+      active: false,
+      restartRequired: true,
+      message: '插件已保存到当前 DSH Profile，重启 DSH 后生效',
+    }
   }
 
   async publish(input: {
@@ -2319,5 +2380,34 @@ export class ArkmeExtensionManager {
     renameSync(temporary, target)
     chmodSync(target, 0o600)
     return target
+  }
+
+  private persistAuthoredBundle(source: ArkmeBundlePublishSource): { path: string; created: boolean } {
+    const packageKey = bundleSha256(source.bundle.packageName).slice(0, 32)
+    const directory = join(this.options.artifactDirectory, 'authored', packageKey, source.bundle.version)
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    chmodSync(directory, 0o700)
+    const target = join(directory, 'bundle.tgz')
+    if (existsSync(target)) {
+      const existingDigest = bundleSha256(readFileSync(target))
+      if (existingDigest !== source.bundle.bundleSha256) {
+        throw new ArkmePluginError(
+          'extension-profile-version-conflict',
+          `插件 ${source.bundle.packageName}@${source.bundle.version} 已保存不同内容，请使用新版本号`,
+          false,
+          409,
+        )
+      }
+      return { path: target, created: false }
+    }
+    const temporary = join(directory, `.bundle.tgz.${randomUUID()}.tmp`)
+    try {
+      writeFileSync(temporary, source.bundle.bytes, { mode: 0o600, flag: 'wx' })
+      renameSync(temporary, target)
+      chmodSync(target, 0o600)
+    } finally {
+      rmSync(temporary, { force: true })
+    }
+    return { path: target, created: true }
   }
 }

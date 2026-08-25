@@ -13,11 +13,16 @@ import type {
 import { effectiveExtensionPublisherRole } from '../extensions/publisher-role.js'
 import { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 import type { ArkmeOpenPrivateChatResult, ArkmeSourceItem } from '../types.js'
-import type { ArkmeMyExtensionItem, ArkmeMyExtensionPage } from '../extensions/owned-types.js'
+import type {
+  ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionProfileSaveResult,
+} from '../extensions/owned-types.js'
 import { ArkmeExtensionIcon } from './ArkmeExtensionIcon.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeExtensionPreviewGallery } from './ArkmeExtensionPreviewGallery.js'
 import { ArkmeExtensionPublishDialog, type ArkmeExtensionPublishFormValue } from './ArkmeExtensionPublishDialog.js'
+import {
+  ArkmeExtensionProfileSaveDialog, type ArkmeExtensionProfileSaveFormValue,
+} from './ArkmeExtensionProfileSaveDialog.js'
 import { ArkmeExtensionEditDialog, type ArkmeExtensionEditFormValue } from './ArkmeExtensionEditDialog.js'
 import {
   applyEditedMyExtension, nextExtensionEditMutation, saveExtensionEdit, type ExtensionEditMutation,
@@ -1383,10 +1388,11 @@ export function ArkmeExtensionLifecycleRow({
   </article>
 }
 
-export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish, onEdit, onOpen, onToggle }: {
+export function MyExtensionCard({ item, installed, toggleBusy = false, onPersist, onPublish, onEdit, onOpen, onToggle }: {
   item: ArkmeMyExtensionItem
   installed?: ArkmeInstalledExtensionView | undefined
   toggleBusy?: boolean | undefined
+  onPersist?(): void
   onPublish?(): void
   onEdit?(): void
 	onOpen?(): void
@@ -1405,6 +1411,7 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
         <span style={styles.name}>{item.name}</span>
         <span style={styles.stateBadges}>
           {myExtensionBadges(item.states).map(label => <span key={label} style={styles.stateBadge}>{label}</span>)}
+          {item.persisted?.artifactContractVersion === 2 && <span style={styles.stateBadge}>V2 沙箱</span>}
           {item.persisted?.artifactContractVersion === 3 && <span style={styles.stateBadge}>V3 原生</span>}
         </span>
       </span>
@@ -1413,6 +1420,9 @@ export function MyExtensionCard({ item, installed, toggleBusy = false, onPublish
     </span>
     <span style={styles.actionGroup}>
 		{item.published !== undefined && <button type="button" style={styles.restartLater} onClick={onOpen}>详情</button>}
+      {item.states.includes('cordis') && !item.states.includes('persisted') && <button
+        type="button" style={styles.restartLater} disabled={onPersist === undefined} onClick={onPersist}
+      >保存到 Profile</button>}
       {action !== undefined && <button
         type="button"
         style={{ ...styles.installSmall, ...((action.kind === 'publish' ? onPublish : onEdit) === undefined ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
@@ -1657,6 +1667,9 @@ export function ArkmeMarketplace({
   const [publishItem, setPublishItem] = useState<ArkmeMyExtensionItem>()
   const [publishBusy, setPublishBusy] = useState(false)
   const [publishError, setPublishError] = useState('')
+  const [profileSaveItem, setProfileSaveItem] = useState<ArkmeMyExtensionItem>()
+  const [profileSaveBusy, setProfileSaveBusy] = useState(false)
+  const [profileSaveError, setProfileSaveError] = useState('')
   const [editItem, setEditItem] = useState<ArkmeMyExtensionItem>()
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState('')
@@ -2331,6 +2344,9 @@ export function ArkmeMarketplace({
       publishMutation.current = undefined
       setPublishItem(undefined)
       await load('mine', 'refresh')
+      if (item.states.includes('cordis') && !item.states.includes('persisted')) {
+        setRestartNotice('扩展已保存到 Profile 并发布；重启 DSH 后会从 Profile 加载。')
+      }
       if (iconFile !== undefined) {
         try {
           await extensionSdk.setExtensionIcon(result.extension_id, iconFile)
@@ -2344,6 +2360,27 @@ export function ArkmeMarketplace({
       setPublishError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setPublishBusy(false)
+    }
+  }
+
+  const saveMyExtensionToProfile = async (
+    item: ArkmeMyExtensionItem,
+    value: ArkmeExtensionProfileSaveFormValue,
+  ) => {
+    setProfileSaveBusy(true); setProfileSaveError(''); setRestartNotice('')
+    try {
+      const result = await callArkme<ArkmeMyExtensionProfileSaveResult>('extensions.mine.persist', {
+        ownedRef: item.ownedRef,
+        ...value,
+        clientMutationId: crypto.randomUUID(),
+      })
+      setProfileSaveItem(undefined)
+      await load('mine', 'refresh')
+      setRestartNotice(result.message)
+    } catch (caught) {
+      setProfileSaveError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setProfileSaveBusy(false)
     }
   }
 
@@ -2494,6 +2531,7 @@ export function ArkmeMarketplace({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       if (editItem !== undefined && !editBusy) { editMutation.current = undefined; setEditItem(undefined) }
+      else if (profileSaveItem !== undefined && !profileSaveBusy) setProfileSaveItem(undefined)
       else if (publishItem !== undefined && !publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) }
       else if (restartPrompt !== undefined && !restarting) setRestartPrompt(undefined)
       else if (authorCardOpen) setAuthorCardOpen(false)
@@ -2502,7 +2540,7 @@ export function ArkmeMarketplace({
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [authorCardOpen, detailModalOpen, displayMode, editBusy, editItem, onClose, publishBusy, publishItem, restartPrompt, restarting])
+  }, [authorCardOpen, detailModalOpen, displayMode, editBusy, editItem, onClose, profileSaveBusy, profileSaveItem, publishBusy, publishItem, restartPrompt, restarting])
 
   useEffect(() => {
     if (!detailModalOpen || typeof document === 'undefined') return
@@ -2706,6 +2744,7 @@ export function ArkmeMarketplace({
               toggleBusy: actionBusyExtensionId === extensionId,
               onToggle: (enabled: boolean) => { void toggleEnabled(extensionId!, enabled) },
             })}
+            onPersist={() => { setProfileSaveError(''); setProfileSaveItem(item) }}
             onPublish={() => { publishMutation.current = undefined; setPublishError(''); setPublishItem(item) }}
             onEdit={() => {
               editMutation.current = undefined; setEditError('')
@@ -2970,6 +3009,13 @@ export function ArkmeMarketplace({
       error={publishError}
       onCancel={() => { if (!publishBusy) { publishMutation.current = undefined; setPublishItem(undefined) } }}
       onSubmit={value => { void publishMyExtension(publishItem, value) }}
+    />}
+    {profileSaveItem !== undefined && <ArkmeExtensionProfileSaveDialog
+      item={profileSaveItem}
+      busy={profileSaveBusy}
+      error={profileSaveError}
+      onCancel={() => { if (!profileSaveBusy) setProfileSaveItem(undefined) }}
+      onSubmit={value => { void saveMyExtensionToProfile(profileSaveItem, value) }}
     />}
     {editItem !== undefined && <ArkmeExtensionEditDialog
       item={editItem}

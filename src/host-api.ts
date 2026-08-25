@@ -548,7 +548,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.persist', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -1348,6 +1348,13 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
+    })
+    case 'extensions.mine.persist': return await requireOwnedExtensionInventory(ownedExtensionInventory).saveToProfile({
+      ownedRef: stringParam(params, 'ownedRef'),
+      name: stringParam(params, 'name'),
+      description: stringParam(params, 'description'),
+      version: stringParam(params, 'version'),
+      clientMutationId: stringParam(params, 'clientMutationId'),
     })
     case 'extensions.mine.publish': return await requireOwnedExtensionInventory(ownedExtensionInventory).publish({
       ownedRef: stringParam(params, 'ownedRef'),

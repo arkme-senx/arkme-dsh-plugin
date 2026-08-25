@@ -16,6 +16,10 @@ import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSessionStore } from './keychain-store.js'
+import {
+  resolveArkmeConfig,
+  type ResolvedArkmeConfig,
+} from './config-compat.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { registerManagedAiProvider } from './managed-ai/adapter.js'
 import {
@@ -47,23 +51,10 @@ import { ArkmeStateStore } from './state-store.js'
 import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
-import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
 
-export interface Config {
-  environment: ArkmeEnvironment
-  authBaseUrl: string
-  subjectBaseUrl: string
-  recordBaseUrl: string
-  dataBaseUrl: string
-  chatBaseUrl: string
-  botBaseUrl: string
-  imBaseUrl: string
-  webrtcBaseUrl: string
-  worldBaseUrl: string
-  relationBaseUrl: string
-  intelligentBaseUrl: string
-  audioBaseUrl: string
-  extensionPublishBaseUrl: string
+interface ArkmeConfigOptions {
+  configContractVersion: number
+  environment: 'prod'
   extensionArtifactDirectory: string
   extensionTrustedSigningKeys: string
   extensionShareDiscoveryEnabled: boolean
@@ -85,31 +76,19 @@ export interface Config {
   allowProduction: boolean
   updateCheckEnabled: boolean
   updateChannel: 'stable' | 'next'
-  updateServiceBaseUrl: string
-  updateArtifactBaseUrl: string
   appVersion: string
   updateCheckIntervalHours: number
   updateAllowLocalInstall: boolean
   openclawProfile: string
-  shareWebsite: string
 }
+
+export type Config = ArkmeConfigOptions
+type ResolvedConfig = ResolvedArkmeConfig<Config>
 
 export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
 export const Config: Schema<Config> = Schema.object({
-  environment: Schema.union(['test', 'prod']).default('test'),
-  authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
-  subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
-  recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
-  dataBaseUrl: Schema.string().default(''),
-  chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
-  botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
-  imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
-  webrtcBaseUrl: Schema.string().default('https://jotmo-webrtc.senguo.me'),
-  worldBaseUrl: Schema.string().default('https://jotmo-world.senguo.me'),
-  relationBaseUrl: Schema.string().default('https://jotmo-relation.senguo.me'),
-  intelligentBaseUrl: Schema.string().default('https://jotmo-intelligent.senguo.me'),
-  audioBaseUrl: Schema.string().default('https://jotmo-audio.senguo.me'),
-  extensionPublishBaseUrl: Schema.string().default(''),
+  configContractVersion: Schema.number().min(1).default(1),
+  environment: Schema.const('prod').default('prod'),
   extensionArtifactDirectory: Schema.string().default(''),
   extensionTrustedSigningKeys: Schema.string().default(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS),
   extensionShareDiscoveryEnabled: Schema.boolean().default(true),
@@ -128,8 +107,6 @@ export const Config: Schema<Config> = Schema.object({
   allowProduction: Schema.boolean().default(false),
   updateCheckEnabled: Schema.boolean().default(true),
   updateChannel: Schema.union(['stable', 'next']).default('stable'),
-  updateServiceBaseUrl: Schema.string().default('https://api.jotmo.cc'),
-  updateArtifactBaseUrl: Schema.string().default(''),
   appVersion: Schema.string().default(''),
   updateCheckIntervalHours: Schema.number().min(1).max(168).default(12),
   updateAllowLocalInstall: Schema.boolean().default(true),
@@ -137,7 +114,6 @@ export const Config: Schema<Config> = Schema.object({
   richMediaSendEnabled: Schema.boolean().default(true),
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
   openclawProfile: Schema.string().default('dev'),
-  shareWebsite: Schema.string().default(ARKME_DEFAULT_SHARE_WEBSITE),
 })
 
 export const name = 'dsh-arkme'
@@ -179,8 +155,9 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-export function apply(ctx: Context, config: Config): void {
-  config = resolveArkmeConfig(ctx, config)
+export function apply(ctx: Context, rawConfig: Config): void {
+  const config = resolveArkmeConfig(rawConfig)
+  validateConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
@@ -308,6 +285,8 @@ export function apply(ctx: Context, config: Config): void {
       runner,
       agents,
       publish: async input => await manager.publish(input),
+      persistCordis: async input => await manager.persistCordisProfile(input),
+      publishSandboxBundle: async input => await manager.publishBundleSource(input),
       publishBundle: async input => await manager.publishNativeBundleSource(input),
       lifecycle: {
         deleteCloud: async (extensionId, signal) => await manager.delete(extensionId, signal),
@@ -447,41 +426,9 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 
-export function resolveArkmeConfig(ctx: Context, config: Config): Config {
-  const resolved = config.dataBaseUrl.trim() === ''
-    ? {
-        ...config,
-        dataBaseUrl: config.environment === 'prod'
-          ? 'https://data.jotmo.cc'
-          : 'https://jotmo-data.senguo.me',
-      }
-    : config
-  validateConfig(ctx, resolved)
-  return resolved
-}
-
-function validateConfig(ctx: Context, config: Config): void {
-  if (config.environment === 'prod' && !config.allowProduction) {
+function validateConfig(ctx: Context, config: ResolvedConfig): void {
+  if (!config.allowProduction) {
     throw new Error('dsh-arkme: production environment requires allowProduction: true')
-  }
-  if (config.environment === 'prod') {
-    const testDefaults = [
-      config.authBaseUrl,
-      config.subjectBaseUrl,
-      config.recordBaseUrl,
-      config.dataBaseUrl,
-      config.chatBaseUrl,
-      config.botBaseUrl,
-      config.imBaseUrl,
-      config.webrtcBaseUrl,
-      config.worldBaseUrl,
-      config.relationBaseUrl,
-      config.intelligentBaseUrl,
-      config.audioBaseUrl,
-    ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
-    if (testDefaults.length > 0) {
-      throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
-    }
   }
   if (!config.allowNonLoopback && ctx.webServer.host !== '127.0.0.1') {
     throw new Error('dsh-arkme: Web UI must bind 127.0.0.1 unless allowNonLoopback is true')

@@ -56,6 +56,16 @@ describe('marketplace Host BFF', () => {
         extensionId: 'ext-1', name: '新名称', description: '', visibility: 'private',
         clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
       })
+      const profileSaveMissingOrigin = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          operation: 'extensions.mine.persist',
+          params: {
+            ownedRef: 'owned-ref', name: '天气', description: '', version: '1.0.0',
+            clientMutationId: '0acf8c13-4086-4d51-890d-4911ad886880',
+          },
+        }),
+      })
+      expect(profileSaveMissingOrigin.status).toBe(403)
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
     }
@@ -369,15 +379,25 @@ describe('marketplace Host BFF', () => {
 		expect(service.extensionAuthors).toHaveBeenCalledWith([77])
 	})
 
-  it('routes my-extension list and publish through the unified Host owner', async () => {
+  it('routes my-extension list, Profile save, and publish through the unified Host owner', async () => {
     const list = vi.fn(async () => ({ items: [], warnings: [] }))
+    const saveToProfile = vi.fn(async () => ({
+      packageName: '@arkme-generated/weather', version: '1.0.0', artifactContractVersion: 2,
+      artifactKind: 'dsh-bundle-tgz', installed: true, active: false, restartRequired: true, message: 'saved',
+    }))
     const publish = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))
-    const owner = { list, publish }
+    const owner = { list, saveToProfile, publish }
 
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.mine.list', { currentSessionId: 'session-1' },
       undefined, undefined, undefined, owner as never,
     )).resolves.toEqual({ items: [], warnings: [] })
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.mine.persist', {
+        ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+        clientMutationId: '0acf8c13-4086-4d51-890d-4911ad886880',
+      }, undefined, undefined, undefined, owner as never,
+    )).resolves.toMatchObject({ artifactContractVersion: 2, installed: true, restartRequired: true })
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.mine.publish', {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
@@ -386,6 +406,10 @@ describe('marketplace Host BFF', () => {
     )).resolves.toMatchObject({ status: 'published' })
 
     expect(list).toHaveBeenCalledWith({ currentSessionId: 'session-1' })
+    expect(saveToProfile).toHaveBeenCalledWith({
+      ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
+      clientMutationId: '0acf8c13-4086-4d51-890d-4911ad886880',
+    })
     expect(publish).toHaveBeenCalledWith({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
       visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',

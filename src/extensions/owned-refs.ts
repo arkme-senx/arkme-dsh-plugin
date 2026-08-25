@@ -14,6 +14,7 @@ export interface ArkmeOwnedProfileTarget {
   packageName: string
   sourcePath: string
   specDigest: string
+  artifactContractVersion: 2 | 3
 }
 
 export type ArkmeOwnedExtensionTarget = ArkmeOwnedCordisTarget | ArkmeOwnedProfileTarget

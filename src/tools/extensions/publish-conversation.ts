@@ -231,7 +231,9 @@ function sourceConfirmation(prepared: ArkmePreparedExtensionPublish): string {
   const input = prepared.input
 	const contract = prepared.publishRoute === 'profile-native-v3'
 		? `，发布方式：V3 原生 DSH Package${(prepared.nativeCapabilities?.length ?? 0) === 0 ? '（未检测到额外原生能力）' : `（原生能力：${prepared.nativeCapabilities!.join('、')}）`}`
-		: '，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）'
+		: prepared.publishRoute === 'profile-sandbox-v2'
+			? '，发布方式：Profile 中已保存的 V2 沙箱 Bundle'
+			: '，发布方式：当前会话 Cordis 插件（先保存到 Profile，再发布 V2 沙箱 Bundle）'
 	const github = input.githubRepositoryUrl === undefined
 		? ''
 		: `，GitHub 来源：${input.githubRepositoryUrl}`

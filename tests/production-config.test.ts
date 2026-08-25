@@ -4,26 +4,37 @@ import {
   ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS,
   resolveArkmeAppVersion,
 } from '../src/index.js'
+import {
+  ARKME_CONFIG_CONTRACT_VERSION,
+  ARKME_MANAGED_ORIGIN_KEYS,
+  ARKME_PRODUCTION_ORIGIN_PRESET,
+} from '../src/config-compat.js'
 
 describe('production plugin configuration', () => {
   it('routes every external API and update endpoint to production infrastructure', () => {
     const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 
+    expect(patch).toContain(`configContractVersion: ${String(ARKME_CONFIG_CONTRACT_VERSION)}`)
     expect(patch).toContain('environment: prod')
-    expect(patch).toContain('authBaseUrl: https://api.jotmo.cc')
-    expect(patch).toContain('subjectBaseUrl: https://subject.jotmo.cc')
-    expect(patch).toContain('botBaseUrl: https://bot.jotmo.cc')
-    expect(patch).toContain('recordBaseUrl: https://record.jotmo.cc')
-    expect(patch).toContain('dataBaseUrl: https://data.jotmo.cc')
-    expect(patch).toContain('chatBaseUrl: https://chat.jotmo.cc')
-    expect(patch).toContain('imBaseUrl: https://im.jotmo.cc')
-    expect(patch).toContain('webrtcBaseUrl: https://webrtc.jiwo.cc')
-    expect(patch).toContain('worldBaseUrl: https://world.jotmo.cc')
-    expect(patch).toContain('relationBaseUrl: https://relation.jotmo.cc')
-    expect(patch).toContain('intelligentBaseUrl: https://intelligent.jotmo.cc')
-    expect(patch).toContain('audioBaseUrl: https://audio.jotmo.cc')
-    expect(patch).toContain('extensionPublishBaseUrl: https://extension-publish.jotmo.cc')
-    expect(patch).toContain('shareWebsite: https://jiwo.cc')
+    for (const key of ARKME_MANAGED_ORIGIN_KEYS) expect(patch).not.toContain(`${key}:`)
+    expect(ARKME_PRODUCTION_ORIGIN_PRESET).toEqual({
+      authBaseUrl: 'https://api.jotmo.cc',
+      subjectBaseUrl: 'https://subject.jotmo.cc',
+      recordBaseUrl: 'https://record.jotmo.cc',
+      dataBaseUrl: 'https://data.jotmo.cc',
+      chatBaseUrl: 'https://chat.jotmo.cc',
+      botBaseUrl: 'https://bot.jotmo.cc',
+      imBaseUrl: 'https://im.jotmo.cc',
+      webrtcBaseUrl: 'https://webrtc.jiwo.cc',
+      worldBaseUrl: 'https://world.jotmo.cc',
+      relationBaseUrl: 'https://relation.jotmo.cc',
+      intelligentBaseUrl: 'https://intelligent.jotmo.cc',
+      audioBaseUrl: 'https://audio.jotmo.cc',
+      extensionPublishBaseUrl: 'https://extension-publish.jotmo.cc',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://d.jiwo.cc',
+      shareWebsite: 'https://jiwo.cc',
+    })
     expect(patch).toContain('prod-ed25519-20260819-1')
     expect(JSON.parse(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS)).toEqual({
       'prod-ed25519-20260819-1': 'm1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs=',
@@ -39,15 +50,12 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('allowProduction: true')
     expect(patch).toContain('updateCheckEnabled: true')
     expect(patch).toContain('updateChannel: stable')
-    expect(patch).toContain('updateServiceBaseUrl: https://api.jotmo.cc')
-    expect(patch).toContain('updateArtifactBaseUrl: https://d.jiwo.cc')
     expect(patch).not.toContain('updateTrustedPublicKey:')
     expect(patch).not.toContain('updateRegistryUrl:')
     expect(patch).not.toContain('registry.npmjs.org')
     expect(patch).toContain('updateCheckIntervalHours: 12')
     expect(patch).toContain('updateAllowLocalInstall: true')
     expect(patch).not.toContain('environment: test')
-    expect(patch).not.toContain('senguo.me')
   })
 
   it('falls back to the desktop-injected APP version for private plugin updates', () => {

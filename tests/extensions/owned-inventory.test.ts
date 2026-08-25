@@ -6,6 +6,7 @@ import { ArkmeOwnedExtensionInventory, selectPublishPackage } from '../../src/ex
 import { ArkmeOwnedExtensionRefs } from '../../src/extensions/owned-refs.js'
 import { ArkmeOwnedExtensionStore } from '../../src/extensions/owned-store.js'
 import { createHash } from 'node:crypto'
+import { materializeCordisBundle } from '../../src/extensions/bundle-materializer.js'
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true })
@@ -159,6 +160,98 @@ describe('owned extension inventory', () => {
     store.close()
   })
 
+  it('saves one live Cordis source into Profile and records durable lineage without cloud publication', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-profile-save-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const packageName = '@arkme-generated/03ff558573117308370085b8'
+    const source = materializeCordisBundle({
+      packageName, name: '天气助手', description: '天气', version: '1.0.0', hostCode: 'return {}',
+    })
+    const persistCordis = vi.fn(async () => ({
+      source, packageName, version: '1.0.0', installed: true as const, active: false as const,
+      restartRequired: true as const, message: '插件已保存到当前 DSH Profile，重启 DSH 后生效',
+    }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [], total: 0 }),
+      runner: {
+        inventory: () => [{
+          agentId: 'session-1', pluginId: 'weather-1', currentPackageId: 'pkg-1',
+          packages: [{ packageId: 'pkg-1', name: '天气助手', purpose: '天气', hasHostHalf: true, hasClientHalf: false }],
+        }],
+        inspectPackage: () => ({ pluginId: 'weather-1', packageId: 'pkg-1', name: '天气助手', purpose: '天气', code: { host: 'return {}' } }),
+      },
+      agents: { get: () => ({ id: 'session-1' }) },
+      publish: async () => { throw new Error('must not publish') },
+      persistCordis,
+    })
+    const page = await inventory.list({ currentSessionId: 'session-1' })
+
+    await expect(inventory.saveToProfile({
+      ownedRef: page.items[0]!.ownedRef, name: '天气助手', description: '天气', version: '1.0.0',
+      clientMutationId: '2de27a1a-8f49-4fb7-b819-00eb523f4df4',
+    })).resolves.toEqual({
+      packageName, version: '1.0.0', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz',
+      installed: true, active: false, restartRequired: true,
+      message: '插件已保存到当前 DSH Profile，重启 DSH 后生效',
+    })
+    expect(persistCordis).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'weather-1', packageId: 'pkg-1', packageName, version: '1.0.0',
+    }))
+    expect(store.owner('profile', `web\0${packageName}`)).toBe(7)
+    expect(store.profileLink('instance-1\0session-1\0weather-1', 7)).toBe(`web\0${packageName}`)
+    expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBeUndefined()
+    store.close()
+  })
+
+  it('keeps the Profile package and lineage when marketplace publication fails after persistence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-persist-before-publish-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const packageName = '@arkme-generated/03ff558573117308370085b8'
+    const source = materializeCordisBundle({
+      packageName, name: '天气助手', description: '天气', version: '1.0.0', hostCode: 'return {}',
+    })
+    const persistCordis = vi.fn(async () => ({
+      source, packageName, version: '1.0.0', installed: true as const, active: false as const,
+      restartRequired: true as const, message: 'saved',
+    }))
+    const publishSandboxBundle = vi.fn(async () => { throw new Error('registry offline') })
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [], total: 0 }),
+      runner: {
+        inventory: () => [{
+          agentId: 'session-1', pluginId: 'weather-1', currentPackageId: 'pkg-1',
+          packages: [{ packageId: 'pkg-1', name: '天气助手', purpose: '天气', hasHostHalf: true, hasClientHalf: false }],
+        }],
+        inspectPackage: () => ({ pluginId: 'weather-1', packageId: 'pkg-1', name: '天气助手', purpose: '天气', code: { host: 'return {}' } }),
+      },
+      agents: { get: () => ({ id: 'session-1' }) }, publish: async () => { throw new Error('legacy route used') },
+      persistCordis, publishSandboxBundle,
+    })
+    const page = await inventory.list({ currentSessionId: 'session-1' })
+
+    await expect(inventory.publish({
+      ownedRef: page.items[0]!.ownedRef, name: '天气助手', description: '天气', version: '1.0.0',
+      visibility: 'private', clientMutationId: '6f80000a-23f5-48cd-8923-41d9ba60a44a',
+    })).rejects.toMatchObject({
+      code: 'extension-publish-after-profile-save-failed',
+      message: expect.stringContaining('已保存到 Profile'),
+    })
+    expect(persistCordis).toHaveBeenCalledOnce()
+    expect(publishSandboxBundle).toHaveBeenCalledWith(expect.objectContaining({ source }))
+    expect(store.owner('profile', `web\0${packageName}`)).toBe(7)
+    expect(store.profileLink('instance-1\0session-1\0weather-1', 7)).toBe(`web\0${packageName}`)
+    expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBeUndefined()
+    store.close()
+  })
+
   it('preflights a Cordis source fingerprint without publishing and detects later code changes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-preflight-'))
     const profile = join(root, 'profiles', 'web')
@@ -285,6 +378,53 @@ describe('owned extension inventory', () => {
       clientMutationId: '985c8698-7622-45f3-9ba7-085d4254aa16',
     })
     expect(publishBundle).toHaveBeenLastCalledWith(expect.objectContaining({ extensionId: 'ext-local' }))
+    store.close()
+  })
+
+  it('publishes a saved Cordis Profile package through the V2 sandbox contract after restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-saved-v2-publish-'))
+    const profile = join(root, 'profiles', 'web')
+    const packageName = '@arkme-generated/saved-weather'
+    const source = materializeCordisBundle({
+      packageName, name: '保存后的天气助手', description: '天气', version: '1.2.3', hostCode: 'return {}',
+    })
+    const tarball = join(root, 'saved-weather.tgz')
+    writeFileSync(tarball, source.bundle.bytes)
+    writeJson(join(profile, 'package.json'), {
+      dependencies: { [packageName]: 'file:../../saved-weather.tgz' },
+      dsh: { profile: { bundles: [packageName] } },
+    })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const publishSandboxBundle = vi.fn(async () => ({
+      extension_id: 'ext-saved-weather', version: '1.2.3', status: 'published' as const,
+    }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [], total: 0 }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') }, publishSandboxBundle,
+    })
+    const page = await inventory.list()
+    expect(page.items).toMatchObject([{
+      name: '保存后的天气助手', description: '天气', states: ['persisted'],
+      persisted: { packageName, version: '1.2.3', active: true, artifactContractVersion: 2 },
+      publish: { allowed: true, route: 'profile-sandbox-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+    }])
+    const input = {
+      ownedRef: page.items[0]!.ownedRef, name: '保存后的天气助手', description: '天气', version: '1.2.3',
+      visibility: 'private' as const, clientMutationId: '39e479fa-25b9-4e26-a1da-02589fe20a62',
+    }
+    await expect(inventory.preparePublish(input)).resolves.toMatchObject({
+      publishRoute: 'profile-sandbox-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz',
+    })
+    await expect(inventory.publish(input)).resolves.toMatchObject({ status: 'published' })
+    expect(publishSandboxBundle).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ bundle: expect.objectContaining({
+        packageName, version: '1.2.3', executionModel: 'arkme-sandboxed',
+      }) }),
+    }))
+    expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBe('ext-saved-weather')
     store.close()
   })
 

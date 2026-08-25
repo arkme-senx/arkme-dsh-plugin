@@ -3,7 +3,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { ArkmeOwnedExtensionStore } from './owned-store.js'
 import {
-  ArkmeBundleArtifactError, packLocalNativeBundleDirectoryV3, readNativeBundleTarballV3,
+  ArkmeBundleArtifactError, packLocalBundleDirectory, packLocalNativeBundleDirectoryV3,
+  inspectBundleArtifact, readLocalBundleTarball, readNativeBundleTarballV3,
 } from './bundle-artifact.js'
 import type { ArkmeOwnedProfileTarget } from './owned-refs.js'
 
@@ -18,7 +19,7 @@ export interface OwnedProfileExtension {
   extensionId?: string
   publishable: boolean
   publishReason?: string
-  artifactContractVersion?: 3
+  artifactContractVersion?: 2 | 3
   target?: ArkmeOwnedProfileTarget
 }
 
@@ -34,6 +35,7 @@ interface PackageManifest {
   dsh?: {
     bundle?: { patch?: unknown }
     client?: unknown
+    arkme?: { executionModel?: unknown; runtimeContract?: unknown }
   }
 }
 
@@ -84,14 +86,18 @@ export function scanOwnedProfileExtensions(input: {
       input.store.claim('profile', sourceKey, input.userId, specDigest)
       let publishable = !packageName.startsWith('@arkme-local/ext-')
       let publishReason: string | undefined
+      let artifactContractVersion: 2 | 3 = 3
       let version = typeof manifest?.version === 'string' && manifest.version.trim() !== '' ? manifest.version : undefined
+      let displayName = packageName
+      let displayDescription = typeof manifest?.description === 'string' ? manifest.description : ''
       if (publishable) {
         try {
-          const source = localSource.kind === 'profile-tarball'
-            ? readNativeBundleTarballV3(localSource.path)
-            : packLocalNativeBundleDirectoryV3(localSource.path)
+          const source = readProfileSource(localSource, manifest)
           if (source.bundle.packageName !== packageName) throw new Error('package name mismatch')
           version = source.bundle.version
+          artifactContractVersion = source.artifactContractVersion
+          displayName = source.displayName ?? displayName
+          displayDescription = source.displayDescription ?? displayDescription
         } catch (error) {
           publishable = false
           publishReason = error instanceof ArkmeBundleArtifactError ? error.code : 'bundle-validation-failed'
@@ -103,11 +109,11 @@ export function scanOwnedProfileExtensions(input: {
         sourceKey,
         packageName,
 	    ...(version === undefined ? {} : { version }),
-        name: packageName,
-	    description: typeof manifest?.description === 'string' ? manifest.description : '',
+        name: displayName,
+	    description: displayDescription,
 	    active: bundles.has(packageName),
 	    halves: { host: true, client: manifest?.dsh?.client !== undefined },
-	    artifactContractVersion: 3,
+	    artifactContractVersion,
 	    publishable,
 	    ...(publishReason === undefined ? {} : { publishReason }),
 	    ...(publishable ? {
@@ -117,6 +123,7 @@ export function scanOwnedProfileExtensions(input: {
 	        packageName,
 	        sourcePath: localSource.path,
 	        specDigest,
+	        artifactContractVersion,
 	      },
 	    } : {}),
         ...(extensionId === undefined ? {} : { extensionId }),
@@ -126,6 +133,52 @@ export function scanOwnedProfileExtensions(input: {
     }
   }
   return { items, invalidEntries }
+}
+
+function readProfileSource(
+  source: { kind: 'profile-directory' | 'profile-tarball' | 'profile-installed'; path: string },
+  manifest: PackageManifest | undefined,
+): {
+  artifactContractVersion: 2 | 3
+  bundle: { packageName: string; version: string }
+  displayName?: string
+  displayDescription?: string
+} {
+  if (source.kind !== 'profile-tarball') {
+    if (manifest?.dsh?.arkme?.executionModel === 'arkme-sandboxed') {
+      const packed = packLocalBundleDirectory(source.path)
+      return { artifactContractVersion: 2, bundle: packed.bundle, ...sandboxDisplayMetadata(packed.bundle.bytes) }
+    }
+    return { artifactContractVersion: 3, bundle: packLocalNativeBundleDirectoryV3(source.path).bundle }
+  }
+  try {
+    const sandbox = readLocalBundleTarball(source.path)
+    if (sandbox.bundle.executionModel !== 'arkme-sandboxed') throw new Error('not a sandbox Bundle')
+    return { artifactContractVersion: 2, bundle: sandbox.bundle, ...sandboxDisplayMetadata(sandbox.bundle.bytes) }
+  } catch (sandboxError) {
+    try {
+      return { artifactContractVersion: 3, bundle: readNativeBundleTarballV3(source.path).bundle }
+    } catch {
+      throw sandboxError
+    }
+  }
+}
+
+function sandboxDisplayMetadata(bytes: Uint8Array): { displayName?: string; displayDescription?: string } {
+  const raw = inspectBundleArtifact(bytes).files.get('package/arkme/source.json')
+  if (raw === undefined) return {}
+  let source: unknown
+  try { source = JSON.parse(raw.toString('utf8')) as unknown } catch { return {} }
+  if (source === null || typeof source !== 'object' || Array.isArray(source)) return {}
+  const record = source as Record<string, unknown>
+  const name = typeof record.name === 'string' ? record.name.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 120) : ''
+  const description = typeof record.description === 'string'
+    ? record.description.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 2_000)
+    : ''
+  return {
+    ...(name === '' ? {} : { displayName: name }),
+    ...(description === '' ? {} : { displayDescription: description }),
+  }
 }
 
 function resolveLocalSource(

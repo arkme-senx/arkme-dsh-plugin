@@ -651,7 +651,7 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it('exposes typed current-user extension inventory and Cordis publication', async () => {
+  it('exposes typed current-user extension inventory, Cordis Profile save, and publication', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
       fetchImpl: async (_input, init) => {
@@ -669,6 +669,12 @@ describe('Arkme SDK', () => {
             publish: { allowed: true, mode: 'new', route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' },
           },
         ], warnings: [] })
+        if (request.operation === 'extensions.mine.persist') {
+          return success({
+            packageName: '@arkme-generated/weather', version: '1.0.0', artifactContractVersion: 2,
+            artifactKind: 'dsh-bundle-tgz', installed: true, active: false, restartRequired: true, message: 'saved',
+          })
+        }
         if (request.operation === 'extensions.mine.publish') {
           return success({ extension_id: 'ext-1', version: '1.0.0', status: 'published' })
         }
@@ -698,6 +704,10 @@ describe('Arkme SDK', () => {
       { publish: { route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' } },
       { publish: { route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' } },
     ], warnings: [] })
+    await expect(sdk.saveMyExtensionToProfile({
+      ownedRef: 'owned-cordis', name: ' 天气 ', description: ' 天气卡片 ', version: '1.0.0',
+      clientMutationId: 'b517787f-d478-4a19-ad7b-310d2950fd54',
+    })).resolves.toMatchObject({ artifactContractVersion: 2, installed: true, restartRequired: true })
     await expect(sdk.publishMyExtension({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
 		visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
@@ -722,6 +732,10 @@ describe('Arkme SDK', () => {
 		})
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
+      { operation: 'extensions.mine.persist', params: {
+        ownedRef: 'owned-cordis', name: '天气', description: '天气卡片', version: '1.0.0',
+        clientMutationId: 'b517787f-d478-4a19-ad7b-310d2950fd54',
+      } },
       { operation: 'extensions.mine.publish', params: {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
 			visibility: 'private', githubRepositoryUrl: 'https://github.com/example/weather',
@@ -749,6 +763,9 @@ describe('Arkme SDK', () => {
       ownedRef: '', name: '天气', description: '天气卡片', version: '1.0.0',
       visibility: 'private', clientMutationId: 'bad',
     })).toThrow(/reference|引用/)
+    expect(() => sdk.saveMyExtensionToProfile({
+      ownedRef: 'owned-cordis', name: '天气', description: '', version: 'not-semver', clientMutationId: 'bad',
+    })).toThrow(/version|版本/)
     await expect(sdk.updateExtensionMetadata('ext-1', {
       name: '新名称', description: '', visibility: 'unlisted' as never,
       clientMutationId: '6f85dfb8-bf84-43c8-8074-c5ac10990f40',

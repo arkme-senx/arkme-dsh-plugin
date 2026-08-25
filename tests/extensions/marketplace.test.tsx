@@ -19,6 +19,7 @@ import {
   extensionNativeInstallWarning, filterMarketplaceMenuOptions, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
 } from '../../src/client/ArkmeMarketplace.js'
 import { ArkmeExtensionPublishDialog } from '../../src/client/ArkmeExtensionPublishDialog.js'
+import { ArkmeExtensionProfileSaveDialog } from '../../src/client/ArkmeExtensionProfileSaveDialog.js'
 import { ArkmeExtensionEditDialog } from '../../src/client/ArkmeExtensionEditDialog.js'
 import type { ArkmeMyExtensionItem } from '../../src/extensions/owned-types.js'
 import { ArkmeExtensionIcon } from '../../src/client/ArkmeExtensionIcon.js'
@@ -940,7 +941,7 @@ describe('Arkme marketplace UI', () => {
       ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片',
       states: ['cordis', 'persisted', 'published'], halves: { host: true, client: false },
       cordis: { packageCount: 1, active: true },
-      persisted: { packageName: 'local-weather', version: '1.0.0', active: true },
+      persisted: { packageName: 'local-weather', version: '1.0.0', active: true, artifactContractVersion: 2 },
       published: { extensionId: 'ext-1', version: '1.0.0', visibility: 'private', iconRef: `icon_v1_${'a'.repeat(64)}` },
       publish: { allowed: true, mode: 'version', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
     }
@@ -950,6 +951,7 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('天气助手')
     expect(html).toContain('Cordis 临时')
     expect(html).toContain('已持久化')
+    expect(html).toContain('V2 沙箱')
     expect(html).toContain('已发布')
     expect(html).not.toContain('发布新版本')
     expect(html).toContain('>编辑</button>')
@@ -971,11 +973,32 @@ describe('Arkme marketplace UI', () => {
       ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['cordis'],
       halves: { host: true, client: false }, cordis: { packageCount: 1, active: true },
       publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
-    }} onPublish={() => {}} />)
+    }} onPersist={() => {}} onPublish={() => {}} />)
 
     expect(html).toContain('>发布</button>')
+    expect(html).toContain('>保存到 Profile</button>')
     expect(html).not.toContain('>仅本地</button>')
     expect(html).not.toContain('>已发布</button>')
+  })
+
+  it('renders an explicit local-only Profile save form for Cordis sources', () => {
+    const html = renderToStaticMarkup(<ArkmeExtensionProfileSaveDialog
+      item={{
+        ownedRef: 'owned-ref', name: '天气助手', description: '天气卡片', states: ['cordis'],
+        halves: { host: true, client: false },
+        publish: { allowed: true, mode: 'new', route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+      }}
+      busy={false}
+      error=""
+      onCancel={() => {}}
+      onSubmit={() => {}}
+    />)
+
+    expect(html).toContain('role="dialog"')
+    expect(html).toContain('保存到 Profile')
+    expect(html).toContain('V2 沙箱包')
+    expect(html).toContain('不会上传到应用市场')
+    expect(html).toContain('value="1.0.0"')
   })
 
   it('renders an accessible private-by-default Cordis publish form', () => {
@@ -992,6 +1015,7 @@ describe('Arkme marketplace UI', () => {
 
     expect(html).toContain('role="dialog"')
     expect(html).toContain('发布扩展')
+    expect(html).toContain('发布前会先把插件保存为当前 Profile 的 V2 沙箱包')
     expect(html).toContain('value="天气助手"')
     expect(html).toContain('<option value="private" selected="">仅自己</option>')
     expect(html).toContain('accept="image/*"')
