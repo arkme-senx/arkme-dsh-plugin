@@ -19,7 +19,7 @@ const styles: Record<string, CSSProperties> = {
   emoji: {
     display: 'inline-flex', width: '1.45em', height: '1.45em', margin: 0,
     alignItems: 'center', justifyContent: 'center', verticalAlign: '-0.34em',
-    userSelect: 'all', cursor: 'text',
+    cursor: 'text',
   },
   emojiImage: { width: '100%', height: '100%', display: 'block', objectFit: 'contain', pointerEvents: 'none' },
 }
@@ -155,6 +155,16 @@ function setEditorSelection(root: HTMLElement, start: number, end: number): void
   range.setEnd(endPoint.node, endPoint.offset)
   selection.removeAllRanges()
   selection.addRange(range)
+}
+
+function emojiAtomSemanticOffset(root: HTMLElement, target: EventTarget | null): number | undefined {
+  if (!(target instanceof Element)) return undefined
+  const atom = target.closest<HTMLElement>('[data-arkme-editable-emoji]')
+  if (atom === null || !root.contains(atom)) return undefined
+  const parent = atom.parentNode
+  if (parent === null) return undefined
+  const index = Array.prototype.indexOf.call(parent.childNodes, atom) as number
+  return pointSemanticOffset(root, parent, index)
 }
 
 function applyElementStyles(element: HTMLElement, elementStyles: CSSProperties): void {
@@ -305,7 +315,17 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
           }
         }}
         onKeyUp={event => { selectionRef.current = editorSelection(event.currentTarget, selectionRef.current) }}
-        onMouseUp={event => { selectionRef.current = editorSelection(event.currentTarget, selectionRef.current) }}
+        onMouseUp={event => {
+          const selection = editorSelection(event.currentTarget, selectionRef.current)
+          const atomOffset = selection.start === selection.end
+            ? emojiAtomSemanticOffset(event.currentTarget, event.target)
+            : undefined
+          if (atomOffset !== undefined) {
+            applySelection(atomOffset, atomOffset + 1)
+            return
+          }
+          selectionRef.current = selection
+        }}
       />
     </div>
   },

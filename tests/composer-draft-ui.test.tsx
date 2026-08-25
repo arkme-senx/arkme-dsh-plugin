@@ -98,5 +98,8 @@ describe('composer draft UI projection', () => {
     expect(richComposerSource).toContain("height: '1.45em', margin: 0")
     expect(richComposerSource).not.toContain("margin: '0 0.12em'")
     expect(richComposerSource).not.toContain("padding: '0 0.12em'")
+    expect(richComposerSource).not.toContain("userSelect: 'all'")
+    expect(richComposerSource).toContain('emojiAtomSemanticOffset(event.currentTarget, event.target)')
+    expect(richComposerSource).toContain('applySelection(atomOffset, atomOffset + 1)')
   })
 })
