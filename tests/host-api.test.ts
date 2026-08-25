@@ -31,6 +31,9 @@ function fakeService() {
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
     listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
+    officialAuthorProfile: vi.fn(async () => ({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })),
+    openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
+    openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
@@ -226,6 +229,25 @@ describe('conversation member Host API dispatch', () => {
     expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref')
   })
 
+  it('opens the official author chat through its Host-owned route', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'chat.official-author.private.open', {
+      peerUserId: 11,
+      displayName: '伪造作者',
+      sourceRef: 'leak',
+    })
+    expect(service.openOfficialAuthorPrivateChat).toHaveBeenCalledWith()
+  })
+
+  it('reads the official author profile through its Host-owned route', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'chat.official-author.profile', {
+      peerUserId: 999,
+      displayName: '伪造作者',
+    })).resolves.toEqual({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })
+    expect(service.officialAuthorProfile).toHaveBeenCalledWith()
+  })
+
   it('rejects an unknown member-record mode instead of silently widening it', async () => {
     const service = fakeService()
     await expect(dispatchArkmeHostOperation(service as never, 'source.member-records', {
@@ -257,6 +279,15 @@ describe('outgoing call Host API dispatch', () => {
     })
     expect(service.searchContact).toHaveBeenCalledWith('lin-lin')
     expect(service.addContact).toHaveBeenCalledWith('contact-ref', { remark: '同事', requestUid: 'request-uid' })
+  })
+
+  it('opens a private chat from contact search without forwarding browser-owned account fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'chat.private.open-from-contact', {
+      contactRef: 'contact-ref', peerUserId: 999, displayName: '伪造名称', requestUid: 'must-not-forward',
+    })
+    expect(service.openPrivateChatFromContact).toHaveBeenCalledWith('contact-ref')
+    expect(service.addContact).not.toHaveBeenCalled()
   })
 
   it('dispatches group and Bot quick-add through strict domain adapters', async () => {

@@ -174,6 +174,7 @@ describe('official DSH client adapter', () => {
           inject: vi.fn((_key: string, factory: () => unknown) => factory()),
           register,
         },
+        locale: createClientLocaleStub(),
         layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
         effect: vi.fn((factory: () => unknown, label: string) => {
           if (!label.includes('official settings sidebar')) return

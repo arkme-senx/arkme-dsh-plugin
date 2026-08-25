@@ -22,6 +22,14 @@ describe('World consumer SDK', () => {
         if (request.operation === 'chat.world.private.open') return success({
           source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
         })
+        if (request.operation === 'chat.official-author.private.open') return success({
+          source: { sourceRef: 'official-author-source', kind: 'private_chat', displayName: '即我作者', activeAtMillis: 0, unreadCount: 0 },
+        })
+        if (request.operation === 'chat.official-author.profile') return success({
+          userId: 11,
+          displayName: '阿森',
+          avatarRef: 'author-avatar-ref',
+        })
         if (request.operation === 'world.voiceprint.availability') return success({
           items: [{ recordRef: 'record-ref', playable: true }],
         })
@@ -62,6 +70,14 @@ describe('World consumer SDK', () => {
     await expect(sdk.openWorldAuthorPrivateChat('author-ref')).resolves.toMatchObject({
       source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '小林' },
     })
+    await expect(sdk.openOfficialAuthorPrivateChat()).resolves.toMatchObject({
+      source: { sourceRef: 'official-author-source', kind: 'private_chat', displayName: '即我作者' },
+    })
+    await expect(sdk.officialAuthorProfile()).resolves.toEqual({
+      userId: 11,
+      displayName: '阿森',
+      avatarRef: 'author-avatar-ref',
+    })
     await expect(sdk.openWorldAuthorPrivateChat('  ')).rejects.toThrow('author reference must not be empty')
     await expect(sdk.worldAuthorLabels(['author-ref'])).resolves.toEqual([{ authorRef: 'author-ref', authorName: '小王' }])
     await expect(sdk.worldVoiceprintPlaybackAvailability(['record-ref'])).resolves.toEqual({
@@ -92,6 +108,8 @@ describe('World consumer SDK', () => {
       { operation: 'world.mine', params: { limit: 10, offset: 20 } },
       { operation: 'world.user', params: { userId: 7, limit: 20, offset: 0 } },
       { operation: 'chat.world.private.open', params: { authorRef: 'author-ref' } },
+      { operation: 'chat.official-author.private.open', params: {} },
+      { operation: 'chat.official-author.profile', params: {} },
       { operation: 'world.author-labels', params: { authorRefs: ['author-ref'] } },
       { operation: 'world.voiceprint.availability', params: { recordRefs: ['record-ref'] } },
       {

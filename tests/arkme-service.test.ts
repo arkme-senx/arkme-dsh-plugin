@@ -3995,6 +3995,186 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('opens a private chat from a searched registered contact without adding the contact', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    state.profile = {
+      userId: 10001,
+      displayName: 'Owner',
+      nickname: 'Owner',
+      avatarRef: '',
+      arkmeId: 'owner-id',
+      accountType: 1,
+      createdAt: 1,
+      bindings: { apple: false, wechat: false, google: false },
+      contact: {},
+    }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://auth.test/api/v1/auth/search-contact-account') {
+        expect(body).toEqual({ identifier_type: 2, identifier: 'mbr_sylj', phone_pre: '86' })
+        return json({ code: 200, data: {
+          user_id: 2001,
+          is_registered: true,
+          is_self: false,
+          can_add: false,
+          nick_name: '木白',
+          jotmo_id: 'mbr_sylj',
+          invite_by_sms: false,
+        } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        expect(body).toEqual({ user_ids: [2001] })
+        return json({ code: 200, data: {
+          items: [{ user_id: 2001, nick_name: '木白', name_slug: 'mbr_sylj', head_img: '' }],
+        } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/create-private') {
+        return json({ code: 200, data: {
+          session: {
+            chat_session_uid: 'private-mubai',
+            session_kind: 1,
+            title: '木白',
+            last_active_at: 1700000002000,
+            last_seq: 5,
+          },
+          unread_snapshot: { unread_count: 0, session_last_seq: 5 },
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const searched = await service.searchContact('@mbr_sylj')
+    expect(searched).toMatchObject({ displayName: '木白', registered: true, canAdd: false, isSelf: false })
+
+    const result = await service.openPrivateChatFromContact(searched.contactRef)
+    expect(result.source).toMatchObject({
+      kind: 'private_chat',
+      displayName: '木白',
+      activeAtMillis: 1700000002000,
+      latestSequence: 5,
+    })
+    expect(requests.map(item => new URL(item.url).pathname)).toEqual([
+      '/api/v1/auth/search-contact-account',
+      '/api/v1/auth/search-contact-account',
+      '/api/v1/auth/get-public-users-by-ids',
+      '/api/v1/chats/create-private',
+    ])
+    expect(requests.map(item => new URL(item.url).pathname)).not.toContain('/api/v1/chats/contacts/add-and-open-private')
+    expect(requests[3]?.body).toMatchObject({
+      peer_user_id: 2001,
+      title: '木白',
+      peer_display_name_snapshot: '木白',
+    })
+  })
+
+  it('opens the official author chat through the same Subject owner as the mobile contact-author entry', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    state.profile = {
+      userId: 10001,
+      displayName: 'Owner',
+      nickname: 'Owner',
+      avatarRef: '',
+      arkmeId: 'owner-id',
+      accountType: 1,
+      createdAt: 1,
+      bindings: { apple: false, wechat: false, google: false },
+      contact: {},
+    }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://subject.test/api/v1/private/create-chat-ref-asen') {
+        expect(String(body.subject_uid)).toMatch(/^dsh_official_author_[0-9a-f]+$/)
+        expect(body).toMatchObject({ network: 'dsh', client_name: 'DSH', locs: [] })
+        expect(body).not.toHaveProperty('peer_user_id')
+        return json({ code: 200, data: { rm_subject_id: 267, already_exist: true } })
+      }
+      if (url === 'https://subject.test/api/v1/private/get-partner-info-v2') {
+        expect(body).toEqual({ rm_subject_ids: [267] })
+        return json({ code: 200, data: {
+          item_ls: [{ rm_subject_id: 267, user_id: 11, mark: '', nick_name: '即我作者真名', head_img: '' }],
+        } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        expect(body).toEqual({ user_ids: [11] })
+        return json({ code: 200, data: {
+          items: [{ user_id: 11, nick_name: '作者资料名', name_slug: 'author-id', head_img: '' }],
+        } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/create-private') {
+        return json({ code: 200, data: {
+          session: {
+            chat_session_uid: 'author-private-1',
+            session_kind: 1,
+            title: '即我作者真名',
+            last_active_at: 1700000001000,
+            last_seq: 1,
+          },
+          unread_snapshot: { unread_count: 0, session_last_seq: 1 },
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const result = await service.openOfficialAuthorPrivateChat()
+    expect(result.source).toMatchObject({
+      kind: 'private_chat',
+      displayName: '即我作者真名',
+      activeAtMillis: 1700000001000,
+      latestSequence: 1,
+    })
+    expect(requests.map(item => new URL(item.url).pathname)).toEqual([
+      '/api/v1/private/create-chat-ref-asen',
+      '/api/v1/private/get-partner-info-v2',
+      '/api/v1/auth/get-public-users-by-ids',
+      '/api/v1/chats/create-private',
+    ])
+    expect(requests[3]?.body).toMatchObject({
+      peer_user_id: 11,
+      title: '即我作者真名',
+      peer_display_name_snapshot: '即我作者真名',
+    })
+  })
+
+  it('reads the official author public profile without creating a private chat', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        expect(body).toEqual({ user_ids: [11] })
+        return json({ code: 200, data: {
+          items: [{
+            user_id: 11,
+            nick_name: '阿森',
+            name_slug: 'asen',
+            head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/asen.png?x-oss-signature=abc',
+          }],
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const profile = await service.officialAuthorProfile()
+    expect(profile).toMatchObject({ userId: 11, displayName: '阿森' })
+    expect(profile.avatarRef).toEqual(expect.any(String))
+    expect(requests.map(item => new URL(item.url).pathname)).toEqual([
+      '/api/v1/auth/get-public-users-by-ids',
+    ])
+  })
+
   it('reads owner and incoming shared recordings without exposing a write surface', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

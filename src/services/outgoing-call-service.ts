@@ -16,6 +16,10 @@ function numberValue(value: unknown): number {
 
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
+function callDiag(label: string, detail: Record<string, unknown>): void {
+  try { console.info(`dsh-arkme: call_diag service ${label}`, detail) } catch { console.info(`dsh-arkme: call_diag service ${label}`) }
+}
+
 export class OutgoingCallService {
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -25,10 +29,12 @@ export class OutgoingCallService {
   ) {}
 
   clearUser(userId: number, reason: string): void {
+    callDiag('clear_user', { userId, reason })
     this.broker.clearUser(userId, reason)
   }
 
   dispose(): void {
+    callDiag('dispose', {})
     this.broker.dispose()
   }
 
@@ -42,6 +48,12 @@ export class OutgoingCallService {
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
     }
+    callDiag('request_outgoing_call', {
+      userId: session.userId,
+      sourceRef,
+      displayName: source.displayName,
+      mediaType,
+    })
     return await this.broker.request({
       userId: session.userId,
       sourceRef,
@@ -53,13 +65,27 @@ export class OutgoingCallService {
 
   async claimOutgoingCallIntent(): Promise<ArkmeOutgoingCallIntentClaim | null> {
     const session = await this.runtime.requireSession()
-    return this.broker.claim(session.userId)
+    const claim = this.broker.claim(session.userId)
+    if (claim !== null) callDiag('claim_intent', {
+      userId: session.userId,
+      intentId: claim.intentId,
+      callRequestId: claim.callRequestId,
+      mediaType: claim.mediaType,
+      displayName: claim.displayName,
+    })
+    return claim
   }
 
   async resolveOutgoingCallIntent(
     input: Omit<ArkmeOutgoingCallIntentResolutionInput, 'userId'>,
   ): Promise<void> {
     const session = await this.runtime.requireSession()
+    callDiag('resolve_intent', {
+      userId: session.userId,
+      intentId: input.intentId,
+      status: input.outcome.status,
+      code: input.outcome.status === 'failed' ? input.outcome.code : undefined,
+    })
     this.broker.resolveIntent({ ...input, userId: session.userId })
   }
 
@@ -74,6 +100,12 @@ export class OutgoingCallService {
     if (source.kind !== 'private_chat') {
       throw new ArkmePluginError('call-source-invalid', '仅支持向私聊用户发起通话', false)
     }
+    callDiag('prepare_start', {
+      userId: session.userId,
+      sourceRef: input.sourceRef,
+      mediaType: input.mediaType,
+      callRequestId: input.callRequestId,
+    })
     this.broker.acquireLease(session.userId, input.callRequestId)
     try {
       const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -94,6 +126,12 @@ export class OutgoingCallService {
       if (!Number.isSafeInteger(counterpartUserId) || counterpartUserId <= 0 || counterpartUserId === session.userId) {
         throw new ArkmePluginError('call-peer-unavailable', '当前私聊用户不可用，请刷新后重试', false, 409)
       }
+      callDiag('prepare_peer_resolved', {
+        userId: session.userId,
+        callRequestId: input.callRequestId,
+        counterpartUserId,
+        mediaType: input.mediaType,
+      })
       const detailDisplayName = stringValue(
         supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
         ?? supplement.pending_name ?? counterpart.visible_phone,
@@ -145,6 +183,13 @@ export class OutgoingCallService {
       if (calleeAccounts.length === 0) {
         throw new ArkmePluginError('call-peer-unavailable', '对方未开通通话，请对方先登录后再试', false, 409)
       }
+      callDiag('prepare_room_created', {
+        userId: session.userId,
+        callRequestId: input.callRequestId,
+        roomId,
+        mediaType: input.mediaType,
+        calleeCount: calleeAccounts.length,
+      })
       const sharedTopicId = numberValue(room.shared_topic_id)
       const userData = JSON.stringify({
         sharedTopicId: sharedTopicId > 0 ? sharedTopicId : 0,
@@ -187,6 +232,11 @@ export class OutgoingCallService {
         },
       }
     } catch (error) {
+      callDiag('prepare_failed_release', {
+        userId: session.userId,
+        callRequestId: input.callRequestId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       this.broker.releaseLease(session.userId, input.callRequestId)
       throw error
     }
@@ -194,11 +244,14 @@ export class OutgoingCallService {
 
   async heartbeatOutgoingCall(callRequestId: string): Promise<{ expiresAtMillis: number }> {
     const session = await this.runtime.requireSession()
-    return { expiresAtMillis: this.broker.heartbeatLease(session.userId, callRequestId) }
+    const expiresAtMillis = this.broker.heartbeatLease(session.userId, callRequestId)
+    callDiag('heartbeat', { userId: session.userId, callRequestId, expiresAtMillis })
+    return { expiresAtMillis }
   }
 
   async releaseOutgoingCall(callRequestId: string): Promise<void> {
     const session = await this.runtime.requireSession()
+    callDiag('release', { userId: session.userId, callRequestId })
     this.broker.releaseLease(session.userId, callRequestId)
   }
 }

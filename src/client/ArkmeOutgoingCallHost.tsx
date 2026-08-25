@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeClientConfig, ArkmeImagePayload } from '../types.js'
 import { callArkme } from './api.js'
@@ -39,6 +39,8 @@ export function ArkmeOutgoingCallHost() {
   if (runtimeRef.current === undefined) runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: loadCallAvatar })
   const runtime = runtimeRef.current
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
+  const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
+  const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
     runtime.mount()
@@ -88,8 +90,8 @@ export function ArkmeOutgoingCallHost() {
           }}
         >关闭</button></div>
       </div> : <iframe
-        ref={(node) => { runtime.attachFrame(node) }}
-        src={`${snapshot.assetBasePath}/index.html`}
+        ref={attachCallFrame}
+        src={callFrameUrl}
         name={JSON.stringify({ callRequestId: snapshot.callRequestId })}
         title={`与${snapshot.displayName}通话`}
         allow="camera; microphone; autoplay"

@@ -1001,6 +1001,8 @@ export interface ArkmeSourceItem {
   sourceRef: string
   /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
   sourceKey?: string
+  /** Private-chat peer identity when this source is a one-to-one chat. */
+  peerUserId?: number
   /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
   parentSourceRef?: string
   kind: ArkmeSourceKind
@@ -1501,6 +1503,12 @@ export interface ArkmeGroupMemberAddResult {
 }
 
 export interface ArkmeUserCardSnapshot {
+  displayName: string
+  avatarRef?: string
+}
+
+export interface ArkmeOfficialAuthorProfile {
+  userId: number
   displayName: string
   avatarRef?: string
 }
@@ -2079,6 +2087,7 @@ export type ArkmePluginOperation =
   | 'auth.logout'
   | 'contacts.search'
   | 'contacts.add'
+  | 'chat.private.open-from-contact'
   | 'group.create'
   | 'bots.create'
   | 'records.summary'
@@ -2100,6 +2109,8 @@ export type ArkmePluginOperation =
   | 'world.user'
   | 'world.author-labels'
   | 'chat.world.private.open'
+  | 'chat.official-author.profile'
+  | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
   | 'world.voiceprint.playback.generate'
   | 'world.voiceprint.social-context'
@@ -2162,6 +2173,7 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.prepare'
   | 'calls.outgoing.heartbeat'
   | 'calls.outgoing.release'
+  | 'calls.outgoing.diag'
   | 'calls.history.list'
   | 'calls.history.detail'
   | 'calls.history.summary.retry'

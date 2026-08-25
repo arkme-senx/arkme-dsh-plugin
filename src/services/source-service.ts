@@ -545,6 +545,7 @@ export class SourceService {
       if (kind === 'private_chat') {
         const counterpartUserId = numberValue(counterpart.user_id)
         if (Number.isSafeInteger(counterpartUserId) && counterpartUserId > 0) {
+          item.peerUserId = counterpartUserId
           privateUserIdByIndex.set(itemIndex, counterpartUserId)
         }
       } else {

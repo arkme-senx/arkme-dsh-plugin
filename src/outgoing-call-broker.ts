@@ -53,6 +53,10 @@ function validUserId(userId: number): number {
   return userId
 }
 
+function callDiag(label: string, detail: Record<string, unknown>): void {
+  try { console.info(`dsh-arkme: call_diag broker ${label}`, detail) } catch { console.info(`dsh-arkme: call_diag broker ${label}`) }
+}
+
 export class ArkmeOutgoingCallBroker {
   private readonly now: () => number
   private readonly randomId: () => string
@@ -89,6 +93,7 @@ export class ArkmeOutgoingCallBroker {
     const intentId = this.randomId()
     const callRequestId = this.randomId()
     const expiresAtMillis = this.now() + INTENT_TTL_MS
+    callDiag('request_created', { userId, intentId, callRequestId, sourceRef, displayName, mediaType: input.mediaType, expiresAtMillis })
     return new Promise<ArkmeOutgoingCallToolResult>((resolve, reject) => {
       const intent: PendingIntent = {
         userId,
@@ -110,6 +115,7 @@ export class ArkmeOutgoingCallBroker {
         if (current === undefined) return
         this.intents.delete(intentId)
         this.detachAbort(current)
+        callDiag('intent_timeout', { userId: current.userId, intentId: current.intentId, callRequestId: current.callRequestId })
         if (!current.toolSettled) {
           current.toolSettled = true
           current.reject(new ArkmeOutgoingCallError('call-ui-unavailable', '呼叫界面不可用，请保持 Arkme 界面打开后重试'))
@@ -119,6 +125,7 @@ export class ArkmeOutgoingCallBroker {
         const abort = (): void => {
           const current = this.intents.get(intentId)
           if (current === undefined || current.toolSettled) return
+          callDiag('request_aborted', { userId: current.userId, intentId: current.intentId, callRequestId: current.callRequestId, claimed: current.claimed })
           current.toolSettled = true
           current.reject(new ArkmeOutgoingCallError('call-cancelled', '呼叫请求已取消'))
           if (!current.claimed) this.removeIntent(current)
@@ -139,6 +146,7 @@ export class ArkmeOutgoingCallBroker {
     if (intent === undefined) return null
     intent.claimed = true
     intent.claimToken = this.randomId()
+    callDiag('intent_claimed', { userId, intentId: intent.intentId, callRequestId: intent.callRequestId, mediaType: intent.mediaType })
     return {
       intentId: intent.intentId,
       claimToken: intent.claimToken,
@@ -158,6 +166,13 @@ export class ArkmeOutgoingCallBroker {
     if (intent.claimToken === undefined || intent.claimToken !== input.claimToken) {
       throw new ArkmeOutgoingCallError('call-cancelled', '呼叫意图领取凭据无效')
     }
+    callDiag('intent_resolve', {
+      userId: input.userId,
+      intentId: intent.intentId,
+      callRequestId: intent.callRequestId,
+      status: input.outcome.status,
+      code: input.outcome.status === 'failed' ? input.outcome.code : undefined,
+    })
     this.removeIntent(intent)
     if (intent.toolSettled) return
     intent.toolSettled = true
@@ -174,10 +189,12 @@ export class ArkmeOutgoingCallBroker {
     this.expireLease(userId)
     const current = this.leases.get(userId)
     if (current !== undefined && current.callRequestId !== requestId) {
+      callDiag('lease_acquire_rejected_active', { userId, requestId, currentCallRequestId: current.callRequestId, expiresAtMillis: current.expiresAtMillis })
       throw new ArkmeOutgoingCallError('call-active', '当前已有通话进行中')
     }
     const expiresAtMillis = this.now() + ACTIVE_LEASE_TTL_MS
     this.leases.set(userId, { callRequestId: requestId, expiresAtMillis })
+    callDiag('lease_acquired', { userId, callRequestId: requestId, expiresAtMillis })
     return expiresAtMillis
   }
 
@@ -187,9 +204,11 @@ export class ArkmeOutgoingCallBroker {
     this.expireLease(userId)
     const current = this.leases.get(userId)
     if (current === undefined || current.callRequestId !== requestId) {
+      callDiag('lease_heartbeat_missing', { userId, callRequestId: requestId, currentCallRequestId: current?.callRequestId })
       throw new ArkmeOutgoingCallError('call-cancelled', '呼叫租约已失效')
     }
     current.expiresAtMillis = this.now() + ACTIVE_LEASE_TTL_MS
+    callDiag('lease_heartbeat', { userId, callRequestId: requestId, expiresAtMillis: current.expiresAtMillis })
     return current.expiresAtMillis
   }
 
@@ -197,7 +216,12 @@ export class ArkmeOutgoingCallBroker {
     validUserId(userId)
     const requestId = nonEmpty(callRequestId, '呼叫请求')
     const current = this.leases.get(userId)
-    if (current?.callRequestId === requestId) this.leases.delete(userId)
+    if (current?.callRequestId === requestId) {
+      this.leases.delete(userId)
+      callDiag('lease_released', { userId, callRequestId: requestId })
+      return
+    }
+    callDiag('lease_release_ignored', { userId, callRequestId: requestId, currentCallRequestId: current?.callRequestId })
   }
 
   clearUser(userId: number, message: string): void {
@@ -216,6 +240,7 @@ export class ArkmeOutgoingCallBroker {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    callDiag('dispose', { intentCount: this.intents.size, leaseCount: this.leases.size })
     for (const intent of [...this.intents.values()]) {
       this.removeIntent(intent)
       if (!intent.toolSettled) {
@@ -239,13 +264,17 @@ export class ArkmeOutgoingCallBroker {
 
   private expireLease(userId: number): void {
     const current = this.leases.get(userId)
-    if (current !== undefined && current.expiresAtMillis <= this.now()) this.leases.delete(userId)
+    if (current !== undefined && current.expiresAtMillis <= this.now()) {
+      this.leases.delete(userId)
+      callDiag('lease_expired', { userId, callRequestId: current.callRequestId, expiresAtMillis: current.expiresAtMillis })
+    }
   }
 
   private removeIntent(intent: PendingIntent): void {
     this.intents.delete(intent.intentId)
     this.clearTimer(intent.timer)
     this.detachAbort(intent)
+    callDiag('intent_removed', { userId: intent.userId, intentId: intent.intentId, callRequestId: intent.callRequestId, claimed: intent.claimed, toolSettled: intent.toolSettled })
   }
 
   private detachAbort(intent: PendingIntent): void {

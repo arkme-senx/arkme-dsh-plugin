@@ -16,6 +16,7 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageReportResult,
+  ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmeRichSendInput,
   ArkmeSourceItem,
@@ -48,6 +49,15 @@ interface ArkmeChatMemberRefPayload {
   chatSessionUid: string
   targetUserId: number
 }
+
+interface OfficialAuthorPrivateChatCreateResult {
+  rm_subject_id?: unknown
+  already_exist?: unknown
+}
+
+// Mirrors the mobile contact-author backend contract used by /api/v1/private/create-chat-ref-asen.
+const OFFICIAL_AUTHOR_USER_ID = 11
+const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
 
 export interface ArkmeChatRealtimePort {
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
@@ -435,55 +445,127 @@ export class ChatService {
   }
 
   async openPrivateChatFromUser(
-      peerUserId: number,
-      options: { displayName?: string; signal?: AbortSignal } = {},
-    ): Promise<ArkmeOpenPrivateChatResult> {
-      const session = await this.runtime.requireSession()
-      if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
-        throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
-      }
-      if (peerUserId === session.userId) {
+    peerUserId: number,
+    options: { displayName?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeOpenPrivateChatResult> {
+    const session = await this.runtime.requireSession()
+    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+      throw new ArkmePluginError('private-chat-peer-invalid', '私聊用户参数无效', false)
+    }
+    if (peerUserId === session.userId) {
+      throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
+    }
+    const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
+    const displayName = options.displayName?.trim() || profile?.displayName || '群成员'
+    const ownerSnapshot = (await this.runtime.stateStore.cachedProfile(session.userId).catch(() => undefined))?.profile?.displayName
+      ?? ''
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/create-private',
+      {
+        chat_session_uid: `chat_session_${randomUUID()}`,
+        peer_user_id: peerUserId,
+        title: displayName,
+        create_at: Date.now(),
+        owner_display_name_snapshot: ownerSnapshot,
+        peer_display_name_snapshot: displayName,
+        extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
+      },
+      session,
+      options.signal,
+    )
+    const chatSession = objectValue(data.session)
+    const uid = stringValue(chatSession.chat_session_uid).trim()
+    if (uid === '') {
+      throw new ArkmePluginError('private-chat-contract-invalid', '私聊会话响应不完整', true, 502)
+    }
+    const unread = objectValue(data.unread_snapshot)
+    const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+    const source: ArkmeSourceItem = {
+      sourceRef: await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
+      sourceKey: await this.source.chatDirectorySourceKey(session.userId, uid),
+      peerUserId,
+      kind: 'private_chat',
+      displayName,
+      ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
+      activeAtMillis: numberValue(chatSession.last_active_at) || Date.now(),
+      unreadCount: numberValue(unread.unread_count),
+      ...(latestSequence > 0 ? { latestSequence } : {}),
+    }
+    this.source.setChatSourceByKey(`${String(session.userId)}:${uid}`, source)
+    return { source }
+  }
+
+  async openOfficialAuthorPrivateChat(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeOpenPrivateChatResult> {
+    const session = await this.runtime.requireSession()
+    const created = await this.runtime.authenticatedSubjectPost<OfficialAuthorPrivateChatCreateResult>(
+      '/api/v1/private/create-chat-ref-asen',
+      {
+        subject_uid: `dsh_official_author_${randomUUID().replace(/-/g, '')}`,
+        network: 'dsh',
+        client_name: 'DSH',
+        locs: [],
+      },
+      session,
+      options.signal,
+    )
+    const rmSubjectId = Math.trunc(numberValue(created.rm_subject_id))
+    if (!Number.isSafeInteger(rmSubjectId) || rmSubjectId <= 0) {
+      if (booleanValue(created.already_exist)) {
         throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
       }
-      const profile = (await this.profile.publicProfileSummariesByUserIds([peerUserId], session, options.signal).catch(() => new Map())).get(peerUserId)
-      const displayName = options.displayName?.trim() || profile?.displayName || '群成员'
-      const ownerSnapshot = (await this.runtime.stateStore.cachedProfile(session.userId).catch(() => undefined))?.profile?.displayName
-        ?? ''
-      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/create-private',
-        {
-          chat_session_uid: `chat_session_${randomUUID()}`,
-          peer_user_id: peerUserId,
-          title: displayName,
-          create_at: Date.now(),
-          owner_display_name_snapshot: ownerSnapshot,
-          peer_display_name_snapshot: displayName,
-          extra: { source: 'dsh_arkme_user_card', client: 'deepseek_harness' },
-        },
-        session,
-        options.signal,
-      )
-      const chatSession = objectValue(data.session)
-      const uid = stringValue(chatSession.chat_session_uid).trim()
-      if (uid === '') {
-        throw new ArkmePluginError('private-chat-contract-invalid', '私聊会话响应不完整', true, 502)
-      }
-      const unread = objectValue(data.unread_snapshot)
-      const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
-      const source: ArkmeSourceItem = {
-        sourceRef: await this.source.sealSourceRef(session.userId, 'private_chat', uid, displayName),
-        sourceKey: await this.source.chatDirectorySourceKey(session.userId, uid),
-        kind: 'private_chat',
-        displayName,
-        ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, peerUserId) }),
-        activeAtMillis: numberValue(chatSession.last_active_at) || Date.now(),
-        unreadCount: numberValue(unread.unread_count),
-        ...(latestSequence > 0 ? { latestSequence } : {}),
-      }
-      this.source.setChatSourceByKey(`${String(session.userId)}:${uid}`, source)
-      return { source }
+      throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者私聊响应不完整', true, 502)
     }
-  
+    const partnerData = await this.runtime.authenticatedSubjectPost<Record<string, unknown>>(
+      '/api/v1/private/get-partner-info-v2',
+      { rm_subject_ids: [rmSubjectId] },
+      session,
+      options.signal,
+    )
+    const partner = listValue(partnerData.item_ls)
+      .map(item => objectValue(item))
+      .find(item => Math.trunc(numberValue(item.rm_subject_id)) === rmSubjectId)
+    if (partner === undefined) {
+      throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者私聊资料缺失，请稍后重试', true, 502)
+    }
+    const peerUserId = Math.trunc(numberValue(partner.user_id))
+    if (!Number.isSafeInteger(peerUserId) || peerUserId <= 0) {
+      throw new ArkmePluginError('official-author-chat-contract-invalid', '联系作者账号资料缺失，请稍后重试', true, 502)
+    }
+    const displayName = stringValue(partner.mark).trim()
+      || stringValue(partner.nick_name).trim()
+      || '作者'
+    return await this.openPrivateChatFromUser(peerUserId, {
+      displayName,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+  }
+
+  async officialAuthorProfile(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeOfficialAuthorProfile> {
+    const session = await this.runtime.requireSession()
+    const profile = (await this.profile.publicProfileSummariesByUserIds(
+      [OFFICIAL_AUTHOR_USER_ID],
+      session,
+      options.signal,
+    )).get(OFFICIAL_AUTHOR_USER_ID)
+    if (profile === undefined) {
+      return { userId: OFFICIAL_AUTHOR_USER_ID, displayName: OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME }
+    }
+    const displayName = profile.displayName.trim()
+      || profile.accountName?.trim()
+      || OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME
+    return {
+      userId: OFFICIAL_AUTHOR_USER_ID,
+      displayName,
+      ...(profile.avatarUrl === undefined ? {} : {
+        avatarRef: await this.profile.sealProfileImageRef(session.userId, OFFICIAL_AUTHOR_USER_ID),
+      }),
+    }
+  }
+
   async readSource(
       sourceRef: string,
       options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},

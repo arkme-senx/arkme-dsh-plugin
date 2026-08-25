@@ -92,6 +92,29 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('opens a searched contact private chat through the public SDK without adding contacts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'chat.private.open-from-contact') return success({
+          source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '木白', activeAtMillis: 1, unreadCount: 0 },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.openPrivateChatFromContact('arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432'))
+      .resolves.toMatchObject({ source: { sourceRef: 'source-ref', displayName: '木白' } })
+    expect(calls).toEqual([
+      {
+        operation: 'chat.private.open-from-contact',
+        params: { contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432' },
+      },
+    ])
+  })
+
   it('reads call history and retries summaries through same-origin opaque refs', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

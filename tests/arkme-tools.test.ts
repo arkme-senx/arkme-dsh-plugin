@@ -28,6 +28,9 @@ function fakeService(): ArkmeCoreToolPorts & {
   calendarRecords: ReturnType<typeof vi.fn>
   createTextForConversation: ReturnType<typeof vi.fn>
   setArkmeIdOnce: ReturnType<typeof vi.fn>
+  searchContact: ReturnType<typeof vi.fn>
+  addContact: ReturnType<typeof vi.fn>
+  openPrivateChatFromContact: ReturnType<typeof vi.fn>
   arkoAsk: ReturnType<typeof vi.fn>
   arkoCancel: ReturnType<typeof vi.fn>
   arkoEnsureSession: ReturnType<typeof vi.fn>
@@ -151,6 +154,22 @@ function fakeService(): ArkmeCoreToolPorts & {
       changed: true,
       canUpdate: false,
       revision: 9,
+    })),
+    searchContact: vi.fn(async (identifier: string) => ({
+      contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432',
+      identifierKind: 'arkme_id' as const,
+      displayName: identifier,
+      registered: true,
+      inviteBySms: false,
+      canAdd: false,
+      isSelf: false,
+    })),
+    addContact: vi.fn(async (contactRef: string) => ({
+      state: 'ready' as const,
+      source: { sourceRef: `source:${contactRef}`, kind: 'private_chat' as const, displayName: '林林', activeAtMillis: 1, unreadCount: 0 },
+    })),
+    openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({
+      source: { sourceRef: `source:${contactRef}`, kind: 'private_chat' as const, displayName: '林林', activeAtMillis: 1, unreadCount: 0 },
     })),
     arkoProfile: vi.fn(async () => ({
       displayName: 'Arko',
@@ -929,6 +948,28 @@ describe('Arkme conversation tools', () => {
       expect(parameters).toContain(name)
       expect(ARKME_TOOL_PROMPT).toContain(name)
     }
+  })
+
+  it('opens a searched contact private chat through the contact tool without adding contacts', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_contact_private_chat_open')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { contact_ref: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432' },
+      { callId: 'contact-open-1', signal } as never,
+    ) as string
+
+    expect(service.openPrivateChatFromContact).toHaveBeenCalledWith(
+      'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432',
+      { signal },
+    )
+    expect(service.addContact).not.toHaveBeenCalled()
+    expect(output).toContain('Arkme 私聊打开结果')
+    expect(output).toContain('"sourceRef": "source:arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432"')
+    expect(tool.description).toContain('without adding it as a contact')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_contact_private_chat_open')
   })
 
   it('starts an explicitly requested outgoing private call through the source port', async () => {

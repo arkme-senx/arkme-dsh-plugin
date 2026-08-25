@@ -150,6 +150,7 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageReportResult,
+  ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
   ArkmeProviderCapabilities,
@@ -979,6 +980,23 @@ export class ArkmeService {
     options: { displayName?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeOpenPrivateChatResult> {
     return await this.chat.openPrivateChatFromUser(peerUserId, options)
+  }
+
+  async openPrivateChatFromContact(
+    contactRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeOpenPrivateChatResult> {
+    const session = await this.runtime.requireSession()
+    const peerUserId = await this.contact.resolveRegisteredContactUserId(contactRef, session, options.signal)
+    return await this.chat.openPrivateChatFromUser(peerUserId, options)
+  }
+
+  async officialAuthorProfile(signal?: AbortSignal): Promise<ArkmeOfficialAuthorProfile> {
+    return await this.chat.officialAuthorProfile(signal === undefined ? {} : { signal })
+  }
+
+  async openOfficialAuthorPrivateChat(signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    return await this.chat.openOfficialAuthorPrivateChat(signal === undefined ? {} : { signal })
   }
 
   async openPrivateChatFromWorldAuthor(recordRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {

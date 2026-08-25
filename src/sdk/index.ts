@@ -40,6 +40,7 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
@@ -158,6 +159,7 @@ export type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeOfficialAuthorProfile,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
@@ -549,6 +551,13 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Open a private chat for a registered candidate returned by searchContact without adding it as a contact. */
+  async openPrivateChatFromContact(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    const ref = contactRef.trim()
+    if (!/^arkme-contact-v1\.[0-9a-f-]{36}$/i.test(ref)) throw new TypeError('Arkme contact reference is invalid')
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.private.open-from-contact', { contactRef: ref }, signal)
+  }
+
   /** Create an initially owner-only group chat with an idempotent client mutation id. */
   async createGroup(
     title: string,
@@ -763,6 +772,16 @@ export class ArkmeSdk {
   async openWorldAuthorPrivateChat(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
     if (authorRef.trim() === '') throw new TypeError('Arkme World author reference must not be empty')
     return await this.call<ArkmeOpenPrivateChatResult>('chat.world.private.open', { authorRef }, signal)
+  }
+
+  /** Open or reuse the same private chat used by the mobile "联系作者" entry. */
+  async openOfficialAuthorPrivateChat(signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.official-author.private.open', {}, signal)
+  }
+
+  /** Read the browser-safe public profile for the mobile "联系作者" entry without creating a chat. */
+  async officialAuthorProfile(signal?: AbortSignal): Promise<ArkmeOfficialAuthorProfile> {
+    return await this.call<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, signal)
   }
 
   /** Resolve viewer-local labels for visible World authors without exposing their user IDs. */

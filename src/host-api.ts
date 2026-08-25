@@ -277,6 +277,12 @@ function outgoingFailureCodeParam(params: Record<string, unknown>): ArkmeOutgoin
   return code
 }
 
+function outgoingDiagTextParam(params: Record<string, unknown>, key: string, maxLength: number): string {
+  return stringParam(params, key)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .slice(0, maxLength)
+}
+
 function cursorParam(params: Record<string, unknown>): ArkmeRecordCursor | undefined {
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
@@ -932,6 +938,11 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'peerUserId', 0),
       { displayName: stringParam(params, 'displayName') },
     )
+    case 'chat.private.open-from-contact': return await service.openPrivateChatFromContact(
+      stringParam(params, 'contactRef'),
+    )
+    case 'chat.official-author.profile': return await service.officialAuthorProfile()
+    case 'chat.official-author.private.open': return await service.openOfficialAuthorPrivateChat()
     case 'chat.member.private.open': return await service.openPrivateChatFromMember(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),
@@ -1010,6 +1021,13 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
+    case 'calls.outgoing.diag': {
+      console.info('dsh-arkme: call_diag browser', {
+        label: outgoingDiagTextParam(params, 'label', 200),
+        detail: outgoingDiagTextParam(params, 'detail', 4_000),
+      })
+      return { ok: true }
+    }
     case 'calls.history.list': return await service.listCallHistory({
       limit: numberParam(params, 'limit', 20),
       ...(stringParam(params, 'cursor').trim() === '' ? {} : { cursor: stringParam(params, 'cursor').trim() }),

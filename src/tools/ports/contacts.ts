@@ -1,4 +1,4 @@
-import type { ArkmeContactAddResult, ArkmeContactSearchResult } from '../../types.js'
+import type { ArkmeContactAddResult, ArkmeContactSearchResult, ArkmeOpenPrivateChatResult } from '../../types.js'
 
 export interface ArkmeContactToolPort {
   searchContact(identifier: string, options?: { signal?: AbortSignal }): Promise<ArkmeContactSearchResult>
@@ -6,4 +6,5 @@ export interface ArkmeContactToolPort {
     contactRef: string,
     options?: { remark?: string; requestUid?: string; signal?: AbortSignal },
   ): Promise<ArkmeContactAddResult>
+  openPrivateChatFromContact(contactRef: string, options?: { signal?: AbortSignal }): Promise<ArkmeOpenPrivateChatResult>
 }
