@@ -5,7 +5,9 @@ import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packArkmeExtension } from '../../src/extensions/artifact.js'
-import { renderPersistentClientBundle } from '../../src/extensions/persistent-client-bundle.js'
+import {
+  renderArkmeBundleClientBundle, renderPersistentClientBundle,
+} from '../../src/extensions/persistent-client-bundle.js'
 import {
   materializePersistentExtensionBundle, quarantinePersistentExtension,
   readPersistentExtensionActivation, writePersistentExtensionActivation,
@@ -110,6 +112,100 @@ describe('persistent extension profile bundle', () => {
       { operation: 'extensions.persistent.invoke', params: { extensionId: 'ext_stale', version: '1.0.0', method: 'read', args: null } },
     ])
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('isolates a Client slot collision and reports only that extension as unavailable', async () => {
+    const requests: Array<{ operation: string; params: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (_input: string, init: { body?: string }) => {
+      const request = JSON.parse(init.body ?? '{}') as { operation: string; params: Record<string, unknown> }
+      requests.push(request)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          value: request.operation === 'extensions.persistent.client-state' ? { mount: true } : { handled: true },
+        }),
+      }
+    })
+    const rendered = renderPersistentClientBundle('@example/colliding-client', {
+      extensionId: 'ext_colliding', version: '1.0.0', name: 'Colliding Client',
+      code: 'return { apply() {} }', apiPath: '/arkme-self/api',
+    })
+    let loaded: { factory: (requireModule: (id: string) => unknown) => unknown } | undefined
+    runInNewContext(rendered, {
+      window: { __ModuleLoader__: { load: (entry: typeof loaded) => { loaded = entry } } },
+      document: { createElement: vi.fn(), head: { append: vi.fn() } },
+      fetch: fetchImpl,
+      console,
+    })
+    const dispose = vi.fn(async () => undefined)
+    const outerContext = {
+      effect: vi.fn(),
+      plugin: vi.fn(() => Object.assign(
+        Promise.reject(new Error('list slot "shell.overlay" already has an entry with id "snake-floating"')),
+        { dispose },
+      )),
+    }
+
+    await expect((loaded!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> }).apply(outerContext))
+      .resolves.toBeUndefined()
+    await vi.waitFor(() => expect(requests.some(request => request.operation === 'extensions.client.failure')).toBe(true))
+
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(requests.find(request => request.operation === 'extensions.client.failure')?.params).toMatchObject({
+      identityKey: 'extensionId',
+      extensionId: 'ext_colliding',
+      version: '1.0.0',
+      kind: 'runtime-load-failed',
+      message: 'list slot "shell.overlay" already has an entry with id "snake-floating"',
+      clientOwnerKey: expect.stringMatching(/^client-v1-[a-f0-9]{64}$/),
+    })
+  })
+
+  it('lets a managed marketplace Client replace the same local generated Client owner', async () => {
+    const code = 'return { apply() {} }'
+    const entries = new Map<string, { factory: (requireModule: (id: string) => unknown) => unknown }>()
+    const context = {
+      window: { __ModuleLoader__: { load: (entry: { id: string; factory: (requireModule: (id: string) => unknown) => unknown }) => entries.set(entry.id, entry) } },
+      document: { createElement: vi.fn(), head: { append: vi.fn() } },
+      fetch: vi.fn(async (_input: string, init: { body?: string }) => {
+        const request = JSON.parse(init.body ?? '{}') as { operation: string }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            value: request.operation === 'extensions.persistent.client-state' ? { mount: true } : {},
+          }),
+        }
+      }),
+      console,
+    }
+    runInNewContext(renderArkmeBundleClientBundle('dsh-snake-draggable', {
+      version: '1.1.2', name: 'Local snake', code, apiPath: '/arkme-self/api',
+    }), context)
+    runInNewContext(renderPersistentClientBundle('@arkme-local/ext-managed', {
+      extensionId: 'ext_managed', version: '1.0.0', name: 'Managed snake', code, apiPath: '/arkme-self/api',
+    }), context)
+    const localDispose = vi.fn(async () => undefined)
+    const managedDispose = vi.fn(async () => undefined)
+    const childContext = { fiber: { inject: {} }, get: vi.fn(() => undefined) }
+    const cordisContext = (dispose: ReturnType<typeof vi.fn>) => ({
+      effect: vi.fn(),
+      plugin: vi.fn((plugin: { apply(ctx: unknown): unknown }) => Object.assign(
+        Promise.resolve(plugin.apply(childContext)),
+        { dispose },
+      )),
+    })
+
+    await (entries.get('dsh-snake-draggable')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply(cordisContext(localDispose))
+    await (entries.get('@arkme-local/ext-managed')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply(cordisContext(managedDispose))
+
+    expect(localDispose).toHaveBeenCalledOnce()
+    expect(managedDispose).not.toHaveBeenCalled()
   })
 
   it('materializes one immutable DSH bundle with Host and Client wrappers', () => {
@@ -254,6 +350,7 @@ describe('persistent extension profile bundle', () => {
     await installer.installTarball(tarball)
     await installer.remove('@arkme-local/ext-0123456789abcdef')
     await installer.remove('@example/install-bundle')
+    await installer.removeMany(['dsh-snake-draggable', '@example/duplicate'])
     expect(run).toHaveBeenNthCalledWith(1, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', `link:${root}`,
     ])
@@ -267,6 +364,10 @@ describe('persistent extension profile bundle', () => {
     expect(run).toHaveBeenNthCalledWith(4, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0',
       'remove', '@example/install-bundle',
+    ])
+    expect(run).toHaveBeenNthCalledWith(5, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
+      'remove', 'dsh-snake-draggable', '@example/duplicate',
     ])
   })
 
