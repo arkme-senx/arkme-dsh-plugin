@@ -21,6 +21,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -116,6 +117,14 @@ const styles: Record<string, CSSProperties> = {
   },
   compactMarker: { left: '50%', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
   hostedMarker: { left: -5 },
+  icon: { position: 'relative', display: 'inline-flex' },
+  unreadIndicator: {
+    position: 'absolute', top: -7, right: -10, minWidth: 16, height: 16,
+    padding: '0 4px', boxSizing: 'border-box', display: 'inline-flex',
+    alignItems: 'center', justifyContent: 'center', borderRadius: 8,
+    background: '#ff5a52', color: '#fff', boxShadow: '0 0 0 2px #fff',
+    fontSize: 10, fontWeight: 600, lineHeight: '16px', fontVariantNumeric: 'tabular-nums',
+  },
   label: { fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap' },
 }
 
@@ -125,6 +134,11 @@ export function ArkmeProductNavigation({
 }: ArkmeProductNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const chatDirectory = useSyncExternalStore(
+    arkmeChatDirectory.subscribe,
+    arkmeChatDirectory.getSnapshot,
+    arkmeChatDirectory.getSnapshot,
+  )
   const pluginUpdateState = useSyncExternalStore(
     arkmePluginUpdateStore.subscribe,
     arkmePluginUpdateStore.getSnapshot,
@@ -173,6 +187,11 @@ export function ArkmeProductNavigation({
         : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
   const pluginUpdate = pluginUpdateState.status
   const installedPluginVersion = pluginUpdate?.installedVersion ?? pluginManifest.version
+  const conversationUnreadCount = authState.auth?.status === 'authenticated' && chatDirectory.baselineReady
+    ? arkmeChatDirectory.totalUnreadCount({ excludeMuted: true })
+    : 0
+  const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
+
   const activate = (id: NavigationItem['id']) => {
     if (id === 'extensions') {
       arkmeUi.showExtensions()
@@ -220,10 +239,13 @@ export function ArkmeProductNavigation({
       {items.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
+        const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         return <button
           key={item.id}
           type="button"
           aria-current={active ? 'page' : undefined}
+          aria-label={showsUnread ? `${item.label}，${String(conversationUnreadCount)} 条未读` : undefined}
+          {...(showsUnread ? { 'data-arkme-conversation-unread': conversationUnreadCount } : {})}
           style={{
             ...styles.button,
             ...(compact ? styles.compactButton : {}),
@@ -237,7 +259,15 @@ export function ArkmeProductNavigation({
             ...(compact ? styles.compactMarker : {}),
             ...(hosted ? styles.hostedMarker : {}),
           }} />}
-          <ItemIcon size={22} weight="regular" aria-hidden />
+          <span style={styles.icon}>
+            <ItemIcon size={22} weight="regular" aria-hidden />
+            {showsUnread && <span
+              data-arkme-unread-indicator
+              data-arkme-unread-count={conversationUnreadCount}
+              aria-hidden
+              style={styles.unreadIndicator}
+            >{conversationUnreadLabel}</span>}
+          </span>
           <span style={styles.label}>{item.label}</span>
         </button>
       })}

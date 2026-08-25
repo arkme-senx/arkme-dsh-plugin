@@ -24,6 +24,20 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot()).toEqual({ revision: 3, sources: [], baselineReady: false, isRefreshing: false })
   })
 
+  it('can exclude muted conversations from an unread total', () => {
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([{
+      sourceRef: 'private-chat-1', kind: 'private_chat', displayName: '联系人',
+      activeAtMillis: 2, unreadCount: 4,
+    }, {
+      sourceRef: 'muted-group-1', kind: 'group_chat', displayName: '免打扰群',
+      activeAtMillis: 1, unreadCount: 120, isMuted: true,
+    }])
+
+    expect(store.totalUnreadCount()).toBe(124)
+    expect(store.totalUnreadCount({ excludeMuted: true })).toBe(4)
+  })
+
   it('keeps stable server order for unread-only updates and equal activity times', () => {
     const store = new ArkmeChatDirectoryStore()
     const first = {

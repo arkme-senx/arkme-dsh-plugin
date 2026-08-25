@@ -334,14 +334,16 @@ export class ArkmeChatDirectoryStore {
     return sources.find(item => identityForSource(indexes, item.sourceRef) === identity)?.unreadCount ?? 0
   }
 
-  totalUnreadCount(): number {
+  totalUnreadCount(options: { excludeMuted?: boolean } = {}): number {
     const sources = applyDirectoryMutations(
       this.snapshot.sources,
       this.pendingMutations,
       this.combinedReadWatermarks(),
       { sourceKeysByRef: new Map(this.sourceKeysByRef) },
     )
-    return sources.reduce((sum, source) => sum + normalizedCount(source.unreadCount), 0)
+    return sources.reduce((sum, source) => options.excludeMuted === true && source.isMuted === true
+      ? sum
+      : sum + normalizedCount(source.unreadCount), 0)
   }
 
   markReadOptimistic(

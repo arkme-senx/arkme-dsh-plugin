@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 const productNavigationSource = readFileSync(
@@ -68,6 +70,36 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('flex-direction:row')
     expect(markup).toContain('border-bottom:1px solid #e7e7e9')
     expect(markup).not.toContain('data-arkme-owned="product-brand"')
+  })
+
+  it('shows the conversation unread indicator from the existing account-scoped directory state', () => {
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 901 })
+    arkmeChatDirectory.activateAccount(901)
+    arkmeChatDirectory.publish([{
+      sourceRef: 'private-chat-1', kind: 'private_chat', displayName: '小林',
+      activeAtMillis: 1, unreadCount: 60,
+    }, {
+      sourceRef: 'group-chat-1', kind: 'group_chat', displayName: '产品群',
+      activeAtMillis: 2, unreadCount: 50,
+    }, {
+      sourceRef: 'muted-group-chat-1', kind: 'group_chat', displayName: '免打扰群',
+      activeAtMillis: 3, unreadCount: 80, isMuted: true,
+    }])
+
+    const unreadMarkup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} />)
+    expect(unreadMarkup).toContain('aria-label="对话，110 条未读"')
+    expect(unreadMarkup).toContain('data-arkme-conversation-unread="110"')
+    expect(unreadMarkup.match(/data-arkme-unread-indicator/g)).toHaveLength(1)
+    expect(unreadMarkup).toContain('data-arkme-unread-count="110"')
+    expect(unreadMarkup).toMatch(/data-arkme-unread-count="110"[^>]*>99\+<\/span>/)
+    expect(unreadMarkup).toContain('background:#ff5a52')
+
+    arkmeChatDirectory.publish([])
+    const readMarkup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} />)
+    expect(readMarkup).not.toContain('data-arkme-unread-indicator')
+
+    arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 1 })
+    arkmeChatDirectory.activateAccount(1)
   })
 
   it('fits the permanent DSH sidebar seat without rendering official sidebar chrome', () => {
