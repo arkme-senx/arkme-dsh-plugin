@@ -137,6 +137,30 @@ describe('World publish Host API dispatch', () => {
     })
   })
 
+  it('matches the mobile limit of 27 images when publishing World posts', async () => {
+    const service = fakeService()
+    const image = (index: number) => ({
+      fileAssetUid: `asset-${String(index).padStart(8, '0')}`,
+      fileName: `${String(index)}.png`,
+      mimeType: 'image/png',
+      size: 128,
+      fileKind: 1,
+    })
+
+    await dispatchArkmeHostOperation(service as never, 'world.publish-file-assets', {
+      clientMutationId: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
+      textContent: '二十七张图片',
+      fileAssets: Array.from({ length: 27 }, (_value, index) => image(index + 1)),
+    })
+    expect(service.publishWorldFileAssets).toHaveBeenCalledOnce()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'world.publish-file-assets', {
+      clientMutationId: '7e0f21bf-5f04-477c-b221-f8285d4a88b2',
+      textContent: '二十八张图片',
+      fileAssets: Array.from({ length: 28 }, (_value, index) => image(index + 1)),
+    })).rejects.toMatchObject({ code: 'world-publish-assets-invalid', message: '请选择 1 至 27 张图片' })
+  })
+
   it('rejects non-image assets before entering the World domain', async () => {
     const service = fakeService()
 

@@ -114,7 +114,8 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('aria-label="世界内容"')
     expect(markup).toContain('data-world-publish-images="true"')
     expect(markup).toContain('>添加图片<')
-    expect(markup).toContain('0 / 9')
+    expect(markup).toContain('最多 27 张，单张不超过 20MB')
+    expect(markup).toContain('0 / 27')
     expect(markup).toContain('0 / 2000')
     expect(markup).toContain('aria-label="关闭发布窗口"')
     expect(markup).not.toContain('选择文件')
@@ -123,10 +124,12 @@ describe('Arkme native World surface', () => {
   it('appends publish images up to the product limit and removes one selection without touching the others', () => {
     const image = (name: string) => ({ name, size: 1, type: 'image/png', lastModified: 1 } as File)
     const current = [image('1.png'), image('2.png')]
-    const appended = appendWorldPublishFiles(current, Array.from({ length: 10 }, (_value, index) => image(`${String(index + 3)}.png`)))
+    const appended = appendWorldPublishFiles(current, Array.from({ length: 30 }, (_value, index) => image(`${String(index + 3)}.png`)))
 
-    expect(appended.map(file => file.name)).toEqual(['1.png', '2.png', '3.png', '4.png', '5.png', '6.png', '7.png', '8.png', '9.png'])
-    expect(removeWorldPublishFile(appended, 3).map(file => file.name)).toEqual(['1.png', '2.png', '3.png', '5.png', '6.png', '7.png', '8.png', '9.png'])
+    expect(appended).toHaveLength(27)
+    expect(appended.at(-1)?.name).toBe('27.png')
+    expect(removeWorldPublishFile(appended, 3)).toHaveLength(26)
+    expect(removeWorldPublishFile(appended, 3).map(file => file.name)).not.toContain('4.png')
   })
 
   it('keeps an already small publish image byte-for-byte instead of doing unnecessary work', async () => {
@@ -156,6 +159,7 @@ describe('Arkme native World surface', () => {
 
     const unavailable = render({ status: 'success', items: [item] }, new Set())
     expect(unavailable).toContain('aria-label="邀请陈一涵开启声纹"')
+    expect(unavailable).toContain('data-world-voiceprint-invite-icon="microphone"')
 
     const withoutComments = render({ status: 'success', items: [{ ...item, extendCount: 0 }] })
     expect(withoutComments).toContain('0 条评论')
@@ -488,8 +492,17 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('cursor:default')
     expect(markup).not.toContain('cursor:zoom-in')
     expect(markup).not.toContain('陈一涵 ·')
-    expect(markup).not.toContain('1 / 2')
+    expect(markup).toContain('data-world-image-preview-counter="true"')
+    expect(markup).toContain('1 / 2')
     expect(markup).not.toContain('>关闭</button>')
+
+    const secondImageMarkup = renderToStaticMarkup(<WorldImagePreviewDialog
+      item={{ ...item, imageRefs: ['portrait-3x4', 'landscape'], imageCount: 2 }}
+      previewIndex={1}
+      onClose={noop}
+      onSelect={noop}
+    />)
+    expect(secondImageMarkup).toContain('2 / 2')
   })
 
   it('pans a zoomed image with desktop-style pointer dragging and never exposes a magnifier cursor', () => {
@@ -504,6 +517,25 @@ describe('Arkme native World surface', () => {
     const feed = render({ status: 'success', items: [{ ...item, imageRefs: ['portrait-3x4'], imageCount: 1 }] })
     expect(feed).toContain('cursor:pointer')
     expect(feed).not.toContain('cursor:zoom-in')
+  })
+
+  it('shows every feed image when a post contains no more than nine images', () => {
+    const imageRefs = Array.from({ length: 8 }, (_, index) => `world_image_${String(index + 1)}`)
+    const markup = render({ status: 'success', items: [{ ...item, imageRefs, imageCount: imageRefs.length }] })
+
+    expect(markup).toContain('grid-template-columns:repeat(3,minmax(0,1fr))')
+    expect(markup.match(/<button[^>]+aria-label="预览陈一涵发布的图片/g)).toHaveLength(8)
+    expect(markup).not.toContain('data-world-image-overflow')
+  })
+
+  it('uses the ninth tile to show how many additional images are available', () => {
+    const imageRefs = Array.from({ length: 12 }, (_, index) => `world_image_${String(index + 1)}`)
+    const markup = render({ status: 'success', items: [{ ...item, imageRefs, imageCount: imageRefs.length }] })
+
+    expect(markup.match(/<button[^>]+aria-label="预览陈一涵发布的图片/g)).toHaveLength(9)
+    expect(markup).toContain('aria-label="预览陈一涵发布的图片 9，另有 3 张图片"')
+    expect(markup).toContain('data-world-image-overflow="3"')
+    expect(markup).toContain('>+3</span>')
   })
 
   it('uses one click target for the compact preview without repeating a view-comments label', () => {

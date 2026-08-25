@@ -422,6 +422,29 @@ describe('world Provider projection', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps every image reference so feeds can preview images beyond the ninth tile', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const publicImages = Array.from({ length: 10 }, (_, index) =>
+      `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo-${String(index + 1)}.png?signature=secret-${String(index + 1)}`)
+    const service = new ArkmeService(config, sessions, stateStore as never, async (input) => {
+      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
+      return json({ code: 200, data: { list: [{
+        record_uid: 'public-record-many-images', user_id: 20002, nick_name: '小林', text_content: '十张图片',
+        images: publicImages, videos: [], voices: [],
+      }], total: 1 } })
+    })
+
+    const page = await service.listWorldFeed()
+
+    expect(page.items[0]).toMatchObject({ imageCount: 10 })
+    expect(page.items[0]?.imageRefs).toHaveLength(10)
+    expect(page.items[0]?.imageRefs).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^arkme-world-image-v1\./),
+    ]))
+    expect(JSON.stringify(page)).not.toContain('signature=secret')
+  })
+
   it('projects world voiceprint availability and playback through account-bound local media refs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

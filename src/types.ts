@@ -579,7 +579,7 @@ export interface ArkmeArrangementReminderWriteResult {
 
 export type ArkmeWorldVisibility = 'visible' | 'pending_review' | 'rejected' | 'unknown' | 'not_published'
 
-export const ARKME_WORLD_PUBLISH_MAX_IMAGES = 9
+export const ARKME_WORLD_PUBLISH_MAX_IMAGES = 27
 export const ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 export interface ArkmeWorldPublishResult {

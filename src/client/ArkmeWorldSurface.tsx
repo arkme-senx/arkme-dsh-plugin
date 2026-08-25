@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Mous
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
+import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
@@ -37,6 +38,7 @@ import { downloadWorldVoiceprintAudio, playPreparedWorldVoiceprintAudio, playWor
 type WorldScope = 'all' | 'mine'
 
 const worldSdk = createArkmeSdk()
+const WORLD_FEED_IMAGE_LIMIT = 9
 
 export type ArkmeWorldViewState = {
   status: 'loading' | 'error' | 'empty' | 'success'
@@ -92,7 +94,7 @@ const styles: Record<string, CSSProperties> = {
   voiceprintButton: { width: 20, height: 20, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer', lineHeight: 0 },
   voiceprintPlayable: { color: '#979da6' },
   voiceprintActive: { background: '#f0f1f3', color: '#565c66' },
-  voiceprintInvite: { color: '#9aa1ad' },
+  voiceprintInvite: { width: 18, height: 18, marginLeft: 2, color: '#b3b8c0' },
   time: { whiteSpace: 'nowrap', color: '#989ba3', fontSize: 10 },
   headline: { minWidth: 0, maxWidth: '100%', margin: '12px 0 0', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.5, fontWeight: 600 },
   textBlock: { minWidth: 0, maxWidth: '100%' },
@@ -101,7 +103,8 @@ const styles: Record<string, CSSProperties> = {
   textToggle: { marginTop: 3, padding: '3px 0', border: 0, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, lineHeight: 1.4 },
   imageGrid: { width: '100%', maxWidth: 620, minWidth: 0, marginTop: 12, boxSizing: 'border-box', display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 },
   image: { width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 11, background: '#f1f1f3' },
-  imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: '#f1f1f3', cursor: 'pointer' },
+  imageButton: { position: 'relative', minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: '#f1f1f3', cursor: 'pointer' },
+  imageOverflow: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(20,22,28,.52)', color: '#fff', fontSize: 22, lineHeight: 1, fontWeight: 650, letterSpacing: '.01em', pointerEvents: 'none' },
   cardFooter: { minHeight: 24, marginTop: 9, paddingTop: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButton: { padding: '3px 0', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: '#7e848e', cursor: 'pointer', font: 'inherit', fontSize: 11 },
@@ -191,6 +194,7 @@ const styles: Record<string, CSSProperties> = {
   previewImage: { position: 'absolute', inset: 0, display: 'block', width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none' },
   previewClose: { position: 'absolute', top: 0, right: 8, zIndex: 2, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', cursor: 'pointer' },
   previewNav: { position: 'absolute', top: '50%', zIndex: 2, width: 40, height: 40, marginTop: -20, padding: 0, border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', cursor: 'pointer', fontSize: 24, lineHeight: 1 },
+  previewCounter: { position: 'absolute', left: '50%', bottom: 12, zIndex: 2, transform: 'translateX(-50%)', minWidth: 46, padding: '5px 10px', boxSizing: 'border-box', borderRadius: 999, background: 'rgba(20,22,28,.62)', color: '#fff', fontSize: 11, lineHeight: 1.2, textAlign: 'center', pointerEvents: 'none' },
   replyTarget: { marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.accent, fontSize: 12 },
 }
 
@@ -670,6 +674,7 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
         {multiple && <>
           <button type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label="上一张图片" disabled={previewIndex === 0} onClick={() => { selectImage(Math.max(0, previewIndex - 1)) }}>‹</button>
           <button type="button" style={{ ...styles.previewNav, right: 10, opacity: previewIndex === item.imageRefs.length - 1 ? 0.3 : 1 }} aria-label="下一张图片" disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { selectImage(Math.min(item.imageRefs.length - 1, previewIndex + 1)) }}>›</button>
+          <span style={styles.previewCounter} aria-live="polite" data-world-image-preview-counter>{previewIndex + 1} / {item.imageRefs.length}</span>
         </>}
       </div>
     </section>
@@ -936,6 +941,8 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
   const interactionLabel = interactionCount === undefined
     ? `${String(Math.max(0, item.extendCount))} 条评论`
     : `${String(interactionCount.count)}${interactionCount.hasMore ? '+' : ''} 条评论`
+  const visibleImageRefs = item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
+  const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
   useEffect(() => {
     if (previewIndex === undefined) return
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewIndex(undefined) }
@@ -962,8 +969,8 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
                 : <SpeakerHigh size={16} weight="light" />}
             </button>
-            : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} onClick={() => { onInviteVoiceprint(item) }}>
-              <Plus size={13} weight="bold" />
+            : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
+              <Microphone size={17} weight="light" />
             </button>}
         </span>
       </span>
@@ -976,10 +983,19 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
       textContent={item.textContent}
       hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
     />}
-    {item.imageRefs.length > 0 && <div style={styles.imageGrid}>{item.imageRefs.slice(0, 3).map((imageRef, index) =>
-      <button key={imageRef} type="button" style={styles.imageButton} aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}`} onClick={() => { setPreviewIndex(index) }}>
+    {visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
+      const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
+      return <button
+        key={imageRef}
+        type="button"
+        style={styles.imageButton}
+        aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}${overflowCount > 0 ? `，另有 ${String(overflowCount)} 张图片` : ''}`}
+        onClick={() => { setPreviewIndex(index) }}
+      >
         <WorldImage imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(index + 1)}`} />
-      </button>)}</div>}
+        {overflowCount > 0 && <span style={styles.imageOverflow} data-world-image-overflow={overflowCount}>+{overflowCount}</span>}
+      </button>
+    })}</div>}
     <footer style={styles.cardFooter}>
       <button type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
         <ChatCircleDots size={16} weight="light" aria-hidden />{interactionLabel}
@@ -1271,7 +1287,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPub
       </div>
       <section style={styles.publishImageSection} data-world-publish-images="true">
         <div style={styles.publishImageHeader}>
-          <span style={styles.publishImageTitle}>图片<span style={styles.publishImageHint}>最多 9 张，单张不超过 20MB</span></span>
+          <span style={styles.publishImageTitle}>图片<span style={styles.publishImageHint}>最多 {ARKME_WORLD_PUBLISH_MAX_IMAGES} 张，单张不超过 20MB</span></span>
           <span style={styles.publishImageCount}>{files.length} / {ARKME_WORLD_PUBLISH_MAX_IMAGES}</span>
         </div>
         <input ref={fileInputRef} style={styles.publishHiddenInput} type="file" accept="image/*" multiple disabled={sending || files.length >= ARKME_WORLD_PUBLISH_MAX_IMAGES} aria-label="选择世界图片" onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />

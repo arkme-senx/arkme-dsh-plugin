@@ -1098,7 +1098,7 @@ export class WorldService {
       : rawAvatar
     const avatarFallback = worldPhoneDefaultAvatar(rawAvatar)
     const imageRefs: string[] = []
-    for (const [index, signedUrl] of rawImages.slice(0, 9).entries()) {
+    for (const [index, signedUrl] of rawImages.entries()) {
       if (!this.isTrustedWorldImageUrl(signedUrl)) continue
       imageRefs.push(await this.sealWorldImageRef(
         viewerUserId,

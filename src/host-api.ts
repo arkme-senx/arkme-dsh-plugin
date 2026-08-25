@@ -342,7 +342,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
 function worldPublishFileAssetsParam(params: Record<string, unknown>): ArkmeWorldPublishFileAsset[] {
   const rawAssets = Array.isArray(params.fileAssets) ? params.fileAssets : []
   if (rawAssets.length === 0 || rawAssets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES) {
-    throw new ArkmePluginError('world-publish-assets-invalid', '请选择 1 至 9 张图片', false, 400)
+    throw new ArkmePluginError('world-publish-assets-invalid', `请选择 1 至 ${String(ARKME_WORLD_PUBLISH_MAX_IMAGES)} 张图片`, false, 400)
   }
   return rawAssets.map(raw => {
     if (raw === null || typeof raw !== 'object') {
