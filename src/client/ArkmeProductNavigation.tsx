@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties }
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
-import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
@@ -33,7 +32,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'search' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
@@ -43,7 +42,6 @@ const items: NavigationItem[] = [
   { id: 'contacts', label: '联系人', icon: AddressBook },
   { id: 'calls', label: '通话', icon: PhoneCall },
   { id: 'recordings', label: '录音', icon: Waveform },
-  { id: 'search', label: '搜索', icon: MagnifyingGlass },
   { id: 'calendar', label: '日历', icon: CalendarBlank },
   { id: 'world', label: '世界', icon: GlobeHemisphereWest },
   { id: 'extensions', label: '市集', icon: PuzzlePiece },
@@ -183,8 +181,7 @@ export function ArkmeProductNavigation({
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
-      : ui.mode === 'search' ? 'search'
-        : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
+      : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
   const pluginUpdate = pluginUpdateState.status
   const installedPluginVersion = pluginUpdate?.installedVersion ?? pluginManifest.version
   const conversationUnreadCount = authState.auth?.status === 'authenticated' && chatDirectory.baselineReady
@@ -202,7 +199,6 @@ export function ArkmeProductNavigation({
     else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
-    else if (id === 'search') arkmeUi.showSearch()
     else arkmeUi.showConversations()
   }
 

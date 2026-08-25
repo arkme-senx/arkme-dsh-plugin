@@ -3374,6 +3374,7 @@ describe('ArkmeService', () => {
     await expect(service.searchRemote({ query: '复盘', limit: 20 })).resolves.toMatchObject({
       items: [{
         recordUid: 'record-1', title: '项目复盘', snippet: '命中复盘', templateKind: 3, displayKind: 4,
+        targetSource: { kind: 'topic', displayName: '项目主题', sourceRef: expect.stringMatching(/^arkme-source-v1\./) },
         media: [{ fileAssetUid: 'image-1', fileName: '截图.png', mimeType: 'image/png', size: 2048 }],
         files: [{ fileAssetUid: 'document-1', fileName: '方案.pdf', mimeType: 'application/pdf', size: 4096 }],
         voice: { fileAssetUid: 'voice-1', fileName: '录音.m4a', mimeType: 'audio/mp4', durationMillis: 3000 },

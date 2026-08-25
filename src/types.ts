@@ -648,6 +648,8 @@ export interface ArkmeSearchHistoryResult {
 
 export interface ArkmeSearchAssetItem {
   fileAssetUid: string
+  /** Opaque browser-safe reference for streaming this search asset through the plugin media proxy. */
+  mediaRef?: string
   fileUid?: string
   fileName?: string
   mimeType?: string
@@ -698,6 +700,8 @@ export interface ArkmeSearchRecordItem {
   recordDurationMillis?: number
   sceneItemCount?: number
   sceneItemSize?: number
+  /** Current-account navigation target for opening this hit in its owning Arkme conversation. */
+  targetSource?: ArkmeSourceItem
 }
 
 export interface ArkmeSearchSourceAggregate {

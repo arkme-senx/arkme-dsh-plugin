@@ -52,7 +52,7 @@ describe('Arkme product navigation', () => {
   })
 
   it('renders only inside an explicitly Arkme-owned boundary', () => {
-    arkmeUi.showSearch()
+    arkmeUi.showConversations()
     const markup = renderToStaticMarkup(<ArkmeProductNavigation compact={false} currentSessionId="session-1" />)
 
     expect(markup).toContain('data-arkme-owned="product-navigation"')
@@ -68,7 +68,7 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('>对话<')
     expect(markup).toContain('>通话<')
     expect(markup).toContain('>录音<')
-    expect(markup).toContain('>搜索<')
+    expect(markup).not.toContain('>搜索<')
     expect(markup).toContain('>日历<')
     expect(markup).toContain('>世界<')
     expect(markup).toContain('>市集<')
@@ -78,6 +78,11 @@ describe('Arkme product navigation', () => {
     expect(markup).toContain('height:33px')
     expect(markup).not.toContain('data-slot="conversation"')
     expect(markup).not.toContain('data-slot="sidebar.footer.action"')
+  })
+
+  it('removes the standalone Search tab from product navigation', () => {
+    expect(productNavigationSource).not.toContain("{ id: 'search', label: '搜索'")
+    expect(productNavigationSource).not.toContain("else if (id === 'search')")
   })
 
   it('uses a horizontal layout contract for compact surfaces', () => {

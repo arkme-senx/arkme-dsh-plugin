@@ -213,6 +213,7 @@ const styles: Record<string, CSSProperties> = {
   },
   date: { alignSelf: 'center', marginBottom: 18, color: arkmeTheme.caption, fontSize: 10 },
   row: { width: '100%', minWidth: 0, display: 'flex' },
+  rowSearchTarget: { borderRadius: 14, outline: '2px solid rgba(10,132,255,.42)', outlineOffset: 5, background: 'rgba(10,132,255,.07)', transition: 'outline-color .3s ease, background-color .3s ease' },
   rowMe: { justifyContent: 'flex-end' },
   rowOther: { justifyContent: 'flex-start' },
   messageLine: { maxWidth: '100%', display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 23 },
@@ -836,6 +837,8 @@ export function ArkmeSurface({
   const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [highlightedTargetUid, setHighlightedTargetUid] = useState('')
+  const conversationTargetPagingRef = useRef({ revision: 0, pages: 0 })
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [agreed, setAgreed] = useState(true)
   const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
@@ -1262,7 +1265,7 @@ export function ArkmeSurface({
     }
   }, [source])
 
-  const loadTimeline = useCallback(async (cursor?: ArkmeTimelineCursor, preserve = false) => {
+  const loadTimeline = useCallback(async (cursor?: ArkmeTimelineCursor, preserve = false, limit = 40) => {
     if (source === undefined) return
     const sourceRef = source.sourceRef
     const generation = timelineGenerationRef.current
@@ -1273,7 +1276,7 @@ export function ArkmeSurface({
     let page: ArkmeTimelinePage
     try {
       page = await callArkme<ArkmeTimelinePage>('source.timeline', {
-        sourceRef, limit: 40, ...(cursor === undefined ? {} : { cursor }),
+        sourceRef, limit, ...(cursor === undefined ? {} : { cursor }),
       }, controller.signal)
     } catch (caught) {
       if (controller.signal.aborted) return
@@ -1323,6 +1326,37 @@ export function ArkmeSurface({
       await acknowledgeRead(snapshot.items)
     }
   }, [acknowledgeRead, interwovenMoments, source, ui.chatRevision])
+
+  useEffect(() => {
+    const target = ui.conversationTarget
+    if (!authenticated || source === undefined || target === undefined
+      || timelineStateSourceRef !== source.sourceRef) return
+    if (conversationTargetPagingRef.current.revision !== target.revision) {
+      conversationTargetPagingRef.current = { revision: target.revision, pages: 0 }
+      setHighlightedTargetUid('')
+    }
+    if (items.some(item => item.itemUid === target.itemUid)) {
+      const body = bodyRef.current
+      const row = body === null ? undefined : [...body.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')]
+        .find(element => element.dataset.arkmeConversationRow === target.itemUid)
+      row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setHighlightedTargetUid(target.itemUid)
+      window.setTimeout(() => { setHighlightedTargetUid(current => current === target.itemUid ? '' : current) }, 2_400)
+      arkmeUi.consumeConversationTarget(target.revision)
+      return
+    }
+    if (loadingOlder) return
+    if (!hasMore || nextCursor === undefined || conversationTargetPagingRef.current.pages >= 80) {
+      setError('已打开对应会话，但暂未能在当前历史中定位该条消息')
+      arkmeUi.consumeConversationTarget(target.revision)
+      return
+    }
+    conversationTargetPagingRef.current.pages += 1
+    setLoadingOlder(true)
+    void loadTimeline(nextCursor, true, 100)
+      .catch(caught => { setError(errorMessage(caught)); arkmeUi.consumeConversationTarget(target.revision) })
+      .finally(() => { setLoadingOlder(false) })
+  }, [authenticated, hasMore, items, loadTimeline, loadingOlder, nextCursor, source, timelineStateSourceRef, ui.conversationTarget])
 
   useEffect(() => {
     if (!authStoreSnapshot.checked) void refreshAuth()
@@ -2250,7 +2284,7 @@ export function ArkmeSurface({
                 const polishStatus = aiPolishStatus(item)
                 return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}>{dayLabel(item.sendAtMillis)}</li>}
-                  <li data-arkme-conversation-row={row.id} style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther) }}>
+                  <li data-arkme-conversation-row={row.id} style={{ ...styles.row, ...(item.isMe ? styles.rowMe : styles.rowOther), ...(highlightedTargetUid === item.itemUid ? styles.rowSearchTarget : {}) }}>
                     <div style={{
                       ...styles.messageLine,
                       ...(item.isMe ? styles.messageLineMe : {}),

@@ -122,6 +122,55 @@ export class SourceService {
     return this.chatSourceCache.get(cacheKey)
   }
 
+  /** Resolve a remote-search owner into the same viewer-bound source used by the conversation UI. */
+  async searchTargetSource(
+    sourceKind: number,
+    sourceUid: string,
+    displayNameInput: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeSourceItem | undefined> {
+    const session = await this.runtime.requireSession()
+    const displayName = displayNameInput.replace(/\s+/g, ' ').trim()
+    if (sourceKind === 1) {
+      return await this.sourceItem({
+        version: 1,
+        userId: session.userId,
+        kind: 'default_category',
+        ownerRef: 'uncategorized',
+        displayName: displayName || '默认分类',
+      })
+    }
+    const ownerRef = sourceUid.trim()
+    if (ownerRef === '') return undefined
+    if (sourceKind === 2) {
+      return await this.sourceItem({
+        version: 1,
+        userId: session.userId,
+        kind: 'topic',
+        ownerRef,
+        displayName: displayName || '未命名主题',
+      })
+    }
+    if (sourceKind !== 3) return undefined
+    const cacheKey = `${String(session.userId)}:${ownerRef}`
+    const cached = this.chatSourceCache.get(cacheKey)
+    if (cached !== undefined) return cached
+
+    let cursor: string | undefined
+    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+      const page = await this.listSources('root', {
+        limit: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(signal === undefined ? {} : { signal }),
+      })
+      const resolved = this.chatSourceCache.get(cacheKey)
+      if (resolved !== undefined) return resolved
+      if (!page.hasMore || page.nextCursor === undefined) return undefined
+      cursor = page.nextCursor
+    }
+    return undefined
+  }
+
   setChatSource(userId: number, chatSessionUid: string, source: ArkmeSourceItem): void {
     this.chatSourceCache.set(`${String(userId)}:${chatSessionUid}`, source)
   }

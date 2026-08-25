@@ -18,6 +18,7 @@ export interface ArkmeUiState {
     | 'harness'
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
   calendarOpen?: boolean
@@ -42,6 +43,7 @@ export class ArkmeUiController {
   private lastConversationSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
   private settingsOpener: (() => void) | undefined
+  private conversationTargetRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
 
@@ -218,8 +220,32 @@ export class ArkmeUiController {
   selectSource(source: ArkmeSourceItem): void {
     this.leaveContacts()
     this.lastConversationSource = source
-    const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    const { calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', selectedSource: source })
+  }
+
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number): void {
+    this.leaveContacts()
+    const normalizedItemUid = itemUid.trim()
+    if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
+    this.lastConversationSource = source
+    const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({
+      ...rest,
+      mode: 'source',
+      selectedSource: source,
+      conversationTarget: {
+        revision: ++this.conversationTargetRevision,
+        itemUid: normalizedItemUid,
+        sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
+      },
+    })
+  }
+
+  consumeConversationTarget(revision: number): void {
+    if (this.state.conversationTarget?.revision !== revision) return
+    const { conversationTarget: _conversationTarget, ...rest } = this.state
+    this.publish(rest)
   }
 
   private publish(next: ArkmeUiState): void {
@@ -228,6 +254,9 @@ export class ArkmeUiController {
       && next.mode === this.state.mode
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
+      && next.conversationTarget?.revision === this.state.conversationTarget?.revision
+      && next.conversationTarget?.itemUid === this.state.conversationTarget?.itemUid
+      && next.conversationTarget?.sendAtMillis === this.state.conversationTarget?.sendAtMillis
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef

@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
+import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
+import { Play } from '@phosphor-icons/react/dist/icons/Play'
+import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeAiVideoListItem, ArkmeAiVideoListResult, ArkmeFileAssetDisplayItem,
   ArkmeImageSearchItem, ArkmeImageSearchResult,
-  ArkmeRecordSearchResult, ArkmeSearchHistoryResult, ArkmeSearchRecordItem,
+  ArkmeRecordSearchResult, ArkmeRecordingSearchResult, ArkmeSearchHistoryResult, ArkmeSearchRecordItem,
+  ArkmeTimelineCursor, ArkmeTimelinePage,
 } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
+import { arkmeUi } from './ui-controller.js'
 
 const assetRoot = '/arkme-self/api/call'
 const mediaRoute = '/arkme-self/api/media'
@@ -20,31 +25,47 @@ const colors = {
 
 const styles: Record<string, CSSProperties> = {
   shell: { width: 'min(980px, 100%)', margin: '0 auto', padding: '34px 48px 44px', boxSizing: 'border-box', color: colors.text },
+  dialogOverlay: { position: 'fixed', inset: 0, zIndex: 10020, display: 'grid', placeItems: 'center', padding: 24, boxSizing: 'border-box', background: 'color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 22%, transparent)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' },
+  dialogPanel: { width: 'min(1480px, 84vw, calc(100vw - 48px))', height: 'min(940px, 84vh, calc(100vh - 48px))', minHeight: 420, overflow: 'hidden', border: `1px solid ${colors.border}`, borderRadius: 22, background: colors.panel, boxShadow: '0 24px 70px rgba(27, 31, 44, .18)', boxSizing: 'border-box' },
+  dialogShell: { width: '100%', height: '100%', margin: 0, padding: '22px 22px 26px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', color: colors.text },
   hero: { marginBottom: 22 },
   eyebrow: { margin: '0 0 8px', color: '#858991', fontSize: 14, lineHeight: '20px' },
   heroTitle: { margin: 0, fontSize: 26, lineHeight: '34px', letterSpacing: '-.035em', fontWeight: 650 },
   heroSubtitle: { display: 'block', marginTop: 12, color: '#7d818b', fontSize: 15, lineHeight: '22px' },
-  column: { display: 'flex', flexDirection: 'column' },
-  searchBox: { height: 50, flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', boxSizing: 'border-box', border: '1px solid #d9deef', borderRadius: 14, background: '#fff', boxShadow: '0 5px 20px rgba(25,28,38,.035)' },
+  column: { minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column' },
+  searchTopRow: { display: 'flex', alignItems: 'center', gap: 12, flex: 'none' },
+  searchBox: { height: 50, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 14, background: arkmeTheme.input, boxShadow: '0 5px 20px rgba(25,28,38,.035)' },
   searchIcon: { width: 22, height: 22, flex: 'none' },
   input: { flex: 1, minWidth: 0, height: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 15 },
   clear: { width: 40, height: 40, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
-  scroll: { overflowY: 'visible' },
-  section: { margin: '18px 0 0' }, sectionTitle: { margin: '0 0 2px', color: colors.tertiary, fontSize: 12, lineHeight: '22px', fontWeight: 400 },
-  chips: { display: 'flex', flexDirection: 'column', gap: 0 }, chip: { width: '100%', minHeight: 54, padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, border: 0, borderBottom: `1px solid ${colors.border}`, borderRadius: 0, background: 'transparent', color: colors.text, textAlign: 'left', cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '20px' },
+  close: { width: 40, height: 50, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
+  scroll: { minHeight: 0, overflowY: 'visible' }, dialogScroll: { flex: 1, overflowY: 'auto', paddingRight: 2 },
+  section: { margin: '28px 0 0' }, sectionHeader: { minHeight: 24, margin: '0 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }, sectionTitle: { margin: 0, color: colors.text, fontSize: 14, lineHeight: '22px', fontWeight: 600 },
+  historyChips: { display: 'flex', flexWrap: 'wrap', gap: 10 }, historyChip: { minHeight: 40, padding: '0 15px', display: 'inline-flex', alignItems: 'center', border: 0, borderRadius: 12, background: colors.subtle, color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '20px' },
+  quickChips: { display: 'flex', flexWrap: 'wrap', gap: 10 }, quickChip: { minHeight: 44, padding: '0 16px', display: 'inline-flex', alignItems: 'center', gap: 8, border: `1px solid ${colors.border}`, borderRadius: 12, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '20px', fontWeight: 600 }, quickChipIcon: { width: 18, height: 18, display: 'block', flex: 'none' }, quickHint: { color: colors.tertiary, fontSize: 12, lineHeight: '20px', fontWeight: 400 },
   tabs: { display: 'flex', alignItems: 'flex-end', gap: 30, flex: 'none', marginTop: 20, borderBottom: `1px solid ${colors.border}` },
   tab: { position: 'relative', minHeight: 38, padding: '0 0 11px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 14, whiteSpace: 'nowrap' }, tabActive: { fontWeight: 600 },
   indicator: { position: 'absolute', left: '50%', bottom: 5, width: 10, height: 2, marginLeft: -5, borderRadius: 22, background: colors.text },
+  resultTabs: { display: 'flex', alignItems: 'flex-end', gap: 32, flex: 'none', marginTop: 20 },
+  resultTab: { position: 'relative', minHeight: 42, display: 'inline-flex', alignItems: 'center', padding: '0 0 12px', border: 0, outline: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 14, whiteSpace: 'nowrap' },
+  resultTabActive: { color: colors.text, fontWeight: 600 },
+  resultIndicator: { position: 'absolute', left: '50%', bottom: 5, width: 16, height: 2, marginLeft: -8, borderRadius: 22, background: colors.text },
+  resultFrame: { minHeight: 0, flex: 1, marginTop: 2, overflow: 'hidden', border: '1px solid rgba(60, 60, 67, .10)', borderRadius: 14, background: '#fbfbfc' },
+  resultHeader: { margin: 0, padding: '14px 16px 8px', color: colors.tertiary, fontSize: 13, lineHeight: '20px', fontWeight: 500 },
   status: { padding: '54px 12px', textAlign: 'center', color: colors.secondary, fontSize: 13 },
   error: { margin: '14px 0 0', padding: '10px 12px', borderRadius: 8, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
-  list: { display: 'flex', flexDirection: 'column' }, row: { width: '100%', minWidth: 0, padding: '14px 10px', border: 0, borderBottom: `1px solid ${colors.border}`, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', boxSizing: 'border-box' },
+  list: { display: 'flex', flexDirection: 'column', gap: 4, padding: '0 7px 7px' }, row: { width: '100%', minWidth: 0, padding: '13px 12px', border: 0, borderRadius: 10, background: colors.panel, boxShadow: '0 1px 3px rgba(60,60,67,.035)', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit', boxSizing: 'border-box' },
+  rowTop: { display: 'flex', alignItems: 'center', gap: 7 }, dshBadge: { flex: 'none', padding: '1px 5px', borderRadius: 5, background: colors.subtle, color: colors.secondary, fontSize: 9, lineHeight: '15px', fontWeight: 600 },
   title: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '21px', fontWeight: 600 },
   text: { margin: '4px 0 0', display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: colors.secondary, fontSize: 13, lineHeight: '20px' },
   meta: { display: 'block', marginTop: 6, color: arkmeTheme.caption, fontSize: 11, lineHeight: '16px' },
   metaLine: { display: 'flex', marginTop: 6, alignItems: 'center', gap: 4, color: arkmeTheme.caption, fontSize: 11, lineHeight: '16px' },
   dshAgentInputMarker: { fontSize: 11, lineHeight: '16px' },
   dshAgentInputIcon: { width: 10, height: 10, opacity: .72 },
-  sourceLayout: { minHeight: 0, flex: 1, display: 'grid', gridTemplateColumns: 'minmax(180px, 36%) minmax(0, 1fr)', gap: 18, overflow: 'hidden' }, sourceList: { overflowY: 'auto', borderRight: `1px solid ${colors.border}`, paddingRight: 8 }, sourceResults: { overflowY: 'auto' },
+  sourceLayout: { minHeight: 0, height: '100%', display: 'grid', gridTemplateColumns: 'minmax(220px, 34%) minmax(0, 1fr)', gap: 8, padding: 8, overflow: 'hidden', boxSizing: 'border-box' }, sourceList: { minHeight: 0, overflowY: 'auto', padding: '0 5px 5px', borderRadius: 11, background: colors.panel }, sourceResults: { minHeight: 0, overflowY: 'auto', borderRadius: 11, background: colors.panel },
+  sourceRow: { position: 'relative', width: '100%', minWidth: 0, marginTop: 3, padding: '12px 13px', border: 0, borderRadius: 9, background: 'transparent', color: colors.text, textAlign: 'left', cursor: 'pointer', font: 'inherit', boxSizing: 'border-box' },
+  sourceRowActive: { background: 'rgba(10, 132, 255, .075)' }, sourceMarker: { position: 'absolute', left: 0, top: 10, bottom: 10, width: 2, borderRadius: '0 4px 4px 0', background: '#0a84ff' },
+  sourcePrompt: { padding: '62px 20px', textAlign: 'center', color: colors.tertiary, fontSize: 13 },
   quickShell: { width: '100%' },
   quickHeader: { width: '100%' }, quickTopRow: { display: 'flex', alignItems: 'center', gap: 8 },
   back: { width: 32, height: 44, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, borderRadius: 8, background: 'transparent', cursor: 'pointer' },
@@ -55,7 +76,15 @@ const styles: Record<string, CSSProperties> = {
   imageSection: { marginTop: 12 }, imageSectionTitle: { margin: '0 0 6px 2px', color: colors.tertiary, fontSize: 12, lineHeight: '18px', fontWeight: 400 }, imageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 0, background: arkmeTheme.subtle, cursor: 'pointer' },
   loadMoreSentinel: { minHeight: 44, display: 'grid', placeItems: 'center', marginTop: 8, color: colors.secondary, fontSize: 13 },
   retryLoadMore: { display: 'block', minWidth: 96, padding: '7px 16px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 13 },
-  audioRow: { padding: '12px 8px', borderBottom: `1px solid ${colors.border}` }, audio: { width: '100%', height: 34, marginTop: 8 },
+  audioRow: { minHeight: 68, margin: '0 7px 5px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 15, borderRadius: 12, background: colors.panel, boxShadow: '0 1px 3px rgba(60,60,67,.035)', boxSizing: 'border-box' },
+  audioControl: { minWidth: 74, display: 'flex', alignItems: 'center', gap: 8, flex: 'none' },
+  audioPlay: { width: 34, height: 34, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, borderRadius: '50%', background: colors.subtle, color: colors.text, cursor: 'pointer' },
+  audioPlayDisabled: { color: colors.tertiary, cursor: 'default' },
+  audioDuration: { minWidth: 32, color: colors.secondary, fontSize: 12, lineHeight: '18px', fontVariantNumeric: 'tabular-nums' },
+  audioNavigate: { minWidth: 0, flex: 1, padding: 0, border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit' },
+  audioTranscript: { margin: 0, display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: colors.text, fontSize: 14, lineHeight: '21px', fontWeight: 500 },
+  audioMeta: { display: 'block', marginTop: 5, color: colors.tertiary, fontSize: 11, lineHeight: '16px' },
+  audioElement: { display: 'none' },
   fileRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 8px', borderBottom: `1px solid ${colors.border}`, color: colors.text, textDecoration: 'none' }, fileIcon: { width: 38, height: 38, flex: 'none' }, fileText: { minWidth: 0, flex: 1 },
   linkCard: { display: 'block', marginTop: 10, padding: 12, border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, textDecoration: 'none', overflow: 'hidden' },
   aiGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 12 }, aiCard: { minWidth: 0, overflow: 'hidden', border: `1px solid ${colors.border}`, borderRadius: 9 }, aiCover: { ...({ position: 'relative', width: '100%', aspectRatio: '16 / 9', display: 'grid', placeItems: 'center', overflow: 'hidden', padding: 0, border: 0, background: '#20242c', cursor: 'pointer' } as CSSProperties) }, aiBody: { padding: '9px 10px 11px' },
@@ -65,13 +94,44 @@ const styles: Record<string, CSSProperties> = {
 const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = [
   { key: 'image', label: '图片', tabLabel: '图片库' },
   { key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' },
+  { key: 'audio', label: '语音', tabLabel: '语音' },
 ]
-type QuickKey = 'image' | 'ai_video'
+type QuickKey = 'image' | 'ai_video' | 'audio'
 type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
+type SearchResultTab = 'records' | 'topics' | 'recordings' | 'dsh'
+
+export interface ArkmeDshMessageSearchItem {
+  sessionId: string
+  title: string
+  snippet: string
+  updatedAtMillis: number
+}
+
+export interface ArkmeDshMessageSearchResult {
+  items: ArkmeDshMessageSearchItem[]
+  hasMore: boolean
+}
+
+export interface ArkmeSearchSurfaceProps {
+  variant?: 'page' | 'dialog'
+  searchDshMessages?: (query: string, signal: AbortSignal) => Promise<ArkmeDshMessageSearchResult>
+  onOpenDshSession?: (sessionId: string) => void
+  onOpenRecord?: (item: ArkmeSearchRecordItem) => void
+  onClose?: () => void
+}
 
 function errorMessage(error: unknown): string { return error instanceof ArkmeClientError ? error.body.message : error instanceof Error ? error.message : String(error) }
 function dateTimeLabel(value: number): string { return Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '' }
 function displayUrl(item: ArkmeFileAssetDisplayItem | undefined): string { return item?.previewUrl || item?.downloadUrl || '' }
+function audioDurationLabel(durationMillis: number | undefined): string {
+  const totalSeconds = Math.max(0, Math.round((durationMillis ?? 0) / 1_000))
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  return hours > 0
+    ? `${String(hours)}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes)}:${String(seconds).padStart(2, '0')}`
+}
 function mediaUrl(mediaRef: string): string { return `${mediaRoute}?ref=${encodeURIComponent(mediaRef)}` }
 function imageMonthLabel(value: number): string {
   const date = new Date(value)
@@ -94,8 +154,119 @@ function RecordMeta({ item }: { item: ArkmeSearchRecordItem }) {
   }
   return <span style={styles.meta}>{item.sourceTitle === undefined ? '' : `${item.sourceTitle} · `}{dateLabel}</span>
 }
+function normalizedSearchText(value: string): string { return value.replace(/\s+/g, ' ').trim() }
+function recordTitle(item: ArkmeSearchRecordItem): string { return item.title || item.nickname || '快记' }
+function recordSummary(item: ArkmeSearchRecordItem): string {
+  const value = item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')
+  return normalizedSearchText(value) === normalizedSearchText(recordTitle(item)) ? '' : value
+}
 export function RecordRow({ item, onClick }: { item: ArkmeSearchRecordItem; onClick(): void }) {
-  return <button type="button" style={styles.row} onClick={onClick}><p style={styles.title}>{item.title || item.nickname || '快记'}</p><p style={styles.text}>{item.snippet || item.textContent || (item.media.length + item.files.length > 0 || item.voice !== undefined ? '媒体内容' : '暂无文字内容')}</p><RecordMeta item={item} /></button>
+  const summary = recordSummary(item)
+  return <button type="button" style={styles.row} onClick={onClick}><p style={styles.title}>{recordTitle(item)}</p>{summary !== '' && <p style={styles.text}>{summary}</p>}<RecordMeta item={item} /></button>
+}
+function DshMessageRow({ item, onClick }: { item: ArkmeDshMessageSearchItem; onClick(): void }) {
+  return <button type="button" style={styles.row} onClick={onClick}>
+    <span style={styles.rowTop}><span style={styles.dshBadge}>DSH 任务</span><strong style={styles.title}>{item.title}</strong></span>
+    <p style={styles.text}>{item.snippet}</p>
+    <span style={styles.meta}>{dateTimeLabel(item.updatedAtMillis)}</span>
+  </button>
+}
+function RecordingRow({ item }: { item: ArkmeRecordingSearchResult['items'][number] }) {
+  return <button type="button" style={styles.row} onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis)}>
+    <p style={{ ...styles.text, marginTop: 0, color: colors.text }}>{item.snippet || '暂无转写内容'}</p>
+    <span style={styles.meta}>{dateTimeLabel(item.startAtMillis || item.dateStamp)}</span>
+  </button>
+}
+function AudioQuickRow({ item, asset, onOpen }: {
+  item: ArkmeSearchRecordItem
+  asset?: ArkmeFileAssetDisplayItem
+  onOpen(): void
+}) {
+  const initialUrl = item.voice?.mediaRef === undefined ? displayUrl(asset) : mediaUrl(item.voice.mediaRef)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const resolveAbort = useRef<AbortController>()
+  const [url, setUrl] = useState(initialUrl)
+  const [playing, setPlaying] = useState(false)
+  const [resolving, setResolving] = useState(false)
+  const [playWhenReady, setPlayWhenReady] = useState(false)
+  const duration = audioDurationLabel(item.voice?.durationMillis ?? item.recordDurationMillis)
+  const transcript = item.snippet || item.textContent || '暂无转写内容'
+  const sender = item.nickname || recordTitle(item)
+  useEffect(() => { setUrl(initialUrl) }, [initialUrl])
+  useEffect(() => () => { resolveAbort.current?.abort() }, [])
+  useEffect(() => {
+    if (!playWhenReady || url === '' || audioRef.current === null) return
+    setPlayWhenReady(false)
+    void audioRef.current.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
+  }, [playWhenReady, url])
+  const resolveFromConversation = useCallback(async (): Promise<string> => {
+    if (item.targetSource === undefined) return ''
+    resolveAbort.current?.abort()
+    const controller = new AbortController()
+    resolveAbort.current = controller
+    let cursor: ArkmeTimelineCursor | undefined
+    for (let pageIndex = 0; pageIndex < 80; pageIndex += 1) {
+      const page = await callArkme<ArkmeTimelinePage>('source.timeline', {
+        sourceRef: item.targetSource.sourceRef,
+        limit: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      }, controller.signal)
+      const target = page.items.find(candidate => candidate.itemUid === item.recordUid)
+      if (target !== undefined) {
+        const contentBlocks = target.contentBlocks ?? []
+        const audio = contentBlocks.find(block => block.kind === 'audio'
+          && (item.voice?.fileAssetUid === undefined || block.fileAssetUid === item.voice.fileAssetUid))
+          ?? contentBlocks.find(block => block.kind === 'audio')
+        return audio === undefined ? '' : mediaUrl(audio.mediaRef)
+      }
+      if (!page.hasMore || page.nextCursor === undefined) return ''
+      cursor = page.nextCursor
+    }
+    return ''
+  }, [item])
+  const togglePlayback = useCallback(async () => {
+    const audio = audioRef.current
+    if (url === '') {
+      if (resolving || item.targetSource === undefined) return
+      setResolving(true)
+      try {
+        const resolvedUrl = await resolveFromConversation()
+        if (resolvedUrl !== '') {
+          setUrl(resolvedUrl)
+          setPlayWhenReady(true)
+        }
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) setPlaying(false)
+      } finally { setResolving(false) }
+      return
+    }
+    if (audio === null) return
+    if (!audio.paused) {
+      audio.pause()
+      setPlaying(false)
+      return
+    }
+    void audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
+  }, [item.targetSource, resolveFromConversation, resolving, url])
+  const unavailable = url === '' && item.targetSource === undefined
+  return <article style={styles.audioRow}>
+    <div style={styles.audioControl}>
+      <button
+        type="button"
+        disabled={unavailable || resolving}
+        aria-label={resolving ? `正在加载语音，时长 ${duration}` : unavailable ? `语音暂不可播放，时长 ${duration}` : `${playing ? '暂停' : '播放'}语音，时长 ${duration}`}
+        title={resolving ? '正在加载' : unavailable ? '语音暂不可播放' : playing ? '暂停' : '播放'}
+        style={{ ...styles.audioPlay, ...(unavailable || resolving ? styles.audioPlayDisabled : {}) }}
+        onClick={() => { void togglePlayback() }}
+      >{playing ? <Pause size={15} weight="fill" aria-hidden /> : <Play size={15} weight="fill" aria-hidden />}</button>
+      <span style={styles.audioDuration}>{duration}</span>
+    </div>
+    <button type="button" style={styles.audioNavigate} onClick={onOpen}>
+      <p style={styles.audioTranscript}>{transcript}</p>
+      <span style={styles.audioMeta}>{sender}{item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>
+    </button>
+    {url !== '' && <audio ref={audioRef} preload="none" src={url} style={styles.audioElement} onEnded={() => setPlaying(false)} onError={() => setPlaying(false)} />}
+  </article>
 }
 function Status({ loading, error, empty }: { loading: boolean; error?: string; empty?: boolean }) {
   if (loading) return <div style={styles.status} role="status">正在加载…</div>
@@ -103,54 +274,99 @@ function Status({ loading, error, empty }: { loading: boolean; error?: string; e
   return empty === true ? <div style={styles.status}>暂无相关内容</div> : null
 }
 
-export function ArkmeSearchSurface() {
+export function ArkmeSearchSurface({
+  variant = 'page', searchDshMessages, onOpenDshSession, onOpenRecord, onClose,
+}: ArkmeSearchSurfaceProps = {}) {
   const [query, setQuery] = useState('')
   const [history, setHistory] = useState<string[]>([])
   const [records, setRecords] = useState<ArkmeRecordSearchResult>()
+  const [recordings, setRecordings] = useState<ArkmeRecordingSearchResult>()
+  const [dshMessages, setDshMessages] = useState<ArkmeDshMessageSearchResult>()
+  const [resultTab, setResultTab] = useState<SearchResultTab>('records')
+  const [selectedSourceUid, setSelectedSourceUid] = useState('')
+  const [sourceRecords, setSourceRecords] = useState<ArkmeSearchRecordItem[]>([])
   const [quick, setQuick] = useState<QuickKey>()
   const [images, setImages] = useState<ArkmeImageSearchItem[]>()
   const [imageCursor, setImageCursor] = useState('')
   const [imageHasMore, setImageHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [videos, setVideos] = useState<ArkmeAiVideoListItem[]>()
+  const [audioRecords, setAudioRecords] = useState<ArkmeSearchRecordItem[]>()
   const [assets, setAssets] = useState<Map<string, ArkmeFileAssetDisplayItem>>(() => new Map())
   const [resolvedAssetUids, setResolvedAssetUids] = useState<Set<string>>(() => new Set())
-  const [selectedRecord, setSelectedRecord] = useState<ArkmeSearchRecordItem>()
   const [preview, setPreview] = useState<Preview>()
   const [loading, setLoading] = useState(false)
+  const [sourceLoading, setSourceLoading] = useState(false)
   const [recordError, setRecordError] = useState('')
+  const [recordingError, setRecordingError] = useState('')
+  const [dshError, setDshError] = useState('')
   const requestId = useRef(0)
+  const quickRef = useRef<QuickKey>()
+  const searchAbort = useRef<AbortController>()
   const quickRequestAbort = useRef<AbortController>()
   const imageLoadMoreSentinel = useRef<HTMLDivElement>(null)
   const imageLoadMoreInFlight = useRef(false)
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
-  const resetResults = useCallback(() => { requestId.current += 1; setRecords(undefined); setRecordError(''); setLoading(false) }, [])
+  const resetResults = useCallback(() => { searchAbort.current?.abort(); searchAbort.current = undefined; requestId.current += 1; setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setSourceLoading(false) }, [])
 
   const runSearch = useCallback(async (raw: string) => {
     const keyword = raw.trim()
     if (keyword === '') { resetResults(); return }
     const id = ++requestId.current
-    setLoading(true); setRecordError('')
-    const recordResult = await Promise.allSettled([
-      callArkme<ArkmeRecordSearchResult>('search.records', { query: keyword, limit: 50 }),
-    ]).then(results => results[0])
-    if (id !== requestId.current) return
-    setRecords(recordResult.status === 'fulfilled' ? recordResult.value : undefined)
+    searchAbort.current?.abort()
+    const controller = new AbortController()
+    searchAbort.current = controller
+    setLoading(true); setRecordError(''); setRecordingError(''); setDshError('')
+    const [recordResult, recordingResult, dshResult] = await Promise.allSettled([
+      callArkme<ArkmeRecordSearchResult>('search.records', { query: keyword, limit: 50 }, controller.signal),
+      quickRef.current !== undefined ? Promise.resolve(undefined) : callArkme<ArkmeRecordingSearchResult>('search.recordings', { query: keyword, limit: 50 }, controller.signal),
+      quickRef.current !== undefined || searchDshMessages === undefined ? Promise.resolve(undefined) : searchDshMessages(keyword, controller.signal),
+    ])
+    if (id !== requestId.current || controller.signal.aborted) return
+    const nextRecords = recordResult.status === 'fulfilled' ? recordResult.value : undefined
+    setRecords(nextRecords)
+    setRecordings(recordingResult.status === 'fulfilled' ? recordingResult.value : undefined)
+    setRecordingError(recordingResult.status === 'rejected' ? errorMessage(recordingResult.reason) : '')
     setRecordError(recordResult.status === 'rejected' ? errorMessage(recordResult.reason) : '')
+    setDshMessages(dshResult.status === 'fulfilled' ? dshResult.value : undefined)
+    setDshError(dshResult.status === 'rejected' ? errorMessage(dshResult.reason) : '')
+    const firstSource = nextRecords?.sourceAggregates[0]
+    setSelectedSourceUid(firstSource?.sourceUid ?? '')
+    setSourceRecords(firstSource === undefined ? [] : nextRecords?.items.filter(item => item.sourceUid === firstSource.sourceUid) ?? [])
     setLoading(false)
+    if (searchAbort.current === controller) searchAbort.current = undefined
     void callArkme('search.history.create', { query: keyword }).catch(() => undefined)
     setHistory(current => [keyword, ...current.filter(value => value !== keyword)].slice(0, 10))
-  }, [resetResults])
+  }, [resetResults, searchDshMessages])
+
+  const chooseSource = useCallback(async (sourceUid: string, sourceKind: number) => {
+    const keyword = query.trim()
+    if (keyword === '') return
+    setSelectedSourceUid(sourceUid)
+    const cached = (records?.items ?? []).filter(item => item.sourceUid === sourceUid)
+    setSourceRecords(cached)
+    setSourceLoading(true)
+    try {
+      const result = await callArkme<ArkmeRecordSearchResult>('search.records', {
+        query: keyword, limit: 50, sourceUid, searchScope: sourceKind === 2 ? 'topic' : 'chat_session',
+      })
+      setSourceRecords(result.items)
+    } catch (caught) { setRecordError(errorMessage(caught)) }
+    finally { setSourceLoading(false) }
+  }, [query, records])
 
   useEffect(() => { if (query.trim() === '') { resetResults(); return }; const timer = window.setTimeout(() => { void runSearch(query) }, 300); return () => window.clearTimeout(timer) }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
+    searchAbort.current?.abort()
+    searchAbort.current = undefined
     quickRequestAbort.current?.abort()
     quickRequestAbort.current = undefined
-    const hasCachedPage = value === 'image' ? images !== undefined : videos !== undefined
+    const hasCachedPage = value === 'image' ? images !== undefined : value === 'ai_video' ? videos !== undefined : audioRecords !== undefined
     const id = ++requestId.current
-    setQuick(value); setQuery(''); setRecords(undefined); setRecordError('')
+    quickRef.current = value
+    setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError('')
     if (hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
@@ -160,9 +376,12 @@ export function ArkmeSearchSurface() {
       if (value === 'image') {
         const result = await callArkme<ArkmeImageSearchResult>('images.list', { limit: 50 }, controller.signal)
         if (id === requestId.current) { setImages(result.items); setImageCursor(result.nextCursor ?? ''); setImageHasMore(result.hasMore) }
-      } else {
+      } else if (value === 'ai_video') {
         const result = await callArkme<ArkmeAiVideoListResult>('ai-video.list', { limit: 30 }, controller.signal)
         if (id === requestId.current) setVideos(result.items)
+      } else {
+        const result = await callArkme<ArkmeRecordSearchResult>('search.scene', { scene: 'audio', limit: 50 }, controller.signal)
+        if (id === requestId.current) setAudioRecords(result.items)
       }
     } catch (caught) { if (id === requestId.current) setRecordError(controller.signal.aborted ? '加载超时，请重试' : errorMessage(caught)) }
     finally {
@@ -170,7 +389,7 @@ export function ArkmeSearchSurface() {
       if (quickRequestAbort.current === controller) quickRequestAbort.current = undefined
       if (id === requestId.current) setLoading(false)
     }
-  }, [images, videos])
+  }, [audioRecords, images, videos])
 
   const loadMoreImages = useCallback(async () => {
     if (imageLoadMoreInFlight.current || !imageHasMore || imageCursor === '') return
@@ -199,16 +418,22 @@ export function ArkmeSearchSurface() {
     return () => observer.disconnect()
   }, [imageCursor, imageHasMore, loadMoreImages, quick, recordError])
 
-  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; requestId.current += 1; setQuick(undefined); setQuery(''); setRecords(undefined); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setRecordError(''); setLoading(false); setLoadingMore(false) }, [])
-  useEffect(() => () => { quickRequestAbort.current?.abort() }, [])
+  const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setLoadingMore(false) }, [])
+  useEffect(() => () => { quickRequestAbort.current?.abort(); searchAbort.current?.abort() }, [])
   useEffect(() => {
-    const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined).map(fileAssetUid => ({ fileAssetUid }))
-    const uids = [...new Set(videoAssets.map(item => item.fileAssetUid))].filter(uid => !resolvedAssetUids.has(uid))
+    const videoAssets = (videos ?? []).flatMap(item => [item.coverAssetUid, item.videoAssetUid]).filter((value): value is string => value !== undefined)
+    const audioAssets = (audioRecords ?? []).flatMap(item => item.voice === undefined || item.voice.mediaRef !== undefined ? [] : [item.voice.fileAssetUid])
+    const uids = [...new Set([...videoAssets, ...audioAssets])].filter(uid => !resolvedAssetUids.has(uid))
     if (uids.length === 0) return
     let active = true
     void callArkme<ArkmeFileAssetDisplayItem[]>('files.assets', { fileAssetUids: uids }).then(items => { if (!active) return; setAssets(current => { const next = new Map(current); for (const item of items) next.set(item.fileAssetUid, item); return next }); setResolvedAssetUids(current => new Set([...current, ...uids])) }).catch(() => { if (active) setResolvedAssetUids(current => new Set([...current, ...uids])) })
     return () => { active = false }
-  }, [resolvedAssetUids, videos])
+  }, [audioRecords, resolvedAssetUids, videos])
+
+  const openRecord = useCallback((item: ArkmeSearchRecordItem) => {
+    if (onOpenRecord !== undefined) { onOpenRecord(item); return }
+    if (item.targetSource !== undefined) arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis)
+  }, [onOpenRecord])
 
   const quickBody = useMemo<ReactNode>(() => {
     if (quick === undefined) return null
@@ -224,6 +449,14 @@ export function ArkmeSearchSurface() {
       }
       return <>{[...sections].map(([label, sectionItems]) => <section key={label} style={styles.imageSection}><h3 style={styles.imageSectionTitle}>{label}</h3><div style={styles.mediaGrid}>{sectionItems.map(item => <button key={item.itemKey} type="button" style={styles.imageTile} title={item.recordTitle} onClick={() => setPreview({ kind: 'image', url: mediaUrl(item.mediaRef), name: item.fileName, subtitle: [item.sourceTitle, dateTimeLabel(item.sendAtMillis)].filter(Boolean).join(' · ') })}><img src={mediaUrl(item.mediaRef)} alt={item.fileName} loading="lazy" style={styles.mediaImage} /></button>)}</div></section>)}{recordError !== '' && <div style={styles.error}>{recordError}</div>}{loadMoreSentinel}</>
     }
+    if (quick === 'audio') {
+      const items = audioRecords ?? []
+      if (items.length === 0) return <Status loading={false} empty />
+      return <div style={{ paddingTop: 12 }}>{items.map(item => {
+        const asset = item.voice === undefined ? undefined : assets.get(item.voice.fileAssetUid)
+        return <AudioQuickRow key={item.recordUid} item={item} {...(asset === undefined ? {} : { asset })} onOpen={() => { openRecord(item) }} />
+      })}</div>
+    }
     const items = videos ?? []
     if (items.length === 0) return <Status loading={false} empty />
     return <div style={styles.aiGrid}>{items.map(item => {
@@ -231,28 +464,89 @@ export function ArkmeSearchSurface() {
         const video = item.videoAssetUid === undefined ? '' : displayUrl(assets.get(item.videoAssetUid))
         return <article key={item.jobId} style={styles.aiCard}><button type="button" style={styles.aiCover} disabled={item.status !== 'succeeded' || video === ''} onClick={() => setPreview({ kind: 'video', url: video, name: item.title })}>{cover !== '' && <img src={cover} alt="" style={styles.mediaImage} />}{item.status === 'succeeded' ? <img src={`${assetRoot}/video_play_white.svg`} alt="" style={styles.play} /> : <span style={{ color: '#fff', fontSize: 12 }}>{item.status === 'failed' ? '生成失败' : `生成中 ${String(item.progress)}%`}</span>}</button><div style={styles.aiBody}><p style={styles.title}>{item.title}</p><span style={styles.meta}>{dateTimeLabel(item.sourceStartedAtMillis || item.createdAtMillis)}</span></div></article>
       })}</div>
-  }, [assets, imageHasMore, images, loading, loadingMore, loadMoreImages, quick, recordError, videos])
+  }, [assets, audioRecords, imageHasMore, images, loading, loadingMore, loadMoreImages, openRecord, quick, recordError, videos])
 
   const hasQuery = query.trim() !== ''
   const recordItems = records?.items ?? []
+  const recordingItems = recordings?.items ?? []
+  const sourceItems = records?.sourceAggregates ?? []
+  const dshItems = dshMessages?.items ?? []
+  const resultTabs: Array<[SearchResultTab, string]> = [
+    ['records', '快记'], ['topics', '主题'], ['recordings', '录音·转写'],
+    ...(searchDshMessages === undefined ? [] : [['dsh', 'DSH'] as [SearchResultTab, string]]),
+  ]
+  const searchResults = <>
+    <nav style={styles.resultTabs} aria-label="全局搜索结果类型">
+      {resultTabs.map(([key, label]) => <button
+        key={key} type="button" style={{ ...styles.resultTab, ...(resultTab === key ? styles.resultTabActive : {}) }}
+        onClick={() => setResultTab(key)}
+      >{label}{resultTab === key && <span style={styles.resultIndicator} />}</button>)}
+    </nav>
+    <div style={{ ...styles.resultFrame, ...(variant === 'dialog' ? { flex: 1 } : {}) }}>
+      {loading ? <Status loading /> : resultTab === 'records' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="快记搜索结果">
+        <h3 style={styles.resultHeader}>{String(records?.itemCount ?? recordItems.length)}个关联快记</h3>
+        {recordError !== '' ? <div style={styles.error}>快记暂不可用：{recordError}</div>
+          : recordItems.length > 0 ? <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>
+            : <Status loading={false} empty />}
+      </div> : resultTab === 'topics' ? <div style={styles.sourceLayout} aria-label="主题搜索结果">
+        <div style={styles.sourceList}>
+          <h3 style={styles.resultHeader}>{String(sourceItems.length)}个关联主题</h3>
+          {recordError !== '' ? <div style={styles.error}>主题暂不可用：{recordError}</div> : sourceItems.length === 0 ? <Status loading={false} empty /> : sourceItems.map(item => {
+            const active = selectedSourceUid === item.sourceUid
+            return <button key={`${String(item.sourceKind)}:${item.sourceUid}`} type="button" style={{ ...styles.sourceRow, ...(active ? styles.sourceRowActive : {}) }} onClick={() => { void chooseSource(item.sourceUid, item.sourceKind) }}>
+              {active && <span style={styles.sourceMarker} />}
+              <p style={styles.title}>{item.title}</p>
+              <span style={styles.meta}>{item.matchedRecordCountExact ? item.matchedRecordCount : `约 ${String(item.matchedRecordCount)}`}条关联快记</span>
+            </button>
+          })}
+        </div>
+        <div style={styles.sourceResults}>
+          <h3 style={styles.resultHeader}>记录详情</h3>
+          {selectedSourceUid === '' ? <div style={styles.sourcePrompt}>选择一个主题查看关联快记</div>
+            : sourceLoading ? <Status loading />
+              : sourceRecords.length > 0 ? <div style={styles.list}>{sourceRecords.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>
+                : <Status loading={false} empty />}
+        </div>
+      </div> : resultTab === 'recordings' ? <div style={{ height: '100%', overflowY: 'auto' }} aria-label="录音转写搜索结果">
+        <h3 style={styles.resultHeader}>{String(recordingItems.length)}个关联录音</h3>
+        {recordingError !== '' ? <div style={styles.error}>录音·转写暂不可用：{recordingError}</div>
+          : recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingRow key={`${item.sessionId}:${String(item.startAtMillis)}`} item={item} />)}</div>
+            : <Status loading={false} empty />}
+      </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label="DSH 搜索结果">
+        <h3 style={styles.resultHeader}>{String(dshItems.length)}个关联DSH任务</h3>
+        {dshError !== '' ? <div style={styles.error}>DSH 任务暂不可用：{dshError}</div>
+          : dshItems.length > 0 ? <div style={styles.list}>{dshItems.map(item => <DshMessageRow key={item.sessionId} item={item} onClick={() => onOpenDshSession?.(item.sessionId)} />)}</div>
+            : <Status loading={false} empty />}
+      </div>}
+    </div>
+  </>
 
-  return <div style={styles.shell}>
-    <header style={styles.hero}>
+  return <div style={variant === 'dialog' ? styles.dialogShell : styles.shell}>
+    {variant === 'page' && <header style={styles.hero}>
       <h1 style={styles.heroTitle}>一句话，找到所有内容</h1>
-    </header>
+    </header>}
     {quick === undefined ? <div style={styles.column}>
-      <div style={styles.searchBox}>
-        <MagnifyingGlass size={20} color="#a3a7af" aria-hidden />
-        <input autoFocus style={styles.input} value={query} placeholder="搜索人物、主题或你记得的一句话…" aria-label="搜索" onChange={event => setQuery(event.target.value)} />
-        {query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}
+      <div style={styles.searchTopRow}>
+        <div style={styles.searchBox}>
+          <MagnifyingGlass size={20} color="#a3a7af" aria-hidden />
+          <input autoFocus style={styles.input} value={query} placeholder="搜索对话、快记或消息" aria-label="搜索" onChange={event => setQuery(event.target.value)} />
+          {query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}
+        </div>
+        {onClose !== undefined && <button type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
       </div>
-      {!hasQuery ? <div style={styles.scroll}><section style={styles.section}><h3 style={styles.sectionTitle}>快速查找</h3><div style={styles.chips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.chip} onClick={() => { void loadQuick(entry.key) }}><span>{entry.label}</span><ArrowRight size={16} aria-hidden /></button>)}</div></section>{history.length > 0 && <section style={styles.section}><h3 style={styles.sectionTitle}>历史搜索</h3><div style={styles.chips}>{history.map(value => <button key={value} type="button" style={styles.chip} onClick={() => setQuery(value)}><span>{value}</span><ArrowRight size={16} aria-hidden /></button>)}</div></section>}</div> : <>
-        {recordError !== '' && <div style={styles.error}>{recordError}</div>}
-        <div style={styles.scroll}>{loading ? <Status loading /> : recordItems.length === 0 && recordError === '' ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</div>
-      </>}
+      {!hasQuery ? <div style={{ ...styles.scroll, ...(variant === 'dialog' ? styles.dialogScroll : {}) }}>
+        {history.length > 0 && <section style={styles.section} aria-label="搜索历史">
+          <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>搜索历史</h3></div>
+          <div style={styles.historyChips}>{history.map(value => <button key={value} type="button" style={styles.historyChip} onClick={() => setQuery(value)}>{value}</button>)}</div>
+        </section>}
+        <section style={styles.section} aria-label="快速查找">
+          <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>快速查找</h3><span style={styles.quickHint}>按内容类型浏览</span></div>
+          <div style={styles.quickChips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
+        </section>
+      </div> : searchResults}
     </div> : <div style={styles.quickShell}>
       <header style={styles.quickHeader}>
-        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div></div>
+        <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>{onClose !== undefined && <button type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}</div>
         <div style={styles.tabs}>{hasQuery
           ? <button type="button" style={{ ...styles.tab, ...styles.tabActive }}>搜索快记<span style={styles.indicator} /></button>
           : quickEntries.map(entry => {
@@ -261,10 +555,29 @@ export function ArkmeSearchSurface() {
           })}
         </div>
       </header>
-      <main style={styles.quickBody}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => setSelectedRecord(item)} />)}</div>}</> : quickBody}</main>
+      <main style={styles.quickBody}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
     </div>}
-
-    {selectedRecord !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setSelectedRecord(undefined)}><article style={styles.detail} onClick={event => event.stopPropagation()}><h3 style={styles.title}>{selectedRecord.title || selectedRecord.nickname || '快记'}</h3>{selectedRecord.textContent !== '' && <p style={{ ...styles.text, display: 'block', color: colors.text, whiteSpace: 'pre-wrap' }}>{selectedRecord.textContent}</p>}<RecordMeta item={selectedRecord} /><button type="button" style={styles.closeText} onClick={() => setSelectedRecord(undefined)}>返回搜索结果</button></article></div>}
     {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
+  </div>
+}
+
+export function ArkmeGlobalSearchDialog({
+  searchDshMessages, onOpenDshSession, onOpenRecord, onClose,
+}: Required<Pick<ArkmeSearchSurfaceProps, 'onClose'>> & Omit<ArkmeSearchSurfaceProps, 'variant' | 'onClose'>) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+  return <div style={styles.dialogOverlay} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section style={styles.dialogPanel} role="dialog" aria-modal="true" aria-label="全局搜索">
+      <ArkmeSearchSurface
+        variant="dialog"
+        {...(searchDshMessages === undefined ? {} : { searchDshMessages })}
+        {...(onOpenDshSession === undefined ? {} : { onOpenDshSession })}
+        {...(onOpenRecord === undefined ? {} : { onOpenRecord })}
+        onClose={onClose}
+      />
+    </section>
   </div>
 }

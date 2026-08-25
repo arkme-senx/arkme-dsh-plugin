@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import type {
@@ -15,6 +16,7 @@ import { ArkmeSendToSelfIcon } from './ArkmeSendToSelfIcon.js'
 import { ArkmeDSHBetaCommunityEntry } from './ArkmeDSHBetaCommunityEntry.js'
 import { ARKME_EXTENSION_BRAND_GREEN } from './ArkmeMarketplace.js'
 import { ArkmeTopicTagBadge } from './ArkmeTopicTagBadge.js'
+import { ArkmeGlobalSearchDialog, type ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeTopicCreateDialog } from './ArkmeTopicCreateDialog.js'
@@ -51,6 +53,8 @@ export interface ArkmeNavigationProps {
   sendToSelfSource?: ArkmeSourceItem
   directoryLead?: ReactNode
   onCreateTask?: () => void
+  searchDshMessages?: (query: string, signal: AbortSignal) => Promise<ArkmeDshMessageSearchResult>
+  onOpenDshSession?: (sessionId: string) => void
   renderSlot?: (key: 'arkme.directory.entry', ownerProps: ArkmeDirectoryEntryOwnerProps) => ReactNode
 }
 
@@ -726,7 +730,7 @@ export function ArkmeSourceSortControl({
 
 export function ArkmeNavigation({
   wide = true, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
-  sendToSelfSource, directoryLead, onCreateTask, renderSlot,
+  sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(
@@ -775,7 +779,7 @@ export function ArkmeNavigation({
     arkmeArkoConversationPreviewStore.getSnapshot,
   )
   const [error, setError] = useState('')
-  const [conversationQuery, setConversationQuery] = useState('')
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [activeDirectoryEntryId, setActiveDirectoryEntryId] = useState<string>()
   const activateDirectoryEntry = useCallback((entryId?: string) => { setActiveDirectoryEntryId(entryId) }, [])
   const activateNativeEntry = useCallback(() => { setActiveDirectoryEntryId(undefined) }, [])
@@ -812,20 +816,11 @@ export function ArkmeNavigation({
   )
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
-  const normalizedConversationQuery = conversationQuery.trim().toLocaleLowerCase()
-  const rootSources = useMemo(() => normalizedConversationQuery === '' ? sources : sources.filter(source => (
-    source.displayName.toLocaleLowerCase().includes(normalizedConversationQuery)
-    || (source.latestPreview ?? '').toLocaleLowerCase().includes(normalizedConversationQuery)
-  )), [normalizedConversationQuery, sources])
-  const showArkoInSearch = normalizedConversationQuery === ''
-    || arkoPresentationName(arkoProfile).toLocaleLowerCase().includes(normalizedConversationQuery)
-    || (arkoLatestPreview ?? ARKO_CONVERSATION_PREVIEW_FALLBACK).toLocaleLowerCase().includes(normalizedConversationQuery)
+  const rootSources = sources
+  const showArkoInSearch = true
   const sendToSelfPresentation = arkmeSendToSelfDirectoryPresentation(sendToSelfSource)
-  const showSelfInSearch = normalizedConversationQuery === ''
-    || '发给自己 默认分类与主题'.includes(normalizedConversationQuery)
-    || sendToSelfPresentation.preview.toLocaleLowerCase().includes(normalizedConversationQuery)
-  const showHarnessInSearch = normalizedConversationQuery === ''
-    || 'deepseek harness 原生 deepseek 开发环境'.includes(normalizedConversationQuery)
+  const showSelfInSearch = true
+  const showHarnessInSearch = true
 
   const stopCreatedHighlightAnimation = useCallback(() => {
     createdHighlightTimeoutsRef.current.forEach(timer => { clearTimeout(timer) })
@@ -1101,7 +1096,6 @@ export function ArkmeNavigation({
   const showCalls = () => { activateNativeEntry(); arkmeUi.showCalls(); onActivateSurface?.() }
   const showRecordings = () => { activateNativeEntry(); arkmeUi.showRecordings(); onActivateSurface?.() }
   const showCalendar = () => { activateNativeEntry(); arkmeUi.showCalendar(); onActivateSurface?.() }
-  const showSearch = () => { activateNativeEntry(); arkmeUi.showSearch(); onActivateSurface?.() }
   const showContactAdd = () => { activateNativeEntry(); arkmeUi.showContactAdd(); onActivateSurface?.() }
   const showArko = () => { activateNativeEntry(); arkmeUi.showArko(); onActivateSurface?.() }
   const changeDirectory = (next: ArkmeSourceDirectory) => {
@@ -1247,11 +1241,18 @@ export function ArkmeNavigation({
       <label style={{ ...styles.searchField, ...styles.embeddedSearchField }}>
         <MagnifyingGlass size={16} aria-hidden />
         <input
-          value={conversationQuery}
+          value=""
+          readOnly
           style={styles.searchInput}
           placeholder="搜索对话或消息"
           aria-label="搜索对话或消息"
-          onChange={event => { setConversationQuery(event.target.value) }}
+          aria-haspopup="dialog"
+          onClick={() => { setGlobalSearchOpen(true) }}
+          onKeyDown={event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            setGlobalSearchOpen(true)
+          }}
         />
       </label>
       {authenticated && <ArkmeQuickAddButton
@@ -1285,7 +1286,7 @@ export function ArkmeNavigation({
       aria-label={directory === 'send_to_self' ? '发给自己分类' : 'Arkme 会话'}
     >
       {directory === 'root' && <>
-        {authenticated && normalizedConversationQuery === '' && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
+        {authenticated && <ArkmeDSHBetaCommunityEntry onJoined={joinedDSHBetaCommunity} />}
         {showHarnessEntry && showHarnessInSearch && <DeepSeekHarnessRow
           selected={activeDirectoryEntryId === undefined && ui.mode === 'harness'}
           onClick={() => {
@@ -1326,7 +1327,6 @@ export function ArkmeNavigation({
         {!embeddedProductShell && <ArkmeCalendarRow selected={activeDirectoryEntryId === undefined && ui.calendarOpen === true} onClick={showCalendar} />}
         {!embeddedProductShell && <ArkmeCallsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'calls'} onClick={showCalls} />}
         {!embeddedProductShell && <ArkmeRecordingsRow selected={activeDirectoryEntryId === undefined && ui.mode === 'recordings'} onClick={showRecordings} />}
-        {!embeddedProductShell && <ArkmeSearchRow selected={activeDirectoryEntryId === undefined && ui.mode === 'search'} onClick={showSearch} />}
         {renderSlot !== undefined && renderSlot('arkme.directory.entry', {
           wide: !!wide,
           authenticated,
@@ -1416,5 +1416,18 @@ export function ArkmeNavigation({
       submitting={topicCreateSubmitting} error={topicCreateError}
       onCancel={cancelTopicCreate} onConfirm={title => { void submitTopicCreate(title) }}
     />}
+    {globalSearchOpen && typeof document !== 'undefined' && createPortal(<ArkmeGlobalSearchDialog
+      {...(searchDshMessages === undefined ? {} : { searchDshMessages })}
+      onOpenRecord={item => {
+        if (item.targetSource === undefined) return
+        setGlobalSearchOpen(false)
+        arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis)
+      }}
+      onOpenDshSession={sessionId => {
+        setGlobalSearchOpen(false)
+        onOpenDshSession?.(sessionId)
+      }}
+      onClose={() => { setGlobalSearchOpen(false) }}
+    />, document.body)}
   </section>
 }

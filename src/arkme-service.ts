@@ -294,7 +294,7 @@ export class ArkmeService {
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
     })
     this.record = new RecordService(this.runtime, this.media, this.source)
-    this.search = new SearchService(this.runtime, this.record, this.media)
+    this.search = new SearchService(this.runtime, this.record, this.media, this.source)
     this.bot = new BotService(this.runtime, this.source)
     this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker)
     this.world = new WorldService(

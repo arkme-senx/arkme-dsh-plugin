@@ -164,6 +164,24 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('opens and consumes an exact conversation message target', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-search', kind: 'group_chat', displayName: '发布会项目群', activeAtMillis: 1, unreadCount: 0,
+    } as const
+
+    controller.showConversationTarget(source, 'record-search-1', 123)
+    const target = controller.getSnapshot().conversationTarget
+    expect(controller.getSnapshot()).toMatchObject({
+      mode: 'source', selectedSource: source,
+      conversationTarget: { itemUid: 'record-search-1', sendAtMillis: 123 },
+    })
+
+    controller.consumeConversationTarget(target?.revision ?? 0)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    expect(controller.getSnapshot().conversationTarget).toBeUndefined()
+  })
+
   it('opens one user World homepage and clears the target when returning to the public World', () => {
     const controller = new ArkmeUiController()
     const listener = vi.fn()

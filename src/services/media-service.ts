@@ -694,6 +694,75 @@ export class MediaService {
     })
   }
 
+  private async queryRecordMediaDisplayItems(
+    recordUids: string[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<string, unknown[]>> {
+    const expectedRecordUids = [...new Set(recordUids.map(value => value.trim()).filter(value => value !== ''))]
+    const displayItemsByRecordUid = new Map<string, unknown[]>()
+    if (expectedRecordUids.length === 0) return displayItemsByRecordUid
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/media/batch-list',
+      { record_uids: expectedRecordUids },
+      session,
+      signal,
+      {
+        lane: 'interactive-read',
+        scope: 'record-media-page',
+        key: expectedRecordUids.join(','),
+        cacheMs: 1_000,
+      },
+    )
+    // The deployed Record owner names the per-record projection array `items`.
+    // Accept the older `results` draft as a read-only compatibility fallback.
+    for (const rawResult of listValue(data.items ?? data.results)) {
+      const result = objectValue(rawResult)
+      const recordUid = stringValue(result.record_uid).trim()
+      if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
+      displayItemsByRecordUid.set(recordUid, listValue(result.items))
+    }
+    return displayItemsByRecordUid
+  }
+
+  async issueSearchAudioMediaRefs(
+    requests: Array<{ recordUid: string; fileAssetUid: string }>,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const normalized = [...new Map(requests.map(request => {
+      const recordUid = request.recordUid.trim()
+      const fileAssetUid = request.fileAssetUid.trim()
+      return [`${recordUid}\0${fileAssetUid}`, { recordUid, fileAssetUid }] as const
+    }).filter(([, request]) => request.recordUid !== '' && request.fileAssetUid !== '')).values()].slice(0, 50)
+    const mediaRefs = new Map<string, string>()
+    if (normalized.length === 0 || this.runtime.config.richMediaRenderEnabled === false) return mediaRefs
+    const session = await this.runtime.requireSession()
+    const displayItemsByRecordUid = await this.queryRecordMediaDisplayItems(
+      normalized.map(request => request.recordUid),
+      session,
+      signal,
+    )
+    for (const request of normalized) {
+      const rawItem = (displayItemsByRecordUid.get(request.recordUid) ?? []).find(raw => {
+        return stringValue(objectValue(raw).file_asset_uid).trim() === request.fileAssetUid
+      })
+      const item = objectValue(rawItem)
+      const remoteUrl = safeHttpsUrl(item.download_url ?? item.preview_url)
+      if (remoteUrl === undefined) continue
+      const parsedUrl = new URL(remoteUrl)
+      const mimeType = stringValue(item.mime_type).trim() || 'audio/mpeg'
+      if (!allowedSignedAudioHost(this.runtime.config.environment, parsedUrl.hostname) || !mimeType.startsWith('audio/')) continue
+      const key = `${request.recordUid}\0${request.fileAssetUid}`
+      mediaRefs.set(key, this.issueMediaRef(session.userId, {
+        remoteUrl,
+        mimeType,
+        fileName: stringValue(item.file_name).trim() || '语音',
+        size: Math.max(0, numberValue(item.size)),
+      }, `search-audio\0${key}`))
+    }
+    return mediaRefs
+  }
+
   async hydrateRecordMediaPage(
     rawItems: unknown[],
     session: ArkmeSessionCredentials,
@@ -712,25 +781,8 @@ export class MediaService {
       return { displayItemsByRecordUid, unavailableRecordUids }
     }
     try {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/records/media/batch-list',
-        { record_uids: expectedRecordUids },
-        session,
-        signal,
-        {
-          lane: 'interactive-read',
-          scope: 'record-media-page',
-          key: expectedRecordUids.join(','),
-          cacheMs: 1_000,
-        },
-      )
-      // The deployed Record owner names the per-record projection array `items`.
-      // Accept the older `results` draft as a read-only compatibility fallback.
-      for (const rawResult of listValue(data.items ?? data.results)) {
-        const result = objectValue(rawResult)
-        const recordUid = stringValue(result.record_uid).trim()
-        if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
-        const items = listValue(result.items)
+      const queriedItems = await this.queryRecordMediaDisplayItems(expectedRecordUids, session, signal)
+      for (const [recordUid, items] of queriedItems) {
         displayItemsByRecordUid.set(recordUid, items)
         const hasDeliverableItem = items.some(rawItem => {
           const item = objectValue(rawItem)

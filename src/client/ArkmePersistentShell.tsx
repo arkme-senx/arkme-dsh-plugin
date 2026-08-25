@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
 import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
@@ -7,6 +8,7 @@ import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import type { ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySurface.js'
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
@@ -52,11 +54,14 @@ export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
   & {
     collapseSidebar(): void
     closeDetails(): void
+    searchDshMessages?(query: string, signal: AbortSignal): Promise<{ items: SessionSearchResultItem[]; hasMore: boolean }>
+    openDshSession?(sessionId: string): void
   }
 
 /** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
 export function ArkmePersistentSidebar({
   collapsed, useSessions, renderSlot, collapseSidebar, closeDetails,
+  searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
@@ -98,6 +103,21 @@ export function ArkmePersistentSidebar({
   const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
     ? sendToSelfState.source
     : undefined
+  const searchDsh = useCallback(async (query: string, signal: AbortSignal): Promise<ArkmeDshMessageSearchResult> => {
+    const result = await searchDshMessages(query, signal)
+    return {
+      hasMore: result.hasMore,
+      items: result.items.map(item => {
+        const summary = sessionState.byId[item.sessionId]
+        return {
+          sessionId: item.sessionId,
+          title: summary?.displayTitle ?? 'DeepSeek Harness 任务',
+          snippet: item.snippet,
+          updatedAtMillis: summary?.updatedAt ?? 0,
+        }
+      }),
+    }
+  }, [searchDshMessages, sessionState.byId])
   useLayoutEffect(() => {
     closeDetails()
     if (collapsed) collapseSidebar()
@@ -189,6 +209,8 @@ export function ArkmePersistentSidebar({
         showHarnessEntry
         currentSessionId={sessionState.current}
         renderSlot={renderSlot}
+        searchDshMessages={searchDsh}
+        onOpenDshSession={sessionId => { openDshSession(sessionId); arkmeUi.showHarness() }}
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />}
     </div>}
