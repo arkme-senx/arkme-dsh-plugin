@@ -115,4 +115,3 @@ export const arkmeEmojiAssetUrls: readonly string[] = Object.freeze([
   dataUrl(emoji55Base64),
   dataUrl(emoji56Base64),
 ])
-
