@@ -196,6 +196,7 @@ describe('Arkme native World surface', () => {
     const workspace = readFileSync(new URL('../src/client/ArkmeVirtualWorkspace.tsx', import.meta.url), 'utf8')
 
     const activateSource = sidebar.slice(sidebar.indexOf('const activateSource = useCallback'), sidebar.indexOf('const conversationMemberByRef'))
+    expect(activateSource).toContain('if (isArkmeChatDirectorySource(nextSource))')
     expect(activateSource.indexOf('arkmeChatDirectory.upsert(nextSource)')).toBeGreaterThanOrEqual(0)
     expect(activateSource.indexOf('arkmeChatDirectory.upsert(nextSource)')).toBeLessThan(activateSource.indexOf('arkmeUi.selectSource(nextSource)'))
     expect(workspace).toContain('rootRowElementsRef')

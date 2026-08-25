@@ -1,5 +1,4 @@
 import type { CSSProperties } from 'react'
-import { StackSimple } from '@phosphor-icons/react/dist/icons/StackSimple'
 import type { ArkmeSourceItem } from '../types.js'
 
 export interface ArkmeSourceBreadcrumbSegment {
@@ -15,19 +14,12 @@ const colors = {
   text: '#171923',
   secondary: '#8e9199',
   caption: '#a0a3aa',
-  accent: '#5d76e8',
-  accentSoft: '#f1f2f6',
 }
 
 const styles: Record<string, CSSProperties> = {
   breadcrumb: {
     minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', overflow: 'hidden', whiteSpace: 'nowrap',
   },
-  directoryIconFrame: {
-    width: 36, height: 36, marginRight: 9, flex: '0 0 auto', display: 'grid', placeItems: 'center',
-    borderRadius: 10, color: colors.accent, background: colors.accentSoft,
-  },
-  directoryIcon: { width: 18, height: 18 },
   titleGroup: {
     minWidth: 0, flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'center', overflow: 'hidden',
   },
@@ -50,16 +42,6 @@ const styles: Record<string, CSSProperties> = {
   separator: { flex: 'none', padding: '0 4px', color: colors.caption, fontWeight: 400 },
 }
 
-function ArkmeDirectoryBreadcrumbIcon() {
-  return <span
-    aria-hidden="true"
-    data-arkme-source-breadcrumb-icon="true"
-    style={styles.directoryIconFrame}
-  >
-    <StackSimple size={18} weight="regular" style={styles.directoryIcon} />
-  </span>
-}
-
 function reconcileBreadcrumbSource(
   source: ArkmeSourceItem,
   sources: readonly ArkmeSourceItem[],
@@ -71,7 +53,7 @@ function reconcileBreadcrumbSource(
   return equivalent.length === 1 ? equivalent[0]! : source
 }
 
-/** Append one visited personal destination without deriving its directory ancestry. */
+/** Move one visited personal destination to the end without keeping an older duplicate. */
 export function appendArkmeSourceBreadcrumbTrail(
   trail: ArkmeSourceItem[],
   selectedSource: ArkmeSourceItem | undefined,
@@ -81,12 +63,14 @@ export function appendArkmeSourceBreadcrumbTrail(
   if (selectedSource.kind !== 'default_category' && selectedSource.kind !== 'topic') return trail
   const resolved = reconcileBreadcrumbSource(selectedSource, sources)
   const last = trail.at(-1)
-  if (last !== undefined && last.kind === resolved.kind && last.displayName === resolved.displayName) {
+  const uniqueNamedDestination = sources.filter(source => source.kind === resolved.kind
+    && source.displayName === resolved.displayName).length === 1
+  const sameDestination = (source: ArkmeSourceItem): boolean => source.sourceRef === resolved.sourceRef
+    || (uniqueNamedDestination && source.kind === resolved.kind && source.displayName === resolved.displayName)
+  if (last !== undefined && sameDestination(last)) {
     return last === resolved ? trail : [...trail.slice(0, -1), resolved]
   }
-  if (last?.sourceRef !== resolved.sourceRef) return [...trail, resolved]
-  if (last === resolved) return trail
-  return [...trail.slice(0, -1), resolved]
+  return [...trail.filter(source => !sameDestination(source)), resolved]
 }
 
 /** Return to one visited destination and discard everything visited after it. */
@@ -136,14 +120,14 @@ export function ArkmeSourceBreadcrumb({
   const segments = arkmeSourceBreadcrumb(trail, sources)
   const currentSegment = segments.at(-1)!
   const ancestorSegments = segments.slice(0, -1)
-  const pathLabel = ancestorSegments.map(segment => segment.label).join(' / ') || '主题目录'
   return <nav aria-label="当前主题路径" style={styles.breadcrumb}>
-    <ArkmeDirectoryBreadcrumbIcon />
     <span style={styles.titleGroup}>
-      <span data-arkme-source-breadcrumb-path="true" title={pathLabel} style={styles.path}>
-        {ancestorSegments.length === 0
-          ? '主题目录'
-          : ancestorSegments.map((segment, index) => <span key={segment.key} style={{ display: 'contents' }}>
+      {ancestorSegments.length > 0 && <span
+        data-arkme-source-breadcrumb-path="true"
+        title={ancestorSegments.map(segment => segment.label).join(' / ')}
+        style={styles.path}
+      >
+        {ancestorSegments.map((segment, index) => <span key={segment.key} style={{ display: 'contents' }}>
             {index > 0 && <span aria-hidden style={styles.separator}>/</span>}
             <button
               type="button" title={segment.label}
@@ -157,7 +141,7 @@ export function ArkmeSourceBreadcrumb({
                   }}
             >{segment.label}</button>
           </span>)}
-      </span>
+      </span>}
       <span
         aria-current="page"
         data-arkme-source-breadcrumb-current="true"

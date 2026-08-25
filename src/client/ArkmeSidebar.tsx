@@ -79,7 +79,7 @@ import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
   RelatedRecordingsPanel, shouldShowPrivateChatActions, shouldShowRelatedRecordingsEntry,
 } from './related-recordings.js'
-import { isArkmeSelfWorkspaceSource } from './source-list.js'
+import { isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource } from './source-list.js'
 
 export interface ArkmeSurfaceProps {
   floating?: boolean
@@ -1643,7 +1643,9 @@ export function ArkmeSurface({
     // The directory owns the middle conversation list. Update it before selecting
     // the source so sources opened outside that list (for example, from World)
     // have an entry to select immediately instead of waiting for its cached refresh.
-    arkmeChatDirectory.upsert(nextSource)
+    // Personal categories and topics belong only to the send-to-self workspace;
+    // selecting one must not promote it into the left conversation directory.
+    if (isArkmeChatDirectorySource(nextSource)) arkmeChatDirectory.upsert(nextSource)
     arkmeUi.selectSource(nextSource)
     arkmeUi.chatChanged()
   }, [])
@@ -1909,6 +1911,16 @@ export function ArkmeSurface({
               {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
             />
           </span>}
+          {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
+            && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
+              key={auth.userId}
+              userId={auth.userId}
+              selectedSource={selectedSource}
+              onSelect={activateSelfSource}
+              onSelectionInvalidated={invalidateTopicSelection}
+              onSelfSourcesResolution={acceptSelfSourcesResolution}
+              retryRevision={selfSourcesRetryRevision}
+            />}
           <div style={styles.titleGroup}>
             {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
               ? <ArkmeSourceBreadcrumb
@@ -1929,16 +1941,6 @@ export function ArkmeSurface({
             {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
               && source?.isMuted === true && <span style={styles.titleMuteIcon}><ArkmeMuteIcon size={16} /></span>}
           </div>
-          {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
-            && auth?.userId !== undefined && <ArkmeTopicDirectoryPopover
-              key={auth.userId}
-              userId={auth.userId}
-              selectedSource={selectedSource}
-              onSelect={activateSelfSource}
-              onSelectionInvalidated={invalidateTopicSelection}
-              onSelfSourcesResolution={acceptSelfSourcesResolution}
-              retryRevision={selfSourcesRetryRevision}
-            />}
           {authenticated && conversationBackdropVisible && source?.kind === 'private_chat' && <ArkmePrivateCallMenu
             sourceRef={source.sourceRef}
             displayName={source.displayName}

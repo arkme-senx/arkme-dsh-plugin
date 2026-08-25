@@ -189,7 +189,7 @@ describe('topic create UI', () => {
     expect(footer).not.toContain('box-shadow')
   })
 
-  it('renders the directory trigger next to the floating surface close action', () => {
+  it('renders the original directory trigger as the leading header action', () => {
     const markup = renderToStaticMarkup(<ArkmeTopicDirectoryPopover
       userId={10001} selectedSource={undefined} onSelect={() => {}}
       onSelectionInvalidated={() => {}} onSelfSourcesResolution={() => {}} retryRevision={0}
@@ -197,7 +197,9 @@ describe('topic create UI', () => {
 
     expect(markup).toContain('aria-label="打开主题"')
     expect(markup).toContain('title="主题"')
-    expect(markup).toContain('margin-left:auto')
+    expect(markup).toContain('data-arkme-topic-directory-trigger="leading"')
+    expect(markup).toContain('margin-right:7px')
+    expect(markup).not.toContain('margin-left:auto')
     expect(markup).not.toContain('position:absolute')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).toContain('100vh')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).not.toContain('100%')
@@ -265,23 +267,22 @@ describe('topic create UI', () => {
     trail = appendArkmeSourceBreadcrumbTrail(trail, childTopic, sources)
     trail = appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)
     expect(arkmeSourceBreadcrumb(trail, sources).map(segment => segment.label))
-      .toEqual(['发给自己', '产品研发', '发布流程', 'DSH 插件', '产品研发'])
+      .toEqual(['发给自己', '发布流程', 'DSH 插件', '产品研发'])
     expect(appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)).toBe(trail)
     expect(truncateArkmeSourceBreadcrumbTrail(trail, 1).map(source => source.displayName))
-      .toEqual(['产品研发', '发布流程'])
+      .toEqual(['发布流程', 'DSH 插件'])
     expect(appendArkmeSourceBreadcrumbTrail(trail, aggregate, sources)).toEqual([])
 
     const markup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
       trail={[rootTopic, leafTopic]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
     />)
     expect(markup).toContain('aria-label="当前主题路径"')
-    expect(markup).toContain('data-arkme-source-breadcrumb-icon="true"')
-    expect(markup.indexOf('data-arkme-source-breadcrumb-icon="true"')).toBeLessThan(markup.indexOf('发给自己'))
+    expect(markup).not.toContain('data-arkme-source-breadcrumb-icon="true"')
+    expect(markup).not.toContain('<svg')
     expect(markup).toContain('data-arkme-source-breadcrumb-path="true"')
     expect(markup).toContain('data-arkme-source-breadcrumb-current="true"')
     expect(markup.indexOf('data-arkme-source-breadcrumb-path="true"'))
       .toBeLessThan(markup.indexOf('data-arkme-source-breadcrumb-current="true"'))
-    expect(markup).toContain('flex:0 0 auto')
     expect(markup).toContain('flex:1 1 auto')
     expect(markup).toContain('发给自己')
     expect(markup).toContain('产品研发')
@@ -294,7 +295,8 @@ describe('topic create UI', () => {
       trail={[]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
     />)
     expect(aggregateMarkup).toContain('aria-current="page"')
-    expect(aggregateMarkup).toContain('主题目录')
+    expect(aggregateMarkup).not.toContain('主题目录')
+    expect(aggregateMarkup).not.toContain('data-arkme-source-breadcrumb-path="true"')
     expect(aggregateMarkup).toContain('#171923')
     expect(aggregateMarkup).not.toContain('#a0a3aa')
   })
@@ -313,6 +315,17 @@ describe('topic create UI', () => {
     const segments = arkmeSourceBreadcrumb([stale], [current])
     expect(segments).toHaveLength(2)
     expect(segments[1]?.source).toBe(current)
+  })
+
+  it('removes an older occurrence when a visited topic becomes current again', () => {
+    const first = { ...topicRow.source, sourceRef: 'first', displayName: '2' }
+    const second = { ...topicRow.source, sourceRef: 'second', displayName: '1' }
+    const third = { ...topicRow.source, sourceRef: 'third', displayName: '会很健康' }
+    const sources = [first, second, third]
+
+    const trail = appendArkmeSourceBreadcrumbTrail([first, second, third], first, sources)
+
+    expect(trail.map(source => source.displayName)).toEqual(['1', '会很健康', '2'])
   })
 
   it('never reuses a resolved aggregate source across accounts', () => {

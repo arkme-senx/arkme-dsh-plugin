@@ -70,7 +70,7 @@ export const ARKME_TOPIC_DIRECTORY_SEARCH_BG = arkmeTheme.input
 
 const styles: Record<string, CSSProperties> = {
   trigger: {
-    zIndex: 3, width: 28, height: 28, flex: 'none', marginLeft: 'auto',
+    zIndex: 3, width: 28, height: 28, flex: 'none', marginRight: 7,
     display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 8,
     background: 'transparent', color: colors.secondary, cursor: 'pointer',
   },
@@ -79,7 +79,7 @@ const styles: Record<string, CSSProperties> = {
     background: '#f1f2f6',
   },
   popover: {
-    position: 'absolute', zIndex: 12, top: 48, right: 48,
+    position: 'absolute', zIndex: 12, top: 48, left: 20,
     width: 'min(340px, calc(100% - 32px))', maxHeight: ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT,
     display: 'grid', gridTemplateRows: 'auto auto minmax(0, 1fr)', overflow: 'hidden',
     boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 16,
@@ -364,6 +364,7 @@ export function ArkmeTopicDirectoryPopover({
   return <>
     <button
       ref={triggerRef} type="button" aria-label="打开主题" title="主题" aria-haspopup="dialog" aria-expanded={open}
+      data-arkme-topic-directory-trigger="leading"
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
       onClick={() => { setOpen(value => !value) }}
     ><ListBullets size={17} aria-hidden /></button>

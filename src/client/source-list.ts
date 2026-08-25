@@ -18,6 +18,11 @@ export function isArkmeSelfWorkspaceSource(source: ArkmeSourceItem | undefined):
     || source.kind === 'default_category' || source.kind === 'topic'
 }
 
+/** Only real chats own rows in the left conversation directory. */
+export function isArkmeChatDirectorySource(source: ArkmeSourceItem): boolean {
+  return source.kind === 'private_chat' || source.kind === 'group_chat'
+}
+
 /** The aggregate is a timeline target, not a category row inside the directory popover. */
 export function arkmeSelfDirectorySources(sources: readonly ArkmeSourceItem[]): ArkmeSourceItem[] {
   return sources.filter(source => source.kind !== 'send_to_self')

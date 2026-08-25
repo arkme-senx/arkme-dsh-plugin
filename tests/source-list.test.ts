@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
 import {
   arkmeSelfDirectorySources, arkmeSendToSelfDirectoryPresentation, arkmeSourceTimeLabel,
-  isArkmeSelfWorkspaceSource, sortArkmeSources,
+  isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource, sortArkmeSources,
 } from '../src/client/source-list.js'
 
 function source(
@@ -37,6 +37,20 @@ describe('Arkme send-to-self source list', () => {
     expect(isArkmeSelfWorkspaceSource(chat)).toBe(false)
     expect(arkmeSelfDirectorySources([aggregate, defaultCategory, topic]).map(item => item.displayName))
       .toEqual(['默认分类', '工作'])
+  })
+
+  it('keeps send-to-self destinations out of the left conversation directory', () => {
+    const aggregate = { ...source('aggregate', '发给自己', 0, 0), kind: 'send_to_self' as const }
+    const defaultCategory = { ...source('default', '默认分类', 0, 0), kind: 'default_category' as const }
+    const topic = source('topic', '工作', 0, 0)
+    const privateChat = { ...source('private', '私聊', 0, 0), kind: 'private_chat' as const }
+    const groupChat = { ...source('group', '群聊', 0, 0), kind: 'group_chat' as const }
+
+    expect(isArkmeChatDirectorySource(aggregate)).toBe(false)
+    expect(isArkmeChatDirectorySource(defaultCategory)).toBe(false)
+    expect(isArkmeChatDirectorySource(topic)).toBe(false)
+    expect(isArkmeChatDirectorySource(privateChat)).toBe(true)
+    expect(isArkmeChatDirectorySource(groupChat)).toBe(true)
   })
 
   it('globally sorts parents and children for card modes without mutating its input', () => {
