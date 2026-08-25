@@ -82,6 +82,18 @@ describe('Arkme persistent conversation frame', () => {
     expect(arkmeShouldBeginWechat({ status: 'logged-out', environment: 'prod' }, 'login', 'phone', true, '', false)).toBe(false)
   })
 
+  it('does not let the hidden main surface request a QR code when the startup gate owns login', () => {
+    expect(arkmeShouldBeginWechat(
+      { status: 'logged-out', environment: 'prod' },
+      'login',
+      'wechat',
+      true,
+      '',
+      false,
+      false,
+    )).toBe(false)
+  })
+
   it('allows a fresh WeChat QR request after logout or session expiry', () => {
     const transition = Reflect.get(authFlowModule, 'arkmeWechatRequestStartedAfterAuthStatus') as unknown
     expect(transition).toBeTypeOf('function')

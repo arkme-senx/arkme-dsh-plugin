@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { create } from 'react-test-renderer'
+import { describe, expect, it, vi } from 'vitest'
 import { formatLoginPhone, ArkmeLogin, type ArkmeLoginProps } from '../src/client/ArkmeLogin.js'
 
 function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
@@ -41,6 +42,7 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('dsh-arkme-login-wordmark')
     expect(html).toContain('请使用微信扫码登录')
     expect(html).toContain('二维码加载中')
+    expect(html).not.toContain('dsh-arkme-login-qr-hint')
     expect(html.indexOf('微信扫码')).toBeLessThan(html.indexOf('手机号登录'))
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('type="checkbox"')
@@ -69,6 +71,49 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('登录凭据已失效')
     expect(html).toContain('重新登录')
     expect(html).not.toContain('二维码加载中')
+  })
+
+  it('refreshes a loaded WeChat QR code when the QR control is clicked', () => {
+    const onWechatLogin = vi.fn()
+    const renderer = create(<ArkmeLogin
+      mode="wechat"
+      agreed
+      busy={false}
+      submitBusy={false}
+      error=""
+      phone=""
+      smsCode=""
+      smsCountdown={0}
+      testLoginEnabled={false}
+      testUserId=""
+      qrDataUrl="data:image/gif;base64,fresh-qr"
+      onModeChange={() => undefined}
+      onAgreementChange={() => undefined}
+      onPhoneChange={() => undefined}
+      onSmsCodeChange={() => undefined}
+      onTestUserIdChange={() => undefined}
+      onSendCode={() => undefined}
+      onVerifyCode={() => undefined}
+      onTestLogin={() => undefined}
+      onWechatLogin={onWechatLogin}
+      onCancelBinding={() => undefined}
+    />)
+
+    renderer.root.findByProps({ 'aria-label': '刷新微信登录二维码' }).props.onClick()
+
+    expect(onWechatLogin).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables QR refresh while a new WeChat QR code is loading', () => {
+    const html = renderLogin({
+      busy: true,
+      qrDataUrl: 'data:image/gif;base64,current-qr',
+    })
+
+    expect(html).toContain('aria-label="正在刷新微信登录二维码"')
+    expect(html).toContain('aria-busy="true"')
+    expect(html).toContain('disabled=""')
+    expect(html).toContain('正在刷新')
   })
 
   it('renders the bound-phone gate as a focused phone verification flow', () => {

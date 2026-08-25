@@ -169,6 +169,39 @@ const loginStyles = `
     background: var(--arkme-login-subtle);
   }
   .dsh-arkme-login-qr-image { width: 200px; height: 200px; display: block; object-fit: contain; }
+  .dsh-arkme-login-qr-refresh {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 0;
+    border-radius: inherit;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+  }
+  .dsh-arkme-login-qr-refresh-overlay {
+    position: absolute;
+    inset: 4px;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    background: rgba(23, 25, 28, .68);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity .15s ease;
+    pointer-events: none;
+  }
+  .dsh-arkme-login-qr-refresh:hover .dsh-arkme-login-qr-refresh-overlay,
+  .dsh-arkme-login-qr-refresh:focus-visible .dsh-arkme-login-qr-refresh-overlay,
+  .dsh-arkme-login-qr-refresh:disabled .dsh-arkme-login-qr-refresh-overlay { opacity: 1; }
+  .dsh-arkme-login-qr-refresh:focus-visible { outline: 2px solid var(--arkme-login-accent); outline-offset: 2px; }
+  .dsh-arkme-login-qr-refresh:disabled { cursor: wait; }
   .dsh-arkme-login-qr-loading { color: var(--arkme-login-secondary); font-size: 14px; line-height: 20px; }
   .dsh-arkme-login-qr-relogin {
     border: 0;
@@ -411,6 +444,7 @@ const loginStyles = `
   .dsh-arkme-login-qr-title { order: 2; margin-top: 14px; font-size: 14px; line-height: 20px; font-weight: 500; }
   .dsh-arkme-login-qr-frame { order: 1; width: 116px; height: 116px; margin-top: 0; border: 0; border-radius: 0; background: transparent; }
   .dsh-arkme-login-qr-image { width: 108px; height: 108px; }
+  .dsh-arkme-login-qr-refresh-overlay { border-radius: 7px; font-size: 11px; }
   .dsh-arkme-login-qr-loading { color: #91959d; font-size: 11px; }
   .dsh-arkme-login-qr-relogin { border: 0; padding: 7px 10px; background: transparent; color: #51596f; font-size: 11px; font-weight: 500; }
   .dsh-arkme-login-field + .dsh-arkme-login-field { margin-top: 16px; }
@@ -509,7 +543,19 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
                 ? props.error !== '' && !props.busy
                   ? <button type="button" className="dsh-arkme-login-qr-relogin" onClick={props.onWechatLogin}>重新登录</button>
                   : <span className="dsh-arkme-login-qr-loading">二维码加载中</span>
-                : <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt="微信扫码登录 Arkme" />}
+                : <button
+                    type="button"
+                    className="dsh-arkme-login-qr-refresh"
+                    aria-label={props.busy ? '正在刷新微信登录二维码' : '刷新微信登录二维码'}
+                    aria-busy={props.busy}
+                    disabled={props.busy}
+                    onClick={props.onWechatLogin}
+                  >
+                    <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt="微信扫码登录 Arkme" />
+                    <span className="dsh-arkme-login-qr-refresh-overlay" aria-hidden>
+                      {props.busy ? '正在刷新…' : '↻ 点击刷新'}
+                    </span>
+                  </button>}
             </div>
           </div> : effectiveMode === 'phone' ? <div role="tabpanel">
             <div className="dsh-arkme-login-field">
