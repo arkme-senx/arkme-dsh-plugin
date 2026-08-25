@@ -25,6 +25,7 @@ import {
   worldImagePreviewDragPosition,
   worldInteractionCountLabel,
   worldInteractionThreads,
+  worldScopeScrollTransition,
   type ArkmeWorldViewState,
 } from '../src/client/ArkmeWorldSurface.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
@@ -102,6 +103,14 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('>发布</button>')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup).not.toContain('>关闭<')
+  })
+
+  it('keeps World and My World scroll positions independent when switching tabs', () => {
+    const leavingWorld = worldScopeScrollTransition({ all: 0, mine: 0 }, 'all', 'mine', 1680)
+    expect(leavingWorld).toEqual({ positions: { all: 1680, mine: 0 }, restoreTop: 0 })
+
+    const returningToWorld = worldScopeScrollTransition(leavingWorld.positions, 'mine', 'all', 240)
+    expect(returningToWorld).toEqual({ positions: { all: 1680, mine: 240 }, restoreTop: 1680 })
   })
 
   it('renders a spacious World publisher with a custom image picker and complete action area', () => {

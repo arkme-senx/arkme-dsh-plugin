@@ -36,6 +36,21 @@ import { downloadWorldVoiceprintAudio, playPreparedWorldVoiceprintAudio, playWor
 
 type WorldScope = 'all' | 'mine'
 
+export function worldScopeScrollTransition(
+  positions: Readonly<Record<WorldScope, number>>,
+  currentScope: WorldScope,
+  nextScope: WorldScope,
+  currentScrollTop: number,
+): { positions: Record<WorldScope, number>; restoreTop: number } {
+  const normalizedScrollTop = Number.isFinite(currentScrollTop) ? Math.max(0, currentScrollTop) : 0
+  const nextPositions = { ...positions, [currentScope]: normalizedScrollTop }
+  const savedNextScrollTop = nextPositions[nextScope]
+  return {
+    positions: nextPositions,
+    restoreTop: Number.isFinite(savedNextScrollTop) ? Math.max(0, savedNextScrollTop) : 0,
+  }
+}
+
 const worldSdk = createArkmeSdk()
 
 export type ArkmeWorldViewState = {
@@ -1093,7 +1108,23 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
   const interactionItem = interactionRecordRef === undefined
     ? undefined
     : state.items.find(item => item.recordRef === interactionRecordRef)
-  const scrollRootRef = useRef<HTMLDivElement>(null)
+  const scrollRootRef = useRef<HTMLDivElement | null>(null)
+  const scrollPositionsRef = useRef<Record<WorldScope, number>>({ all: 0, mine: 0 })
+  const bindScrollRoot = useCallback((element: HTMLDivElement | null) => {
+    scrollRootRef.current = element
+    if (element !== null) element.scrollTop = scrollPositionsRef.current[scope]
+  }, [scope])
+  const selectScope = (nextScope: WorldScope) => {
+    if (nextScope === scope) return
+    const transition = worldScopeScrollTransition(
+      scrollPositionsRef.current,
+      scope,
+      nextScope,
+      scrollRootRef.current?.scrollTop ?? 0,
+    )
+    scrollPositionsRef.current = transition.positions
+    onSelectScope(nextScope)
+  }
   return <>
     <header style={styles.header}>
       {target === undefined
@@ -1117,12 +1148,12 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
     </header>
     {target === undefined && <div style={styles.worldToolbar}>
       <nav style={styles.tabs} aria-label="世界范围">
-        <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
-        <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
+        <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { selectScope('all') }}>世界</button>
+        <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { selectScope('mine') }}>我的世界</button>
       </nav>
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
-      <div ref={scrollRootRef} style={styles.body} data-world-feed-pane="true" data-world-scroll-container="true">
+      <div key={scope} ref={bindScrollRoot} style={styles.body} data-world-feed-pane="true" data-world-scroll-container="true" data-world-scope={scope}>
         {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
         {state.status === 'loading' && <div role="status" style={styles.notice}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
         {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
@@ -1145,7 +1176,7 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
             {...(onOpenAuthor === undefined ? {} : { onOpenAuthor })}
           />)}
           {state.hasMore && onLoadMore !== undefined && <WorldInfiniteScrollTrigger
-            key={`${String(state.nextOffset ?? 'more')}:${String(state.items.length)}`}
+            key={`${scope}:${String(state.nextOffset ?? 'more')}:${String(state.items.length)}`}
             scrollRootRef={scrollRootRef}
             loading={state.loadingMore === true}
             error={state.message !== undefined}
