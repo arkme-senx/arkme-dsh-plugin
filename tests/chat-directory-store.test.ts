@@ -56,6 +56,39 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['source-2', 'source-1'])
   })
 
+  it('promotes a successfully sent chat message into the directory immediately', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const target = {
+      sourceRef: 'source-harness', sourceKey: 'chat:harness', kind: 'private_chat' as const, displayName: 'Harness4',
+      latestPreview: '@狗才 1', activeAtMillis: 22, unreadCount: 0, latestSequence: 8,
+    }
+    const other = {
+      sourceRef: 'source-other', sourceKey: 'chat:other', kind: 'private_chat' as const, displayName: '其他会话',
+      latestPreview: '稍新的消息', activeAtMillis: 40, unreadCount: 1, latestSequence: 4,
+    }
+    store.publish([other, target])
+
+    expect(store.recordSent(target, {
+      latestPreview: '测试', activeAtMillis: 48, latestSequence: 9,
+    })).toBe(true)
+
+    expect(store.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['source-harness', 'source-other'])
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      latestPreview: '测试', activeAtMillis: 48, unreadCount: 0, latestSequence: 9,
+    })
+
+    store.upsert({ ...target, latestPreview: '@狗才 1', activeAtMillis: 22, latestSequence: 9 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      latestPreview: '测试', activeAtMillis: 48, unreadCount: 0, latestSequence: 9,
+    })
+
+    store.publish([other, { ...target, latestPreview: '@狗才 1', activeAtMillis: 22, latestSequence: 9 }])
+    expect(store.getSnapshot().sources.map(item => item.sourceRef)).toEqual(['source-harness', 'source-other'])
+    expect(store.getSnapshot().sources[0]).toMatchObject({
+      latestPreview: '测试', activeAtMillis: 48, unreadCount: 0, latestSequence: 9,
+    })
+  })
+
   it('single-flights a paginated refresh and reuses its last-success TTL cache', async () => {
     const loadPage = vi.fn(async (cursor?: string) => cursor === undefined
       ? {
