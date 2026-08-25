@@ -213,7 +213,7 @@ const styles: Record<string, CSSProperties> = {
     color: colors.caption, cursor: 'default', font: 'inherit',
   },
   topicToggle: { cursor: 'pointer' },
-  topicChevron: { display: 'inline-block', fontSize: 17, lineHeight: 1, transformOrigin: '50% 50%' },
+  topicChevron: { width: 14, height: 14, flex: 'none', display: 'block', transformOrigin: '50% 50%' },
   topicDot: { width: 5, height: 5, flex: 'none', borderRadius: 999, background: colors.caption },
   topicSelect: {
     position: 'relative', zIndex: 1, minWidth: 0, minHeight: 44, flex: 1, display: 'flex',
@@ -231,7 +231,7 @@ const styles: Record<string, CSSProperties> = {
   topicHover: { background: arkmeTheme.hover },
   topicCreated: { background: colors.active, boxShadow: 'none' },
   topicCreateMask: {
-    position: 'absolute', zIndex: 3, top: 8, right: 0, width: 44, height: 22,
+    position: 'absolute', zIndex: 3, top: 0, right: 0, bottom: 0, width: 44,
     display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 6,
     boxSizing: 'border-box', pointerEvents: 'none',
   },
@@ -523,7 +523,7 @@ export function ArkmeTopicTreeRow({
     onMouseEnter={() => { onHoverChange(true) }} onMouseLeave={() => { onHoverChange(false) }}
   >
     {Array.from({ length: row.depth }, (_, index) => <span
-      key={index} aria-hidden style={{ ...styles.topicGuide, left: 15 + index * 18 }}
+      key={index} aria-hidden style={{ ...styles.topicGuide, left: 14 + index * 18 }}
     />)}
     {row.hasChildren ? <button
       type="button"
@@ -531,7 +531,9 @@ export function ArkmeTopicTreeRow({
       aria-label={`${row.expanded ? '收起' : '展开'}${source.displayName}`}
       title={row.expanded ? '收起子主题' : '展开子主题'}
       onClick={onToggle}
-    ><span aria-hidden style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span></button> : <span
+    ><svg aria-hidden viewBox="0 0 16 16" style={{ ...styles.topicChevron, transform: row.expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+      <path d="M5.5 3.5 10 8l-4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+    </svg></button> : <span
       aria-hidden style={{ ...styles.topicLead, marginLeft: 2 + row.depth * 18 }}
     ><span style={styles.topicDot} /></span>}
     <button type="button" style={styles.topicSelect} onClick={onSelect}>

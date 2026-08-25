@@ -156,15 +156,28 @@ describe('topic create UI', () => {
     const created = renderToStaticMarkup(<ArkmeTopicTreeRow
       {...baseProps} createdHighlightActive createdHighlightVisible hovered={false}
     />)
+    const nestedBranch = renderToStaticMarkup(<ArkmeTopicTreeRow
+      {...baseProps} row={{ ...topicRow, depth: 1 }} hovered={false}
+    />)
+    const nestedLeaf = renderToStaticMarkup(<ArkmeTopicTreeRow
+      {...baseProps} row={{ ...topicRow, depth: 1, hasChildren: false, expanded: false }} hovered={false}
+    />)
 
     expect(resting).toContain('>36</span>')
     expect(resting).not.toContain('创建子主题')
+    expect(resting).toContain('viewBox="0 0 16 16"')
+    expect(resting).toContain('transform:rotate(90deg)')
+    expect(resting).toContain('stroke-linejoin="round"')
+    expect(resting).not.toContain('›')
     expect(hovered).toContain('aria-label="在工作下创建子主题"')
     expect(hovered).not.toContain('>36</span>')
     expect(hovered).toContain('<svg')
     expect(hovered).toContain('width:calc(100% - 8px)')
     expect(hovered).toContain('margin:2px 4px')
     expect(hovered).toContain('width:44px')
+    expect(hovered).toContain('top:0')
+    expect(hovered).toContain('bottom:0')
+    expect(hovered).toContain('align-items:center')
     expect(hovered).toContain('padding-right:6px')
     expect(hovered).toContain('var(--dsw-alias-label-caption, #a3a8ae)')
     expect(leaf).toContain('background:var(--dsw-alias-label-caption, #a3a8ae)')
@@ -177,6 +190,10 @@ describe('topic create UI', () => {
     expect(created).toContain('box-shadow:none')
     expect(created).toContain('transition:background-color 140ms ease')
     expect(created).not.toContain('inset 2px 0 #9eadff')
+    expect(nestedBranch).toContain('left:14px')
+    expect(nestedBranch).toContain('margin-left:20px')
+    expect(nestedLeaf).toContain('left:14px')
+    expect(nestedLeaf).toContain('margin-left:20px')
   })
 
   it('keeps the root create action in a non-scrolling footer', () => {
