@@ -2,21 +2,8 @@
     - id: arkme-self
       name: '@senguoyun/dsh-arkme'
       config:
+        configContractVersion: 2
         environment: prod
-        authBaseUrl: https://api.jotmo.cc
-        subjectBaseUrl: https://subject.jotmo.cc
-        recordBaseUrl: https://record.jotmo.cc
-        dataBaseUrl: https://data.jotmo.cc
-        chatBaseUrl: https://chat.jotmo.cc
-        botBaseUrl: https://bot.jotmo.cc
-        imBaseUrl: https://im.jotmo.cc
-        webrtcBaseUrl: https://webrtc.jiwo.cc
-        worldBaseUrl: https://world.jotmo.cc
-        relationBaseUrl: https://relation.jotmo.cc
-        intelligentBaseUrl: https://intelligent.jotmo.cc
-        audioBaseUrl: https://audio.jotmo.cc
-        extensionPublishBaseUrl: https://extension-publish.jotmo.cc
-        shareWebsite: https://jiwo.cc
         extensionArtifactDirectory: ''
         extensionTrustedSigningKeys: '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
         routePath: /arkme-self/api
@@ -31,8 +18,6 @@
         allowProduction: true
         updateCheckEnabled: true
         updateChannel: stable
-        updateServiceBaseUrl: https://api.jotmo.cc
-        updateArtifactBaseUrl: https://d.jiwo.cc
         appVersion: ''
         updateCheckIntervalHours: 12
         updateAllowLocalInstall: true

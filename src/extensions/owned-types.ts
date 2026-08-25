@@ -2,8 +2,27 @@ import type { ArkmeExtensionPreviewItem, ArkmeExtensionShare, ArkmeExtensionSour
 
 export type ArkmeMyExtensionState = 'cordis' | 'persisted' | 'published'
 export type ArkmeMyExtensionWarning = 'cloud-unavailable' | 'cordis-unavailable' | 'profile-entry-invalid'
-export type ArkmeExtensionPublishRoute = 'dynamic-cordis-v2' | 'profile-native-v3'
+export type ArkmeExtensionPublishRoute = 'dynamic-cordis-v2' | 'profile-sandbox-v2' | 'profile-native-v3'
 export type ArkmeExtensionPublishArtifactKind = 'dsh-bundle-tgz' | 'dsh-native-package-tgz'
+
+export interface ArkmeMyExtensionProfileSaveInput {
+  ownedRef: string
+  name: string
+  description: string
+  version: string
+  clientMutationId: string
+}
+
+export interface ArkmeMyExtensionProfileSaveResult {
+  packageName: string
+  version: string
+  artifactContractVersion: 2
+  artifactKind: 'dsh-bundle-tgz'
+  installed: true
+  active: false
+  restartRequired: true
+  message: string
+}
 
 export type ArkmeMyExtensionPublishState =
   | {

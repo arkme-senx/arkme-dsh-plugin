@@ -40,6 +40,25 @@ describe('owned extension provenance store', () => {
     store.close()
   })
 
+  it('persists Cordis-to-Profile lineage and never exposes another account link', () => {
+    const directory = temporaryDirectory()
+    const cordisKey = 'instance-1\0session-1\0weather-1'
+    const profileKey = 'web\0@arkme-generated/weather'
+    const store = new ArkmeOwnedExtensionStore(directory)
+    store.claim('cordis', cordisKey, 7)
+    store.claim('profile', profileKey, 7, 'a'.repeat(64))
+    store.linkProfile(cordisKey, profileKey, 7)
+
+    expect(store.profileLink(cordisKey, 7)).toBe(profileKey)
+    expect(store.profileLink(cordisKey, 8)).toBeUndefined()
+    expect(() => store.linkProfile(cordisKey, profileKey, 8)).toThrow('已属于其他 Arkme 账号')
+    store.close()
+
+    const reopened = new ArkmeOwnedExtensionStore(directory)
+    expect(reopened.profileLink(cordisKey, 7)).toBe(profileKey)
+    reopened.close()
+  })
+
   it('removes every current-account source reference to one deleted cloud extension only', () => {
     const store = new ArkmeOwnedExtensionStore(temporaryDirectory())
     store.claim('cordis', 'instance-1\0session-1\0weather-1', 7)

@@ -25,6 +25,7 @@ describe('Arkme extension tools in the DSH ToolRuntime', () => {
 
     expect(ctx.tools.schemas(agent).map(schema => schema.name)).toEqual(expect.arrayContaining([
       'arkme_extension_list_mine',
+      'arkme_extension_save_profile',
       'arkme_extension_publish',
       'arkme_extension_edit',
       'arkme_extension_preview_add',

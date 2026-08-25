@@ -33,6 +33,16 @@ function preparedV3(input: ArkmeMyExtensionPublishInput, sourceFingerprint = 'na
   }
 }
 
+function preparedProfileV2(input: ArkmeMyExtensionPublishInput) {
+  return {
+    input,
+    sourceFingerprint: 'profile-v2-fingerprint',
+    publishRoute: 'profile-sandbox-v2' as const,
+    artifactContractVersion: 2 as const,
+    artifactKind: 'dsh-bundle-tgz' as const,
+  }
+}
+
 describe('extension publish conversation confirmation', () => {
 	it('rejects malformed and duplicate existing extension targets before preflight', async () => {
 		const preflight = vi.fn(async (input: ArkmeMyExtensionPublishInput) => preparedV2(input))
@@ -148,7 +158,7 @@ describe('extension publish conversation confirmation', () => {
     expect(prepared).toEqual({
       status: 'confirmation_required',
       count: 2,
-      question: '是否确认一次发布以下 2 个扩展？\n- 天气助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）\n- 日程助手 1.0.0，仅自己，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）',
+      question: '是否确认一次发布以下 2 个扩展？\n- 天气助手 1.0.0，仅自己，发布方式：当前会话 Cordis 插件（先保存到 Profile，再发布 V2 沙箱 Bundle）\n- 日程助手 1.0.0，仅自己，发布方式：当前会话 Cordis 插件（先保存到 Profile，再发布 V2 沙箱 Bundle）',
       items: [
         { ownedRef: 'owned-weather', name: '天气助手', version: '1.0.0', visibility: 'private', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
         { ownedRef: 'owned-calendar', name: '日程助手', version: '1.0.0', visibility: 'private', publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
@@ -298,7 +308,7 @@ describe('extension publish conversation confirmation', () => {
     })
   })
 
-  it('makes V2 and V3 routes explicit in one mixed prepare batch', async () => {
+  it('makes live Cordis, saved V2, and native V3 routes explicit in one mixed prepare batch', async () => {
     const events: Array<Record<string, unknown>> = [
       { seq: 0, type: 'user/message', data: { content: [{ type: 'text', text: '准备发布两个来源' }], source: { kind: 'user' } } },
     ]
@@ -306,7 +316,7 @@ describe('extension publish conversation confirmation', () => {
     const conversation = new ArkmeExtensionPublishConversation({
       preflight: async input => input.ownedRef === 'owned-native'
         ? preparedV3(input)
-        : preparedV2(input),
+        : input.ownedRef === 'owned-profile-v2' ? preparedProfileV2(input) : preparedV2(input),
       publish: vi.fn(),
       now: () => 1_000,
       createMutationId: () => '00000000-0000-4000-8000-000000000001',
@@ -314,14 +324,17 @@ describe('extension publish conversation confirmation', () => {
 
     const prepared = await conversation.prepare(agent as never, [
       draft('owned-cordis', 'Cordis 扩展'),
+      draft('owned-profile-v2', '已保存扩展'),
       { ...draft('owned-native', '原生扩展'), githubRepositoryUrl: 'https://github.com/example/native' },
     ])
 
-    expect(prepared.question).toContain('发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）')
+    expect(prepared.question).toContain('发布方式：当前会话 Cordis 插件（先保存到 Profile，再发布 V2 沙箱 Bundle）')
+    expect(prepared.question).toContain('发布方式：Profile 中已保存的 V2 沙箱 Bundle')
     expect(prepared.question).toContain('发布方式：V3 原生 DSH Package（原生能力：runtime_dependencies）')
     expect(prepared.question).toContain('GitHub 来源：https://github.com/example/native')
     expect(prepared.items).toMatchObject([
       { publishRoute: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
+      { publishRoute: 'profile-sandbox-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' },
       { publishRoute: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz', nativeCapabilities: ['runtime_dependencies'] },
     ])
   })

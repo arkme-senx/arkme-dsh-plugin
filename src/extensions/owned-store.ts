@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { Buffer } from 'node:buffer'
 import { securePrivateDirectorySync, securePrivateFileSync } from '../private-filesystem.js'
 
 export type ArkmeOwnedExtensionSourceKind = 'cordis' | 'profile'
@@ -14,6 +15,7 @@ interface OwnedSourceRow {
   owner_user_id: number
   spec_digest: string | null
   cloud_extension_id: string | null
+  profile_source_key: string | null
 }
 
 /** Account ownership and explicit cloud lineage for local extension sources. */
@@ -36,11 +38,16 @@ export class ArkmeOwnedExtensionStore {
         owner_user_id INTEGER NOT NULL,
         spec_digest TEXT,
         cloud_extension_id TEXT,
+        profile_source_key TEXT,
         claimed_at_millis INTEGER NOT NULL,
         updated_at_millis INTEGER NOT NULL,
         PRIMARY KEY (source_kind, source_key)
       );
     `)
+    const columns = this.database.prepare('PRAGMA table_info(owned_extension_sources)').all() as unknown as Array<{ name: string }>
+    if (!columns.some(column => column.name === 'profile_source_key')) {
+      this.database.exec('ALTER TABLE owned_extension_sources ADD COLUMN profile_source_key TEXT')
+    }
     this.secureFiles()
   }
 
@@ -102,6 +109,37 @@ export class ArkmeOwnedExtensionStore {
     return row?.owner_user_id === userId ? row.cloud_extension_id ?? undefined : undefined
   }
 
+  /** Bind one ephemeral Cordis source to the durable Profile source created from its exact package. */
+  linkProfile(cordisKey: string, profileKey: string, userId: number): void {
+    this.assertIdentity('cordis', cordisKey, userId)
+    this.assertIdentity('profile', profileKey, userId)
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const cordis = this.row('cordis', cordisKey)
+      const profile = this.row('profile', profileKey)
+      if (cordis === undefined || profile === undefined) throw new Error('扩展来源尚未绑定账号')
+      if (cordis.owner_user_id !== userId || profile.owner_user_id !== userId) {
+        throw new Error('扩展已属于其他 Arkme 账号')
+      }
+      this.database.prepare(`
+        UPDATE owned_extension_sources
+        SET profile_source_key = ?, updated_at_millis = ?
+        WHERE source_kind = 'cordis' AND source_key = ?
+      `).run(encodeProfileLink(profileKey), Date.now(), cordisKey)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    this.secureFiles()
+  }
+
+  profileLink(cordisKey: string, userId: number): string | undefined {
+    const row = this.row('cordis', cordisKey)
+    if (row?.owner_user_id !== userId || row.profile_source_key === null) return undefined
+    return decodeProfileLink(row.profile_source_key)
+  }
+
   cloudReferences(userId: number, extensionId: string): ArkmeOwnedExtensionSourceReference[] {
     this.assertCloudIdentity(userId, extensionId)
     const rows = this.database.prepare(`
@@ -137,7 +175,7 @@ export class ArkmeOwnedExtensionStore {
 
   private row(kind: ArkmeOwnedExtensionSourceKind, key: string): OwnedSourceRow | undefined {
     return this.database.prepare(`
-      SELECT owner_user_id, spec_digest, cloud_extension_id
+      SELECT owner_user_id, spec_digest, cloud_extension_id, profile_source_key
       FROM owned_extension_sources WHERE source_kind = ? AND source_key = ?
     `).get(kind, key) as unknown as OwnedSourceRow | undefined
   }
@@ -163,6 +201,17 @@ export class ArkmeOwnedExtensionStore {
       }
     }
   }
+}
+
+function encodeProfileLink(profileKey: string): string {
+  return `hex:${Buffer.from(profileKey, 'utf8').toString('hex')}`
+}
+
+function decodeProfileLink(encoded: string): string {
+  if (!encoded.startsWith('hex:') || !/^[a-f0-9]+$/.test(encoded.slice(4)) || encoded.length % 2 !== 0) {
+    throw new Error('Profile 扩展来源关联无效')
+  }
+  return Buffer.from(encoded.slice(4), 'hex').toString('utf8')
 }
 
 function sqliteHexText(value: string): string {

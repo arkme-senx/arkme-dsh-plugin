@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { ArkmeOwnedExtensionStore } from '../../src/extensions/owned-store.js'
 import { scanOwnedProfileExtensions } from '../../src/extensions/profile-owned-inventory.js'
 import { packLocalBundleDirectory } from '../../src/extensions/bundle-artifact.js'
+import { materializeCordisBundle } from '../../src/extensions/bundle-materializer.js'
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true })
@@ -34,11 +35,16 @@ describe('Profile-owned extension inventory', () => {
     const officialLocal = join(root, 'DSH Official Local')
     const arkmeOfficialLocal = join(root, 'Arkme Official Local')
     const tarballSource = join(root, 'Tarball Source')
+    const savedCordis = materializeCordisBundle({
+      packageName: '@arkme-generated/saved-cordis', name: '保存后的天气助手', description: 'Cordis Profile 插件',
+      version: '1.2.3', hostCode: 'return { apply() {} }',
+    })
     const wrapper = join(profile, 'arkme-extensions', 'third-party', '1.0.0')
     const remoteInstalled = join(profile, 'node_modules', 'remote-extension')
     writeBundle(local, 'local-weather')
     writeBundle(tarballSource, 'local-tarball')
     writeFileSync(join(root, 'local-plugin.tgz'), packLocalBundleDirectory(tarballSource).bundle.bytes)
+    writeFileSync(join(root, 'saved-cordis.tgz'), savedCordis.bundle.bytes)
     writeBundle(officialLocal, '@deepseek-ai/dsh-official-local')
     writeBundle(arkmeOfficialLocal, '@senguoyun/dsh-arkme')
     writeBundle(wrapper, '@arkme-local/ext-aaaaaaaaaaaaaaaa')
@@ -52,6 +58,7 @@ describe('Profile-owned extension inventory', () => {
         '@senguoyun/dsh-arkme': 'link:../../Arkme Official Local',
         'remote-extension': '^1.0.0',
         'local-tarball': 'file:../../local-plugin.tgz',
+        '@arkme-generated/saved-cordis': 'file:../../saved-cordis.tgz',
         '@arkme-local/ext-aaaaaaaaaaaaaaaa': 'link:arkme-extensions/third-party/1.0.0',
       },
       dsh: { profile: { bundles: [
@@ -74,7 +81,11 @@ describe('Profile-owned extension inventory', () => {
       name: 'remote-extension', active: false, publishable: true, artifactContractVersion: 3,
     }, {
       sourceKey: 'web\0local-tarball', packageName: 'local-tarball', version: '1.0.0',
-      name: 'local-tarball', active: false, publishable: true,
+      name: 'local-tarball', active: false, publishable: true, artifactContractVersion: 3,
+    }, {
+      sourceKey: 'web\0@arkme-generated/saved-cordis', packageName: '@arkme-generated/saved-cordis', version: '1.2.3',
+      name: '保存后的天气助手', description: 'Cordis Profile 插件', active: false,
+      publishable: true, artifactContractVersion: 2,
     }])
     expect(result.items.map(item => item.packageName)).not.toContain('@deepseek-ai/dsh-base')
     expect(result.items.map(item => item.packageName)).not.toContain('@senguoyun/dsh-arkme')

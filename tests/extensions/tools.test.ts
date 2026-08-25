@@ -80,6 +80,10 @@ describe('Arkme extension tools', () => {
       extension_id: 'ext-1', status: 'deleted', installed: false, active: false,
       references_removed: true, removed_source_count: 1, restart_required: false, message: '扩展已完全移除',
     }))
+    const saveToProfile = vi.fn(async () => ({
+      packageName: '@arkme-generated/weather', version: '1.0.0', artifactContractVersion: 2,
+      artifactKind: 'dsh-bundle-tgz', installed: true, active: false, restartRequired: true, message: 'saved',
+    }))
     const applyExtension = vi.fn(async () => ({
       extension_id: 'ext-native', version: '1.0.0', state: 'active', installed: true, active: true,
       approval_required: false, restart_required: false, message: '已激活',
@@ -107,10 +111,10 @@ describe('Arkme extension tools', () => {
       auditExtension,
       searchCatalog,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
-    } as never, { delete: deleteExtension } as never, { readImage }, 'business')
+    } as never, { delete: deleteExtension, saveToProfile } as never, { readImage }, 'business')
 
     expect(definitions.map(item => item.name)).toEqual([
-      'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
+      'arkme_extension_save_profile', 'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
 		'arkme_extension_share', 'arkme_extension_share_read',
@@ -121,6 +125,26 @@ describe('Arkme extension tools', () => {
     expect(listMine?.description).toContain('dynamic-cordis-v2')
     expect(listMine?.description).toContain('profile-native-v3')
     expect(listMine?.description).toContain('untrusted')
+    const saveProfile = definitions.find(item => item.name === 'arkme_extension_save_profile')
+    expect(saveProfile?.description).toContain('never uploads')
+    expect(saveProfile?.parameters).toHaveProperty('properties.owned_ref')
+    expect(saveProfile?.parameters).toHaveProperty('properties.version')
+    const saveAgent = confirmationAgent('session-profile-save', '保存到 Profile')
+    const saveArguments = {
+      owned_ref: 'owned-ref', name: '天气助手', description: '天气', version: '1.0.0',
+    }
+    await expect(saveProfile?.execute?.(
+      saveArguments, toolExec(saveAgent, 'call-profile-save-prepare'),
+    )).resolves.toContain('"status": "confirmation_required"')
+    expect(saveToProfile).not.toHaveBeenCalled()
+    addNaturalConfirmation(saveAgent, '确认保存')
+    await expect(saveProfile?.execute?.(
+      saveArguments, toolExec(saveAgent, 'call-profile-save-confirm'),
+    )).resolves.toContain('"restartRequired": true')
+    expect(saveToProfile).toHaveBeenCalledWith(expect.objectContaining({
+      ownedRef: 'owned-ref', name: '天气助手', description: '天气', version: '1.0.0',
+      clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    }))
     const listInstalledTool = definitions.find(item => item.name === 'arkme_extension_list_installed')
     await expect(listInstalledTool?.execute?.({}, toolExec(confirmationAgent('session-list', '查看已安装扩展'), 'call-list')))
       .resolves.toContain('"message": "插件运行失败，已自动停用。"')
@@ -158,14 +182,15 @@ describe('Arkme extension tools', () => {
     expect(publish?.description).toContain('1 to 10')
     expect(publish?.description).toContain('artifact_contract_version=2')
     expect(publish?.description).toContain('artifact_contract_version=3')
-    expect(publish?.description).toContain('not a third route')
+    expect(publish?.description).toContain('not an upload route')
 		expect(publish?.description).not.toContain('required for public/unlisted V3')
     expect(publish?.description).toContain('does not publish')
     expect(publish?.description).toContain('later direct human message')
     expect(sections).toHaveLength(1)
     expect(sections[0]).toMatchObject({ name: 'tool:arkme-extension-authoring', order: 117 })
     expect(sections[0]?.text()).toBe(ARKME_EXTENSION_AUTHORING_PREFLIGHT_PROMPT)
-    expect(sections[0]?.text()).toContain('exactly two Host-selected publication routes')
+    expect(sections[0]?.text()).toContain('one product-level extension flow')
+    expect(sections[0]?.text()).toContain('arkme_extension_save_profile')
     expect(sections[0]?.text()).toContain('publish.route, artifactContractVersion, artifactKind')
     expect(sections[0]?.text()).toContain('not a third upload route')
     expect(sections[0]?.text()).toContain('before planning, coding, searching, or calling tools')

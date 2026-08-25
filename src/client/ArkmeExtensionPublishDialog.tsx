@@ -43,6 +43,9 @@ export function ArkmeExtensionPublishDialog({ item, busy, error, onCancel, onSub
   return <div style={styles.backdrop}>
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-publish-title">
       <h3 id="arkme-extension-publish-title" style={styles.title}>{item.publish.allowed && item.publish.mode === 'version' ? '发布新版本' : '发布扩展'}</h3>
+      {item.states.includes('cordis') && !item.states.includes('persisted') && <p style={styles.notice}>
+        发布前会先把插件保存为当前 Profile 的 V2 沙箱包；如果上传失败，本地保存结果仍会保留。
+      </p>}
       <form onSubmit={submit}>
         <label style={styles.label}>名称<input style={styles.input} value={name} maxLength={120} required disabled={busy} onChange={event => { setName(event.target.value) }} /></label>
         <label style={styles.label}>说明<textarea style={styles.textarea} value={description} maxLength={2000} disabled={busy} onChange={event => { setDescription(event.target.value) }} /></label>
@@ -85,6 +88,7 @@ const styles: Record<string, CSSProperties> = {
   backdrop: { position: 'absolute', zIndex: 4, inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(17, 24, 39, .28)' },
   dialog: { width: 'min(430px, calc(100% - 40px))', padding: 22, boxSizing: 'border-box', borderRadius: 14, background: 'var(--dsw-specific-sidebar-fill, #fff)', boxShadow: '0 20px 55px rgba(0,0,0,.22)' },
   title: { margin: '0 0 16px', fontSize: 17 },
+  notice: { margin: '0 0 12px', color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12, lineHeight: '18px' },
   label: { display: 'grid', gap: 6, marginTop: 11, color: 'var(--dsw-alias-label-secondary, #717780)', fontSize: 12 },
   input: { width: '100%', height: 36, padding: '0 10px', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },
   textarea: { width: '100%', minHeight: 62, padding: 10, resize: 'vertical', boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 8, background: 'transparent', color: 'inherit', font: 'inherit' },

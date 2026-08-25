@@ -6,14 +6,16 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensi
   DynamicCordisRunnerLike,
 } from './types.js'
 import type { ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute,
-  ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+  ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionProfileSaveInput,
+  ArkmeMyExtensionProfileSaveResult, ArkmeMyExtensionPublishInput,
   ArkmeMyExtensionState, ArkmeMyExtensionWarning, ArkmePreparedExtensionPublish,
 } from './owned-types.js'
 import type { ArkmeOwnedExtensionRefs } from './owned-refs.js'
 import type { ArkmeOwnedExtensionStore } from './owned-store.js'
 import { scanOwnedProfileExtensions } from './profile-owned-inventory.js'
 import {
-  packLocalNativeBundleDirectoryV3, readNativeBundleTarballV3, type ArkmeNativeBundlePublishSource,
+  packLocalBundleDirectory, packLocalNativeBundleDirectoryV3, readLocalBundleTarball,
+  readNativeBundleTarballV3, type ArkmeBundlePublishSource, type ArkmeNativeBundlePublishSource,
 } from './bundle-artifact.js'
 import type { ArkmeOwnedExtensionTarget } from './owned-refs.js'
 
@@ -23,7 +25,7 @@ interface MutableOwnedItem {
   description: string
   halves: { host: boolean; client: boolean }
   cordis?: { row: DynamicCordisInventoryRowLike; packageId: string; sourceKey: string }
-  persisted?: { packageName: string; version?: string; active: boolean; artifactContractVersion?: 3; publishable: boolean; publishReason?: string; target?: ArkmeOwnedExtensionTarget }
+  persisted?: { packageName: string; version?: string; active: boolean; artifactContractVersion?: 2 | 3; publishable: boolean; publishReason?: string; target?: ArkmeOwnedExtensionTarget }
   published?: ArkmeExtensionCatalogItem
 }
 
@@ -57,7 +59,19 @@ interface PublishInput {
   signal?: AbortSignal
 }
 
-interface PublishBundleInput {
+interface PublishSandboxBundleInput {
+  source: ArkmeBundlePublishSource
+  extensionId?: string
+  name: string
+  description: string
+  visibility: ArkmeExtensionVisibility
+  changelog?: string
+	githubRepositoryUrl?: string
+  idempotencyKey: string
+  signal?: AbortSignal
+}
+
+interface PublishNativeBundleInput {
   source: ArkmeNativeBundlePublishSource
   extensionId?: string
   name: string
@@ -94,7 +108,25 @@ export interface ArkmeOwnedExtensionInventoryOptions {
   runner: DynamicCordisRunnerLike
   agents: AgentRegistryLike
   publish(input: PublishInput): Promise<ArkmeExtensionPublishResult>
-  publishBundle?(input: PublishBundleInput): Promise<ArkmeExtensionPublishResult>
+  persistCordis?(input: {
+    agent: unknown
+    pluginId: string
+    packageId: string
+    packageName: string
+    name: string
+    description: string
+    version: string
+  }): Promise<{
+    source: ArkmeBundlePublishSource
+    packageName: string
+    version: string
+    installed: true
+    active: false
+    restartRequired: true
+    message: string
+  }>
+  publishSandboxBundle?(input: PublishSandboxBundleInput): Promise<ArkmeExtensionPublishResult>
+  publishBundle?(input: PublishNativeBundleInput): Promise<ArkmeExtensionPublishResult>
   lifecycle?: ArkmeOwnedExtensionLifecycle
 }
 
@@ -125,6 +157,7 @@ export class ArkmeOwnedExtensionInventory {
     const cordisRows = this.options.runner.inventory?.()
     if (cordisRows === undefined) warnings.add('cordis-unavailable')
     const rows = new Map<string, MutableOwnedItem>()
+    const profileRowKeys = new Map<string, string>()
 
     for (const cloud of cloudItems) {
       rows.set(`cloud:${cloud.extension_id}`, {
@@ -156,6 +189,7 @@ export class ArkmeOwnedExtensionInventory {
       }
       row.halves = mergeHalves(row.halves, local.halves)
       rows.set(key, row)
+      profileRowKeys.set(local.sourceKey, key)
     }
     for (const cordis of cordisRows ?? []) {
       const sourceKey = this.cordisSourceKey(cordis.agentId, cordis.pluginId)
@@ -170,8 +204,11 @@ export class ArkmeOwnedExtensionInventory {
       const selected = cordis.packages.find(item => item.packageId === packageId)
       if (selected === undefined) continue
       const cloudId = this.options.store.cloudLink('cordis', sourceKey, userId)
-      const key = cloudId === undefined ? `cordis:${sourceKey}` : `cloud:${cloudId}`
+      const linkedProfileRow = profileRowKeys.get(this.options.store.profileLink(sourceKey, userId) ?? '')
+      const key = cloudId === undefined ? linkedProfileRow ?? `cordis:${sourceKey}` : `cloud:${cloudId}`
       const row = rows.get(key) ?? cordisItem(key, selected)
+      row.name = selected.name
+      row.description = selected.purpose
       row.cordis = { row: cordis, packageId, sourceKey }
       row.halves = mergeHalves(row.halves, { host: selected.hasHostHalf, client: selected.hasClientHalf })
       rows.set(key, row)
@@ -190,6 +227,27 @@ export class ArkmeOwnedExtensionInventory {
     const agent = this.options.agents.get(target.agentId)
     if (agent === undefined) throw new ArkmePluginError('extension-agent-unavailable', '创建该扩展的 DSH 会话已不可用', false, 409)
     return await this.publishTarget(userId, target, agent, input)
+  }
+
+  async saveToProfile(input: ArkmeMyExtensionProfileSaveInput): Promise<ArkmeMyExtensionProfileSaveResult> {
+    const userId = await this.currentUserId()
+    const target = this.options.refs.resolve(userId, input.ownedRef)
+    if (target.kind !== 'cordis') {
+      throw new ArkmePluginError('extension-profile-already-persisted', '该插件已经是 Profile 来源', false, 409)
+    }
+    const agent = this.options.agents.get(target.agentId)
+    if (agent === undefined) throw new ArkmePluginError('extension-agent-unavailable', '创建该扩展的 DSH 会话已不可用', false, 409)
+    const saved = await this.persistCordisTarget(userId, target, agent, input)
+    return {
+      packageName: saved.profile.packageName,
+      version: saved.profile.version,
+      artifactContractVersion: 2,
+      artifactKind: 'dsh-bundle-tgz',
+      installed: true,
+      active: false,
+      restartRequired: true,
+      message: saved.profile.message,
+    }
   }
 
   /**
@@ -309,9 +367,8 @@ export class ArkmeOwnedExtensionInventory {
       || this.options.store.specDigest('profile', target.sourceKey) !== target.specDigest) {
       throw new ArkmePluginError('extension-owner-mismatch', '该本地扩展不属于当前 Arkme 账号', false, 403)
     }
-    const source = target.kind === 'profile-tarball'
-      ? readNativeBundleTarballV3(target.sourcePath)
-      : packLocalNativeBundleDirectoryV3(target.sourcePath)
+    const profileSource = readProfileTargetSource(target)
+    const source = profileSource.source
     if (source.bundle.packageName !== target.packageName) {
       throw new ArkmePluginError('extension-profile-stale', '本地 Bundle package identity 已变化，请刷新列表', false, 409)
     }
@@ -324,10 +381,12 @@ export class ArkmeOwnedExtensionInventory {
       sourceFingerprint: createHash('sha256')
         .update(`${source.bundle.bundleSha256}\0${source.source.sourceSha256}`)
         .digest('hex'),
-      publishRoute: 'profile-native-v3',
-      artifactContractVersion: 3,
-      artifactKind: 'dsh-native-package-tgz',
-      nativeCapabilities: [...source.bundle.nativeCapabilities],
+      publishRoute: profileSource.artifactContractVersion === 2 ? 'profile-sandbox-v2' : 'profile-native-v3',
+      artifactContractVersion: profileSource.artifactContractVersion,
+      artifactKind: profileSource.artifactContractVersion === 2 ? 'dsh-bundle-tgz' : 'dsh-native-package-tgz',
+      ...(profileSource.artifactContractVersion === 2
+        ? {}
+        : { nativeCapabilities: [...profileSource.source.bundle.nativeCapabilities] }),
     }
   }
 
@@ -370,6 +429,38 @@ export class ArkmeOwnedExtensionInventory {
     const packageName = extensionId === undefined
       ? `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`
       : await this.ownedCloudPackageName(extensionId, input.signal)
+    if (this.options.persistCordis !== undefined && this.options.publishSandboxBundle !== undefined) {
+      const saved = await this.persistCordisTarget(userId, target, agent, input, packageName)
+      let result: ArkmeExtensionPublishResult
+      try {
+        result = await this.options.publishSandboxBundle({
+          source: saved.profile.source,
+          ...(extensionId === undefined ? {} : { extensionId }),
+          name: input.name,
+          description: input.description,
+          visibility: input.visibility,
+          ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
+		  ...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
+          idempotencyKey: createHash('sha256')
+            .update(`my-extension-publish\0${String(userId)}\0${target.sourceKey}\0${input.version}\0${input.clientMutationId}`)
+            .digest('hex'),
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+        })
+      } catch (error) {
+        throw new ArkmePluginError(
+          'extension-publish-after-profile-save-failed',
+          `插件已保存到 Profile，但市集发布失败：${error instanceof Error ? error.message : String(error)}`,
+          error instanceof ArkmePluginError ? error.retryable : true,
+          error instanceof ArkmePluginError ? error.httpStatus : 503,
+          { cause: error },
+        )
+      }
+      if (result.status === 'published') {
+        this.linkPublishedTarget('cordis', target.sourceKey, userId, extensionId, result.extension_id)
+        this.linkPublishedTarget('profile', saved.profileSourceKey, userId, extensionId, result.extension_id)
+      }
+      return result
+    }
     const result = await this.options.publish({
       agent,
       pluginId: target.pluginId,
@@ -402,16 +493,18 @@ export class ArkmeOwnedExtensionInventory {
       || this.options.store.specDigest('profile', target.sourceKey) !== target.specDigest) {
       throw new ArkmePluginError('extension-owner-mismatch', '该本地扩展不属于当前 Arkme 账号', false, 403)
     }
-    const source = target.kind === 'profile-tarball'
-      ? readNativeBundleTarballV3(target.sourcePath)
-      : packLocalNativeBundleDirectoryV3(target.sourcePath)
+    const profileSource = readProfileTargetSource(target)
+    const source = profileSource.source
     if (source.bundle.packageName !== target.packageName) {
       throw new ArkmePluginError('extension-profile-stale', '本地 Bundle package identity 已变化，请刷新列表', false, 409)
     }
     if (source.bundle.version !== input.version) {
       throw new ArkmePluginError('extension-version-mismatch', '发布版本必须与 Bundle package.json.version 一致', false, 409)
     }
-    if (this.options.publishBundle === undefined) {
+    const publishBundle = profileSource.artifactContractVersion === 2
+      ? this.options.publishSandboxBundle
+      : this.options.publishBundle
+    if (publishBundle === undefined) {
       throw new ArkmePluginError('extension-bundle-publish-unavailable', '当前 Arkme 版本不支持发布本地 Bundle', false, 503)
     }
     const extensionId = this.publishExtensionId('profile', target.sourceKey, userId, input.extensionId)
@@ -419,7 +512,7 @@ export class ArkmeOwnedExtensionInventory {
       ? undefined
       : await this.ownedCloudPackageName(extensionId, input.signal)
     this.assertUpdatePackageIdentity(source.bundle.packageName, packageName)
-    const result = await this.options.publishBundle({
+    const result = await publishBundle({
       source,
       ...(extensionId === undefined ? {} : { extensionId }),
       name: input.name,
@@ -436,6 +529,46 @@ export class ArkmeOwnedExtensionInventory {
       this.linkPublishedTarget('profile', target.sourceKey, userId, extensionId, result.extension_id)
     }
     return result
+  }
+
+  private async persistCordisTarget(
+    userId: number,
+    target: { sourceKey: string; agentId: string; pluginId: string; packageId: string },
+    agent: unknown,
+    input: Pick<ArkmeMyExtensionProfileSaveInput, 'name' | 'description' | 'version'>,
+    resolvedPackageName?: string,
+  ): Promise<{
+    profile: Awaited<ReturnType<NonNullable<ArkmeOwnedExtensionInventoryOptions['persistCordis']>>>
+    profileSourceKey: string
+  }> {
+    const live = this.options.runner.inventory?.().find(row => row.agentId === target.agentId && row.pluginId === target.pluginId)
+    if (live === undefined || !live.packages.some(item => item.packageId === target.packageId)) {
+      throw new ArkmePluginError('extension-cordis-stale', 'Cordis 扩展已失效，请刷新列表', false, 409)
+    }
+    if (this.options.persistCordis === undefined) {
+      throw new ArkmePluginError('extension-profile-save-unavailable', '当前 Arkme 版本不支持保存插件到 Profile', false, 503)
+    }
+    const linkedExtensionId = this.options.store.cloudLink('cordis', target.sourceKey, userId)
+    const packageName = resolvedPackageName ?? (linkedExtensionId === undefined
+      ? `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`
+      : await this.ownedCloudPackageName(linkedExtensionId))
+    const profileSourceKey = `${this.options.profileName}\0${packageName}`
+    const profileOwner = this.options.store.owner('profile', profileSourceKey)
+    if (profileOwner !== undefined && profileOwner !== userId) {
+      throw new ArkmePluginError('extension-owner-mismatch', '目标 Profile 插件已属于其他 Arkme 账号', false, 403)
+    }
+    const profile = await this.options.persistCordis({
+      agent,
+      pluginId: target.pluginId,
+      packageId: target.packageId,
+      packageName,
+      name: input.name,
+      description: input.description,
+      version: input.version,
+    })
+    this.options.store.claim('profile', profileSourceKey, userId, profile.source.bundle.bundleSha256)
+    this.options.store.linkProfile(target.sourceKey, profileSourceKey, userId)
+    return { profile, profileSourceKey }
   }
 
   private async cloudItems(signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem[]> {
@@ -616,7 +749,28 @@ function publishContractForTarget(target: ArkmeOwnedExtensionTarget): {
 } {
   return target.kind === 'cordis'
     ? { route: 'dynamic-cordis-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' }
-    : { route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' }
+    : target.artifactContractVersion === 2
+      ? { route: 'profile-sandbox-v2', artifactContractVersion: 2, artifactKind: 'dsh-bundle-tgz' }
+      : { route: 'profile-native-v3', artifactContractVersion: 3, artifactKind: 'dsh-native-package-tgz' }
+}
+
+function readProfileTargetSource(target: Exclude<ArkmeOwnedExtensionTarget, { kind: 'cordis' }> ):
+  | { artifactContractVersion: 2; source: ArkmeBundlePublishSource }
+  | { artifactContractVersion: 3; source: ArkmeNativeBundlePublishSource } {
+  if (target.artifactContractVersion === 2) {
+    return {
+      artifactContractVersion: 2,
+      source: target.kind === 'profile-tarball'
+        ? readLocalBundleTarball(target.sourcePath)
+        : packLocalBundleDirectory(target.sourcePath),
+    }
+  }
+  return {
+    artifactContractVersion: 3,
+    source: target.kind === 'profile-tarball'
+      ? readNativeBundleTarballV3(target.sourcePath)
+      : packLocalNativeBundleDirectoryV3(target.sourcePath),
+  }
 }
 
 export function selectPublishPackage(input: Pick<DynamicCordisInventoryRowLike, 'packages' | 'currentPackageId'>): string | undefined {

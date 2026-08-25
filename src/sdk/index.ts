@@ -94,7 +94,10 @@ import type {
 	ArkmeSharedExtensionDetail,
 	ArkmeExtensionSource,
 } from '../extensions/types.js'
-import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
+import type {
+  ArkmeMyExtensionPage, ArkmeMyExtensionProfileSaveInput, ArkmeMyExtensionProfileSaveResult,
+  ArkmeMyExtensionPublishInput,
+} from '../extensions/owned-types.js'
 import { normalizeGitHubRepositoryURL } from '../extensions/source.js'
 
 export type {
@@ -212,7 +215,8 @@ export type {
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
 } from '../types.js'
-export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput,
+export type { ArkmeMyExtensionItem, ArkmeMyExtensionPage, ArkmeMyExtensionProfileSaveInput,
+  ArkmeMyExtensionProfileSaveResult, ArkmeMyExtensionPublishInput,
   ArkmeExtensionPublishArtifactKind, ArkmeExtensionPublishRoute, ArkmeMyExtensionPublishState,
   ArkmeMyExtensionState, ArkmeMyExtensionWarning,
 } from '../extensions/owned-types.js'
@@ -660,13 +664,36 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  /** List current-account sources with their Host-derived dynamic-cordis-v2 or profile-native-v3 publication route. */
+  /** List current-account sources with their Host-derived sandbox V2 or native V3 publication route. */
   async myExtensions(options: { currentSessionId?: string; signal?: AbortSignal } = {}): Promise<ArkmeMyExtensionPage> {
     return await this.call<ArkmeMyExtensionPage>('extensions.mine.list', {
       ...(options.currentSessionId === undefined || options.currentSessionId.trim() === ''
         ? {}
         : { currentSessionId: options.currentSessionId.trim() }),
     }, options.signal)
+  }
+
+  /** Persist one live Cordis source as an immutable sandbox V2 package in the current DSH Profile. */
+  saveMyExtensionToProfile(
+    input: ArkmeMyExtensionProfileSaveInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMyExtensionProfileSaveResult> {
+    if (input.ownedRef.trim() === '') throw new TypeError('Arkme extension reference must not be empty')
+    if (input.name.trim() === '' || input.name.trim().length > 120) throw new TypeError('Arkme extension name is invalid')
+    if (input.description.length > 2_000) throw new TypeError('Arkme extension description is too long')
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(input.version.trim())) {
+      throw new TypeError('Arkme extension version must be SemVer')
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.clientMutationId)) {
+      throw new TypeError('Arkme extension client mutation id must be a UUID')
+    }
+    return this.call<ArkmeMyExtensionProfileSaveResult>('extensions.mine.persist', {
+      ownedRef: input.ownedRef,
+      name: input.name.trim(),
+      description: input.description.trim(),
+      version: input.version.trim(),
+      clientMutationId: input.clientMutationId,
+    }, signal)
   }
 
   /** Publish one exact owned source through its Host-derived V2 or V3 route after explicit current-user intent. */

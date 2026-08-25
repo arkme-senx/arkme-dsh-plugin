@@ -2272,6 +2272,7 @@ export type ArkmePluginOperation =
   | 'calls.history.detail'
   | 'calls.history.summary.retry'
   | 'extensions.mine.list'
+  | 'extensions.mine.persist'
   | 'extensions.mine.publish'
   | 'extensions.catalog.list'
   | 'extensions.catalog.detail'

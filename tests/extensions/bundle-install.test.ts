@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { canonicalExtensionSignatureMessage, packArkmeExtension } from '../../src/extensions/artifact.js'
-import { packLocalBundleDirectory, packLocalNativeBundleDirectoryV3 } from '../../src/extensions/bundle-artifact.js'
+import { packLocalBundleDirectory, packLocalNativeBundleDirectoryV3, readLocalBundleTarball } from '../../src/extensions/bundle-artifact.js'
 import { ArkmeExtensionInstallStore } from '../../src/extensions/install-store.js'
 import { ArkmeExtensionManager } from '../../src/extensions/manager.js'
 import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
@@ -47,6 +47,58 @@ function nativeBundleFixture() {
 }
 
 describe('Bundle v2 profile installation', () => {
+  it('materializes a live Cordis package once, installs the immutable tgz, and rejects same-version drift', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cordis-profile-save-'))
+    directories.push(root)
+    const profile = join(root, 'profiles', 'web')
+    mkdirSync(profile, { recursive: true })
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: [] } } }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'state'))
+    const installTarball = vi.fn(async () => undefined)
+    let hostCode = 'return { apply() {} }'
+    const manager = new ArkmeExtensionManager(
+      new ExtensionPublishClient(async () => { throw new Error('not used') }, async () => { throw new Error('not used') }),
+      store,
+      {
+        inspectPackage: () => ({
+          pluginId: 'weather-1', packageId: 'pkg-1', name: '天气助手', purpose: '天气', code: { host: hostCode },
+        }),
+        define: () => { throw new Error('not used') },
+        run: async () => { throw new Error('not used') },
+      },
+      {
+        artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
+        profileInstaller: {
+          install: vi.fn(), installTarball, remove: vi.fn(), restart: vi.fn(), setEnabled: vi.fn(),
+        } as never,
+      },
+    )
+    const input = {
+      agent: { id: 'session-1' }, pluginId: 'weather-1', packageId: 'pkg-1',
+      packageName: '@arkme-generated/weather', name: '天气助手', description: '天气', version: '1.0.0',
+    }
+
+    const first = await manager.persistCordisProfile(input)
+    const replay = await manager.persistCordisProfile(input)
+    expect(first).toMatchObject({
+      packageName: '@arkme-generated/weather', version: '1.0.0', installed: true, active: false, restartRequired: true,
+    })
+    expect(replay.source.bundle.bundleSha256).toBe(first.source.bundle.bundleSha256)
+    expect(installTarball).toHaveBeenCalledTimes(2)
+    const artifactPath = installTarball.mock.calls[0]![0]
+    expect(installTarball.mock.calls[1]![0]).toBe(artifactPath)
+    expect(readLocalBundleTarball(artifactPath).bundle).toMatchObject({
+      packageName: '@arkme-generated/weather', version: '1.0.0', executionModel: 'arkme-sandboxed',
+    })
+
+    hostCode = 'return { apply() { return true } }'
+    await expect(manager.persistCordisProfile(input)).rejects.toMatchObject({
+      code: 'extension-profile-version-conflict', httpStatus: 409,
+    })
+    expect(installTarball).toHaveBeenCalledTimes(2)
+    store.close()
+  })
+
   it('verifies and installs the downloaded tgz directly without an Arkme wrapper', async () => {
     const source = bundleFixture()
     const { publicKey, privateKey } = generateKeyPairSync('ed25519')
