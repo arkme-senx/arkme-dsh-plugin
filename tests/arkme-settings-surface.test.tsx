@@ -15,6 +15,7 @@ describe('ArkmeSettingsSurface', () => {
     expect(markup).toContain('>核心插件<')
     expect(markup).toContain('>关于<')
     expect(markup).toContain('>关于 Arkme<')
+    expect(markup).toContain('版本 v…')
     expect(markup).toContain('>用户协议<')
     expect(markup).toContain('>隐私条款<')
     expect(markup).not.toContain('>个人资料<')
@@ -41,6 +42,7 @@ describe('ArkmeSettingsSurface', () => {
     try {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
       const authenticated = renderToStaticMarkup(<ArkmeSettingsSurface />)
+      expect(authenticated).toMatch(/当前余量[\s\S]*正在加载余量…[\s\S]*充值/)
       expect(authenticated).toContain('>退出登录<')
       expect(authenticated).toContain('>账户操作<')
       expect(authenticated.indexOf('>隐私条款<')).toBeLessThan(authenticated.indexOf('>账户操作<'))

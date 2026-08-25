@@ -7,6 +7,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
@@ -212,6 +213,10 @@ export function ArkmeSettingsSurface() {
           title={bindingRequired ? '待完成登录' : authState.checked ? '当前未登录' : '正在读取登录状态…'}
           description={bindingRequired ? '完成手机号绑定后即可登录' : '登录 Arkme 后可管理账户'}
         />
+      </SettingsGroup>}
+
+      {authenticated && <SettingsGroup title="账户">
+        <ArkmeBillingSettings />
       </SettingsGroup>}
 
       <SettingsGroup title="通用">

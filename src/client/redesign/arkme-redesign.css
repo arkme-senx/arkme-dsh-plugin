@@ -497,6 +497,177 @@ button.arkme-redesign-setting-row:hover, a.arkme-redesign-setting-row:hover { co
 .arkme-redesign-setting-row > strong.is-danger { color: #b54841; }
 .arkme-redesign-setting-summary { max-width: 360px; overflow: hidden; color: #858992; font-size: 12px; line-height: 18px; text-align: right; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-redesign-setting-row > svg { color: #8d929b; }
+.arkme-redesign-balance-main {
+  min-width: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.arkme-redesign-balance-main > strong { font-size: 14px; line-height: 20px; font-weight: 500; }
+.arkme-redesign-balance-main > small { color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-redesign-recharge-trigger {
+  min-width: 54px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  background: #fff;
+  color: #4e596d;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.arkme-redesign-recharge-trigger:hover { border-color: #cfd3da; background: #f7f7f8; color: #20232c; }
+.arkme-billing-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(24, 27, 34, .24);
+  backdrop-filter: blur(3px);
+}
+.arkme-billing-recharge-dialog,
+.arkme-billing-payment-dialog {
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 56px));
+  overflow-y: auto;
+  border: 1px solid #dedfe3;
+  border-radius: 20px;
+  background: #fff;
+  color: #20232c;
+  box-shadow: 0 24px 72px rgba(25, 28, 35, .18);
+}
+.arkme-billing-payment-dialog { width: min(420px, 100%); }
+.arkme-billing-dialog-header {
+  min-height: 78px;
+  padding: 20px 22px 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #ececef;
+}
+.arkme-billing-dialog-header h2 { margin: 0; font-size: 18px; line-height: 25px; font-weight: 600; }
+.arkme-billing-dialog-header p { margin: 4px 0 0; overflow-wrap: anywhere; color: #8a8e96; font-size: 12px; line-height: 18px; }
+.arkme-billing-dialog-header > button {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #777c85;
+  font: inherit;
+  font-size: 22px;
+  cursor: pointer;
+}
+.arkme-billing-dialog-header > button:hover { background: #f3f3f5; color: #20232c; }
+.arkme-billing-dialog-body { padding: 18px 22px 22px; }
+.arkme-billing-dialog-balance {
+  min-height: 48px;
+  padding: 0 2px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  border-bottom: 1px solid #ececef;
+}
+.arkme-billing-dialog-balance > span { grid-column: 1; color: #8a8e96; font-size: 11px; line-height: 16px; }
+.arkme-billing-dialog-balance > strong { grid-column: 1; font-size: 22px; line-height: 28px; font-weight: 600; }
+.arkme-billing-dialog-balance > button,
+.arkme-billing-error > button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  background: #fff;
+  color: #626772;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.arkme-billing-products-section,
+.arkme-billing-payment-section { padding-top: 17px; }
+.arkme-billing-products-section h3,
+.arkme-billing-payment-section h3 { margin: 0 0 11px; font-size: 12px; line-height: 18px; font-weight: 500; color: #747984; }
+.arkme-billing-product-grid { width: 100%; }
+.arkme-billing-product-grid > button {
+  min-width: 0;
+  min-height: 62px;
+  padding: 9px 11px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid #dfe1e5;
+  border-radius: 11px;
+  background: #fff;
+  color: #20232c;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.arkme-billing-product-grid > button:hover { background: #f8f8f9; border-color: #cfd2d8; }
+.arkme-billing-product-grid > button.is-selected { border-color: #75839e; box-shadow: 0 0 0 1px #75839e; }
+.arkme-billing-product-grid > button > span { overflow: hidden; font-size: 12px; line-height: 17px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-billing-product-grid > button > strong { font-size: 14px; line-height: 19px; font-weight: 600; }
+.arkme-billing-payment-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.arkme-billing-payment-actions > button {
+  min-width: 154px;
+  height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #dfe1e5;
+  border-radius: 10px;
+  background: #fff;
+  color: #333842;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.arkme-billing-payment-actions > button:hover { background: #f7f7f8; border-color: #cfd3da; }
+.arkme-billing-payment-actions > button:disabled,
+.arkme-billing-product-grid > button:disabled { opacity: .48; cursor: default; }
+.arkme-billing-platform-icon { width: 18px; height: 18px; flex: none; }
+.arkme-billing-platform-icon.is-alipay { color: #1677ff; }
+.arkme-billing-platform-icon.is-wechat { color: #07c160; }
+.arkme-billing-state { margin: 12px 0 2px; color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-billing-error { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #b54841; font-size: 12px; line-height: 18px; }
+.arkme-billing-error.is-purchase { justify-content: flex-start; }
+.arkme-billing-payment-content { padding: 28px 24px 18px; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.arkme-billing-payment-content > .arkme-billing-platform-icon { width: 38px; height: 38px; margin-bottom: 4px; }
+.arkme-billing-payment-content > img { width: 210px; height: 210px; border-radius: 10px; }
+.arkme-billing-payment-content > strong { font-size: 14px; line-height: 21px; font-weight: 600; }
+.arkme-billing-payment-content > p { margin: 0; color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-billing-dialog-actions { padding: 0 22px 20px; display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
+.arkme-billing-dialog-actions > button,
+.arkme-billing-primary-action {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  background: #fff;
+  color: #3c424d;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.arkme-billing-dialog-actions > .arkme-billing-primary-action,
+.arkme-billing-payment-content > .arkme-billing-primary-action { border-color: #20232d; background: #20232d; color: #fff; }
 .arkme-redesign-settings-error { margin: -8px 0 28px; padding: 10px 13px; border-radius: 10px; background: #fff3f0; color: #b54841; font-size: 12px; line-height: 18px; }
 .arkme-redesign-model-settings { width: 100%; height: 100%; overflow-y: auto; color: #20232c; background: #fff; }
 .arkme-redesign-model-settings > header { width: min(760px, calc(100% - 96px)); margin: 0 auto; padding: 42px 0 22px; }

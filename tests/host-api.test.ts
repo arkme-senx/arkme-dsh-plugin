@@ -50,8 +50,65 @@ function fakeService() {
     publishWorldFileAssets: vi.fn(async (input: unknown) => input),
     worldVoiceprintSocialContext: vi.fn(async (recordRef: string, options: unknown) => ({ recordRef, options })),
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
+    billingQuota: vi.fn(async () => ({
+      availableNanoCny: '1200', totalNanoCny: '1500', reservedNanoCny: '300', currency: 'CNY',
+    })),
+    billingProducts: vi.fn(async () => ({ items: [] })),
+    createBillingOrder: vi.fn(async (input: unknown) => input),
+    billingOrderStatus: vi.fn(async (orderId: string) => ({ orderId, status: 'pending' })),
   }
 }
+
+describe('billing Host API dispatch', () => {
+  it('dispatches quota and product reads without browser account fields', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'billing.quota', { userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'billing.products', { accessToken: 'secret' })
+
+    expect(service.billingQuota).toHaveBeenCalledWith()
+    expect(service.billingProducts).toHaveBeenCalledWith()
+  })
+
+  it('passes only the normalized order creation identity to the service', async () => {
+    const service = fakeService()
+    const clientRequestId = '8e37aebc-e2ba-4db2-b589-da729867410c'
+
+    await dispatchArkmeHostOperation(service as never, 'billing.order.create', {
+      productId: 'product-1', paymentMethod: 'wechat_native', clientRequestId,
+      amountMinor: 1, userId: 999,
+    })
+
+    expect(service.createBillingOrder).toHaveBeenCalledWith({
+      productId: 'product-1', paymentMethod: 'wechat_native', clientRequestId,
+    })
+  })
+
+  it.each([
+    [{ productId: '', paymentMethod: 'wechat_native', clientRequestId: '8e37aebc-e2ba-4db2-b589-da729867410c' }, 'billing-product-id-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'card', clientRequestId: '8e37aebc-e2ba-4db2-b589-da729867410c' }, 'billing-payment-method-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'alipay_pc_web', clientRequestId: '' }, 'billing-client-request-id-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'alipay_pc_web', clientRequestId: 'request-1' }, 'billing-client-request-id-invalid'],
+  ])('rejects invalid order creation parameters', async (params, code) => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.create', params))
+      .rejects.toMatchObject({ code })
+    expect(service.createBillingOrder).not.toHaveBeenCalled()
+  })
+
+  it('requires an order UUID and does not forward unknown status fields', async () => {
+    const service = fakeService()
+    const orderId = '755a40f2-b5a5-420f-a7c5-1e4543cf016c'
+
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId: '' }))
+      .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId: 'order-1' }))
+      .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
+    await dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId, accessToken: 'secret' })
+    expect(service.billingOrderStatus).toHaveBeenCalledWith(orderId)
+  })
+})
 
 describe('World publish Host API dispatch', () => {
   it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {
