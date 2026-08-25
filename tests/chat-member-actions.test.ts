@@ -9,6 +9,7 @@ import {
   arkmeMemberProfileNames,
   arkmeMemberRecordTimeline, arkmeMemberRecordTotal, formatArkmeMemberRecordTime,
   clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
+  retainArkmeMemberRecordsScrollTop, shouldLoadOlderArkmeMemberRecords,
 } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichContent.js'
 import {
@@ -178,6 +179,19 @@ describe('chat member action menu placement', () => {
     expect(clampArkmeMemberRecordsWidth(520, 600)).toBe(428)
     expect(clampArkmeMemberRecordsWidth(520, 320)).toBe(320)
     expect(clampArkmeMemberRecordsWidth(Number.NaN, 1_200)).toBe(428)
+  })
+
+  it('loads older records near the top without a manual pagination button', () => {
+    expect(shouldLoadOlderArkmeMemberRecords(120, true, 900, false)).toBe(true)
+    expect(shouldLoadOlderArkmeMemberRecords(121, true, 900, false)).toBe(false)
+    expect(shouldLoadOlderArkmeMemberRecords(0, false, 900, false)).toBe(false)
+    expect(shouldLoadOlderArkmeMemberRecords(0, true, undefined, false)).toBe(false)
+    expect(shouldLoadOlderArkmeMemberRecords(0, true, 900, true)).toBe(false)
+  })
+
+  it('retains the visible record after older records are prepended', () => {
+    expect(retainArkmeMemberRecordsScrollTop(24, 1_000, 1_400)).toBe(424)
+    expect(retainArkmeMemberRecordsScrollTop(0, 1_000, 900)).toBe(0)
   })
 
   it('builds the same chronological 30-minute time segmentation as the desktop client', () => {
