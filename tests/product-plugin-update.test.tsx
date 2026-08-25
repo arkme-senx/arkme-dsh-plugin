@@ -61,16 +61,16 @@ beforeEach(() => {
 })
 
 describe('Arkme product plugin update entry', () => {
-  it('shows the installed plugin version below the logo and a red new-version action only when an update exists', () => {
+  it('shows the installed plugin version below the logo and the Demo-style rail update entry only when an update exists', () => {
     const availableMarkup = renderToStaticMarkup(
       <productNavigation.ArkmeProductNavigation compact={false} currentSessionId="session-1" />,
     )
 
     expect(availableMarkup).toContain('data-arkme-plugin-version="0.1.16"')
     expect(availableMarkup).toContain('>v0.1.16</span>')
-    expect(availableMarkup).toContain('aria-label="查看插件新版本 0.1.17"')
-    expect(availableMarkup).toContain('background:#ef4444')
-    expect(availableMarkup).toContain('>新版本</button>')
+    expect(availableMarkup).toContain('aria-label="更新 Arkme"')
+    expect(availableMarkup).toContain('arkme-update-rail is-available')
+    expect(availableMarkup).toContain('<span>更新</span>')
 
     updateState.snapshot = { ...updateState.snapshot, status: status({ availability: 'current', latestVersion: '0.1.16' }) }
     const currentMarkup = renderToStaticMarkup(
@@ -78,7 +78,8 @@ describe('Arkme product plugin update entry', () => {
     )
 
     expect(currentMarkup).toContain('>v0.1.16</span>')
-    expect(currentMarkup).not.toContain('>新版本</button>')
+    expect(currentMarkup).not.toContain('aria-label="更新 Arkme"')
+    expect(currentMarkup).not.toContain('arkme-update-rail-slot')
   })
 
   it('shows the packaged plugin version while the first update status request is still loading', () => {

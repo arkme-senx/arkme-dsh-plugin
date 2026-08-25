@@ -139,7 +139,9 @@ describe('contact detail presentation', () => {
     />)
 
     expect(none).toContain('class="arkme-directory-detail-empty"')
-    expect(none).toContain('alt="Arkme"')
+    expect(none.match(/alt="Arkme"/g)).toHaveLength(2)
+    expect(none).toContain('data-arkme-theme-image="light"')
+    expect(none).toContain('data-arkme-theme-image="dark"')
     expect(speaker).toContain('speaker slot: candidate-ref')
   })
 

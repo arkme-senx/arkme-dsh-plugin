@@ -11,16 +11,47 @@ describe('ArkmeSettingsSurface', () => {
   it('keeps Arkme account and update capabilities in the redesigned settings surface', () => {
     expect(source).toContain("callArkme<ArkmeUserProfileSnapshot>('user.profile'")
     expect(source).toContain("callArkme<ArkmeAuthSnapshot>('auth.logout')")
-    expect(source).toContain('个人资料')
-    expect(source).toContain('登录与安全')
     expect(source).toContain('退出登录')
     expect(source).toContain('aria-label="Arkme 设置"')
-    expect(source).toContain('模型与 API Key')
-    expect(source).toContain('buildArkmeUpdateCenterRows')
-    expect(source).toContain('下载更新包')
+    expect(source).toContain('buildArkmePluginUpdateRow')
     expect(source).toContain('立即更新')
-    expect(navigationSource).toContain('<strong>我的账户</strong>')
+    expect(source).not.toContain('<SettingsRow title="个人资料"')
+    expect(source).not.toContain('<SettingsRow title="登录与安全"')
+    expect(source).not.toContain('<SettingsRow title="执行前确认"')
+    expect(source).not.toContain('<SettingsRow title="可读取内容"')
+    expect(source).not.toContain('<SettingsRow title="外观"')
+    expect(source).not.toContain('<SettingsRow title="模型与 API Key"')
+    expect(source).not.toContain('ArkmeAppUpdateSnapshot')
+    expect(source).not.toContain('arkmeAppUpdateStore')
+    expect(navigationSource).not.toContain('<strong>我的账户</strong>')
     expect(navigationSource).toContain('arkmeUi.openDshSettings()')
+  })
+
+  it('clears the previous account projection before loading another authenticated user', () => {
+    expect(source).toMatch(/if \(authState\.auth\?\.status !== 'authenticated'\) \{\s*setProfile\(undefined\)\s*setError\(''\)\s*return/)
+    expect(source).toMatch(/const controller = new AbortController\(\)\s*setProfile\(undefined\)\s*setError\(''\)\s*void callArkme<ArkmeUserProfileSnapshot>\('user.profile'/)
+  })
+
+  it('positions the DSH account section at the top before paint', () => {
+    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*scrollArkmeSettingsSurface\(surfaceRef\.current\)/)
+    expect(source).not.toContain('document.getElementById')
+    expect(source).not.toContain('settingsSection')
+  })
+
+  it('inherits the native DSH settings canvas without a standalone compatibility mode', () => {
+    expect(adapterSource).toContain('<ArkmeSettingsSurface />')
+    expect(source).not.toContain('ArkmeSettingsHost')
+    expect(source).not.toContain('data-arkme-settings-host')
+    expect(redesignCss).toMatch(/\.arkme-redesign-settings-surface \{[^}]*background: transparent;/)
+    expect(redesignCss).toMatch(/\.arkme-redesign-settings-group \{[^}]*border-radius: 0;[^}]*background: transparent;/)
+    expect(redesignCss).toMatch(/body\[data-ds-dark-theme\] \.arkme-redesign-settings-surface,[\s\S]*?\.arkme-redesign-settings-group \{[^}]*background: transparent !important;/)
+  })
+
+  it('leaves DSH as the only scroll owner and prevents row overflow', () => {
+    expect(redesignCss).toMatch(/\.arkme-redesign-settings-surface \{[^}]*height: auto;[^}]*overflow: visible;/)
+    expect(redesignCss).toMatch(/\.arkme-redesign-setting-row \{[^}]*box-sizing: border-box;/)
+    expect(redesignCss).not.toMatch(/\.arkme-redesign-settings-group \{[^}]*overflow: visible;/)
+    expect(redesignCss).not.toMatch(/\.arkme-redesign-settings-surface \{[^}]*overflow-[xy]: auto;/)
   })
 
   it('uses the Demo settings groups and adapts the DSH task conversation layout', () => {
@@ -44,6 +75,9 @@ describe('ArkmeSettingsSurface', () => {
     expect(shellSource).toContain("ui.calendarOpen !== true")
     expect(shellSource).not.toContain("renderSlot('sidebar.settings'")
     expect(adapterSource).toContain('arkmeUi.bindSettingsOpener(openOfficialSettings)')
+    expect(adapterSource).toContain("ctx.slots.inject('settings.section'")
+    expect(adapterSource).toContain("id: 'arkme-account'")
+    expect(adapterSource).toContain("label: '我的账户'")
     expect(adapterSource).toContain('[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]')
     expect(adapterSource).toContain('[data-arkme-owned="persistent-sidebar"]')
     expect(adapterSource).not.toContain("document.querySelector<HTMLButtonElement>('button[aria-haspopup=\"dialog\"]')")

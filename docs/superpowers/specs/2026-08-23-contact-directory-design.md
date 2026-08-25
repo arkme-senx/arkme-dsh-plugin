@@ -17,7 +17,7 @@
 
 ## 当前事实与复用边界
 
-- 真实宿主通过 `ArkmeProductNavigation`、`ArkmePersistentSidebar` 和 `ArkmePersistentWorkspace` 分别承担产品 Tab、中间列和主内容；`ArkmeRootFrame` 只是兼容表面，不得作为生产接入点。
+- 真实宿主通过 `ArkmeProductNavigation`、`ArkmePersistentSidebar` 和 `ArkmePersistentWorkspace` 分别承担产品 Tab、中间列和主内容，生产代码只维护这条接入链路。
 - 插件已有 `user.card`、`chat.private.open` 和世界内容读取能力，可复用联系人资料、私聊打开和用户世界数据。
 - 即我联系人列表接口为 `/api/v1/chats/contacts/list`；移动端已有联系人排序和首字母目录投影。
 - 团队列表接口为 `/api/v1/team/list-mine`。本次只消费列表，不引入团队详情能力。
@@ -40,7 +40,7 @@
 
 直接嵌入 `/unmarked-speakers` 能减少服务适配，但会形成桌面外壳内的第二套路由、鉴权、主题和返回行为，联系人右侧也无法统一管理选中状态，因此不采用。
 
-### 未采用：在 `ArkmeRootFrame` 中直接调用所有接口
+### 未采用：在外壳根组件中直接调用所有接口
 
 该方式改动入口少，但会把网络契约、数据投影、播放和写操作继续堆叠到已较大的根组件中，难以独立测试和维护，因此不采用。
 

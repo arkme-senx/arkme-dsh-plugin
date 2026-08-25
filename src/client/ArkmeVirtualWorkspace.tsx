@@ -35,6 +35,7 @@ import {
   ARKO_CONVERSATION_PREVIEW_FALLBACK,
   arkmeArkoConversationPreviewStore,
 } from './arko-conversation-preview-store.js'
+import { ArkmeArkoConversationPreviewSync } from './arko-conversation-preview-sync.js'
 import {
   buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
@@ -422,13 +423,19 @@ export function ArkmeArkoRow({
   selected,
   displayName = 'Arko',
   latestPreview = ARKO_CONVERSATION_PREVIEW_FALLBACK,
+  latestAtMillis,
   onClick,
 }: {
   selected: boolean
   displayName?: string
   latestPreview?: string
+  latestAtMillis?: number
   onClick(): void
 }) {
+  const latestTime = latestAtMillis === undefined ? '' : timeLabel(latestAtMillis)
+  const latestDateTime = latestTime === '' || latestAtMillis === undefined
+    ? undefined
+    : new Date(latestAtMillis).toISOString()
   return <button
     type="button"
     role="treeitem"
@@ -441,6 +448,11 @@ export function ArkmeArkoRow({
       <span style={styles.chatTop}>
         <span style={styles.entryName}>{displayName}</span>
         <ArkmeTopicTagBadge label="AI" selected={selected} />
+        <span aria-hidden style={{ flex: 1 }} />
+        {latestDateTime !== undefined && <time
+          style={styles.chatTime}
+          dateTime={latestDateTime}
+        >{latestTime}</time>}
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}>{latestPreview}</span></span>
     </span>
@@ -780,6 +792,9 @@ export function ArkmeNavigation({
   const arkoLatestPreview = arkoPreviewSnapshot.userId === auth?.userId
     ? arkoPreviewSnapshot.latestPreview
     : undefined
+  const arkoLatestAtMillis = arkoPreviewSnapshot.userId === auth?.userId
+    ? arkoPreviewSnapshot.latestAtMillis
+    : undefined
   const directorySources = useMemo(
     () => arkmeSelfDirectorySources(sources),
     [sources],
@@ -966,13 +981,8 @@ export function ArkmeNavigation({
   useEffect(() => {
     const userId = authenticated ? auth?.userId : undefined
     if (userId === undefined) return
-    const request = arkmeArkoConversationPreviewStore.beginHistoryRequest(userId)
-    if (request === undefined) return
-    const controller = new AbortController()
-    void callArkme<ArkmeArkoHistoryPage>('arko.history', { limit: 10, offset: 0 }, controller.signal)
-      .then(page => { arkmeArkoConversationPreviewStore.setLatestFromHistory(request, page.items) })
-      .catch(() => undefined)
-    return () => { controller.abort() }
+    const sync = new ArkmeArkoConversationPreviewSync()
+    return sync.start(userId)
   }, [authenticated, auth?.userId])
   useEffect(() => {
     if (!authenticated || directory !== 'root' || chatDirectory.revision === 0) return
@@ -1286,6 +1296,7 @@ export function ArkmeNavigation({
           selected={activeDirectoryEntryId === undefined && ui.mode === 'arko'}
           displayName={arkoPresentationName(arkoProfile)}
           {...(arkoLatestPreview === undefined ? {} : { latestPreview: arkoLatestPreview })}
+          {...(arkoLatestAtMillis === undefined ? {} : { latestAtMillis: arkoLatestAtMillis })}
           onClick={showArko}
         />}
         {showSelfInSearch && <button

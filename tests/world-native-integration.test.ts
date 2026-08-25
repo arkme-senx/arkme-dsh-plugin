@@ -50,7 +50,7 @@ describe('native World integration', () => {
     const world = await source('src/client/ArkmeWorldSurface.tsx')
 
     expect(world).toContain("borderBottom: '2px solid transparent'")
-    expect(world).toContain("tabActive: { borderBottom: '2px solid #20232d'")
+    expect(world).toContain('tabActive: { borderBottom: `2px solid ${arkmeTheme.accent}`')
     expect(world).not.toContain('tabActive: { borderBottomColor:')
   })
 

@@ -1010,6 +1010,17 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
+    case 'calls.history.list': return await service.listCallHistory({
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor').trim() === '' ? {} : { cursor: stringParam(params, 'cursor').trim() }),
+      includeRecentContacts: params.includeRecentContacts !== false,
+    })
+    case 'calls.history.detail': return await service.callDetail(
+      requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
+    )
+    case 'calls.history.summary.retry': return await service.retryCallSummary(
+      requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
+    )
     case 'extensions.catalog.list': {
       const sort = extensionCatalogSortParam(params)
       const ownerUserId = numberParam(params, 'ownerUserId', 0)

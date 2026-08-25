@@ -53,6 +53,10 @@ describe('ArkmeCallHistorySurface', () => {
     expect(markup).not.toContain('陈依涵')
     expect(markup).not.toContain('周鹏')
     expect(markup).toContain('第一版演示')
+    expect(markup).toContain('aria-label="播放通话录音"')
+    expect(markup).toContain(
+      'background:var(--dsw-alias-button-primary-fill, #17191c);color:var(--dsw-alias-label-primary-inverted, #ffffff)',
+    )
     expect(markup).not.toContain('aria-label="回放进度"')
     expect(markup).not.toContain('type="range"')
   })

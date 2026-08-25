@@ -16,6 +16,10 @@ import type {
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
+  ArkmeCallDetail,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallSummaryRetryResult,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
@@ -112,6 +116,16 @@ export type {
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
   ArkmeCalendarRecordItem,
+  ArkmeCallDetail,
+  ArkmeCallHistoryItem,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallMediaType,
+  ArkmeCallParticipant,
+  ArkmeCallRecentContact,
+  ArkmeCallSummaryRetryResult,
+  ArkmeCallSummaryStatus,
+  ArkmeCallTranscriptSegment,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
@@ -257,6 +271,17 @@ export interface ArkmeSubscribeOptions {
   intervalMs?: number
   immediate?: boolean
   onError?: (error: unknown) => void
+}
+
+function safeSdkCallDetail(detail: ArkmeCallDetail): ArkmeCallDetail {
+  if (detail.videoRecord === undefined) return detail
+  return {
+    ...detail,
+    videoRecord: {
+      available: detail.videoRecord.available,
+      source: detail.videoRecord.source,
+    },
+  }
 }
 
 export class ArkmeSdk {
@@ -459,6 +484,34 @@ export class ArkmeSdk {
 
   async authStatus(signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
+  }
+
+  /** Read recent call history through Browser-safe opaque call references. */
+  async callHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
+    const limit = options.limit === undefined ? undefined : Math.trunc(options.limit)
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0 || limit > 50)) {
+      throw new TypeError('Arkme call history limit must be 1-50')
+    }
+    const cursor = options.cursor?.trim() ?? ''
+    return await this.call<ArkmeCallHistoryPage>('calls.history.list', {
+      ...(limit === undefined ? {} : { limit }),
+      ...(cursor === '' ? {} : { cursor }),
+      ...(options.includeRecentContacts === undefined ? {} : { includeRecentContacts: options.includeRecentContacts }),
+    }, signal)
+  }
+
+  /** Read one call detail using an unchanged callRef returned by callHistory(). */
+  async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> {
+    const normalized = callRef.trim()
+    if (normalized === '') throw new TypeError('Arkme call reference must not be empty')
+    return safeSdkCallDetail(await this.call<ArkmeCallDetail>('calls.history.detail', { callRef: normalized }, signal))
+  }
+
+  /** Retry call summary generation only from an explicit current human action. */
+  async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> {
+    const normalized = callRef.trim()
+    if (normalized === '') throw new TypeError('Arkme call reference must not be empty')
+    return await this.call<ArkmeCallSummaryRetryResult>('calls.history.summary.retry', { callRef: normalized }, signal)
   }
 
   async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {

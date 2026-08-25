@@ -54,6 +54,7 @@ export interface ArkmeServiceConfig {
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string
+  dataBaseUrl?: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -273,6 +274,9 @@ export class ServiceRuntime {
     const normalized = baseUrl.replace(/\/+$/, '')
     const services: Array<[string, ArkmeRequestService]> = [
       [this.config.authBaseUrl, 'auth'],
+      ...(this.config.dataBaseUrl === undefined || this.config.dataBaseUrl.trim() === ''
+        ? []
+        : [[this.config.dataBaseUrl, 'data'] as [string, ArkmeRequestService]]),
       [this.config.chatBaseUrl, 'chat'],
       [this.config.recordBaseUrl, 'record'],
       [this.config.audioBaseUrl, 'audio'],
@@ -583,6 +587,30 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.recordBaseUrl, path, body, session.accessToken, [0, 200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedDataPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    const baseUrl = this.config.dataBaseUrl?.trim() ?? ''
+    if (baseUrl === '') {
+      throw new ArkmePluginError('data-service-disabled', '通话记录服务尚未配置', false, 503)
+    }
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'data', 'interactive-read', options)
+    try {
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 

@@ -1,11 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
 import type { ArkmeChatClientEvent, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
-import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
 import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySurface.js'
@@ -25,6 +24,7 @@ import {
 } from './provider-instance-runtime.js'
 import { forgetNavigationProviderInstance } from './navigation-cache.js'
 import { arkmeUi } from './ui-controller.js'
+import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
@@ -287,11 +287,13 @@ export function ArkmePersistentSidebar({
   </aside>
 }
 
-export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'> & { closeDetails(): void }
+export type ArkmePersistentWorkspaceProps = PropsRuntime<'conversation'>
+  & PropsLocale<typeof ARKME_LOGIN_LOCALE_NAMESPACE>
+  & { closeDetails(): void }
 
 /** Arkme keeps the conversation seat and embeds the complete native DSH client inside it. */
 export function ArkmePersistentWorkspace({
-  sessionId, closeDetails,
+  sessionId, closeDetails, t,
 }: ArkmePersistentWorkspaceProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -329,11 +331,7 @@ export function ArkmePersistentWorkspace({
           onCandidateCleared={() => { arkmeContactsTab.clear() }} onDirectoryRefresh={() => { arkmeContactsTab.activateAccount(contactsAccountKey); arkmeContactsTab.refresh() }}
         />}
       />
-    </div> : ui.mode === 'settings'
-      ? <div className="arkme-redesign-route-surface arkme-redesign-settings-page">
-        <ArkmeSettingsSurface />
-      </div>
-      : <div
+    </div> : <div
         data-arkme-owned="arkme-conversation-layer"
         style={{
           ...styles.conversationLayer,
@@ -344,6 +342,7 @@ export function ArkmePersistentWorkspace({
         aria-hidden={ui.mode === 'harness' ? true : undefined}
       >
         <ArkmeSurface
+          t={t}
           productChrome={false}
           productNavigation={false}
           ownsWechatLogin={!startupAuthGateEnabled()}

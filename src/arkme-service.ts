@@ -20,12 +20,17 @@ import type {
 } from './outgoing-call-contract.js'
 import type { ArkmeRequestStats } from './request-coordinator.js'
 import { SecretValue } from './secret-value.js'
+import {
+  buildWorldVoiceprintInviteMessage,
+  WORLD_VOICEPRINT_INVITE_VARIANT_COUNT,
+} from './world-voiceprint-copy.js'
 import { AiVideoService } from './services/ai-video-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService } from './services/auth-service.js'
 import { BotService, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { CalendarService } from './services/calendar-service.js'
+import { CallHistoryService } from './services/call-history-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
 import { ChatService } from './services/chat-service.js'
 import { ContactService } from './services/contact-service.js'
@@ -102,6 +107,10 @@ import type {
   ArkmeBotSummary,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
+  ArkmeCallDetail,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallSummaryRetryResult,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeCaptchaResult,
@@ -203,17 +212,6 @@ import type {
 } from './types.js'
 import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 
-function worldVoiceprintInviteMessage(input: {
-  peerDisplayName: string
-  inviteUrl: string
-  textPreview?: string
-}): string {
-  const intro = input.textPreview === undefined
-    ? '我想邀请你开启声纹。'
-    : `我看到你在世界里发的「${input.textPreview}」，想邀请你开启声纹。`
-  return `${intro}\n以后看到你的世界动态时，可以直接听到你的声音。\n${input.inviteUrl}`
-}
-
 function voiceprintInviteRateLimitMessage(error: unknown): string | undefined {
   if (!(error instanceof ArkmePluginError)) return undefined
   if (error.upstreamStatus !== 429 && error.httpStatus !== 429 && !/\bHTTP\s*429\b/.test(error.message)) return undefined
@@ -235,6 +233,7 @@ export class ArkmeService {
   private readonly aiVideo: AiVideoService
   private readonly arrangement: ArrangementService
   private readonly calendar: CalendarService
+  private readonly callHistory: CallHistoryService
   private readonly wechat: WechatService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
@@ -259,6 +258,7 @@ export class ArkmeService {
   private readonly contactDirectory: ContactDirectoryService
   private readonly unmarkedSpeaker: UnmarkedSpeakerService
   private readonly voiceprint: VoiceprintService
+  private worldVoiceprintInviteVariantIndex = 0
 
   constructor(
     private readonly config: ArkmeServiceConfig,
@@ -275,6 +275,7 @@ export class ArkmeService {
     this.wechat = new WechatService(this.runtime)
     this.recording = new RecordingService(this.runtime)
     this.profile = new ProfileService(this.runtime)
+    this.callHistory = new CallHistoryService(this.runtime, this.profile)
     this.extensionReview = new ExtensionReviewService(this.runtime, this.profile, {
       createTextForConversation: async (recordUid, textContent) => {
         return await this.createTextForConversation(recordUid, textContent)
@@ -490,6 +491,7 @@ export class ArkmeService {
         richContentSend: this.config.richMediaSendEnabled !== false,
         fileUpload: this.config.richMediaSendEnabled !== false,
         outgoingCall: true,
+        callHistory: true,
         groupMembers: true,
         groupMemberAdd: true,
         userCard: true,
@@ -573,6 +575,10 @@ export class ArkmeService {
   async releaseOutgoingCall(callRequestId: string): Promise<void> {
     return await this.outgoingCall.releaseOutgoingCall(callRequestId)
   }
+
+  async listCallHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> { return await this.callHistory.listCallHistory(options, signal) }
+  async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> { return await this.callHistory.callDetail(callRef, signal) }
+  async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
 
   dispose(): void {
     this.contact.dispose()
@@ -1410,13 +1416,15 @@ export class ArkmeService {
   ): Promise<ArkmeWorldVoiceprintInviteResult> {
     try {
       const intent = await this.world.createWorldVoiceprintInviteIntent(recordRef, signal)
+      const variantIndex = this.worldVoiceprintInviteVariantIndex
+      this.worldVoiceprintInviteVariantIndex = (variantIndex + 1) % WORLD_VOICEPRINT_INVITE_VARIANT_COUNT
       const privateChat = await this.chat.openPrivateChatFromUser(intent.peerUserId, {
         displayName: intent.peerDisplayName,
         ...(signal === undefined ? {} : { signal }),
       })
       const sent = await this.chat.sendSourceText(
         privateChat.source.sourceRef,
-        worldVoiceprintInviteMessage(intent),
+        buildWorldVoiceprintInviteMessage({ ...intent, variantIndex }),
         signal === undefined ? {} : { signal },
       )
       if (sent.localState !== 'synced') {

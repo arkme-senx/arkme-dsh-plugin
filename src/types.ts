@@ -734,6 +734,107 @@ export interface ArkmeRecordingSearchResult {
   queryGuard: ArkmeSearchQueryGuard
 }
 
+export type ArkmeCallMediaType = 'audio' | 'video' | 'unknown'
+export type ArkmeCallSummaryStatus = 'idle' | 'pending' | 'done' | 'failed'
+
+export interface ArkmeCallHistoryOptions {
+  limit?: number
+  cursor?: string
+  includeRecentContacts?: boolean
+}
+
+export interface ArkmeCallHistoryItem {
+  callRef: string
+  stableId: string
+  peerDisplayName: string
+  peerUserId?: number
+  peerAvatarRef?: string
+  mediaType: ArkmeCallMediaType
+  startedAtMillis: number
+  acceptedAtMillis: number
+  endedAtMillis: number
+  durationSeconds: number
+  callResult: string
+  resultLabel: string
+  summaryStatus: ArkmeCallSummaryStatus
+  summaryPreview?: string
+  summaryUpdatedAtMillis?: number
+  canOpenDetail: boolean
+  canRedial: boolean
+  chatSessionUid?: string
+  sharedTopicId?: number
+}
+
+export interface ArkmeCallRecentContact {
+  userId: number
+  displayName: string
+  avatarRef?: string
+  sharedTopicId?: number
+}
+
+export interface ArkmeCallHistoryPage {
+  items: ArkmeCallHistoryItem[]
+  recentContacts?: ArkmeCallRecentContact[]
+  hasMore: boolean
+  nextCursor?: string
+}
+
+export interface ArkmeCallParticipant {
+  userId?: number
+  displayName: string
+  isCurrentUser?: boolean
+  avatarRef?: string
+}
+
+export interface ArkmeCallTranscriptSegment {
+  segmentId: string
+  speakerDisplayName: string
+  speakerUserId?: number
+  text: string
+  startMillis: number
+  endMillis: number
+}
+
+export interface ArkmeCallVideoRecord {
+  available: boolean
+  source: 'real' | 'sample'
+  videoUrl?: string
+  posterUrl?: string
+  perspectives?: ArkmeCallVideoPerspective[]
+}
+
+export interface ArkmeCallVideoPerspective {
+  perspective: 'self' | 'peer' | 'main' | 'unknown'
+  label?: string
+  videoUrl?: string
+  posterUrl?: string
+}
+
+export interface ArkmeCallDetail {
+  callRef: string
+  title: string
+  mediaType: ArkmeCallMediaType
+  startedAtMillis: number
+  acceptedAtMillis: number
+  endedAtMillis: number
+  durationSeconds: number
+  callResult: string
+  resultLabel: string
+  summaryStatus: ArkmeCallSummaryStatus
+  summaryText?: string
+  summaryUpdatedAtMillis?: number
+  transcriptPending: boolean
+  transcriptFailed: boolean
+  videoRecord?: ArkmeCallVideoRecord
+  participants: ArkmeCallParticipant[]
+  transcriptSegments: ArkmeCallTranscriptSegment[]
+}
+
+export interface ArkmeCallSummaryRetryResult {
+  status: 'submitted'
+  detail: ArkmeCallDetail
+}
+
 export interface ArkmeProviderCapabilities {
   contractVersion: typeof ARKME_PROVIDER_CONTRACT_VERSION
   provider: '@senguoyun/dsh-arkme'
@@ -760,6 +861,8 @@ export interface ArkmeProviderCapabilities {
     richContentSend: boolean
     fileUpload: boolean
     outgoingCall: true
+    /** Browser-safe call-history list/detail and explicit summary retry are available. */
+    callHistory?: true
     groupMembers: true
     groupMemberAdd?: true
     userCard: true
@@ -2040,6 +2143,9 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.prepare'
   | 'calls.outgoing.heartbeat'
   | 'calls.outgoing.release'
+  | 'calls.history.list'
+  | 'calls.history.detail'
+  | 'calls.history.summary.retry'
   | 'extensions.mine.list'
   | 'extensions.mine.publish'
   | 'extensions.catalog.list'

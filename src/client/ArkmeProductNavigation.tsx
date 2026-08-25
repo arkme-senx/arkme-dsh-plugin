@@ -3,14 +3,13 @@ import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
-import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
+import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Fingerprint } from '@phosphor-icons/react/dist/icons/Fingerprint'
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix'
 import { GlobeHemisphereWest } from '@phosphor-icons/react/dist/icons/GlobeHemisphereWest'
-import { UserCircle } from '@phosphor-icons/react/dist/icons/UserCircle'
 import { AddressBook } from '@phosphor-icons/react/dist/icons/AddressBook'
 import type { Icon } from '@phosphor-icons/react/lib'
 import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
@@ -20,7 +19,7 @@ import arkmeNavigationLogoDarkBase64 from '../../assets/branding/arkme-navigatio
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
-import { ArkmePluginUpdateDialog } from './ArkmePluginUpdateDialog.js'
+import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -86,11 +85,6 @@ const styles: Record<string, CSSProperties> = {
   },
   brandImage: { display: 'block', width: 48, height: 28, objectFit: 'cover' },
   brandVersion: { color: '#a5a8af', fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
-  updateBadge: {
-    minHeight: 20, marginTop: 3, padding: '1px 8px', border: 0, borderRadius: 999,
-    background: '#ef4444', color: '#fff', cursor: 'pointer', font: 'inherit',
-    fontSize: 10, lineHeight: '18px', fontWeight: 600, whiteSpace: 'nowrap',
-  },
   primary: { minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 },
   button: {
     position: 'relative',
@@ -137,7 +131,6 @@ export function ArkmeProductNavigation({
     arkmePluginUpdateStore.getSnapshot,
   )
   const [profileOpen, setProfileOpen] = useState(false)
-  const [pluginUpdateOpen, setPluginUpdateOpen] = useState(false)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const profileTriggerRef = useRef<HTMLButtonElement>(null)
   const profilePopoverRef = useRef<HTMLDivElement>(null)
@@ -170,7 +163,7 @@ export function ArkmeProductNavigation({
       document.removeEventListener('keydown', dismissOnEscape)
     }
   }, [profileOpen])
-  const activeId = ui.mode === 'settings' || ui.mode === 'login' ? undefined
+  const activeId = ui.mode === 'login' ? undefined
     : ui.calendarOpen === true ? 'calendar'
     : ui.mode === 'extensions' ? 'extensions'
     : ui.mode === 'world' ? 'world'
@@ -180,14 +173,6 @@ export function ArkmeProductNavigation({
         : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
   const pluginUpdate = pluginUpdateState.status
   const installedPluginVersion = pluginUpdate?.installedVersion ?? pluginManifest.version
-  const pluginUpdateAvailable = pluginUpdate?.availability === 'available'
-  const pluginInstalling = pluginUpdateState.install !== undefined
-    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(pluginUpdateState.install.phase)
-  const pluginInstallError = pluginUpdateState.installError
-    || (pluginUpdateState.install !== undefined && ['failed', 'rolled-back'].includes(pluginUpdateState.install.phase)
-      ? pluginUpdateState.install.message
-      : pluginUpdateState.error)
-
   const activate = (id: NavigationItem['id']) => {
     if (id === 'extensions') {
       arkmeUi.showExtensions()
@@ -230,9 +215,6 @@ export function ArkmeProductNavigation({
         <span data-arkme-plugin-version={installedPluginVersion} style={styles.brandVersion}>
           v{installedPluginVersion}
         </span>
-        {pluginUpdateAvailable && <button type="button" style={styles.updateBadge}
-          aria-label={`查看插件新版本 ${pluginUpdate.latestVersion ?? '最新版本'}`}
-          onClick={() => { setPluginUpdateOpen(true) }}>新版本</button>}
       </div>}
       <div style={{ ...styles.primary, ...(compact ? { flexDirection: 'row' as const } : {}) }}>
       {items.map(item => {
@@ -264,18 +246,9 @@ export function ArkmeProductNavigation({
         anchor="product-rail"
         onClose={() => { arkmeUi.hideCalendar() }}
       />, document.body)}
-      {pluginUpdateOpen && pluginUpdateAvailable && typeof document !== 'undefined' && createPortal(
-        <ArkmePluginUpdateDialog
-          status={pluginUpdate}
-          {...(pluginUpdateState.install === undefined ? {} : { install: pluginUpdateState.install })}
-          busy={pluginUpdateState.busy || pluginInstalling}
-          error={pluginInstallError}
-          onDismiss={() => { if (!pluginInstalling && !pluginUpdateState.busy) setPluginUpdateOpen(false) }}
-          onInstall={() => { void arkmePluginUpdateStore.install() }}
-        />,
-        document.body,
-      )}
-      {!compact && authState.auth?.status === 'authenticated' && <div className="arkme-redesign-rail-footer">
+      {!compact && <div className="arkme-redesign-rail-footer">
+        <ArkmeUpdateRailSlot />
+        {authState.auth?.status === 'authenticated' && <>
         {profileOpen && typeof document !== 'undefined' && createPortal(<div ref={profilePopoverRef} className="arkme-redesign-profile-popover" role="menu" aria-label="个人菜单">
           <div className="arkme-redesign-profile-head">
             <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={40} label="当前用户头像" />
@@ -284,13 +257,13 @@ export function ArkmeProductNavigation({
           <div className="arkme-redesign-profile-menu">
             <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showWorld() }}><GlobeHemisphereWest size={19} /><span><strong>我的世界</strong><small>管理你的个人内容</small></span><CaretRight size={15} /></button>
             <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showVoiceprint() }}><Fingerprint size={19} /><span><strong>声纹管理</strong><small>设置声音识别</small></span><CaretRight size={15} /></button>
-            <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.showSettings() }}><UserCircle size={19} /><span><strong>我的账户</strong><small>个人资料与登录安全</small></span><CaretRight size={15} /></button>
             <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>设置</strong><small>打开 DSH 应用设置</small></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
         <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label="个人资料" onClick={() => { setProfileOpen(value => !value) }}>
           <ArkmeUserAvatar {...(profile?.avatarRef ? { avatarRef: profile.avatarRef } : {})} size={32} label="当前用户头像" />
         </button>
+        </>}
       </div>}
     </nav>
 }

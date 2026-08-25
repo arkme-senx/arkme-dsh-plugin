@@ -92,6 +92,52 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('reads call history and retries summaries through same-origin opaque refs', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'calls.history.list') return success({
+          items: [{ callRef: 'arkme-call-v1.payload.sig', peerDisplayName: '林林', mediaType: 'audio' }],
+          hasMore: false,
+        })
+        if (request.operation === 'calls.history.detail') return success({
+          callRef: 'arkme-call-v1.payload.sig',
+          title: '通话详情',
+          mediaType: 'video',
+          videoRecord: {
+            available: true,
+            source: 'real',
+            videoUrl: 'https://media.example/real-call.mp4',
+            posterUrl: 'https://media.example/real-call.jpg',
+          },
+          participants: [],
+          transcriptSegments: [],
+        })
+        if (request.operation === 'calls.history.summary.retry') return success({
+          status: 'submitted',
+          detail: { callRef: 'arkme-call-v1.payload.sig', title: '通话详情', mediaType: 'audio' },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await sdk.callHistory({ limit: 5, cursor: ' next ', includeRecentContacts: false })
+    const detail = await sdk.callDetail(' arkme-call-v1.payload.sig ')
+    expect(detail).toMatchObject({
+      videoRecord: { available: true, source: 'real' },
+    })
+    expect(JSON.stringify(detail)).not.toContain('media.example')
+    await sdk.retryCallSummary(' arkme-call-v1.payload.sig ')
+
+    expect(calls).toEqual([
+      { operation: 'calls.history.list', params: { limit: 5, cursor: 'next', includeRecentContacts: false } },
+      { operation: 'calls.history.detail', params: { callRef: 'arkme-call-v1.payload.sig' } },
+      { operation: 'calls.history.summary.retry', params: { callRef: 'arkme-call-v1.payload.sig' } },
+    ])
+  })
+
   it('creates groups and Bots through safe same-origin contracts', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({

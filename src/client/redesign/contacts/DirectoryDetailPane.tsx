@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { ArkmeSourceItem } from '../../../types.js'
 import arkmeNavigationLogoBase64 from '../../../../assets/branding/arkme-navigation-logo.png'
+import arkmeNavigationLogoDarkBase64 from '../../../../assets/branding/arkme-navigation-logo-dark.png'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
 import { ContactProfileDetail } from './ContactProfileDetail.js'
 
@@ -26,6 +27,14 @@ export function DirectoryDetailPane({
         className="arkme-directory-detail-logo"
         src={`data:image/png;base64,${arkmeNavigationLogoBase64}`}
         alt="Arkme"
+        data-arkme-theme-image="light"
+        draggable={false}
+      />
+      <img
+        className="arkme-directory-detail-logo"
+        src={`data:image/png;base64,${arkmeNavigationLogoDarkBase64}`}
+        alt="Arkme"
+        data-arkme-theme-image="dark"
         draggable={false}
       />
     </div>

@@ -180,7 +180,7 @@ const styles: Record<string, CSSProperties> = {
   videoDetailMetaCenter: { justifySelf: 'center' }, videoDetailMetaEnd: { justifySelf: 'end' },
   player: { marginTop: 20, padding: '17px 18px', border: `1px solid ${c.border}`, borderRadius: 16, background: c.layer },
   playerTop: { display: 'flex', alignItems: 'center', gap: 12 },
-  mainPlay: { width: 42, height: 42, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 999, background: c.text, color: arkmeTheme.foreground, cursor: 'pointer', fontSize: 14 },
+  mainPlay: { width: 42, height: 42, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 999, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', fontSize: 14 },
   playerCopy: { minWidth: 0, flex: 1 }, playerTitle: { margin: 0, fontSize: 14, lineHeight: '21px', fontWeight: 650 },
   playerSubtitle: { margin: '2px 0 0', color: c.secondary, fontSize: 11, lineHeight: '17px' },
   timer: { flex: 'none', color: c.secondary, fontVariantNumeric: 'tabular-nums', fontSize: 11 },

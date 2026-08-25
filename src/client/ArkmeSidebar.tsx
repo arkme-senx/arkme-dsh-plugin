@@ -27,8 +27,8 @@ import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
-import { ArkmeCallHistorySurface } from './ArkmeCallHistorySurface.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
+import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeMentionTextarea } from './ArkmeMentionTextarea.js'
@@ -45,7 +45,6 @@ import {
 } from './ArkmeTopicDirectoryPopover.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
-import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeVoiceprintSurface } from './ArkmeVoiceprintSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -81,8 +80,13 @@ import {
   RelatedRecordingsPanel, shouldShowPrivateChatActions, shouldShowRelatedRecordingsEntry,
 } from './related-recordings.js'
 import { isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource } from './source-list.js'
+import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
+import {
+  defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
+} from './arkme-login-locales.js'
 
 export interface ArkmeSurfaceProps {
+  t?: ArkmeLoginTranslate
   floating?: boolean
   productNavigation?: boolean
   initialAuth?: ArkmeAuthSnapshot | undefined
@@ -605,6 +609,7 @@ function ForwardRecordsDetail({ item, onClose }: { item: ArkmeTimelineItem; onCl
 }
 
 export function ArkmeSurface({
+  t = defaultArkmeLoginTranslate,
   floating = false,
   initialAuth,
   currentSessionId,
@@ -736,7 +741,7 @@ export function ArkmeSurface({
   const [compactNavigation, setCompactNavigation] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const [error, setError] = useState(initialAuth?.status === 'binding-required' ? '请先绑定手机号，再继续使用 Arkme' : '')
+  const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [agreed, setAgreed] = useState(true)
   const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
   const [phone, setPhone] = useState('')
@@ -857,6 +862,14 @@ export function ArkmeSurface({
   const authenticated = auth?.status === 'authenticated'
   const authView = arkmeAuthView(auth)
   const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth)
+  const localeId = t('locale.id')
+  const localeIdRef = useRef(localeId)
+
+  useEffect(() => {
+    if (localeIdRef.current === localeId) return
+    localeIdRef.current = localeId
+    if (authView === 'login') setError('')
+  }, [authView, localeId])
   const [relatedEligibility, setRelatedEligibility] = useState<'idle' | 'loading' | 'allowed' | 'denied' | 'error'>('idle')
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
   const [relatedPanelOpen, setRelatedPanelOpen] = useState(false)
@@ -928,7 +941,7 @@ export function ArkmeSurface({
       setAgreed(true)
       setQr('')
       setSmsCode('')
-      setError('请先绑定手机号，再继续使用 Arkme')
+      setError(t('error.binding.required'))
       if (bindingNotifiedUserIdRef.current !== snapshot.userId) {
         bindingNotifiedUserIdRef.current = snapshot.userId
         arkmeUi.authChanged(false)
@@ -939,7 +952,7 @@ export function ArkmeSurface({
     if (accountChanged || arkmeUi.getSnapshot().mode === 'login') {
       arkmeUi.authChanged(true, accountChanged)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     if (initialAuth === undefined) return
@@ -961,8 +974,10 @@ export function ArkmeSurface({
     setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
   }, [authStoreSnapshot.config])
   useEffect(() => {
-    if (authStoreSnapshot.error !== '' && authView === 'login') setError(authStoreSnapshot.error)
-  }, [authStoreSnapshot.error, authView])
+    if (authStoreSnapshot.error !== '' && authView === 'login') {
+      setError(arkmeStoredLoginErrorMessage(authStoreSnapshot.error, t))
+    }
+  }, [authStoreSnapshot.error, authView, t])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -982,9 +997,9 @@ export function ArkmeSurface({
         setTestLoginEnabled(config.testLoginEnabled)
       }
       if (!['authenticated', 'binding-required'].includes(snapshot.status) && config?.testLoginEnabled === true) setLoginMode('test')
-    } catch (caught) { setError(errorMessage(caught)) }
+    } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) }
     finally { setBusy(false) }
-  }, [acceptAuthSnapshot])
+  }, [acceptAuthSnapshot, t])
 
   const loadRelatedPage = useCallback(async (
     month: string,
@@ -1403,47 +1418,47 @@ export function ArkmeSurface({
         if (stopped) return
         acceptAuthSnapshot(snapshot)
         if (snapshot.status === 'authenticated') { setQr(''); return }
-      } catch (caught) { if (!stopped) setError(errorMessage(caught)) }
+      } catch (caught) { if (!stopped) setError(arkmeLoginErrorMessage(caught, t)) }
       if (!stopped) timer = setTimeout(() => { void poll() }, 1200)
     }
     timer = setTimeout(() => { void poll() }, 800)
     return () => { stopped = true; clearTimeout(timer) }
-  }, [agreed, auth?.attemptId, auth?.status, loginMode, ownsWechatLogin])
+  }, [agreed, auth?.attemptId, auth?.status, loginMode, ownsWechatLogin, t])
 
   const beginWechat = async () => {
-    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
+    if (!agreed) { setError(t('error.agreement.required')); return }
     setBusy(true); setError('')
     try { const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.begin'); acceptAuthSnapshot(snapshot); setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent)) }
-    catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+    catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
   }
 
   const sendCode = async () => {
-    if (!/^1[3-9]\d{9}$/.test(phone)) { setError('请输入正确的 11 位手机号'); return }
+    if (!/^1[3-9]\d{9}$/.test(phone)) { setError(t('error.phone.eleven')); return }
     setBusy(true); setError('')
     try { const captcha = await verifyPhoneCaptcha(captchaId, phone); await callArkme('auth.phone.send', { phone, captcha }); setSmsCountdown(60) }
-    catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+    catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
   }
 
   const verifyCode = async () => {
-    if (!/^1[3-9]\d{9}$/.test(phone)) { setError('请输入正确的手机号'); return }
-    if (!/^\d{6}$/.test(smsCode)) { setError('请输入验证码'); return }
-    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
+    if (!/^1[3-9]\d{9}$/.test(phone)) { setError(t('error.phone.invalid')); return }
+    if (!/^\d{6}$/.test(smsCode)) { setError(t('error.code.invalid')); return }
+    if (!agreed) { setError(t('error.agreement.required')); return }
     setBusy(true); setSubmitBusy(true); setError('')
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
       acceptAuthSnapshot(snapshot)
-    } catch (caught) { setError(errorMessage(caught)) } finally { setSubmitBusy(false); setBusy(false) }
+    } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setSubmitBusy(false); setBusy(false) }
   }
 
   const testLogin = async () => {
     const userId = Number(testUserId)
-    if (!Number.isSafeInteger(userId) || userId <= 0) { setError('请输入有效的测试账号 user_id'); return }
-    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
+    if (!Number.isSafeInteger(userId) || userId <= 0) { setError(t('error.test.invalid')); return }
+    if (!agreed) { setError(t('error.agreement.required')); return }
     setBusy(true); setError('')
     try {
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.test.login', { userId })
       acceptAuthSnapshot(snapshot)
-    } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+    } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
   }
 
   const cancelBinding = async () => {
@@ -1459,7 +1474,7 @@ export function ArkmeSurface({
       qrRequestStartedRef.current = false
       setLoginMode(testLoginEnabled ? 'test' : 'wechat')
       arkmeUi.authChanged(false)
-    } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+    } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
   }
 
   useEffect(() => {
@@ -1878,10 +1893,10 @@ export function ArkmeSurface({
     ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
     : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
+    : ui.mode === 'calls' ? '通话'
     : ui.mode === 'world' ? '世界'
     : ui.mode === 'search' ? '搜索'
     : ui.mode === 'extensions' ? '市集'
-    : ui.mode === 'settings' ? '设置'
     : ui.mode === 'voiceprint' ? '声纹管理'
     : ui.mode === 'arko' ? 'Arko'
     : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
@@ -1889,7 +1904,7 @@ export function ArkmeSurface({
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
     && (ui.mode === 'recordings' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions'
-      || ui.mode === 'settings' || ui.mode === 'voiceprint')
+      || ui.mode === 'voiceprint' || ui.mode === 'calls')
 
   return (
     <div
@@ -1995,6 +2010,7 @@ export function ArkmeSurface({
           </div>}
         </header>}
         {authView === 'login' ? <div style={styles.loginBody}><ArkmeLogin
+          t={t}
           mode={loginMode}
           phoneBindingRequired={phoneBindingRequired}
           agreed={agreed}
@@ -2017,14 +2033,7 @@ export function ArkmeSurface({
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
-        /></div> : ui.mode === 'calls' ? <ArkmeCallHistorySurface
-          assetBasePath={authStoreSnapshot.config?.callAssetBasePath ?? '/arkme-self/api/call'}
-          contacts={chatDirectory.sources.filter(source => source.kind === 'private_chat' && source.displayName !== '林小满' && source.displayName !== '妈妈').map(source => ({
-            sourceRef: source.sourceRef,
-            displayName: source.displayName,
-            ...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef }),
-          }))}
-        />
+        /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
@@ -2041,7 +2050,6 @@ export function ArkmeSurface({
             onShareExit={() => { arkmeUi.dismissExtensionShare() }}
             onPrivateChatOpened={activateSource}
           />
-          : ui.mode === 'settings' ? <div style={styles.utilityBody}><ArkmeSettingsSurface /></div>
           : ui.mode === 'voiceprint' ? <ArkmeVoiceprintSurface />
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
           : source === undefined ? <div className="arkme-conversation-body" style={styles.body}>

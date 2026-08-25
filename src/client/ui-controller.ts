@@ -15,9 +15,8 @@ export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
   mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
-    | 'settings' | 'harness'
+    | 'harness'
   productMode?: 'conversations' | 'contacts'
-  settingsSection?: 'account' | 'general' | 'about'
   selectedSource?: ArkmeSourceItem
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
@@ -199,12 +198,6 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'arko' })
   }
 
-  showSettings(section: 'account' | 'general' | 'about' = 'account'): void {
-    this.leaveContacts()
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'settings', settingsSection: section })
-  }
-
   showHarness(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
@@ -234,7 +227,6 @@ export class ArkmeUiController {
       && next.chatRevision === this.state.chatRevision
       && next.mode === this.state.mode
       && next.productMode === this.state.productMode
-      && next.settingsSection === this.state.settingsSection
       && next.calendarOpen === this.state.calendarOpen
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis

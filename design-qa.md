@@ -70,4 +70,43 @@ The search-history area in the production QA image is blurred because it contain
 - The production search history is blurred only in the saved QA artifact because it contains live account data.
 - Focused send-to-self comparison checked typography, spacing, neutral tokens, existing icons, and copy. The only image-asset change is the transparent Arkme brand wordmark/mark used through public DSH slots.
 
+## Update UI refactor QA (2026-08-25)
+
+### Source and implementation
+
+- Visual and interaction source: `http://127.0.0.1:5176/`
+- Real implementation: `http://127.0.0.1:5198/` running `@deepseek-ai/dsh@0.1.0-rc.8` with the packed Arkme plugin
+- Source capture: `/private/tmp/arkme-update-demo-same-viewport-1440.png`
+- Implementation capture: `/private/tmp/arkme-update-real-same-viewport.png`
+- Combined component comparison: `/private/tmp/arkme-update-dialog-final-comparison.png`
+- Progress capture: `/private/tmp/arkme-update-real-final-progress.png`
+- Collapsed progress capture: `/private/tmp/arkme-update-real-final-collapsed.png`
+- Feedback source capture: `/private/tmp/arkme-update-feedback-demo.png`
+- Feedback implementation capture: `/private/tmp/arkme-update-feedback-final-open.png`
+- Feedback focused comparison: `/private/tmp/arkme-update-feedback-comparison.png`
+- No-update implementation capture: `/private/tmp/arkme-update-feedback-no-update.png`
+- Browser state: desktop, light theme. The source and implementation components were compared at their rendered CSS size rather than judging screenshots in isolation.
+
+### States checked
+
+| State | Expected | Observed |
+| --- | --- | --- |
+| Update available | Demo rail entry and anchored release-note popover | Real DSH renders the same 356 × 347.046875 px popover, 20 px radius, shadow, content rhythm, numbered notes, and two-button footer |
+| Updating | Demo top-center progress capsule | Real DSH renders the capsule above the working content without blocking chat or navigation |
+| Progress collapsed | Closing the capsule leaves a percentage above the avatar | Real DSH keeps the 8% recovery entry in the lower rail and the page remains usable |
+| Progress restored | Clicking the percentage restores the capsule | Covered by the controller/component interaction tests; the real 0.1.20 package also showed the recoverable 8% entry while the Host request was active |
+| Restarting | Preserve the baseline updater's automatic restart | A real 0.1.20 tgz downloaded the remote 0.1.21 artifact, stopped PID 63643, installed the new package, and automatically restarted the same 5198 service as PID 63771 |
+| No update | Do not reserve an update-entry slot | A real DSH profile running the current 0.1.21 package exposes only the profile button; the update rail slot is absent and the profile remains 12 px from the viewport bottom |
+
+### Comparison history
+
+1. Removed the temporary standalone QA shell from the implementation path and validated only inside a real DSH host.
+2. Replaced the old logo badge/blocking update dialogs with the Demo rail entry, anchored popover, top-center progress capsule, and collapsed percentage recovery entry.
+3. P1 — the first pass invented fallback release-note rows and a secondary sentence that were not returned by the update API. Removed all fallback copy; production now renders only the real remote summary lines and omits the note region when no release text exists.
+4. P1 — the popover was absolutely positioned inside the rail footer and was clipped by the navigation column despite its z-index. Portalled it to `document.body`, positioned it from the rail button's viewport rectangle, and raised it to the page-level overlay layer. Browser evidence confirms `parentElement === document.body`, `position: fixed`, and `z-index: 100000`.
+5. P1 — DSH button styles overrode the primary action, leaving `立即更新` white and changing hover behavior. Scoped the Demo tokens to the update controls with sufficient specificity. Browser evidence now reads `rgb(28, 31, 40)` for the primary background, white text, a 12 px radius, and the Demo shadow; the red rail button uses the Demo active/hover red and elevation.
+6. P2 — update presence needed an explicit no-reserved-space check. A real DSH profile at the current remote version renders no update slot while keeping the profile control at its normal 12 px bottom inset; a component regression assertion covers the absent rail-slot markup.
+7. P1 — the bundled updater entry silently exited because tsdown moved its guarded `main()` into a shared chunk. Split the executable wrapper from the reusable updater module and added a post-bundle executable-entry check; the real tgz update now reaches `succeeded` and records the target artifact digest, app version, and DSH version.
+8. The post-fix 1492 × 1171 source and implementation captures were inspected together in `/private/tmp/arkme-update-feedback-comparison.png`. The different popover height is intentional because production now displays one real remote note instead of three Demo fixture notes. Typography, spacing rhythm, tokens, icon source, button states, radii, shadows, and copy ownership have no remaining actionable P0/P1/P2 mismatch.
+
 final result: passed

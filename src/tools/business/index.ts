@@ -1,5 +1,6 @@
 import { arkoToolModules } from './arko/index.js'
 import { botToolModules } from './bots/index.js'
+import { callHistoryToolModules } from './calls/index.js'
 import { recordCalendarToolModules } from './calendar/index.js'
 import type { ArkmeToolModule } from '../contract/module.js'
 import { accountBusinessToolModules } from './account/index.js'
@@ -67,6 +68,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   reportMessageToolModule,
   relatedRecordingsToolModule,
   groupAiPolishToolModule,
+  ...callHistoryToolModules,
   sendTextToolModule,
   sendDirectTextToolModule,
   startCallToolModule,

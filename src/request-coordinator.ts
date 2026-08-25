@@ -4,6 +4,7 @@ export type ArkmeRequestService =
   | 'auth'
   | 'chat'
   | 'record'
+  | 'data'
   | 'audio'
   | 'world'
   | 'relation'
@@ -187,7 +188,7 @@ export class ArkmeRequestCoordinator {
       this.laneLimits.set(lane, resolveLimit(DEFAULT_LANE_LIMITS[lane], options.laneLimits?.[lane], now))
     }
     for (const service of [
-      'auth', 'chat', 'record', 'audio', 'world', 'relation', 'intelligent', 'webrtc', 'extension', 'oss', 'other',
+      'auth', 'chat', 'record', 'data', 'audio', 'world', 'relation', 'intelligent', 'webrtc', 'extension', 'oss', 'other',
     ] as ArkmeRequestService[]) {
       const base = {
         maxConcurrent: positiveInteger(options.defaultServiceLimit?.maxConcurrent, DEFAULT_SERVICE_LIMIT.maxConcurrent),

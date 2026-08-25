@@ -51,6 +51,7 @@ export interface Config {
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string
+  dataBaseUrl: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -95,6 +96,7 @@ export const Config: Schema<Config> = Schema.object({
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
+  dataBaseUrl: Schema.string().default('https://jotmo-data.senguo.me'),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -437,6 +439,7 @@ function validateConfig(ctx: Context, config: Config): void {
     const testDefaults = [
       config.authBaseUrl,
       config.recordBaseUrl,
+      config.dataBaseUrl,
       config.chatBaseUrl,
       config.botBaseUrl,
       config.imBaseUrl,
@@ -468,6 +471,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['authBaseUrl', config.authBaseUrl],
     ['subjectBaseUrl', config.subjectBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
+    ['dataBaseUrl', config.dataBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
     ['botBaseUrl', config.botBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
@@ -551,6 +555,16 @@ export type {
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
+  ArkmeCallDetail,
+  ArkmeCallHistoryItem,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallMediaType,
+  ArkmeCallParticipant,
+  ArkmeCallRecentContact,
+  ArkmeCallSummaryRetryResult,
+  ArkmeCallSummaryStatus,
+  ArkmeCallTranscriptSegment,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
   ArkmePluginUpdateAvailability,

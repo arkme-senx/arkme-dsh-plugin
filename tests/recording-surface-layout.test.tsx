@@ -37,6 +37,22 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('>时间轴</button>')
   })
 
+  it('uses semantic DSH colors across the recording page', async () => {
+    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
+
+    expect(markup).toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+    expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
+    expect(markup).not.toContain('background:#fff')
+    expect(markup).not.toContain('background:#fcfcfd')
+    expect(source).toMatch(/daySelected: \{[^}]*background: colors\.primaryAction, color: colors\.onPrimaryAction/)
+    expect(source).toMatch(/recordingRow: \{[^}]*background: colors\.layer2/)
+    expect(source).toMatch(/trackSegment: \{[^}]*background: colors\.text/)
+    expect(source).toMatch(/event: \{[^\n]*background: colors\.layer1/)
+    expect(source).not.toContain("selected ? { background: '#fff' }")
+    expect(source).toContain('selected ? { background: colors.onPrimaryAction }')
+  })
+
   it('provides a whole-month calendar expansion with future dates disabled', async () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 

@@ -40,6 +40,13 @@ const actions = {
   onToggleVoiceprint: noop,
 }
 
+function styleForDataAttribute(markup: string, attribute: string, value: string): string {
+  const tag = markup.match(/<[^>]+>/g)?.find(candidate => candidate.includes(`${attribute}="${value}"`))
+  const match = tag === undefined ? undefined : /style="([^"]+)"/.exec(tag)
+  expect(match?.[1]).toBeDefined()
+  return match?.[1] ?? ''
+}
+
 const item: ArkmeWorldFeedItem = {
   recordRef: 'world_1',
   authorName: '陈一涵',
@@ -105,6 +112,40 @@ describe('Arkme native World surface', () => {
     expect(markup).not.toContain('>关闭<')
   })
 
+  it('keeps the World header and feed on one semantic base canvas', () => {
+    const markup = renderToStaticMarkup(<ArkmeWorldSurface />)
+
+    expect(styleForDataAttribute(markup, 'data-arkme-owned', 'world-surface'))
+      .toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+    expect(styleForDataAttribute(markup, 'data-world-layout', 'feed'))
+      .toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+    expect(styleForDataAttribute(markup, 'data-world-feed-pane', 'true'))
+      .toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+  })
+
+  it('uses semantic theme tokens for feed cards and compact comments', () => {
+    const feedMarkup = render({ status: 'success', items: [item] })
+    const cardStyle = styleForDataAttribute(feedMarkup, 'data-world-record-ref', item.recordRef)
+    expect(cardStyle).toContain('border:1px dashed var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))')
+    expect(cardStyle).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
+
+    const previewMarkup = renderToStaticMarkup(<WorldInteractionPreviewContent item={item} items={interactions} onOpen={noop} />)
+    expect(previewMarkup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(styleForDataAttribute(previewMarkup, 'data-world-comment-level', 'root'))
+      .toContain('color:var(--dsw-alias-label-secondary, #68707c)')
+  })
+
+  it('keeps the expanded comment panel and composer on one semantic surface', () => {
+    const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
+
+    expect(styleForDataAttribute(markup, 'data-world-comment-panel', 'inline'))
+      .toContain('background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
+    expect(styleForDataAttribute(markup, 'data-world-comment-toolbar', 'sticky'))
+      .toContain('background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
+    expect(markup).toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
+    expect(markup).toContain('color:var(--dsw-alias-label-primary, #17191c)')
+  })
+
   it('keeps World and My World scroll positions independent when switching tabs', () => {
     const leavingWorld = worldScopeScrollTransition({ all: 0, mine: 0 }, 'all', 'mine', 1680)
     expect(leavingWorld).toEqual({ positions: { all: 1680, mine: 0 }, restoreTop: 0 })
@@ -128,6 +169,12 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('0 / 2000')
     expect(markup).toContain('aria-label="关闭发布窗口"')
     expect(markup).not.toContain('选择文件')
+    expect(styleForDataAttribute(markup, 'data-world-publish-dialog', 'spacious'))
+      .toContain('background:var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #ffffff))')
+    expect(styleForDataAttribute(markup, 'data-world-publish-editor', 'true'))
+      .toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
+    expect(markup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
   })
 
   it('appends publish images up to the product limit and removes one selection without touching the others', () => {
@@ -305,7 +352,7 @@ describe('Arkme native World surface', () => {
     expect(markup).not.toContain('data-world-image-preview-loading')
   })
 
-  it('uses the demo compact white-feed language without introducing demo-only actions', () => {
+  it('keeps the compact feed language without introducing light-only colors or demo-only actions', () => {
     const markup = render({ status: 'success', items: [item] })
 
     expect(markup).toContain('width:min(980px, 100%);min-height:90px;margin:0 auto;padding:34px 48px 0')
@@ -314,15 +361,19 @@ describe('Arkme native World surface', () => {
     expect(markup.indexOf('aria-label="发世界"')).toBeLessThan(markup.indexOf('aria-label="世界范围"'))
     expect(markup).toContain('width:min(884px, calc(100% - 96px))')
     expect(markup).toContain('padding:22px 20px 18px')
-    expect(markup).toContain('border:1px dashed #d7dbe3')
+    expect(markup).toContain('border:1px dashed var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))')
     expect(markup).toContain('overflow-x:hidden')
     expect(markup).toContain('overflow-wrap:anywhere')
     expect(markup).toContain('border-radius:14px')
-    expect(markup).toContain('background:#fff')
+    expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
     expect(markup).not.toContain('>共鸣<')
     expect(markup).not.toContain('aria-label="分享"')
     expect(markup).not.toContain('正在发生')
     expect(markup).not.toContain('发布前由你确认')
+
+    const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
+    const themedStyles = source.slice(source.indexOf('const styles:'), source.indexOf('previewBackdrop:'))
+    expect(themedStyles).not.toMatch(/#fff\b|#fafafb\b|#f5f5f6\b|#d7dbe3\b|#cfd3db\b|--dsw-alias-bg-subtle/)
   })
 
   it('loads the next World page from an intersection sentinel and shows an animated loading icon', () => {
@@ -413,7 +464,7 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('data-world-comment-toolbar="sticky"')
     expect(markup).toContain('position:sticky;top:0')
     expect(markup).toContain('width:calc(100% - 4px)')
-    expect(markup).toContain('border-radius:12px;background:var(--dsw-alias-bg-subtle, #f5f5f6)')
+    expect(markup).toContain('border-radius:12px;background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
     expect(markup).toContain('评论加载中')
     expect(markup).toContain('写一条评论')
     expect(markup).toContain('>收起<')

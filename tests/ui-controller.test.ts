@@ -123,6 +123,22 @@ describe('ArkmeUiController', () => {
     })
   })
 
+  it('opens calls without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人', activeAtMillis: 1, unreadCount: 0,
+    }
+    controller.selectSource(source)
+
+    controller.showCalls()
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0, chatRevision: 0, mode: 'calls',
+    })
+    controller.showConversations()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+  })
+
   it('opens contact add above the current conversation and restores that conversation when closed', () => {
     const controller = new ArkmeUiController()
     const source = {
@@ -220,19 +236,6 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('opens the requested account settings section without retaining a conversation source', () => {
-    const controller = new ArkmeUiController()
-    controller.selectSource({
-      sourceRef: 'source-1', kind: 'topic', displayName: '主题', activeAtMillis: 1, unreadCount: 0,
-    })
-
-    controller.showSettings('about')
-
-    expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'settings', settingsSection: 'about',
-    })
-  })
-
   it('returns from a utility page to the retained conversation', () => {
     const controller = new ArkmeUiController()
     const source = {
@@ -254,8 +257,6 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().mode).toBe('harness')
     controller.showConversations()
     expect(controller.getSnapshot().mode).toBe('source')
-    controller.showSettings()
-    expect(controller.getSnapshot().mode).toBe('settings')
   })
 
   it('opens and closes the calendar without replacing the page underneath it', () => {

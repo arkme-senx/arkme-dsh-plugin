@@ -122,9 +122,9 @@ describe('Arkme redesign dark theme', () => {
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="persistent-sidebar"]')
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"]')
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="product-navigation"]')
-    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="product-brand"]')
-    expect(darkCss).toContain('[data-arkme-theme-image="light"] { display: none !important; }')
-    expect(darkCss).toContain('[data-arkme-theme-image="dark"] { display: block !important; }')
+    expect(redesignCss).toContain('[data-arkme-workspace] [data-arkme-theme-image="dark"] { display: none !important; }')
+    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-workspace] [data-arkme-theme-image="light"] { display: none !important; }')
+    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-workspace] [data-arkme-theme-image="dark"] { display: block !important; }')
     expect(darkCss).toContain('background: transparent !important;')
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="product-navigation"] button[aria-current="page"]')
     expect(darkCss).toContain('background: var(--dsw-specific-sidebar-fill) !important;')
@@ -138,14 +138,10 @@ describe('Arkme redesign dark theme', () => {
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] .arkme-conversation-composer')
   })
 
-  it('covers inline search and World surfaces rendered outside redesign wrappers', () => {
+  it('covers inline search rendered outside redesign wrappers', () => {
     const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
 
     expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="persistent-workspace"] div:has(> input[aria-label="搜索"])')
-    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="world-surface"]')
-    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="world-surface"] article')
-    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="world-surface"] button[aria-label="刷新"]')
-    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-owned="world-surface"] [role="status"]')
   })
 
   it('covers the product conversation directory and its inline light controls', () => {
@@ -259,13 +255,10 @@ describe('Arkme redesign dark theme', () => {
     expect(redesignCss).toContain('.arkme-directory-detail-pane')
   })
 
-  it('covers the complete World body, dialogs, comments, and readable copy', () => {
+  it('leaves World theming to the component semantic tokens instead of DOM overrides', () => {
     const darkCss = redesignCss.slice(redesignCss.indexOf('body[data-ds-dark-theme] [data-arkme-workspace] {'))
 
-    expect(darkCss).toContain('[data-arkme-owned="world-surface"] > div:not([role])')
-    expect(darkCss).toContain('[data-arkme-owned="world-surface"] [role="dialog"]:not([aria-label="世界图片预览"]) > section')
-    expect(darkCss).toContain('[data-arkme-owned="world-surface"] section[aria-label$="的评论区"]')
-    expect(darkCss).toContain('[data-arkme-owned="world-surface"] article p')
+    expect(darkCss).not.toContain('[data-arkme-owned="world-surface"]')
   })
 
   it('refreshes a retained style element when a newer plugin bundle is installed', () => {

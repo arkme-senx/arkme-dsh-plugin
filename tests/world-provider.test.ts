@@ -749,7 +749,10 @@ describe('world Provider projection', () => {
       }
       if (url === 'https://chat.test/api/v1/chats/records/send') {
         expect(body).toMatchObject({ chat_session_uid: 'private-20002', template_kind: 1 })
-        expect(String(body.text_content)).toContain('邀请你开启声纹')
+        expect(String(body.text_content)).toContain('小林，我是看到你在世界发的这条快记才来找你的')
+        expect(String(body.text_content)).toContain('【来自世界的快记】')
+        expect(String(body.text_content)).toContain('“今天好难”')
+        expect(String(body.text_content)).toContain('录入一下声纹')
         expect(String(body.text_content)).toContain('https://jotmo-app.senguo.me/app/voiceprint/invite#t=voiceprint.invite_202608210001')
         return json({ code: 200, data: { record_uid: body.record_uid, audit_status: 0, seq: 8 } })
       }

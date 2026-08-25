@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createClientLocaleStub } from './client-locale-stub.js'
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -40,6 +41,7 @@ describe('client notification activation', () => {
     const effects: Array<{ run: () => (() => void) | void; label: string }> = []
     apply({
       slots: { inject: vi.fn(), register: vi.fn() },
+      locale: createClientLocaleStub(),
       effect: (run: () => (() => void) | void, label: string) => { effects.push({ run, label }) },
     } as never)
     const activationEffect = effects.find(effect => effect.label === 'dsh-arkme: activate message notification sources')
