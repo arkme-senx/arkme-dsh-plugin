@@ -761,10 +761,18 @@ describe('ArkmeService', () => {
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = String(input)
       requests.push({ url, body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown> })
-      if (url.endsWith('/wechat-login-qrcode')) {
-        return json({ code: 200, data: { url: 'weixin://qr-content', scene_str: 'scene-1', expire_seconds: 300 } })
+      if (url.endsWith('/wechat-oauth-login-qrcode')) {
+        return json({
+          code: 200,
+          data: {
+            url: 'https://jiwo.cc/app/login/wechat-desktop?scene_str=scene-1&target=test',
+            scene_str: 'scene-1',
+            poll_token: 'poll-secret',
+            expire_seconds: 300,
+          },
+        })
       }
-      if (url.endsWith('/wechat-scan-login')) {
+      if (url.endsWith('/wechat-oauth-login-poll')) {
         scans += 1
         return scans === 1
           ? json({ code: 200, data: { user_id: 0 } })
@@ -776,14 +784,17 @@ describe('ArkmeService', () => {
     const service = new ArkmeService(config, sessions, state, fetchImpl)
 
     const begun = await service.beginWechatLogin()
-    expect(begun).toMatchObject({ status: 'pending', qrContent: 'weixin://qr-content' })
+    expect(begun).toMatchObject({
+      status: 'pending',
+      qrContent: 'https://jiwo.cc/app/login/wechat-desktop?scene_str=scene-1&target=test',
+    })
     expect(JSON.stringify(begun)).not.toContain('secret')
     expect(await service.pollWechatLogin(begun.attemptId!)).toMatchObject({ status: 'pending' })
     const authenticated = await service.pollWechatLogin(begun.attemptId!)
     expect(authenticated).toEqual({ status: 'authenticated', environment: 'test', userId: 10001 })
     expect(sessions.session).toEqual({ userId: 10001, accessToken: 'access-secret', refreshToken: 'refresh-secret' })
-    expect(requests.find(request => request.url.endsWith('/wechat-scan-login'))?.body)
-      .toMatchObject({ scene_str: 'scene-1', unique_code: 'dsh-device-1' })
+    expect(requests.find(request => request.url.endsWith('/wechat-oauth-login-poll'))?.body)
+      .toMatchObject({ scene_str: 'scene-1', poll_token: 'poll-secret', unique_code: 'dsh-device-1' })
   })
 
   it('publishes a versioned provider capability and revision state', async () => {
