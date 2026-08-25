@@ -139,7 +139,13 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
     || !Number.isSafeInteger(sessionId) || sessionId <= 0
     || (roleCode !== 2 && roleCode !== 3)) return undefined
   const extra = parsedJsonRecord(data.extra ?? data.metadata ?? data.meta)
-  const createdAt = numberValue(data.created_at ?? data.create_at ?? data.createdAt ?? data.createAt)
+  const extraData = parsedJsonRecord(extra.data)
+  const activityAt = [
+    data.send_at, data.sendAt, extraData.send_at, extraData.sendAt,
+    data.created_at, data.create_at, data.createdAt, data.createAt,
+    extraData.create_at, extraData.createAt, extra.create_at, extra.createAt,
+    extraData.update_at, extraData.updateAt, data.updated_at, data.updatedAt,
+  ].map(numberValue).find(candidate => candidate > 0) ?? 0
   const runUid = optionalString(extra.agent_run_uid)
   const runStatus = optionalString(extra.agent_run_status)
   const retryable = optionalBooleanValue(extra.agent_run_retryable)
@@ -151,7 +157,7 @@ function arkoHistoryItemFromData(value: unknown): ArkmeArkoHistoryItem | undefin
     role: roleCode === 2 ? 'user' : 'assistant',
     text: stringValue(data.content ?? data.text_content ?? data.textContent),
     reasoning: stringValue(data.reason_content ?? data.reason_text ?? data.reasonText),
-    createdAtMillis: createdAt > 0 && createdAt < 100_000_000_000 ? createdAt * 1000 : createdAt,
+    createdAtMillis: activityAt > 0 && activityAt < 100_000_000_000 ? activityAt * 1000 : activityAt,
     status: numberValue(data.status ?? data.msg_status),
     ...(runUid === undefined ? {} : { runUid }),
     ...(runStatus === undefined ? {} : { runStatus }),

@@ -20,4 +20,29 @@ describe('ArkoService', () => {
     const service = new ArkoService(runtime, new ProfileService(runtime))
     await expect(service.arkoActivateModel('../invalid')).rejects.toMatchObject({ code: 'arko-model-route-invalid' })
   })
+
+  it('uses the client-compatible send time before the creation time for history activity', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {},
+      async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
+    runtime.authenticatedIntelligentPost = async () => ({
+      message_ls: [{
+        id: 101,
+        session_id: 88,
+        role: 3,
+        content: '最新回复',
+        send_at: 1_786_000_100,
+        created_at: 1_786_000_000,
+        status: 1,
+      }],
+    })
+    const service = new ArkoService(runtime, new ProfileService(runtime))
+
+    await expect(service.arkoHistoryPage(10, 0)).resolves.toMatchObject({
+      items: [{ text: '最新回复', createdAtMillis: 1_786_000_100_000 }],
+    })
+  })
 })
