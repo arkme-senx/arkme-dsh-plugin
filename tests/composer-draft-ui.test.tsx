@@ -1,16 +1,21 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
+import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import '../src/client/composer-draft-auth-binding.js'
 import {
   arkmeArkoComposerDraftKey,
+  ARKME_COMPOSER_EMOJI_PLACEHOLDER,
   arkmeComposerDraftStore,
   arkmeSourceComposerDraftKey,
 } from '../src/client/composer-draft-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeAuthSnapshot, ArkmeSourceItem } from '../src/types.js'
+
+const richComposerSource = readFileSync(new URL('../src/client/ArkmeRichComposerInput.tsx', import.meta.url), 'utf8')
 
 const account: ArkmeAuthSnapshot = { status: 'authenticated', environment: 'test', userId: 10001 }
 const sourceA: ArkmeSourceItem = {
@@ -36,11 +41,11 @@ describe('composer draft UI projection', () => {
     arkmeUi.selectSource(sourceA)
     const restoredA = renderToStaticMarkup(<ArkmeSurface initialAuth={account} />)
 
-    expect(markupA).toContain('只属于会话 A 的草稿')
-    expect(markupA).not.toContain('只属于会话 B 的草稿')
-    expect(markupB).toContain('只属于会话 B 的草稿')
-    expect(markupB).not.toContain('只属于会话 A 的草稿')
-    expect(restoredA).toContain('只属于会话 A 的草稿')
+    expect(markupA).toContain('aria-label="会话 A"')
+    expect(markupB).toContain('aria-label="会话 B"')
+    expect(restoredA).toContain('aria-label="会话 A"')
+    expect(arkmeComposerDraftStore.get(keyA).text).toBe('只属于会话 A 的草稿')
+    expect(arkmeComposerDraftStore.get(keyB).text).toBe('只属于会话 B 的草稿')
   })
 
   it('keeps Arko draft separate from ordinary conversations across remounts', () => {
@@ -69,5 +74,26 @@ describe('composer draft UI projection', () => {
 
     expect(arkmeComposerDraftStore.get(sourceKey).text).toBe('')
     expect(arkmeComposerDraftStore.get(arkoKey).text).toBe('')
+  })
+
+  it('renders selected rich emoji as an atomic editable object inside the real input surface', () => {
+    const markup = renderToStaticMarkup(<ArkmeRichComposerInput
+      value={`前${ARKME_COMPOSER_EMOJI_PLACEHOLDER}后`}
+      mentions={[]}
+      emojis={[{ emojiId: 'angry_face', startIndex: 1 }]}
+      maxLength={20_000}
+      placeholder="发送消息"
+      ariaLabel="发送消息"
+      disabled={false}
+      style={{ minHeight: 38, fontSize: 13, lineHeight: '21px' }}
+      onTextChange={() => {}}
+    />)
+
+    expect(markup).toContain('contenteditable="true"')
+    expect(markup).toContain('data-arkme-rich-composer="true"')
+    expect(markup).not.toContain('<textarea')
+    expect(richComposerSource).toContain("atom.contentEditable = 'false'")
+    expect(richComposerSource).toContain('atom.dataset.arkmeEditableEmoji = run.emoji.id')
+    expect(richComposerSource).toContain('root.replaceChildren(fragment)')
   })
 })

@@ -31,7 +31,7 @@ import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent, ArkmeRichText } from './ArkmeRichContent.js'
-import { ArkmeMentionTextarea } from './ArkmeMentionTextarea.js'
+import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
@@ -69,9 +69,7 @@ import {
   serializeArkmeComposerDraft,
   type ArkmeComposerAttachment,
 } from './composer-draft-store.js'
-import {
-  arkmeConversationComposerHeight, arkmeConversationComposerLayout,
-} from './conversation-composer-presentation.js'
+import { arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 import { restoreArkmeComposerFocus } from './composer-focus.js'
 import {
   ARKME_CONVERSATION_HEADER_HEIGHT, ArkmeInterwovenDetailAside, ArkmeInterwovenMentionCard,
@@ -780,7 +778,7 @@ export function ArkmeSurface({
   const bodyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<ArkmeRichComposerHandle>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const addMenuTriggerRef = useRef<HTMLButtonElement>(null)
@@ -1089,13 +1087,6 @@ export function ArkmeSurface({
       setError(arkmeStoredLoginErrorMessage(authStoreSnapshot.error, t))
     }
   }, [authStoreSnapshot.error, authView, t])
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    if (textarea === null) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${arkmeConversationComposerHeight(textarea.scrollHeight)}px`
-  }, [draft])
 
   const refreshAuth = useCallback(async () => {
     setBusy(true); setError('')
@@ -2340,8 +2331,8 @@ export function ArkmeSurface({
             />)}</div>}
             {uploadStatus !== undefined && uploadStatus.key === composerDraftKey
               && <div style={styles.uploadStatus} role="status">{uploadStatus.message}</div>}
-            <ArkmeMentionTextarea className="arkme-conversation-textarea" ref={textareaRef} rows={1} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} aria-label={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
-              onChange={event => { arkmeComposerDraftStore.setText(composerDraftKey, event.target.value) }}
+            <ArkmeRichComposerInput className="arkme-conversation-textarea" ref={textareaRef} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} ariaLabel={arkmeSourceComposerPlaceholder(selectedSource)} disabled={busy}
+              onTextChange={text => { arkmeComposerDraftStore.setText(composerDraftKey, text) }}
               onPaste={event => {
                 const imageFiles = arkmeClipboardImageFiles(event.clipboardData)
                 if (imageFiles.length === 0) return
@@ -2352,8 +2343,8 @@ export function ArkmeSurface({
                 if (!event.nativeEvent.isComposing && (event.key === 'Backspace' || event.key === 'Delete')) {
                   const caret = arkmeComposerDraftStore.deleteMentionAtSelection(
                     composerDraftKey,
-                    event.currentTarget.selectionStart,
-                    event.currentTarget.selectionEnd,
+                    textareaRef.current?.selectionStart ?? draft.length,
+                    textareaRef.current?.selectionEnd ?? draft.length,
                     event.key === 'Backspace' ? 'backward' : 'forward',
                   )
                   if (caret !== undefined) {

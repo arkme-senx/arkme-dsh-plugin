@@ -50,9 +50,10 @@ describe('Arkme conversation composer presentation', () => {
       expect(source).toContain('...arkmeConversationComposerLayout.composerInner')
       expect(source).toContain('...arkmeConversationComposerLayout.textarea')
       expect(source).toContain('...arkmeConversationComposerLayout.tools')
-      expect(source).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
       expect(source).not.toMatch(/Math\.min\(textarea\.scrollHeight,\s*(180|336)\)/)
     }
+    expect(arkoSource).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
+    expect(sidebarSource).toContain('<ArkmeRichComposerInput')
 
     expect(arkoSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")
     expect(arkoSource).toContain("callArkme<ArkmeArkoCancelResult>('arko.cancel'")
