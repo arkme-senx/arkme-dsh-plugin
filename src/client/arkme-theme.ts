@@ -13,6 +13,7 @@ export const arkmeTheme = {
   menu: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #ffffff))',
   messageOwn: 'var(--arkme-chat-self-bubble, var(--dsw-alias-state-business-tertiary, #eef1f8))',
   messageOther: 'var(--dsw-specific-bubble, var(--dsw-alias-bg-layer-2, #f0f2f5))',
+  memberRecordOther: 'var(--arkme-member-record-other-bubble, var(--dsw-specific-bubble-highlight, var(--dsw-alias-bg-layer-3, #e1e5ee)))',
   subtle: 'var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))',
   elevated: 'var(--dsw-alias-button-elevated-fill, var(--dsw-alias-bg-layer-2, #ffffff))',
   primaryAction: 'var(--dsw-alias-button-primary-fill, #17191c)',

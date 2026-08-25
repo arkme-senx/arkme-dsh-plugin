@@ -25,6 +25,7 @@ export const ARKME_MEMBER_RECORDS_DEFAULT_WIDTH = 428
 export const ARKME_MEMBER_RECORDS_RESIZE_HANDLE_WIDTH = 10
 export const ARKME_MEMBER_RECORDS_RESIZE_INDICATOR_WIDTH = 3
 export const ARKME_MEMBER_RECORDS_MAX_WIDTH_FACTOR = 0.6
+export const ARKME_MEMBER_RECORD_OTHER_BUBBLE = arkmeTheme.memberRecordOther
 const MEMBER_RECORDS_WIDTH_STORAGE_KEY = 'arkme.member-records-sidebar-width.v1'
 let cachedMemberRecordsWidth: number | undefined
 
@@ -114,7 +115,7 @@ const styles: Record<string, CSSProperties> = {
   menu: {
     position: 'absolute', zIndex: 42, width: MENU_WIDTH, overflow: 'hidden', boxSizing: 'border-box',
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 12,
-    background: 'rgba(255, 255, 255, .92)',
+    background: arkmeTheme.menu,
     backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
     boxShadow: '0 12px 34px rgba(24, 29, 36, .16)',
   },
@@ -155,7 +156,7 @@ const styles: Record<string, CSSProperties> = {
   },
   cardButton: {
     width: '100%', height: 50, marginTop: 'auto', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
-    background: arkmeTheme.foreground, color: arkmeTheme.text, fontSize: 16, fontWeight: 600, cursor: 'pointer',
+    background: arkmeTheme.elevated, color: arkmeTheme.text, fontSize: 16, fontWeight: 600, cursor: 'pointer',
     transition: 'background-color 120ms ease, border-color 120ms ease, opacity 120ms ease',
   },
   drawer: {
@@ -199,9 +200,9 @@ const styles: Record<string, CSSProperties> = {
   recordName: { margin: '0 0 4px', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
   recordBubble: {
     minWidth: 0, maxWidth: '100%', padding: '10px 13px', border: '1px solid rgba(29,32,40,.035)',
-    borderRadius: '5px 14px 14px 14px', background: arkmeTheme.messageOther,
+    borderRadius: '5px 14px 14px 14px', background: ARKME_MEMBER_RECORD_OTHER_BUBBLE,
     color: arkmeTheme.text, fontSize: 14, lineHeight: '22px', overflowWrap: 'anywhere',
-    '--arkme-bubble-fade': arkmeTheme.messageOther,
+    '--arkme-bubble-fade': ARKME_MEMBER_RECORD_OTHER_BUBBLE,
   } as CSSProperties,
   recordBubbleSelf: {
     borderRadius: '14px 5px 14px 14px', background: arkmeTheme.messageOwn,
@@ -332,7 +333,7 @@ export function ArkmeMemberProfileCard(props: {
       ? arkmeTheme.active
       : buttonState === 'hover'
         ? arkmeTheme.hover
-        : arkmeTheme.foreground
+        : arkmeTheme.elevated
   const names = arkmeMemberProfileNames(props.member, props.showTopicNickname === true)
   return <div style={styles.cardScrim} role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget) props.onClose()

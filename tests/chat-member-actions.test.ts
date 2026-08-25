@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ArkmeConversationMemberItem, ArkmeConversationMemberJoinEvent } from '../src/types.js'
 import {
-  ARKME_MEMBER_RECORDS_DEFAULT_WIDTH,
+  ARKME_MEMBER_RECORDS_DEFAULT_WIDTH, ARKME_MEMBER_RECORD_OTHER_BUBBLE,
   ArkmeMemberActionMenu, ArkmeMemberProfileCard, ArkmeMemberRecordsPanel,
   arkmeMemberActionMenuRowCount, arkmeMemberConversationAction,
   arkmeMemberProfileNames,
@@ -62,6 +62,7 @@ describe('chat member action menu placement', () => {
     expect(menu).toContain('看TA的快记')
     expect(menu).toContain('>2<')
     expect(menu).toContain('>7<')
+    expect(menu).toContain('background:var(--dsw-specific-menu')
 
     const card = renderToStaticMarkup(createElement(ArkmeMemberProfileCard, {
       member,
@@ -72,6 +73,7 @@ describe('chat member action menu placement', () => {
     expect(card).toContain('小林')
     expect(card).toContain('发送消息')
     expect(card).toContain('data-arkme-profile-send-state="idle"')
+    expect(card).toContain('background:var(--dsw-alias-button-elevated-fill')
   })
 
   it('shows only the matching owner-record action with its count in private chats', () => {
@@ -161,6 +163,13 @@ describe('chat member action menu placement', () => {
     expect(panel).toContain('data-arkme-member-records-dismiss="true"')
     expect(panel).toContain('data-arkme-member-records-resize-handle="true"')
     expect(panel).toContain(`data-width="${ARKME_MEMBER_RECORDS_DEFAULT_WIDTH}"`)
+  })
+
+  it('keeps another member record bubble distinct from the client-matched level-2 drawer', () => {
+    expect(ARKME_MEMBER_RECORD_OTHER_BUBBLE).toContain('--arkme-member-record-other-bubble')
+    expect(ARKME_MEMBER_RECORD_OTHER_BUBBLE).toContain('--dsw-specific-bubble-highlight')
+    expect(ARKME_MEMBER_RECORD_OTHER_BUBBLE).not.toContain('--dsw-specific-bubble,')
+    expect(ARKME_MEMBER_RECORD_OTHER_BUBBLE).not.toContain('--dsw-alias-bg-layer-2')
   })
 
   it('clamps the shared records drawer width like the desktop client', () => {
