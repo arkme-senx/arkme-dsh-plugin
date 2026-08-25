@@ -11,7 +11,7 @@ export interface ArkmeEmoji {
 
 type ArkmeEmojiSeed = Pick<ArkmeEmoji, 'id' | 'unicode' | 'label'>
 
-/** The desktop client's default catalog in the exact asset order used by Jotmo. */
+/** The desktop client's default catalog in the exact asset order used by Arkme. */
 const arkmeDefaultEmojiSeeds: readonly ArkmeEmojiSeed[] = Object.freeze([
   { id: 'angry_face', unicode: '😡', label: '生气' },
   { id: 'awkward_face', unicode: '😐', label: '尴尬' },

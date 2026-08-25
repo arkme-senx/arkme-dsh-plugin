@@ -682,7 +682,7 @@ function targetForContactSearch(result: ArkmeContactSearchResult): CallTarget {
         : '该账号当前无法直接呼叫'
   return {
     key: `contact-search:${result.contactRef}`,
-    displayName: result.displayName.trim() || arkmeId || '即我用户',
+    displayName: result.displayName.trim() || arkmeId || 'Arkme 用户',
     relation,
     ...(cleanAvatarRef(result.avatarRef) === undefined ? {} : { avatarRef: cleanAvatarRef(result.avatarRef) }),
     ...(canOpen ? { contactRef: result.contactRef, contactCanOpen: true } : { contactCanOpen: false }),
