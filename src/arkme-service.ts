@@ -944,7 +944,17 @@ export class ArkmeService {
   }
 
   async renameGroup(sourceRef: string, title: string, signal?: AbortSignal): Promise<ArkmeGroupActionResult> {
-    return await this.group.renameGroup(sourceRef, title, signal)
+    const result = await this.group.renameGroup(sourceRef, title, signal)
+    this.realtime.emitChatClientEvent({
+      type: 'sessions-delta',
+      revision: this.realtime.nextChatClientRevision(),
+      updates: [{
+        ...(result.source.sourceKey === undefined ? {} : { sourceKey: result.source.sourceKey }),
+        source: result.source,
+        timelineItems: [],
+      }],
+    })
+    return result
   }
 
   async leaveGroup(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupActionResult> {

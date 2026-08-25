@@ -18,6 +18,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_member_add',
   'arkme_contact_add',
   'arkme_group_create',
+  'arkme_group_rename',
   'arkme_world_voiceprint_invite',
   'arkme_world_private_chat_open',
   'arkme_voiceprint_invite',
@@ -70,6 +71,12 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_group_create') {
     const title = cleanArgument(args.title, 80)
     return title === '' ? '是否确认创建这个群聊？' : `是否确认创建群聊“${title}”？`
+  }
+  if (name === 'arkme_group_rename') {
+    const title = cleanArgument(args.title, 80)
+    return title === ''
+      ? '是否确认修改这个群聊的名称？'
+      : `是否确认将这个群聊的名称修改为“${title}”？`
   }
   if (name === 'arkme_world_voiceprint_invite') {
     return '是否确认给这条世界动态的发布者发送一条私聊，邀请对方开启声纹？'

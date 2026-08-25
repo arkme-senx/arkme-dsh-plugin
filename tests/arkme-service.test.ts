@@ -2085,6 +2085,42 @@ describe('ArkmeService', () => {
     expect(tailCalls).toEqual(new Map([['chat-1', 1], ['chat-2', 2]]))
   })
 
+  it('publishes a renamed group projection to browser realtime subscribers', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/chats/rename')) {
+        return json({ code: 200, data: {
+          session: {
+            chat_session_uid: 'group-1', session_kind: 2, title: 'Harness3',
+            last_active_at: 123, last_seq: 9,
+          },
+          unread_snapshot: { unread_count: 2, session_last_seq: 9 },
+        } })
+      }
+      if (url.endsWith('/api/v1/chats/group-avatar-snapshots')) {
+        return json({ code: 200, data: { items: [] } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const events: unknown[] = []
+    service.subscribeChatRealtime(event => { events.push(event) })
+
+    await service.renameGroup(sourceRefFor('group_chat', 'group-1', 'harness2'), 'Harness3')
+
+    expect(events).toEqual([expect.objectContaining({
+      type: 'sessions-delta',
+      updates: [expect.objectContaining({
+        source: expect.objectContaining({
+          kind: 'group_chat', displayName: 'Harness3', sourceKey: expect.any(String),
+        }),
+        sourceKey: expect.any(String),
+        timelineItems: [],
+      })],
+    })])
+  })
+
   it('keeps browser bootstrap reconciliation cache-aware and does not refresh the directory on upstream reconnect', () => {
     const service = new ArkmeService(
       config,

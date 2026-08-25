@@ -38,6 +38,7 @@ function fakeService(): ArkmeCoreToolPorts & {
   listCallHistory: ReturnType<typeof vi.fn>
   callDetail: ReturnType<typeof vi.fn>
   retryCallSummary: ReturnType<typeof vi.fn>
+  renameGroup: ReturnType<typeof vi.fn>
 } {
   return {
     providerCapabilities: () => ({
@@ -241,6 +242,16 @@ function fakeService(): ArkmeCoreToolPorts & {
     })),
     confirmDisableGroupAiPolish: vi.fn(async () => ({
       groupName: '产品群', enabled: false, ruleName: '友好简洁', changed: true,
+    })),
+    renameGroup: vi.fn(async (sourceRef: string, title: string) => ({
+      source: {
+        sourceRef,
+        kind: 'group_chat' as const,
+        displayName: title,
+        activeAtMillis: 0,
+        unreadCount: 0,
+      },
+      status: 'ok' as const,
     })),
     requestOutgoingCall: vi.fn(async (_sourceRef: string, mediaType: 'audio' | 'video') => ({
       status: 'calling' as const,
@@ -797,6 +808,87 @@ describe('Arkme conversation tools', () => {
     ) as string
     expect(service.confirmEnableGroupAiPolish).toHaveBeenCalledWith('confirm-1', { signal })
     expect(enabled).toContain('"enabled": true')
+  })
+
+  it('renames one exact group source through an explicit write tool', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_group_rename')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { group_source_ref: 'arkme-source-v1.group.sig', title: '新产品群' },
+      { signal } as never,
+    ) as string
+
+    expect(service.renameGroup).toHaveBeenCalledWith(
+      'arkme-source-v1.group.sig', '新产品群', signal,
+    )
+    expect(output).toContain('"displayName": "新产品群"')
+    expect(output).toContain('"status": "ok"')
+    expect(tool.description).toContain('explicit')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_group_rename')
+  })
+
+  it('requires conversational confirmation before the registered group rename writes', async () => {
+    const definitions: Array<{
+      name: string
+      execute(args: Record<string, unknown>, exec: Record<string, unknown>): Promise<unknown>
+    }> = []
+    const service = fakeService()
+    const ctx = {
+      systemPrompt: { section: vi.fn() },
+      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      on: vi.fn(),
+      inject: vi.fn(),
+      get: vi.fn(),
+    }
+    registerArkmeTools(ctx as never, service as never)
+    const rename = definitions.find(definition => definition.name === 'arkme_group_rename')!
+    const args = {
+      group_source_ref: 'arkme-source-v1.group.sig',
+      title: '新产品群',
+    }
+    const events: Array<Record<string, unknown>> = [
+      {
+        seq: 1,
+        type: 'user/message',
+        data: {
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: '把产品群改名为新产品群' }],
+        },
+      },
+    ]
+    const agent = { id: 'session-group-rename', session: { events } }
+
+    const preview = await rename.execute(args, {
+      agent,
+      callId: 'rename-prepare',
+      signal: new AbortController().signal,
+    }) as string
+
+    expect(preview).toContain('"status": "confirmation_required"')
+    expect(preview).toContain('新产品群')
+    expect(service.renameGroup).not.toHaveBeenCalled()
+
+    events.push({
+      seq: 2,
+      type: 'user/message',
+      data: {
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: '确认修改' }],
+      },
+    })
+    const result = await rename.execute(args, {
+      agent,
+      callId: 'rename-confirm',
+      signal: new AbortController().signal,
+    }) as string
+
+    expect(result).toContain('"status": "ok"')
+    expect(service.renameGroup).toHaveBeenCalledWith(
+      'arkme-source-v1.group.sig', '新产品群', expect.any(AbortSignal),
+    )
   })
 
   it('direct-sends to an explicit recipient with stable hidden ids and no text echo', async () => {

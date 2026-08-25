@@ -611,6 +611,7 @@ export class GroupService {
       // Rename success is authoritative; avatar refresh is optional.
     }
     this.source.setChatSourceByKey(`${String(session.userId)}:${source.ownerRef}`, nextSource)
+    this.source.invalidateSourceListCache(session.userId, 'root')
     return { source: nextSource, status: 'ok' }
   }
 
