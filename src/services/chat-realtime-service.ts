@@ -144,11 +144,12 @@ export class ChatRealtimeService {
       void this.invalidateRecordProjection()
       return
     }
-    if (notice.cause === 'hint' && notice.projectionInvalidation?.projection === 'record') {
+    if (notice.cause === 'projection-invalidation'
+      && notice.projectionInvalidation?.projection === 'record') {
       void this.invalidateRecordProjection()
       return
     }
-    if (notice.cause === 'hint' && notice.hint !== undefined) {
+    if (notice.cause === 'chat-hint' && notice.hint !== undefined) {
       this.scheduleChatSessionProjection(
         notice.hint.chatSessionUid,
         notice.hint.latestSequence,

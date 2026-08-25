@@ -2210,7 +2210,7 @@ describe('ArkmeService', () => {
     const internal = service as unknown as {
       source: { invalidateSourceListCache(userId: number, directory?: string): void }
       handleChatRealtimeNotice(notice: {
-        cause: 'hint'
+        cause: 'projection-invalidation'
         state: { revision: number; connected: boolean; connectionGeneration: number }
         projectionInvalidation: { eventUid: string; projection: string; eventAtMillis: number }
       }): void
@@ -2218,7 +2218,7 @@ describe('ArkmeService', () => {
     const invalidate = vi.spyOn(internal.source, 'invalidateSourceListCache')
 
     internal.handleChatRealtimeNotice({
-      cause: 'hint',
+      cause: 'projection-invalidation',
       state: { revision: 2, connected: true, connectionGeneration: 1 },
       projectionInvalidation: { eventUid: 'projection-1', projection: 'record', eventAtMillis: 123456 },
     })

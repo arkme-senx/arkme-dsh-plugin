@@ -33,7 +33,7 @@ export interface ArkmeProjectionInvalidatedHint {
 
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
-  cause: 'reconcile' | 'hint' | 'local'
+  cause: 'reconcile' | 'chat-hint' | 'projection-invalidation' | 'local'
   hint?: ArkmeChatReceiveHint
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
 }
@@ -397,7 +397,11 @@ export class ArkmeChatRealtimeRuntime {
       if (oldest !== undefined) this.seenEventUids.delete(oldest)
     }
     this.lastEventAtMillis = projectionInvalidation?.eventAtMillis ?? hint?.eventAtMillis
-    this.advanceRevision('hint', hint, projectionInvalidation)
+    if (projectionInvalidation !== undefined) {
+      this.advanceRevision('projection-invalidation', undefined, projectionInvalidation)
+    } else {
+      this.advanceRevision('chat-hint', hint)
+    }
   }
 
   private advanceRevision(

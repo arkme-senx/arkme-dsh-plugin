@@ -77,7 +77,7 @@ describe('Arkme Chat realtime', () => {
     stream.enqueue(encoder.encode(`data: ${JSON.stringify(recordProjectionHint)}\n\n`))
     await vi.waitFor(() => { expect(runtime.state()).toMatchObject({ revision: 3, lastEventAtMillis: 123457 }) })
     expect(observed).toEqual([1, 2, 3])
-    expect(causes).toEqual(['reconcile', 'hint', 'hint'])
+    expect(causes).toEqual(['reconcile', 'chat-hint', 'projection-invalidation'])
 
     const [input, init] = fetchImpl.mock.calls[0]!
     expect(String(input)).toBe(`https://im.example.test${ARKME_CHAT_SSE_PATH}`)
