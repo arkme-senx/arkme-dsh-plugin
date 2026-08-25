@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Smiley } from '@phosphor-icons/react/dist/icons/Smiley'
 import { Heart } from '@phosphor-icons/react/dist/icons/Heart'
 import { arkmeTheme } from './arkme-theme.js'
-import { ARKME_COMPOSER_TOOL_ICON_SIZE, ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
+import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
+import { ArkmeComposerEmojiIcon } from './ArkmeComposerToolIcon.js'
 import {
   arkmeDefaultEmojis, arkmeEmojiById, nextArkmeRecentEmojiIds, type ArkmeEmoji,
 } from './arkme-emoji.js'
@@ -10,9 +10,9 @@ import {
 const recentStorageKey = 'arkme:composer:recent-emojis:v1'
 
 const styles: Record<string, CSSProperties> = {
-  host: { position: 'relative', flex: 'none' },
+  host: { flex: 'none' },
   panel: {
-    position: 'absolute', left: 0, bottom: 42, zIndex: 30,
+    position: 'absolute', left: 0, bottom: 'calc(100% + 8px)', zIndex: 30,
     width: 'min(372px, calc(100vw - 48px))', maxHeight: 'min(410px, calc(100vh - 180px))',
     overflowY: 'auto', padding: '14px 14px 10px', boxSizing: 'border-box',
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 13,
@@ -126,7 +126,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, onSelect }: {
       </div>
       <ArkmeEmojiGrid emojis={arkmeDefaultEmojis} onSelect={select} />
       <div style={styles.tabs} aria-label="表情分类">
-        <button type="button" style={styles.tab} aria-label="默认表情" aria-pressed="true"><Smiley size={20} weight="regular" /></button>
+        <button type="button" style={styles.tab} aria-label="默认表情" aria-pressed="true"><ArkmeComposerEmojiIcon /></button>
         <button type="button" style={{ ...styles.tab, ...styles.disabledTab }} aria-label="收藏表情（暂不可用）" disabled><Heart size={20} weight="regular" /></button>
       </div>
     </section>}
@@ -138,6 +138,6 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, onSelect }: {
       data-arkme-composer-tool="emoji"
       onMouseDown={event => { event.preventDefault() }}
       onClick={() => { setOpen(value => !value) }}
-    ><Smiley size={ARKME_COMPOSER_TOOL_ICON_SIZE} weight="regular" aria-hidden /></ArkmeComposerToolButton>
+    ><ArkmeComposerEmojiIcon /></ArkmeComposerToolButton>
   </div>
 }

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 const arkoSource = readFileSync(new URL('../src/client/ArkmeArkoSurface.tsx', import.meta.url), 'utf8')
 const sidebarSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 const toolButtonSource = readFileSync(new URL('../src/client/ArkmeComposerToolButton.tsx', import.meta.url), 'utf8')
+const toolIconSource = readFileSync(new URL('../src/client/ArkmeComposerToolIcon.tsx', import.meta.url), 'utf8')
 const presentationModuleUrl = new URL('../src/client/conversation-composer-presentation.ts', import.meta.url)
 
 describe('Arkme conversation composer presentation', () => {
@@ -60,11 +61,13 @@ describe('Arkme conversation composer presentation', () => {
 
   it('uses one static icon-button contract for add and emoji tools', () => {
     expect(sidebarSource).toContain('<ArkmeComposerToolButton ref={addMenuTriggerRef}')
-    expect(sidebarSource).toContain('<Plus size={ARKME_COMPOSER_TOOL_ICON_SIZE} weight="regular"')
+    expect(sidebarSource).toContain('<ArkmeComposerPlusIcon />')
     expect(toolButtonSource).toContain("width: 34")
     expect(toolButtonSource).toContain("height: 34")
     expect(toolButtonSource).toContain("transition: 'none'")
     expect(toolButtonSource).not.toContain('onMouseEnter')
     expect(toolButtonSource).not.toContain('onMouseLeave')
+    expect(toolIconSource).toContain('viewBox="0 0 20 20"')
+    expect(toolIconSource.match(/strokeWidth="1\.5"/gu)).toHaveLength(3)
   })
 })

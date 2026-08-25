@@ -3,7 +3,6 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
@@ -34,7 +33,8 @@ import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeAttachmentDraftTile, ArkmeMessageContent, ArkmeRichText } from './ArkmeRichContent.js'
 import { ArkmeMentionTextarea } from './ArkmeMentionTextarea.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
-import { ARKME_COMPOSER_TOOL_ICON_SIZE, ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
+import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
+import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
@@ -2370,7 +2370,7 @@ export function ArkmeSurface({
                   if (canSend) void send()
                 }
               }} />
-            <div style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} data-arkme-composer-tool="add" onClick={() => { setAddMenuOpen(value => !value) }}><Plus size={ARKME_COMPOSER_TOOL_ICON_SIZE} weight="regular" aria-hidden /></ArkmeComposerToolButton><ArkmeEmojiPicker
+            <div style={styles.tools}><div style={styles.toolGroup}><ArkmeComposerToolButton ref={addMenuTriggerRef} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} data-arkme-composer-tool="add" onClick={() => { setAddMenuOpen(value => !value) }}><ArkmeComposerPlusIcon /></ArkmeComposerToolButton><ArkmeEmojiPicker
               disabled={busy}
               scopeKey={composerDraftKey}
               onSelect={insertEmoji}
