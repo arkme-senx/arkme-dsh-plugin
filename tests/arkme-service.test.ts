@@ -1647,9 +1647,28 @@ describe('ArkmeService', () => {
             record_uid: 'aggregate-topic', owner_user_id: 10001, creator_user_id: 10001,
             title: '', text_content: '主题聚合内容', template_kind: 1, status: 1, version: 1, send_at: 109,
           },
+        }, {
+          // The home-feed projection uses the legacy voice payload rather than
+          // a media_refs entry.  It must still hydrate into the shared player.
+          record_uid: 'aggregate-voice', source_kind: 1, send_at: 108,
+          record_core: {
+            record_uid: 'aggregate-voice', owner_user_id: 10001, creator_user_id: 10001,
+            title: '', text_content: '语音转写内容', template_kind: 3, status: 1, version: 1, send_at: 108,
+            record_duration_millis: 31_000,
+            content_payload: {
+              voice: { source_file_asset_uid: 'voice-asset-1', file_name: '语音.m4a', mime_type: 'audio/mp4', duration_millis: 31_000 },
+            },
+          },
         }],
         has_more: true, next_cursor_send_at: 108, next_cursor_record_uid: 'aggregate-next',
       } })
+      if (url.endsWith('/api/v1/records/media/batch-list')) return json({ code: 0, data: { items: [{
+        record_uid: 'aggregate-voice',
+        items: [{
+          file_asset_uid: 'voice-asset-1', file_kind: 2, file_name: '语音.m4a', mime_type: 'audio/mp4',
+          size: 31, duration_sec: 31, download_url: 'https://media.test/aggregate-voice.m4a',
+        }],
+      }] } })
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
@@ -1682,6 +1701,10 @@ describe('ArkmeService', () => {
       items: [
         { itemUid: 'aggregate-default', textContent: '未分类内容', isMe: true },
         { itemUid: 'aggregate-topic', textContent: '主题聚合内容', isMe: true, selfTopic: { title: '工作' } },
+        {
+          itemUid: 'aggregate-voice', textContent: '语音转写内容', isMe: true, templateKind: 3,
+          contentBlocks: [{ kind: 'audio', fileAssetUid: 'voice-asset-1', durationSec: 31 }],
+        },
       ],
       hasMore: true,
       nextCursor: { sendAtMillis: 108, itemUid: 'aggregate-next' },

@@ -698,15 +698,65 @@ export class MediaService {
     const payload = jsonObjectValue(record.payload)
     const core = objectValue(root.record_core)
     return jsonObjectValue(
-      root.content_payload ?? payload.content_payload ?? record.content_payload ?? core.content_payload,
+      root.content_payload ?? root.contentPayload
+        ?? payload.content_payload ?? payload.contentPayload
+        ?? record.content_payload ?? record.contentPayload
+        ?? core.content_payload ?? core.contentPayload,
     )
   }
 
+  /**
+   * Older quick-record projections carry their voice outside media_refs.  The
+   * Flutter clients accept these payload forms, so normalize them before the
+   * shared display-item hydration and rich-content renderer see the record.
+   */
+  private recordVoiceMediaRef(raw: unknown): Record<string, unknown> | undefined {
+    const root = objectValue(raw)
+    const record = objectValue(root.record)
+    const payload = jsonObjectValue(record.payload)
+    const core = objectValue(root.record_core)
+    const contentPayload = this.recordContentPayload(raw)
+    const candidates = [
+      contentPayload.voice, contentPayload.voice_media, contentPayload.voiceMedia,
+      payload.voice, payload.voice_media, payload.voiceMedia,
+      record.voice, record.voice_media, record.voiceMedia,
+      core.voice, core.voice_media, core.voiceMedia,
+      root.voice, root.voice_media, root.voiceMedia,
+    ]
+    for (const candidate of candidates) {
+      const voice = jsonObjectValue(candidate)
+      const fileAssetUid = [
+        voice.source_file_asset_uid, voice.sourceFileAssetUid,
+        voice.file_asset_uid, voice.fileAssetUid,
+        voice.file_id, voice.fileId, voice.uid,
+      ].map(value => stringValue(value).trim()).find(value => value !== '')
+      if (fileAssetUid === undefined) continue
+      const durationSeconds = numberValue(voice.duration_sec ?? voice.durationSec ?? voice.duration)
+      const durationMillis = numberValue(voice.duration_millis ?? voice.durationMillis ?? voice.duration_ms)
+      return {
+        ...voice,
+        file_asset_uid: fileAssetUid,
+        file_kind: 2,
+        ...(stringValue(voice.mime_type ?? voice.mimeType).trim() === '' ? {} : {
+          mime_type: stringValue(voice.mime_type ?? voice.mimeType).trim(),
+        }),
+        ...(durationSeconds > 0 ? { duration_sec: durationSeconds }
+          : durationMillis > 0 ? { duration_sec: Math.ceil(durationMillis / 1000) }
+            : {}),
+      }
+    }
+    return undefined
+  }
+
   private recordMediaRefs(raw: unknown): Record<string, unknown>[] {
-    return listValue(this.recordContentPayload(raw).media_refs).map(objectValue).filter(item => {
-      return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
-        && stringValue(item.file_asset_uid).trim() !== ''
-    })
+    const contentPayload = this.recordContentPayload(raw)
+    const voiceRef = this.recordVoiceMediaRef(raw)
+    const refs = [
+      ...listValue(contentPayload.media_refs ?? contentPayload.mediaRefs).map(objectValue),
+      ...(voiceRef === undefined ? [] : [voiceRef]),
+    ].filter(item => Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
+      && stringValue(item.file_asset_uid).trim() !== '')
+    return [...new Map(refs.map(item => [stringValue(item.file_asset_uid).trim(), item])).values()]
   }
 
   private async queryRecordMediaDisplayItems(
@@ -917,7 +967,7 @@ export class MediaService {
       const uid = stringValue(item.file_asset_uid).trim()
       if (uid !== '') displayByAsset.set(uid, item)
     }
-    const mediaRefs = listValue(contentPayload.media_refs).map(objectValue)
+    const mediaRefs = this.recordMediaRefs(raw)
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
       : displayItems
