@@ -6,7 +6,7 @@ import type { ArkmeToolModule } from '../contract/module.js'
 import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule } from './conversation/list-sources.js'
 import { groupAiPolishToolModule } from './conversation/group-ai-polish.js'
-import { listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './conversation/favorite-stickers.js'
+import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './conversation/favorite-stickers.js'
 import { readSourceToolModule } from './conversation/read-source.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
@@ -75,6 +75,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   relatedRecordingsToolModule,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,
   ...callHistoryToolModules,

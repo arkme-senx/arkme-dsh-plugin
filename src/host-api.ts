@@ -7,7 +7,7 @@ import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './out
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
   ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind, ArkmeHumanMentionInput,
-  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
@@ -362,22 +362,19 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   }
 }
 
-function favoriteStickerItemsParam(params: Record<string, unknown>): ArkmeFavoriteStickerSaveInput[] {
-  if (!Array.isArray(params.items)) throw new ArkmePluginError('favorite-stickers-invalid', '收藏表情列表无效', false, 400)
-  return params.items.map(raw => {
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-      throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
-    }
-    const item = raw as Record<string, unknown>
-    return {
-      fileAssetUid: stringParam(item, 'fileAssetUid'),
-      fileName: stringParam(item, 'fileName'),
-      mimeType: stringParam(item, 'mimeType'),
-      size: Math.max(0, Math.trunc(numberParam(item, 'size', 0))),
-      fileKind: 1,
-      ...(item.isAnimated === true ? { isAnimated: true } : {}),
-    }
-  })
+function favoriteStickerItemParam(params: Record<string, unknown>): ArkmeFavoriteStickerAddInput {
+  if (params.item === null || typeof params.item !== 'object' || Array.isArray(params.item)) {
+    throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
+  }
+  const item = params.item as Record<string, unknown>
+  return {
+    fileAssetUid: stringParam(item, 'fileAssetUid'),
+    fileName: stringParam(item, 'fileName'),
+    mimeType: stringParam(item, 'mimeType'),
+    size: Math.max(0, Math.trunc(numberParam(item, 'size', 0))),
+    fileKind: 1,
+    ...(item.isAnimated === true ? { isAnimated: true } : {}),
+  }
 }
 
 function favoriteStickerManageActionParam(params: Record<string, unknown>): ArkmeFavoriteStickerManageAction {
@@ -1008,7 +1005,7 @@ export async function dispatchArkmeHostOperation(
       },
     )
     case 'favorite-stickers.list': return await service.favoriteStickers()
-    case 'favorite-stickers.save': return await service.saveFavoriteStickers(favoriteStickerItemsParam(params))
+    case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'fileAssetUid'),

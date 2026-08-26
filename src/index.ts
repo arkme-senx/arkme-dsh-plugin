@@ -547,7 +547,7 @@ export type {
   ArkmeContentKind,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
-  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeRichSendInput,
   ArkmeImageMediaType,

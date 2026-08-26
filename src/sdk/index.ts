@@ -26,7 +26,7 @@ import type {
   ArkmeContactSearchResult,
   ArkmeContentBlock,
   ArkmeFavoriteStickerList,
-  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeConversationMemberList,
   ArkmeConversationMemberRecordMode,
@@ -141,7 +141,7 @@ export type {
   ArkmeContentBlock,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
-  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeContentKind,
   ArkmeConversationMemberItem,
@@ -1240,11 +1240,12 @@ export class ArkmeSdk {
     return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
   }
 
-  async saveFavoriteStickers(
-    items: readonly ArkmeFavoriteStickerSaveInput[],
+  async addFavoriteSticker(
+    item: ArkmeFavoriteStickerAddInput,
     signal?: AbortSignal,
   ): Promise<ArkmeFavoriteStickerList> {
-    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.save', { items }, signal)
+    if (item.fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.add', { item }, signal)
   }
 
   async sendFavoriteSticker(

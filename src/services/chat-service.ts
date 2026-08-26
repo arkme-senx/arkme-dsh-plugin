@@ -10,7 +10,7 @@ import type {
   ArkmeForwardRecordPreviewItem,
   ArkmeFavoriteSticker,
   ArkmeFavoriteStickerList,
-  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeForwardTranscriptSegment,
   ArkmeGroupAiPolishNotice,
@@ -80,6 +80,22 @@ function numberValue(value: unknown): number {
 }
 
 function booleanValue(value: unknown): boolean { return value === true }
+
+function favoriteStickerPersistenceItem(item: Record<string, unknown>): Record<string, unknown> {
+  return {
+    file_asset_uid: stringValue(item.file_asset_uid).trim(),
+    file_id: stringValue(item.file_id).trim(),
+    file_hash: stringValue(item.file_hash).trim(),
+    file_name: stringValue(item.file_name).trim(),
+    mime_type: stringValue(item.mime_type).trim(),
+    file_kind: Math.trunc(numberValue(item.file_kind)),
+    file_type: Math.trunc(numberValue(item.file_type)),
+    is_animated: booleanValue(item.is_animated),
+    file_size: Math.max(0, Math.trunc(numberValue(item.file_size))),
+    file_create_at: Math.max(0, Math.trunc(numberValue(item.file_create_at))),
+    file_push_at: Math.max(0, Math.trunc(numberValue(item.file_push_at))),
+  }
+}
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 
 function chatMemberRole(value: unknown): ArkmeGroupMemberRole {
@@ -1372,28 +1388,28 @@ export class ChatService {
     }
   }
 
-  async saveFavoriteStickers(
-    items: readonly ArkmeFavoriteStickerSaveInput[],
+  async addFavoriteSticker(
+    item: ArkmeFavoriteStickerAddInput,
     signal?: AbortSignal,
   ): Promise<ArkmeFavoriteStickerList> {
-    if (items.length > 200) throw new ArkmePluginError('favorite-stickers-limit', '收藏表情最多 200 个', false, 400)
-    const normalized = items.map(item => {
-      const fileAssetUid = item.fileAssetUid.trim()
-      if (!/^[A-Za-z0-9._:-]{8,256}$/.test(fileAssetUid) || item.fileKind !== 1 || !item.mimeType.toLowerCase().startsWith('image/')) {
-        throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
-      }
-      return {
-        file_asset_uid: fileAssetUid,
-        file_name: item.fileName.trim() || '收藏表情',
-        mime_type: item.mimeType.trim().toLowerCase(),
-        file_kind: 1,
-        file_size: Math.max(0, Math.trunc(item.size)),
-        is_animated: item.isAnimated === true || item.mimeType.toLowerCase() === 'image/gif',
-      }
-    })
+    const fileAssetUid = item.fileAssetUid.trim()
+    if (!/^[A-Za-z0-9._:-]{8,256}$/.test(fileAssetUid) || item.fileKind !== 1 || !item.mimeType.toLowerCase().startsWith('image/')) {
+      throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
+    }
     const session = await this.runtime.requireSession()
+    const { items } = await this.favoriteStickerDocument(session, signal)
+    const remaining = items.filter(existing => stringValue(existing.file_asset_uid).trim() !== fileAssetUid)
+    if (remaining.length >= 200) throw new ArkmePluginError('favorite-stickers-limit', '收藏表情最多 200 个', false, 400)
+    const normalized = {
+      file_asset_uid: fileAssetUid,
+      file_name: item.fileName.trim() || '收藏表情',
+      mime_type: item.mimeType.trim().toLowerCase(),
+      file_kind: 1,
+      file_size: Math.max(0, Math.trunc(item.size)),
+      is_animated: item.isAnimated === true || item.mimeType.toLowerCase() === 'image/gif',
+    }
     await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/favorite-stickers/set', { items: normalized }, session, signal,
+      '/api/v1/chats/favorite-stickers/set', { items: [normalized, ...remaining.map(favoriteStickerPersistenceItem)] }, session, signal,
     )
     return await this.favoriteStickers(signal)
   }
@@ -1415,19 +1431,7 @@ export class ChatService {
     const [target] = nextItems.splice(targetIndex, 1)
     if (action === 'move-to-front' && target !== undefined) nextItems.unshift(target)
     await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-      '/api/v1/chats/favorite-stickers/set', { items: nextItems.map(item => ({
-        file_asset_uid: stringValue(item.file_asset_uid).trim(),
-        file_id: stringValue(item.file_id).trim(),
-        file_hash: stringValue(item.file_hash).trim(),
-        file_name: stringValue(item.file_name).trim(),
-        mime_type: stringValue(item.mime_type).trim(),
-        file_kind: Math.trunc(numberValue(item.file_kind)),
-        file_type: Math.trunc(numberValue(item.file_type)),
-        is_animated: booleanValue(item.is_animated),
-        file_size: Math.max(0, Math.trunc(numberValue(item.file_size))),
-        file_create_at: Math.max(0, Math.trunc(numberValue(item.file_create_at))),
-        file_push_at: Math.max(0, Math.trunc(numberValue(item.file_push_at))),
-      })) }, session, signal,
+      '/api/v1/chats/favorite-stickers/set', { items: nextItems.map(favoriteStickerPersistenceItem) }, session, signal,
     )
     return await this.favoriteStickers(signal)
   }

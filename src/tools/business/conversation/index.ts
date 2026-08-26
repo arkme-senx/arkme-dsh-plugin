@@ -2,7 +2,7 @@ import type { ArkmeToolModule } from '../../contract/module.js'
 import { listSourcesToolModule } from './list-sources.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './member-records.js'
 import { groupAiPolishToolModule } from './group-ai-polish.js'
-import { listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './favorite-stickers.js'
+import { addFavoriteStickerToolModule, listFavoriteStickersToolModule, manageFavoriteStickerToolModule, sendFavoriteStickerToolModule } from './favorite-stickers.js'
 import { readSourceToolModule } from './read-source.js'
 import { messageReadReceiptToolModules } from './read-receipts.js'
 import { relatedRecordingsToolModule } from './related-recordings.js'
@@ -24,6 +24,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   relatedRecordingsToolModule,
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
+  addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,
   sendTextToolModule,

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type {
-  ArkmeFavoriteSticker, ArkmeFavoriteStickerList, ArkmeFavoriteStickerSaveInput, ArkmeSourceSendResult, ArkmeUploadedAsset,
+  ArkmeFavoriteSticker, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerList, ArkmeSourceSendResult, ArkmeUploadedAsset,
 } from '../types.js'
 import { callArkme } from './api.js'
 import {
@@ -13,6 +13,7 @@ import { ArkmeComposerEmojiIcon } from './ArkmeComposerToolIcon.js'
 import type { ArkmeComposerCaretGeometry } from './ArkmeRichComposerInput.js'
 
 const recentStorageKey = 'arkme:chat-emoji:recent:v1'
+const favoriteStickerLoadTimeoutMs = 15_000
 export const arkmeDefaultEmojiGridColumns = 14
 
 interface ArkmePendingFavoriteSticker {
@@ -204,13 +205,6 @@ function StickerFallbackIcon() {
   </svg>
 }
 
-function favoriteStickerSaveInput(item: ArkmeFavoriteSticker): ArkmeFavoriteStickerSaveInput {
-  return {
-    fileAssetUid: item.fileAssetUid, fileName: item.fileName, mimeType: item.mimeType,
-    size: item.size, fileKind: 1, isAnimated: item.isAnimated,
-  }
-}
-
 function EmojiGrid({ emojis, layout = 'compact', onSelect }: {
   emojis: readonly ArkmeEmoji[]
   layout?: 'compact' | 'default'
@@ -266,6 +260,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   const [pendingStickers, setPendingStickers] = useState<ArkmePendingFavoriteSticker[]>([])
   const pendingStickersRef = useRef<ArkmePendingFavoriteSticker[]>([])
   const cancelledPendingStickerIdsRef = useRef<Set<string>>(new Set())
+  const stickerLoadAbortRef = useRef<AbortController>()
   const disposedRef = useRef(false)
   const [busyStickerId, setBusyStickerId] = useState('')
   const [previewFailedIds, setPreviewFailedIds] = useState<Set<string>>(() => new Set())
@@ -346,6 +341,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
 
   useEffect(() => () => {
     disposedRef.current = true
+    stickerLoadAbortRef.current?.abort()
     for (const item of pendingStickersRef.current) {
       cancelledPendingStickerIdsRef.current.add(item.id)
       if (item.previewUrl !== '') URL.revokeObjectURL(item.previewUrl)
@@ -360,16 +356,39 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   }
 
   const loadStickers = async () => {
+    stickerLoadAbortRef.current?.abort()
+    const controller = new AbortController()
+    stickerLoadAbortRef.current = controller
+    let timedOut = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+        reject(new Error('收藏表情加载超时，请重试'))
+      }, favoriteStickerLoadTimeoutMs)
+    })
     setLoadPhase('loading')
     try {
-      const result = await callArkme<ArkmeFavoriteStickerList>('favorite-stickers.list')
+      const result = await Promise.race([
+        callArkme<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, controller.signal),
+        timeoutPromise,
+      ])
+      if (disposedRef.current || controller.signal.aborted) return
       setStickers(result.items)
       setPreviewFailedIds(new Set())
       setPreviewRevision(value => value + 1)
       setLoadPhase('success')
     } catch (caught) {
+      if (disposedRef.current || (controller.signal.aborted && !timedOut)) return
+      const message = timedOut
+        ? '收藏表情加载超时，请重试'
+        : caught instanceof Error ? caught.message : '收藏表情加载失败'
       setLoadPhase('error')
-      onError?.(caught instanceof Error ? caught.message : '收藏表情加载失败')
+      onError?.(message)
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
+      if (stickerLoadAbortRef.current === controller) stickerLoadAbortRef.current = undefined
     }
   }
 
@@ -377,8 +396,8 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
     if (open && tab === 'favorite' && loadPhase === 'idle') void loadStickers()
   }, [open, tab, loadPhase])
 
-  const saveStickerItems = async (items: readonly ArkmeFavoriteStickerSaveInput[]) => {
-    const result = await callArkme<ArkmeFavoriteStickerList>('favorite-stickers.save', { items })
+  const addFavoriteSticker = async (item: ArkmeFavoriteStickerAddInput) => {
+    const result = await callArkme<ArkmeFavoriteStickerList>('favorite-stickers.add', { item })
     setStickers(result.items)
     setLoadPhase('success')
   }
@@ -394,10 +413,10 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
       const asset = pending.uploadedAsset ?? await onUploadSticker!(pending.file)
       if (disposedRef.current || cancelledPendingStickerIdsRef.current.has(pending.id)) return
       setPendingStickers(current => current.map(item => item.id === pending.id ? { ...item, uploadedAsset: asset } : item))
-      await saveStickerItems([{
+      await addFavoriteSticker({
         fileAssetUid: asset.fileAssetUid, fileName: asset.fileName, mimeType: asset.mimeType,
         size: asset.size, fileKind: 1, isAnimated: asset.mimeType.toLowerCase() === 'image/gif',
-      }, ...stickers.map(favoriteStickerSaveInput).filter(item => item.fileAssetUid !== asset.fileAssetUid)])
+      })
       setPendingStickers(current => current.filter(item => item.id !== pending.id))
       if (pending.previewUrl !== '') URL.revokeObjectURL(pending.previewUrl)
     } catch (caught) {
@@ -523,7 +542,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
         </div> : <div style={styles.favoriteGrid} data-arkme-favorite-sticker-grid="true">
           <button
             type="button" style={styles.addTile} aria-label="添加收藏表情" title="添加收藏表情"
-            disabled={busyStickerId !== '' || onUploadSticker === undefined}
+            disabled={loadPhase === 'loading' || busyStickerId !== '' || onUploadSticker === undefined}
             onClick={() => { stickerInputRef.current?.click() }}
           ><PlusIcon /></button>
           {loadPhase === 'loading' && stickers.length === 0 && pendingStickers.length === 0 && Array.from({ length: 5 }, (_, index) => <div key={`skeleton:${String(index)}`} style={styles.skeleton} data-arkme-favorite-sticker-skeleton="true" />)}

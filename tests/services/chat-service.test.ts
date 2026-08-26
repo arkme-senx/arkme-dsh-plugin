@@ -44,16 +44,28 @@ describe('ChatService', () => {
       {} as never, {} as never, {} as never, {} as never,
     )
 
-    const moved = await chat.manageFavoriteSticker('asset-second-123', 'move-to-front')
-    expect(moved.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123', 'asset-first-1234'])
+    const added = await chat.addFavoriteSticker({
+      fileAssetUid: 'asset-new-12345', fileName: 'new.gif', mimeType: 'image/gif', fileKind: 1, size: 30,
+    })
+    expect(added.items.map(item => item.fileAssetUid)).toEqual(['asset-new-12345', 'asset-first-1234', 'asset-second-123'])
     expect(setBodies[0]).toMatchObject({ items: [
-      { file_asset_uid: 'asset-second-123', file_name: 'second.gif', mime_type: 'image/gif', file_kind: 1, file_size: 20, is_animated: true },
-      { file_asset_uid: 'asset-first-1234', file_name: 'first.png', mime_type: 'image/png', file_kind: 1, file_size: 10 },
+      { file_asset_uid: 'asset-new-12345', file_name: 'new.gif', mime_type: 'image/gif', file_kind: 1, file_size: 30, is_animated: true },
+      { file_asset_uid: 'asset-first-1234' },
+      { file_asset_uid: 'asset-second-123' },
     ] })
     expect(JSON.stringify(setBodies[0])).not.toContain('signed_url')
 
+    const moved = await chat.manageFavoriteSticker('asset-second-123', 'move-to-front')
+    expect(moved.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123', 'asset-new-12345', 'asset-first-1234'])
+    expect(setBodies[1]).toMatchObject({ items: [
+      { file_asset_uid: 'asset-second-123', file_name: 'second.gif', mime_type: 'image/gif', file_kind: 1, file_size: 20, is_animated: true },
+      { file_asset_uid: 'asset-new-12345', file_name: 'new.gif', mime_type: 'image/gif', file_kind: 1, file_size: 30, is_animated: true },
+      { file_asset_uid: 'asset-first-1234', file_name: 'first.png', mime_type: 'image/png', file_kind: 1, file_size: 10 },
+    ] })
+    expect(JSON.stringify(setBodies[1])).not.toContain('signed_url')
+
     const deleted = await chat.manageFavoriteSticker('asset-first-1234', 'delete')
-    expect(deleted.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123'])
+    expect(deleted.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123', 'asset-new-12345'])
   })
 
   it('preserves forwarded recording segments and safe media without leaking source identities', async () => {

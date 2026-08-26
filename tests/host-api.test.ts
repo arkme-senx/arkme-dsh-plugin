@@ -40,7 +40,7 @@ function fakeService() {
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
     favoriteStickers: vi.fn(async () => ({ items: [], itemCount: 0, updatedAtMillis: 0 })),
-    saveFavoriteStickers: vi.fn(async (items: unknown) => items),
+    addFavoriteSticker: vi.fn(async (item: unknown) => item),
     manageFavoriteSticker: vi.fn(async (fileAssetUid: string, action: string) => ({ fileAssetUid, action })),
     sendFavoriteSticker: vi.fn(async (_sourceRef: string, _fileAssetUid: string, options: unknown) => options),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
@@ -63,6 +63,18 @@ function fakeService() {
 }
 
 describe('favorite sticker Host API dispatch', () => {
+  it('forwards one bounded favorite sticker addition', async () => {
+    const service = fakeService()
+    const item = {
+      fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1,
+      isAnimated: true,
+    }
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.add', { item, signedUrl: 'must-not-forward' })
+
+    expect(service.addFavoriteSticker).toHaveBeenCalledWith(item)
+  })
+
   it('forwards only the bounded sticker id and management action', async () => {
     const service = fakeService()
 

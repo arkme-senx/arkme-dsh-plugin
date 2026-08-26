@@ -1275,7 +1275,7 @@ export interface ArkmeFavoriteStickerList {
   updatedAtMillis: number
 }
 
-export interface ArkmeFavoriteStickerSaveInput {
+export interface ArkmeFavoriteStickerAddInput {
   fileAssetUid: string
   fileName: string
   mimeType: string
@@ -2289,7 +2289,7 @@ export type ArkmePluginOperation =
   | 'chat.member.private.open'
   | 'source.send-rich'
   | 'favorite-stickers.list'
-  | 'favorite-stickers.save'
+  | 'favorite-stickers.add'
   | 'favorite-stickers.send'
   | 'favorite-stickers.manage'
   | 'source.long-article.detail'

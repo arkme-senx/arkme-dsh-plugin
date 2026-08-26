@@ -28,10 +28,14 @@ describe('Arkme SDK', () => {
       },
     })
 
+    const item = { fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1 as const }
+    await expect(sdk.addFavoriteSticker(item)).resolves.toMatchObject({ itemCount: 0 })
     await expect(sdk.manageFavoriteSticker('asset-12345678', 'move-to-front')).resolves.toMatchObject({ itemCount: 0 })
-    expect(calls).toEqual([{
-      operation: 'favorite-stickers.manage', params: { fileAssetUid: 'asset-12345678', action: 'move-to-front' },
-    }])
+    expect(calls).toEqual([
+      { operation: 'favorite-stickers.add', params: { item } },
+      { operation: 'favorite-stickers.manage', params: { fileAssetUid: 'asset-12345678', action: 'move-to-front' } },
+    ])
+    await expect(sdk.addFavoriteSticker({ ...item, fileAssetUid: ' ' })).rejects.toThrow(/must not be empty/)
     await expect(sdk.manageFavoriteSticker(' ', 'delete')).rejects.toThrow(/must not be empty/)
   })
 
