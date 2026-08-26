@@ -343,6 +343,8 @@ export interface ArkmeBotSummary {
   description: string
   status: ArkmeBotStatus
   directChatAvailable: boolean
+  /** Account-bound opaque reference resolved through image.read. */
+  avatarRef?: string
 }
 
 export interface ArkmeBotList {
@@ -384,6 +386,20 @@ export interface ArkmeWorldAvatarFallback {
   label: string
 }
 
+/** Immutable display snapshot emitted after one extension version becomes public. */
+export interface ArkmeWorldExtensionPublication {
+  extensionId: string
+  version: string
+  name: string
+  description: string
+  iconRef?: string
+  previewRefs: string[]
+  visibility: 'public'
+  runtimeDshRange?: string
+  desktopRequired: boolean
+  publishedAtMillis: number
+}
+
 export interface ArkmeWorldFeedItem {
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
@@ -402,6 +418,8 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
+  recordType?: 'extension_publication'
+  extensionPublication?: ArkmeWorldExtensionPublication
 }
 
 export interface ArkmeWorldFeedPage {
@@ -862,7 +880,11 @@ export interface ArkmeProviderCapabilities {
     imageLibrary?: true
     sourceDirectory: true
     sourceTimeline: true
+    /** Forward snapshots include typed transcripts and account-bound attachment references. */
+    forwardContent?: true
     sourceTextSend: true
+    /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
+    messageReadReceipts?: true
     richContentRead: boolean
     richContentSend: boolean
     fileUpload: boolean
@@ -917,6 +939,7 @@ export interface ArkmeProviderCapabilities {
     maxImageBytes: number
     maxRelatedRecordingPageSize?: number
     maxRelatedRecordingCursorLength?: number
+    maxMessageReadReceiptItems?: number
     maxUploadBytes: number
   }
 }
@@ -1028,6 +1051,7 @@ export interface ArkmeSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
   latestSequence?: number
@@ -1103,6 +1127,8 @@ export interface ArkmeTimelineItem {
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
   isMe: boolean
+  /** Browser-safe projection of whether this incoming message mentions the current viewer. */
+  mentionsViewer?: boolean
   sendAtMillis: number
   title: string
   textContent: string
@@ -1128,6 +1154,8 @@ export interface ArkmeMessageReadReceiptQueryItem {
   itemUid: string
   sequence: number
 }
+
+export const ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS = 50 as const
 
 export type ArkmeMessageReadReceiptStatus = 'read' | 'partially_read' | 'unread'
 
@@ -1170,6 +1198,18 @@ export interface ArkmeForwardRecordsPreview {
   createdAtMillis: number
   summaryLines: string[]
   items: ArkmeForwardRecordPreviewItem[]
+  /** The bounded snapshot omitted additional records or nested content. */
+  truncated?: true
+}
+
+export interface ArkmeForwardTranscriptSegment {
+  speakerName: string
+  textContent: string
+  /** Offsets in the forwarded recording, not wall-clock timestamps. */
+  startMillis: number
+  endMillis: number
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: true
 }
 
 export interface ArkmeForwardRecordPreviewItem {
@@ -1180,6 +1220,11 @@ export interface ArkmeForwardRecordPreviewItem {
   title: string
   textContent: string
   contentLabel?: string
+  sourceType?: 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
+  segments?: ArkmeForwardTranscriptSegment[]
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: true
+  truncated?: true
 }
 
 export interface ArkmeTimelineAgentSource {
@@ -1267,10 +1312,18 @@ export interface ArkmeRichSendInput {
   thinkingDurationMillis?: number
   assets?: ArkmeUploadedAsset[]
   humanMentions?: ArkmeHumanMentionInput[]
+  botMentions?: ArkmeBotMentionInput[]
 }
 
 export interface ArkmeHumanMentionInput {
-  memberRef: string
+  memberRef?: string
+  all?: boolean
+  startIndex: number
+  length: number
+}
+
+export interface ArkmeBotMentionInput {
+  botRef: string
   startIndex: number
   length: number
 }
@@ -1541,6 +1594,7 @@ export interface ArkmeGroupBotCandidate {
   name: string
   description: string
   installed: boolean
+  avatarRef?: string
 }
 
 export interface ArkmeGroupBotCandidateList {
@@ -2162,6 +2216,12 @@ export type ArkmeChatClientEvent = {
   sourceKey?: string
   effectiveReadSequence: number
   unreadCount: number
+} | {
+  type: 'read-receipts-invalidated'
+  revision: number
+  /** Account-bound conversation identity; raw Chat session and reader identities stay in Host memory. */
+  sourceKey: string
+  throughSequence: number
 }
 
 export type ArkmePluginOperation =
@@ -2180,6 +2240,7 @@ export type ArkmePluginOperation =
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'
+  | 'bots.list'
   | 'bots.create'
   | 'records.summary'
   | 'records.cache'
@@ -2228,6 +2289,8 @@ export type ArkmePluginOperation =
   | 'source.members'
   | 'source.member-records'
   | 'source.mark-read'
+  | 'source.read-receipts.summary-list'
+  | 'source.read-receipts.detail'
   | 'source.send-text'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
@@ -2362,6 +2425,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.client.failure'
+  | 'extensions.bundle.client-state'
   | 'extensions.persistent.invoke'
   | 'extensions.bundle.invoke'
 

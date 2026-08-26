@@ -6,6 +6,7 @@ import {
 } from './chat-directory-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { forgetNavigationProviderInstance } from './navigation-cache.js'
+import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
 import {
   reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
 } from './provider-instance-runtime.js'
@@ -23,18 +24,30 @@ export function useArkmeRealtimeClientEvents(
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
       arkmeChatDirectory.activateAccount(undefined)
+      arkmeMessageReadReceipts.activateAccount(undefined)
       return
     }
     const authenticatedUserId = auth.userId
     arkmeChatDirectory.activateAccount(authenticatedUserId)
+    arkmeMessageReadReceipts.activateAccount(authenticatedUserId)
     let stopped = false
     let observedRevision: number | undefined
+    const updateForeground = () => {
+      arkmeMessageReadReceipts.setForeground(typeof document === 'undefined' || document.visibilityState !== 'hidden')
+    }
+    const reconcileReceipts = () => { arkmeMessageReadReceipts.reconcile() }
+    const browserDocument = typeof document === 'undefined' ? undefined : document
+    const browserWindow = typeof window === 'undefined' ? undefined : window
+    updateForeground()
+    browserDocument?.addEventListener('visibilitychange', updateForeground)
+    browserWindow?.addEventListener('focus', reconcileReceipts)
     const refreshUnread = async (force = false) => {
       await arkmeChatDirectory.refreshRoot({ force })
     }
     if (refreshDirectoryBaseline) void refreshUnread().catch(() => undefined)
     const events = new EventSource('/arkme-self/api/events')
     events.onopen = () => {
+      reconcileReceipts()
       void reconcileArkmeProviderInstance()
         .then(async changed => {
           if (!changed || stopped) return
@@ -61,6 +74,7 @@ export function useArkmeRealtimeClientEvents(
         observedRevision = update.revision
         if (update.type === 'reconcile') {
           arkmeInterwovenInvalidation.invalidate()
+          reconcileReceipts()
           if (update.refresh === 'none') return
           void refreshUnread(update.refresh === 'force')
             .then(() => { if (!stopped) arkmeUi.chatChanged() })
@@ -83,9 +97,14 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated') {
           if (update.projection !== 'record') return
           arkmeInterwovenInvalidation.invalidate()
-          arkmeUi.chatChanged()
+          arkmeUi.recordChanged()
           return
         }
+        if (update.type === 'read-receipts-invalidated') {
+          arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
+          return
+        }
+        if (update.type !== 'sessions-delta') return
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({
           source: item.source,
           ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),
@@ -100,6 +119,8 @@ export function useArkmeRealtimeClientEvents(
     return () => {
       stopped = true
       events.close()
+      browserDocument?.removeEventListener('visibilitychange', updateForeground)
+      browserWindow?.removeEventListener('focus', reconcileReceipts)
     }
   }, [auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline])
 }

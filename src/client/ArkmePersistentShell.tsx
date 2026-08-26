@@ -99,7 +99,7 @@ export function ArkmePersistentSidebar({
       }
     }).catch(() => undefined)
     return () => controller.abort()
-  }, [authenticatedUserId, ui.chatRevision])
+  }, [authenticatedUserId, ui.recordRevision])
   const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
     ? sendToSelfState.source
     : undefined

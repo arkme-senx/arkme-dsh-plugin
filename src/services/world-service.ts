@@ -1094,10 +1094,17 @@ export class WorldService {
     const recordUid = stringValue(item.record_uid).trim()
     const textContent = stringValue(item.text_content ?? item.content).trim()
     const headline = stringValue(item.headline).trim()
+    const recordType = stringValue(item.record_type).trim()
+    const rawExtensionPublication = objectValue(item.extension_publication)
+    const extensionId = stringValue(rawExtensionPublication.extension_id).trim()
+    const extensionVisibility = stringValue(rawExtensionPublication.visibility).trim()
+    const isExtensionPublication = recordType === 'extension_publication'
+      && extensionId !== ''
+      && extensionVisibility === 'public'
     const rawImages = listValue(item.images).map(stringValue).map(value => value.trim()).filter(value => value !== '')
     const videoCount = listValue(item.videos).length
     const voiceCount = listValue(item.voices).length
-    if (recordUid === '' || (textContent === '' && headline === '' && rawImages.length + videoCount + voiceCount === 0)) {
+    if (recordUid === '' || (!isExtensionPublication && textContent === '' && headline === '' && rawImages.length + videoCount + voiceCount === 0)) {
       return undefined
     }
     const ownerUserId = Math.trunc(numberValue(item.user_id))
@@ -1151,6 +1158,27 @@ export class WorldService {
       videoCount,
       voiceCount,
       extendCount: Math.max(0, Math.trunc(numberValue(item.extend_count))),
+      ...(isExtensionPublication ? {
+        recordType: 'extension_publication' as const,
+        extensionPublication: {
+          extensionId,
+          version: stringValue(rawExtensionPublication.version).trim(),
+          name: stringValue(rawExtensionPublication.name).trim() || '未命名插件',
+          description: stringValue(rawExtensionPublication.description).trim(),
+          ...(() => {
+            const iconRef = stringValue(rawExtensionPublication.icon_ref).trim()
+            return iconRef === '' ? {} : { iconRef }
+          })(),
+          previewRefs: listValue(rawExtensionPublication.preview_refs).map(stringValue).map(value => value.trim()).filter(value => value !== ''),
+          visibility: 'public' as const,
+          ...(() => {
+            const runtimeDshRange = stringValue(rawExtensionPublication.runtime_dsh_range).trim()
+            return runtimeDshRange === '' ? {} : { runtimeDshRange }
+          })(),
+          desktopRequired: Boolean(rawExtensionPublication.desktop_required),
+          publishedAtMillis: Math.trunc(numberValue(rawExtensionPublication.published_at)),
+        },
+      } : {}),
     }
   }
 

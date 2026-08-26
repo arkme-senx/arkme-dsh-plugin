@@ -13,6 +13,7 @@ import {
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
   extensionAuthorWorldTarget, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
+  extensionEnabledLabel,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
   extensionNativeInstallWarning, filterMarketplaceMenuOptions, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
@@ -115,6 +116,8 @@ describe('Arkme marketplace UI', () => {
     const html = renderToStaticMarkup(<ArkmeMarketplace displayMode="page" />)
     expect(html).toContain('role="region"')
     expect(html).not.toContain('aria-modal="true"')
+    expect(html).toMatch(/<section style="[^"]*background:var\(--dsw-alias-bg-base, #ffffff\)[^"]*" role="region"/)
+    expect(html).toMatch(/<div style="[^"]*background:var\(--dsw-alias-bg-base, #ffffff\)[^"]*" aria-label="Arkme 市集"/)
     expect(html.match(/data-market-header-layer=/g)).toHaveLength(2)
     expect(html).toContain('data-market-header-layer="primary"')
     expect(html).toContain('data-market-header-layer="secondary"')
@@ -131,6 +134,17 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('排序：评分最高')
     expect(html.match(/aria-haspopup="listbox"/g)).toHaveLength(2)
     expect(html).not.toContain('排序接口完成后启用')
+  })
+
+  it('renders an initial exact author filter when opened from a World plugin preview', () => {
+    const html = renderToStaticMarkup(<ArkmeMarketplace
+      displayMode="page"
+      initialAuthorFilter={{ ownerUserId: 7, ownerName: '泡泡' }}
+    />)
+
+    expect(html).toContain('data-marketplace-author-filter="true"')
+    expect(html).toContain('泡泡 的全部插件')
+    expect(html).toContain('aria-label="清除作者 泡泡 筛选"')
   })
 
   it('keeps only copy-link and close actions in the detail modal header', () => {
@@ -633,6 +647,9 @@ describe('Arkme marketplace UI', () => {
     const unavailable = renderToStaticMarkup(<ArkmeExtensionRestartDialog
       kind="unavailable" restarting={false} onLater={() => {}} onRestart={() => {}}
     />)
+    const disable = renderToStaticMarkup(<ArkmeExtensionRestartDialog
+      kind="disable" restarting={false} onLater={() => {}} onRestart={() => {}}
+    />)
 
     expect(ARKME_EXTENSION_RESTART_SURFACE).toContain('--dsw-specific-menu')
     expect(ready).toContain('role="alertdialog"')
@@ -651,6 +668,15 @@ describe('Arkme marketplace UI', () => {
     expect(unavailable).not.toContain('需要重启 DSH')
     expect(unavailable).not.toContain('立即重启')
     expect(unavailable).not.toContain('harness.defineTool')
+    expect(disable).toContain('扩展关闭状态已保存')
+    expect(disable).toContain('立即重启')
+  })
+
+  it('distinguishes a disabled desired state from a Bundle that is still active until restart', () => {
+    expect(extensionEnabledLabel({ enabled: false, active: false } as never)).toBe('已关闭')
+    expect(extensionEnabledLabel({ enabled: false, active: true } as never)).toBe('已关闭，重启后完全停用')
+    expect(extensionEnabledLabel({ enabled: false, active: false, restartRequired: true } as never))
+      .toBe('已关闭，重启后完全停用')
   })
 
   it('opens the unavailable dialog instead of retrying restart for a quarantined extension', () => {

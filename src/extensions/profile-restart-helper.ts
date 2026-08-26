@@ -1,17 +1,18 @@
 import { closeSync, openSync } from 'node:fs'
 import { readFile, rm, unlink } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
-import { relative, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ArkmeExtensionInstallStore } from './install-store.js'
 import { localExtensionPnpmArgs, prepareProfilePackageManager } from '../profile-package-manager.js'
 import type { ArkmeInstalledExtension } from './types.js'
+import { applyArkmeProfileBundlePolicy } from './profile-bundle-policy.js'
 
 const PARENT_EXIT_TIMEOUT_MS = 20_000
 const HEALTH_TIMEOUT_MS = 45_000
 
 export interface ArkmeExtensionProfileRestartPlan {
-  schemaVersion: 1 | 2
+  schemaVersion: 1 | 2 | 3
   parentPid: number
   execPath: string
   dshBinPath: string
@@ -27,6 +28,8 @@ export interface ArkmeExtensionProfileRestartPlan {
   cleanupPaths?: string[]
   installStoreDirectory: string
   previousInstalled?: ArkmeInstalledExtension
+  activationChange?: true
+  previousProfileIncluded?: boolean
   healthUrl: string
   logPath: string
 }
@@ -61,14 +64,21 @@ export function parseExtensionProfileRestartPlan(value: unknown): ArkmeExtension
     previousInstalled: source.previousInstalled !== null && typeof source.previousInstalled === 'object'
       ? source.previousInstalled as ArkmeInstalledExtension
       : undefined,
+    activationChange: source.activationChange === true ? true as const : undefined,
+    previousProfileIncluded: typeof source.previousProfileIncluded === 'boolean'
+      ? source.previousProfileIncluded
+      : undefined,
     healthUrl: stringValue(source.healthUrl), logPath: stringValue(source.logPath),
   }
-  if (![1, 2].includes(plan.schemaVersion as number) || typeof plan.parentPid !== 'number' || !Number.isSafeInteger(plan.parentPid)
+  if (![1, 2, 3].includes(plan.schemaVersion as number) || typeof plan.parentPid !== 'number' || !Number.isSafeInteger(plan.parentPid)
     || plan.parentPid <= 0 || plan.execPath === undefined || plan.dshBinPath === undefined || plan.restartArgv.length === 0
     || plan.dshHome === undefined || plan.profileName === undefined || plan.packageName === undefined
     || plan.extensionId === undefined || typeof plan.expectActive !== 'boolean'
     || plan.installStoreDirectory === undefined
     || plan.healthUrl === undefined || plan.logPath === undefined
+    || (plan.schemaVersion === 3 && (plan.activationChange !== true
+      || plan.previousInstalled === undefined || plan.previousProfileIncluded === undefined))
+    || (plan.schemaVersion !== 3 && plan.activationChange === true)
     || (plan.schemaVersion === 1
       ? !/^@arkme-local\/ext-[a-f0-9]{16}$/.test(plan.packageName)
       : !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(plan.packageName))) {
@@ -78,7 +88,7 @@ export function parseExtensionProfileRestartPlan(value: unknown): ArkmeExtension
   if (health.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(health.hostname)) {
     throw new Error('extension restart health URL must be loopback HTTP')
   }
-  return { ...plan, schemaVersion: plan.schemaVersion as 1 | 2, healthUrl: health.toString() } as ArkmeExtensionProfileRestartPlan
+  return { ...plan, schemaVersion: plan.schemaVersion as 1 | 2 | 3, healthUrl: health.toString() } as ArkmeExtensionProfileRestartPlan
 }
 
 function alive(pid: number): boolean {
@@ -110,9 +120,16 @@ async function healthy(plan: ArkmeExtensionProfileRestartPlan): Promise<boolean>
         signal: AbortSignal.timeout(2_000),
       })
       if (response.ok) {
-        const body = await response.json() as { ok?: boolean; value?: Array<{ extensionId?: string; active?: boolean }> }
+        const body = await response.json() as {
+          ok?: boolean
+          value?: Array<{ extensionId?: string; enabled?: boolean; active?: boolean }>
+        }
         const installed = body.value?.find(item => item.extensionId === plan.extensionId)
-        if (body.ok === true && (plan.expectActive ? installed?.active === true : installed === undefined)) return true
+        if (body.ok === true && (plan.activationChange === true
+          ? plan.expectActive
+            ? installed?.enabled === true && installed.active === true
+            : installed?.enabled === false && installed.active === false
+          : plan.expectActive ? installed?.active === true : installed === undefined)) return true
       }
     } catch { /* Restart is still in progress. */ }
     await new Promise(resolve => setTimeout(resolve, 500))
@@ -136,6 +153,7 @@ export interface ExtensionProfileRestartOperations {
   start: typeof start
   isHealthy: typeof healthy
   profileCommand: typeof profileCommand
+  applyBundlePolicy: typeof applyArkmeProfileBundlePolicy
   removePath: (path: string) => Promise<void>
 }
 
@@ -143,6 +161,7 @@ const defaultOperations: ExtensionProfileRestartOperations = {
   start,
   isHealthy: healthy,
   profileCommand,
+  applyBundlePolicy: applyArkmeProfileBundlePolicy,
   removePath: async path => await rm(path, { recursive: true, force: true }),
 }
 
@@ -166,8 +185,15 @@ async function rollback(
   restart: boolean,
   helper: ExtensionProfileRestartOperations,
 ): Promise<void> {
-  const restored = helper.profileCommand(plan, extensionProfileRollbackArgs(plan))
-  if (!restored) throw new Error('extension profile rollback failed')
+  if (plan.activationChange === true) {
+    helper.applyBundlePolicy(join(plan.dshHome, 'profiles', plan.profileName), [{
+      packageName: plan.packageName,
+      enabled: plan.previousProfileIncluded === true,
+    }])
+  } else {
+    const restored = helper.profileCommand(plan, extensionProfileRollbackArgs(plan))
+    if (!restored) throw new Error('extension profile rollback failed')
+  }
   const store = new ArkmeExtensionInstallStore(plan.installStoreDirectory)
   try {
     if (plan.previousInstalled === undefined) store.remove(plan.extensionId)
@@ -179,6 +205,7 @@ async function rollback(
 }
 
 export function extensionProfileRollbackArgs(plan: ArkmeExtensionProfileRestartPlan): string[] {
+  if (plan.activationChange === true) throw new Error('activation restart rollback does not use DSH plugin commands')
   if (plan.previousBundlePath === undefined) return ['remove', plan.packageName]
   return plan.schemaVersion === 1
     ? ['add', `link:${plan.previousBundlePath}`]

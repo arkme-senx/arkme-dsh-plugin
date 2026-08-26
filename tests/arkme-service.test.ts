@@ -823,6 +823,7 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         recordCalendar: true,
+        messageReadReceipts: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,
@@ -833,7 +834,7 @@ describe('ArkmeService', () => {
         extensionIcons: true,
         extensionPreviews: true,
       },
-      limits: { maxImageBytes: 2 * 1024 * 1024 },
+      limits: { maxImageBytes: 2 * 1024 * 1024, maxMessageReadReceiptItems: 50 },
     })
     await expect(service.providerState()).resolves.toEqual({
       contractVersion: 1,
@@ -2008,9 +2009,15 @@ describe('ArkmeService', () => {
             unread_snapshot: { unread_count: 2, session_last_seq: 8 },
           },
           {
-            session: { chat_session_uid: 'chat-group', session_kind: 2, title: '项目群', last_active_at: 190 },
+            session: {
+              chat_session_uid: 'chat-group',
+              session_kind: 2,
+              title: '项目群',
+              last_active_at: 190,
+              rm_subject_id: 88010,
+            },
             current_policy: { mute_state: 2, notify_state: 2 },
-            sort_active_at: 195, unread_snapshot: { unread_count: 0 },
+            sort_active_at: 195, unread_snapshot: { unread_count: 1, has_unread_attention: '1', unread_attention_count: 1 },
           },
         ],
         has_more: false,
@@ -2022,6 +2029,9 @@ describe('ArkmeService', () => {
         items: [
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
           { user_id: 20002, nick_name: '小林', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/peer.png?x-oss-signature=peer' },
+          { user_id: 30003, nick_name: '公开用户昵称小周' },
+          { user_id: 40004, nick_name: '公开用户昵称小吴' },
+          { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
       if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
@@ -2068,9 +2078,27 @@ describe('ArkmeService', () => {
         record_uid: body.record_uid,
         seq: body.seq,
         items: [
-          { user_id: 20002, display_name: '小林', read_status: 'read', read_at: 220 },
-          { user_id: 30003, display_name: '小周', read_status: 'unread', read_at: 0 },
+          {
+            user_id: 20002, member_name: '群昵称小林', display_name: '用户昵称小林',
+            read_status: 'read', read_at: 220,
+          },
+          {
+            user_id: 30003, remark: '', member_name: '群昵称小周', display_name: '用户昵称小周',
+            read_status: 'unread', read_at: 0,
+          },
+          { user_id: 40004, display_name: '用户昵称小吴', read_status: 'read', read_at: 230 },
+          { user_id: 50005, display_name: '群成员', read_status: 'unread', read_at: 0 },
         ],
+      } })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return json({ code: 200, data: {
+        items: [
+          { user_id: 20002, remark: '备注小林' },
+          { user_id: 30003, remark: '' },
+        ],
+        has_more: false,
+      } })
+      if (url.endsWith('/api/v1/bot/group/list')) return json({ code: 200, data: {
+        subject_title: '项目群', can_current_user_add_bots: true, bots: [],
       } })
       if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
@@ -2100,6 +2128,8 @@ describe('ArkmeService', () => {
         sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
         displayName: '项目群',
         isMuted: true,
+        unreadCount: 1,
+        hasUnreadMention: true,
       },
     ])
     const privateRef = sources.items[0]!.sourceRef
@@ -2163,6 +2193,9 @@ describe('ArkmeService', () => {
       unreadCount: 0,
     })
     const groupRef = sources.items[1]!.sourceRef
+    await expect(service.listGroupBots(groupRef)).resolves.toMatchObject({ displayName: '项目群', items: [] })
+    expect(calls.find(call => call.url.endsWith('/api/v1/bot/group/list'))?.body)
+      .toEqual({ rm_subject_id: 88010 })
     const groupTimeline = await service.readSource(groupRef)
     expect(groupTimeline.items).toHaveLength(2)
     expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toBeUndefined()
@@ -2178,20 +2211,31 @@ describe('ArkmeService', () => {
       sourceRef: groupRef,
       itemUid: 'chat-record-2',
       sequence: 8,
-      readCount: 1,
-      unreadCount: 1,
-      totalMemberCount: 2,
+      readCount: 2,
+      unreadCount: 2,
+      totalMemberCount: 4,
       items: [
         {
           memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
-          displayName: '小林',
+          displayName: '备注小林',
           readStatus: 'read',
           readAtMillis: 220,
           avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
         },
         {
           memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
-          displayName: '小周',
+          displayName: '群昵称小周',
+          readStatus: 'unread',
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '用户昵称小吴',
+          readStatus: 'read',
+          readAtMillis: 230,
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '公开用户昵称小赵',
           readStatus: 'unread',
         },
       ],
@@ -2199,6 +2243,9 @@ describe('ArkmeService', () => {
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/read-receipts/detail'))?.body).toEqual({
       chat_session_uid: 'chat-group', record_uid: 'chat-record-2', seq: 8,
     })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/chats/contacts/list'))).toMatchObject([
+      { body: { limit: 50, offset: 0 } },
+    ])
     await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
       reason: '明确举报', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
     })).resolves.toMatchObject({ reportUid: 'report-1', status: 1 })
@@ -2308,6 +2355,21 @@ describe('ArkmeService', () => {
         const uid = String(body.chat_session_uid)
         tailCalls.set(uid, (tailCalls.get(uid) ?? 0) + 1)
         if (uid === 'chat-2' && tailCalls.get(uid) === 1) return json({ code: 500, message: 'temporarily unavailable' })
+        if (uid === 'chat-1') return json({ code: 200, data: { items: [{
+          relation: {
+            rel_uid: 'rel-mention-1', record_uid: 'rec-mention-1', sender_user_id: 20002,
+            display_name_snapshot: '小林', attach_at: 101, seq: 9,
+          },
+          record: {
+            status: 1,
+            payload: {
+              text_content: '@吴宏涛 测试',
+              mention_metadata: {
+                human_mentions: [{ user_id: 10001, display_name_snapshot: '吴宏涛', start_index: 0, length: 4 }],
+              },
+            },
+          },
+        }] } })
         return json({ code: 200, data: { items: [] } })
       }
       throw new Error(`unexpected ${url}`)
@@ -2320,7 +2382,10 @@ describe('ArkmeService', () => {
 
     const failed = await internal.refreshChatSessionProjectionBatch([['chat-1', 9], ['chat-2', 9]])
     expect(failed).toEqual([['chat-2', 9]])
-    expect(events[0]).toMatchObject({ type: 'sessions-delta', updates: [{ source: { displayName: '群聊-chat-1' } }] })
+    expect(events[0]).toMatchObject({
+      type: 'sessions-delta',
+      updates: [{ source: { displayName: '群聊-chat-1', latestPreview: '@吴宏涛 测试', hasUnreadMention: true } }],
+    })
     await expect(internal.refreshChatSessionProjectionBatch(failed)).resolves.toEqual([])
     expect(tailCalls).toEqual(new Map([['chat-1', 1], ['chat-2', 2]]))
   })
@@ -2393,7 +2458,7 @@ describe('ArkmeService', () => {
     const internal = service as unknown as {
       source: { invalidateSourceListCache(userId: number, directory?: string): void }
       handleChatRealtimeNotice(notice: {
-        cause: 'hint'
+        cause: 'projection-invalidation'
         state: { revision: number; connected: boolean; connectionGeneration: number }
         projectionInvalidation: { eventUid: string; projection: string; eventAtMillis: number }
       }): void
@@ -2401,7 +2466,7 @@ describe('ArkmeService', () => {
     const invalidate = vi.spyOn(internal.source, 'invalidateSourceListCache')
 
     internal.handleChatRealtimeNotice({
-      cause: 'hint',
+      cause: 'projection-invalidation',
       state: { revision: 2, connected: true, connectionGeneration: 1 },
       projectionInvalidation: { eventUid: 'projection-1', projection: 'record', eventAtMillis: 123456 },
     })
@@ -2471,12 +2536,20 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chats/members/list')) return json({ code: 200, data: {
         items: [{
           user_id: 2001, role: 3, status: 1, join_at: 20,
-          display_name_snapshot: '小林', remark: '小林',
+          display_name_snapshot: '1D3E', remark: '',
           extra: {
             record_count: 7, mention_count: 2, join_batch_at: 1_700_000_000_000,
             inviter_user_id: 10001, inviter_display_name: '我', invitee_display_name: '小林',
           },
         }],
+      } })
+      if (url.endsWith('/api/v1/chats/list')) return json({ code: 200, data: {
+        items: [{
+          session: { session_kind: 1 },
+          private_counterpart: { user_id: 2001, display_name_snapshot: '1D3E' },
+          private_supplement: { remark: '宏顺' },
+        }],
+        has_more: false,
       } })
       if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) return json({ code: 200, data: {
         items: [{ user_id: 2001, nick_name: 'Lin', name_slug: 'lin', head_img: '' }],
@@ -2500,7 +2573,8 @@ describe('ArkmeService', () => {
     const sourceRef = sourceRefFor('group_chat', 'group-mention', '协作群')
     const members = await service.listSourceMembers(sourceRef)
     expect(members.items[0]).toMatchObject({
-      displayName: '小林', recordCount: 7, mentionCount: 2, memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+      displayName: '1D3E', memberName: '1D3E', secondaryName: '宏顺',
+      recordCount: 7, mentionCount: 2, memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
     })
     expect(members.joinEvents).toMatchObject([{
       eventId: expect.stringMatching(/^arkme-chat-join-v1\./),
@@ -2517,29 +2591,50 @@ describe('ArkmeService', () => {
       .rejects.toMatchObject({ code: 'chat-member-ref-invalid' })
     await expect(service.sourceMemberRecords(sourceRef, memberRef, 'mentioned', { limit: 10 }))
       .resolves.toMatchObject({
-        member: { memberRef, displayName: '小林' },
+        member: { memberRef, displayName: '1D3E', secondaryName: '宏顺' },
         mode: 'mentioned',
         items: [{ itemUid: 'member-record-1', memberRef, textContent: '成员快记' }],
         hasMore: true,
         nextCursor: { beforeSequence: 8 },
       })
 
-    const result = await service.sendSourceText(sourceRef, '  @小林 请看  ', {
+    const result = await service.sendSourceText(sourceRef, '  @1D3E 请看  ', {
       recordUid: 'record-human-mention', relationUid: 'relation-human-mention',
-      humanMentions: [{ memberRef, startIndex: 2, length: 3 }],
+      humanMentions: [{ memberRef, startIndex: 2, length: 5 }],
     })
     expect(result).toMatchObject({ itemUid: 'record-human-mention', sequence: 18 })
     expect(requests.some(request => request.url.endsWith('/api/v1/chats/ai-polish/settings/query'))).toBe(false)
     expect(requests.at(-1)?.body).toMatchObject({
       chat_session_uid: 'group-mention',
-      text_content: '@小林 请看',
+      text_content: '@1D3E 请看',
       content_payload: {
-        payload_kind: 2,
+        payload_kind: 1,
         schema_version: 1,
+        text_state: 1,
         mention_metadata: {
           schema_version: 1,
           source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
-          human_mentions: [{ user_id: 2001, display_name_snapshot: '小林', start_index: 0, length: 3 }],
+          human_mentions: [{ user_id: 2001, display_name_snapshot: '1D3E', start_index: 0, length: 5 }],
+        },
+      },
+    })
+
+    const allResult = await service.sendSourceText(sourceRef, '@所有人 请看', {
+      recordUid: 'record-all-mention', relationUid: 'relation-all-mention',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })
+    expect(allResult).toMatchObject({ itemUid: 'record-all-mention', sequence: 18 })
+    expect(requests.at(-1)?.body).toMatchObject({
+      chat_session_uid: 'group-mention',
+      text_content: '@所有人 请看',
+      content_payload: {
+        payload_kind: 1,
+        schema_version: 1,
+        text_state: 1,
+        mention_metadata: {
+          schema_version: 1,
+          source_checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+          human_mentions: [{ user_id: 0, display_name_snapshot: '所有人', start_index: 0, length: 4 }],
         },
       },
     })

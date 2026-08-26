@@ -200,6 +200,8 @@ export function apply(ctx: Context, config: Config): void {
     workspaceRoot: join(openClawStateDirectory, 'workspaces'),
     isRuntimeOnline: async botRef => (await service.listBots()).items.some(bot => bot.botRef === botRef && bot.status === 'online'),
   }))
+  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
+  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const updateManager = new ArkmePluginUpdateManager({
     enabled: config.updateCheckEnabled,
     channel: config.updateChannel,
@@ -215,6 +217,8 @@ export function apply(ctx: Context, config: Config): void {
       profileName: 'web',
       healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
+      disabledProfilePackages: () => extensionStore.list().flatMap(item =>
+        !item.enabled && item.profilePackageName !== undefined ? [item.profilePackageName] : []),
       ...(process.env.ARKME_DESKTOP_MANAGED_RESTART === '1'
         && process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH !== undefined
         ? {
@@ -230,7 +234,6 @@ export function apply(ctx: Context, config: Config): void {
     enabled: config.extensionShareDiscoveryEnabled !== false,
     logger: ctx.logger,
   })
-  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionProfileDirectory = join(dshHome, 'profiles', 'web')
   const extensionProfileInstaller = new ArkmeExtensionProfileInstaller({
     dshHome,
@@ -251,7 +254,6 @@ export function apply(ctx: Context, config: Config): void {
         }
       : {}),
   })
-  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const ownedExtensionStore = new ArkmeOwnedExtensionStore(extensionDirectory)
   const ownedExtensionRefs = new ArkmeOwnedExtensionRefs()
   const ownedExtensionHostInstanceId = randomUUID()
@@ -284,7 +286,9 @@ export function apply(ctx: Context, config: Config): void {
       },
     )
     extensionManager = manager
-    void manager.reconcileInstallationMetrics()
+    void manager.reconcileInstallationMetrics().catch(error => {
+      ctx.logger.warn('Arkme extension startup reconciliation failed: %s', error instanceof Error ? error.message : String(error))
+    })
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: ownedExtensionHostInstanceId,
       profileDirectory: extensionProfileDirectory,
@@ -566,6 +570,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,

@@ -72,7 +72,14 @@ describe('persistent extension profile bundle', () => {
       const request = JSON.parse(init.body ?? '{}') as { operation: string; params: Record<string, unknown> }
       requests.push(request)
       if (request.operation === 'extensions.persistent.client-state') {
-        return { ok: true, status: 200, json: async () => ({ ok: true, value: { mount: true } }) }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            value: { mount: true, extension_id: 'ext_stale', instance_key: 'instance-stale', generation: 1 },
+          }),
+        }
       }
       return {
         ok: false,
@@ -124,7 +131,9 @@ describe('persistent extension profile bundle', () => {
         status: 200,
         json: async () => ({
           ok: true,
-          value: request.operation === 'extensions.persistent.client-state' ? { mount: true } : { handled: true },
+          value: request.operation === 'extensions.persistent.client-state'
+            ? { mount: true, extension_id: 'ext_colliding', instance_key: 'instance-colliding', generation: 1 }
+            : { handled: true },
         }),
       }
     })
@@ -159,12 +168,12 @@ describe('persistent extension profile bundle', () => {
       version: '1.0.0',
       kind: 'runtime-load-failed',
       message: 'list slot "shell.overlay" already has an entry with id "snake-floating"',
-      clientOwnerKey: expect.stringMatching(/^client-v1-[a-f0-9]{64}$/),
+      clientInstanceKey: 'instance-colliding',
+      clientContentDigest: expect.stringMatching(/^client-v1-[a-f0-9]{64}$/),
     })
   })
 
-  it('lets a managed marketplace Client replace the same local generated Client owner', async () => {
-    const code = 'return { apply() {} }'
+  it('lets a newer Client instance replace an older lease and prevents the stale instance from reclaiming it', async () => {
     const entries = new Map<string, { factory: (requireModule: (id: string) => unknown) => unknown }>()
     const context = {
       window: { __ModuleLoader__: { load: (entry: { id: string; factory: (requireModule: (id: string) => unknown) => unknown }) => entries.set(entry.id, entry) } },
@@ -176,17 +185,22 @@ describe('persistent extension profile bundle', () => {
           status: 200,
           json: async () => ({
             ok: true,
-            value: request.operation === 'extensions.persistent.client-state' ? { mount: true } : {},
+            value: request.operation === 'extensions.bundle.client-state'
+              ? { mount: true, extension_id: 'ext_managed', instance_key: 'instance-old', generation: 1 }
+              : request.operation === 'extensions.persistent.client-state'
+                ? { mount: true, extension_id: 'ext_managed', instance_key: 'instance-current', generation: 2 }
+                : {},
           }),
         }
       }),
       console,
     }
     runInNewContext(renderArkmeBundleClientBundle('dsh-snake-draggable', {
-      version: '1.1.2', name: 'Local snake', code, apiPath: '/arkme-self/api',
+      version: '1.1.2', name: 'Local snake', code: 'return { apply() { return "old" } }', apiPath: '/arkme-self/api',
     }), context)
     runInNewContext(renderPersistentClientBundle('@arkme-local/ext-managed', {
-      extensionId: 'ext_managed', version: '1.0.0', name: 'Managed snake', code, apiPath: '/arkme-self/api',
+      extensionId: 'ext_managed', version: '2.0.0', name: 'Managed snake',
+      code: 'return { apply() { return "current" } }', apiPath: '/arkme-self/api',
     }), context)
     const localDispose = vi.fn(async () => undefined)
     const managedDispose = vi.fn(async () => undefined)
@@ -203,9 +217,63 @@ describe('persistent extension profile bundle', () => {
       .apply(cordisContext(localDispose))
     await (entries.get('@arkme-local/ext-managed')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
       .apply(cordisContext(managedDispose))
+    const lateOldPlugin = vi.fn()
+    await (entries.get('dsh-snake-draggable')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: lateOldPlugin })
 
     expect(localDispose).toHaveBeenCalledOnce()
     expect(managedDispose).not.toHaveBeenCalled()
+    expect(lateOldPlugin).not.toHaveBeenCalled()
+  })
+
+  it('skips a second mount of the same extension instance without disabling it', async () => {
+    const entries = new Map<string, { factory: (requireModule: (id: string) => unknown) => unknown }>()
+    const requests: Array<{ operation: string }> = []
+    const context = {
+      window: { __ModuleLoader__: { load: (entry: { id: string; factory: (requireModule: (id: string) => unknown) => unknown }) => entries.set(entry.id, entry) } },
+      document: { createElement: vi.fn(), head: { append: vi.fn() } },
+      fetch: vi.fn(async (_input: string, init: { body?: string }) => {
+        const request = JSON.parse(init.body ?? '{}') as { operation: string }
+        requests.push({ operation: request.operation })
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            value: {
+              mount: true,
+              extension_id: 'ext_same',
+              instance_key: 'instance-same',
+              generation: 7,
+            },
+          }),
+        }
+      }),
+      console,
+    }
+    for (const packageName of ['@example/same-a', '@example/same-b']) {
+      runInNewContext(renderArkmeBundleClientBundle(packageName, {
+        version: '1.0.0', name: packageName, code: 'return { apply() {} }', apiPath: '/arkme-self/api',
+      }), context)
+    }
+    const childContext = { fiber: { inject: {} }, get: vi.fn(() => undefined) }
+    const firstPlugin = vi.fn((plugin: { apply(ctx: unknown): unknown }) => Object.assign(
+      Promise.resolve(plugin.apply(childContext)),
+      { dispose: vi.fn() },
+    ))
+    const secondPlugin = vi.fn()
+
+    await (entries.get('@example/same-a')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: firstPlugin })
+    await (entries.get('@example/same-b')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: secondPlugin })
+
+    expect(firstPlugin).toHaveBeenCalledOnce()
+    expect(secondPlugin).not.toHaveBeenCalled()
+    expect(requests).toEqual([
+      { operation: 'extensions.bundle.client-state' },
+      { operation: 'extensions.bundle.client-state' },
+    ])
   })
 
   it('materializes one immutable DSH bundle with Host and Client wrappers', () => {
@@ -223,16 +291,26 @@ describe('persistent extension profile bundle', () => {
       },
     })
     const manifest = JSON.parse(readFileSync(join(result.bundleDirectory, 'package.json'), 'utf8')) as {
-      name: string; exports: Record<string, string>; dsh: { bundle: { patch: string }; client?: { inject: string[] } }
+      name: string
+      exports: Record<string, string>
+      dsh: {
+        bundle: { patch: string }
+        arkme?: { clientContentDigest?: string }
+        client?: { inject: string[] }
+      }
     }
     expect(manifest.name).toMatch(/^@arkme-local\/ext-[a-f0-9]{16}$/)
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
+    expect(manifest.dsh.arkme).toMatchObject({
+      clientContentDigest: expect.stringMatching(/^client-v1-[a-f0-9]{64}$/),
+    })
     expect(manifest.dsh.client?.inject).toEqual([])
     expect(manifest.exports['./package.json']).toBe('./package.json')
     expect(readFileSync(join(result.bundleDirectory, 'cordis.patch.yml'), 'utf8')).toContain(manifest.name)
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'index.js'), 'utf8')).toContain('applyPersistentArkmeHostExtension')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.invoke')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.client-state')
+    expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('"wrapperVersion":3')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('version: spec.version')
     expect(JSON.parse(readFileSync(join(result.bundleDirectory, 'activation.json'), 'utf8'))).toEqual({
       schema_version: 1, extension_id: 'ext_test', enabled: true,

@@ -55,6 +55,8 @@ describe('Arkme conversation composer presentation', () => {
     }
     expect(arkoSource).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
     expect(sidebarSource).toContain('<ArkmeRichComposerInput')
+    expect(sidebarSource).toContain('onSelectionChange={updateMentionTrigger}')
+    expect(sidebarSource).not.toContain('<ArkmeMentionTextarea')
 
     expect(arkoSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")
     expect(arkoSource).toContain("callArkme<ArkmeArkoCancelResult>('arko.cancel'")

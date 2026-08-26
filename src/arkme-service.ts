@@ -36,10 +36,7 @@ import { ChatService } from './services/chat-service.js'
 import { ContactService } from './services/contact-service.js'
 import { ContactDirectoryService } from './services/contact-directory-service.js'
 import { CommunityService } from './services/community-service.js'
-import {
-  ExtensionReviewService,
-  type ArkmeExtensionAuthorProjection,
-} from './services/extension-review-service.js'
+import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './services/extension-review-service.js'
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
@@ -172,8 +169,7 @@ import type {
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
-  ArkmeRichSendInput,
-  ArkmeHumanMentionInput,
+  ArkmeRichSendInput, ArkmeBotMentionInput, ArkmeHumanMentionInput,
   ArkmeSearchHistoryResult,
   ArkmeSearchSceneKind,
   ArkmeSelfRecordItem,
@@ -220,7 +216,7 @@ import type {
   ArkmeWorldPublishFileAssetsInput, ArkmeWorldPublishResult, ArkmeWorldPublishTextInput,
   ArkmeWorldRecordList,
 } from './types.js'
-import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 
 function voiceprintInviteRateLimitMessage(error: unknown): string | undefined {
   if (!(error instanceof ArkmePluginError)) return undefined
@@ -297,7 +293,7 @@ export class ArkmeService {
       this.runtime,
       this.profile,
       { openWorldImageRef: async (imageRef, viewerUserId) => await this.openWorldImageRef(imageRef, viewerUserId) },
-      { recordUid: raw => this.recordUid(raw) },
+      { recordUid: raw => this.recordUid(raw) }, { openBotImageRef: async (imageRef, viewerUserId) => await this.bot.openBotImageRef(imageRef, viewerUserId) },
     )
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
@@ -502,7 +498,9 @@ export class ArkmeService {
         imageLibrary: true,
         sourceDirectory: true,
         sourceTimeline: true,
+        forwardContent: true,
         sourceTextSend: true,
+        messageReadReceipts: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         fileUpload: this.config.richMediaSendEnabled !== false,
@@ -537,6 +535,7 @@ export class ArkmeService {
         maxSearchResults: 30,
         maxSyncPages: 20,
         maxImageBytes: MAX_ARKME_IMAGE_BYTES,
+        maxMessageReadReceiptItems: ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS,
         ...(this.relatedRecording.isEnabled() ? {
           maxRelatedRecordingPageSize: MAX_ARKME_RELATED_RECORDING_PAGE_SIZE,
           maxRelatedRecordingCursorLength: MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH,
@@ -1113,6 +1112,7 @@ export class ArkmeService {
       relationUid?: string
       botRefs?: readonly string[]
       humanMentions?: readonly ArkmeHumanMentionInput[]
+      botMentions?: readonly ArkmeBotMentionInput[]
       signal?: AbortSignal
       agentAuthored?: boolean
     } = {},
