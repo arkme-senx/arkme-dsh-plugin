@@ -338,6 +338,8 @@ export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
 
 export interface ArkmeBotSummary {
   botRef: string
+  /** Stable, account-scoped opaque key for plugin-local directory preferences. */
+  directoryKey?: string
   name: string
   provider: ArkmeBotProvider
   description: string
@@ -1114,8 +1116,17 @@ export interface ArkmeSourceItem {
   hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
+  /** Server-persisted conversation pin state for private and group chats. */
+  isPinned?: boolean
   latestSequence?: number
   recordCount?: number
+}
+
+/** Result of a server-backed conversation-directory policy mutation. */
+export interface ArkmeSourceDirectoryPolicyResult {
+  sourceRef: string
+  pinned: boolean
+  hidden: boolean
 }
 
 export interface ArkmeSourceList {
@@ -2398,6 +2409,7 @@ export type ArkmePluginOperation =
   | 'extensions.reviews.create'
   | 'extensions.audit.check'
   | 'sources.list'
+  | 'source.directory.policy.set'
   | 'source.timeline'
   | 'source.members'
   | 'source.member-records'

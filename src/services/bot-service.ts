@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../openclaw/index.js'
@@ -686,6 +686,7 @@ export class BotService {
     const createdAtMillis = botPrivateChatTimestamp(raw.created_at ?? raw.createdAt)
     return {
       botRef: this.sealBotRef(userId, botId, provider),
+      directoryKey: await this.botDirectoryKey(userId, botId),
       name,
       provider,
       description: stringValue(raw.description).trim(),
@@ -802,6 +803,13 @@ export class BotService {
     this.botRefByKey.set(key, botRef)
     this.pruneBotRefs()
     return botRef
+  }
+
+  private async botDirectoryKey(userId: number, botId: string): Promise<string> {
+    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+      .update(`arkme-bot-directory-v1:${String(userId)}:${botId}`)
+      .digest('base64url')
+    return `arkme-bot-directory-v1.${digest}`
   }
 
   async openBotRef(botRef: string, expectedUserId: number): Promise<ArkmeBotRefPayload> {

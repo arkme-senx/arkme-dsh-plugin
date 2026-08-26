@@ -178,6 +178,7 @@ import type {
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
   ArkmeSourceDirectory,
+  ArkmeSourceDirectoryPolicyResult,
   ArkmeSourceItem,
   ArkmeSourceList,
   ArkmeSourceReadResult,
@@ -873,6 +874,13 @@ export class ArkmeService {
     options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     return await this.source.listSources(directory, options)
+  }
+
+  async setChatDirectoryPolicy(
+    sourceRef: string,
+    options: { pinned?: boolean; hidden?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceDirectoryPolicyResult> {
+    return await this.source.setChatDirectoryPolicy(sourceRef, options)
   }
 
   async dshBetaCommunityEntryState(signal?: AbortSignal): Promise<ArkmeDSHBetaCommunityEntryState> {

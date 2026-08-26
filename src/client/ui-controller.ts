@@ -7,7 +7,7 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
   return left.sourceRef === right.sourceRef && left.kind === right.kind && left.displayName === right.displayName
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
-    && left.isMuted === right.isMuted
+    && left.isMuted === right.isMuted && left.isPinned === right.isPinned
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
     && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)

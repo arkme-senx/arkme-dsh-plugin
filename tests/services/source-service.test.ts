@@ -15,6 +15,99 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('updates a pin in the chat policy and the cloud topic pin policy', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ path, body })
+      if (path === '/api/v1/chats/policy/get') {
+        return new Response(JSON.stringify({ code: 200, data: {
+          show_in_home_state: 1, privacy_state: 2, mute_state: 2, pin_state: 1, notify_state: 2, status: 3,
+        } }), { status: 200 })
+      }
+      if (path === '/api/v1/chats/policy/update') return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
+      if (path === '/api/v1/topics/pin/set') return new Response(JSON.stringify({ code: 0, data: {} }), { status: 200 })
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    const source = await service.sourceItem({
+      version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '测试会话',
+      sidebarSubjectUid: 'topic-chat-1', sidebarHiddenAnchorTimestamp: 500,
+    })
+
+    await expect(service.setChatDirectoryPolicy(source.sourceRef, { pinned: true })).resolves.toEqual({
+      sourceRef: source.sourceRef, pinned: true, hidden: false,
+    })
+    expect(requests).toHaveLength(3)
+    expect(requests[1]).toMatchObject({
+      path: '/api/v1/chats/policy/update',
+      body: {
+        chat_session_uid: 'chat-1', show_in_home_state: 1, privacy_state: 2, mute_state: 2,
+        pin_state: 2, notify_state: 2, status: 3,
+      },
+    })
+    expect(requests[2]).toMatchObject({
+      path: '/api/v1/topics/pin/set',
+      body: { topic_uid: 'topic-chat-1', pin_state: 1, pinned_at: expect.any(Number) },
+    })
+  })
+
+  it('writes removal to the same cloud sidebar-hidden state used by the Flutter clients', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ path, body })
+      if (path === '/api/v1/chats/policy/get') {
+        return new Response(JSON.stringify({ code: 200, data: {
+          show_in_home_state: 1, privacy_state: 1, mute_state: 1, pin_state: 1, notify_state: 1, status: 1,
+        } }), { status: 200 })
+      }
+      if (path === '/api/v1/chats/policy/update' || path === '/api/v1/subject/batch-set-sidebar-hidden-status') {
+        return new Response(JSON.stringify({ code: 200, data: {} }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    const source = await service.sourceItem({
+      version: 1, userId: 42, kind: 'group_chat', ownerRef: 'chat-group-1', displayName: '测试群聊',
+      sidebarSubjectUid: 'topic-group-1', sidebarHiddenAnchorTimestamp: 123,
+    })
+
+    await expect(service.setChatDirectoryPolicy(source.sourceRef, { hidden: true })).resolves.toEqual({
+      sourceRef: source.sourceRef, pinned: false, hidden: true,
+    })
+    expect(requests).toContainEqual({
+      path: '/api/v1/subject/batch-set-sidebar-hidden-status',
+      body: {
+        items: [{
+          subject_uid: 'topic-group-1',
+          hidden: true,
+          hidden_anchor_timestamp: 123,
+        }],
+      },
+    })
+  })
+
   it('resolves only current-viewer remarks across contact and direct-chat owners', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

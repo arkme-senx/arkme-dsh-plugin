@@ -102,6 +102,7 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(result).toEqual({
       items: [{
         botRef: expect.stringMatching(/^arkme-bot-v2\./),
+        directoryKey: expect.stringMatching(/^arkme-bot-directory-v1\./),
         name: '群聊总结',
         provider: 'openclaw',
         description: '总结群聊',
@@ -615,6 +616,7 @@ describe('ArkmeService Bot owner adapter', () => {
       canAddBots: true,
       items: [{
         botRef,
+        directoryKey: expect.stringMatching(/^arkme-bot-directory-v1\./),
         name: '群聊总结',
         provider: 'openclaw',
         description: '总结',
