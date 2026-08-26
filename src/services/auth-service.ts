@@ -330,13 +330,12 @@ export class AuthService {
   }
 
   async cancelJiwoLogin(attemptId: string): Promise<{ canceled: true }> {
-    this.jiwoAttemptGeneration += 1
     if (attemptId.trim() === '') {
-      await this.cancelAllJiwoLoginAttempts()
       return { canceled: true }
     }
     const attempt = this.attempts.get(attemptId)
     if (attempt === undefined || attempt.kind !== 'jiwo') return { canceled: true }
+    this.jiwoAttemptGeneration += 1
     this.attempts.delete(attemptId)
     await this.cancelJiwoCredentials(attempt.ticket, attempt.pollSecret)
     return { canceled: true }

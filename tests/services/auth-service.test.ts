@@ -107,19 +107,21 @@ describe('AuthService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('cancels a ticket returned after the browser already switched login mode', async () => {
+  it('does not treat an empty attempt ID as cancel all', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return undefined }, async write() {}, async delete() {},
     }
-    let resolveStart: ((response: Response) => void) | undefined
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, body })
-      if (url.endsWith('/start')) {
-        return await new Promise<Response>(resolve => { resolveStart = resolve })
-      }
+      if (url.endsWith('/start')) return json({
+        ticket: 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc12',
+        poll_secret: 'SeCrEtGhIjKlMnOpQrStUvWxYz0123456789_-abc12',
+        expires_at: 1_700_000_300_000,
+      })
+      if (url.endsWith('/poll')) return json({ status: 'pending' })
       if (url.endsWith('/cancel')) return json({ status: 'canceled' })
       throw new Error(`unexpected URL ${url}`)
     }) as typeof fetch
@@ -131,23 +133,11 @@ describe('AuthService', () => {
     })
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
     try {
-      const beginning = service.beginJiwoLogin()
-      await vi.waitFor(() => { expect(resolveStart).toBeTypeOf('function') })
+      const begun = await service.beginJiwoLogin()
       await service.cancelJiwoLogin('')
-      resolveStart?.(json({
-        ticket: 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc12',
-        poll_secret: 'SeCrEtGhIjKlMnOpQrStUvWxYz0123456789_-abc12',
-        expires_at: 1_700_000_300_000,
-      }))
 
-      await expect(beginning).rejects.toMatchObject({ code: 'login-attempt-canceled' })
-      expect(requests.at(-1)).toMatchObject({
-        url: 'https://jotmo.senguo.me/api/public/v1/auth/app-scan-login/cancel',
-        body: {
-          ticket: 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc12',
-          poll_secret: 'SeCrEtGhIjKlMnOpQrStUvWxYz0123456789_-abc12',
-        },
-      })
+      await expect(service.pollJiwoLogin(begun.attemptId ?? '')).resolves.toEqual(begun)
+      expect(requests.some(request => request.url.endsWith('/cancel'))).toBe(false)
     } finally {
       now.mockRestore()
     }

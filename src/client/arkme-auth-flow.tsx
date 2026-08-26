@@ -202,6 +202,7 @@ export function useArkmeAuthFlow(
   const ignoreStaleBindingAuthRef = useRef(false)
   const qrFlowRevisionRef = useRef(0)
   const currentJiwoAttemptRef = useRef<string>()
+  const pendingLoginModeSelectionRef = useRef<ArkmeLoginMode>()
 
   const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
   const authView = arkmeAuthView(auth, phoneBindingGate)
@@ -267,9 +268,11 @@ export function useArkmeAuthFlow(
     setTestLoginEnabled(storeSnapshot.config.testLoginEnabled)
     setJiwoScanLoginEnabled(storeSnapshot.config.jiwoScanLoginEnabled)
     if (!phoneBindingRequired && (auth?.status === 'logged-out' || auth?.status === 'expired')) {
-      setLoginMode(storeSnapshot.config.jiwoScanLoginEnabled
+      const selectedMode = pendingLoginModeSelectionRef.current
+      pendingLoginModeSelectionRef.current = undefined
+      setLoginMode(selectedMode ?? (storeSnapshot.config.jiwoScanLoginEnabled
         ? 'jiwo'
-        : storeSnapshot.config.testLoginEnabled ? 'test' : 'wechat')
+        : storeSnapshot.config.testLoginEnabled ? 'test' : 'wechat'))
     }
   }, [auth?.status, phoneBindingRequired, storeSnapshot.config])
 
@@ -395,7 +398,12 @@ export function useArkmeAuthFlow(
     try {
       const operation = mode === 'jiwo' ? 'auth.app.begin' : 'auth.begin'
       const snapshot = await callArkme<ArkmeAuthSnapshot>(operation)
-      if (flowRevision !== qrFlowRevisionRef.current) return
+      if (flowRevision !== qrFlowRevisionRef.current) {
+        if (mode === 'jiwo' && snapshot.attemptId !== undefined) {
+          void callArkme('auth.app.cancel', { attemptId: snapshot.attemptId }).catch(() => undefined)
+        }
+        return
+      }
       acceptAuthSnapshot(snapshot)
       currentJiwoAttemptRef.current = mode === 'jiwo' ? snapshot.attemptId : undefined
       setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent))
@@ -436,9 +444,12 @@ export function useArkmeAuthFlow(
   }, [agreed, auth, authView, beginJiwo, beginWechat, jiwoScanLoginEnabled, loginMode, qr])
 
   useEffect(() => () => {
-    void callArkme('auth.app.cancel', {
-      attemptId: currentJiwoAttemptRef.current ?? '',
-    }).catch(() => undefined)
+    qrFlowRevisionRef.current += 1
+    const attemptId = currentJiwoAttemptRef.current
+    currentJiwoAttemptRef.current = undefined
+    if (attemptId !== undefined) {
+      void callArkme('auth.app.cancel', { attemptId }).catch(() => undefined)
+    }
   }, [])
 
   const sendCode = async () => {
@@ -536,10 +547,11 @@ export function useArkmeAuthFlow(
     const previousJiwoAttempt = currentJiwoAttemptRef.current
     qrFlowRevisionRef.current += 1
     currentJiwoAttemptRef.current = undefined
-    void callArkme('auth.app.cancel', {
-      attemptId: previousJiwoAttempt ?? '',
-    }).catch(() => undefined)
+    if (previousJiwoAttempt !== undefined) {
+      void callArkme('auth.app.cancel', { attemptId: previousJiwoAttempt }).catch(() => undefined)
+    }
     if (auth?.status === 'pending') {
+      pendingLoginModeSelectionRef.current = mode
       arkmeAuthStore.setAuth({ status: 'logged-out', environment: auth.environment })
     }
     setLoginMode(mode)
