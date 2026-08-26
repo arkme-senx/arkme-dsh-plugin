@@ -54,6 +54,24 @@ describe('Arkme Demo-aligned update surfaces', () => {
     })
   })
 
+  it('does not present a slow update check as an install stuck at 8%', () => {
+    const presentation = deriveArkmeUpdatePresentation({
+      app: { checked: true, busy: false, error: '' },
+      plugin: {
+        checked: true,
+        busy: true,
+        error: '',
+        installError: '',
+        status: pluginStatus,
+      },
+    })
+
+    expect(presentation.primary).toMatchObject({
+      target: 'plugin', available: true, active: false,
+    })
+    expect(presentation.primary?.progress).toBeUndefined()
+  })
+
   it('uses real APP byte progress and remains indeterminate when total bytes are unavailable', () => {
     expect(appUpdateProgress(25, 100)).toBe(25)
     expect(appUpdateProgress(25, undefined)).toBeUndefined()
