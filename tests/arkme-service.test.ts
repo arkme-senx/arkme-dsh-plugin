@@ -1957,6 +1957,27 @@ describe('ArkmeService', () => {
       if (url.endsWith('/api/v1/chats/report')) return json({ code: 200, data: {
         report: { report_uid: 'report-1', status: 1 }, outcome: 'inserted',
       } })
+      if (url.endsWith('/api/v1/chats/read-receipts/summary-list')) return json({ code: 200, data: {
+        chat_session_uid: body.chat_session_uid,
+        items: (body.items as Array<Record<string, unknown>>).map(item => ({
+          chat_session_uid: body.chat_session_uid,
+          record_uid: item.record_uid,
+          seq: item.seq,
+          read_count: body.chat_session_uid === 'chat-private' ? 1 : 1,
+          unread_count: body.chat_session_uid === 'chat-private' ? 0 : 1,
+          total_member_count: body.chat_session_uid === 'chat-private' ? 1 : 2,
+          is_all_read: body.chat_session_uid === 'chat-private',
+        })),
+      } })
+      if (url.endsWith('/api/v1/chats/read-receipts/detail')) return json({ code: 200, data: {
+        chat_session_uid: body.chat_session_uid,
+        record_uid: body.record_uid,
+        seq: body.seq,
+        items: [
+          { user_id: 20002, display_name: '小林', read_status: 'read', read_at: 220 },
+          { user_id: 30003, display_name: '小周', read_status: 'unread', read_at: 0 },
+        ],
+      } })
       if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
         effective_read_seq: body.read_seq,
@@ -2004,6 +2025,32 @@ describe('ArkmeService', () => {
       ],
       nextCursor: { beforeSequence: 6 },
     })
+    await expect(service.messageReadReceiptSummaries(privateRef, [
+      { itemUid: 'chat-record-2', sequence: 8 },
+    ])).resolves.toEqual({
+      sourceRef: privateRef,
+      conversationKind: 'private_chat',
+      items: [{
+        itemUid: 'chat-record-2',
+        sequence: 8,
+        readCount: 1,
+        unreadCount: 0,
+        totalMemberCount: 1,
+        status: 'read',
+      }],
+    })
+    expect(calls.at(-1)?.body).toEqual({
+      chat_session_uid: 'chat-private',
+      items: [{ record_uid: 'chat-record-2', seq: 8 }],
+    })
+    const callsBeforeInvalidReceiptReads = calls.length
+    await expect(service.messageReadReceiptSummaries(privateRef, [
+      { itemUid: 'chat-record-2', sequence: 8 },
+      { itemUid: 'chat-record-2', sequence: 8 },
+    ])).rejects.toMatchObject({ code: 'message-read-receipt-items-invalid' })
+    await expect(service.messageReadReceiptDetail(privateRef, 'chat-record-2', 8))
+      .rejects.toMatchObject({ code: 'message-read-receipt-group-required' })
+    expect(calls).toHaveLength(callsBeforeInvalidReceiptReads)
     await expect(service.sendSourceText(privateRef, '回复', { recordUid: 'record-send', relationUid: 'rel-send' })).resolves.toMatchObject({
       itemUid: 'record-send', sequence: 8, localState: 'synced',
     })
@@ -2027,6 +2074,37 @@ describe('ArkmeService', () => {
     expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toBeUndefined()
     expect(groupTimeline.items[0]?.messageRef).toMatch(/^arkme-message-v1\./)
     expect(groupTimeline.items[1]?.messageRef).toBeUndefined()
+    await expect(service.messageReadReceiptSummaries(groupRef, [
+      { itemUid: 'chat-record-2', sequence: 8 },
+    ])).resolves.toMatchObject({
+      conversationKind: 'group_chat',
+      items: [{ status: 'partially_read', readCount: 1, unreadCount: 1 }],
+    })
+    await expect(service.messageReadReceiptDetail(groupRef, 'chat-record-2', 8)).resolves.toMatchObject({
+      sourceRef: groupRef,
+      itemUid: 'chat-record-2',
+      sequence: 8,
+      readCount: 1,
+      unreadCount: 1,
+      totalMemberCount: 2,
+      items: [
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '小林',
+          readStatus: 'read',
+          readAtMillis: 220,
+          avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '小周',
+          readStatus: 'unread',
+        },
+      ],
+    })
+    expect(calls.find(call => call.url.endsWith('/api/v1/chats/read-receipts/detail'))?.body).toEqual({
+      chat_session_uid: 'chat-group', record_uid: 'chat-record-2', seq: 8,
+    })
     await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
       reason: '明确举报', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
     })).resolves.toMatchObject({ reportUid: 'report-1', status: 1 })

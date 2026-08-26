@@ -149,6 +149,9 @@ import type {
   ArkmeInterwovenDetail,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptSummaryList,
   ArkmeMessageReportResult,
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
@@ -1024,6 +1027,9 @@ export class ArkmeService {
     return await this.chat.readSource(sourceRef, options)
   }
 
+  async messageReadReceiptSummaries(sourceRef: string, items: readonly ArkmeMessageReadReceiptQueryItem[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptSummaryList> { return await this.chat.messageReadReceiptSummaries(sourceRef, items, options) }
+  async messageReadReceiptDetail(sourceRef: string, itemUid: string, sequence: number, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptDetail> { return await this.chat.messageReadReceiptDetail(sourceRef, itemUid, sequence, options) }
+
   async relatedRecordingEligibility(
     sourceRef: string,
     signal?: AbortSignal,
@@ -1138,9 +1144,7 @@ export class ArkmeService {
     return await this.chat.sendDirectText(recipientArkmeId, textContent, options)
   }
 
-  async markSourceRead(sourceRef: string, readSequence: number): Promise<ArkmeSourceReadResult> {
-    return await this.chat.markSourceRead(sourceRef, readSequence)
-  }
+  async markSourceRead(sourceRef: string, readSequence: number, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceReadResult> { return await this.chat.markSourceRead(sourceRef, readSequence, options) }
 
   async listWechatConversations(
     options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},

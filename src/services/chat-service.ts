@@ -15,6 +15,10 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptSummary,
+  ArkmeMessageReadReceiptSummaryList,
   ArkmeMessageReportResult,
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
@@ -58,6 +62,7 @@ interface OfficialAuthorPrivateChatCreateResult {
 // Mirrors the mobile contact-author backend contract used by /api/v1/private/create-chat-ref-asen.
 const OFFICIAL_AUTHOR_USER_ID = 11
 const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
+const MAX_MESSAGE_READ_RECEIPT_ITEMS = 50
 
 export interface ArkmeChatRealtimePort {
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
@@ -720,6 +725,178 @@ export class ChatService {
       if (reportUid === '') throw new ArkmePluginError('message-report-invalid-response', '举报服务返回无效', true, 502)
       return { messageRef, reportUid, status: numberValue(report.status) }
     }
+
+  async messageReadReceiptSummaries(
+    sourceRef: string,
+    rawItems: readonly ArkmeMessageReadReceiptQueryItem[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageReadReceiptSummaryList> {
+    const session = await this.runtime.requireSession()
+    const source = await this.requireReadReceiptChatSource(sourceRef, session.userId)
+    const items = this.requireReadReceiptItems(rawItems)
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/read-receipts/summary-list',
+      {
+        chat_session_uid: source.ownerRef,
+        items: items.map(item => ({ record_uid: item.itemUid, seq: item.sequence })),
+      },
+      session,
+      options.signal,
+    )
+    if (stringValue(data.chat_session_uid).trim() !== source.ownerRef) {
+      throw new ArkmePluginError('message-read-receipt-invalid-response', '消息已读状态服务返回了不匹配的会话', true, 502)
+    }
+    const requestedKeys = new Set(items.map(item => this.readReceiptItemKey(item.itemUid, item.sequence)))
+    const summaries = new Map<string, ArkmeMessageReadReceiptSummary>()
+    for (const raw of listValue(data.items)) {
+      const item = objectValue(raw)
+      const itemUid = stringValue(item.record_uid).trim()
+      const sequence = Math.trunc(numberValue(item.seq))
+      const key = this.readReceiptItemKey(itemUid, sequence)
+      const rowSessionUid = stringValue(item.chat_session_uid).trim()
+      const readCount = Math.trunc(numberValue(item.read_count))
+      const unreadCount = Math.trunc(numberValue(item.unread_count))
+      const totalMemberCount = Math.trunc(numberValue(item.total_member_count))
+      if (!requestedKeys.has(key) || summaries.has(key) || rowSessionUid !== source.ownerRef
+        || typeof item.seq !== 'number' || !Number.isSafeInteger(item.seq)
+        || typeof item.read_count !== 'number' || !Number.isSafeInteger(item.read_count)
+        || typeof item.unread_count !== 'number' || !Number.isSafeInteger(item.unread_count)
+        || typeof item.total_member_count !== 'number' || !Number.isSafeInteger(item.total_member_count)
+        || readCount < 0 || unreadCount < 0 || totalMemberCount < 0
+        || readCount + unreadCount !== totalMemberCount) {
+        throw new ArkmePluginError('message-read-receipt-invalid-response', '消息已读状态服务返回无效', true, 502)
+      }
+      summaries.set(key, {
+        itemUid,
+        sequence,
+        readCount,
+        unreadCount,
+        totalMemberCount,
+        status: unreadCount === 0 ? 'read' : readCount === 0 ? 'unread' : 'partially_read',
+      })
+    }
+    if (summaries.size !== items.length) {
+      throw new ArkmePluginError('message-read-receipt-invalid-response', '消息已读状态服务返回不完整', true, 502)
+    }
+    return {
+      sourceRef,
+      conversationKind: source.kind,
+      items: items.map(item => summaries.get(this.readReceiptItemKey(item.itemUid, item.sequence))!),
+    }
+  }
+
+  async messageReadReceiptDetail(
+    sourceRef: string,
+    itemUid: string,
+    sequence: number,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageReadReceiptDetail> {
+    const session = await this.runtime.requireSession()
+    const source = await this.requireReadReceiptChatSource(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') {
+      throw new ArkmePluginError('message-read-receipt-group-required', '成员已读详情只支持群聊消息；私聊请查询消息已读状态', false, 400)
+    }
+    const [message] = this.requireReadReceiptItems([{ itemUid, sequence }])
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/read-receipts/detail',
+      { chat_session_uid: source.ownerRef, record_uid: message!.itemUid, seq: message!.sequence },
+      session,
+      options.signal,
+    )
+    if (stringValue(data.chat_session_uid).trim() !== source.ownerRef
+      || stringValue(data.record_uid).trim() !== message!.itemUid
+      || typeof data.seq !== 'number' || !Number.isSafeInteger(data.seq)
+      || Math.trunc(numberValue(data.seq)) !== message!.sequence) {
+      throw new ArkmePluginError('message-read-receipt-invalid-response', '成员已读详情服务返回了不匹配的消息', true, 502)
+    }
+    const rawMembers = listValue(data.items).map(objectValue)
+    const seenUserIds = new Set<number>()
+    const receiptMembers = rawMembers.map(item => {
+      const userId = Math.trunc(numberValue(item.user_id))
+      const readStatus = stringValue(item.read_status).trim()
+      const readAtMillis = Math.trunc(numberValue(item.read_at))
+      if (typeof item.user_id !== 'number' || !Number.isSafeInteger(item.user_id)
+        || typeof item.read_at !== 'number' || !Number.isSafeInteger(item.read_at)
+        || !Number.isSafeInteger(userId) || userId <= 0 || userId === session.userId || seenUserIds.has(userId)
+        || (readStatus !== 'read' && readStatus !== 'unread') || readAtMillis < 0
+        || (readStatus === 'unread' && readAtMillis !== 0)) {
+        throw new ArkmePluginError('message-read-receipt-invalid-response', '成员已读详情服务返回无效', true, 502)
+      }
+      seenUserIds.add(userId)
+      return {
+        userId,
+        readStatus: readStatus === 'read' ? 'read' as const : 'unread' as const,
+        readAtMillis,
+        upstreamDisplayName: stringValue(item.display_name).trim(),
+      }
+    })
+    const profiles = await this.profile.publicProfileSummariesByUserIds(
+      receiptMembers.map(item => item.userId), session, options.signal,
+    ).catch(() => new Map())
+    const members = [] as ArkmeMessageReadReceiptDetail['items']
+    for (const item of receiptMembers) {
+      const profile = profiles.get(item.userId)
+      const profileDisplayName = profile?.displayName.trim() ?? ''
+      const displayName = profileDisplayName !== '' && profileDisplayName !== `用户 ${String(item.userId)}`
+        ? profileDisplayName
+        : item.upstreamDisplayName || '群成员'
+      members.push({
+        memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, item.userId),
+        displayName,
+        ...(profile?.avatarUrl === undefined ? {} : {
+          avatarRef: await this.profile.sealProfileImageRef(session.userId, item.userId),
+        }),
+        readStatus: item.readStatus,
+        ...(item.readStatus === 'read' && item.readAtMillis > 0 ? { readAtMillis: item.readAtMillis } : {}),
+      })
+    }
+    const readCount = members.filter(member => member.readStatus === 'read').length
+    return {
+      sourceRef,
+      itemUid: message!.itemUid,
+      sequence: message!.sequence,
+      readCount,
+      unreadCount: members.length - readCount,
+      totalMemberCount: members.length,
+      items: members,
+    }
+  }
+
+  private async requireReadReceiptChatSource(sourceRef: string, userId: number): Promise<ArkmeSourceRefPayload & {
+    kind: 'private_chat' | 'group_chat'
+  }> {
+    const source = await this.source.openSourceRef(sourceRef, userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('message-read-receipt-chat-required', '消息已读状态只支持私聊或群聊', false, 400)
+    }
+    return source as ArkmeSourceRefPayload & { kind: 'private_chat' | 'group_chat' }
+  }
+
+  private requireReadReceiptItems(rawItems: readonly ArkmeMessageReadReceiptQueryItem[]): ArkmeMessageReadReceiptQueryItem[] {
+    if (rawItems.length < 1 || rawItems.length > MAX_MESSAGE_READ_RECEIPT_ITEMS) {
+      throw new ArkmePluginError(
+        'message-read-receipt-items-invalid',
+        `消息已读状态每次需要 1 至 ${String(MAX_MESSAGE_READ_RECEIPT_ITEMS)} 条消息`,
+        false,
+        400,
+      )
+    }
+    const seen = new Set<string>()
+    return rawItems.map(raw => {
+      const itemUid = raw.itemUid.trim()
+      const sequence = Math.trunc(raw.sequence)
+      const key = this.readReceiptItemKey(itemUid, sequence)
+      if (itemUid === '' || itemUid.length > 256 || !Number.isSafeInteger(raw.sequence) || sequence <= 0 || seen.has(key)) {
+        throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效或重复', false, 400)
+      }
+      seen.add(key)
+      return { itemUid, sequence }
+    })
+  }
+
+  private readReceiptItemKey(itemUid: string, sequence: number): string {
+    return `${itemUid}\u0000${String(sequence)}`
+  }
   
   async sendSourceText(
       sourceRef: string,
@@ -1200,7 +1377,11 @@ export class ChatService {
       }
     }
   
-  async markSourceRead(sourceRef: string, readSequence: number): Promise<ArkmeSourceReadResult> {
+  async markSourceRead(
+    sourceRef: string,
+    readSequence: number,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceReadResult> {
       const session = await this.runtime.requireSession()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
@@ -1219,6 +1400,7 @@ export class ChatService {
           reason: 'arkme_dsh_open_chat',
         },
         session,
+        options.signal,
       )
       const responseSessionUid = stringValue(data.chat_session_uid).trim()
       const effectiveReadSequence = numberValue(data.effective_read_seq)

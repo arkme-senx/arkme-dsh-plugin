@@ -1078,6 +1078,48 @@ export interface ArkmeTimelineItem {
   forwardRecords?: ArkmeForwardRecordsPreview
 }
 
+/** Identity of one message returned by an Arkme private/group timeline. */
+export interface ArkmeMessageReadReceiptQueryItem {
+  itemUid: string
+  sequence: number
+}
+
+export type ArkmeMessageReadReceiptStatus = 'read' | 'partially_read' | 'unread'
+
+/** Read/unread aggregate for one current-user-sent private/group message. */
+export interface ArkmeMessageReadReceiptSummary extends ArkmeMessageReadReceiptQueryItem {
+  readCount: number
+  unreadCount: number
+  /** Active human recipients, excluding the sender. */
+  totalMemberCount: number
+  status: ArkmeMessageReadReceiptStatus
+}
+
+export interface ArkmeMessageReadReceiptSummaryList {
+  sourceRef: string
+  conversationKind: 'private_chat' | 'group_chat'
+  items: ArkmeMessageReadReceiptSummary[]
+}
+
+export interface ArkmeMessageReadReceiptMember {
+  /** Account- and conversation-bound member reference. */
+  memberRef: string
+  displayName: string
+  avatarRef?: string
+  readStatus: 'read' | 'unread'
+  /** Present only when this member has read the message. */
+  readAtMillis?: number
+}
+
+/** Member-level receipt detail for one current-user-sent group message. */
+export interface ArkmeMessageReadReceiptDetail extends ArkmeMessageReadReceiptQueryItem {
+  sourceRef: string
+  readCount: number
+  unreadCount: number
+  totalMemberCount: number
+  items: ArkmeMessageReadReceiptMember[]
+}
+
 export interface ArkmeForwardRecordsPreview {
   title: string
   createdAtMillis: number

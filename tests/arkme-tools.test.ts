@@ -232,6 +232,34 @@ function fakeService(): ArkmeCoreToolPorts & {
       source: { sourceRef, kind: 'private_chat' as const, displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
       items: [], hasMore: false,
     })),
+    messageReadReceiptSummaries: vi.fn(async (sourceRef: string, messages: Array<{ itemUid: string; sequence: number }>) => ({
+      sourceRef,
+      conversationKind: 'private_chat' as const,
+      items: messages.map(message => ({
+        ...message,
+        readCount: 1,
+        unreadCount: 0,
+        totalMemberCount: 1,
+        status: 'read' as const,
+      })),
+    })),
+    messageReadReceiptDetail: vi.fn(async (sourceRef: string, itemUid: string, sequence: number) => ({
+      sourceRef,
+      itemUid,
+      sequence,
+      readCount: 1,
+      unreadCount: 1,
+      totalMemberCount: 2,
+      items: [
+        { memberRef: 'member-read', displayName: '已读成员', readStatus: 'read' as const, readAtMillis: 123 },
+        { memberRef: 'member-unread', displayName: '未读成员', readStatus: 'unread' as const },
+      ],
+    })),
+    markSourceRead: vi.fn(async (sourceRef: string, readSequence: number) => ({
+      sourceRef,
+      effectiveReadSequence: readSequence,
+      unreadCount: 0,
+    })),
     reportMessage: vi.fn(async (messageRef: string, _reportType: 1 | 2 | 3 | 4) => ({
       messageRef, reportUid: 'report-1', status: 1,
     })),
@@ -781,6 +809,68 @@ describe('Arkme conversation tools', () => {
       signal,
     }))
     expect(service.arkoProfile).not.toHaveBeenCalled()
+  })
+
+  it('reads self-sent private/group message receipt summaries and group member detail', async () => {
+    const service = fakeService()
+    const tools = createArkmeCoreToolDefinitions(service)
+    const summaries = tools.find(definition => definition.name === 'arkme_message_read_statuses')!
+    const detail = tools.find(definition => definition.name === 'arkme_message_read_members')!
+    const signal = new AbortController().signal
+
+    const summaryOutput = await summaries.execute({
+      source_ref: 'source-private-1',
+      messages: [{ item_uid: 'record-self-1', sequence: 8 }],
+    }, { signal } as never)
+    expect(summaryOutput).toContain('"status": "read"')
+    expect(service.messageReadReceiptSummaries).toHaveBeenCalledWith(
+      'source-private-1',
+      [{ itemUid: 'record-self-1', sequence: 8 }],
+      { signal },
+    )
+
+    const detailOutput = await detail.execute({
+      source_ref: 'source-group-1',
+      item_uid: 'record-self-2',
+      sequence: 11,
+    }, { signal } as never)
+    expect(detailOutput).toContain('"readStatus": "unread"')
+    expect(service.messageReadReceiptDetail).toHaveBeenCalledWith(
+      'source-group-1', 'record-self-2', 11, { signal },
+    )
+  })
+
+  it('lists only current-account unread conversations and explicitly advances one read cursor', async () => {
+    const service = fakeService()
+    service.listSources.mockResolvedValueOnce({
+      directory: 'root',
+      items: [
+        { sourceRef: 'source-unread', kind: 'private_chat', displayName: '小林', activeAtMillis: 2, unreadCount: 3, latestSequence: 12 },
+        { sourceRef: 'source-read', kind: 'group_chat', displayName: '项目群', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 },
+      ],
+      hasMore: true,
+      nextCursor: 'next-root-page',
+    })
+    const tools = createArkmeCoreToolDefinitions(service)
+    const unread = tools.find(definition => definition.name === 'arkme_unread_conversations')!
+    const markRead = tools.find(definition => definition.name === 'arkme_conversation_mark_read')!
+    const signal = new AbortController().signal
+
+    const unreadOutput = await unread.execute({ limit: 50 }, { signal } as never)
+    expect(unreadOutput).toContain('小林')
+    expect(unreadOutput).not.toContain('项目群')
+    expect(unreadOutput).toContain('"unreadConversationCount": 1')
+    expect(unreadOutput).toContain('"unreadMessageCount": 3')
+    expect(unreadOutput).toContain('"nextCursor": "next-root-page"')
+    expect(service.listSources).toHaveBeenCalledWith('root', { limit: 50, signal })
+
+    const markOutput = await markRead.execute({
+      source_ref: 'source-unread',
+      read_sequence: 12,
+    }, { signal } as never)
+    expect(markOutput).toContain('"effectiveReadSequence": 12')
+    expect(markOutput).toContain('"unreadCount": 0')
+    expect(service.markSourceRead).toHaveBeenCalledWith('source-unread', 12, { signal })
   })
 
   it('reports only an opaque message reference with a stable retry identity', async () => {
