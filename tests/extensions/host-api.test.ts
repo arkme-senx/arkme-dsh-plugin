@@ -299,11 +299,12 @@ describe('marketplace Host BFF', () => {
       references_removed: true, removed_source_count: 1, restart_required: false, message: '扩展已完全移除',
     }))
 
+    const signal = new AbortController().signal
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.delete', { extensionId: 'ext-owned' }, undefined, undefined, undefined,
-      { delete: deleteExtension } as never,
+      { delete: deleteExtension } as never, signal,
     )).resolves.toMatchObject({ extension_id: 'ext-owned', status: 'deleted', references_removed: true })
-    expect(deleteExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned' })
+    expect(deleteExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned', signal })
   })
 
   it('routes author unpublish without invoking the permanent delete lifecycle', async () => {
@@ -311,11 +312,12 @@ describe('marketplace Host BFF', () => {
       extension_id: 'ext-owned', status: 'suspended', unpublished_at: 1780000001123,
     }))
 
+    const signal = new AbortController().signal
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.unpublish', { extensionId: 'ext-owned' }, undefined, undefined, undefined,
-      { unpublish: unpublishExtension } as never,
+      { unpublish: unpublishExtension } as never, signal,
     )).resolves.toMatchObject({ extension_id: 'ext-owned', status: 'suspended' })
-    expect(unpublishExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned' })
+    expect(unpublishExtension).toHaveBeenCalledWith({ extensionId: 'ext-owned', signal })
   })
 
   it('routes metadata editing through the authenticated Host manager', async () => {
@@ -399,10 +401,11 @@ describe('marketplace Host BFF', () => {
     }))
     const publish = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))
     const owner = { list, saveToProfile, publish }
+    const signal = new AbortController().signal
 
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.mine.list', { currentSessionId: 'session-1' },
-      undefined, undefined, undefined, owner as never,
+      undefined, undefined, undefined, owner as never, signal,
     )).resolves.toEqual({ items: [], warnings: [] })
     await expect(dispatchArkmeHostOperation(
       {} as never, 'extensions.mine.persist', {
@@ -414,17 +417,17 @@ describe('marketplace Host BFF', () => {
       {} as never, 'extensions.mine.publish', {
         ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
         visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
-      }, undefined, undefined, undefined, owner as never,
+      }, undefined, undefined, undefined, owner as never, signal,
     )).resolves.toMatchObject({ status: 'published' })
 
-    expect(list).toHaveBeenCalledWith({ currentSessionId: 'session-1' })
+    expect(list).toHaveBeenCalledWith({ currentSessionId: 'session-1', signal })
     expect(saveToProfile).toHaveBeenCalledWith({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
       clientMutationId: '0acf8c13-4086-4d51-890d-4911ad886880',
     })
     expect(publish).toHaveBeenCalledWith({
       ownedRef: 'owned-ref', name: '天气', description: '天气卡片', version: '1.0.0',
-      visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432',
+      visibility: 'private', changelog: 'first', clientMutationId: '9f445b4f-55aa-45c1-9250-25161832d432', signal,
     })
   })
 

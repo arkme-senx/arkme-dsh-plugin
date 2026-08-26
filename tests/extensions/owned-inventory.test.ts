@@ -45,6 +45,57 @@ function cloudItem() {
 }
 
 describe('owned extension inventory', () => {
+  it('drains all cloud owner pages before resolving an existing extension', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-pages-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const sourceKey = 'instance-1\0session-1\0weather-1'
+    store.claim('cordis', sourceKey, 7)
+    store.linkCloud('cordis', sourceKey, 7, 'ext-owned-page-2')
+    const calls: Array<{ cursor?: string; limit?: number }> = []
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async input => {
+        calls.push(input)
+        return input.cursor === undefined
+          ? { items: [{ ...cloudItem(), extension_id: 'ext-owned-page-1' }], total: 2, next_cursor: '1' }
+          : { items: [{ ...cloudItem(), extension_id: 'ext-owned-page-2' }], total: 2 }
+      },
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') },
+      lifecycle: {
+        unpublishCloud: async extensionId => ({ extension_id: extensionId, status: 'suspended', unpublished_at: 1 }),
+        deleteCloud: async () => { throw new Error('not used') },
+        uninstall: async () => { throw new Error('not used') }, canUninstallWithoutAgent: () => true,
+        installedProfilePackageName: () => undefined, removeProfilePackage: async () => false,
+      },
+    })
+
+    await expect(inventory.unpublish({ extensionId: 'ext-owned-page-2' }))
+      .resolves.toMatchObject({ extension_id: 'ext-owned-page-2', status: 'suspended' })
+    expect(calls).toEqual([{ limit: 50 }, { limit: 50, cursor: '1' }])
+    store.close()
+  })
+
+  it('surfaces a repeated owner cursor as unavailable instead of hanging inventory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-cursor-loop-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({ items: [], total: 1, next_cursor: 'loop' }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') },
+    })
+
+    await expect(inventory.list()).resolves.toEqual({ items: [], warnings: ['cloud-unavailable'] })
+    store.close()
+  })
+
   it('merges explicit Cordis, Profile, and cloud lineage into one safe row', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-'))
     const profileDirectory = profileWithOwnedWrapper(root)
@@ -83,6 +134,40 @@ describe('owned extension inventory', () => {
     expect(JSON.stringify(page)).not.toContain(profileDirectory)
     expect(JSON.stringify(page)).not.toContain('session-1')
     expect(JSON.stringify(page)).not.toContain('@deepseek-ai/dsh-base')
+    store.close()
+  })
+
+  it('repairs lost Profile-to-cloud lineage only from the unique package identity', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-lineage-repair-'))
+    const profile = join(root, 'profiles', 'web')
+    const packageName = '@arkme-generated/recovered-weather'
+    const source = materializeCordisBundle({
+      packageName, name: '恢复天气', description: '响应丢失后的本地 Bundle', version: '1.0.0', hostCode: 'return {}',
+    })
+    writeFileSync(join(root, 'recovered-weather.tgz'), source.bundle.bytes)
+    writeJson(join(profile, 'package.json'), {
+      dependencies: { [packageName]: 'file:../../recovered-weather.tgz' },
+      dsh: { profile: { bundles: [packageName] } },
+    })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList: async () => ({
+        items: [{ ...cloudItem(), extension_id: 'ext-recovered', package_name: packageName }], total: 1,
+      }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') },
+    })
+
+    const page = await inventory.list()
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]).toMatchObject({
+      states: ['persisted', 'published'],
+      persisted: { packageName },
+      published: { extensionId: 'ext-recovered' },
+    })
+    expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBe('ext-recovered')
     store.close()
   })
 
@@ -204,6 +289,14 @@ describe('owned extension inventory', () => {
     expect(store.owner('profile', `web\0${packageName}`)).toBe(7)
     expect(store.profileLink('instance-1\0session-1\0weather-1', 7)).toBe(`web\0${packageName}`)
     expect(store.cloudLink('cordis', 'instance-1\0session-1\0weather-1', 7)).toBeUndefined()
+
+    await inventory.saveToProfile({
+      ownedRef: page.items[0]!.ownedRef, name: '天气助手', description: '天气', version: '1.0.1',
+      clientMutationId: 'd9f3e637-1f58-45f7-a77a-221643e77847',
+    })
+    expect(persistCordis).toHaveBeenLastCalledWith(expect.objectContaining({
+      packageName, version: '1.0.1',
+    }))
     store.close()
   })
 
@@ -249,6 +342,14 @@ describe('owned extension inventory', () => {
     expect(store.owner('profile', `web\0${packageName}`)).toBe(7)
     expect(store.profileLink('instance-1\0session-1\0weather-1', 7)).toBe(`web\0${packageName}`)
     expect(store.cloudLink('profile', `web\0${packageName}`, 7)).toBeUndefined()
+
+    await expect(inventory.publish({
+      ownedRef: page.items[0]!.ownedRef, name: '天气助手', description: '天气', version: '1.0.0',
+      visibility: 'private', clientMutationId: 'd9f3e637-1f58-45f7-a77a-221643e77847',
+    })).rejects.toMatchObject({ code: 'extension-publish-after-profile-save-failed' })
+    expect(persistCordis).toHaveBeenLastCalledWith(expect.objectContaining({ packageName }))
+    expect(publishSandboxBundle.mock.calls[1]?.[0].idempotencyKey)
+      .toBe(publishSandboxBundle.mock.calls[0]?.[0].idempotencyKey)
     store.close()
   })
 
@@ -628,7 +729,8 @@ describe('owned extension inventory', () => {
       },
     })
 
-    await expect(inventory.delete({ extensionId: 'ext-owned' })).resolves.toEqual({
+    const requestSignal = new AbortController().signal
+    await expect(inventory.delete({ extensionId: 'ext-owned', signal: requestSignal })).resolves.toEqual({
       extension_id: 'ext-owned', status: 'deleted', deleted_at: 1780000001123,
       installed: false, active: false, references_removed: true, removed_source_count: 2,
       restart_required: true, message: '扩展已彻底删除；服务端仅保留身份与安全审计记录，当前 DSH 重启后完成本地移除',
@@ -637,6 +739,7 @@ describe('owned extension inventory', () => {
     expect(uninstall).toHaveBeenCalledWith({ agent: undefined, extensionId: 'ext-owned' })
     expect(undefine).toHaveBeenCalledWith(agent, 'weather-1')
     expect(removeProfilePackage).toHaveBeenCalledWith('@example/weather')
+    expect(deleteCloud).toHaveBeenCalledWith('ext-owned')
     expect(store.owner('cordis', cordisKey)).toBeUndefined()
     expect(store.owner('profile', profileKey)).toBeUndefined()
     expect(() => refs.resolve(7, staleRef)).toThrow('引用不存在或已失效')
@@ -712,6 +815,62 @@ describe('owned extension inventory', () => {
     await expect(inventory.delete({ extensionId: 'ext-owned' })).rejects.toThrow('registry unavailable')
     expect(store.cloudLink('profile', sourceKey, 7)).toBe('ext-owned')
     expect(refs.resolve(7, staleRef)).toMatchObject({ packageName: '@example/weather' })
+    store.close()
+  })
+
+  it('continues an idempotent permanent-delete repair when the tombstone is already hidden from my-list', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-delete-tombstone-retry-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const sourceKey = 'web\0@example/weather'
+    store.claim('profile', sourceKey, 7, 'a'.repeat(64))
+    store.linkCloud('profile', sourceKey, 7, 'ext-owned')
+    const deleteCloud = vi.fn(async () => ({
+      extension_id: 'ext-owned', status: 'deleted' as const, deleted_at: 1780000001123,
+    }))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      // A completed tombstone is intentionally absent from the author's normal inventory.
+      cloudList: async () => ({ items: [], total: 0 }),
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') },
+      lifecycle: {
+        deleteCloud,
+        uninstall: async () => ({
+          extension_id: 'ext-owned', installed: false, active: false, restart_required: false, message: '扩展未安装',
+        }),
+        canUninstallWithoutAgent: () => true,
+        installedProfilePackageName: () => undefined,
+        removeProfilePackage: async () => false,
+      },
+    })
+
+    await expect(inventory.delete({ extensionId: 'ext-owned' })).resolves.toMatchObject({
+      extension_id: 'ext-owned', status: 'deleted', references_removed: true,
+    })
+    expect(deleteCloud).toHaveBeenCalledWith('ext-owned')
+    expect(store.cloudLink('profile', sourceKey, 7)).toBeUndefined()
+    store.close()
+  })
+
+  it('treats an empty legacy next cursor as the end of the owned cloud inventory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-owned-inventory-empty-cursor-'))
+    const profile = join(root, 'profiles', 'web')
+    writeJson(join(profile, 'package.json'), { dependencies: {}, dsh: { profile: { bundles: [] } } })
+    const cloudList = vi.fn(async () => ({ items: [cloudItem()], total: 1, next_cursor: '' }))
+    const store = new ArkmeOwnedExtensionStore(join(root, 'state'))
+    const inventory = new ArkmeOwnedExtensionInventory({
+      hostInstanceId: 'instance-1', profileDirectory: profile, profileName: 'web', store,
+      refs: new ArkmeOwnedExtensionRefs(), providerState: async () => ({ authStatus: 'authenticated', userId: 7 }),
+      cloudList,
+      runner: { inventory: () => [], inspectPackage: () => { throw new Error('not used') } },
+      agents: { get: () => undefined }, publish: async () => { throw new Error('not used') },
+    })
+
+    await expect(inventory.list()).resolves.toMatchObject({ items: [{ states: ['published'] }], warnings: [] })
+    expect(cloudList).toHaveBeenCalledTimes(1)
     store.close()
   })
 
