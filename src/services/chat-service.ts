@@ -1649,8 +1649,9 @@ export class ChatService {
   async fetchMedia(
       mediaRef: string,
       range?: string,
+      signal?: AbortSignal,
     ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-      return await this.media.fetchMedia(mediaRef, range)
+      return await this.media.fetchMedia(mediaRef, range, signal)
     }
   
   private currentUserAgentSourceFallback(

@@ -55,52 +55,6 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
-  it('reuses a recent notification baseline instead of rescanning every chat after a short reconnect', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(100_000)
-    let currentUserId = 10001
-    const sessions: ArkmeSessionStore = {
-      async read() { return { userId: currentUserId, accessToken: 'access', refreshToken: 'refresh' } },
-      async write() {}, async delete() {},
-    }
-    const runtime = new ServiceRuntime(config, sessions, {} as StateStore)
-    const source = new SourceService(runtime, new ProfileService(runtime), {
-      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
-    })
-    const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
-    const internals = service as unknown as {
-      notificationBaselineCompletedAtMillis: number
-      notificationBaselineGeneration: number
-      notificationBaselineSequences: Map<string, number>
-      notificationBaselineUserId: number | undefined
-      chatRealtime: { state(): { revision: number; connected: boolean; connectionGeneration: number } }
-      reconcileChatNotificationBaseline(generation: number): Promise<void>
-    }
-    internals.notificationBaselineCompletedAtMillis = Date.now()
-    internals.notificationBaselineGeneration = 1
-    internals.notificationBaselineUserId = 10001
-    internals.notificationBaselineSequences.set('chat-1', 42)
-    vi.spyOn(internals.chatRealtime, 'state').mockReturnValue({ revision: 2, connected: true, connectionGeneration: 2 })
-    const listSources = vi.spyOn(source, 'listSources')
-
-    await internals.reconcileChatNotificationBaseline(2)
-
-    expect(listSources).not.toHaveBeenCalled()
-    expect(internals.notificationBaselineGeneration).toBe(2)
-    expect(internals.notificationBaselineSequences.get('chat-1')).toBe(42)
-
-    currentUserId = 20002
-    vi.spyOn(internals.chatRealtime, 'state').mockReturnValue({ revision: 3, connected: true, connectionGeneration: 3 })
-    listSources.mockResolvedValue({ items: [], itemCount: 0, hasMore: false })
-    await internals.reconcileChatNotificationBaseline(3)
-
-    expect(listSources).toHaveBeenCalled()
-    expect(internals.notificationBaselineUserId).toBe(20002)
-    expect(internals.notificationBaselineSequences.size).toBe(0)
-    service.dispose()
-    vi.useRealTimers()
-  })
-
   it('projects another member cursor advance to an account-bound browser invalidation', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },

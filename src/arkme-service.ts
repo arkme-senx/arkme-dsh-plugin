@@ -1127,8 +1127,9 @@ export class ArkmeService {
   async fetchMedia(
     mediaRef: string,
     range?: string,
+    signal?: AbortSignal,
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-    return await this.chat.fetchMedia(mediaRef, range)
+    return await this.chat.fetchMedia(mediaRef, range, signal)
   }
 
   async sendDirectText(
