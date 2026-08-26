@@ -270,6 +270,32 @@ describe('conversation member Host API dispatch', () => {
       humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
     })
   })
+
+  it('keeps @所有人 human mention intent without requiring a member ref', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ all: true, memberRef: 'browser-owned', startIndex: 0, length: 4 }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@所有人 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })
+  })
+
+  it('keeps structured Bot mention ranges without exposing browser-owned fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@总结助手 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5, botId: 'browser-owned' }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@总结助手 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5 }],
+    })
+  })
 })
 
 describe('message read receipt Host API dispatch', () => {

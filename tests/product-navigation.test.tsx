@@ -43,6 +43,7 @@ describe('Arkme product navigation', () => {
   it('keeps the persistent client runtime subscribed to record projection invalidations', () => {
     expect(persistentShellSource).toContain('useArkmeRealtimeClientEvents(auth, ui.authRevision, true)')
     expect(realtimeClientEventsSource).toContain("if (update.type === 'projection-invalidated')")
+    expect(realtimeClientEventsSource).toContain('arkmeUi.recordChanged()')
     expect(realtimeClientEventsSource).toContain("if (update.projection !== 'record') return")
     expect(realtimeClientEventsSource).toContain('arkmeUi.chatChanged()')
   })

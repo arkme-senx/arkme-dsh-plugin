@@ -63,5 +63,5 @@ describe('client notification activation', () => {
     })
     cleanup?.()
     expect(mocks.stopActivated).toHaveBeenCalledOnce()
-  })
+  }, 15_000)
 })

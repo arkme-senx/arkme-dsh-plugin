@@ -1,5 +1,5 @@
 import {
-  Fragment, useEffect, useMemo, useRef, useState, type CSSProperties,
+  Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { XIcon } from '@phosphor-icons/react/dist/csr/X'
@@ -26,8 +26,27 @@ export const ARKME_MEMBER_RECORDS_RESIZE_HANDLE_WIDTH = 10
 export const ARKME_MEMBER_RECORDS_RESIZE_INDICATOR_WIDTH = 3
 export const ARKME_MEMBER_RECORDS_MAX_WIDTH_FACTOR = 0.6
 export const ARKME_MEMBER_RECORD_OTHER_BUBBLE = arkmeTheme.memberRecordOther
+export const ARKME_MEMBER_RECORDS_LOAD_MORE_THRESHOLD = 120
 const MEMBER_RECORDS_WIDTH_STORAGE_KEY = 'arkme.member-records-sidebar-width.v1'
 let cachedMemberRecordsWidth: number | undefined
+
+export function shouldLoadOlderArkmeMemberRecords(
+  scrollTop: number,
+  hasMore: boolean,
+  cursor: number | undefined,
+  loading: boolean,
+): boolean {
+  return hasMore && cursor !== undefined && !loading
+    && Number.isFinite(scrollTop) && scrollTop <= ARKME_MEMBER_RECORDS_LOAD_MORE_THRESHOLD
+}
+
+export function retainArkmeMemberRecordsScrollTop(
+  previousScrollTop: number,
+  previousScrollHeight: number,
+  currentScrollHeight: number,
+): number {
+  return Math.max(0, previousScrollTop + currentScrollHeight - previousScrollHeight)
+}
 
 export function clampArkmeMemberRecordsWidth(preferredWidth: number, availableWidth: number): number {
   const available = Number.isFinite(availableWidth) ? Math.max(0, availableWidth) : 0
@@ -208,9 +227,13 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: '14px 5px 14px 14px', background: arkmeTheme.messageOwn,
     '--arkme-bubble-fade': arkmeTheme.messageOwn,
   } as CSSProperties,
-  more: {
-    width: '100%', height: 38, marginBottom: 12, border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,
-    background: arkmeTheme.foreground, color: arkmeTheme.text, cursor: 'pointer',
+  loadMoreState: {
+    minHeight: 32, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    gap: 8, color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px', textAlign: 'center',
+  },
+  loadMoreRetry: {
+    height: 28, padding: '0 10px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 7,
+    background: arkmeTheme.foreground, color: arkmeTheme.text, cursor: 'pointer', fontSize: 12,
   },
 }
 
@@ -441,9 +464,11 @@ export function ArkmeMemberRecordsPanel(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const requestRef = useRef<AbortController>()
+  const loadingRef = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const dismissRef = useRef<HTMLDivElement>(null)
   const initialScrollRef = useRef(false)
+  const pendingScrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number }>()
   const preferredWidthRef = useRef(readPreferredMemberRecordsWidth())
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number }>()
   const [preferredWidth, setPreferredWidth] = useState(preferredWidthRef.current)
@@ -452,9 +477,20 @@ export function ArkmeMemberRecordsPanel(props: {
   const [resizing, setResizing] = useState(false)
 
   const load = (beforeSequence?: number) => {
+    const isLoadingOlder = beforeSequence !== undefined
+    if (isLoadingOlder && loadingRef.current) return
+    if (isLoadingOlder && bodyRef.current !== null) {
+      pendingScrollAnchorRef.current = {
+        scrollHeight: bodyRef.current.scrollHeight,
+        scrollTop: bodyRef.current.scrollTop,
+      }
+    } else {
+      pendingScrollAnchorRef.current = undefined
+    }
     requestRef.current?.abort()
     const controller = new AbortController()
     requestRef.current = controller
+    loadingRef.current = true
     setLoading(true)
     setError('')
     void callArkme<ArkmeConversationMemberRecordPage>('source.member-records', {
@@ -467,14 +503,21 @@ export function ArkmeMemberRecordsPanel(props: {
       .then(page => {
         if (requestRef.current !== controller) return
         setItems(current => beforeSequence === undefined ? page.items : mergeRecordItems(current, page.items))
-        setCursor(page.nextCursor?.beforeSequence)
-        setHasMore(page.hasMore)
+        const nextCursor = page.nextCursor?.beforeSequence
+        const canLoadMore = page.hasMore && nextCursor !== undefined && nextCursor !== beforeSequence
+        setCursor(canLoadMore ? nextCursor : undefined)
+        setHasMore(canLoadMore)
       })
       .catch(caught => {
         if (requestRef.current !== controller || controller.signal.aborted) return
+        pendingScrollAnchorRef.current = undefined
         setError(errorMessage(caught))
       })
-      .finally(() => { if (requestRef.current === controller) setLoading(false) })
+      .finally(() => {
+        if (requestRef.current !== controller) return
+        loadingRef.current = false
+        setLoading(false)
+      })
   }
 
   useEffect(() => {
@@ -483,7 +526,11 @@ export function ArkmeMemberRecordsPanel(props: {
     setCursor(undefined)
     setHasMore(false)
     load()
-    return () => { requestRef.current?.abort() }
+    return () => {
+      requestRef.current?.abort()
+      loadingRef.current = false
+      pendingScrollAnchorRef.current = undefined
+    }
   }, [props.sourceRef, props.member.memberRef, props.mode])
 
   useEffect(() => {
@@ -506,13 +553,34 @@ export function ArkmeMemberRecordsPanel(props: {
     return () => { window.removeEventListener('resize', measure) }
   }, [])
 
-  useEffect(() => {
-    if (items.length === 0 || initialScrollRef.current) return
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (items.length === 0 || body === null) return
+    const anchor = pendingScrollAnchorRef.current
+    if (anchor !== undefined) {
+      pendingScrollAnchorRef.current = undefined
+      body.scrollTop = retainArkmeMemberRecordsScrollTop(
+        anchor.scrollTop,
+        anchor.scrollHeight,
+        body.scrollHeight,
+      )
+      return
+    }
+    if (initialScrollRef.current) return
     initialScrollRef.current = true
-    window.requestAnimationFrame(() => {
-      if (bodyRef.current !== null) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    body.scrollTop = body.scrollHeight
+  }, [items])
+
+  useEffect(() => {
+    if (loading || error !== '') return
+    const frame = window.requestAnimationFrame(() => {
+      const body = bodyRef.current
+      if (body !== null && shouldLoadOlderArkmeMemberRecords(body.scrollTop, hasMore, cursor, loadingRef.current)) {
+        load(cursor)
+      }
     })
-  }, [items.length])
+    return () => { window.cancelAnimationFrame(frame) }
+  }, [cursor, error, hasMore, items.length, loading])
 
   const title = props.mode === 'mentioned'
     ? (props.member.isSelf ? '@我的快记' : `@${props.member.displayName}的快记`)
@@ -600,14 +668,30 @@ export function ArkmeMemberRecordsPanel(props: {
         <XIcon size={18} weight="regular" aria-hidden />
       </button>
     </header>
-    <div ref={bodyRef} style={styles.drawerBody}>
+    <div ref={bodyRef} style={styles.drawerBody} onScroll={event => {
+      if (shouldLoadOlderArkmeMemberRecords(
+        event.currentTarget.scrollTop,
+        hasMore,
+        cursor,
+        loadingRef.current,
+      )) {
+        load(cursor)
+      }
+    }}>
       {loading && items.length === 0 && <div style={styles.state}>正在加载快记…</div>}
       {error !== '' && items.length === 0 && <div style={styles.state} role="alert">
         <div>{error}</div><button type="button" style={styles.retry} onClick={() => { load() }}>重试</button>
       </div>}
       {!loading && error === '' && items.length === 0 && <div style={styles.state}>暂无快记</div>}
-      {hasMore && items.length > 0 && <button type="button" style={{ ...styles.more, opacity: loading ? .55 : 1 }} disabled={loading || cursor === undefined}
-        onClick={() => { if (cursor !== undefined) load(cursor) }}>{loading ? '正在加载…' : '加载更早快记'}</button>}
+      {loading && items.length > 0 && <div style={styles.loadMoreState} role="status" aria-live="polite">
+        正在加载更早快记…
+      </div>}
+      {error !== '' && items.length > 0 && <div style={styles.loadMoreState} role="alert" title={error}>
+        <span>加载更早快记失败</span>
+        <button type="button" style={styles.loadMoreRetry} onClick={() => { if (cursor !== undefined) load(cursor) }}>
+          重试
+        </button>
+      </div>}
       {timeline.map(entry => entry.kind === 'time'
         ? <div key={entry.key} style={styles.recordTime} data-arkme-record-time={entry.timestamp}>{entry.label}</div>
         : <Fragment key={entry.key}>
@@ -633,7 +717,6 @@ export function ArkmeMemberRecordsPanel(props: {
             />}
           </article>
         </Fragment>)}
-      {error !== '' && items.length > 0 && <div style={{ ...styles.state, padding: '12px' }} role="alert">{error}</div>}
     </div>
   </aside>
   </>

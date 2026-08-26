@@ -144,6 +144,20 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('data-arkme-text-collapsible')
   })
 
+  it('highlights visible member mentions only when the conversation enables mention rendering', () => {
+    const item = {
+      itemUid: 'mention-visible', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+      title: '', textContent: '@小林 处理一下',
+    }
+    const plainHtml = renderToStaticMarkup(<ArkmeMessageContent item={item} />)
+    expect(plainHtml).toContain('@小林 处理一下')
+    expect(plainHtml).not.toContain('--dsw-alias-state-business-primary')
+
+    const highlightedHtml = renderToStaticMarkup(<ArkmeMessageContent item={item} highlightMentions />)
+    expect(highlightedHtml).toContain('<span style="color:var(--dsw-alias-state-business-primary, #3964fe)">@小林</span>')
+    expect(highlightedHtml).toContain(' 处理一下')
+  })
+
   it('shows a precise fallback when record media delivery is temporarily unavailable', () => {
     const html = renderToStaticMarkup(<ArkmeMessageContent item={{
       itemUid: 'media-unavailable', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,

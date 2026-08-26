@@ -23,6 +23,24 @@ vi.mock('../src/client/api.js', () => ({
 
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { callArkme } from '../src/client/api.js'
+import { ArkmeSettingsSurface } from '../src/client/ArkmeSettingsSurface.js'
+import { ArkmeLogin } from '../src/client/ArkmeLogin.js'
+import { useArkmeAuthFlow } from '../src/client/arkme-auth-flow.js'
+import { ArkmeStartupAuthGateView, startupAuthGateScreen } from '../src/client/ArkmeStartupAuthGate.js'
+import {
+  arkmeLoginEn, defaultArkmeLoginTranslate, type ArkmeLoginLocaleKey, type ArkmeLoginTranslate,
+} from '../src/client/arkme-login-locales.js'
+
+const english = ((key: ArkmeLoginLocaleKey) => arkmeLoginEn[key]) as ArkmeLoginTranslate
+
+function LoginAfterLogout({ t }: { t: ArkmeLoginTranslate }) {
+  const flow = useArkmeAuthFlow({}, t)
+  return <ArkmeStartupAuthGateView
+    screen={startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error)}
+    error={flow.error} busy={flow.busy} onRetry={flow.retry} flow={flow} t={t}
+  />
+}
 
 describe('Arkme WeChat login ownership', () => {
   let renderer: ReactTestRenderer | undefined
@@ -46,5 +64,42 @@ describe('Arkme WeChat login ownership', () => {
     })
 
     expect(testState.calls.filter(method => method === 'auth.poll')).toHaveLength(0)
+  })
+
+  it.each([
+    ['zh', defaultArkmeLoginTranslate, '登录即我'],
+    ['en', english, 'Sign in to Arkme'],
+  ] as const)('keeps the selected %s login language after the Chinese account settings log out', async (locale, t, title) => {
+    let auth: ArkmeAuthSnapshot = { status: 'authenticated', environment: 'prod', userId: 10001 }
+    arkmeAuthStore.setAuth(auth)
+    vi.mocked(callArkme).mockImplementation(async method => {
+      testState.calls.push(method)
+      if (method === 'auth.status') return auth as never
+      if (method === 'auth.config') return { captchaId: '', testLoginEnabled: false } as never
+      if (method === 'user.profile' || method === 'user.profile.refresh') {
+        return { profile: { displayName: 'Test', nickname: 'Test', arkmeId: 'test', contact: { phoneMasked: '138****0000' } } } as never
+      }
+      if (method === 'auth.logout') {
+        auth = { status: 'logged-out', environment: 'prod' }
+        return auth as never
+      }
+      if (method === 'auth.begin' || method === 'auth.poll') return testState.pending as never
+      throw new Error(`unexpected method ${method}`)
+    })
+
+    await act(async () => {
+      renderer = create(<><ArkmeSettingsSurface /><LoginAfterLogout t={t} /></>)
+    })
+    expect(renderer!.root.findAllByType(ArkmeLogin)).toHaveLength(0)
+    const logout = renderer!.root.findAllByType('button')
+      .find(button => button.findAllByType('strong').some(label => label.children.includes('退出登录')))
+    expect(logout).toBeDefined()
+
+    await act(async () => { logout!.props.onClick() })
+
+    expect(testState.calls).toContain('auth.logout')
+    const login = renderer!.root.findByType(ArkmeLogin)
+    expect(login.props.t('locale.id')).toBe(locale)
+    expect(login.findByType('h3').children).toEqual([title])
   })
 })

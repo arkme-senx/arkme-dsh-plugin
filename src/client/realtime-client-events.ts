@@ -97,7 +97,7 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated') {
           if (update.projection !== 'record') return
           arkmeInterwovenInvalidation.invalidate()
-          arkmeUi.chatChanged()
+          arkmeUi.recordChanged()
           return
         }
         if (update.type === 'read-receipts-invalidated') {

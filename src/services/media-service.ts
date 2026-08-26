@@ -23,6 +23,10 @@ export interface ArkmeWorldImageReader {
   openWorldImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
 }
 
+export interface ArkmeBotImageReader {
+  openBotImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
+}
+
 export interface ArkmeRecordIdentity {
   recordUid(raw: unknown): string
 }
@@ -263,6 +267,7 @@ export class MediaService {
     private readonly profile: ProfileService,
     private readonly worldImages: ArkmeWorldImageReader,
     private readonly recordIdentity: ArkmeRecordIdentity,
+    private readonly botImages?: ArkmeBotImageReader,
   ) {}
 
   dispose(): void {
@@ -572,6 +577,16 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
+      if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
+      const reference = await this.botImages.openBotImageRef(imageRef, session.userId)
+      return await this.downloadSignedImage(
+        trustedSignedImageUrl(this.runtime.config.environment, reference.sourceUrl),
+        byteLimit,
+        signal,
+        this.runtime.requestScope(session.userId),
+      )
+    }
     if (imageRef.trim().startsWith('arkme-media-v1.')) {
       const { response, descriptor } = await this.fetchMedia(imageRef.trim(), undefined, signal)
       if (!descriptor.mimeType.trim().toLowerCase().startsWith('image/')) {
