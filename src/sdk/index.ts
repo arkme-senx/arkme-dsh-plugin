@@ -740,6 +740,14 @@ export class ArkmeSdk {
 		return await this.call<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef: normalized }, signal)
 	}
 
+	async extensionShareCatalogDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+		const normalized = shareRef.trim()
+		if (!/^extshare_[0-9a-f]{32}$/.test(normalized)) {
+			throw new TypeError('Arkme extension share reference is invalid')
+		}
+		return await this.call<ArkmeExtensionCatalogItem>('extensions.share.resolve', { shareRef: normalized }, signal)
+	}
+
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
   async readImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {
     if (imageRef.trim() === '') throw new TypeError('Arkme image reference must not be empty')

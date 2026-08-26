@@ -2340,6 +2340,7 @@ export type ArkmePluginOperation =
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'
+	| 'extensions.share.resolve'
   | 'extensions.installed-list'
   | 'extensions.enabled-state'
   | 'extensions.persistent.client-state'

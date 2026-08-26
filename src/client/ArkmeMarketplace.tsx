@@ -27,6 +27,7 @@ import { ArkmeExtensionSourceLink } from './ArkmeExtensionShare.js'
 import { ArkmeSharedExtensionDetail as SharedExtensionDetailView } from './ArkmeSharedExtensionDetail.js'
 import { appendExtensionDiscoverPage, extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
+import { resolveExtensionSharePresentation } from './extension-share-presentation.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
@@ -1674,6 +1675,7 @@ export function ArkmeMarketplace({
   const openedInitialExtensionIdRef = useRef<string>()
   const detailReturnFocus = useRef<HTMLElement>()
   const promptedRestartExtensions = useRef(new Set<string>())
+  const preserveResolvedShareDetail = useRef(false)
 
   const categoryOptions = marketplaceCategoryOptions(
     classificationTree,
@@ -1685,12 +1687,14 @@ export function ArkmeMarketplace({
   const classificationHint = classificationStatusHint(classificationTree.status, classificationTree.message)
 
   const closeDetail = (restoreFocus = true) => {
+    const dismissPendingShare = shareRef !== undefined && sharedDetail === undefined
     setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setDetailError('')
     setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
     setShareNotice(''); setAuthorCardOpen(false); setAuthorActionError('')
     const target = detailReturnFocus.current
     detailReturnFocus.current = undefined
     if (restoreFocus && target !== undefined && typeof window !== 'undefined') window.setTimeout(() => { target.focus() }, 0)
+    if (dismissPendingShare) onShareExit?.()
   }
 
   const hostInstance = async (): Promise<string | undefined> => {
@@ -1786,6 +1790,7 @@ export function ArkmeMarketplace({
   const load = async (
     target: Tab,
     mode: 'initial' | 'refresh' = extensionTabLoadMode(loadedTabs, target),
+    preserveDetail = false,
   ) => {
     const sequence = ++requestSequence.current
     requestController.current?.abort()
@@ -1798,7 +1803,8 @@ export function ArkmeMarketplace({
     const controller = new AbortController()
     requestController.current = controller
     if (mode === 'initial') setLoadingTab(target)
-    setError(''); setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError(''); setInstallError('')
+    setError(''); setInstallError('')
+    if (!preserveDetail) { setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError('') }
     setAuditResult(undefined); setAuditError('')
     try {
       if (target === 'discover') {
@@ -1934,6 +1940,10 @@ export function ArkmeMarketplace({
 
   useEffect(() => {
     if (shareRef !== undefined) return
+    if (preserveResolvedShareDetail.current) {
+      preserveResolvedShareDetail.current = false
+      return
+    }
     const timer = window.setTimeout(() => { void load('discover', 'initial') }, searchQuery.trim() === '' ? 0 : 250)
     return () => {
       window.clearTimeout(timer)
@@ -1945,13 +1955,27 @@ export function ArkmeMarketplace({
   useEffect(() => {
     if (shareRef === undefined) return
     const controller = new AbortController()
-    setSharedDetail(undefined); setSharedDetailBusy(true); setDetail(undefined); setError('')
-    void callArkme<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef }, controller.signal)
-      .then(value => { setSharedDetail(value) })
-      .catch(caught => {
-        if ((caught as Error).name !== 'AbortError') setError(caught instanceof Error ? caught.message : String(caught))
+    setSharedDetail(undefined); setSharedDetailBusy(false); setDetail(undefined); setError('')
+    setDetailRequestedExtensionId(`share:${shareRef}`); setDetailBusy(true); setDetailError('')
+    setTab('discover')
+    void load('discover', 'initial', true)
+    void resolveExtensionSharePresentation(shareRef, controller.signal)
+      .then(presentation => {
+        if (controller.signal.aborted) return
+        if (presentation.kind === 'catalog') {
+          setDetailRequestedExtensionId(presentation.detail.extension_id); setDetail(presentation.detail); setDetailBusy(false)
+          preserveResolvedShareDetail.current = true
+          onShareExit?.()
+        } else {
+          setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setSharedDetail(presentation.detail)
+        }
       })
-      .finally(() => { if (!controller.signal.aborted) setSharedDetailBusy(false) })
+      .catch(caught => {
+        if ((caught as Error).name !== 'AbortError' && !controller.signal.aborted) {
+          setDetailBusy(false)
+          setDetailError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
     return () => { controller.abort() }
   }, [shareRef])
 

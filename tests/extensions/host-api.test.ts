@@ -345,6 +345,30 @@ describe('marketplace Host BFF', () => {
 		expect(readSharedDetail).toHaveBeenCalledWith('extshare_0123456789abcdef0123456789abcdef')
 	})
 
+	it('routes public share resolution through the standard catalog detail owner', async () => {
+		const service = {
+			extensionAuthors: vi.fn(async () => new Map([[77, {
+				displayName: 'Lucis', arkmeId: 'lucis', avatarRef: 'sealed-avatar-ref',
+				avatarFallback: { kind: 'phone_default' as const, colorIndex: 3, label: 'L' },
+			}]])),
+		}
+		const resolveSharedCatalogDetail = vi.fn(async () => ({
+			extension_id: 'ext-public-1', owner_user_id: 77, name: '天气', description: '', visibility: 'public',
+		}))
+		await expect(dispatchArkmeHostOperation(
+			service as never,
+			'extensions.share.resolve',
+			{ shareRef: 'extshare_0123456789abcdef0123456789abcdef' },
+			undefined,
+			{ resolveSharedCatalogDetail } as never,
+		)).resolves.toMatchObject({
+			extension_id: 'ext-public-1', name: '天气', owner_name: 'Lucis', owner_arkme_id: 'lucis',
+			owner_avatar_ref: 'sealed-avatar-ref',
+		})
+		expect(resolveSharedCatalogDetail).toHaveBeenCalledWith('extshare_0123456789abcdef0123456789abcdef')
+		expect(service.extensionAuthors).toHaveBeenCalledWith([77])
+	})
+
   it('routes my-extension list and publish through the unified Host owner', async () => {
     const list = vi.fn(async () => ({ items: [], warnings: [] }))
     const publish = vi.fn(async () => ({ extension_id: 'ext-1', version: '1.0.0', status: 'published' }))

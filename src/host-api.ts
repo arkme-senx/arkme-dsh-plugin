@@ -1191,6 +1191,10 @@ export async function dispatchArkmeHostOperation(
 	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
 		stringParam(params, 'shareRef'),
 	)
+	case 'extensions.share.resolve': {
+		const item = await requireExtensionManager(extensionManager).resolveSharedCatalogDetail(stringParam(params, 'shareRef'))
+		return (await enrichExtensionAuthors(service, [item]))[0]
+	}
     case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
       extensionId: stringParam(params, 'extensionId'),
     })

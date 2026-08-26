@@ -22,6 +22,9 @@ describe('extension share DSH deep link', () => {
 		controller.dismissExtensionShare()
 		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
 		controller.openExtensionShare(SHARE_REF)
+		const latestShareRef = 'extshare_fedcba9876543210fedcba9876543210'
+		controller.openExtensionShare(latestShareRef)
+		expect(controller.getSnapshot()).toMatchObject({ extensionShareRef: latestShareRef })
 		controller.dismissExtensionShare()
 		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
 	})
