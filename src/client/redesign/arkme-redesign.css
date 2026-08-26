@@ -461,6 +461,9 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-plugins-page .arkme-extension-center-embedded main > [role="alert"] { grid-column: 1 / -1; }
 @keyframes arkme-icon-spin { to { transform: rotate(360deg); } }
 .arkme-icon-spin { animation: arkme-icon-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  [data-arkme-voice] .arkme-icon-spin { animation: none; }
+}
 
 .arkme-redesign-settings-surface { width: 100%; height: auto; overflow: visible; color: #20232c; background: transparent; }
 .arkme-redesign-settings-shell { width: 100%; box-sizing: border-box; margin: 0; padding: 0; }
