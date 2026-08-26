@@ -68,6 +68,36 @@ describe('ChatService', () => {
     expect(deleted.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123', 'asset-new-12345'])
   })
 
+  it('serializes concurrent favorite sticker mutations so additions cannot overwrite each other', async () => {
+    let items: Record<string, unknown>[] = [
+      { file_asset_uid: 'asset-existing-1', file_name: 'existing.png', mime_type: 'image/png', file_kind: 1, file_size: 10 },
+    ]
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path.endsWith('/get')) {
+          await Promise.resolve()
+          return { items, updated_at_millis: 1 }
+        }
+        await Promise.resolve()
+        items = body.items as Record<string, unknown>[]
+        return {}
+      }),
+    }
+    const media = { favoriteStickerMediaRef: (raw: Record<string, unknown>) => `favorite:${String(raw.file_asset_uid)}` }
+    const chat = new ChatService(
+      runtime as never, {} as never, {} as never, media as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await Promise.all([
+      chat.addFavoriteSticker({ fileAssetUid: 'asset-added-one', fileName: 'one.png', mimeType: 'image/png', fileKind: 1, size: 11 }),
+      chat.addFavoriteSticker({ fileAssetUid: 'asset-added-two', fileName: 'two.png', mimeType: 'image/png', fileKind: 1, size: 12 }),
+    ])
+
+    expect(items.map(item => item.file_asset_uid)).toEqual(['asset-added-two', 'asset-added-one', 'asset-existing-1'])
+  })
+
   it('preserves forwarded recording segments and safe media without leaking source identities', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
