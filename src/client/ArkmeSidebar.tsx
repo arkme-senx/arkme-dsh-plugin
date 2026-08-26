@@ -243,6 +243,14 @@ const styles: Record<string, CSSProperties> = {
   },
   agentSourceIcon: { flex: 'none', width: 12, height: 12, display: 'grid', placeItems: 'center', overflow: 'hidden' },
   agentSourceText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  selfTopicBadge: {
+    maxWidth: 'min(600px, 100%)', minWidth: 0, height: 24, display: 'inline-flex', alignItems: 'center', gap: 3,
+    padding: '0 6px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: arkmeTheme.secondary,
+    font: 'inherit', fontSize: 11, lineHeight: '14px', cursor: 'pointer',
+  },
+  selfTopicBadgeIcon: { width: 13, height: 13, flex: 'none' },
+  selfTopicBadgeText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  selfTopicBadgeChevron: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 15, lineHeight: 1 },
   bubble: { maxWidth: 'min(600px, 100%)', minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box', cursor: 'pointer', border: '1px solid rgba(29,32,40,.035)' },
   bubbleMe: { background: arkmeTheme.messageOwn, borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
   bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
@@ -342,6 +350,46 @@ export function ArkmeTimelineAgentSourceBadge({ item }: { item: ArkmeTimelineIte
     <span style={styles.agentSourceIcon} aria-hidden><AgentAssistantIcon size={12} /></span>
     <span style={styles.agentSourceText}>{item.agentSource.label}</span>
   </span>
+}
+
+export function arkmeTimelineSelfTopicSource(
+  item: ArkmeTimelineItem,
+  sources: readonly ArkmeSourceItem[],
+): ArkmeSourceItem | undefined {
+  const topic = item.selfTopic
+  if (topic === undefined) return undefined
+  const resolved = sources.find(source => source.kind === 'topic' && source.topicHierarchyKey === topic.topicHierarchyKey)
+  if (resolved !== undefined) return resolved
+  if (topic.sourceRef === undefined || topic.title === undefined) return undefined
+  return {
+    sourceRef: topic.sourceRef,
+    kind: 'topic',
+    displayName: topic.title,
+    activeAtMillis: 0,
+    unreadCount: 0,
+  }
+}
+
+export function ArkmeTimelineSelfTopicBadge({
+  topic,
+  onSelect,
+}: {
+  topic: ArkmeSourceItem
+  onSelect: (source: ArkmeSourceItem) => void
+}) {
+  return <button
+    type="button"
+    data-arkme-self-topic-badge={topic.displayName}
+    aria-label={`查看主题「${topic.displayName}」`}
+    style={styles.selfTopicBadge}
+    onClick={event => {
+      event.stopPropagation()
+      onSelect(topic)
+    }}
+  ><svg aria-hidden viewBox="0 0 16 16" style={styles.selfTopicBadgeIcon}>
+      <path d="M3.25 2.75h9.5v10.5h-9.5zM5.25 5.25h5.5M5.25 7.9h3.8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg><span style={styles.selfTopicBadgeText}>{topic.displayName}</span><span aria-hidden style={styles.selfTopicBadgeChevron}>›</span>
+  </button>
 }
 
 export function arkmeShouldBeginWechat(
@@ -2493,6 +2541,9 @@ export function ArkmeSurface({
                   </Fragment>
                 }
                 const item = row.item
+                const selfTopicSource = source?.kind === 'send_to_self'
+                  ? arkmeTimelineSelfTopicSource(item, selfSources)
+                  : undefined
                 const avatarRef = arkmeTimelineAvatarRef(item, selfProfile)
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
@@ -2574,6 +2625,7 @@ export function ArkmeSurface({
                             <ArkmeTimelineAgentSourceBadge item={item} />
                           </div>
                         </ArkmeMessageReadReceiptLine>
+                        {selfTopicSource !== undefined && <ArkmeTimelineSelfTopicBadge topic={selfTopicSource} onSelect={activateSelfSource} />}
                       </div>
                     </div>
                   </li>

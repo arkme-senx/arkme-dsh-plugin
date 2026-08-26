@@ -248,7 +248,7 @@ export function arkmeSelfTopicSelectionLabel(
   sources: readonly ArkmeSourceItem[] = [],
 ): string {
   const path = arkmeSelfTopicSelectionPath(selectedSource, sources)
-  return path.length === 0 ? '全部主题' : path.join(' / ')
+  return path.length === 0 ? '全部' : path.join(' / ')
 }
 
 function topicDirectRecordCount(source: ArkmeSourceItem | undefined): number {
@@ -538,7 +538,7 @@ export function ArkmeSourceBreadcrumb({
       }}
     >
       <span style={styles.selectorText}>
-        {compactSelectedPath.length === 0 ? '全部主题' : compactSelectedPath.map((segment, index) => <Fragment key={`${String(index)}:${segment}`}>
+        {compactSelectedPath.length === 0 ? '全部' : compactSelectedPath.map((segment, index) => <Fragment key={`${String(index)}:${segment}`}>
           {index > 0 && <span aria-hidden style={styles.selectorPathSeparator}>/</span>}
           {segment === '…'
             ? <span aria-hidden style={styles.selectorPathEllipsis}>…</span>

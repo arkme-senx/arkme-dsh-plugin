@@ -319,8 +319,8 @@ describe('topic create UI', () => {
     expect(markup).toContain('发给自己')
     expect(markup).toContain('发布流程')
 
-    expect(arkmeSelfTopicSelectionLabel(undefined)).toBe('全部主题')
-    expect(arkmeSelfTopicSelectionLabel(aggregate)).toBe('全部主题')
+    expect(arkmeSelfTopicSelectionLabel(undefined)).toBe('全部')
+    expect(arkmeSelfTopicSelectionLabel(aggregate)).toBe('全部')
     expect(arkmeSelfTopicSelectionLabel(leafTopic)).toBe('发布流程')
     expect(arkmeSelfTopicSelectionPath(leafTopic, sources)).toEqual(['产品研发', 'DSH 插件', '发布流程'])
     expect(arkmeTopicPathNames(leafTopic, sources)).toEqual(['产品研发', 'DSH 插件', '发布流程'])
