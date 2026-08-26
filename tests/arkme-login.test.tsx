@@ -114,7 +114,7 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('data-state="error"')
     expect(html).toContain('.dsh-arkme-login-qr-frame[data-state=')
     expect(html).toContain('] .dsh-arkme-login-qr-relogin')
-    expect(html).toContain('background: #171923')
+    expect(html).toContain('background: var(--arkme-login-primary-action)')
     expect(html).not.toContain('二维码加载中')
   })
 
@@ -244,6 +244,20 @@ describe('ArkmeLogin', () => {
     expect(html).not.toContain('.dsh-arkme-login-qr-panel { display: flex; flex-direction: column; align-items: center; text-align: center; }')
   })
 
+  it('keeps the final desktop palette on DSH semantic theme tokens', () => {
+    const css = renderLogin().replaceAll('&gt;', '>')
+    const desktopPalette = css.match(/\.dsh-arkme-login-page \{\s+min-height: 100%;([\s\S]+?)\/\* DSH owns light\/dark\/system;/)?.[1] ?? ''
+
+    expect(desktopPalette).not.toBe('')
+    expect(desktopPalette).toContain('background: var(--arkme-login-base);')
+    expect(desktopPalette).toContain('background: var(--arkme-login-subtle);')
+    expect(desktopPalette).toContain('background: var(--arkme-login-primary-action) !important;')
+    expect(desktopPalette).toContain('color: var(--arkme-login-on-primary-action) !important;')
+    expect(desktopPalette).toContain('background: var(--arkme-login-surface) !important;')
+    expect(desktopPalette).toContain('color: var(--arkme-login-text) !important;')
+    expect(desktopPalette).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  })
+
   it('follows the host dark theme for both columns and keeps the wordmark readable', () => {
     const darkCss = darkLoginCss()
 
@@ -283,16 +297,16 @@ describe('ArkmeLogin', () => {
     const css = html.replaceAll('&gt;', '>')
 
     expect(css).toContain('font-family: -apple-system, BlinkMacSystemFont')
-    expect(css).toContain('.dsh-arkme-login-brand > p { margin: 0 0 8px; color: #858a94; font-size: 12px;')
+    expect(css).toContain('.dsh-arkme-login-brand > p { margin: 0 0 8px; color: var(--arkme-login-secondary); font-size: 12px;')
     expect(css).toContain('.dsh-arkme-login-title { font-size: 30px; line-height: 1.2;')
-    expect(css).toContain('.dsh-arkme-login-brand > span { margin-top: 9px; display: block; color: #858992; font-size: 13px;')
+    expect(css).toContain('.dsh-arkme-login-brand > span { margin-top: 9px; display: block; color: var(--arkme-login-secondary); font-size: 13px;')
     expect(css).toContain('.dsh-arkme-login-description { margin: 24px 0 0;')
     expect(css).toContain('.dsh-arkme-login-tabs-wrap { justify-content: flex-start; margin-top: 28px; }')
     expect(css).toContain('.dsh-arkme-login-qr-panel { min-height: 152px; justify-content: flex-start; }')
     expect(css).toContain('.dsh-arkme-login-agreement { margin-top: 32px; column-gap: 3px;')
     expect(css).toContain('.dsh-arkme-login-tabs { width: 232px;')
-    expect(css).toContain('.dsh-arkme-login-tab { height: 34px; padding: 0 9px; border-radius: 9px; color: #777b84; font-size: 12px;')
-    expect(css).toContain('.dsh-arkme-login-submit { height: 46px; margin-top: 18px; border-radius: 12px; background: #171923; font-size: 14px;')
+    expect(css).toContain('.dsh-arkme-login-tab { height: 34px; padding: 0 9px; border-radius: 9px; color: var(--arkme-login-secondary); font-size: 12px;')
+    expect(css).toContain('.dsh-arkme-login-submit { height: 46px; margin-top: 18px; border-radius: 12px; background: var(--arkme-login-primary-action); font-size: 14px;')
     expect(css).toContain('.dsh-arkme-login-phone-panel > .dsh-arkme-login-submit { margin-top: 28px; }')
     expect(css).toContain('.dsh-arkme-login-card { margin: 0 auto; padding: 90px 0 48px; }')
     expect(css).toContain('.dsh-arkme-login-page .dsh-arkme-login-tab {')
@@ -300,6 +314,6 @@ describe('ArkmeLogin', () => {
     expect(css).toContain('.dsh-arkme-login-page .dsh-arkme-login-tab:focus {')
     expect(css).toContain('outline: none !important;')
     expect(css).toContain('.dsh-arkme-login-page .dsh-arkme-login-submit,')
-    expect(css).toContain('background: #171923 !important;')
+    expect(css).toContain('background: var(--arkme-login-primary-action) !important;')
   })
 })
