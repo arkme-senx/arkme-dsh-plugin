@@ -27,7 +27,7 @@ import {
 import { AiVideoService } from './services/ai-video-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
-import { AuthService } from './services/auth-service.js'
+import { AuthService, jiwoScanLoginAvailable } from './services/auth-service.js'
 import { BotService, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { CalendarService } from './services/calendar-service.js'
 import { CallHistoryService } from './services/call-history-service.js'
@@ -460,6 +460,7 @@ export class ArkmeService {
       captchaId: this.config.geetestCaptchaId,
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',
+      jiwoScanLoginEnabled: jiwoScanLoginAvailable(this.config),
       callAssetBasePath: `${this.config.routePath}/call`,
       voiceprintEnrollmentPath: `${this.config.routePath}/voiceprint/enroll`,
       shareWebsite: this.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE,
@@ -1184,6 +1185,18 @@ export class ArkmeService {
 
   async pollWechatLogin(attemptId: string): Promise<ArkmeAuthSnapshot> {
     return await this.auth.pollWechatLogin(attemptId)
+  }
+
+  async beginJiwoLogin(): Promise<ArkmeAuthSnapshot> {
+    return await this.auth.beginJiwoLogin()
+  }
+
+  async pollJiwoLogin(attemptId: string): Promise<ArkmeAuthSnapshot> {
+    return await this.auth.pollJiwoLogin(attemptId)
+  }
+
+  async cancelJiwoLogin(attemptId: string): Promise<{ canceled: true }> {
+    return await this.auth.cancelJiwoLogin(attemptId)
   }
 
   async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {

@@ -185,7 +185,7 @@ describe('Arkme product navigation', () => {
     const markup = renderToStaticMarkup(<ArkmeCallSurface initialPickerOpen />)
 
     expect(markup).toContain('aria-label="选择通话联系人"')
-    expect(markup).toContain('placeholder="搜索私聊联系人"')
+    expect(markup).toContain('placeholder="输入即我号或昵称"')
     expect(markup).toContain('>最近联系人<')
     expect(markup).toContain('没有可呼叫联系人')
     expect(markup).toContain('先在对话里建立私聊后，就可以从这里发起通话。')

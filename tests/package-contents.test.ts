@@ -5,10 +5,9 @@ import { describe, expect, it } from 'vitest'
 describe('published package contents', () => {
   it('ships public docs without internal planning artifacts', () => {
     const pnpmCli = process.env.npm_execpath
-    expect(pnpmCli).toBeTruthy()
-
-    const output = execFileSync(process.execPath, [
-      pnpmCli!,
+    const command = pnpmCli === undefined ? 'pnpm' : process.execPath
+    const output = execFileSync(command, [
+      ...(pnpmCli === undefined ? [] : [pnpmCli]),
       'pack',
       '--dry-run',
       '--json',

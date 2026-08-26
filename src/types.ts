@@ -25,6 +25,7 @@ export interface ArkmeClientConfig {
   captchaId: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
+  jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
   shareWebsite: string
@@ -2054,6 +2055,9 @@ export type ArkmePluginOperation =
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
+  | 'auth.app.begin'
+  | 'auth.app.poll'
+  | 'auth.app.cancel'
   | 'auth.test.login'
   | 'auth.phone.send'
   | 'auth.phone.verify'

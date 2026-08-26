@@ -1,7 +1,7 @@
 import type { ChangeEvent } from 'react'
 import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 
-export type ArkmeLoginMode = 'wechat' | 'phone' | 'test'
+export type ArkmeLoginMode = 'jiwo' | 'wechat' | 'phone' | 'test'
 
 export interface ArkmeLoginProps {
   mode: ArkmeLoginMode
@@ -14,6 +14,7 @@ export interface ArkmeLoginProps {
   smsCode: string
   smsCountdown: number
   testLoginEnabled: boolean
+  jiwoScanLoginEnabled: boolean
   testUserId: string
   qrDataUrl: string
   onModeChange: (mode: ArkmeLoginMode) => void
@@ -25,6 +26,7 @@ export interface ArkmeLoginProps {
   onVerifyCode: () => void
   onTestLogin: () => void
   onWechatLogin: () => void
+  onJiwoLogin: () => void
   onCancelBinding: () => void
 }
 
@@ -403,6 +405,7 @@ const loginStyles = `
   .dsh-arkme-login-tabs-wrap { justify-content: flex-start; margin-top: 32px; }
   .dsh-arkme-login-tabs { width: 232px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 3px; border-radius: 11px; background: #f1f1f3; }
   .dsh-arkme-login-tabs:has(.dsh-arkme-login-tab:nth-child(3)) { width: 330px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dsh-arkme-login-tabs:has(.dsh-arkme-login-tab:nth-child(4)) { width: 390px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .dsh-arkme-login-tab { height: 34px; padding: 0 9px; border-radius: 9px; color: #777b84; font-size: 12px; font-weight: 400; }
   .dsh-arkme-login-tab:hover { color: #20232c; }
   .dsh-arkme-login-tab[aria-selected='true'] { color: #20232c; font-weight: 500; box-shadow: 0 1px 4px rgba(30,32,38,.1); }
@@ -452,7 +455,11 @@ const loginStyles = `
 export function ArkmeLogin(props: ArkmeLoginProps) {
   const effectiveMode = props.phoneBindingRequired === true
     ? 'phone'
-    : props.mode === 'test' && !props.testLoginEnabled ? 'wechat' : props.mode
+    : props.mode === 'jiwo' && !props.jiwoScanLoginEnabled
+      ? 'wechat'
+      : props.mode === 'test' && !props.testLoginEnabled
+        ? props.jiwoScanLoginEnabled ? 'jiwo' : 'wechat'
+        : props.mode
   const changePhone = (event: ChangeEvent<HTMLInputElement>) => {
     props.onPhoneChange(event.target.value.replace(/\D/g, '').slice(0, 11))
   }
@@ -495,6 +502,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
 
         {props.phoneBindingRequired !== true && <div className="dsh-arkme-login-tabs-wrap">
           <div className="dsh-arkme-login-tabs" role="tablist" aria-label="登录方式">
+            {props.jiwoScanLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'jiwo'} onClick={() => { props.onModeChange('jiwo') }}>即我扫码</button>}
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'wechat'} onClick={() => { props.onModeChange('wechat') }}>微信扫码</button>
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'phone'} onClick={() => { props.onModeChange('phone') }}>手机号登录</button>
             {props.testLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'test'} onClick={() => { props.onModeChange('test') }}>测试账号</button>}
@@ -502,14 +510,14 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
         </div>}
 
         <div className="dsh-arkme-login-method">
-          {effectiveMode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
-            <div className="dsh-arkme-login-qr-title">请使用微信扫码登录</div>
+          {effectiveMode === 'jiwo' || effectiveMode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
+            <div className="dsh-arkme-login-qr-title">{effectiveMode === 'jiwo' ? '请使用即我 App 扫码登录' : '请使用微信扫码登录'}</div>
             <div className="dsh-arkme-login-qr-frame">
               {props.qrDataUrl === ''
                 ? props.error !== '' && !props.busy
-                  ? <button type="button" className="dsh-arkme-login-qr-relogin" onClick={props.onWechatLogin}>重新登录</button>
+                  ? <button type="button" className="dsh-arkme-login-qr-relogin" onClick={effectiveMode === 'jiwo' ? props.onJiwoLogin : props.onWechatLogin}>重新登录</button>
                   : <span className="dsh-arkme-login-qr-loading">二维码加载中</span>
-                : <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt="微信扫码登录 Arkme" />}
+                : <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt={effectiveMode === 'jiwo' ? '即我扫码登录 Arkme' : '微信扫码登录 Arkme'} />}
             </div>
           </div> : effectiveMode === 'phone' ? <div role="tabpanel">
             <div className="dsh-arkme-login-field">

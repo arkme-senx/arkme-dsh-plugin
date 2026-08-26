@@ -779,6 +779,7 @@ describe('ArkmeService', () => {
       captchaId: 'captcha-test-id-1234567890',
       environment: 'test',
       testLoginEnabled: true,
+      jiwoScanLoginEnabled: false,
       callAssetBasePath: '/arkme-self/api/call',
       voiceprintEnrollmentPath: '/arkme-self/api/voiceprint/enroll',
       shareWebsite: 'https://app.arkme.ai',

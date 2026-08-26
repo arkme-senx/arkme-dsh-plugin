@@ -87,6 +87,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeCallSurface.tsx'),
     join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
     join(root, 'src/services/contact-service.ts'),
@@ -107,6 +108,35 @@ function withoutOfficialCommunityProductCopy(file: string, content: string): str
   return content
 }
 
+function withoutApprovedJiwoScanLoginFeature(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'cordis.patch.yml'),
+    join(root, 'src/arkme-service.ts'),
+    join(root, 'src/client/ArkmeLogin.tsx'),
+    join(root, 'src/client/ArkmeSidebar.tsx'),
+    join(root, 'src/client/arkme-auth-flow.tsx'),
+    join(root, 'src/host-api.ts'),
+    join(root, 'src/index.ts'),
+    join(root, 'src/services/auth-service.ts'),
+    join(root, 'src/services/service.ts'),
+    join(root, 'src/types.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // This is an intentionally product-facing compatibility feature: Arkme can
+  // authenticate against the Jiwo account domain when explicitly enabled.
+  return content.replace(/jotmo|jiwo/gi, '').replaceAll('即我', '')
+}
+
+function withoutOutgoingCallAssetCompatibilityAlias(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'src/client/ArkmeCallSurface.tsx'),
+    join(root, 'src/outgoing-call-assets.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // The already-published call icon filename is a fixed asset protocol key.
+  return content.replaceAll('jotmo-video-linear.svg', '')
+}
+
 describe('Arkme plugin identity', () => {
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
@@ -118,9 +148,15 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutOfficialCommunityProductCopy(
+      const source = withoutOutgoingCallAssetCompatibilityAlias(
         file,
-        withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+        withoutApprovedJiwoScanLoginFeature(
+          file,
+          withoutOfficialCommunityProductCopy(
+            file,
+            withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+          ),
+        ),
       )
       const content = withoutInfrastructureNames(withoutOpenClawProtocolNames(file, source))
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []

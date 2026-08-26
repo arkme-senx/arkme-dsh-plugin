@@ -482,6 +482,9 @@ export async function dispatchArkmeHostOperation(
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
     case 'auth.poll': return await service.pollWechatLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.begin': return await service.beginJiwoLogin()
+    case 'auth.app.poll': return await service.pollJiwoLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.cancel': return await service.cancelJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),

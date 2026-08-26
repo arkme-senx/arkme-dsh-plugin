@@ -733,12 +733,13 @@ export function ArkmeSurface({
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? '请先绑定手机号，再继续使用 Arkme' : '')
   const [agreed, setAgreed] = useState(true)
-  const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
+  const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'jiwo')
   const [phone, setPhone] = useState('')
   const [smsCode, setSmsCode] = useState('')
   const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
+  const [jiwoScanLoginEnabled, setJiwoScanLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
   const [conversationMembers, setConversationMembers] = useState<ArkmeConversationMemberItem[]>([])
@@ -834,6 +835,7 @@ export function ArkmeSurface({
   }, [addMenuOpen])
 
   const qrRequestStartedRef = useRef(false)
+  const currentJiwoAttemptRef = useRef<string>()
   const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
   const cacheAccountUserIdRef = useRef<number>()
   const timelineGenerationRef = useRef(0)
@@ -954,7 +956,13 @@ export function ArkmeSurface({
     if (authStoreSnapshot.config === undefined) return
     setCaptchaId(authStoreSnapshot.config.captchaId)
     setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
-  }, [authStoreSnapshot.config])
+    setJiwoScanLoginEnabled(authStoreSnapshot.config.jiwoScanLoginEnabled)
+    if (!phoneBindingRequired && (auth?.status === 'logged-out' || auth?.status === 'expired')) {
+      setLoginMode(authStoreSnapshot.config.jiwoScanLoginEnabled
+        ? 'jiwo'
+        : authStoreSnapshot.config.testLoginEnabled ? 'test' : 'wechat')
+    }
+  }, [auth?.status, authStoreSnapshot.config, phoneBindingRequired])
   useEffect(() => {
     if (authStoreSnapshot.error !== '' && authView === 'login') setError(authStoreSnapshot.error)
   }, [authStoreSnapshot.error, authView])
@@ -975,8 +983,13 @@ export function ArkmeSurface({
       if (config !== undefined) {
         setCaptchaId(config.captchaId)
         setTestLoginEnabled(config.testLoginEnabled)
+        setJiwoScanLoginEnabled(config.jiwoScanLoginEnabled)
       }
-      if (!['authenticated', 'binding-required'].includes(snapshot.status) && config?.testLoginEnabled === true) setLoginMode('test')
+      if (!['authenticated', 'binding-required'].includes(snapshot.status)) {
+        setLoginMode(config?.jiwoScanLoginEnabled === true
+          ? 'jiwo'
+          : config?.testLoginEnabled === true ? 'test' : 'wechat')
+      }
     } catch (caught) { setError(errorMessage(caught)) }
     finally { setBusy(false) }
   }, [acceptAuthSnapshot])
@@ -1390,18 +1403,23 @@ export function ArkmeSurface({
   }, [smsCountdown])
 
   useEffect(() => {
-    if (loginMode !== 'wechat' || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
+    if (!['jiwo', 'wechat'].includes(loginMode) || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
     let stopped = false; let timer: ReturnType<typeof setTimeout>
+    const operation = loginMode === 'jiwo' ? 'auth.app.poll' : 'auth.poll'
     const poll = async () => {
       try {
-        const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.poll', { attemptId: auth.attemptId })
+        const snapshot = await callArkme<ArkmeAuthSnapshot>(operation, { attemptId: auth.attemptId })
         if (stopped) return
         acceptAuthSnapshot(snapshot)
-        if (snapshot.status === 'authenticated') { setQr(''); return }
+        if (snapshot.status === 'authenticated' || snapshot.status === 'expired') {
+          currentJiwoAttemptRef.current = undefined
+          setQr('')
+          return
+        }
       } catch (caught) { if (!stopped) setError(errorMessage(caught)) }
       if (!stopped) timer = setTimeout(() => { void poll() }, 1200)
     }
-    timer = setTimeout(() => { void poll() }, 800)
+    timer = setTimeout(() => { void poll() }, 1200)
     return () => { stopped = true; clearTimeout(timer) }
   }, [agreed, auth?.attemptId, auth?.status, loginMode])
 
@@ -1410,6 +1428,17 @@ export function ArkmeSurface({
     setBusy(true); setError('')
     try { const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.begin'); acceptAuthSnapshot(snapshot); setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent)) }
     catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
+  }
+
+  const beginJiwo = async () => {
+    if (!agreed) { setError('请阅读并同意用户协议和隐私条款'); return }
+    setBusy(true); setError('')
+    try {
+      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.app.begin')
+      currentJiwoAttemptRef.current = snapshot.attemptId
+      acceptAuthSnapshot(snapshot)
+      setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent))
+    } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
   const sendCode = async () => {
@@ -1452,21 +1481,32 @@ export function ArkmeSurface({
       setQr('')
       setSubmitBusy(false)
       qrRequestStartedRef.current = false
-      setLoginMode(testLoginEnabled ? 'test' : 'wechat')
+      setLoginMode(jiwoScanLoginEnabled ? 'jiwo' : testLoginEnabled ? 'test' : 'wechat')
       arkmeUi.authChanged(false)
     } catch (caught) { setError(errorMessage(caught)) } finally { setBusy(false) }
   }
 
   useEffect(() => {
-    if (!arkmeShouldBeginWechat(auth, authView, loginMode, agreed, qr, qrRequestStartedRef.current)) return
+    const shouldBegin = loginMode === 'jiwo'
+      ? jiwoScanLoginEnabled && authView === 'login' && auth !== undefined
+        && ['logged-out', 'expired'].includes(auth.status) && agreed && qr === '' && !qrRequestStartedRef.current
+      : arkmeShouldBeginWechat(auth, authView, loginMode, agreed, qr, qrRequestStartedRef.current)
+    if (!shouldBegin) return
     qrRequestStartedRef.current = true
-    void beginWechat()
-  }, [agreed, auth, authView, loginMode, qr])
+    void (loginMode === 'jiwo' ? beginJiwo() : beginWechat())
+  }, [agreed, auth, authView, jiwoScanLoginEnabled, loginMode, qr])
 
   const changeLoginMode = (mode: ArkmeLoginMode) => {
+    const attemptId = currentJiwoAttemptRef.current
+    currentJiwoAttemptRef.current = undefined
+    void callArkme('auth.app.cancel', { attemptId: attemptId ?? '' }).catch(() => undefined)
+    if (auth?.status === 'pending') {
+      arkmeAuthStore.setAuth({ status: 'logged-out', environment: auth.environment })
+    }
     setLoginMode(mode)
+    setQr('')
     setError('')
-    if (mode !== 'wechat') qrRequestStartedRef.current = false
+    qrRequestStartedRef.current = false
   }
 
   const uploadFile = async (file: File, targetDraftKey: string): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
@@ -1986,6 +2026,7 @@ export function ArkmeSurface({
           smsCode={smsCode}
           smsCountdown={smsCountdown}
           testLoginEnabled={testLoginEnabled}
+          jiwoScanLoginEnabled={jiwoScanLoginEnabled}
           testUserId={testUserId}
           qrDataUrl={qr}
           onModeChange={changeLoginMode}
@@ -1997,6 +2038,7 @@ export function ArkmeSurface({
           onVerifyCode={() => { void verifyCode() }}
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
+          onJiwoLogin={() => { void beginJiwo() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />

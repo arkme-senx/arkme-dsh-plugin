@@ -4,7 +4,7 @@ import { formatLoginPhone, ArkmeLogin, type ArkmeLoginProps } from '../src/clien
 
 function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
   return renderToStaticMarkup(<ArkmeLogin
-    mode="wechat"
+    mode="jiwo"
     agreed
     busy={false}
     submitBusy={false}
@@ -13,6 +13,7 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     smsCode=""
     smsCountdown={0}
     testLoginEnabled={false}
+    jiwoScanLoginEnabled
     testUserId=""
     qrDataUrl=""
     onModeChange={() => undefined}
@@ -24,13 +25,14 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     onVerifyCode={() => undefined}
     onTestLogin={() => undefined}
     onWechatLogin={() => undefined}
+    onJiwoLogin={() => undefined}
     onCancelBinding={() => undefined}
     {...patch}
   />)
 }
 
 describe('ArkmeLogin', () => {
-  it('matches the desktop web login default with WeChat first and agreement checked', () => {
+  it('defaults to Jiwo scan with WeChat and phone retained', () => {
     const html = renderLogin()
 
     expect(html).toContain('登录 Arkme')
@@ -39,8 +41,9 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('Digital ark, true me')
     expect(html).toContain('dsh-arkme-login-story')
     expect(html).toContain('dsh-arkme-login-wordmark')
-    expect(html).toContain('请使用微信扫码登录')
+    expect(html).toContain('请使用即我 App 扫码登录')
     expect(html).toContain('二维码加载中')
+    expect(html.indexOf('即我扫码')).toBeLessThan(html.indexOf('微信扫码'))
     expect(html.indexOf('微信扫码')).toBeLessThan(html.indexOf('手机号登录'))
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('type="checkbox"')
@@ -50,6 +53,25 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('#8295e8')
     expect(html).not.toContain('state-success')
     expect(html).not.toContain('#2f80ed')
+  })
+
+  it('hides Jiwo scan when the Host feature flag is disabled', () => {
+    const html = renderLogin({
+      mode: 'jiwo',
+      jiwoScanLoginEnabled: false,
+    })
+
+    expect(html).not.toContain('即我扫码')
+    expect(html).toContain('请使用微信扫码登录')
+  })
+
+  it('renders all four methods in test environment with Jiwo first', () => {
+    const html = renderLogin({ testLoginEnabled: true })
+
+    expect(html.indexOf('即我扫码')).toBeLessThan(html.indexOf('微信扫码'))
+    expect(html.indexOf('微信扫码')).toBeLessThan(html.indexOf('手机号登录'))
+    expect(html.indexOf('手机号登录')).toBeLessThan(html.indexOf('测试账号'))
+    expect(html).toContain('repeat(4, minmax(0, 1fr))')
   })
 
   it('renders the web phone form labels and formatting', () => {
