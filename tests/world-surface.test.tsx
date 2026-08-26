@@ -21,15 +21,18 @@ import {
   WorldImagePreviewMedia,
   WorldInteractionPreviewContent,
   WorldInteractionThreadList,
+  WORLD_EXTENSION_SHELF_PREVIEW_LIMIT,
   voiceprintInvitePromptTitle,
   worldImagePreviewDragPosition,
   worldInteractionCountLabel,
   worldInteractionThreads,
+  worldExtensionShelfPreview,
   worldScopeScrollTransition,
   type ArkmeWorldViewState,
 } from '../src/client/ArkmeWorldSurface.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import type { ArkmeWorldFeedItem, ArkmeWorldInteractionItem } from '../src/types.js'
+import type { ArkmeExtensionCatalogItem } from '../src/extensions/types.js'
 
 const noop = () => {}
 const actions = {
@@ -98,6 +101,16 @@ function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = 
 }
 
 describe('Arkme native World surface', () => {
+  it('caps the World extension shelf preview at six items without mutating the catalog result', () => {
+    const items = Array.from({ length: 9 }, (_, index) => ({ extension_id: `extension-${index}` })) as ArkmeExtensionCatalogItem[]
+
+    expect(WORLD_EXTENSION_SHELF_PREVIEW_LIMIT).toBe(6)
+    expect(worldExtensionShelfPreview(items).map(item => item.extension_id)).toEqual([
+      'extension-0', 'extension-1', 'extension-2', 'extension-3', 'extension-4', 'extension-5',
+    ])
+    expect(items).toHaveLength(9)
+  })
+
   it('owns a full-page surface and keeps all original controls visible while loading', () => {
     const markup = renderToStaticMarkup(<ArkmeWorldSurface />)
 
@@ -449,6 +462,23 @@ describe('Arkme native World surface', () => {
     expect(empty).toContain('TA 的世界暂无公开内容。')
     expect(empty).toContain('data-arkme-world-empty-state="true"')
     expect(renderTarget({ status: 'success', items: [item] })).toContain('世界正文')
+  })
+
+  it('keeps the extension shelf and World timeline in one dashed 16px content stack', () => {
+    const markup = renderToStaticMarkup(<ArkmeWorldContent
+      state={{ status: 'success', items: [item] }}
+      scope="mine"
+      catalogOwnerUserId={7}
+      catalogOwnerName="泡泡"
+      voiceprintPlayableRefs={new Set()}
+      voiceprintRecordRef={undefined}
+      {...actions}
+    />)
+
+    expect(markup.match(/data-world-content-stack="true"/g)).toHaveLength(1)
+    expect(markup).toContain('data-world-extension-shelf="loading"')
+    expect(markup).toContain('border:1px dashed')
+    expect(styleForDataAttribute(markup, 'data-world-content-stack', 'true')).toContain('gap:16px')
   })
 
   it('keeps complete comments inline under the selected World item', () => {

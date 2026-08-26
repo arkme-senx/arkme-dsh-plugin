@@ -384,6 +384,20 @@ export interface ArkmeWorldAvatarFallback {
   label: string
 }
 
+/** Immutable display snapshot emitted after one extension version becomes public. */
+export interface ArkmeWorldExtensionPublication {
+  extensionId: string
+  version: string
+  name: string
+  description: string
+  iconRef?: string
+  previewRefs: string[]
+  visibility: 'public'
+  runtimeDshRange?: string
+  desktopRequired: boolean
+  publishedAtMillis: number
+}
+
 export interface ArkmeWorldFeedItem {
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
@@ -402,6 +416,8 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
+  recordType?: 'extension_publication'
+  extensionPublication?: ArkmeWorldExtensionPublication
 }
 
 export interface ArkmeWorldFeedPage {
@@ -863,6 +879,8 @@ export interface ArkmeProviderCapabilities {
     sourceDirectory: true
     sourceTimeline: true
     sourceTextSend: true
+    /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
+    messageReadReceipts?: true
     richContentRead: boolean
     richContentSend: boolean
     fileUpload: boolean
@@ -917,6 +935,7 @@ export interface ArkmeProviderCapabilities {
     maxImageBytes: number
     maxRelatedRecordingPageSize?: number
     maxRelatedRecordingCursorLength?: number
+    maxMessageReadReceiptItems?: number
     maxUploadBytes: number
   }
 }
@@ -1083,6 +1102,8 @@ export interface ArkmeMessageReadReceiptQueryItem {
   itemUid: string
   sequence: number
 }
+
+export const ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS = 50 as const
 
 export type ArkmeMessageReadReceiptStatus = 'read' | 'partially_read' | 'unread'
 
@@ -2148,6 +2169,12 @@ export type ArkmeChatClientEvent = {
   sourceKey?: string
   effectiveReadSequence: number
   unreadCount: number
+} | {
+  type: 'read-receipts-invalidated'
+  revision: number
+  /** Account-bound conversation identity; raw Chat session and reader identities stay in Host memory. */
+  sourceKey: string
+  throughSequence: number
 }
 
 export type ArkmePluginOperation =
@@ -2214,6 +2241,8 @@ export type ArkmePluginOperation =
   | 'source.members'
   | 'source.member-records'
   | 'source.mark-read'
+  | 'source.read-receipts.summary-list'
+  | 'source.read-receipts.detail'
   | 'source.send-text'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'

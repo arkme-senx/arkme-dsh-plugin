@@ -153,6 +153,49 @@ describe('Arkme emoji composer', () => {
     await act(async () => { renderer.unmount() })
   })
 
+  it('does not save an uploading sticker after the user deletes it', async () => {
+    let finishUpload!: (asset: {
+      fileAssetUid: string; fileName: string; mimeType: string; size: number; fileKind: 1
+    }) => void
+    const upload = new Promise<{
+      fileAssetUid: string; fileName: string; mimeType: string; size: number; fileKind: 1
+    }>(resolve => { finishUpload = resolve })
+    callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'favorite-stickers.list') return { items: [], itemCount: 0, updatedAtMillis: 1 }
+      throw new Error(`unexpected operation: ${operation}`)
+    })
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:pending-sticker')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeEmojiPicker
+        disabled={false} scopeKey="private:1" sourceRef="source-ref" onSelect={() => undefined}
+        onUploadSticker={async () => await upload}
+      />)
+    })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '选择表情' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '收藏表情' }).props.onClick() })
+    const file = new File(['image'], 'pending.png', { type: 'image/png' })
+    await act(async () => {
+      renderer.root.findByType('input').props.onChange({ target: { files: [file], value: file.name } })
+    })
+    const pending = renderer.root.findByProps({ 'aria-label': '正在上传pending.png' })
+    await act(async () => {
+      pending.props.onContextMenu({ preventDefault: () => undefined, stopPropagation: () => undefined, clientX: 220, clientY: 220 })
+    })
+    await act(async () => { renderer.root.findByProps({ children: '删除' }).props.onClick() })
+    await act(async () => {
+      finishUpload({ fileAssetUid: 'asset-pending-1234', fileName: 'pending.png', mimeType: 'image/png', size: 5, fileKind: 1 })
+      await upload
+    })
+
+    expect(callArkme).not.toHaveBeenCalledWith('favorite-stickers.save', expect.anything())
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:pending-sticker')
+    createObjectUrl.mockRestore()
+    revokeObjectUrl.mockRestore()
+    await act(async () => { renderer.unmount() })
+  })
+
   it('keeps favorites visible but does not offer unsupported sending outside chats', async () => {
     callArkme.mockResolvedValue(favoriteList)
     let renderer!: ReactTestRenderer

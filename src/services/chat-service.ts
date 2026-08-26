@@ -35,6 +35,7 @@ import type {
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
 } from '../types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS } from '../types.js'
 import { ArkoService } from './arko-service.js'
 import { BotService } from './bot-service.js'
 import { GroupAiPolishService } from './group-ai-polish-service.js'
@@ -66,7 +67,6 @@ interface OfficialAuthorPrivateChatCreateResult {
 // Mirrors the mobile contact-author backend contract used by /api/v1/private/create-chat-ref-asen.
 const OFFICIAL_AUTHOR_USER_ID = 11
 const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
-const MAX_MESSAGE_READ_RECEIPT_ITEMS = 50
 
 export interface ArkmeChatRealtimePort {
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
@@ -136,6 +136,34 @@ function firstJoinDisplayName(source: Record<string, unknown>, keys: readonly st
     if (value !== '') return value
   }
   return ''
+}
+
+interface ChatMemberDisplayNames {
+  displayName: string
+  memberName: string
+  secondaryName: string
+}
+
+function resolveChatMemberDisplayNames(input: {
+  userId: number
+  remarkCandidates?: readonly unknown[]
+  memberNameCandidates?: readonly unknown[]
+  userNameCandidates?: readonly unknown[]
+}): ChatMemberDisplayNames {
+  const isUsable = (value: string): boolean => value !== ''
+    && value !== '成员'
+    && value !== '群成员'
+    && value !== `用户 ${String(input.userId)}`
+  const firstUsable = (values: readonly unknown[]): string => values
+    .map(normalizedJoinDisplayName)
+    .find(isUsable) ?? ''
+  const remarkName = firstUsable(input.remarkCandidates ?? [])
+  const memberName = firstUsable(input.memberNameCandidates ?? [])
+  const userName = firstUsable(input.userNameCandidates ?? [])
+  const displayName = [remarkName, memberName, userName].find(isUsable) ?? '群成员'
+  const secondaryName = [memberName, userName, remarkName]
+    .find(value => isUsable(value) && value !== displayName) ?? ''
+  return { displayName, memberName, secondaryName }
 }
 
 function normalizedJoinTimestamp(value: unknown): number {
@@ -831,19 +859,41 @@ export class ChatService {
         userId,
         readStatus: readStatus === 'read' ? 'read' as const : 'unread' as const,
         readAtMillis,
-        upstreamDisplayName: stringValue(item.display_name).trim(),
+        remarkName: firstJoinDisplayName(item, [
+          'remark', 'remark_name', 'remarkName', 'contact_remark', 'contactRemark',
+          'member_remark', 'memberRemark',
+        ]),
+        memberName: firstJoinDisplayName(item, [
+          'member_name', 'memberName', 'nickname', 'nick_name', 'nickName', 'name',
+          'user_name', 'userName', 'display_name_snapshot', 'displayNameSnapshot',
+        ]),
+        userName: firstJoinDisplayName(item, ['display_name', 'displayName']),
       }
     })
-    const profiles = await this.profile.publicProfileSummariesByUserIds(
-      receiptMembers.map(item => item.userId), session, options.signal,
-    ).catch(() => new Map())
+    const userIds = receiptMembers.map(item => item.userId)
+    const missingRemarkUserIds = receiptMembers
+      .filter(item => item.remarkName === '')
+      .map(item => item.userId)
+    const [profiles, privateRemarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(
+        userIds, session, options.signal,
+      ).catch(() => new Map()),
+      missingRemarkUserIds.length === 0
+        ? Promise.resolve(new Map<number, string>())
+        : this.source.privateRemarksByUserIds(
+            missingRemarkUserIds,
+            options.signal === undefined ? {} : { signal: options.signal },
+          ).catch(() => new Map<number, string>()),
+    ])
     const members = [] as ArkmeMessageReadReceiptDetail['items']
     for (const item of receiptMembers) {
       const profile = profiles.get(item.userId)
-      const profileDisplayName = profile?.displayName.trim() ?? ''
-      const displayName = profileDisplayName !== '' && profileDisplayName !== `用户 ${String(item.userId)}`
-        ? profileDisplayName
-        : item.upstreamDisplayName || '群成员'
+      const { displayName } = resolveChatMemberDisplayNames({
+        userId: item.userId,
+        remarkCandidates: [item.remarkName, privateRemarks.get(item.userId)],
+        memberNameCandidates: [item.memberName],
+        userNameCandidates: [item.userName, profile?.displayName],
+      })
       members.push({
         memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, item.userId),
         displayName,
@@ -877,10 +927,10 @@ export class ChatService {
   }
 
   private requireReadReceiptItems(rawItems: readonly ArkmeMessageReadReceiptQueryItem[]): ArkmeMessageReadReceiptQueryItem[] {
-    if (rawItems.length < 1 || rawItems.length > MAX_MESSAGE_READ_RECEIPT_ITEMS) {
+    if (rawItems.length < 1 || rawItems.length > ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS) {
       throw new ArkmePluginError(
         'message-read-receipt-items-invalid',
-        `消息已读状态每次需要 1 至 ${String(MAX_MESSAGE_READ_RECEIPT_ITEMS)} 条消息`,
+        `消息已读状态每次需要 1 至 ${String(ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS)} 条消息`,
         false,
         400,
       )
@@ -1732,14 +1782,12 @@ export class ChatService {
       const userId = Math.trunc(numberValue(item.user_id))
       if (!Number.isSafeInteger(userId) || userId <= 0) continue
       const profile = profiles.get(userId)
-      const remarkName = stringValue(item.remark).trim()
-      const memberName = stringValue(item.display_name_snapshot).trim()
-      const profileDisplayName = profile?.displayName.trim() ?? ''
-      const publicDisplayName = profileDisplayName === `用户 ${String(userId)}` ? '' : profileDisplayName
-      const displayName = [remarkName, memberName, publicDisplayName]
-        .find(value => value !== '' && value !== '成员' && value !== '群成员') ?? '群成员'
-      const secondaryName = [memberName, publicDisplayName, remarkName]
-        .find(value => value !== '' && value !== '成员' && value !== '群成员' && value !== displayName) ?? ''
+      const { displayName, memberName, secondaryName } = resolveChatMemberDisplayNames({
+        userId,
+        remarkCandidates: [item.remark],
+        memberNameCandidates: [item.display_name_snapshot],
+        userNameCandidates: [profile?.displayName],
+      })
       const role = chatMemberRole(item.role)
       const status = chatMemberStatus(item.status)
       const extra = parsedObject(item.extra)

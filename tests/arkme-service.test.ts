@@ -817,6 +817,7 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         recordCalendar: true,
+        messageReadReceipts: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,
@@ -827,7 +828,7 @@ describe('ArkmeService', () => {
         extensionIcons: true,
         extensionPreviews: true,
       },
-      limits: { maxImageBytes: 2 * 1024 * 1024 },
+      limits: { maxImageBytes: 2 * 1024 * 1024, maxMessageReadReceiptItems: 50 },
     })
     await expect(service.providerState()).resolves.toEqual({
       contractVersion: 1,
@@ -1928,6 +1929,9 @@ describe('ArkmeService', () => {
         items: [
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
           { user_id: 20002, nick_name: '小林', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/peer.png?x-oss-signature=peer' },
+          { user_id: 30003, nick_name: '公开用户昵称小周' },
+          { user_id: 40004, nick_name: '公开用户昵称小吴' },
+          { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
       if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
@@ -1974,9 +1978,24 @@ describe('ArkmeService', () => {
         record_uid: body.record_uid,
         seq: body.seq,
         items: [
-          { user_id: 20002, display_name: '小林', read_status: 'read', read_at: 220 },
-          { user_id: 30003, display_name: '小周', read_status: 'unread', read_at: 0 },
+          {
+            user_id: 20002, member_name: '群昵称小林', display_name: '用户昵称小林',
+            read_status: 'read', read_at: 220,
+          },
+          {
+            user_id: 30003, remark: '', member_name: '群昵称小周', display_name: '用户昵称小周',
+            read_status: 'unread', read_at: 0,
+          },
+          { user_id: 40004, display_name: '用户昵称小吴', read_status: 'read', read_at: 230 },
+          { user_id: 50005, display_name: '群成员', read_status: 'unread', read_at: 0 },
         ],
+      } })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return json({ code: 200, data: {
+        items: [
+          { user_id: 20002, remark: '备注小林' },
+          { user_id: 30003, remark: '' },
+        ],
+        has_more: false,
       } })
       if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
@@ -2084,20 +2103,31 @@ describe('ArkmeService', () => {
       sourceRef: groupRef,
       itemUid: 'chat-record-2',
       sequence: 8,
-      readCount: 1,
-      unreadCount: 1,
-      totalMemberCount: 2,
+      readCount: 2,
+      unreadCount: 2,
+      totalMemberCount: 4,
       items: [
         {
           memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
-          displayName: '小林',
+          displayName: '备注小林',
           readStatus: 'read',
           readAtMillis: 220,
           avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
         },
         {
           memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
-          displayName: '小周',
+          displayName: '群昵称小周',
+          readStatus: 'unread',
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '用户昵称小吴',
+          readStatus: 'read',
+          readAtMillis: 230,
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '公开用户昵称小赵',
           readStatus: 'unread',
         },
       ],
@@ -2105,6 +2135,9 @@ describe('ArkmeService', () => {
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/read-receipts/detail'))?.body).toEqual({
       chat_session_uid: 'chat-group', record_uid: 'chat-record-2', seq: 8,
     })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/chats/contacts/list'))).toMatchObject([
+      { body: { limit: 50, offset: 0 } },
+    ])
     await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
       reason: '明确举报', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
     })).resolves.toMatchObject({ reportUid: 'report-1', status: 1 })

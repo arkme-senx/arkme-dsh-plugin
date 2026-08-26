@@ -9,6 +9,7 @@ import type {
   ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind, ArkmeHumanMentionInput,
   ArkmeFavoriteStickerSaveInput,
   ArkmeFavoriteStickerManageAction,
+  ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -319,6 +320,20 @@ function humanMentionsParam(params: Record<string, unknown>): ArkmeHumanMentionI
       startIndex: numberParam(item, 'startIndex', -1),
       length: numberParam(item, 'length', 0),
     }
+  })
+}
+
+function messageReadReceiptItemsParam(params: Record<string, unknown>): ArkmeMessageReadReceiptQueryItem[] {
+  const values = params.items
+  if (!Array.isArray(values)) {
+    throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效', false, 400)
+  }
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return { itemUid: stringParam(item, 'itemUid'), sequence: numberParam(item, 'sequence', 0) }
   })
 }
 
@@ -872,6 +887,17 @@ export async function dispatchArkmeHostOperation(
     case 'source.mark-read': return await service.markSourceRead(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
+    )
+    case 'source.read-receipts.summary-list': return await service.messageReadReceiptSummaries(
+      stringParam(params, 'sourceRef'),
+      messageReadReceiptItemsParam(params),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.read-receipts.detail': return await service.messageReadReceiptDetail(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+      numberParam(params, 'sequence', 0),
+      requestSignal === undefined ? {} : { signal: requestSignal },
     )
     case 'source.send-text': return await service.sendSourceText(
       stringParam(params, 'sourceRef'),

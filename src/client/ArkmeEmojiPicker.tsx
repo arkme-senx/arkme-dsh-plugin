@@ -265,6 +265,8 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   const [loadPhase, setLoadPhase] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [pendingStickers, setPendingStickers] = useState<ArkmePendingFavoriteSticker[]>([])
   const pendingStickersRef = useRef<ArkmePendingFavoriteSticker[]>([])
+  const cancelledPendingStickerIdsRef = useRef<Set<string>>(new Set())
+  const disposedRef = useRef(false)
   const [busyStickerId, setBusyStickerId] = useState('')
   const [previewFailedIds, setPreviewFailedIds] = useState<Set<string>>(() => new Set())
   const [previewRevision, setPreviewRevision] = useState(0)
@@ -343,7 +345,9 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
   }, [pendingStickers])
 
   useEffect(() => () => {
+    disposedRef.current = true
     for (const item of pendingStickersRef.current) {
+      cancelledPendingStickerIdsRef.current.add(item.id)
       if (item.previewUrl !== '') URL.revokeObjectURL(item.previewUrl)
     }
   }, [])
@@ -388,6 +392,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
     }))
     try {
       const asset = pending.uploadedAsset ?? await onUploadSticker!(pending.file)
+      if (disposedRef.current || cancelledPendingStickerIdsRef.current.has(pending.id)) return
       setPendingStickers(current => current.map(item => item.id === pending.id ? { ...item, uploadedAsset: asset } : item))
       await saveStickerItems([{
         fileAssetUid: asset.fileAssetUid, fileName: asset.fileName, mimeType: asset.mimeType,
@@ -396,10 +401,14 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
       setPendingStickers(current => current.filter(item => item.id !== pending.id))
       if (pending.previewUrl !== '') URL.revokeObjectURL(pending.previewUrl)
     } catch (caught) {
+      if (disposedRef.current || cancelledPendingStickerIdsRef.current.has(pending.id)) return
       const message = caught instanceof Error ? caught.message : '收藏表情添加失败'
       setPendingStickers(current => current.map(item => item.id === pending.id ? { ...item, status: 'failed', error: message } : item))
       onError?.(message)
-    } finally { setBusyStickerId(current => current === pending.id ? '' : current) }
+    } finally {
+      cancelledPendingStickerIdsRef.current.delete(pending.id)
+      if (!disposedRef.current) setBusyStickerId(current => current === pending.id ? '' : current)
+    }
   }
 
   const addSticker = (event: ChangeEvent<HTMLInputElement>) => {
@@ -446,6 +455,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
 
   const removePendingSticker = (pending: ArkmePendingFavoriteSticker) => {
     setContextMenu(undefined)
+    cancelledPendingStickerIdsRef.current.add(pending.id)
     setPendingStickers(current => current.filter(item => item.id !== pending.id))
     if (pending.previewUrl !== '') URL.revokeObjectURL(pending.previewUrl)
   }

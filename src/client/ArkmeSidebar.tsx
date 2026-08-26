@@ -24,6 +24,7 @@ import {
 } from './ArkmeChatMemberActions.js'
 import { ArkmeLogin, type ArkmeLoginMode } from './ArkmeLogin.js'
 import { ArkmeMuteIcon } from './ArkmeMuteIcon.js'
+import { ArkmeMessageReadReceiptLine } from './ArkmeMessageReadReceipt.js'
 import { ArkmeArkoSurface } from './ArkmeArkoSurface.js'
 import { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
@@ -50,6 +51,7 @@ import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeVoiceprintSurface } from './ArkmeVoiceprintSurface.js'
 import { ArkmeNavigation, type ArkmeNavigationProps } from './ArkmeVirtualWorkspace.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation } from './chat-directory-store.js'
 import {
   ArkmeConversationMemoryCache,
@@ -1800,6 +1802,13 @@ export function ArkmeSurface({
       }))
       if (result.localState !== 'failed' && isArkmeChatDirectorySource(targetSource)
         && result.sequence !== undefined) {
+        arkmeMessageReadReceipts.provision({
+          sourceRef: targetSource.sourceRef,
+          sourceKey: targetSource.sourceKey ?? targetSource.sourceRef,
+          conversationKind: targetSource.kind === 'private_chat' ? 'private_chat' : 'group_chat',
+          itemUid: result.itemUid,
+          sequence: result.sequence,
+        })
         arkmeChatDirectory.recordSent(targetSource, {
           latestPreview: result.aiPolish?.state === 'polished' && result.aiPolish.polishedText !== undefined
             ? result.aiPolish.polishedText
@@ -2254,6 +2263,7 @@ export function ArkmeSurface({
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
+            {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
             onBackToWorld={() => { arkmeUi.showWorld() }}
             onSourceActivated={activateSource}
           />
@@ -2264,6 +2274,8 @@ export function ArkmeSurface({
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
             {...(selfProfile?.avatarRef.trim() ? { currentUserAvatarRef: selfProfile.avatarRef.trim() } : {})}
             {...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
+            {...(ui.extensionDetailId === undefined ? {} : { initialExtensionId: ui.extensionDetailId })}
+            {...(ui.extensionAuthorFilter === undefined ? {} : { initialAuthorFilter: ui.extensionAuthorFilter })}
             onShareExit={() => { arkmeUi.dismissExtensionShare() }}
             onPrivateChatOpened={activateSource}
           />
@@ -2346,51 +2358,57 @@ export function ArkmeSurface({
                         ...(item.forwardRecords === undefined ? {} : styles.forwardMessageBody),
                       }}>
                         <ArkmeTimelineMessageHeader item={item} {...(selfProfile === undefined ? {} : { profile: selfProfile })} />
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          style={{
-                            ...styles.bubble,
-                            ...(item.isMe ? styles.bubbleMe : styles.bubbleOther),
-                            ...(item.forwardRecords === undefined ? {} : styles.forwardBubble),
-                          }}
-                          onClick={event => {
-                            if (event.target instanceof Element && event.target.closest('button,a,audio,video')) return
-                            setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
-                          }}
-                          onKeyDown={event => {
-                            if (event.target !== event.currentTarget) return
-                            if (event.key !== 'Enter' && event.key !== ' ') return
-                            event.preventDefault(); setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
-                          }}
-                          aria-label="打开快记详情"
-                        >{polishStatus !== '' && <span style={styles.polishMeta}>
-                          {item.aiPolish?.state === 'failed' ? <button
-                            type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
-                          >{polishStatus}</button> : polishStatus}
-                        </span>}
-                          <ArkmeMessageContent
+                        <ArkmeMessageReadReceiptLine
+                          source={source}
                           item={item}
-                          sourceRef={source.sourceRef}
-                          onLongArticleUpdated={detail => {
-                            setItems(current => current.map(candidate => candidate.itemUid === detail.itemUid
-                              ? {
-                                ...candidate,
-                                title: detail.title,
-                                textContent: detail.textContent,
-                                sendAtMillis: detail.sendAtMillis,
-                                updateAtMillis: detail.updateAtMillis,
-                                templateKind: 1,
-                                displayKind: 1,
-                                version: detail.version,
-                                recordDurationMillis: detail.recordDurationMillis,
-                                editDurationMillis: detail.editDurationMillis,
-                              }
-                              : candidate))
-                          }}
-                        />
-                          <ArkmeTimelineAgentSourceBadge item={item} />
-                        </div>
+                          wide={item.forwardRecords !== undefined}
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            style={{
+                              ...styles.bubble,
+                              ...(item.isMe ? styles.bubbleMe : styles.bubbleOther),
+                              ...(item.forwardRecords === undefined ? {} : styles.forwardBubble),
+                            }}
+                            onClick={event => {
+                              if (event.target instanceof Element && event.target.closest('button,a,audio,video')) return
+                              setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
+                            }}
+                            onKeyDown={event => {
+                              if (event.target !== event.currentTarget) return
+                              if (event.key !== 'Enter' && event.key !== ' ') return
+                              event.preventDefault(); setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
+                            }}
+                            aria-label="打开快记详情"
+                          >{polishStatus !== '' && <span style={styles.polishMeta}>
+                            {item.aiPolish?.state === 'failed' ? <button
+                              type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void retryAiPolish(item) }}
+                            >{polishStatus}</button> : polishStatus}
+                          </span>}
+                            <ArkmeMessageContent
+                            item={item}
+                            sourceRef={source.sourceRef}
+                            onLongArticleUpdated={detail => {
+                              setItems(current => current.map(candidate => candidate.itemUid === detail.itemUid
+                                ? {
+                                  ...candidate,
+                                  title: detail.title,
+                                  textContent: detail.textContent,
+                                  sendAtMillis: detail.sendAtMillis,
+                                  updateAtMillis: detail.updateAtMillis,
+                                  templateKind: 1,
+                                  displayKind: 1,
+                                  version: detail.version,
+                                  recordDurationMillis: detail.recordDurationMillis,
+                                  editDurationMillis: detail.editDurationMillis,
+                                }
+                                : candidate))
+                            }}
+                          />
+                            <ArkmeTimelineAgentSourceBadge item={item} />
+                          </div>
+                        </ArkmeMessageReadReceiptLine>
                       </div>
                     </div>
                   </li>

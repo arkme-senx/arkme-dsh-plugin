@@ -182,6 +182,27 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().conversationTarget).toBeUndefined()
   })
 
+  it('opens the marketplace with an exact author filter and clears it for normal marketplace navigation', () => {
+    const controller = new ArkmeUiController()
+
+    controller.showAuthorExtensions(7, '  Lucis   测试  ')
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0,
+      chatRevision: 0,
+      mode: 'extensions',
+      extensionAuthorFilter: { ownerUserId: 7, ownerName: 'Lucis 测试' },
+    })
+
+    controller.showExtensions()
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0,
+      chatRevision: 0,
+      mode: 'extensions',
+    })
+    expect(() => { controller.showAuthorExtensions(0, '无效') }).toThrow('插件作者用户 ID')
+  })
+
   it('opens one user World homepage and clears the target when returning to the public World', () => {
     const controller = new ArkmeUiController()
     const listener = vi.fn()

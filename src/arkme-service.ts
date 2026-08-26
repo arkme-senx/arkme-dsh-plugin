@@ -214,7 +214,7 @@ import type {
   ArkmeWorldPublishFileAssetsInput, ArkmeWorldPublishResult, ArkmeWorldPublishTextInput,
   ArkmeWorldRecordList,
 } from './types.js'
-import { ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from './types.js'
 
 function voiceprintInviteRateLimitMessage(error: unknown): string | undefined {
   if (!(error instanceof ArkmePluginError)) return undefined
@@ -492,6 +492,7 @@ export class ArkmeService {
         sourceDirectory: true,
         sourceTimeline: true,
         sourceTextSend: true,
+        messageReadReceipts: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         fileUpload: this.config.richMediaSendEnabled !== false,
@@ -526,6 +527,7 @@ export class ArkmeService {
         maxSearchResults: 30,
         maxSyncPages: 20,
         maxImageBytes: MAX_ARKME_IMAGE_BYTES,
+        maxMessageReadReceiptItems: ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS,
         ...(this.relatedRecording.isEnabled() ? {
           maxRelatedRecordingPageSize: MAX_ARKME_RELATED_RECORDING_PAGE_SIZE,
           maxRelatedRecordingCursorLength: MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH,
@@ -1077,14 +1079,12 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceText(sourceRef, textContent, options)
   }
-
   async retryGroupAiPolish(
     retryRef: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     return await this.aiPolish.retryGroupAiPolish(retryRef, options)
   }
-
   async sendSourceRich(
     sourceRef: string,
     input: ArkmeRichSendInput,

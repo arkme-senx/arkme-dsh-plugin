@@ -555,7 +555,7 @@ const PENDING_EXTENSION_RESTART_KEY = 'arkme.extension.pending-restart'
 
 const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
 type MarketplaceCategory = string
-type MarketplaceAuthorFilter = {
+export type MarketplaceAuthorFilter = {
   ownerUserId: number
   ownerName: string
 }
@@ -1589,13 +1589,15 @@ export function extensionEnableUnavailable(
 }
 
 export function ArkmeMarketplace({
-  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, onShareExit, onClose,
+  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, initialExtensionId, initialAuthorFilter, onShareExit, onClose,
   displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
 }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
   currentUserAvatarRef?: string | undefined
   shareRef?: string | undefined
+  initialExtensionId?: string | undefined
+  initialAuthorFilter?: MarketplaceAuthorFilter | undefined
   onShareExit?(): void
   onClose?: (() => void) | undefined
   displayMode?: 'dialog' | 'page'
@@ -1649,7 +1651,7 @@ export function ArkmeMarketplace({
   const [discoverNextCursor, setDiscoverNextCursor] = useState<string>()
   const [loadingMoreDiscover, setLoadingMoreDiscover] = useState(false)
   const [loadMoreDiscoverError, setLoadMoreDiscoverError] = useState('')
-  const [authorFilter, setAuthorFilter] = useState<MarketplaceAuthorFilter>()
+  const [authorFilter, setAuthorFilter] = useState<MarketplaceAuthorFilter | undefined>(() => initialAuthorFilter)
   const [authorCardOpen, setAuthorCardOpen] = useState(false)
   const [authorActionBusy, setAuthorActionBusy] = useState(false)
   const [authorActionError, setAuthorActionError] = useState('')
@@ -1663,6 +1665,7 @@ export function ArkmeMarketplace({
   const publishMutation = useRef<ExtensionPublishMutation>()
   const editMutation = useRef<ExtensionEditMutation>()
   const detailDialogRef = useRef<HTMLElement>(null)
+  const openedInitialExtensionIdRef = useRef<string>()
   const detailReturnFocus = useRef<HTMLElement>()
 
   const categoryOptions = marketplaceCategoryOptions(
@@ -2005,6 +2008,23 @@ export function ArkmeMarketplace({
     catch (caught) { setDetailError(caught instanceof Error ? caught.message : String(caught)) }
     finally { setDetailBusy(false) }
   }
+
+  useEffect(() => {
+    const extensionId = initialExtensionId?.trim()
+    if (extensionId === undefined || extensionId === '' || openedInitialExtensionIdRef.current === extensionId) return
+    openedInitialExtensionIdRef.current = extensionId
+    void inspect(extensionId)
+  }, [initialExtensionId])
+
+  useEffect(() => {
+    if (initialAuthorFilter === undefined) return
+    setTab('discover')
+    setCategory('all')
+    setAuthorFilter(current => current?.ownerUserId === initialAuthorFilter.ownerUserId
+      && current.ownerName === initialAuthorFilter.ownerName
+      ? current
+      : initialAuthorFilter)
+  }, [initialAuthorFilter?.ownerUserId, initialAuthorFilter?.ownerName])
 
   const runAudit = async (extensionId: string) => {
     setAuditBusyExtensionId(extensionId); setAuditError(''); setAuditResult(undefined)
@@ -2475,7 +2495,7 @@ export function ArkmeMarketplace({
         placeholder="搜索扩展、功能或作者…"
       />
       {authorFilter !== undefined && <span style={styles.marketplaceAuthorFilter} data-marketplace-author-filter="true">
-        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName} 的全部插件</span>
+        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName === '我' ? '我的全部插件' : `${authorFilter.ownerName} 的全部插件`}</span>
         <button
           type="button"
           style={styles.marketplaceAuthorFilterClear}

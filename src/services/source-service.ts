@@ -41,9 +41,18 @@ const SOURCE_LIST_CACHE_TTL_MS = 30_000
 const SOURCE_LIST_CACHE_MAX_ENTRIES = 200
 const GROUP_AVATAR_CACHE_TTL_MS = 5 * 60_000
 const GROUP_AVATAR_NEGATIVE_CACHE_TTL_MS = 60_000
+const PRIVATE_REMARK_PAGE_LIMIT = 50
+const PRIVATE_REMARK_MAX_PAGES = 20
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function integerIdentifierValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value
+  if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value.trim())) return 0
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : 0
 }
 
 function booleanValue(value: unknown): boolean { return value === true }
@@ -226,6 +235,89 @@ export class SourceService {
       pageCursor = next
     }
     return displayNames
+  }
+
+  /**
+   * Resolve only viewer-owned contact remarks for the supplied people.
+   * This deliberately does not fall back to a private nickname or snapshot:
+   * callers must keep those identities in their own domain-specific order.
+   */
+  async privateRemarksByUserIds(
+    userIds: readonly number[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<Map<number, string>> {
+    const session = await this.runtime.requireSession()
+    const remaining = new Set(userIds.filter(
+      userId => Number.isSafeInteger(userId) && userId > 0 && userId !== session.userId,
+    ))
+    const remarks = new Map<number, string>()
+    let offset = 0
+
+    for (let page = 0; page < PRIVATE_REMARK_MAX_PAGES && remaining.size > 0; page += 1) {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/contacts/list',
+        { limit: PRIVATE_REMARK_PAGE_LIMIT, offset },
+        session,
+        options.signal,
+        {
+          lane: 'background-read',
+          key: `private-remarks:${String(offset)}`,
+          failureCooldownMs: 2_000,
+        },
+      )
+      const rawItems = listValue(data.items)
+      for (const value of rawItems) {
+        const raw = objectValue(value)
+        const targetUserId = integerIdentifierValue(raw.user_id)
+        if (!remaining.has(targetUserId)) continue
+        const remark = stringValue(raw.remark).trim()
+        if (remark !== '') {
+          remarks.set(targetUserId, remark)
+          remaining.delete(targetUserId)
+        }
+      }
+      if (data.has_more !== true) break
+      if (rawItems.length === 0) {
+        throw new ArkmePluginError(
+          'private-remark-pagination-invalid', '联系人备注分页响应不完整', true, 502,
+        )
+      }
+      offset += rawItems.length
+    }
+
+    let pageCursor: Record<string, unknown> | undefined
+    for (let page = 0; page < PRIVATE_REMARK_MAX_PAGES && remaining.size > 0; page += 1) {
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/list',
+        {
+          limit: PRIVATE_REMARK_PAGE_LIMIT,
+          ...(pageCursor === undefined ? {} : { page_cursor: pageCursor }),
+        },
+        session,
+        options.signal,
+        {
+          lane: 'background-read',
+          key: `private-remarks:direct:${pageCursor === undefined ? 'first' : String(page)}`,
+          failureCooldownMs: 2_000,
+        },
+      )
+      for (const value of listValue(data.items)) {
+        const bundle = objectValue(value)
+        const chatSession = objectValue(bundle.session)
+        const sessionKind = numberValue(chatSession.session_kind)
+        if (sessionKind !== 1 && sessionKind !== 3) continue
+        const targetUserId = integerIdentifierValue(objectValue(bundle.private_counterpart).user_id)
+        if (!remaining.has(targetUserId)) continue
+        const remark = stringValue(objectValue(bundle.private_supplement).remark).trim()
+        if (remark !== '') remarks.set(targetUserId, remark)
+        remaining.delete(targetUserId)
+      }
+      if (data.has_more !== true) break
+      const next = objectValue(data.next_page_cursor)
+      if (Object.keys(next).length === 0) break
+      pageCursor = next
+    }
+    return remarks
   }
 
   invalidateGroupAvatar(userId: number, chatSessionUid: string): void {
