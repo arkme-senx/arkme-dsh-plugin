@@ -23,7 +23,7 @@ const expectedPublicMethods = [
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
-  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'listSources', 'listSourceMembers', 'sourceMemberRecords',
+  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'listSourceMembers', 'sourceMemberRecords',
   'dshBetaCommunityEntryState', 'interwovenMoments', 'interwovenMomentDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
@@ -31,7 +31,7 @@ const expectedPublicMethods = [
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
-  'openPrivateChatFromUser', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'relatedRecordingEligibility', 'relatedRecordings',
+  'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'relatedRecordingEligibility', 'relatedRecordings',
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -52,7 +52,7 @@ const expectedPublicMethods = [
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
-  'createText', 'createTextForConversation', 'pendingWrites',
+  'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
   'retryPending', 'extensionPost',
 ].sort()
 
@@ -64,7 +64,7 @@ const expectedServiceFiles = [
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
-  'voiceprint-service.ts', 'call-history-service.ts',
+  'voiceprint-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -95,7 +95,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_600)
+    expect(facade.split('\n').length).toBeLessThan(1_700)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })

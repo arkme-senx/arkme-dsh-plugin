@@ -318,8 +318,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 @media (prefers-reduced-motion: reduce) {
   .arkme-conversation-records-reveal { animation: none; }
 }
-.arkme-redesign-route-chats [aria-label="打开快记详情"] { border-radius: 5px 16px 16px 16px !important; }
-.arkme-redesign-route-chats [data-arkme-message-content] p { font-size: 14px !important; line-height: 22px !important; }
+.arkme-redesign-route-chats [data-arkme-content-presentation="bubble"] p { font-size: 14px; line-height: 1.62; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }
 .arkme-redesign-route-chats .arkme-conversation-composer-inner {
   width: 100% !important;
@@ -461,6 +460,9 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-plugins-page .arkme-extension-center-embedded main > [role="alert"] { grid-column: 1 / -1; }
 @keyframes arkme-icon-spin { to { transform: rotate(360deg); } }
 .arkme-icon-spin { animation: arkme-icon-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  [data-arkme-voice] .arkme-icon-spin { animation: none; }
+}
 
 .arkme-redesign-settings-surface { width: 100%; height: auto; overflow: visible; color: #20232c; background: transparent; }
 .arkme-redesign-settings-shell { width: 100%; box-sizing: border-box; margin: 0; padding: 0; }
@@ -828,6 +830,7 @@ body[data-ds-dark-theme] [data-arkme-workspace] {
   --arkme-focus: var(--dsw-alias-state-business-primary);
   color: var(--dsw-alias-label-primary);
 }
+body[data-ds-dark-theme] [data-arkme-call-surface] { --arkme-call-video-icon-filter: invert(1) brightness(1.8); }
 
 /* The permanent DSH seats use inline layout styles, so their light colors
    need explicit theme-scoped overrides without changing the seat geometry. */
@@ -1498,4 +1501,43 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
 @media (prefers-reduced-motion: reduce) {
   .arkme-contact-directory-caret { transition: none; }
   .arkme-icon-spin { animation: none; }
+}
+
+/* Chat-specific colors follow DSH's single light/dark owner. */
+.arkme-conversation-surface {
+  --arkme-chat-self-bubble: #eef1f8;
+  --arkme-chat-other-bubble: #f3f4f6;
+}
+body[data-ds-dark-theme] .arkme-conversation-surface {
+  --arkme-chat-self-bubble: #2c3142;
+  --arkme-chat-other-bubble: #282a31;
+  --arkme-audio-control: #8995c5;
+}
+[data-arkme-message-direction]:focus-visible,
+[data-arkme-note-detail] button:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
+  outline-offset: 2px;
+}
+
+.arkme-world-extension-open:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06)) !important;
+}
+.arkme-world-extension-open:active {
+  background: var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10)) !important;
+}
+.arkme-world-extension-open:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
+  outline-offset: 2px;
+}
+@media (max-width: 680px) {
+  .arkme-world-extension-activity {
+    grid-template-columns: 48px minmax(0, 1fr) !important;
+    gap: 11px !important;
+    padding: 13px !important;
+  }
+  .arkme-world-extension-open {
+    grid-column: 2;
+    justify-self: start;
+    margin: 0 0 0 -8px !important;
+  }
 }

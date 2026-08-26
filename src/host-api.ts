@@ -7,7 +7,7 @@ import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './out
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
   ArkmeBillingPaymentMethod, ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind,
-  ArkmeHumanMentionInput,
+  ArkmeBotMentionInput, ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -310,6 +310,12 @@ function outgoingFailureCodeParam(params: Record<string, unknown>): ArkmeOutgoin
   return code
 }
 
+function outgoingDiagTextParam(params: Record<string, unknown>, key: string, maxLength: number): string {
+  return stringParam(params, key)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .slice(0, maxLength)
+}
+
 function cursorParam(params: Record<string, unknown>): ArkmeRecordCursor | undefined {
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
@@ -339,23 +345,65 @@ function humanMentionsParam(params: Record<string, unknown>): ArkmeHumanMentionI
       throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
     }
     const item = value as Record<string, unknown>
+    const all = item.all === true
     return {
-      memberRef: stringParam(item, 'memberRef'),
+      ...(all ? { all } : { memberRef: stringParam(item, 'memberRef') }),
       startIndex: numberParam(item, 'startIndex', -1),
       length: numberParam(item, 'length', 0),
     }
   })
 }
 
+function messageReadReceiptItemsParam(params: Record<string, unknown>): ArkmeMessageReadReceiptQueryItem[] {
+  const values = params.items
+  if (!Array.isArray(values)) {
+    throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效', false, 400)
+  }
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return { itemUid: stringParam(item, 'itemUid'), sequence: numberParam(item, 'sequence', 0) }
+  })
+}
+
+function botMentionsParam(params: Record<string, unknown>): ArkmeBotMentionInput[] {
+  const values = params.botMentions
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 参数无效', false, 400)
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return {
+      botRef: stringParam(item, 'botRef'),
+      startIndex: numberParam(item, 'startIndex', -1),
+      length: numberParam(item, 'length', 0),
+    }
+  })
+}
+
+function botRefsParam(params: Record<string, unknown>): string[] {
+  const values = params.botRefs
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用参数无效', false, 400)
+  return values.map(value => String(value).trim())
+}
+
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
+  const humanMentions = humanMentionsParam(params)
+  const botMentions = botMentionsParam(params)
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
-    ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
+    ...(humanMentions.length === 0 ? {} : { humanMentions }),
+    ...(botMentions.length === 0 ? {} : { botMentions }),
     assets: rawAssets.flatMap(raw => {
       if (raw === null || typeof raw !== 'object') return []
       const asset = raw as Record<string, unknown>
@@ -448,7 +496,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -625,6 +673,7 @@ export async function dispatchArkmeHostOperation(
         ...(avatar === '' ? {} : { avatar }),
       })
     }
+    case 'bots.list': return await service.listBots(requestSignal === undefined ? {} : { signal: requestSignal })
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
@@ -847,6 +896,25 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'title'),
       stringParam(params, 'parentSourceRef') || undefined,
     )
+    case 'topic.rename': return await service.renameTopic(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'title'),
+    )
+    case 'topic.dissolve': return await service.dissolveTopic(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'parentSourceRef') || undefined,
+      stringListParam(params, 'childSourceRefs'),
+      stringParam(params, 'requestId') || undefined,
+      numberParam(params, 'expectedRecordCount', 0),
+    )
+    case 'topic.dissolve.status': return await service.topicDissolveStatus(stringParam(params, 'requestId')) ?? null
+    case 'topic.dissolve.active': return await service.activeTopicDissolve() ?? null
+    case 'topic.hierarchy.move': return await service.moveTopicHierarchy(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'currentParentSourceRef') || undefined,
+      stringParam(params, 'nextParentSourceRef') || undefined,
+      stringParam(params, 'insertBeforeSourceRef') || undefined,
+    )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {
@@ -886,16 +954,34 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
     )
-    case 'source.send-text': return await service.sendSourceText(
+    case 'source.read-receipts.summary-list': return await service.messageReadReceiptSummaries(
       stringParam(params, 'sourceRef'),
-      stringParam(params, 'textContent'),
-      {
-        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
-        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
-        ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
-        ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
-      },
+      messageReadReceiptItemsParam(params),
+      requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.read-receipts.detail': return await service.messageReadReceiptDetail(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+      numberParam(params, 'sequence', 0),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.send-text': {
+      const botRefs = botRefsParam(params)
+      const humanMentions = humanMentionsParam(params)
+      const botMentions = botMentionsParam(params)
+      return await service.sendSourceText(
+        stringParam(params, 'sourceRef'),
+        stringParam(params, 'textContent'),
+        {
+          ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+          ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+          ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
+          ...(botRefs.length === 0 ? {} : { botRefs }),
+          ...(humanMentions.length === 0 ? {} : { humanMentions }),
+          ...(botMentions.length === 0 ? {} : { botMentions }),
+        },
+      )
+    }
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
     )
@@ -977,6 +1063,11 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'peerUserId', 0),
       { displayName: stringParam(params, 'displayName') },
     )
+    case 'chat.private.open-from-contact': return await service.openPrivateChatFromContact(
+      stringParam(params, 'contactRef'),
+    )
+    case 'chat.official-author.profile': return await service.officialAuthorProfile()
+    case 'chat.official-author.private.open': return await service.openOfficialAuthorPrivateChat()
     case 'chat.member.private.open': return await service.openPrivateChatFromMember(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'memberRef'),
@@ -1055,6 +1146,13 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
+    case 'calls.outgoing.diag': {
+      console.info('dsh-arkme: call_diag browser', {
+        label: outgoingDiagTextParam(params, 'label', 200),
+        detail: outgoingDiagTextParam(params, 'detail', 4_000),
+      })
+      return { ok: true }
+    }
     case 'calls.history.list': return await service.listCallHistory({
       limit: numberParam(params, 'limit', 20),
       ...(stringParam(params, 'cursor').trim() === '' ? {} : { cursor: stringParam(params, 'cursor').trim() }),
@@ -1200,9 +1298,24 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.restart': return await requireExtensionInstallTasks(extensionInstallTasks).restart(
       stringParam(params, 'extensionId'),
     )
+    case 'extensions.client.failure': return await requireExtensionManager(extensionManager).reportClientFailure({
+      identityKey: stringParam(params, 'identityKey'),
+      extensionId: stringParam(params, 'extensionId'),
+      version: stringParam(params, 'version'),
+      clientInstanceKey: stringParam(params, 'clientInstanceKey'),
+      clientContentDigest: stringParam(params, 'clientContentDigest'),
+      clientOwnerKey: stringParam(params, 'clientOwnerKey'),
+      kind: stringParam(params, 'kind'),
+      message: stringParam(params, 'message'),
+    })
     case 'extensions.persistent.client-state': return requireExtensionManager(extensionManager).persistentClientState(
       stringParam(params, 'extensionId'),
       stringParam(params, 'version'),
+    )
+    case 'extensions.bundle.client-state': return requireExtensionManager(extensionManager).bundleClientState(
+      stringParam(params, 'packageName'),
+      stringParam(params, 'version'),
+      stringParam(params, 'clientContentDigest'),
     )
     case 'extensions.persistent.invoke': {
       const extensionId = stringParam(params, 'extensionId')

@@ -7,7 +7,7 @@ const BRIDGE_EVENT_TYPES = new Set([
   'ready', 'state', 'calling', 'begin', 'end', 'user_reject', 'user_no_response',
   'user_line_busy', 'not_connected', 'permission_denied', 'fatal_error',
   'toggle_fullscreen_request', 'toggle_compact_mode_request', 'hide_window_request',
-  'media_permission_request',
+  'media_permission_request', 'diag',
 ])
 
 const HOST_COMMAND_TYPES = new Set([
@@ -24,6 +24,9 @@ export interface DesktopCallBridgeEvent {
   statusText?: string
   message?: string
   reason?: string
+  label?: string
+  detail?: string
+  hasActiveCall?: boolean
   camera?: boolean
   microphone?: boolean
 }
@@ -63,6 +66,8 @@ export function parseDesktopCallBridgeEvent(
   const statusText = safeString(message.statusText)
   const detailMessage = safeString(message.message)
   const reason = safeString(message.reason, 200)
+  const label = safeString(message.label, 200)
+  const detail = message.detail === undefined ? undefined : safeString(JSON.stringify(message.detail), 2_000)
   return {
     type: message.type,
     ...(requestId === undefined ? {} : { requestId }),
@@ -73,6 +78,9 @@ export function parseDesktopCallBridgeEvent(
     ...(statusText === undefined ? {} : { statusText }),
     ...(detailMessage === undefined ? {} : { message: detailMessage }),
     ...(reason === undefined ? {} : { reason }),
+    ...(label === undefined ? {} : { label }),
+    ...(detail === undefined ? {} : { detail }),
+    ...(typeof message.hasActiveCall === 'boolean' ? { hasActiveCall: message.hasActiveCall } : {}),
     ...(typeof message.camera === 'boolean' ? { camera: message.camera } : {}),
     ...(typeof message.microphone === 'boolean' ? { microphone: message.microphone } : {}),
   }

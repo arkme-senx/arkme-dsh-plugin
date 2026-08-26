@@ -5,7 +5,8 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
   if (left === undefined || right === undefined) return left === right
   return left.sourceRef === right.sourceRef && left.kind === right.kind && left.displayName === right.displayName
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
-    && left.unreadCount === right.unreadCount && left.isMuted === right.isMuted
+    && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
+    && left.isMuted === right.isMuted
     && left.latestSequence === right.latestSequence
     && left.avatarRef === right.avatarRef && (left.avatarRefs ?? []).join('|') === (right.avatarRefs ?? []).join('|')
     && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)
@@ -14,14 +15,23 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
 export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
+  recordRevision: number
   mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness'
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
+  conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
+  extensionDetailId?: string
+  extensionAuthorFilter?: ArkmeExtensionAuthorFilter
   calendarOpen?: boolean
   worldTarget?: ArkmeWorldTarget
+}
+
+export interface ArkmeExtensionAuthorFilter {
+  ownerUserId: number
+  ownerName: string
 }
 
 export interface ArkmeWorldTarget {
@@ -38,10 +48,11 @@ function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTa
 }
 
 export class ArkmeUiController {
-  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, mode: 'login' }
+  private state: ArkmeUiState = { authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' }
   private lastConversationSource: ArkmeSourceItem | undefined
   private readonly listeners = new Set<() => void>()
   private settingsOpener: (() => void) | undefined
+  private conversationTargetRevision = 0
 
   readonly getSnapshot = (): ArkmeUiState => this.state
 
@@ -91,6 +102,10 @@ export class ArkmeUiController {
 
   chatChanged(): void {
     this.publish({ ...this.state, chatRevision: this.state.chatRevision + 1 })
+  }
+
+  recordChanged(): void {
+    this.publish({ ...this.state, recordRevision: this.state.recordRevision + 1 })
   }
 
   showLogin(): void {
@@ -167,8 +182,37 @@ export class ArkmeUiController {
   showExtensions(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    const { extensionShareRef: _extensionShareRef, ...withoutShare } = rest
-    this.publish({ ...withoutShare, mode: 'extensions' })
+    const { extensionShareRef: _extensionShareRef, extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutExtensionIntent } = rest
+    this.publish({ ...withoutExtensionIntent, mode: 'extensions' })
+  }
+
+  showAuthorExtensions(ownerUserId: number, ownerName: string): void {
+    this.leaveContacts()
+    if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new TypeError('插件作者用户 ID 必须是正整数')
+    const normalizedOwnerName = ownerName.replace(/\s+/g, ' ').trim()
+    if (normalizedOwnerName === '') throw new TypeError('插件作者名称不能为空')
+    const {
+      selectedSource: _selectedSource,
+      recordingTarget: _recordingTarget,
+      calendarOpen: _calendarOpen,
+      productMode: _productMode,
+      extensionShareRef: _extensionShareRef,
+      extensionDetailId: _extensionDetailId,
+      ...rest
+    } = this.state
+    this.publish({
+      ...rest,
+      mode: 'extensions',
+      extensionAuthorFilter: { ownerUserId, ownerName: normalizedOwnerName },
+    })
+  }
+
+  showExtensionDetail(extensionId: string): void {
+    this.leaveContacts()
+    const normalized = extensionId.trim()
+    if (normalized === '') throw new TypeError('插件 ID 不能为空')
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, extensionShareRef: _extensionShareRef, extensionAuthorFilter: _extensionAuthorFilter, ...rest } = this.state
+    this.publish({ ...rest, mode: 'extensions', extensionDetailId: normalized })
   }
 
   showConversations(): void {
@@ -207,7 +251,8 @@ export class ArkmeUiController {
   openExtensionShare(shareRef: string): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'extensions', extensionShareRef: shareRef })
+    const { extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutDetail } = rest
+    this.publish({ ...withoutDetail, mode: 'extensions', extensionShareRef: shareRef })
   }
 
   dismissExtensionShare(): void {
@@ -218,19 +263,50 @@ export class ArkmeUiController {
   selectSource(source: ArkmeSourceItem): void {
     this.leaveContacts()
     this.lastConversationSource = source
-    const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    const { calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', selectedSource: source })
+  }
+
+  showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number): void {
+    this.leaveContacts()
+    const normalizedItemUid = itemUid.trim()
+    if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
+    this.lastConversationSource = source
+    const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({
+      ...rest,
+      mode: 'source',
+      selectedSource: source,
+      conversationTarget: {
+        revision: ++this.conversationTargetRevision,
+        itemUid: normalizedItemUid,
+        sendAtMillis: Number.isFinite(sendAtMillis) ? sendAtMillis : 0,
+      },
+    })
+  }
+
+  consumeConversationTarget(revision: number): void {
+    if (this.state.conversationTarget?.revision !== revision) return
+    const { conversationTarget: _conversationTarget, ...rest } = this.state
+    this.publish(rest)
   }
 
   private publish(next: ArkmeUiState): void {
     if (next.authRevision === this.state.authRevision
       && next.chatRevision === this.state.chatRevision
+      && next.recordRevision === this.state.recordRevision
       && next.mode === this.state.mode
       && next.productMode === this.state.productMode
       && next.calendarOpen === this.state.calendarOpen
+      && next.conversationTarget?.revision === this.state.conversationTarget?.revision
+      && next.conversationTarget?.itemUid === this.state.conversationTarget?.itemUid
+      && next.conversationTarget?.sendAtMillis === this.state.conversationTarget?.sendAtMillis
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef
+      && next.extensionDetailId === this.state.extensionDetailId
+      && next.extensionAuthorFilter?.ownerUserId === this.state.extensionAuthorFilter?.ownerUserId
+      && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
       && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next

@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const redesignCss = readFileSync(
@@ -40,7 +41,7 @@ describe('Arkme redesign dark theme', () => {
   })
 
   it('gives every production Contacts class a substantive scoped rule', () => {
-    const contactsDir = new URL('../src/client/redesign/contacts/', import.meta.url).pathname
+    const contactsDir = fileURLToPath(new URL('../src/client/redesign/contacts/', import.meta.url))
     const contactsClasses = new Set<string>()
     for (const file of readdirSync(contactsDir).filter(name => name.endsWith('.tsx'))) {
       const source = readFileSync(join(contactsDir, file), 'utf8')
@@ -80,6 +81,7 @@ describe('Arkme redesign dark theme', () => {
     expect(darkCss).toContain('.arkme-unmarked-speaker-success')
     expect(darkCss).toContain('var(--dsw-alias-state-success-tertiary)')
     expect(darkCss).toContain('var(--dsw-alias-state-error-primary)')
+    expect(darkCss).toContain('body[data-ds-dark-theme] [data-arkme-call-surface] { --arkme-call-video-icon-filter: invert(1) brightness(1.8); }')
   })
 
   it('maps every redesign surface family to DSH semantic backgrounds', () => {

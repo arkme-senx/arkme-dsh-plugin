@@ -45764,6 +45764,14 @@ function summarizeDiagPayload(payload = {}) {
 function diagLog(label, payload = {}) {
   try {
     console.log(`[DesktopCallDiag] ${label} ${safeJsonStringify(payload)}`);
+    try {
+      postToWebHostBridge({
+        type: "diag",
+        label,
+        detail: payload
+      });
+    } catch (_) {
+    }
   } catch (error) {
     console.log(
       `[DesktopCallDiag] ${label} ${safeJsonStringify({
@@ -46350,10 +46358,11 @@ function postToWebHostBridge(message) {
   if (!callRequestId) {
     return false;
   }
+  const payload = typeof message === "string" ? message : safeJsonStringify(message);
   window.parent.postMessage({
     channel: "jotmo-desktop-call",
     callRequestId,
-    message
+    message: payload
   }, window.location.origin);
   return true;
 }
@@ -49256,8 +49265,22 @@ function markTerminalEmitted(payload = {}) {
   state.terminalBridgeKey = resolveCallSessionKey(payload);
 }
 async function finalizeTerminalState(type, payload = {}, statusText) {
+  diagLog("finalize_terminal_state_start", {
+    type,
+    payload: summarizeDiagPayload(payload),
+    statusText,
+    pendingLocalTerminalAction: state.pendingLocalTerminalAction,
+    terminalBridgeKey: state.terminalBridgeKey,
+    sessionKey: resolveCallSessionKey(payload)
+  });
   updateCallIdentity(payload);
   if (isTerminalAlreadyEmitted(payload)) {
+    diagLog("finalize_terminal_state_duplicate_skip", {
+      type,
+      payload: summarizeDiagPayload(payload),
+      terminalBridgeKey: state.terminalBridgeKey,
+      sessionKey: resolveCallSessionKey(payload)
+    });
     return;
   }
   markTerminalEmitted(payload);
@@ -49285,6 +49308,12 @@ async function finalizeTerminalState(type, payload = {}, statusText) {
   await cleanupActiveMedia();
   resetRuntimeState({ preserveBootstrap: true });
   render();
+  diagLog("finalize_terminal_state_done", {
+    type,
+    resolvedStatusText,
+    phase: state.phase,
+    terminalBridgeKey: state.terminalBridgeKey
+  });
 }
 async function attachRemoteView(userId) {
   const normalizedUserId = safeString(userId);
@@ -49763,11 +49792,16 @@ async function hangupCall() {
   }
   const engine = state.engine;
   state.pendingLocalTerminalAction = "hangup";
+  diagLog("hangup_call_start", captureRuntimeSnapshot({
+    pendingLocalTerminalAction: state.pendingLocalTerminalAction
+  }));
   postLocalTerminalToWebHost("end", "\u901A\u8BDD\u5DF2\u7ED3\u675F");
   void engine.hangup().catch(() => {
     state.pendingLocalTerminalAction = "";
+    diagLog("hangup_call_engine_failed", captureRuntimeSnapshot());
   });
   await finalizeTerminalState("end", {}, "\u901A\u8BDD\u5DF2\u7ED3\u675F");
+  diagLog("hangup_call_done", captureRuntimeSnapshot());
 }
 async function requestToggleFullscreen() {
   state.activeDevicePopover = "";

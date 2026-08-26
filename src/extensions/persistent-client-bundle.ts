@@ -1,3 +1,5 @@
+import { arkmeClientContentDigest } from './client-owner.js'
+
 interface PersistentClientSpec {
   extensionId: string
   version: string
@@ -6,7 +8,11 @@ interface PersistentClientSpec {
   apiPath: string
   operation?: 'extensions.persistent.invoke' | 'extensions.bundle.invoke'
   identityKey?: 'extensionId' | 'packageName'
+  clientContentDigest?: string
+  wrapperVersion?: number
 }
+
+export const ARKME_CLIENT_WRAPPER_VERSION = 3
 
 /** This function is serialized into each generated browser bundle. It must stay closure-free. */
 function persistentClientFactory(requireModule: (id: string) => unknown, spec: PersistentClientSpec): unknown {
@@ -40,6 +46,31 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
       throw error
     }
     return envelope.value
+  }
+  const identityKey = spec.identityKey ?? 'extensionId'
+  const registryProperty = '__arkmeExtensionClientOwnersV2'
+  type ClientLease = { instanceKey: string; generation: number; deactivate(): void }
+  const browser = globalThis as typeof globalThis & {
+    [registryProperty]?: Map<string, ClientLease>
+  }
+  const owners = browser[registryProperty] ?? new Map<string, ClientLease>()
+  browser[registryProperty] = owners
+  let clientInstanceKey = ''
+  const reportFailure = (error: unknown): void => {
+    const message = (error !== null && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : String(error)).trim().slice(0, 2_000)
+    void callOperation('extensions.client.failure', {
+      identityKey,
+      extensionId: spec.extensionId,
+      version: spec.version,
+      clientInstanceKey,
+      clientContentDigest: spec.clientContentDigest ?? '',
+      kind: 'runtime-load-failed',
+      message: message || 'extension client failed to load',
+    }).catch(reportError => {
+      console.error(`[arkme-extension:${spec.extensionId}] failed to report Client isolation`, reportError)
+    })
   }
   let deactivateClient: (() => void) | undefined
   const callHost = async (method: string, args: unknown = null): Promise<unknown> => {
@@ -103,23 +134,7 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
   return {
     name: `arkme-extension-client:${spec.extensionId}`,
     async apply(ctx: any) {
-      if (spec.identityKey !== 'packageName') {
-        const state = await callOperation('extensions.persistent.client-state', {
-          extensionId: spec.extensionId,
-          version: spec.version,
-        }) as {
-          mount?: boolean
-        }
-        if (state.mount !== true) return
-      }
       const styles = new Styles()
-      const traps = {
-        setTimeout: unavailable('setTimeout'), setInterval: unavailable('setInterval'),
-        clearTimeout: unavailable('clearTimeout'), clearInterval: unavailable('clearInterval'),
-        fetch: unavailable('fetch'), require: unavailable('require'),
-      }
-      const parameters = ['React', 'console', 'styles', 'host', 'harness', ...Object.keys(traps), 'process', 'Buffer']
-      const closure = new Function(...parameters, `return (async () => {\n${spec.code}\n})()`)
       const taggedConsole = {
         ...console,
         log: (...args: unknown[]) => console.log(`[arkme-extension:${spec.extensionId}]`, ...args),
@@ -127,40 +142,109 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
         warn: (...args: unknown[]) => console.warn(`[arkme-extension:${spec.extensionId}]`, ...args),
         error: (...args: unknown[]) => console.error(`[arkme-extension:${spec.extensionId}]`, ...args),
       }
-      const harness = new Proxy({}, { get(_target, property) { throw new Error(`harness.${String(property)} belongs to the Host half`) } })
-      const evaluated = await closure(
-        React, taggedConsole, styles, { call: callHost }, harness, ...Object.values(traps), undefined, undefined,
-      )
-      const isFunction = typeof evaluated === 'function'
-      if (!isFunction && (evaluated === null || typeof evaluated !== 'object' || typeof evaluated.apply !== 'function')) {
-        throw new Error('persistent extension client code did not return a Cordis plugin')
-      }
-      const applyEvaluated = isFunction ? evaluated : evaluated.apply.bind(evaluated)
-      const guarded = {
-        ...(isFunction ? {} : evaluated),
-        name: `arkme-extension-client:${spec.extensionId}`,
-        apply(childCtx: unknown, config?: unknown) { return applyEvaluated(guardedContext(childCtx), config) },
-      }
-      ctx.effect(() => () => styles.dispose(), `arkme-extension:${spec.extensionId}:styles`)
-      const fiber = ctx.plugin(guarded) as { dispose?(): unknown; then?: unknown }
-      const deactivate = () => {
+      let fiber: { dispose?(): unknown; then?: unknown } | undefined
+      let deactivate: (() => void) | undefined
+      let ownerKey = ''
+      let lease: ClientLease | undefined
+      let active = false
+      try {
+        const state = await callOperation(
+          identityKey === 'packageName' ? 'extensions.bundle.client-state' : 'extensions.persistent.client-state',
+          identityKey === 'packageName'
+            ? {
+                packageName: spec.extensionId,
+                version: spec.version,
+                clientContentDigest: spec.clientContentDigest ?? '',
+              }
+            : { extensionId: spec.extensionId, version: spec.version },
+        ) as { mount?: boolean; extension_id?: unknown; instance_key?: unknown; generation?: unknown }
+        if (state.mount !== true) return
+        if (typeof state.extension_id !== 'string' || state.extension_id.trim() === ''
+          || typeof state.instance_key !== 'string' || state.instance_key.trim() === ''
+          || typeof state.generation !== 'number' || !Number.isSafeInteger(state.generation) || state.generation < 0) {
+          throw new Error('Arkme Host returned an invalid Client owner lease')
+        }
+        ownerKey = state.extension_id.trim()
+        clientInstanceKey = state.instance_key.trim()
+        const generation = state.generation
+        const current = owners.get(ownerKey)
+        if (current !== undefined) {
+          if (current.instanceKey === clientInstanceKey) {
+            taggedConsole.warn(`Client instance ${clientInstanceKey} is already active; skipping duplicate mount`)
+            return
+          }
+          if (current.generation >= generation) {
+            taggedConsole.warn(`A newer Client instance for ${ownerKey} is already active; skipping stale mount`)
+            return
+          }
+          current.deactivate()
+        }
+        active = true
+        deactivate = () => {
+          if (!active) return
+          active = false
+          styles.dispose()
+          void Promise.resolve(fiber?.dispose?.()).catch(() => undefined)
+        }
+        lease = { instanceKey: clientInstanceKey, generation, deactivate }
+        owners.set(ownerKey, lease)
+        deactivateClient = deactivate
+        ctx.effect(() => () => {
+          deactivate?.()
+          if (deactivateClient === deactivate) deactivateClient = undefined
+          if (owners.get(ownerKey) === lease) owners.delete(ownerKey)
+        }, `arkme-extension:${ownerKey}:client-lease`)
+        const traps = {
+          setTimeout: unavailable('setTimeout'), setInterval: unavailable('setInterval'),
+          clearTimeout: unavailable('clearTimeout'), clearInterval: unavailable('clearInterval'),
+          fetch: unavailable('fetch'), require: unavailable('require'),
+        }
+        const parameters = ['React', 'console', 'styles', 'host', 'harness', ...Object.keys(traps), 'process', 'Buffer']
+        const closure = new Function(...parameters, `return (async () => {\n${spec.code}\n})()`)
+        const harness = new Proxy({}, { get(_target, property) { throw new Error(`harness.${String(property)} belongs to the Host half`) } })
+        const evaluated = await closure(
+          React, taggedConsole, styles, { call: callHost }, harness, ...Object.values(traps), undefined, undefined,
+        )
+        if (!active || owners.get(ownerKey) !== lease) return
+        const isFunction = typeof evaluated === 'function'
+        if (!isFunction && (evaluated === null || typeof evaluated !== 'object' || typeof evaluated.apply !== 'function')) {
+          throw new Error('persistent extension client code did not return a Cordis plugin')
+        }
+        const applyEvaluated = isFunction ? evaluated : evaluated.apply.bind(evaluated)
+        const guarded = {
+          ...(isFunction ? {} : evaluated),
+          name: `arkme-extension-client:${spec.extensionId}`,
+          apply(childCtx: unknown, config?: unknown) { return applyEvaluated(guardedContext(childCtx), config) },
+        }
+        fiber = ctx.plugin(guarded) as { dispose?(): unknown; then?: unknown }
+        if (!active || owners.get(ownerKey) !== lease) {
+          void Promise.resolve(fiber.dispose?.()).catch(() => undefined)
+          return
+        }
+        await fiber
+      } catch (error) {
+        const authoritativeFailure = active && lease !== undefined && owners.get(ownerKey) === lease
+        deactivate?.()
         styles.dispose()
-        void Promise.resolve(fiber.dispose?.()).catch(() => undefined)
-      }
-      deactivateClient = deactivate
-      ctx.effect(() => () => {
         if (deactivateClient === deactivate) deactivateClient = undefined
-      }, `arkme-extension:${spec.extensionId}:client-fiber`)
-      await fiber
+        if (lease !== undefined && owners.get(ownerKey) === lease) owners.delete(ownerKey)
+        taggedConsole.error('Client load failed and was isolated; DSH will continue without this extension', error)
+        if (authoritativeFailure) reportFailure(error)
+      }
     },
   }
 }
 
 export function renderPersistentClientBundle(packageName: string, spec: PersistentClientSpec): string {
+  const renderedSpec: PersistentClientSpec = {
+    ...spec,
+    clientContentDigest: spec.clientContentDigest ?? arkmeClientContentDigest(spec.code),
+    wrapperVersion: ARKME_CLIENT_WRAPPER_VERSION,
+  }
   return [
     `window.__ModuleLoader__.load({ id: ${JSON.stringify(packageName)}, factory: (require) => {`,
     `  const __name = (target, value) => Object.defineProperty(target, 'name', { value, configurable: true })`,
-    `  return (${persistentClientFactory.toString()})(require, ${JSON.stringify(spec)})`,
+    `  return (${persistentClientFactory.toString()})(require, ${JSON.stringify(renderedSpec)})`,
     `} })`,
     '',
   ].join('\n')

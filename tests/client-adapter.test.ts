@@ -74,17 +74,18 @@ describe('official DSH client adapter', () => {
     const toggleSidebar = vi.fn()
     const closeDetails = vi.fn()
     const cleanups: Array<() => void> = []
+    const effect = vi.fn((factory: () => unknown, label: string) => {
+      if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
+      const cleanup = factory()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+    })
     arkmeUi.showConversations()
     apply({
       slots: { inject, register },
       layout: { toggleSidebar, closeDetails },
       locale: createClientLocaleStub(),
       sessions: { open: vi.fn() },
-      effect: vi.fn((factory: () => unknown, label: string) => {
-        if (!label.includes('embedded DeepSeek Harness') && !label.includes('official settings sidebar')) return
-        const cleanup = factory()
-        if (typeof cleanup === 'function') cleanups.push(cleanup)
-      }),
+      effect,
     } as never)
 
     expect(registered.map(item => item.name)).toEqual([
@@ -109,10 +110,14 @@ describe('official DSH client adapter', () => {
       expect.objectContaining({
         name: 'settings.section',
         id: 'arkme-account',
-        order: 1000,
+        order: -1,
         label: '我的账户',
       }),
     ]))
+    expect(effect).toHaveBeenCalledWith(
+      expect.any(Function),
+      'dsh-arkme: render account settings navigation icon',
+    )
 
     const sidebarFace = registered.find(item => item.name === 'sidebar')?.inject?.() as {
       collapseSidebar(): void
@@ -174,6 +179,7 @@ describe('official DSH client adapter', () => {
           inject: vi.fn((_key: string, factory: () => unknown) => factory()),
           register,
         },
+        locale: createClientLocaleStub(),
         layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
         effect: vi.fn((factory: () => unknown, label: string) => {
           if (!label.includes('official settings sidebar')) return

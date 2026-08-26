@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties }
 import { createPortal } from 'react-dom'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
-import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { PuzzlePiece } from '@phosphor-icons/react/dist/icons/PuzzlePiece'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
@@ -21,6 +20,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -32,7 +32,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'search' | 'calendar' | 'world' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'world' | 'extensions'
   label: string
   icon: Icon
 }
@@ -42,7 +42,6 @@ const items: NavigationItem[] = [
   { id: 'contacts', label: '联系人', icon: AddressBook },
   { id: 'calls', label: '通话', icon: PhoneCall },
   { id: 'recordings', label: '录音', icon: Waveform },
-  { id: 'search', label: '搜索', icon: MagnifyingGlass },
   { id: 'calendar', label: '日历', icon: CalendarBlank },
   { id: 'world', label: '世界', icon: GlobeHemisphereWest },
   { id: 'extensions', label: '市集', icon: PuzzlePiece },
@@ -116,6 +115,14 @@ const styles: Record<string, CSSProperties> = {
   },
   compactMarker: { left: '50%', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
   hostedMarker: { left: -5 },
+  icon: { position: 'relative', display: 'inline-flex' },
+  unreadIndicator: {
+    position: 'absolute', top: -7, right: -10, minWidth: 16, height: 16,
+    padding: '0 4px', boxSizing: 'border-box', display: 'inline-flex',
+    alignItems: 'center', justifyContent: 'center', borderRadius: 8,
+    background: '#ff5a52', color: '#fff', boxShadow: '0 0 0 2px #fff',
+    fontSize: 10, fontWeight: 600, lineHeight: '16px', fontVariantNumeric: 'tabular-nums',
+  },
   label: { fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap' },
 }
 
@@ -125,6 +132,11 @@ export function ArkmeProductNavigation({
 }: ArkmeProductNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const chatDirectory = useSyncExternalStore(
+    arkmeChatDirectory.subscribe,
+    arkmeChatDirectory.getSnapshot,
+    arkmeChatDirectory.getSnapshot,
+  )
   const pluginUpdateState = useSyncExternalStore(
     arkmePluginUpdateStore.subscribe,
     arkmePluginUpdateStore.getSnapshot,
@@ -169,10 +181,14 @@ export function ArkmeProductNavigation({
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
-      : ui.mode === 'search' ? 'search'
-        : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
+      : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
   const pluginUpdate = pluginUpdateState.status
   const installedPluginVersion = pluginUpdate?.installedVersion ?? pluginManifest.version
+  const conversationUnreadCount = authState.auth?.status === 'authenticated' && chatDirectory.baselineReady
+    ? arkmeChatDirectory.totalUnreadCount({ excludeMuted: true })
+    : 0
+  const conversationUnreadLabel = conversationUnreadCount > 99 ? '99+' : String(conversationUnreadCount)
+
   const activate = (id: NavigationItem['id']) => {
     if (id === 'extensions') {
       arkmeUi.showExtensions()
@@ -183,7 +199,6 @@ export function ArkmeProductNavigation({
     else if (id === 'recordings') arkmeUi.showRecordings()
     else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'calendar') arkmeUi.showCalendar()
-    else if (id === 'search') arkmeUi.showSearch()
     else arkmeUi.showConversations()
   }
 
@@ -220,10 +235,13 @@ export function ArkmeProductNavigation({
       {items.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
+        const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         return <button
           key={item.id}
           type="button"
           aria-current={active ? 'page' : undefined}
+          aria-label={showsUnread ? `${item.label}，${String(conversationUnreadCount)} 条未读` : undefined}
+          {...(showsUnread ? { 'data-arkme-conversation-unread': conversationUnreadCount } : {})}
           style={{
             ...styles.button,
             ...(compact ? styles.compactButton : {}),
@@ -237,7 +255,15 @@ export function ArkmeProductNavigation({
             ...(compact ? styles.compactMarker : {}),
             ...(hosted ? styles.hostedMarker : {}),
           }} />}
-          <ItemIcon size={22} weight="regular" aria-hidden />
+          <span style={styles.icon}>
+            <ItemIcon size={22} weight="regular" aria-hidden />
+            {showsUnread && <span
+              data-arkme-unread-indicator
+              data-arkme-unread-count={conversationUnreadCount}
+              aria-hidden
+              style={styles.unreadIndicator}
+            >{conversationUnreadLabel}</span>}
+          </span>
           <span style={styles.label}>{item.label}</span>
         </button>
       })}

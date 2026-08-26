@@ -200,10 +200,12 @@ describe('Arkme extension tools', () => {
     )).resolves.toContain('"status": "confirmation_required"')
     expect(setEnabled).not.toHaveBeenCalled()
     addNaturalConfirmation(enabledAgent, '行，先关掉吧')
-    await expect(enabledTool?.execute?.(
+    const enabledResult = await enabledTool?.execute?.(
       { extension_id: 'ext-1', enabled: false },
       toolExec(enabledAgent, 'call-enabled-confirm'),
-    )).resolves.toContain('"enabled": false')
+    )
+    expect(enabledResult).toContain('"enabled": false')
+    expect(enabledResult).toContain('"restart_required": true')
     expect(setEnabled).toHaveBeenCalledWith({
       agent: enabledAgent, extensionId: 'ext-1', enabled: false,
     })

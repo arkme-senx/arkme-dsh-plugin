@@ -22,7 +22,10 @@ import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from './plugin-update-policy.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
-import { assertTargetArtifactIntegrity, buildTargetInstallArgs } from './plugin-updater-helper.js'
+import {
+  assertTargetArtifactIntegrity, buildTargetInstallArgs, reconcilePluginUpdaterProfilePolicy,
+} from './plugin-updater-helper.js'
+import { isArkmeProfilePackageName } from './extensions/profile-bundle-policy.js'
 import type {
   ArkmePluginUpdateAvailability,
   ArkmePluginUpdateLevel,
@@ -94,6 +97,7 @@ export interface PluginUpdateInstallRuntime {
   requestProcessExit?: (code: number) => void
   runProfilePluginAdd?: (plan: PluginUpdaterPlan) => Promise<void>
   runProfilePluginRemove?: (plan: PluginUpdaterPlan) => Promise<void>
+  disabledProfilePackages?: () => readonly string[]
   preparePackageManager?: (dshHome: string, profileName: string) => void
   allowLocalInstall?: boolean
 }
@@ -395,6 +399,11 @@ export class ArkmePluginUpdateManager {
     const previousArtifactPath = existingCachedPluginArtifactPath(cacheDirectory, this.installedVersion)
     const planPath = join(this.stateDirectory, `plugin-update-plan-${jobId}.json`)
     const logPath = join(this.stateDirectory, 'plugin-update-helper.log')
+    const disabledProfilePackages = [...new Set(runtime.disabledProfilePackages?.() ?? [])]
+    if (disabledProfilePackages.length > 1_000
+      || disabledProfilePackages.some(packageName => !isArkmeProfilePackageName(packageName))) {
+      throw new ArkmePluginUpdateError('plugin-update-profile-policy-invalid', '已关闭扩展的 Profile 状态无效', false)
+    }
     const plan: PluginUpdaterPlan = {
       schemaVersion: 1,
       jobId,
@@ -413,6 +422,7 @@ export class ArkmePluginUpdateManager {
       ...(this.appVersion === undefined ? {} : { appVersion: this.appVersion }),
       ...(this.dshVersion === undefined ? {} : { dshVersion: this.dshVersion }),
       ...(previousArtifactPath === undefined ? {} : { previousArtifactPath }),
+      ...(disabledProfilePackages.length === 0 ? {} : { disabledProfilePackages }),
       stateDirectory: this.stateDirectory,
       healthUrl: runtime.healthUrl,
       logPath,
@@ -511,6 +521,7 @@ export class ArkmePluginUpdateManager {
       'add',
       fallbackSpec,
     ], '恢复旧版本')
+    reconcilePluginUpdaterProfilePolicy(plan)
   }
 
   private readInstalledProfilePluginVersion(plan: PluginUpdaterPlan): string {
@@ -540,6 +551,7 @@ export class ArkmePluginUpdateManager {
       assertTargetArtifactIntegrity(plan)
       await remove(plan)
       await add(plan)
+      reconcilePluginUpdaterProfilePolicy(plan)
       const installedVersion = this.readInstalledProfilePluginVersion(plan)
       if (installedVersion !== plan.targetVersion) {
         throw new Error(`DSH Profile 实际安装版本为 ${installedVersion || '未知'}，预期为 ${plan.targetVersion}`)

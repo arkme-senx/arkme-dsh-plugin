@@ -10,6 +10,7 @@ import Schema from '@deepseek-ai/schemastery'
 export { createOpenClawCliAdapter } from './openclaw/index.js'
 import { createOpenClawCliAdapter, createOpenClawCommandRunner, createOpenClawFileSecretStore, createOpenClawProvisioner } from './openclaw/index.js'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
@@ -74,6 +75,7 @@ export interface Config {
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   interwovenMomentsEnabled: boolean
+  chatMemberJoinEventsEnabled: boolean
   richMediaRenderEnabled: boolean
   richMediaSendEnabled: boolean
   maxUploadBytes: number
@@ -98,7 +100,7 @@ export const Config: Schema<Config> = Schema.object({
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
-  dataBaseUrl: Schema.string().default('https://jotmo-data.senguo.me'),
+  dataBaseUrl: Schema.string().default(''),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -119,6 +121,7 @@ export const Config: Schema<Config> = Schema.object({
   relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
+  chatMemberJoinEventsEnabled: Schema.boolean().default(true),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
   allowNonLoopback: Schema.boolean().default(false),
@@ -177,7 +180,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  validateConfig(ctx, config)
+  config = resolveArkmeConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
@@ -199,6 +202,8 @@ export function apply(ctx: Context, config: Config): void {
     workspaceRoot: join(openClawStateDirectory, 'workspaces'),
     isRuntimeOnline: async botRef => (await service.listBots()).items.some(bot => bot.botRef === botRef && bot.status === 'online'),
   }))
+  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
+  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const updateManager = new ArkmePluginUpdateManager({
     enabled: config.updateCheckEnabled,
     channel: config.updateChannel,
@@ -214,6 +219,8 @@ export function apply(ctx: Context, config: Config): void {
       profileName: 'web',
       healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
+      disabledProfilePackages: () => extensionStore.list().flatMap(item =>
+        !item.enabled && item.profilePackageName !== undefined ? [item.profilePackageName] : []),
       ...(process.env.ARKME_DESKTOP_MANAGED_RESTART === '1'
         && process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH !== undefined
         ? {
@@ -229,7 +236,6 @@ export function apply(ctx: Context, config: Config): void {
     enabled: config.extensionShareDiscoveryEnabled !== false,
     logger: ctx.logger,
   })
-  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionProfileDirectory = join(dshHome, 'profiles', 'web')
   const extensionProfileInstaller = new ArkmeExtensionProfileInstaller({
     dshHome,
@@ -250,7 +256,6 @@ export function apply(ctx: Context, config: Config): void {
         }
       : {}),
   })
-  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const ownedExtensionStore = new ArkmeOwnedExtensionStore(extensionDirectory)
   const ownedExtensionRefs = new ArkmeOwnedExtensionRefs()
   const ownedExtensionHostInstanceId = randomUUID()
@@ -269,6 +274,7 @@ export function apply(ctx: Context, config: Config): void {
       credentialOwner: service,
     })
   })
+  registerDSHAgentInputRecordSync(ctx, service)
   registerArkmeTools(ctx, service, config.toolProfile)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
@@ -288,7 +294,9 @@ export function apply(ctx: Context, config: Config): void {
       },
     )
     extensionManager = manager
-    void manager.reconcileInstallationMetrics()
+    void manager.reconcileInstallationMetrics().catch(error => {
+      ctx.logger.warn('Arkme extension startup reconciliation failed: %s', error instanceof Error ? error.message : String(error))
+    })
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: ownedExtensionHostInstanceId,
       profileDirectory: extensionProfileDirectory,
@@ -439,6 +447,19 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 
+export function resolveArkmeConfig(ctx: Context, config: Config): Config {
+  const resolved = config.dataBaseUrl.trim() === ''
+    ? {
+        ...config,
+        dataBaseUrl: config.environment === 'prod'
+          ? 'https://data.jotmo.cc'
+          : 'https://jotmo-data.senguo.me',
+      }
+    : config
+  validateConfig(ctx, resolved)
+  return resolved
+}
+
 function validateConfig(ctx: Context, config: Config): void {
   if (config.environment === 'prod' && !config.allowProduction) {
     throw new Error('dsh-arkme: production environment requires allowProduction: true')
@@ -557,6 +578,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,

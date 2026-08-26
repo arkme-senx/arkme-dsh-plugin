@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { buildArkmePluginUpdateRow, updateVersionText } from '../src/client/ArkmeSettingsSurface.js'
+import {
+  buildArkmeAppUpdateRow,
+  buildArkmePluginUpdateRow,
+  updateVersionText,
+} from '../src/client/ArkmeSettingsSurface.js'
 
 describe('Arkme settings policy', () => {
   it('hides the latest version label when current and latest versions match', () => {
@@ -16,6 +20,39 @@ describe('Arkme settings policy', () => {
     })).toEqual({
       label: '核心插件', current: 'v0.1.10', latest: 'v0.1.11',
       action: 'install', feedback: '发现新版本，可以立即更新',
+    })
+  })
+
+  it('projects an available APP update through the existing desktop update flow', () => {
+    expect(buildArkmeAppUpdateRow({
+      app: { status: 'available', currentVersion: '1.2.0', latestVersion: '1.3.0' },
+    })).toEqual({
+      label: 'APP', current: 'v1.2.0', latest: 'v1.3.0',
+      action: 'download', feedback: '发现新版本，可以下载更新包',
+    })
+  })
+
+  it('opens a downloaded APP package from its existing local path', () => {
+    expect(buildArkmeAppUpdateRow({
+      app: {
+        status: 'downloaded',
+        currentVersion: '1.2.0',
+        latestVersion: '1.3.0',
+        downloadedFilePath: '/Users/example/Downloads/arkme-1.3.0-darwin-arm64.zip',
+      },
+    })).toEqual({
+      label: 'APP', current: 'v1.2.0', latest: 'v1.3.0', action: 'open',
+      feedback: '下载完成，可打开所在文件夹定位安装包',
+      downloadedFilePath: '/Users/example/Downloads/arkme-1.3.0-darwin-arm64.zip',
+    })
+  })
+
+  it('disables the APP row when the desktop update bridge is unavailable', () => {
+    expect(buildArkmeAppUpdateRow({
+      appError: 'APP 更新只在 Arkme 桌面端可用',
+    })).toMatchObject({
+      action: 'busy',
+      feedback: '检查失败：APP 更新只在 Arkme 桌面端可用',
     })
   })
 
@@ -61,10 +98,13 @@ describe('Arkme settings policy', () => {
     }).feedback).toBe('检查失败：请稍后重试')
   })
 
-  it('keeps legacy update paths out of the account settings surface', () => {
+  it('restores the APP entry without restoring the legacy copy-command path', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
     expect(source).not.toContain('复制更新命令')
-    expect(source).not.toContain('arkmeAppUpdateStore')
-    expect(source).not.toContain('ArkmeAppUpdateSnapshot')
+    expect(source).toContain('arkmeAppUpdateStore')
+    expect(source).toContain('ArkmeAppUpdateSnapshot')
+    expect(source).toContain("arkmeUpdateUi.open('app')")
+    expect(source).toContain('arkmeAppUpdateStore.showDownloadedFile()')
+    expect(source).toContain('arkmeAppUpdateStore.refresh(true)')
   })
 })

@@ -7,12 +7,14 @@ import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule } from './conversation/list-sources.js'
 import { groupAiPolishToolModule } from './conversation/group-ai-polish.js'
 import { readSourceToolModule } from './conversation/read-source.js'
+import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { sendDirectTextToolModule } from './conversation/send-direct-text.js'
 import { sendTextToolModule } from './conversation/send-text.js'
 import { startCallToolModule } from './conversation/start-call.js'
+import { conversationMarkReadToolModule, unreadConversationsToolModule } from './conversation/unread.js'
 import { aiVideoToolModule } from './media/ai-video.js'
 import { textAiVideoToolModule } from './media/text-ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
@@ -61,10 +63,13 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordingToolModules,
   ...wechatToolModules,
   listSourcesToolModule,
+  unreadConversationsToolModule,
   ...groupMemberToolModules,
   readSourceToolModule,
   sourceMembersToolModule,
   sourceMemberRecordsToolModule,
+  ...messageReadReceiptToolModules,
+  conversationMarkReadToolModule,
   reportMessageToolModule,
   relatedRecordingsToolModule,
   groupAiPolishToolModule,

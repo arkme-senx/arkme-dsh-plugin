@@ -1,0 +1,105 @@
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ArkmeAuthSnapshot } from '../src/types.js'
+
+const testState = vi.hoisted(() => ({
+  calls: [] as string[],
+  pending: {
+    status: 'pending',
+    environment: 'prod',
+    attemptId: 'gate-attempt',
+    qrContent: 'weixin://gate-qr',
+    expiresAtMillis: 1_800_000_000_000,
+  } as ArkmeAuthSnapshot,
+}))
+
+vi.mock('../src/client/api.js', () => ({
+  callArkme: vi.fn(async (method: string) => {
+    testState.calls.push(method)
+    if (method === 'auth.poll') return testState.pending
+    throw new Error(`unexpected method ${method}`)
+  }),
+}))
+
+import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { callArkme } from '../src/client/api.js'
+import { ArkmeSettingsSurface } from '../src/client/ArkmeSettingsSurface.js'
+import { ArkmeLogin } from '../src/client/ArkmeLogin.js'
+import { useArkmeAuthFlow } from '../src/client/arkme-auth-flow.js'
+import { ArkmeStartupAuthGateView, startupAuthGateScreen } from '../src/client/ArkmeStartupAuthGate.js'
+import {
+  arkmeLoginEn, defaultArkmeLoginTranslate, type ArkmeLoginLocaleKey, type ArkmeLoginTranslate,
+} from '../src/client/arkme-login-locales.js'
+
+const english = ((key: ArkmeLoginLocaleKey) => arkmeLoginEn[key]) as ArkmeLoginTranslate
+
+function LoginAfterLogout({ t }: { t: ArkmeLoginTranslate }) {
+  const flow = useArkmeAuthFlow({}, t)
+  return <ArkmeStartupAuthGateView
+    screen={startupAuthGateScreen(flow.auth, flow.phoneBindingGate, flow.error)}
+    error={flow.error} busy={flow.busy} onRetry={flow.retry} flow={flow} t={t}
+  />
+}
+
+describe('Arkme WeChat login ownership', () => {
+  let renderer: ReactTestRenderer | undefined
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    testState.calls = []
+    arkmeAuthStore.setAuth(testState.pending)
+  })
+
+  afterEach(async () => {
+    await act(async () => { renderer?.unmount() })
+    renderer = undefined
+    vi.useRealTimers()
+  })
+
+  it('does not poll the startup gate attempt from a hidden non-owner surface', async () => {
+    await act(async () => {
+      renderer = create(<ArkmeSurface ownsWechatLogin={false} />)
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+
+    expect(testState.calls.filter(method => method === 'auth.poll')).toHaveLength(0)
+  })
+
+  it.each([
+    ['zh', defaultArkmeLoginTranslate, '登录即我'],
+    ['en', english, 'Sign in to Arkme'],
+  ] as const)('keeps the selected %s login language after the Chinese account settings log out', async (locale, t, title) => {
+    let auth: ArkmeAuthSnapshot = { status: 'authenticated', environment: 'prod', userId: 10001 }
+    arkmeAuthStore.setAuth(auth)
+    vi.mocked(callArkme).mockImplementation(async method => {
+      testState.calls.push(method)
+      if (method === 'auth.status') return auth as never
+      if (method === 'auth.config') return { captchaId: '', testLoginEnabled: false } as never
+      if (method === 'user.profile' || method === 'user.profile.refresh') {
+        return { profile: { displayName: 'Test', nickname: 'Test', arkmeId: 'test', contact: { phoneMasked: '138****0000' } } } as never
+      }
+      if (method === 'auth.logout') {
+        auth = { status: 'logged-out', environment: 'prod' }
+        return auth as never
+      }
+      if (method === 'auth.begin' || method === 'auth.poll') return testState.pending as never
+      throw new Error(`unexpected method ${method}`)
+    })
+
+    await act(async () => {
+      renderer = create(<><ArkmeSettingsSurface /><LoginAfterLogout t={t} /></>)
+    })
+    expect(renderer!.root.findAllByType(ArkmeLogin)).toHaveLength(0)
+    const logout = renderer!.root.findAllByType('button')
+      .find(button => button.findAllByType('strong').some(label => label.children.includes('退出登录')))
+    expect(logout).toBeDefined()
+
+    await act(async () => { logout!.props.onClick() })
+
+    expect(testState.calls).toContain('auth.logout')
+    const login = renderer!.root.findByType(ArkmeLogin)
+    expect(login.props.t('locale.id')).toBe(locale)
+    expect(login.findByType('h3').children).toEqual([title])
+  })
+})

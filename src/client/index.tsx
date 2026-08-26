@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -20,11 +20,12 @@ import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
+import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
 
-export const inject = ['slots', 'layout', 'locale']
+export const inject = ['slots', 'layout', 'locale', 'sessions']
 
 function ArkmeDshSettingsSection() {
   return <ArkmeSettingsSurface />
@@ -119,6 +120,18 @@ export function apply(ctx: ClientContext): void {
         inject: () => ({
           collapseSidebar: () => { ctx.layout.toggleSidebar() },
           closeDetails: () => { ctx.layout.closeDetails() },
+          searchDshMessages: async (query: string, signal: AbortSignal) => {
+            const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
+            if (typeof dshSessions?.search !== 'function') throw new Error('当前 DSH 版本暂不支持任务消息搜索')
+            const result = await dshSessions.search(query, signal)
+            if (!result.ok) throw new Error(result.error.message)
+            return result.value
+          },
+          openDshSession: (sessionId: string) => {
+            const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
+            if (typeof dshSessions?.open !== 'function') throw new Error('当前 DSH 版本暂不支持打开任务')
+            dshSessions.open(sessionId as SessionId)
+          },
         }),
       }, ArkmePersistentSidebar))
     }
@@ -182,6 +195,11 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: install redesign visual system')
 
+  ctx.effect(
+    () => installArkmeAccountSettingsNavIcon(),
+    'dsh-arkme: render account settings navigation icon',
+  )
+
   ctx.effect(() => {
     let disposeConversation: (() => void) | undefined
     let disposeDetails: (() => void) | undefined
@@ -215,7 +233,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'arkme-account',
-    order: 1000,
+    order: -1,
     label: '我的账户',
   }, ArkmeDshSettingsSection))
 

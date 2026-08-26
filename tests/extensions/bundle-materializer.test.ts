@@ -4,6 +4,7 @@ import {
   arkmeSandboxEntryId, canonicalBundleJson, inspectBundleArtifact, packBundleFiles,
 } from '../../src/extensions/bundle-artifact.js'
 import { materializeCordisBundle } from '../../src/extensions/bundle-materializer.js'
+import { arkmeClientContentDigest } from '../../src/extensions/client-owner.js'
 
 describe('Cordis to DSH Bundle materializer', () => {
   it('materializes identical Cordis source into one deterministic sandboxed Bundle', () => {
@@ -34,6 +35,7 @@ describe('Cordis to DSH Bundle materializer', () => {
         './client': './lib/client.js',
         './package.json': './package.json',
       },
+      dsh: { arkme: { clientContentDigest: arkmeClientContentDigest(input.clientCode) } },
     })
     expect(Object.keys(packageJSON.exports as Record<string, unknown>).sort()).toEqual([
       '.', './client', './package.json',

@@ -33,8 +33,10 @@ export function sortArkmeSources(
   sources: readonly ArkmeSourceItem[],
   sort: ArkmeSourceSort,
 ): ArkmeSourceItem[] {
-  if (sort === 'default') return [...sources]
   return sources.map((source, index) => ({ source, index })).sort((left, right) => {
+    if (left.source.kind === 'default_category') return right.source.kind === 'default_category' ? 0 : -1
+    if (right.source.kind === 'default_category') return 1
+    if (sort === 'default') return left.index - right.index
     let compared = 0
     if (sort === 'latest') {
       compared = finiteValue(right.source.activeAtMillis) - finiteValue(left.source.activeAtMillis)

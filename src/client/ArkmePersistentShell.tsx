@@ -1,27 +1,24 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
-import type { ArkmeChatClientEvent, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import type { ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySurface.js'
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
 import { UnmarkedSpeakerDetail } from './redesign/contacts/UnmarkedSpeakerDetail.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import { callArkme } from './api.js'
 import { DeepSeekHarnessSurface } from './DeepSeekHarnessSurface.js'
+import { startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import { arkmeAuthStore } from './auth-store.js'
-import {
-  arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
-} from './chat-directory-store.js'
-import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
-import {
-  reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
-} from './provider-instance-runtime.js'
-import { forgetNavigationProviderInstance } from './navigation-cache.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
+import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { arkmeUi } from './ui-controller.js'
 import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
 
@@ -47,93 +44,7 @@ export function ArkmePersistentClientRuntime() {
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const auth = authState.auth
 
-  useEffect(() => {
-    void arkmeAuthStore.refresh().catch(() => undefined)
-  }, [ui.authRevision])
-
-  useEffect(() => {
-    if (auth?.status !== 'authenticated' || auth.userId === undefined) {
-      arkmeChatDirectory.activateAccount(undefined)
-      return
-    }
-    const authenticatedUserId = auth.userId
-    arkmeChatDirectory.activateAccount(authenticatedUserId)
-    let stopped = false
-    let observedRevision: number | undefined
-    const refreshUnread = async (force = false) => {
-      await arkmeChatDirectory.refreshRoot({ force })
-    }
-    // Establish the directory baseline before a navigation surface happens to mount.
-    void refreshUnread().catch(() => undefined)
-    const events = new EventSource('/arkme-self/api/events')
-    events.onopen = () => {
-      void reconcileArkmeProviderInstance()
-        .then(async changed => {
-          if (!changed || stopped) return
-          try {
-            await recoverArkmeProviderInstanceDirectory({
-              userId: authenticatedUserId,
-              activateAccount: userId => { arkmeChatDirectory.activateAccount(userId) },
-              refreshRoot: async force => { await refreshUnread(force) },
-              onRefreshed: () => { if (!stopped) arkmeUi.chatChanged() },
-            })
-          } catch (error) {
-            forgetNavigationProviderInstance()
-            throw error
-          }
-        })
-        .catch(() => undefined)
-    }
-    events.onmessage = event => {
-      if (stopped) return
-      try {
-        const update = JSON.parse(event.data) as ArkmeChatClientEvent
-        if (!Number.isSafeInteger(update.revision) || update.revision < 0
-          || (observedRevision !== undefined && update.revision <= observedRevision)) return
-        observedRevision = update.revision
-        if (update.type === 'reconcile') {
-          arkmeInterwovenInvalidation.invalidate()
-          if (update.refresh === 'none') return
-          void refreshUnread(update.refresh === 'force')
-            .then(() => { if (!stopped) arkmeUi.chatChanged() })
-            .catch(() => undefined)
-          return
-        }
-        if (update.type === 'read-ack') {
-          arkmeChatDirectory.updateReadAck(
-            update.sourceRef,
-            update.sourceKey,
-            update.effectiveReadSequence,
-            update.unreadCount,
-          )
-          return
-        }
-        if (update.type === 'message-notification') {
-          void arkmeDesktopNotifications.show(update.notification)
-          return
-        }
-        if (update.type === 'projection-invalidated') {
-          if (update.projection !== 'record') return
-          arkmeInterwovenInvalidation.invalidate()
-          arkmeUi.chatChanged()
-          return
-        }
-        arkmeChatDirectory.upsertMany(update.updates.map(item => ({
-          source: item.source,
-          ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),
-        })))
-        const timelineUpdates = update.updates
-          .filter(item => item.timelineItems.length > 0)
-          .map(item => ({ sourceRef: item.source.sourceRef, items: item.timelineItems }))
-        if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
-        arkmeInterwovenInvalidation.invalidate()
-      } catch { /* A malformed local frame must not unmount the persistent shell. */ }
-    }
-    return () => {
-      stopped = true
-      events.close()
-    }
-  }, [auth?.status, auth?.userId])
+  useArkmeRealtimeClientEvents(auth, ui.authRevision, true)
 
   return <ArkmeOutgoingCallHost />
 }
@@ -143,11 +54,14 @@ export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
   & {
     collapseSidebar(): void
     closeDetails(): void
+    searchDshMessages?(query: string, signal: AbortSignal): Promise<{ items: SessionSearchResultItem[]; hasMore: boolean }>
+    openDshSession?(sessionId: string): void
   }
 
 /** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
 export function ArkmePersistentSidebar({
   collapsed, useSessions, renderSlot, collapseSidebar, closeDetails,
+  searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
@@ -185,10 +99,25 @@ export function ArkmePersistentSidebar({
       }
     }).catch(() => undefined)
     return () => controller.abort()
-  }, [authenticatedUserId, ui.chatRevision])
+  }, [authenticatedUserId, ui.recordRevision])
   const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
     ? sendToSelfState.source
     : undefined
+  const searchDsh = useCallback(async (query: string, signal: AbortSignal): Promise<ArkmeDshMessageSearchResult> => {
+    const result = await searchDshMessages(query, signal)
+    return {
+      hasMore: result.hasMore,
+      items: result.items.map(item => {
+        const summary = sessionState.byId[item.sessionId]
+        return {
+          sessionId: item.sessionId,
+          title: summary?.displayTitle ?? 'DeepSeek Harness 任务',
+          snippet: item.snippet,
+          updatedAtMillis: summary?.updatedAt ?? 0,
+        }
+      }),
+    }
+  }, [searchDshMessages, sessionState.byId])
   useLayoutEffect(() => {
     closeDetails()
     if (collapsed) collapseSidebar()
@@ -280,6 +209,8 @@ export function ArkmePersistentSidebar({
         showHarnessEntry
         currentSessionId={sessionState.current}
         renderSlot={renderSlot}
+        searchDshMessages={searchDsh}
+        onOpenDshSession={sessionId => { openDshSession(sessionId); arkmeUi.showHarness() }}
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />}
     </div>}
@@ -344,6 +275,7 @@ export function ArkmePersistentWorkspace({
           t={t}
           productChrome={false}
           productNavigation={false}
+          ownsWechatLogin={!startupAuthGateEnabled()}
           currentSessionId={sessionId}
           onActivateSurface={() => undefined}
         />

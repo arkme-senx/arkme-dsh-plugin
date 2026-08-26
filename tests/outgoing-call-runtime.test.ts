@@ -251,4 +251,92 @@ describe('outgoing call runtime', () => {
     expect(api).toHaveBeenCalledWith('calls.outgoing.release', { callRequestId: 'request-1' })
     runtime.dispose()
   })
+
+  it.each(['audio', 'video'] as const)('treats iframe idle state as terminal after a %s call was sent', async (mediaType) => {
+    const timeouts: Array<() => void> = []
+    const result = structuredClone(prepareResult)
+    result.call.mediaType = mediaType
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? result : undefined)
+    const controller = new OutgoingCallUiController()
+    const runtime = new OutgoingCallRuntime({
+      api,
+      controller,
+      randomId: () => 'request-1',
+      setInterval: vi.fn(() => 1 as unknown as ReturnType<typeof setInterval>),
+      clearInterval: vi.fn(),
+      setTimeout: ((callback: () => void) => {
+        timeouts.push(callback)
+        return timeouts.length as unknown as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout,
+      clearTimeout: vi.fn(),
+    })
+    const target = iframe()
+    runtime.mount()
+    runtime.attachFrame(target.frame)
+
+    controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType })
+    await settle()
+    runtime.handleBridgeMessage({ type: 'ready' })
+
+    expect(sentCommand(target, 'call')).toBe(true)
+
+    runtime.handleBridgeMessage({
+      type: 'state',
+      phase: 'idle',
+      statusText: '已初始化，等待来电或发起呼叫',
+      hasActiveCall: false,
+    })
+
+    expect(runtime.getSnapshot()).toMatchObject({ visible: false, retainFrame: true, phase: 'ending', statusText: '通话已结束' })
+
+    timeouts.splice(0).forEach(callback => { callback() })
+    await settle()
+
+    expect(runtime.getSnapshot()).toMatchObject({ visible: false, retainFrame: false, phase: 'idle' })
+    expect(api).toHaveBeenCalledWith('calls.outgoing.release', { callRequestId: 'request-1' })
+    runtime.dispose()
+  })
+
+  it('releases the lease when the iframe never reports outgoing progress after call command', async () => {
+    let fallback: (() => void) | undefined
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? structuredClone(prepareResult) : undefined)
+    const controller = new OutgoingCallUiController()
+    const settled = vi.fn()
+    controller.subscribeSettled(settled)
+    const runtime = new OutgoingCallRuntime({
+      api,
+      controller,
+      randomId: () => 'request-1',
+      setInterval: vi.fn(() => 1 as unknown as ReturnType<typeof setInterval>),
+      clearInterval: vi.fn(),
+      setTimeout: ((callback: () => void) => {
+        fallback = callback
+        return 1 as unknown as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout,
+      clearTimeout: vi.fn(),
+    })
+    const target = iframe()
+    runtime.mount()
+    runtime.attachFrame(target.frame)
+
+    controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'video' })
+    await settle()
+    runtime.handleBridgeMessage({ type: 'ready' })
+
+    expect(sentCommand(target, 'call')).toBe(true)
+    expect(runtime.getSnapshot()).toMatchObject({ visible: true, phase: 'bootstrapping' })
+
+    fallback?.()
+    await settle()
+
+    expect(runtime.getSnapshot()).toMatchObject({ visible: false, retainFrame: false, phase: 'idle' })
+    expect(api).toHaveBeenCalledWith('calls.outgoing.release', { callRequestId: 'request-1' })
+    expect(settled).toHaveBeenCalledWith({
+      callRequestId: 'request-1',
+      displayName: '小林',
+      mediaType: 'video',
+      status: 'ended',
+    })
+    runtime.dispose()
+  })
 })

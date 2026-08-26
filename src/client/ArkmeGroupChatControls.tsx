@@ -877,14 +877,22 @@ function RenameDialog(props: {
 }
 
 export function ArkmeGroupChatControls(props: {
+  membersOpen?: boolean
+  onMembersOpenChange?: (open: boolean) => void
   source: ArkmeSourceItem
   overlayHostRef: RefObject<HTMLElement>
   onSourceActivated: (source: ArkmeSourceItem) => void
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
+  onMembersChanged?: () => void
   onError: (message: string) => void
 }) {
-  const [membersOpen, setMembersOpen] = useState(false)
+  const [localMembersOpen, setLocalMembersOpen] = useState(false)
+  const membersOpen = props.membersOpen ?? localMembersOpen
+  const setMembersOpen = (open: boolean) => {
+    setLocalMembersOpen(open)
+    props.onMembersOpenChange?.(open)
+  }
   const [inviteOpen, setInviteOpen] = useState(false)
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -912,7 +920,7 @@ export function ArkmeGroupChatControls(props: {
     setSettingsOpen(false)
     setMembersOpen(true)
     setRefreshToken(value => value + 1)
-  }, [])
+  }, [props.onMembersOpenChange])
 
   const overlayHost = props.overlayHostRef.current
 
@@ -976,7 +984,10 @@ export function ArkmeGroupChatControls(props: {
         source={props.source}
         open={addMembersOpen}
         onClose={() => { setAddMembersOpen(false) }}
-        onAdded={() => { setRefreshToken(value => value + 1) }}
+        onAdded={() => {
+          setRefreshToken(value => value + 1)
+          props.onMembersChanged?.()
+        }}
         onError={props.onError}
       />
       <RenameDialog

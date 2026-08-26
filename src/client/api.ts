@@ -31,6 +31,10 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'recordings.calendar'
   | 'recordings.day'
   | 'topic.create'
+  | 'topic.rename'
+  | 'topic.dissolve'
+  | 'topic.dissolve.status'
+  | 'topic.dissolve.active'
   | 'arko.profile'
   | 'arko.session'
   | 'arko.new-session'
@@ -64,6 +68,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.persistent.client-state'
+  | 'extensions.bundle.client-state'
   | 'extensions.persistent.invoke'
   | 'extensions.bundle.invoke'
   | 'search.history'
@@ -74,6 +79,7 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'ai-video.list'
   | 'files.assets'
   | 'world.voiceprint.invite'
+  | 'calls.outgoing.diag'
 
 /** Built-in UI bridge. UI-only operations intentionally stay out of the public Consumer SDK. */
 export async function callArkme<T>(

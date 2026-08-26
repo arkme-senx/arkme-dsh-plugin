@@ -1,0 +1,30 @@
+name: 限制 master 拉取请求来源
+
+on:
+  pull_request_target:
+    branches: [master]
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  enforce-organization-members-only:
+    if: >-
+      ${{
+        !contains(fromJSON('["MEMBER", "OWNER"]'),
+        github.event.pull_request.author_association) &&
+        !(github.event.pull_request.user.login == 'github-actions[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.event.pull_request.head.ref, 'release/v'))
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 关闭非组织成员的拉取请求
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr close "$PR_NUMBER" --repo "$GH_REPO"

@@ -28,6 +28,26 @@ describe('production plugin configuration', () => {
     expect(JSON.parse(ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS)).toEqual({
       'prod-ed25519-20260819-1': 'm1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs=',
     })
+    expect(patch).toContain('toolProfile: business')
+    expect(patch).toContain('relatedRecordingsEnabled: true')
+    expect(patch).not.toContain('relatedRecordingSharingEnabled:')
+    expect(patch).toContain('interwovenMomentsEnabled: true')
+    expect(patch).toContain('chatMemberJoinEventsEnabled: true')
+    expect(patch).toContain('richMediaRenderEnabled: true')
+    expect(patch).toContain('richMediaSendEnabled: true')
+    expect(patch).toContain('maxUploadBytes: 104857600')
+    expect(patch).toContain('allowProduction: true')
+    expect(patch).toContain('updateCheckEnabled: true')
+    expect(patch).toContain('updateChannel: stable')
+    expect(patch).toContain('updateServiceBaseUrl: https://api.jotmo.cc')
+    expect(patch).toContain('updateArtifactBaseUrl: https://d.jiwo.cc')
+    expect(patch).not.toContain('updateTrustedPublicKey:')
+    expect(patch).not.toContain('updateRegistryUrl:')
+    expect(patch).not.toContain('registry.npmjs.org')
+    expect(patch).toContain('updateCheckIntervalHours: 12')
+    expect(patch).toContain('updateAllowLocalInstall: true')
+    expect(patch).not.toContain('environment: test')
+    expect(patch).not.toContain('senguo.me')
   })
 
   it('falls back to the desktop-injected APP version for private plugin updates', () => {
