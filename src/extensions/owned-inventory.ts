@@ -153,6 +153,18 @@ export class ArkmeOwnedExtensionInventory {
       return []
     })
     const cloudIds = new Set(cloudItems.map(item => item.extension_id))
+    const cloudByPackageName = new Map<string, ArkmeExtensionCatalogItem>()
+    const ambiguousCloudPackageNames = new Set<string>()
+    for (const item of cloudItems) {
+      const packageName = item.package_name?.trim()
+      if (packageName === undefined || packageName === '' || ambiguousCloudPackageNames.has(packageName)) continue
+      if (cloudByPackageName.has(packageName)) {
+        cloudByPackageName.delete(packageName)
+        ambiguousCloudPackageNames.add(packageName)
+      } else {
+        cloudByPackageName.set(packageName, item)
+      }
+    }
     const profile = scanOwnedProfileExtensions({
       profileDirectory: this.options.profileDirectory,
       profileName: this.options.profileName,
@@ -176,8 +188,14 @@ export class ArkmeOwnedExtensionInventory {
       })
     }
     for (const local of profile.items) {
-      const key = local.extensionId !== undefined && cloudIds.has(local.extensionId)
-        ? `cloud:${local.extensionId}`
+      const recoveredCloudId = local.extensionId !== undefined && cloudIds.has(local.extensionId)
+        ? local.extensionId
+        : cloudByPackageName.get(local.packageName)?.extension_id
+      if (recoveredCloudId !== undefined && local.extensionId !== recoveredCloudId) {
+        this.options.store.linkCloud('profile', local.sourceKey, userId, recoveredCloudId)
+      }
+      const key = recoveredCloudId !== undefined
+        ? `cloud:${recoveredCloudId}`
         : `profile:${local.sourceKey}`
       const row = rows.get(key) ?? {
         key,
@@ -210,8 +228,12 @@ export class ArkmeOwnedExtensionInventory {
       if (packageId === undefined) continue
       const selected = cordis.packages.find(item => item.packageId === packageId)
       if (selected === undefined) continue
-      const cloudId = this.options.store.cloudLink('cordis', sourceKey, userId)
+      let cloudId = this.options.store.cloudLink('cordis', sourceKey, userId)
       const linkedProfileRow = profileRowKeys.get(this.options.store.profileLink(sourceKey, userId) ?? '')
+      if (cloudId === undefined && linkedProfileRow?.startsWith('cloud:') === true) {
+        cloudId = linkedProfileRow.slice('cloud:'.length)
+        this.options.store.linkCloud('cordis', sourceKey, userId, cloudId)
+      }
       const key = cloudId === undefined ? linkedProfileRow ?? `cordis:${sourceKey}` : `cloud:${cloudId}`
       const row = rows.get(key) ?? cordisItem(key, selected)
       row.name = selected.name
@@ -299,9 +321,10 @@ export class ArkmeOwnedExtensionInventory {
     }))]
 
     const ownedCloudItems = await this.cloudItems(input.signal)
-    if (!ownedCloudItems.some(item => item.extension_id === extensionId)) {
+    if (!ownedCloudItems.some(item => item.extension_id === extensionId) && linkedSources.length === 0) {
       throw new ArkmePluginError('extension-delete-target-not-owned', '待删除扩展不属于当前 Arkme 账号或已删除', false, 404)
     }
+    input.signal?.throwIfAborted()
     const uninstalled = await lifecycle.uninstall({ agent: input.agent, extensionId })
     let restartRequired = uninstalled.restart_required
     for (const source of cordisSources) {
@@ -316,7 +339,9 @@ export class ArkmeOwnedExtensionInventory {
     for (const packageName of profilePackages) {
       if (await lifecycle.removeProfilePackage(packageName)) restartRequired = true
     }
-    const deleted = await lifecycle.deleteCloud(extensionId, input.signal)
+    // Once local teardown starts, the idempotent cloud tombstone must finish even if
+    // the browser request disconnects; otherwise cancellation strands a half-delete.
+    const deleted = await lifecycle.deleteCloud(extensionId)
     if (deleted.extension_id !== extensionId || deleted.status !== 'deleted') {
       throw new ArkmePluginError('extension-delete-contract-invalid', '市集返回了不一致的删除结果', false, 502)
     }
@@ -455,7 +480,10 @@ export class ArkmeOwnedExtensionInventory {
     const cloudPackageName = extensionId === undefined
       ? undefined
       : await this.ownedCloudPackageName(extensionId, input.signal)
-    const packageName = cloudPackageName ?? publicationCandidatePackageName(userId, input.clientMutationId)
+    const linkedProfilePackageName = this.linkedProfilePackageName(target.sourceKey, userId)
+    this.assertCordisPackageIdentity(cloudPackageName, linkedProfilePackageName)
+    const packageName = cloudPackageName ?? linkedProfilePackageName
+      ?? publicationCandidatePackageName(userId, input.clientMutationId)
     if (this.options.persistCordis !== undefined && this.options.publishSandboxBundle !== undefined) {
       const saved = await this.persistCordisTarget(userId, target, agent, input, packageName)
       let result: ArkmeExtensionPublishResult
@@ -468,9 +496,7 @@ export class ArkmeOwnedExtensionInventory {
           visibility: input.visibility,
           ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
 		  ...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
-          idempotencyKey: createHash('sha256')
-            .update(`my-extension-publish-v2\0${String(userId)}\0${input.version}\0${input.clientMutationId}`)
-            .digest('hex'),
+          idempotencyKey: publicationIdempotencyKey(userId, saved.profile.packageName, input.version),
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         })
       } catch (error) {
@@ -500,9 +526,7 @@ export class ArkmeOwnedExtensionInventory {
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
 		...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
-      idempotencyKey: createHash('sha256')
-        .update(`my-extension-publish-v2\0${String(userId)}\0${input.version}\0${input.clientMutationId}`)
-        .digest('hex'),
+      idempotencyKey: publicationIdempotencyKey(userId, packageName, input.version),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     })
     if (result.status === 'published') {
@@ -547,9 +571,7 @@ export class ArkmeOwnedExtensionInventory {
       visibility: input.visibility,
       ...(input.changelog === undefined || input.changelog.trim() === '' ? {} : { changelog: input.changelog.trim() }),
 		...(input.githubRepositoryUrl === undefined || input.githubRepositoryUrl.trim() === '' ? {} : { githubRepositoryUrl: input.githubRepositoryUrl.trim() }),
-      idempotencyKey: createHash('sha256')
-        .update(`my-extension-bundle-publish-v2\0${String(userId)}\0${input.version}\0${input.clientMutationId}`)
-        .digest('hex'),
+      idempotencyKey: publicationIdempotencyKey(userId, source.bundle.packageName, input.version),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     })
     if (result.status === 'published') {
@@ -579,7 +601,10 @@ export class ArkmeOwnedExtensionInventory {
     const cloudPackageName = linkedExtensionId === undefined
       ? undefined
       : await this.ownedCloudPackageName(linkedExtensionId)
-    const packageName = resolvedPackageName ?? cloudPackageName ?? publicationCandidatePackageName(userId, input.clientMutationId)
+    const linkedProfilePackageName = this.linkedProfilePackageName(target.sourceKey, userId)
+    this.assertCordisPackageIdentity(resolvedPackageName ?? cloudPackageName, linkedProfilePackageName)
+    const packageName = resolvedPackageName ?? cloudPackageName ?? linkedProfilePackageName
+      ?? publicationCandidatePackageName(userId, input.clientMutationId)
     const profileSourceKey = `${this.options.profileName}\0${packageName}`
     const profileOwner = this.options.store.owner('profile', profileSourceKey)
     if (profileOwner !== undefined && profileOwner !== userId) {
@@ -608,16 +633,18 @@ export class ArkmeOwnedExtensionInventory {
     let capabilities: ArkmeExtensionPublicationCapabilities | undefined
     const cursors = new Set<string>()
     let cursor: string | undefined
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    while (true) {
       const page = await this.options.cloudList({ limit: 50, ...(cursor === undefined ? {} : { cursor }) }, signal)
       items.push(...page.items)
       capabilities ??= page.publication_capabilities
-      if (page.next_cursor === undefined) return { items, ...(capabilities === undefined ? {} : { capabilities }) }
-      if (cursors.has(page.next_cursor)) throw new Error('cloud extension cursor loop')
-      cursors.add(page.next_cursor)
-      cursor = page.next_cursor
+      const nextCursor = page.next_cursor?.trim()
+      if (nextCursor === undefined || nextCursor === '') {
+        return { items, ...(capabilities === undefined ? {} : { capabilities }) }
+      }
+      if (cursors.has(nextCursor)) throw new Error('cloud extension cursor loop')
+      cursors.add(nextCursor)
+      cursor = nextCursor
     }
-    throw new Error('cloud extension page limit exceeded')
   }
 
   private publishExtensionId(
@@ -687,6 +714,36 @@ export class ArkmeOwnedExtensionInventory {
     throw new ArkmePluginError(
       'extension-package-identity-mismatch',
       `Bundle package.json.name 必须与已有扩展保持一致：${expectedPackageName}`,
+      false,
+      409,
+    )
+  }
+
+  private linkedProfilePackageName(cordisSourceKey: string, userId: number): string | undefined {
+    const profileSourceKey = this.options.store.profileLink(cordisSourceKey, userId)
+    if (profileSourceKey === undefined) return undefined
+    const prefix = `${this.options.profileName}\0`
+    const packageName = profileSourceKey.startsWith(prefix) ? profileSourceKey.slice(prefix.length) : ''
+    if (packageName === '' || this.options.store.owner('profile', profileSourceKey) !== userId) {
+      throw new ArkmePluginError(
+        'extension-profile-reference-invalid',
+        'Cordis 插件关联的 Profile package identity 无效',
+        false,
+        500,
+      )
+    }
+    return packageName
+  }
+
+  private assertCordisPackageIdentity(
+    authoritativePackageName: string | undefined,
+    linkedProfilePackageName: string | undefined,
+  ): void {
+    if (authoritativePackageName === undefined || linkedProfilePackageName === undefined
+      || authoritativePackageName === linkedProfilePackageName) return
+    throw new ArkmePluginError(
+      'extension-package-identity-mismatch',
+      `Profile package identity 与云端扩展身份不一致：${authoritativePackageName}`,
       false,
       409,
     )
@@ -787,6 +844,12 @@ export function publicationCandidatePackageName(userId: number, clientMutationId
   return `@arkme-generated/${createHash('sha256')
     .update(`publication-identity-v3\0${String(userId)}\0${mutation}`)
     .digest('hex').slice(0, 24)}`
+}
+
+function publicationIdempotencyKey(userId: number, packageName: string, version: string): string {
+  return createHash('sha256')
+    .update(`my-extension-publication-v3\0${String(userId)}\0${packageName}\0${version}`)
+    .digest('hex')
 }
 
 function publishContractForTarget(target: ArkmeOwnedExtensionTarget): {

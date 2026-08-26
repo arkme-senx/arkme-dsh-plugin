@@ -1156,7 +1156,7 @@ export async function dispatchArkmeHostOperation(
     })
     case 'extensions.my-list': return await enrichExtensionPageAuthors(
       service,
-      await requireExtensionManager(extensionManager).myList(),
+      await requireExtensionManager(extensionManager).myList(requestSignal),
     )
     case 'extensions.metadata.update': return await requireExtensionManager(extensionManager).updateMetadata({
       extensionId: stringParam(params, 'extensionId'),
@@ -1174,13 +1174,16 @@ export async function dispatchArkmeHostOperation(
 	)
     case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
       extensionId: stringParam(params, 'extensionId'),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'extensions.unpublish': return await requireOwnedExtensionInventory(ownedExtensionInventory).unpublish({
       extensionId: stringParam(params, 'extensionId'),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'extensions.mine.persist': return await requireOwnedExtensionInventory(ownedExtensionInventory).saveToProfile({
       ownedRef: stringParam(params, 'ownedRef'),
@@ -1196,8 +1199,9 @@ export async function dispatchArkmeHostOperation(
       version: stringParam(params, 'version'),
       visibility: extensionVisibilityParam(params),
       ...(stringParam(params, 'changelog').trim() === '' ? {} : { changelog: stringParam(params, 'changelog') }),
-		...(stringParam(params, 'githubRepositoryUrl').trim() === '' ? {} : { githubRepositoryUrl: stringParam(params, 'githubRepositoryUrl') }),
+      ...(stringParam(params, 'githubRepositoryUrl').trim() === '' ? {} : { githubRepositoryUrl: stringParam(params, 'githubRepositoryUrl') }),
       clientMutationId: stringParam(params, 'clientMutationId'),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'extensions.enabled-state': return requireExtensionManager(extensionManager).enabledState(
       stringParam(params, 'extensionId'),

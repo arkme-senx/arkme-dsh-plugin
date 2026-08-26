@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ArkmePluginError } from '../arkme-service.js'
@@ -776,7 +776,30 @@ export class ArkmeExtensionManager {
   }
 
   async myList(signal?: AbortSignal): Promise<ArkmeExtensionCatalogPage> {
-    return await this.client.myList({ limit: 50 }, signal)
+    const items: ArkmeExtensionCatalogItem[] = []
+    const seenExtensionIds = new Set<string>()
+    const seenCursors = new Set<string>()
+    let cursor: string | undefined
+    let publicationCapabilities: ArkmeExtensionCatalogPage['publication_capabilities']
+    while (true) {
+      const page = await this.client.myList({ limit: 50, ...(cursor === undefined ? {} : { cursor }) }, signal)
+      publicationCapabilities ??= page.publication_capabilities
+      for (const item of page.items) {
+        if (seenExtensionIds.has(item.extension_id)) continue
+        seenExtensionIds.add(item.extension_id)
+        items.push(item)
+      }
+      const nextCursor = page.next_cursor?.trim()
+      if (nextCursor === undefined || nextCursor === '') {
+        return {
+          items, total: items.length,
+          ...(publicationCapabilities === undefined ? {} : { publication_capabilities: publicationCapabilities }),
+        }
+      }
+      if (seenCursors.has(nextCursor)) throw new Error('owned extension cursor loop')
+      seenCursors.add(nextCursor)
+      cursor = nextCursor
+    }
   }
 
   async updateMetadata(input: {
@@ -2250,8 +2273,24 @@ export class ArkmeExtensionManager {
     const temporary = join(directory, `.bundle.tgz.${randomUUID()}.tmp`)
     try {
       writeFileSync(temporary, source.bundle.bytes, { mode: 0o600, flag: 'wx' })
-      renameSync(temporary, target)
-      chmodSync(target, 0o600)
+      try {
+        // A hard link is an atomic no-overwrite publish on the same filesystem. Unlike
+        // rename, it cannot replace a bundle written concurrently by another process.
+        linkSync(temporary, target)
+        chmodSync(target, 0o600)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        const existingDigest = bundleSha256(readFileSync(target))
+        if (existingDigest !== source.bundle.bundleSha256) {
+          throw new ArkmePluginError(
+            'extension-profile-version-conflict',
+            `插件 ${source.bundle.packageName}@${source.bundle.version} 已保存不同内容，请使用新版本号`,
+            false,
+            409,
+          )
+        }
+        return { path: target, created: false }
+      }
     } finally {
       rmSync(temporary, { force: true })
     }

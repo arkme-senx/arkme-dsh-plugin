@@ -47,6 +47,46 @@ function nativeBundleFixture() {
 }
 
 describe('Bundle v2 profile installation', () => {
+  it('loads every owned cloud page without duplicating cursor overlap', async () => {
+    const calls: Array<{ cursor?: string; limit?: number }> = []
+    const client = new ExtensionPublishClient(async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
+      if (path !== '/api/v1/extensions/my-list') throw new Error(`unexpected ${path}`)
+      calls.push(body)
+      return (body.cursor === undefined
+        ? { items: [{ extension_id: 'ext-1' }], total: 2, next_cursor: '1' }
+        : { items: [{ extension_id: 'ext-1' }, { extension_id: 'ext-2' }], total: 2 }) as T
+    })
+    const root = mkdtempSync(join(tmpdir(), 'owned-cloud-pages-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'state'))
+    const manager = new ArkmeExtensionManager(client, store, {
+      inspectPackage: () => { throw new Error('not used') }, define: () => { throw new Error('not used') },
+      run: async () => { throw new Error('not used') },
+    }, { artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}' })
+
+    await expect(manager.myList()).resolves.toMatchObject({
+      items: [{ extension_id: 'ext-1' }, { extension_id: 'ext-2' }], total: 2,
+    })
+    expect(calls).toEqual([{ limit: 50 }, { limit: 50, cursor: '1' }])
+    store.close()
+  })
+
+  it('rejects an owned cloud cursor loop instead of retrying forever', async () => {
+    const client = new ExtensionPublishClient(async <T>(): Promise<T> => ({
+      items: [], total: 1, next_cursor: 'loop',
+    }) as T)
+    const root = mkdtempSync(join(tmpdir(), 'owned-cloud-cursor-loop-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'state'))
+    const manager = new ArkmeExtensionManager(client, store, {
+      inspectPackage: () => { throw new Error('not used') }, define: () => { throw new Error('not used') },
+      run: async () => { throw new Error('not used') },
+    }, { artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}' })
+
+    await expect(manager.myList()).rejects.toThrow('owned extension cursor loop')
+    store.close()
+  })
+
   it('materializes a live Cordis package once, installs the immutable tgz, and rejects same-version drift', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cordis-profile-save-'))
     directories.push(root)
