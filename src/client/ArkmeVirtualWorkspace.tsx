@@ -39,7 +39,7 @@ import {
 } from './arko-conversation-preview-store.js'
 import { ArkmeArkoConversationPreviewSync } from './arko-conversation-preview-sync.js'
 import {
-  buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
 import arkmeUserAddIconBase64 from '../../assets/icons/user-add-linear.svg'
 
@@ -1413,6 +1413,7 @@ export function ArkmeNavigation({
     {topicCreateParent !== undefined && <ArkmeTopicCreateDialog
       key={topicCreateParent?.sourceRef ?? 'root'}
       mode={topicCreateParent === null ? 'topic' : 'child'}
+      {...(topicCreateParent === null ? {} : { parentTopicPath: arkmeTopicPathNames(topicCreateParent, sources) })}
       submitting={topicCreateSubmitting} error={topicCreateError}
       onCancel={cancelTopicCreate} onConfirm={title => { void submitTopicCreate(title) }}
     />}

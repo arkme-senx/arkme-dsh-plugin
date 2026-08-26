@@ -37,6 +37,53 @@ describe('SourceService', () => {
     })
   })
 
+  it('moves a topic atomically to the root and persists its sibling order', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    let created = 0
+    const fetchImpl = vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ path, body })
+      if (path === '/api/v1/topics/create') {
+        created += 1
+        return new Response(JSON.stringify({ code: 0, data: { topic_uid: `topic-${String(created)}`, status: 1 } }), { status: 200 })
+      }
+      if (path === '/api/v1/topics/hierarchy/bind') {
+        return new Response(JSON.stringify({ code: 0, data: { relation: { status: 1 } } }), { status: 200 })
+      }
+      if (path === '/api/v1/topics/hierarchy/move') {
+        return new Response(JSON.stringify({ code: 0, data: {
+          topic_uid: 'topic-2', parent_topic_uid: '', sibling_order: 1,
+        } }), { status: 200 })
+      }
+      throw new Error(`unexpected request: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const parent = await service.createTopic('父主题')
+    const child = await service.createTopic('子主题', parent.source.sourceRef)
+    await expect(service.moveTopicHierarchy(
+      child.source.sourceRef, parent.source.sourceRef, undefined, undefined,
+    )).resolves.toEqual({ sourceRef: child.source.sourceRef, siblingOrder: 1 })
+    expect(calls.at(-1)).toMatchObject({
+      path: '/api/v1/topics/hierarchy/move',
+      body: {
+        topic_uid: 'topic-2', previous_parent_topic_uid: 'topic-1',
+        parent_topic_uid: '', insert_before_topic_uid: '',
+      },
+    })
+  })
+
   it('does not join concurrent root and group-only reads or share their failure state', async () => {
     const activeSession = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const sessions: ArkmeSessionStore = {
@@ -94,6 +141,9 @@ describe('SourceService', () => {
     const stateStore = { async uniqueCode() { return 'device-secret' } } as StateStore
     const fetchImpl = vi.fn(async (input) => {
       const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) {
         return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })
       }
@@ -150,9 +200,121 @@ describe('SourceService', () => {
     const defaultCategory = result.items.find(item => item.kind === 'default_category')
 
     expect(defaultCategory).toMatchObject({
-      displayName: '默认分类',
+      displayName: '未分类',
       latestPreview: '普通发给自己',
       activeAtMillis: 190,
     })
+  })
+
+  it('never projects privacy-locked topics or protected quick notes into the personal directory', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchImpl = vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      bodies.push(body)
+      if (path === '/api/v1/records/privacy/visibility-snapshot') {
+        return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
+      }
+      if (path === '/api/v1/topics/display/list') return new Response(JSON.stringify({ code: 0, data: { items: [
+        { topic_core: { topic_uid: 'public-topic', title: '公开主题', privacy_state: 1 }, summary: { record_count: 1 } },
+        { topic_core: { topic_uid: 'private-topic', title: '不能显示', privacy_state: 2 }, summary: { record_count: 99 } },
+      ] } }), { status: 200 })
+      if (path === '/api/v1/topics/hierarchy/relations/list') {
+        return new Response(JSON.stringify({ code: 0, data: { relations: [] } }), { status: 200 })
+      }
+      if (path === '/api/v1/records/uncategorized/query') return new Response(JSON.stringify({ code: 0, data: { items: [
+        { record_uid: 'locked-record', record_core: { record_uid: 'locked-record', text_content: '不能显示', content_access_state: 2 } },
+        { record_uid: 'public-record', send_at: 10, record_core: { record_uid: 'public-record', text_content: '公开快记', send_at: 10 } },
+      ] } }), { status: 200 })
+      throw new Error(`unexpected request: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 1, wordsCount: 0, totalSec: 0 } },
+      recordItem(raw) {
+        const item = raw as { record_uid: string; send_at: number; record_core: { text_content: string } }
+        return { recordUid: item.record_uid, sendAtMillis: item.send_at, title: '', textContent: item.record_core.text_content, templateKind: 1, status: 1, version: 1 }
+      },
+    })
+
+    const result = await service.listSources('send_to_self', { refresh: true })
+    expect(result.items.map(item => item.displayName)).toEqual(['发给自己', '未分类', '公开主题'])
+    expect(result.items.find(item => item.kind === 'default_category')).toMatchObject({ latestPreview: '公开快记' })
+    expect(bodies).toContainEqual({ limit: 30, keyword: '', privacy_state: 1 })
+    expect(bodies).toContainEqual({ limit: 10 })
+  })
+
+  it('loads 100 personal topics so a parent after the first 50 can retain its child hierarchy', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const stateStore = { async uniqueCode() { return 'device-secret' } } as StateStore
+    const fillerTopics = Array.from({ length: 99 }, (_, index) => ({
+      topic_core: { topic_uid: `topic-${String(index + 1)}`, title: `主题${String(index + 1)}` },
+      summary: { record_count: 0 },
+    }))
+    const displayItems = [
+      { topic_core: { topic_uid: 'child', title: '二级主题' }, summary: { record_count: 0 } },
+      ...fillerTopics,
+      { topic_core: { topic_uid: 'parent', title: '一级主题' }, summary: { record_count: 0 } },
+    ]
+    const displayListBodies: Array<Record<string, unknown>> = []
+    const fetchImpl = vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (path === '/api/v1/records/privacy/visibility-snapshot') {
+        return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
+      }
+      if (path === '/api/v1/topics/display/list') {
+        displayListBodies.push(body)
+        const limit = Number(body.limit)
+        const offset = Number(body.offset ?? 0)
+        const nextOffset = offset + limit
+        return new Response(JSON.stringify({ code: 0, data: {
+          items: displayItems.slice(offset, nextOffset),
+          has_more: nextOffset < displayItems.length,
+          ...(nextOffset < displayItems.length ? { next_offset: nextOffset } : {}),
+        } }), { status: 200 })
+      }
+      if (path === '/api/v1/topics/hierarchy/relations/list') {
+        return new Response(JSON.stringify({ code: 0, data: { relations: [{
+          parent_topic_uid: 'parent', child_topic_uid: 'child', rel_kind: 1, status: 1,
+        }] } }), { status: 200 })
+      }
+      if (path === '/api/v1/records/uncategorized/summary') {
+        return new Response(JSON.stringify({ code: 0, data: { record_count: 0 } }), { status: 200 })
+      }
+      if (path === '/api/v1/records/uncategorized/query') {
+        return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, stateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    const first = await service.listSources('send_to_self', { limit: 100, refresh: true })
+    const child = first.items.find(item => item.displayName === '二级主题')
+    const second = await service.listSources('send_to_self', { limit: 100, cursor: first.nextCursor, refresh: true })
+    const parent = second.items.find(item => item.displayName === '一级主题')
+
+    expect(displayListBodies).toEqual([
+      { limit: 100, keyword: '', privacy_state: 1 },
+      { limit: 100, keyword: '', privacy_state: 1, offset: 100 },
+    ])
+    expect(first.hasMore).toBe(true)
+    expect(first.nextCursor).toEqual(expect.any(String))
+    expect(child?.parentSourceRef).toBeUndefined()
+    expect(child?.parentTopicHierarchyKey).toEqual(expect.any(String))
+    expect(parent?.topicHierarchyKey).toBe(child?.parentTopicHierarchyKey)
   })
 })

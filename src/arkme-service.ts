@@ -52,6 +52,7 @@ import {
 import { OutgoingCallService } from './services/outgoing-call-service.js'
 import { ProfileService } from './services/profile-service.js'
 import { RecordService } from './services/record-service.js'
+import { ArkmePrivacyVisibilityService } from './services/privacy-visibility.js'
 import { RecordingService } from './services/recording-service.js'
 import {
   MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH,
@@ -186,6 +187,11 @@ import type {
   ArkmeTimelineCursor,
   ArkmeTimelinePage,
   ArkmeTopicCreateResult,
+  ArkmeTopicDissolveResult,
+  ArkmeTopicDissolveProgress,
+  ArkmeTopicDissolveTask,
+  ArkmeTopicHierarchyMoveResult,
+  ArkmeTopicRenameResult,
   ArkmeUploadedAsset,
   ArkmeUnmarkedSpeakerInferenceRetry,
   ArkmeUnmarkedSpeakerMarkResult,
@@ -244,6 +250,7 @@ export class ArkmeService {
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
   private readonly media: MediaService
+  private readonly privacy: ArkmePrivacyVisibilityService
   private readonly source: SourceService
   private readonly record: RecordService
   private readonly search: SearchService
@@ -273,9 +280,10 @@ export class ArkmeService {
     outgoingCallBroker = new ArkmeOutgoingCallBroker(),
   ) {
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore)
+    this.privacy = new ArkmePrivacyVisibilityService(this.runtime)
     this.aiVideo = new AiVideoService(this.runtime)
     this.arrangement = new ArrangementService(this.runtime)
-    this.calendar = new CalendarService(this.runtime)
+    this.calendar = new CalendarService(this.runtime, this.privacy)
     this.wechat = new WechatService(this.runtime)
     this.recording = new RecordingService(this.runtime)
     this.profile = new ProfileService(this.runtime)
@@ -295,9 +303,10 @@ export class ArkmeService {
       summary: async () => await this.summary(),
       recordItem: raw => this.recordItem(raw),
       isDSHAgentInput: raw => this.record.isDSHAgentInput(raw),
-    })
-    this.record = new RecordService(this.runtime, this.media, this.source)
-    this.search = new SearchService(this.runtime, this.record, this.media, this.source)
+      isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
+    }, this.privacy)
+    this.record = new RecordService(this.runtime, this.media, this.source, this.privacy)
+    this.search = new SearchService(this.runtime, this.record, this.media, this.source, this.privacy)
     this.bot = new BotService(this.runtime, this.source)
     this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker)
     this.world = new WorldService(
@@ -334,6 +343,7 @@ export class ArkmeService {
       this.arko,
       this.aiPolish,
       this.realtime,
+      this.privacy,
     )
     this.contactDirectory = new ContactDirectoryService(
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
@@ -352,6 +362,7 @@ export class ArkmeService {
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    for (const userId of userIds) this.privacy.clear(userId)
     for (const userId of userIds) this.outgoingCall.clearUser(userId, '账号已退出，呼叫已取消')
     this.source.dispose()
     this.media.dispose()
@@ -787,6 +798,37 @@ export class ArkmeService {
 
   async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
     return await this.source.createTopic(titleInput, parentSourceRef)
+  }
+
+  async renameTopic(sourceRef: string, title: string): Promise<ArkmeTopicRenameResult> {
+    return await this.source.renameTopic(sourceRef, title)
+  }
+
+  async dissolveTopic(
+    sourceRef: string,
+    parentSourceRef: string | undefined,
+    childSourceRefs: readonly string[],
+    requestId?: string,
+    expectedRecordCount?: number,
+  ): Promise<ArkmeTopicDissolveResult> {
+    return await this.source.dissolveTopic(sourceRef, parentSourceRef, childSourceRefs, requestId, expectedRecordCount)
+  }
+
+  async topicDissolveStatus(requestId: string): Promise<ArkmeTopicDissolveTask | undefined> {
+    return await this.source.topicDissolveStatus(requestId)
+  }
+
+  async activeTopicDissolve(): Promise<ArkmeTopicDissolveTask | undefined> {
+    return await this.source.activeTopicDissolve()
+  }
+
+  async moveTopicHierarchy(
+    sourceRef: string,
+    currentParentSourceRef?: string,
+    nextParentSourceRef?: string,
+    insertBeforeSourceRef?: string,
+  ): Promise<ArkmeTopicHierarchyMoveResult> {
+    return await this.source.moveTopicHierarchy(sourceRef, currentParentSourceRef, nextParentSourceRef, insertBeforeSourceRef)
   }
 
   async listSources(

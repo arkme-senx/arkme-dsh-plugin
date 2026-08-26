@@ -454,6 +454,9 @@ describe('ArkmeService', () => {
         body,
         authorization: new Headers(init?.headers).get('Authorization') ?? '',
       })
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (String(input).endsWith('/api/v1/calendar/buckets/query')) {
         return json({ code: 200, data: {
           timezone: 'Asia/Shanghai',
@@ -495,7 +498,7 @@ describe('ArkmeService', () => {
       timezone: 'Asia/Shanghai',
     })).resolves.toMatchObject({
       scope: 'self',
-      days: [{ bucketDate: '2026-08-21', count: 41, protectedCount: 2, hasRecords: true }],
+      days: [{ bucketDate: '2026-08-21', count: 39, protectedCount: 0, hasRecords: true }],
     })
     await expect(service.calendarRecords({
       bucketDate: '2026-08-21',
@@ -507,7 +510,7 @@ describe('ArkmeService', () => {
       items: [{ recordUid: 'record-1', title: '会议纪要', textContent: '讨论日历迁移', topicTitle: '前端重构' }],
       nextCursor: { sendAtMillis: 1_787_300_000_000, recordUid: 'record-next' },
     })
-    expect(requests).toMatchObject([
+    expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot'))).toMatchObject([
       {
         url: 'https://record.test/api/v1/calendar/buckets/query',
         authorization: 'Bearer access',
@@ -543,6 +546,9 @@ describe('ArkmeService', () => {
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url: String(input), body })
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (String(input).endsWith('/api/v1/calendar/records/query')) {
         return json({ code: 200, data: {
           timezone: 'Asia/Shanghai',
@@ -1560,7 +1566,10 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     let requestBody: Record<string, unknown> = {}
-    const service = new ArkmeService(config, sessions, state, async (_input, init) => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       requestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       return json({
         code: 0,
@@ -1578,7 +1587,9 @@ describe('ArkmeService', () => {
     })
 
     const result = await service.list(30, { sendAtMillis: 200, recordUid: 'cursor-record' })
-    expect(requestBody).toEqual({ limit: 30, cursor_send_at: 200, cursor_record_uid: 'cursor-record' })
+    expect(requestBody).toEqual({
+      limit: 30, cursor_send_at: 200, cursor_record_uid: 'cursor-record',
+    })
     expect(result.items[0]).toMatchObject({ recordUid: 'record-1', textContent: 'hello', version: 2 })
     expect(result.nextCursor).toEqual({ sendAtMillis: 120, recordUid: 'record-next' })
     expect(state.cached.get(10001)?.[0]).toMatchObject({ recordUid: 'record-1', textContent: 'hello' })
@@ -1593,6 +1604,9 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ url, body })
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
         summary: { record_count: 2, latest_send_at: 109 },
@@ -1644,7 +1658,7 @@ describe('ArkmeService', () => {
 
     const sources = await service.listSources('send_to_self', { limit: 20 })
     expect(sources.items.map(item => [item.kind, item.displayName, item.recordCount])).toEqual([
-      ['send_to_self', '发给自己', undefined], ['default_category', '默认分类', 7],
+      ['send_to_self', '发给自己', undefined], ['default_category', '未分类', 7],
       ['topic', '工作', 2], ['topic', '周报', 1], ['topic', '空主题', 0],
     ])
     expect(sources.items[0]).toMatchObject({
@@ -1671,7 +1685,8 @@ describe('ArkmeService', () => {
       nextCursor: { sendAtMillis: 108, itemUid: 'aggregate-next' },
     })
     expect(calls.find(call => call.url.endsWith('/api/v1/home/feed/query'))?.body).toEqual({
-      limit: 30, source_kinds: [1, 2], cursor_send_at: 111, cursor_record_uid: 'aggregate-cursor',
+      limit: 30, source_kinds: [1, 2],
+      cursor_send_at: 111, cursor_record_uid: 'aggregate-cursor',
     })
     const topicRef = sources.items[2]!.sourceRef
     await expect(service.readSource(topicRef)).resolves.toMatchObject({
@@ -1698,6 +1713,9 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ url, body })
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
         summary: { record_count: 2 },
@@ -1734,6 +1752,67 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('renames and safely dissolves a topic while promoting its direct children', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = new MemoryStateStore()
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push({ url, body })
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
+      if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [
+        { topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 } },
+        { topic_core: { topic_uid: 'topic-child', title: '周报', update_at: 90 } },
+      ] } })
+      if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: {
+        relations: [{ rel_kind: 1, status: 1, parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-child', sibling_order: 1 }],
+      } })
+      if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0 } })
+      if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
+        records: [{ record_core: { record_uid: 'record-1' } }, { record_core: { record_uid: 'record-2' } }], has_more: false,
+      } })
+      if (url.endsWith('/api/v1/topics/records/bind') || url.endsWith('/api/v1/topics/records/unbind')) {
+        return json({ code: 0, data: { rel_uid: `${String(body.topic_uid)}:${String(body.record_uid)}` } })
+      }
+      if (url.endsWith('/api/v1/topics/hierarchy/move')) return json({ code: 0, data: {
+        topic_uid: 'topic-child', parent_topic_uid: '', sibling_order: 1,
+      } })
+      if (url.endsWith('/api/v1/topics/update')) return json({ code: 0, data: { topic_uid: body.topic_uid, updated: true } })
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const topics = (await service.listSources('send_to_self')).items.filter(item => item.kind === 'topic')
+    const parent = topics.find(item => item.displayName === '工作')!
+    const child = topics.find(item => item.displayName === '周报')!
+    const renamed = await service.renameTopic(parent.sourceRef, '工作计划')
+    const dissolved = await service.dissolveTopic(parent.sourceRef, undefined, [child.sourceRef])
+
+    expect(renamed).toMatchObject({ displayName: '工作计划' })
+    expect(renamed.sourceRef).not.toBe(parent.sourceRef)
+    expect(dissolved).toEqual({ sourceRef: parent.sourceRef, movedChildSourceRefs: [child.sourceRef], movedRecordCount: 2 })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/update')).map(call => call.body)).toEqual([
+      {
+        topic_uid: 'topic-parent', title: '工作计划', show_in_home: true,
+        privacy_state: 1, status: 1, extra: { source: 'dsh-arkme' },
+      },
+      {
+        topic_uid: 'topic-parent', title: '工作', show_in_home: true,
+        privacy_state: 1, status: 2, extra: { source: 'dsh-arkme' },
+      },
+    ])
+    expect(calls.find(call => call.url.endsWith('/api/v1/topics/hierarchy/move'))?.body).toEqual({
+      topic_uid: 'topic-child', previous_parent_topic_uid: 'topic-parent', parent_topic_uid: '', insert_before_topic_uid: '',
+    })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/records/unbind')).map(call => call.body)).toEqual([
+      { topic_uid: 'topic-parent', record_uid: 'record-1' },
+      { topic_uid: 'topic-parent', record_uid: 'record-2' },
+    ])
+  })
+
   it('rolls back a newly created topic when child hierarchy binding fails', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -1743,6 +1822,9 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ url, body })
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
       }] } })
@@ -1775,6 +1857,9 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     const service = new ArkmeService(config, sessions, state, async input => {
       const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
       }] } })
@@ -1808,6 +1893,9 @@ describe('ArkmeService', () => {
     }))
     const service = new ArkmeService(config, sessions, state, async input => {
       const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '第五级', update_at: 100 },
       }] } })
@@ -1844,6 +1932,9 @@ describe('ArkmeService', () => {
       state.summary = cachedSummary
       const service = new ArkmeService(config, sessions, state, async input => {
         const url = String(input)
+        if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+          return json({ code: 0, data: { items: [], has_more: false } })
+        }
         if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
         if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new TypeError('summary unavailable')
         throw new Error(`unexpected ${url}`)
@@ -1852,7 +1943,7 @@ describe('ArkmeService', () => {
       const sources = await service.listSources('send_to_self')
       expect(sources.items).toHaveLength(2)
       expect(sources.items[0]).toMatchObject({ kind: 'send_to_self', displayName: '发给自己' })
-      expect(sources.items[1]).toMatchObject({ kind: 'default_category', displayName: '默认分类' })
+      expect(sources.items[1]).toMatchObject({ kind: 'default_category', displayName: '未分类' })
       expect(sources.items[1]?.recordCount).toBe(cachedSummary?.recordCount)
     }
   })
@@ -1877,6 +1968,9 @@ describe('ArkmeService', () => {
     const state = new MemoryStateStore()
     const service = new ArkmeService(config, sessions, state, async input => {
       const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-1', title: '工作', update_at: 100 },
       }] } })
@@ -3464,7 +3558,7 @@ describe('ArkmeService', () => {
     await expect(service.searchRecordings({ query: '北京', limit: 9 })).resolves.toMatchObject({
       items: [{ sessionId: 'session-1', snippet: '北京复盘' }],
     })
-    expect(requests.map(item => item.body)).toEqual([
+    expect(requests.filter(item => !item.url.endsWith('/api/v1/records/privacy/visibility-snapshot')).map(item => item.body)).toEqual([
       { keyword: '复盘', limit: 20, search_scope: 'global', source_kinds: [1, 2, 3] },
       { scene_kind: 3, limit: 10, search_scope: 'global' },
       { keyword: '北京', limit: 9 },
@@ -3506,6 +3600,9 @@ describe('ArkmeService', () => {
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/search/records/scene/query')) {
         requestBodies.push(body)
         if (body.cursor === undefined) return json({ code: 0, data: {
@@ -3578,6 +3675,9 @@ describe('ArkmeService', () => {
     let pageCount = 0
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
       const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (!url.endsWith('/api/v1/search/records/scene/query')) throw new Error(`unexpected request ${url}`)
       pageCount += 1
       return json({ code: 0, data: {
@@ -4330,6 +4430,9 @@ describe('ArkmeService', () => {
       const url = String(input)
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       calls.push({ url, body })
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return json({ code: 0, data: { items: [], has_more: false } })
+      }
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) return json({ code: 0, data: { record_count: 0, words_count: 0, total_sec: 0 } })
@@ -4748,6 +4851,9 @@ describe('ArkmeService', () => {
         const url = String(input)
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
         calls.push({ url, body })
+        if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+          return json({ code: 0, data: { items: [], has_more: false } })
+        }
         if (url.endsWith('/api/v1/records/uncategorized/query')) return json({ code: 0, data: {
           items: [{
             record_uid: 'record-two-images', send_at: 100,
@@ -4799,6 +4905,9 @@ describe('ArkmeService', () => {
       new MemoryStateStore(),
       async input => {
         const url = String(input)
+        if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+          return json({ code: 0, data: { items: [], has_more: false } })
+        }
         if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
           records: [{
             record_uid: 'record-media-only', creator_user_id: 10001, send_at: 100, status: 1,

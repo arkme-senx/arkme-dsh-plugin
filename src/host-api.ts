@@ -808,6 +808,25 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'title'),
       stringParam(params, 'parentSourceRef') || undefined,
     )
+    case 'topic.rename': return await service.renameTopic(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'title'),
+    )
+    case 'topic.dissolve': return await service.dissolveTopic(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'parentSourceRef') || undefined,
+      stringListParam(params, 'childSourceRefs'),
+      stringParam(params, 'requestId') || undefined,
+      numberParam(params, 'expectedRecordCount', 0),
+    )
+    case 'topic.dissolve.status': return await service.topicDissolveStatus(stringParam(params, 'requestId')) ?? null
+    case 'topic.dissolve.active': return await service.activeTopicDissolve() ?? null
+    case 'topic.hierarchy.move': return await service.moveTopicHierarchy(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'currentParentSourceRef') || undefined,
+      stringParam(params, 'nextParentSourceRef') || undefined,
+      stringParam(params, 'insertBeforeSourceRef') || undefined,
+    )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {

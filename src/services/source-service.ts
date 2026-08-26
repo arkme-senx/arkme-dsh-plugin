@@ -10,8 +10,14 @@ import type {
   ArkmeSourceList,
   ArkmeTimelineItem,
   ArkmeTopicCreateResult,
+  ArkmeTopicDissolveResult,
+  ArkmeTopicDissolveProgress,
+  ArkmeTopicDissolveTask,
+  ArkmeTopicHierarchyMoveResult,
+  ArkmeTopicRenameResult,
 } from '../types.js'
 import { ProfileService, type ArkmePublicProfile } from './profile-service.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeSourceRefPayload {
@@ -35,12 +41,14 @@ export interface ArkmeSourceRecordReader {
   summary(): Promise<ArkmeSelfSummary>
   recordItem(raw: unknown): ArkmeSelfRecordItem | undefined
   isDSHAgentInput?(raw: unknown): boolean
+  isPrivacyLocked?(raw: unknown): boolean
 }
 
 const SOURCE_LIST_CACHE_TTL_MS = 30_000
 const SOURCE_LIST_CACHE_MAX_ENTRIES = 200
 const GROUP_AVATAR_CACHE_TTL_MS = 5 * 60_000
 const GROUP_AVATAR_NEGATIVE_CACHE_TTL_MS = 60_000
+const TOPIC_DISSOLVE_RECORD_CONCURRENCY = 6
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -107,12 +115,50 @@ export class SourceService {
   private readonly sourceListCache = new Map<string, CacheEntry<ArkmeSourceList>>()
   private readonly sourceListInFlight = new Map<string, Promise<ArkmeSourceList>>()
   private readonly groupAvatarSnapshotCache = new Map<string, CacheEntry<ArkmeGroupAvatarSnapshotProjection | null>>()
+  private readonly topicDissolveProgress = new Map<string, {
+    userId: number
+    sourceRef: string
+    parentSourceRef?: string
+    progress: ArkmeTopicDissolveProgress
+  }>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly profile: ProfileService,
     private readonly recordReader: ArkmeSourceRecordReader,
+    private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
   ) {}
+
+  async topicDissolveStatus(requestId: string): Promise<ArkmeTopicDissolveTask | undefined> {
+    const session = await this.runtime.requireSession()
+    const entry = this.topicDissolveProgress.get(requestId.trim())
+    if (entry === undefined || entry.userId !== session.userId) return undefined
+    return { ...entry.progress, sourceRef: entry.sourceRef, ...(entry.parentSourceRef === undefined ? {} : { parentSourceRef: entry.parentSourceRef }) }
+  }
+
+  async activeTopicDissolve(): Promise<ArkmeTopicDissolveTask | undefined> {
+    const session = await this.runtime.requireSession()
+    const tasks = [...this.topicDissolveProgress.values()].filter(entry => entry.userId === session.userId
+      && entry.progress.stage !== 'completed' && entry.progress.stage !== 'failed')
+    const entry = tasks.at(-1)
+    return entry === undefined ? undefined : {
+      ...entry.progress,
+      sourceRef: entry.sourceRef,
+      ...(entry.parentSourceRef === undefined ? {} : { parentSourceRef: entry.parentSourceRef }),
+    }
+  }
+
+  private updateTopicDissolveProgress(
+    requestId: string | undefined,
+    userId: number,
+    progress: Omit<ArkmeTopicDissolveProgress, 'requestId'>,
+  ): void {
+    const normalized = requestId?.trim() ?? ''
+    if (normalized === '') return
+    const existing = this.topicDissolveProgress.get(normalized)
+    if (existing === undefined || existing.userId !== userId) return
+    this.topicDissolveProgress.set(normalized, { ...existing, progress: { requestId: normalized, ...progress } })
+  }
 
   cachedChatSource(userId: number, chatSessionUid: string): ArkmeSourceItem | undefined {
     return this.chatSourceCache.get(`${String(userId)}:${chatSessionUid}`)
@@ -137,7 +183,7 @@ export class SourceService {
         userId: session.userId,
         kind: 'default_category',
         ownerRef: 'uncategorized',
-        displayName: displayName || '默认分类',
+        displayName: '未分类',
       })
     }
     const ownerRef = sourceUid.trim()
@@ -237,6 +283,7 @@ export class SourceService {
     this.sourceListCache.clear()
     this.sourceListInFlight.clear()
     this.groupAvatarSnapshotCache.clear()
+    this.topicDissolveProgress.clear()
   }
 
   async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
@@ -335,12 +382,349 @@ export class SourceService {
     }
   }
 
+  async renameTopic(sourceRef: string, titleInput: string): Promise<ArkmeTopicRenameResult> {
+    const session = await this.runtime.requireSession()
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') {
+      throw new ArkmePluginError('topic-rename-invalid', '只能重命名主题', false)
+    }
+    const title = titleInput.trim()
+    if (title === '' || Array.from(title).length > 100) {
+      throw new ArkmePluginError('topic-title-invalid', '主题名称不能为空或超过 100 个字符', false)
+    }
+    if (title === topic.displayName) return { sourceRef, displayName: title }
+    const updated = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/topics/update',
+      {
+        topic_uid: topic.ownerRef,
+        title,
+        show_in_home: true,
+        privacy_state: 1,
+        status: 1,
+        extra: { source: 'dsh-arkme' },
+      },
+      session,
+    )
+    if (stringValue(updated.topic_uid).trim() !== topic.ownerRef || !booleanValue(updated.updated)) {
+      throw new ArkmePluginError('topic-rename-contract-invalid', '主题重命名响应不完整，请重试', true, 502)
+    }
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
+    return {
+      sourceRef: await this.sealSourceRef(session.userId, 'topic', topic.ownerRef, title),
+      displayName: title,
+    }
+  }
+
+  /**
+   * Dissolving a topic promotes its direct children and moves the topic's own
+   * records into its parent. Root-topic records return to the default category.
+   */
+  async dissolveTopic(
+    sourceRef: string,
+    parentSourceRef: string | undefined,
+    childSourceRefs: readonly string[],
+    requestId?: string,
+    expectedRecordCount?: number,
+  ): Promise<ArkmeTopicDissolveResult> {
+    const session = await this.runtime.requireSession()
+    let totalRecordCount = Math.max(0, Math.trunc(expectedRecordCount ?? 0))
+    let completedRecordCount = 0
+    const report = (
+      stage: ArkmeTopicDissolveProgress['stage'],
+      error?: string,
+    ) => {
+      this.updateTopicDissolveProgress(requestId, session.userId, {
+        stage, completedRecordCount, totalRecordCount, ...(error === undefined ? {} : { error }),
+      })
+    }
+    const normalizedRequestId = requestId?.trim() ?? ''
+    if (normalizedRequestId !== '') {
+      this.topicDissolveProgress.set(normalizedRequestId, {
+        userId: session.userId, sourceRef,
+        ...(parentSourceRef === undefined ? {} : { parentSourceRef }),
+        progress: { requestId: normalizedRequestId, stage: 'reading', completedRecordCount: 0, totalRecordCount },
+      })
+    }
+    report('reading')
+    try {
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') {
+      throw new ArkmePluginError('topic-dissolve-invalid', '只能解散主题', false)
+    }
+    const parent = parentSourceRef === undefined ? undefined : await this.openSourceRef(parentSourceRef, session.userId)
+    if (parent !== undefined && parent.kind !== 'topic') {
+      throw new ArkmePluginError('topic-dissolve-parent-invalid', '主题父级无效，请刷新后重试', false)
+    }
+    const childRefs = [...new Set(childSourceRefs.map(value => value.trim()).filter(value => value !== '' && value !== sourceRef))]
+    const children = await Promise.all(childRefs.map(async childRef => {
+      const child = await this.openSourceRef(childRef, session.userId)
+      if (child.kind !== 'topic' || child.ownerRef === topic.ownerRef) {
+        throw new ArkmePluginError('topic-dissolve-child-invalid', '子主题信息无效，请刷新后重试', false)
+      }
+      return { sourceRef: childRef, topic: child }
+    }))
+    const recordUids = await this.topicRecordUids(topic.ownerRef, session, completed => {
+      completedRecordCount = completed
+      totalRecordCount = Math.max(totalRecordCount, completed)
+      report('reading')
+    })
+    totalRecordCount = recordUids.length
+    completedRecordCount = 0
+    report('migrating')
+    const movedRecordUids = await this.moveTopicRecordsForDissolve(
+      topic.ownerRef, parent?.ownerRef, recordUids, session,
+      completed => { completedRecordCount = completed; report('migrating') },
+    )
+    const movedChildren: Array<{ sourceRef: string; topic: ArkmeSourceRefPayload }> = []
+    try {
+      report('promoting')
+      for (const child of children) {
+        const moved = await this.moveTopicHierarchyForDissolve(child.topic.ownerRef, topic.ownerRef, parent?.ownerRef, session)
+        if (!moved) throw new ArkmePluginError('topic-dissolve-child-move-contract-invalid', '子主题转移失败，未解散当前主题', true, 502)
+        movedChildren.push(child)
+      }
+      report('dissolving')
+      const dissolved = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/update',
+        {
+          topic_uid: topic.ownerRef,
+          title: topic.displayName,
+          show_in_home: true,
+          privacy_state: 1,
+          status: 2,
+          extra: { source: 'dsh-arkme' },
+        },
+        session,
+      )
+      if (stringValue(dissolved.topic_uid).trim() !== topic.ownerRef || !booleanValue(dissolved.updated)) {
+        throw new ArkmePluginError('topic-dissolve-contract-invalid', '主题解散响应不完整，请重试', true, 502)
+      }
+    } catch (cause) {
+      await this.rollbackDissolvedTopicChildren(movedChildren, topic.ownerRef, parent?.ownerRef, session)
+      await this.rollbackDissolvedTopicRecords(topic.ownerRef, parent?.ownerRef, movedRecordUids, session)
+      throw cause
+    }
+    this.invalidateSourceListCache(session.userId, 'send_to_self')
+    const result = {
+      sourceRef,
+      movedChildSourceRefs: movedChildren.map(child => child.sourceRef),
+      movedRecordCount: movedRecordUids.length,
+      ...(parentSourceRef === undefined ? {} : { recordTargetSourceRef: parentSourceRef }),
+    }
+    completedRecordCount = movedRecordUids.length
+    report('completed')
+    return result
+    } catch (cause) {
+      report('failed', safeFailureMessage(cause))
+      throw cause
+    }
+  }
+
+  private async topicRecordUids(
+    topicUid: string,
+    session: ArkmeSessionCredentials,
+    onProgress?: (loadedRecordCount: number) => void,
+  ): Promise<string[]> {
+    const recordUids = new Set<string>()
+    const seenCursors = new Set<string>()
+    let cursorSendAt: number | undefined
+    let cursorRecordUid: string | undefined
+    for (let pageIndex = 0; pageIndex < 1_000; pageIndex += 1) {
+      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/display/detail',
+        {
+          topic_uid: topicUid,
+          limit: 100,
+          ...(cursorSendAt === undefined ? {} : { cursor_send_at: cursorSendAt }),
+          ...(cursorRecordUid === undefined ? {} : { cursor_record_uid: cursorRecordUid }),
+        },
+        session,
+      )
+      for (const raw of listValue(data.records)) {
+        const item = objectValue(raw)
+        const uid = stringValue(item.record_uid ?? objectValue(item.record_core).record_uid).trim()
+        if (uid !== '') recordUids.add(uid)
+      }
+      onProgress?.(recordUids.size)
+      if (data.has_more !== true) return [...recordUids]
+      const nextSendAt = numberValue(data.next_cursor_send_at)
+      const nextRecordUid = stringValue(data.next_cursor_record_uid).trim()
+      const cursorKey = `${String(nextSendAt)}:${nextRecordUid}`
+      if (nextSendAt <= 0 || nextRecordUid === '' || seenCursors.has(cursorKey)) {
+        throw new ArkmePluginError('topic-dissolve-record-page-invalid', '主题快记加载不完整，未解散主题，请刷新后重试', true, 502)
+      }
+      seenCursors.add(cursorKey)
+      cursorSendAt = nextSendAt
+      cursorRecordUid = nextRecordUid
+    }
+    throw new ArkmePluginError('topic-dissolve-record-page-limit', '主题快记过多，未解散主题，请稍后重试', true, 409)
+  }
+
+  private async moveTopicRecordsForDissolve(
+    sourceTopicUid: string, targetTopicUid: string | undefined, recordUids: readonly string[], session: ArkmeSessionCredentials,
+    onProgress?: (completedRecordCount: number) => void,
+  ): Promise<string[]> {
+    const moved: string[] = []
+    try {
+      let nextIndex = 0
+      let failure: unknown
+      const moveOne = async (recordUid: string) => {
+        let targetBound = false
+        try {
+          if (targetTopicUid !== undefined) {
+            const bound = await this.runtime.authenticatedPost<Record<string, unknown>>(
+              '/api/v1/topics/records/bind',
+              { topic_uid: targetTopicUid, record_uid: recordUid, rel_kind: 1, is_primary: true }, session,
+            )
+            if (stringValue(bound.rel_uid).trim() === '') throw new ArkmePluginError('topic-dissolve-record-bind-contract-invalid', '快记迁移失败，请重试', true, 502)
+            targetBound = true
+          }
+          const unbound = await this.runtime.authenticatedPost<Record<string, unknown>>(
+            '/api/v1/topics/records/unbind', { topic_uid: sourceTopicUid, record_uid: recordUid }, session,
+          )
+          if (stringValue(unbound.rel_uid).trim() === '') throw new ArkmePluginError('topic-dissolve-record-unbind-contract-invalid', '快记迁移失败，请重试', true, 502)
+          moved.push(recordUid)
+          onProgress?.(moved.length)
+        } catch (cause) {
+          if (targetBound && targetTopicUid !== undefined) {
+            await this.runtime.authenticatedPost<Record<string, unknown>>(
+              '/api/v1/topics/records/unbind', { topic_uid: targetTopicUid, record_uid: recordUid }, session,
+            ).catch(() => undefined)
+          }
+          throw cause
+        }
+      }
+      const worker = async () => {
+        while (failure === undefined) {
+          const index = nextIndex
+          nextIndex += 1
+          if (index >= recordUids.length) return
+          try {
+            await moveOne(recordUids[index]!)
+          } catch (cause) {
+            failure = cause
+            return
+          }
+        }
+      }
+      await Promise.all(Array.from(
+        { length: Math.min(TOPIC_DISSOLVE_RECORD_CONCURRENCY, recordUids.length) },
+        () => worker(),
+      ))
+      if (failure !== undefined) throw failure
+      return moved
+    } catch (cause) {
+      await this.rollbackDissolvedTopicRecords(sourceTopicUid, targetTopicUid, moved, session)
+      throw new ArkmePluginError('topic-dissolve-record-move-failed', '快记迁移失败，未解散主题，请重试', true, 409, { cause })
+    }
+  }
+
+  private async rollbackDissolvedTopicRecords(
+    sourceTopicUid: string, targetTopicUid: string | undefined, recordUids: readonly string[], session: ArkmeSessionCredentials,
+  ): Promise<void> {
+    for (const recordUid of [...recordUids].reverse()) {
+      await this.runtime.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/records/bind', { topic_uid: sourceTopicUid, record_uid: recordUid, rel_kind: 1, is_primary: true }, session,
+      ).catch(() => undefined)
+      if (targetTopicUid !== undefined) {
+        await this.runtime.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/topics/records/unbind', { topic_uid: targetTopicUid, record_uid: recordUid }, session,
+        ).catch(() => undefined)
+      }
+    }
+  }
+
+  private async moveTopicHierarchyForDissolve(
+    topicUid: string, previousParentTopicUid: string, nextParentTopicUid: string | undefined, session: ArkmeSessionCredentials,
+  ): Promise<boolean> {
+    const moved = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/topics/hierarchy/move',
+      {
+        topic_uid: topicUid,
+        previous_parent_topic_uid: previousParentTopicUid,
+        parent_topic_uid: nextParentTopicUid ?? '',
+        insert_before_topic_uid: '',
+      },
+      session,
+    )
+    return stringValue(moved.topic_uid).trim() === topicUid
+      && stringValue(moved.parent_topic_uid).trim() === (nextParentTopicUid ?? '')
+      && numberValue(moved.sibling_order) > 0
+  }
+
+  private async rollbackDissolvedTopicChildren(
+    children: readonly { sourceRef: string; topic: ArkmeSourceRefPayload }[],
+    topicUid: string,
+    parentTopicUid: string | undefined,
+    session: ArkmeSessionCredentials,
+  ): Promise<void> {
+    for (const child of [...children].reverse()) {
+      await this.moveTopicHierarchyForDissolve(child.topic.ownerRef, parentTopicUid ?? '', topicUid, session).catch(() => false)
+    }
+  }
+
+  /** Move a topic atomically, including its persisted order among siblings. */
+  async moveTopicHierarchy(
+    sourceRef: string,
+    currentParentSourceRef: string | undefined,
+    nextParentSourceRef: string | undefined,
+    insertBeforeSourceRef: string | undefined,
+  ): Promise<ArkmeTopicHierarchyMoveResult> {
+    const session = await this.runtime.requireSession()
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') {
+      throw new ArkmePluginError('topic-hierarchy-move-invalid', '只能调整主题层级', false)
+    }
+    const resolveTopic = async (reference: string | undefined): Promise<string | undefined> => {
+      if (reference === undefined) return undefined
+      const item = await this.openSourceRef(reference, session.userId)
+      if (item.kind !== 'topic') {
+        throw new ArkmePluginError('topic-hierarchy-parent-invalid', '只能移动到主题下', false)
+      }
+      if (item.ownerRef === topic.ownerRef) {
+        throw new ArkmePluginError('topic-hierarchy-cycle', '不能移动到自身下', false)
+      }
+      return item.ownerRef
+    }
+    const currentParentUid = await resolveTopic(currentParentSourceRef)
+    const nextParentUid = await resolveTopic(nextParentSourceRef)
+    const insertBeforeUid = await resolveTopic(insertBeforeSourceRef)
+    if (insertBeforeUid === topic.ownerRef) {
+      throw new ArkmePluginError('topic-hierarchy-insert-before-invalid', '不能插入到自身之前', false)
+    }
+    const moved = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/topics/hierarchy/move',
+      {
+        topic_uid: topic.ownerRef,
+        previous_parent_topic_uid: currentParentUid ?? '',
+        parent_topic_uid: nextParentUid ?? '',
+        insert_before_topic_uid: insertBeforeUid ?? '',
+      },
+      session,
+    )
+    const movedTopicUid = stringValue(moved.topic_uid).trim()
+    const movedParentUid = stringValue(moved.parent_topic_uid).trim()
+    const siblingOrder = numberValue(moved.sibling_order)
+    if (movedTopicUid !== topic.ownerRef || movedParentUid !== (nextParentUid ?? '') || siblingOrder <= 0) {
+      throw new ArkmePluginError('topic-hierarchy-move-contract-invalid', '主题移动响应不完整，请刷新后重试', true, 502)
+    }
+    this.sourceListCache.clear()
+    return {
+      sourceRef,
+      ...(nextParentSourceRef === undefined ? {} : { parentSourceRef: nextParentSourceRef }),
+      siblingOrder,
+    }
+  }
+
   async listSources(
     directory: ArkmeSourceDirectory,
     options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
   ): Promise<ArkmeSourceList> {
     const session = await this.runtime.requireSession()
-    const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)))
+    // Topic hierarchies require their parent and child to arrive in the same response.
+    // The topics endpoint supports up to 100 items, while chat directories stay capped at 50.
+    const maxLimit = directory === 'send_to_self' ? 100 : 50
+    const limit = Math.min(maxLimit, Math.max(1, Math.trunc(options.limit ?? 30)))
     const cursor = options.cursor?.trim() ?? ''
     const cacheKey = `${String(session.userId)}:${directory}:${String(limit)}:${cursor}`
     this.pruneSourceListCache()
@@ -387,19 +771,29 @@ export class SourceService {
     sessionKind?: number,
   ): Promise<ArkmeSourceList> {
     if (directory === 'send_to_self') {
-      if (options.cursor !== undefined && options.cursor.trim() !== '') {
-        throw new ArkmePluginError('source-cursor-invalid', '发给自己的主题目录不支持该分页游标', false)
-      }
+      const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
+      const topicPage = options.cursor === undefined || options.cursor.trim() === ''
+        ? undefined
+        : this.decodeTopicDirectoryCursor(options.cursor)
       const [data, hierarchyData] = await Promise.all([
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/display/list',
-          { limit: Math.min(100, Math.max(1, limit)) },
+          {
+            limit: Math.min(100, Math.max(1, limit)),
+            // The established topic-client contract always supplies a keyword, including for an unfiltered page.
+            keyword: '',
+            privacy_state: 1,
+            ...(topicPage?.pageCursor === undefined ? {} : { page_cursor: topicPage.pageCursor }),
+            ...(topicPage?.offset === undefined ? {} : { offset: topicPage.offset }),
+          },
           session,
+          options.signal,
         ),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/hierarchy/relations/list',
           {},
           session,
+          options.signal,
         ).catch(() => undefined),
       ])
       const [summaryResult, latestRecordsResult] = await Promise.allSettled([
@@ -419,7 +813,12 @@ export class SourceService {
         : cached?.summary?.recordCount
       const defaultLatestRecord = latestRecordsResult.status === 'fulfilled'
         ? listValue(latestRecordsResult.value.items)
-          .map(raw => this.recordReader.isDSHAgentInput?.(raw) === true ? undefined : this.recordReader.recordItem(raw))
+          .map(raw => this.recordReader.isDSHAgentInput?.(raw) === true
+            || this.recordReader.isPrivacyLocked?.(raw) === true
+            || arkmePrivacyLockedRecord(raw)
+            || lockedRecordUids.has(stringValue(objectValue(raw).record_uid ?? objectValue(objectValue(raw).record_core).record_uid).trim())
+            ? undefined
+            : this.recordReader.recordItem(raw))
           .find(item => item !== undefined)
         : cached?.items.reduce<ArkmeSelfRecordItem | undefined>((latest, item) => (
           item.creationSource === 3
@@ -430,9 +829,9 @@ export class SourceService {
         ? ''
         : (defaultLatestRecord.textContent.trim() || defaultLatestRecord.title.trim())
       const defaultCategory: ArkmeSourceItem = {
-        sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '默认分类'),
+        sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '未分类'),
         kind: 'default_category',
-        displayName: '默认分类',
+        displayName: '未分类',
         activeAtMillis: defaultLatestRecord?.sendAtMillis ?? 0,
         unreadCount: 0,
         ...(defaultLatestPreview === '' ? {} : { latestPreview: defaultLatestPreview }),
@@ -441,6 +840,7 @@ export class SourceService {
       const topicDescriptors: Array<{
         topicUid: string
         parentTopicUid?: string
+        siblingOrder: number
         title: string
         latestPreview: string
         latestMessageAtMillis: number
@@ -449,6 +849,8 @@ export class SourceService {
       }> = []
       const seenTopicUids = new Set<string>()
       const parentTopicUidByChild = new Map<string, string>()
+      const siblingOrderByChild = new Map<string, number>()
+      const childTopicUidsByParent = new Map<string, Set<string>>()
       for (const raw of listValue(hierarchyData?.relations)) {
         const relation = objectValue(raw)
         if (numberValue(relation.rel_kind) !== 1 || numberValue(relation.status) !== 1) continue
@@ -456,10 +858,19 @@ export class SourceService {
         const childTopicUid = stringValue(relation.child_topic_uid).trim()
         if (parentTopicUid === '' || childTopicUid === '' || parentTopicUid === childTopicUid) continue
         parentTopicUidByChild.set(childTopicUid, parentTopicUid)
+        siblingOrderByChild.set(childTopicUid, numberValue(relation.sibling_order))
+        const children = childTopicUidsByParent.get(parentTopicUid) ?? new Set<string>()
+        children.add(childTopicUid)
+        childTopicUidsByParent.set(parentTopicUid, children)
       }
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
+        if (arkmePrivacyLockedTopic(item)) continue
         const core = objectValue(item.topic_core)
+        const status = core.status ?? item.status
+        // A dissolved topic remains in some list responses briefly (or in an
+        // older cache), but it must never be selectable by the plugin.
+        if (status !== undefined && numberValue(status) !== 1) continue
         const summary = objectValue(item.summary)
         const latest = objectValue(item.latest_record_core)
         const parent = objectValue(
@@ -477,6 +888,7 @@ export class SourceService {
         topicDescriptors.push({
           topicUid,
           ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
+          siblingOrder: numberValue(siblingOrderByChild.get(topicUid) ?? core.sibling_order ?? item.sibling_order),
           title,
           latestPreview: textPreview(latest),
           latestMessageAtMillis: numberValue(latest.send_at ?? summary.latest_send_at),
@@ -485,27 +897,39 @@ export class SourceService {
         })
       }
       const sourceRefByTopicUid = new Map<string, string>()
+      const topicHierarchyKeyByUid = new Map<string, string>()
       for (const topic of topicDescriptors) {
         sourceRefByTopicUid.set(
           topic.topicUid,
           await this.sealSourceRef(session.userId, 'topic', topic.topicUid, topic.title),
         )
+        topicHierarchyKeyByUid.set(topic.topicUid, await this.topicHierarchyKey(session.userId, topic.topicUid))
       }
-      const topics: ArkmeSourceItem[] = topicDescriptors.map(topic => {
+      const topics: ArkmeSourceItem[] = await Promise.all(topicDescriptors.map(async topic => {
         const parentSourceRef = topic.parentTopicUid === undefined
           ? undefined
           : sourceRefByTopicUid.get(topic.parentTopicUid)
+        const parentTopicHierarchyKey = topic.parentTopicUid === undefined
+          ? undefined
+          : await this.topicHierarchyKey(session.userId, topic.parentTopicUid)
+        const hasPendingChildren = data.has_more === true
+          && (childTopicUidsByParent.get(topic.topicUid)?.size ?? 0) > 0
+          && [...(childTopicUidsByParent.get(topic.topicUid) ?? [])].some(childUid => !seenTopicUids.has(childUid))
         return {
           sourceRef: sourceRefByTopicUid.get(topic.topicUid)!,
           ...(parentSourceRef === undefined ? {} : { parentSourceRef }),
+          topicHierarchyKey: topicHierarchyKeyByUid.get(topic.topicUid)!,
+          ...(parentTopicHierarchyKey === undefined ? {} : { parentTopicHierarchyKey }),
+          ...(topic.siblingOrder > 0 ? { siblingOrder: topic.siblingOrder } : {}),
           kind: 'topic',
           displayName: topic.title,
           ...(topic.latestPreview === '' ? {} : { latestPreview: topic.latestPreview }),
           activeAtMillis: topic.activeAtMillis,
           unreadCount: 0,
           recordCount: topic.recordCount,
+          ...(hasPendingChildren ? { hasPendingChildren: true } : {}),
         }
-      })
+      }))
       const aggregateCandidates = [
         defaultCategory,
         ...topics.map((source, index) => ({
@@ -528,7 +952,28 @@ export class SourceService {
         activeAtMillis: latestAggregateItem?.activeAtMillis ?? 0,
         unreadCount: 0,
       }
-      return { directory, items: [aggregateSource, defaultCategory, ...topics], hasMore: false }
+      const nextPageCursor = objectValue(data.next_page_cursor ?? data.next_cursor)
+      const nextOffset = numberValue(data.next_offset)
+      // The mobile client treats the cursor and offset forms as alternatives.
+      // Prefer the cursor whenever both are present; sending both can make the
+      // server repeat the first page instead of advancing the directory.
+      const preferredPageCursor = Object.keys(nextPageCursor).length > 0 ? nextPageCursor : undefined
+      const preferredOffset = preferredPageCursor === undefined && nextOffset > 0 ? nextOffset : undefined
+      const hasMore = data.has_more === true && (preferredPageCursor !== undefined || preferredOffset !== undefined)
+      const totalValue = data.total ?? data.total_count
+      const total = totalValue === undefined ? undefined : Math.max(0, numberValue(totalValue))
+      return {
+        directory,
+        items: [aggregateSource, defaultCategory, ...topics],
+        ...(total === undefined ? {} : { total }),
+        hasMore,
+        ...(hasMore ? {
+          nextCursor: this.encodeTopicDirectoryCursor({
+            ...(preferredPageCursor === undefined ? {} : { pageCursor: preferredPageCursor }),
+            ...(preferredOffset === undefined ? {} : { offset: preferredOffset }),
+          }),
+        } : {}),
+      }
     }
     if (directory !== 'root') throw new ArkmePluginError('source-directory-invalid', 'Arkme 数据源目录无效', false)
     const pageCursor = options.cursor === undefined || options.cursor.trim() === ''
@@ -765,6 +1210,13 @@ export class SourceService {
     return `arkme-chat-source-v1.${digest}`
   }
 
+  private async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
+    const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+      .update(`topic-hierarchy-key-v1:${String(userId)}:${topicUid.trim()}`)
+      .digest('base64url')
+    return `arkme-topic-hierarchy-v1.${digest}`
+  }
+
   async sealSourceRef(
     userId: number,
     kind: ArkmeSourceKind,
@@ -799,7 +1251,7 @@ export class SourceService {
       userId: numberValue(parsed.userId),
       kind: isSourceKind(kind) ? kind : 'default_category',
       ownerRef: stringValue(parsed.ownerRef).trim(),
-      displayName: stringValue(parsed.displayName).trim(),
+      displayName: isSourceKind(kind) && kind === 'default_category' ? '未分类' : stringValue(parsed.displayName).trim(),
     }
     if (parsed.version !== 1 || result.userId !== expectedUserId || !isSourceKind(kind)
       || result.ownerRef === '' || result.displayName === '') {
@@ -890,6 +1342,26 @@ export class SourceService {
       return decoded
     } catch (error) {
       throw new ArkmePluginError('source-cursor-invalid', 'Arkme 数据源分页游标无效', false, 400, { cause: error })
+    }
+  }
+
+  private encodeTopicDirectoryCursor(value: { pageCursor?: Record<string, unknown>; offset?: number }): string {
+    return this.encodeCursor({ directory: 'send_to_self', ...value })
+  }
+
+  private decodeTopicDirectoryCursor(cursor: string): { pageCursor?: Record<string, unknown>; offset?: number } {
+    const value = this.decodeCursor(cursor)
+    if (value.directory !== 'send_to_self') {
+      throw new ArkmePluginError('source-cursor-invalid', '发给自己的主题分页游标无效', false)
+    }
+    const pageCursor = objectValue(value.pageCursor)
+    const offset = numberValue(value.offset)
+    if (Object.keys(pageCursor).length === 0 && offset <= 0) {
+      throw new ArkmePluginError('source-cursor-invalid', '发给自己的主题分页游标无效', false)
+    }
+    return {
+      ...(Object.keys(pageCursor).length === 0 ? {} : { pageCursor }),
+      ...(offset <= 0 ? {} : { offset }),
     }
   }
 }

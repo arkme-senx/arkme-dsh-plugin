@@ -9,7 +9,7 @@ import type {
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
 const PROVIDER_INSTANCE_KEY = 'dsh-arkme:navigation:v1:provider-instance'
-const MAX_CACHED_SOURCES = 200
+const MAX_CACHED_SOURCES = 2_000
 
 export interface ArkmeNavigationCache {
   version: 1
@@ -83,6 +83,12 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.parentSourceRef === 'string' && item.parentSourceRef !== ''
       ? { parentSourceRef: item.parentSourceRef }
       : {}),
+    ...(typeof item.topicHierarchyKey === 'string' && item.topicHierarchyKey !== ''
+      ? { topicHierarchyKey: item.topicHierarchyKey }
+      : {}),
+    ...(typeof item.parentTopicHierarchyKey === 'string' && item.parentTopicHierarchyKey !== ''
+      ? { parentTopicHierarchyKey: item.parentTopicHierarchyKey }
+      : {}),
     kind: item.kind,
     displayName: item.displayName,
     ...(typeof item.avatarRef === 'string' && item.avatarRef !== '' ? { avatarRef: item.avatarRef } : {}),
@@ -100,6 +106,7 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.recordCount === 'number' && Number.isFinite(item.recordCount)
       ? { recordCount: Math.max(0, Math.trunc(item.recordCount)) }
       : {}),
+    ...(item.hasPendingChildren === true ? { hasPendingChildren: true } : {}),
   }
 }
 

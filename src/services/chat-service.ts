@@ -36,6 +36,7 @@ import { BotService } from './bot-service.js'
 import { GroupAiPolishService } from './group-ai-polish-service.js'
 import { MediaService, type ArkmeMediaDescriptor } from './media-service.js'
 import { ProfileService } from './profile-service.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { RecordService } from './record-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
@@ -334,6 +335,7 @@ export class ChatService {
     private readonly arko: ArkoService,
     private readonly aiPolish: GroupAiPolishService,
     private readonly realtime: ArkmeChatRealtimePort,
+    private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
   ) {}
 
   async listSourceMembers(
@@ -579,6 +581,7 @@ export class ChatService {
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30)))
       if (source.kind === 'send_to_self') {
+        const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
         const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/home/feed/query',
           {
@@ -590,7 +593,8 @@ export class ChatService {
           session,
           options.signal,
         )
-        const rawRecords = listValue(data.items)
+        const rawRecords = listValue(data.items).filter(raw => !arkmePrivacyLockedRecord(raw)
+          && !lockedRecordUids.has(this.record.recordUid(raw)))
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
         const items = rawRecords.map(raw => {
           const recordUid = this.record.recordUid(raw)
@@ -625,6 +629,7 @@ export class ChatService {
         }
       }
       if (source.kind === 'topic') {
+        const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
         const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/display/detail',
           {
@@ -636,7 +641,11 @@ export class ChatService {
           session,
           options.signal,
         )
-        const rawRecords = listValue(data.records)
+        if (arkmePrivacyLockedTopic(data.topic_core)) {
+          throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能在 Arkme 插件中查看', false, 403)
+        }
+        const rawRecords = listValue(data.records).filter(raw => !arkmePrivacyLockedRecord(raw)
+          && !lockedRecordUids.has(this.record.recordUid(raw)))
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
         const records = rawRecords.map(raw => {
           const recordUid = this.record.recordUid(raw)

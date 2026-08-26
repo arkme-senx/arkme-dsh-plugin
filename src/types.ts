@@ -1007,8 +1007,16 @@ export interface ArkmeSourceItem {
   sourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
   peerUserId?: number
-  /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
+  /** Opaque reference to this topic's parent when both topic labels are available in the same response. */
   parentSourceRef?: string
+  /** Opaque topic identity for reconciling hierarchy across paginated directory responses. */
+  topicHierarchyKey?: string
+  /** Opaque parent topic identity. A child stays hidden until this key is present in the loaded tree. */
+  parentTopicHierarchyKey?: string
+  /** Some direct child topics are still on later pages of the personal-topic directory. */
+  hasPendingChildren?: boolean
+  /** Server-persisted order within this topic's sibling group. */
+  siblingOrder?: number
   kind: ArkmeSourceKind
   displayName: string
   /** Opaque Provider image reference; consumers resolve it through image.read. */
@@ -1039,6 +1047,43 @@ export interface ArkmeTopicCreateResult {
   source: ArkmeSourceItem
   /** Present only when the requested parent relation and the automatic orphan cleanup both failed. */
   warning?: string
+}
+
+/** Result of moving a personal topic to a different hierarchy parent. */
+export interface ArkmeTopicHierarchyMoveResult {
+  sourceRef: string
+  parentSourceRef?: string
+  siblingOrder: number
+}
+
+/** Result of renaming one personal topic. The opaque reference changes with the title. */
+export interface ArkmeTopicRenameResult {
+  sourceRef: string
+  displayName: string
+}
+
+/** Result of dissolving one personal topic while retaining its child topics. */
+export interface ArkmeTopicDissolveResult {
+  sourceRef: string
+  movedChildSourceRefs: string[]
+  movedRecordCount: number
+  /** Undefined means the records returned to the default category. */
+  recordTargetSourceRef?: string
+}
+
+/** Live status for a long-running topic dissolve operation. */
+export interface ArkmeTopicDissolveProgress {
+  requestId: string
+  stage: 'reading' | 'migrating' | 'promoting' | 'dissolving' | 'completed' | 'failed'
+  completedRecordCount: number
+  totalRecordCount: number
+  error?: string
+}
+
+/** A viewer-bound dissolve task that can be restored after the page reloads. */
+export interface ArkmeTopicDissolveTask extends ArkmeTopicDissolveProgress {
+  sourceRef: string
+  parentSourceRef?: string
 }
 
 export interface ArkmeTimelineCursor {
@@ -2241,6 +2286,11 @@ export type ArkmePluginOperation =
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'
+  | 'topic.hierarchy.move'
+  | 'topic.rename'
+  | 'topic.dissolve'
+  | 'topic.dissolve.status'
+  | 'topic.dissolve.active'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
@@ -2275,6 +2325,11 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'ai-video.list'
   | 'files.assets'
   | 'topic.create'
+  | 'topic.hierarchy.move'
+  | 'topic.rename'
+  | 'topic.dissolve'
+  | 'topic.dissolve.status'
+  | 'topic.dissolve.active'
   | 'arko.profile'
   | 'arko.session'
   | 'arko.new-session'
