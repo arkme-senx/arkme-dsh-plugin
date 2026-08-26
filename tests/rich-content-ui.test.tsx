@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewDragTop, arkmeNextImagePreviewMode } from '../src/client/ArkmeRichContent.js'
+import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, ArkmeRecordDetailContent, arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewDragTop, arkmeNextImagePreviewMode } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu } from '../src/client/ArkmeSidebar.js'
 
@@ -162,10 +162,54 @@ describe('Arkme rich content presentation', () => {
         { kind: 'file', mediaRef: 'file-ref', fileName: '非常长的文件名称需要显示两行然后省略.pdf', mimeType: 'application/pdf', size: 4, sortOrder: 1 },
       ],
     }} />)
-    expect(html).toContain('data-arkme-audio="compact"')
-    expect(html).toContain('01:05')
+    expect(html).toContain('data-arkme-voice="inline"')
+    expect(html).toContain('1:05')
+    expect(html).not.toContain('data-arkme-voice-transcript')
     expect(html).toContain('data-arkme-file-card="file"')
     expect(html).toContain('-webkit-line-clamp:2')
+  })
+
+  it.each([3, 4])('places voice kind %s before its transcript, with no separate player plate or duplicate text', (templateKind) => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'voice', senderName: 'lucis', isMe: false, sendAtMillis: 1, status: 1,
+      templateKind, title: '', textContent: '123456。', recordDurationMillis: 2_000,
+      contentBlocks: [{ kind: 'audio', mediaRef: 'voice-ref', fileName: 'voice.m4a', mimeType: 'audio/mp4', size: 3, sortOrder: 0 }],
+    }} />)
+    expect(html).toContain('data-arkme-voice="inline"')
+    expect(html).toContain('0:02')
+    expect(html.match(/123456。/gu)).toHaveLength(1)
+    expect(html.indexOf('0:02')).toBeLessThan(html.indexOf('123456。'))
+    expect(html).not.toMatch(/<p(?:\s|>)/u)
+    expect(html).not.toContain('••')
+    expect(html).not.toContain('width:188px')
+    expect(html).not.toContain('border-radius')
+  })
+
+  it('keeps generic audio attachments separate from unrelated body text', () => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'attachment', senderName: 'lucis', isMe: false, sendAtMillis: 1, status: 1,
+      templateKind: 2, title: '', textContent: '附件说明', recordDurationMillis: 42_000,
+      contentBlocks: [{ kind: 'audio', mediaRef: 'music-ref', fileName: 'music.mp3', mimeType: 'audio/mpeg', size: 3, sortOrder: 0 }],
+    }} />)
+    expect(html).not.toContain('data-arkme-voice-transcript')
+    expect(html).toContain('--:--')
+    expect(html).not.toContain('0:42')
+  })
+
+  it.each([3, 4])('renders voice kind %s details while preserving original/polished text selection', (templateKind) => {
+    const item = {
+      itemUid: 'voice', senderName: 'lucis', isMe: false, sendAtMillis: 1, status: 1,
+      templateKind, title: '', textContent: '原始正文',
+      aiPolish: { state: 'polished' as const, originalText: '原文'.repeat(200), polishedText: '润色'.repeat(200) },
+      contentBlocks: [{ kind: 'audio' as const, mediaRef: 'voice-ref', fileName: 'voice.m4a', mimeType: 'audio/mp4', size: 3, durationSec: 2, sortOrder: 0 }],
+    }
+    for (const showOriginal of [false, true]) {
+      const html = renderToStaticMarkup(<ArkmeRecordDetailContent item={item} showOriginal={showOriginal} />)
+      expect(html).toContain('data-arkme-voice="inline"')
+      expect(html).toContain((showOriginal ? '原文' : '润色').repeat(200))
+      expect(html).not.toContain('-webkit-line-clamp')
+      expect(html).not.toContain(showOriginal ? '润色' : '原文')
+    }
   })
 
   it('renders composer attachments as square Jotmo-style preview tiles', () => {

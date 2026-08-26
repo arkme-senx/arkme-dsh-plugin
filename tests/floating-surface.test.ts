@@ -236,6 +236,54 @@ describe('Arkme persistent conversation frame', () => {
     expect(markup).toContain('这条快记带图片')
   })
 
+  it.each([3, 4])('keeps the complete voice transcript and polish toggle in the detail drawer (type %s)', (templateKind) => {
+    const originalText = '语音原文。'.repeat(120)
+    const polishedText = '语音润色。'.repeat(120)
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-voice-detail', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent: originalText, status: 1, templateKind,
+      aiPolish: { state: 'polished', originalText, polishedText },
+      contentBlocks: [{
+        kind: 'audio', mediaRef: 'voice-detail-ref', fileName: '语音.m4a',
+        mimeType: 'audio/mp4', size: 12, sortOrder: 0, durationSec: 2,
+      }],
+    }
+    for (const showOriginal of [false, true]) {
+      const markup = renderToStaticMarkup(createElement(ArkmeTimelineDetailDrawer, {
+        item, sourceRef: 'source-detail', showOriginal, onClose: () => {}, onToggleOriginal: () => {},
+      }))
+      expect(markup).toContain('data-arkme-voice="inline"')
+      expect(markup).toContain('/arkme-self/api/media?ref=voice-detail-ref')
+      expect(markup).toContain('0:02')
+      expect(markup).toContain(showOriginal ? originalText : polishedText)
+      expect(markup).not.toContain(showOriginal ? polishedText : originalText)
+      expect(markup).toContain(showOriginal ? '显示润色' : '显示原文')
+      expect(markup).not.toContain('-webkit-line-clamp')
+      expect(markup).not.toContain('正在加载语音')
+    }
+  })
+
+  it('keeps image preview and attachment order when a detail also contains voice', () => {
+    const textContent = '图文混合语音详情。'.repeat(120)
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-mixed-detail', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent, status: 1,
+      contentBlocks: [
+        { kind: 'image', mediaRef: 'image-mixed-ref', fileName: '截图.png', mimeType: 'image/png', size: 12, sortOrder: 0 },
+        { kind: 'audio', mediaRef: 'voice-mixed-ref', fileName: '语音.m4a', mimeType: 'audio/mp4', size: 12, sortOrder: 1, durationSec: 2 },
+      ],
+    }
+    const markup = renderToStaticMarkup(createElement(ArkmeTimelineDetailDrawer, {
+      item, showOriginal: false, onClose: () => {}, onToggleOriginal: () => {},
+    }))
+    expect(markup).toContain('预览图片 截图.png')
+    expect(markup).toContain('data-arkme-voice="inline"')
+    expect(markup.indexOf('image-mixed-ref')).toBeLessThan(markup.indexOf('voice-mixed-ref'))
+    expect(markup).toContain(textContent)
+    expect(markup).not.toContain('data-arkme-voice-transcript')
+    expect(markup).not.toContain('-webkit-line-clamp')
+  })
+
   it('does not render the non-text fallback label for image-only timeline details', () => {
     const item: ArkmeTimelineItem = {
       itemUid: 'record-image-only',
