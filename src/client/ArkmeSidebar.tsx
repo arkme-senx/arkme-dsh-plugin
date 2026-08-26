@@ -336,6 +336,46 @@ export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem): string {
   return item.agentSource === undefined ? item.senderName : `${item.senderName} · ${item.agentSource.label}`
 }
 
+function arkmeTimelineDetailText(item: ArkmeTimelineItem, showOriginal: boolean, fallback = '非文本内容'): string {
+  if (showOriginal && item.aiPolish?.originalText !== undefined) return item.aiPolish.originalText
+  if (item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined) return item.aiPolish.polishedText
+  return item.textContent || item.title || fallback
+}
+
+export function ArkmeTimelineDetailDrawer({
+  item, showOriginal, onClose, onToggleOriginal,
+}: {
+  item: ArkmeTimelineItem
+  showOriginal: boolean
+  onClose: () => void
+  onToggleOriginal: () => void
+}) {
+  const hasRichMedia = (item.contentBlocks?.length ?? 0) > 0 || item.mediaUnavailable === true
+  const detailText = arkmeTimelineDetailText(item, showOriginal, hasRichMedia ? '' : '非文本内容')
+  return <aside style={styles.drawer} aria-label="快记详情">
+    <header style={styles.drawerHeader}>
+      <h3 style={styles.drawerTitle}>快记详情</h3>
+      <button type="button" style={styles.close} aria-label="关闭详情" onClick={onClose}>×</button>
+    </header>
+    <div style={styles.drawerBody}>
+      <div style={{ color: colors.secondary, fontSize: 12, marginBottom: 16 }}>
+        {arkmeTimelineDetailSenderText(item)} · {new Date(item.sendAtMillis).toLocaleString('zh-CN')}
+      </div>
+      {item.aiPolish?.state === 'polished'
+        && item.aiPolish.originalText !== undefined
+        && item.aiPolish.polishedText !== undefined
+        && <button type="button" style={styles.toggle} onClick={onToggleOriginal}>
+          {showOriginal ? '👁️显示润色' : '👁️显示原文'}
+        </button>}
+      {hasRichMedia
+        ? <div style={styles.detailText} data-arkme-timeline-detail-rich-content>
+          <ArkmeMessageContent item={{ ...item, textContent: detailText }} />
+        </div>
+        : <p style={styles.detailText}><ArkmeRichText text={detailText} /></p>}
+    </div>
+  </aside>
+}
+
 export function ArkmeTimelineAgentSourceBadge({ item }: { item: ArkmeTimelineItem }) {
   if (item.agentSource === undefined) return null
   return <span style={styles.agentSource} data-arkme-agent-source={item.agentSource.kind}>
@@ -2462,28 +2502,12 @@ export function ArkmeSurface({
             onClose={() => { setDrawer(undefined) }}
           />
         </>}
-        {drawer === 'detail' && detailItem !== undefined && detailItem.forwardRecords === undefined && <aside style={styles.drawer} aria-label="快记详情">
-          <header style={styles.drawerHeader}>
-            <h3 style={styles.drawerTitle}>快记详情</h3>
-            <button type="button" style={styles.close} aria-label="关闭详情" onClick={() => { setDrawer(undefined) }}>×</button>
-          </header>
-          <div style={styles.drawerBody}>
-            <div style={{ color: colors.secondary, fontSize: 12, marginBottom: 16 }}>
-              {arkmeTimelineDetailSenderText(detailItem)} · {new Date(detailItem.sendAtMillis).toLocaleString('zh-CN')}
-            </div>
-            {detailItem.aiPolish?.state === 'polished'
-              && detailItem.aiPolish.originalText !== undefined
-              && detailItem.aiPolish.polishedText !== undefined
-              && <button type="button" style={styles.toggle} onClick={() => { setShowOriginal(value => !value) }}>
-                {showOriginal ? '👁️显示润色' : '👁️显示原文'}
-              </button>}
-            <p style={styles.detailText}><ArkmeRichText text={showOriginal && detailItem.aiPolish?.originalText !== undefined
-              ? detailItem.aiPolish.originalText
-              : detailItem.aiPolish?.state === 'polished' && detailItem.aiPolish.polishedText !== undefined
-                ? detailItem.aiPolish.polishedText
-                : detailItem.textContent || detailItem.title || '非文本内容'} /></p>
-          </div>
-        </aside>}
+        {drawer === 'detail' && detailItem !== undefined && detailItem.forwardRecords === undefined && <ArkmeTimelineDetailDrawer
+          item={detailItem}
+          showOriginal={showOriginal}
+          onClose={() => { setDrawer(undefined) }}
+          onToggleOriginal={() => { setShowOriginal(value => !value) }}
+        />}
         {authView === 'content' && ui.mode === 'contact-add' && <div
           style={styles.contactBackdrop}
           role="presentation"

@@ -6,6 +6,7 @@ import { ArkmeUiController } from '../src/client/ui-controller.js'
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
   aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader,
+  ArkmeTimelineDetailDrawer,
   arkmeSourceShowsMessageAvatars, arkmeTimelineAvatarRef, arkmeTimelineDetailSenderText, arkmeTimelineSenderName,
   arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
@@ -201,5 +202,68 @@ describe('Arkme persistent conversation frame', () => {
     expect(agentSourceHtml).toContain('Codex代发')
     expect(agentSourceHtml).toContain('data-arkme-agent-source="agent"')
     expect(agentSourceHtml).toContain('data-arkme-agent-source-icon="assistant"')
+  })
+
+  it('renders timeline detail images with the same rich media content as the message bubble', () => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-image-1',
+      senderName: '我',
+      isMe: true,
+      sendAtMillis: new Date(2026, 7, 26, 9, 9, 41).getTime(),
+      title: '',
+      textContent: '这条快记带图片',
+      status: 1,
+      contentBlocks: [{
+        kind: 'image',
+        mediaRef: 'image-detail-ref',
+        fileName: '截图.png',
+        mimeType: 'image/png',
+        size: 12,
+        sortOrder: 0,
+      }],
+    }
+
+    const markup = renderToStaticMarkup(createElement(ArkmeTimelineDetailDrawer, {
+      item,
+      showOriginal: false,
+      onClose: () => {},
+      onToggleOriginal: () => {},
+    }))
+
+    expect(markup).toContain('data-arkme-timeline-detail-rich-content="true"')
+    expect(markup).toContain('/arkme-self/api/media?ref=image-detail-ref')
+    expect(markup).toContain('预览图片 截图.png')
+    expect(markup).toContain('这条快记带图片')
+  })
+
+  it('does not render the non-text fallback label for image-only timeline details', () => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-image-only',
+      senderName: '我',
+      isMe: true,
+      sendAtMillis: new Date(2026, 7, 26, 10, 38, 58).getTime(),
+      title: '',
+      textContent: '',
+      status: 1,
+      contentBlocks: [{
+        kind: 'image',
+        mediaRef: 'image-only-ref',
+        fileName: '纯图片.png',
+        mimeType: 'image/png',
+        size: 12,
+        sortOrder: 0,
+      }],
+    }
+
+    const markup = renderToStaticMarkup(createElement(ArkmeTimelineDetailDrawer, {
+      item,
+      showOriginal: false,
+      onClose: () => {},
+      onToggleOriginal: () => {},
+    }))
+
+    expect(markup).toContain('/arkme-self/api/media?ref=image-only-ref')
+    expect(markup).toContain('预览图片 纯图片.png')
+    expect(markup).not.toContain('非文本内容')
   })
 })
