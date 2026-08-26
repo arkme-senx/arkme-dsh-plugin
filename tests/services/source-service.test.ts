@@ -14,6 +14,62 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('resolves only current-viewer remarks across contact and direct-chat owners', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ path, body })
+      if (path === '/api/v1/chats/contacts/list') {
+        return new Response(JSON.stringify({ code: 200, data: {
+          items: [
+            { user_id: '7', remark: 'apple备注' },
+            { user_id: '8', remark: '' },
+          ],
+          has_more: false,
+        } }), { status: 200 })
+      }
+      if (path === '/api/v1/chats/list') {
+        return new Response(JSON.stringify({ code: 200, data: {
+          items: [
+            {
+              session: { session_kind: 1 },
+              private_counterpart: { user_id: '8' },
+              private_supplement: { remark: '' },
+            },
+            {
+              session: { session_kind: 1 },
+              private_counterpart: { user_id: '9' },
+              private_supplement: { remark: '小九备注' },
+            },
+          ],
+          has_more: false,
+        } }), { status: 200 })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async uniqueCode() { return 'device-secret' },
+    } as StateStore, fetchImpl)
+    const service = new SourceService(runtime, new ProfileService(runtime), {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+
+    await expect(service.privateRemarksByUserIds([7, 8, 9, 42, 0, 7])).resolves.toEqual(new Map([
+      [7, 'apple备注'],
+      [9, '小九备注'],
+    ]))
+    expect(requests).toEqual([
+      { path: '/api/v1/chats/contacts/list', body: { limit: 50, offset: 0 } },
+      { path: '/api/v1/chats/list', body: { limit: 50 } },
+    ])
+  })
+
   it('creates a topic with an account-bound source reference', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

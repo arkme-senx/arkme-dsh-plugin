@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore,
+  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -20,6 +20,8 @@ const ACCESSORY_WIDTH = 18
 const PANEL_WIDTH = 286
 const PANEL_MAX_CONTENT_HEIGHT = 36 * 8
 const PANEL_MAX_HEIGHT = PANEL_MAX_CONTENT_HEIGHT + 18
+const PANEL_EDGE_INSET = 8
+const PANEL_ANCHOR_GAP = 10
 
 const styles: Record<string, CSSProperties> = {
   root: {
@@ -54,12 +56,14 @@ const styles: Record<string, CSSProperties> = {
     position: 'fixed', zIndex: 1200, width: PANEL_WIDTH,
   },
   panelSurface: {
-    width: PANEL_WIDTH, maxHeight: PANEL_MAX_HEIGHT,
+    width: PANEL_WIDTH, maxHeight: `min(${String(PANEL_MAX_HEIGHT)}px, calc(100vh - 16px))`,
     padding: '8px 0', overflow: 'hidden', boxSizing: 'border-box',
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 12, background: arkmeTheme.base,
     boxShadow: '0 4px 10px rgba(0,0,0,.10)', color: arkmeTheme.text,
   },
-  panelBody: { maxHeight: PANEL_MAX_CONTENT_HEIGHT, overflowY: 'auto' },
+  panelBody: {
+    maxHeight: `min(${String(PANEL_MAX_CONTENT_HEIGHT)}px, calc(100vh - 34px))`, overflowY: 'auto',
+  },
   panelState: {
     width: '100%', height: 36, padding: '0 14px', border: 0, boxSizing: 'border-box',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -87,8 +91,8 @@ const styles: Record<string, CSSProperties> = {
   arrowTop: {
     position: 'absolute', top: -8, width: 16, height: 8, pointerEvents: 'none',
   },
-  arrowRight: {
-    position: 'absolute', right: -8, width: 8, height: 16, pointerEvents: 'none',
+  arrowBottom: {
+    position: 'absolute', bottom: -8, width: 16, height: 8, pointerEvents: 'none',
   },
   triangleTopBorder: {
     position: 'absolute', inset: 0, width: 0, height: 0,
@@ -100,15 +104,15 @@ const styles: Record<string, CSSProperties> = {
     borderLeft: '8px solid transparent', borderRight: '8px solid transparent',
     borderBottom: `8px solid ${arkmeTheme.base}`,
   },
-  triangleRightBorder: {
+  triangleBottomBorder: {
     position: 'absolute', inset: 0, width: 0, height: 0,
-    borderTop: '8px solid transparent', borderBottom: '8px solid transparent',
-    borderLeft: `8px solid ${arkmeTheme.border}`,
+    borderLeft: '8px solid transparent', borderRight: '8px solid transparent',
+    borderTop: `8px solid ${arkmeTheme.border}`,
   },
-  triangleRightFill: {
-    position: 'absolute', top: 0, left: -1, width: 0, height: 0,
-    borderTop: '8px solid transparent', borderBottom: '8px solid transparent',
-    borderLeft: `8px solid ${arkmeTheme.base}`,
+  triangleBottomFill: {
+    position: 'absolute', top: -1, left: 0, width: 0, height: 0,
+    borderLeft: '8px solid transparent', borderRight: '8px solid transparent',
+    borderTop: `8px solid ${arkmeTheme.base}`,
   },
 }
 
@@ -169,32 +173,53 @@ function errorText(error: unknown): string {
 interface DetailPanelLayout {
   left: number
   top: number
-  arrowPlacement: 'top' | 'right'
+  arrowPlacement: 'top' | 'bottom'
   arrowOffset: number
 }
 
-function detailPanelLayout(anchor: HTMLButtonElement | null): DetailPanelLayout {
-  const rect = anchor?.getBoundingClientRect()
-  if (rect === undefined) return { left: 12, top: 12, arrowPlacement: 'top', arrowOffset: PANEL_WIDTH - 26 }
-  const clampLeft = (left: number) => Math.max(8, Math.min(window.innerWidth - PANEL_WIDTH - 8, left))
-  const roomBelow = window.innerHeight - rect.bottom
-  if (roomBelow > PANEL_MAX_HEIGHT + 20) {
-    const left = clampLeft(rect.right - PANEL_WIDTH)
-    return {
-      left,
-      top: rect.bottom + 10,
-      arrowPlacement: 'top',
-      arrowOffset: Math.max(10, Math.min(PANEL_WIDTH - 26, rect.left + rect.width / 2 - left - 8)),
-    }
+export function arkmeMessageReadReceiptPanelLayout(
+  rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom' | 'width' | 'height'> | undefined,
+  viewport: { width: number; height: number },
+  measuredPanelHeight = PANEL_MAX_HEIGHT,
+): DetailPanelLayout {
+  if (rect === undefined) {
+    return { left: 12, top: 12, arrowPlacement: 'top', arrowOffset: PANEL_WIDTH - 26 }
   }
-  const left = clampLeft(rect.left - PANEL_WIDTH - 10)
-  const top = Math.max(8, Math.min(window.innerHeight - PANEL_MAX_HEIGHT - 8, rect.bottom - PANEL_MAX_HEIGHT + 52))
+  const viewportWidth = Number.isFinite(viewport.width) ? Math.max(0, viewport.width) : 0
+  const viewportHeight = Number.isFinite(viewport.height) ? Math.max(0, viewport.height) : 0
+  const panelHeight = Number.isFinite(measuredPanelHeight)
+    ? Math.max(1, Math.min(PANEL_MAX_HEIGHT, measuredPanelHeight))
+    : PANEL_MAX_HEIGHT
+  const maxLeft = Math.max(PANEL_EDGE_INSET, viewportWidth - PANEL_WIDTH - PANEL_EDGE_INSET)
+  const left = Math.max(PANEL_EDGE_INSET, Math.min(maxLeft, rect.right - PANEL_WIDTH))
+  const maxTop = Math.max(PANEL_EDGE_INSET, viewportHeight - panelHeight - PANEL_EDGE_INSET)
+  const belowTop = rect.bottom + PANEL_ANCHOR_GAP
+  const aboveTop = rect.top - panelHeight - PANEL_ANCHOR_GAP
+  const fitsBelow = belowTop <= maxTop
+  const fitsAbove = aboveTop >= PANEL_EDGE_INSET
+  const placeBelow = fitsBelow || (!fitsAbove
+    && viewportHeight - rect.bottom >= rect.top)
+  const top = Math.max(
+    PANEL_EDGE_INSET,
+    Math.min(maxTop, placeBelow ? belowTop : aboveTop),
+  )
   return {
     left,
     top,
-    arrowPlacement: 'right',
-    arrowOffset: Math.max(10, Math.min(PANEL_MAX_HEIGHT - 26, rect.top + rect.height / 2 - top - 8)),
+    arrowPlacement: placeBelow ? 'top' : 'bottom',
+    arrowOffset: Math.max(10, Math.min(PANEL_WIDTH - 26, rect.left + rect.width / 2 - left - 8)),
   }
+}
+
+function detailPanelLayout(
+  anchor: HTMLButtonElement | null,
+  panel: HTMLDivElement | null = null,
+): DetailPanelLayout {
+  return arkmeMessageReadReceiptPanelLayout(
+    anchor?.getBoundingClientRect(),
+    { width: window.innerWidth, height: window.innerHeight },
+    panel?.getBoundingClientRect().height ?? PANEL_MAX_HEIGHT,
+  )
 }
 
 function PanelArrow(props: Pick<DetailPanelLayout, 'arrowPlacement' | 'arrowOffset'>) {
@@ -204,9 +229,9 @@ function PanelArrow(props: Pick<DetailPanelLayout, 'arrowPlacement' | 'arrowOffs
       <span style={styles.triangleTopFill} />
     </span>
   }
-  return <span style={{ ...styles.arrowRight, top: props.arrowOffset }} aria-hidden>
-    <span style={styles.triangleRightBorder} />
-    <span style={styles.triangleRightFill} />
+  return <span style={{ ...styles.arrowBottom, left: props.arrowOffset }} aria-hidden>
+    <span style={styles.triangleBottomBorder} />
+    <span style={styles.triangleBottomFill} />
   </span>
 }
 
@@ -228,9 +253,24 @@ function ArkmeMessageReadReceiptDetailPanel(props: {
       .catch(error => { setState({ status: 'error', message: errorText(error) }) })
   }, [props.target])
 
+  const reposition = useCallback(() => {
+    const next = detailPanelLayout(props.anchor, panelRef.current)
+    setLayout(current => current.left === next.left && current.top === next.top
+      && current.arrowPlacement === next.arrowPlacement && current.arrowOffset === next.arrowOffset
+      ? current
+      : next)
+  }, [props.anchor])
+
   useEffect(() => { load() }, [load])
+  useLayoutEffect(() => { reposition() }, [reposition, state.status])
   useEffect(() => {
-    const reposition = () => { setLayout(detailPanelLayout(props.anchor)) }
+    const panel = panelRef.current
+    if (panel === null || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(reposition)
+    observer.observe(panel)
+    return () => { observer.disconnect() }
+  }, [reposition])
+  useEffect(() => {
     const closeOnOutside = (event: MouseEvent) => {
       const target = event.target
       if (!(target instanceof Node) || panelRef.current?.contains(target) === true || props.anchor?.contains(target) === true) return
@@ -258,6 +298,7 @@ function ArkmeMessageReadReceiptDetailPanel(props: {
     ref={panelRef}
     role="dialog"
     aria-label="群消息已读详情"
+    data-arkme-read-receipt-panel-placement={layout.arrowPlacement === 'bottom' ? 'above' : 'below'}
     style={{ ...styles.panel, left: layout.left, top: layout.top }}
   >
     <PanelArrow arrowPlacement={layout.arrowPlacement} arrowOffset={layout.arrowOffset} />

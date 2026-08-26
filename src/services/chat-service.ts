@@ -866,15 +866,27 @@ export class ChatService {
         userName: firstJoinDisplayName(item, ['display_name', 'displayName']),
       }
     })
-    const profiles = await this.profile.publicProfileSummariesByUserIds(
-      receiptMembers.map(item => item.userId), session, options.signal,
-    ).catch(() => new Map())
+    const userIds = receiptMembers.map(item => item.userId)
+    const missingRemarkUserIds = receiptMembers
+      .filter(item => item.remarkName === '')
+      .map(item => item.userId)
+    const [profiles, privateRemarks] = await Promise.all([
+      this.profile.publicProfileSummariesByUserIds(
+        userIds, session, options.signal,
+      ).catch(() => new Map()),
+      missingRemarkUserIds.length === 0
+        ? Promise.resolve(new Map<number, string>())
+        : this.source.privateRemarksByUserIds(
+            missingRemarkUserIds,
+            options.signal === undefined ? {} : { signal: options.signal },
+          ).catch(() => new Map<number, string>()),
+    ])
     const members = [] as ArkmeMessageReadReceiptDetail['items']
     for (const item of receiptMembers) {
       const profile = profiles.get(item.userId)
       const { displayName } = resolveChatMemberDisplayNames({
         userId: item.userId,
-        remarkCandidates: [item.remarkName],
+        remarkCandidates: [item.remarkName, privateRemarks.get(item.userId)],
         memberNameCandidates: [item.memberName],
         userNameCandidates: [item.userName, profile?.displayName],
       })

@@ -1979,7 +1979,7 @@ describe('ArkmeService', () => {
         seq: body.seq,
         items: [
           {
-            user_id: 20002, remark: '备注小林', member_name: '群昵称小林', display_name: '用户昵称小林',
+            user_id: 20002, member_name: '群昵称小林', display_name: '用户昵称小林',
             read_status: 'read', read_at: 220,
           },
           {
@@ -1989,6 +1989,13 @@ describe('ArkmeService', () => {
           { user_id: 40004, display_name: '用户昵称小吴', read_status: 'read', read_at: 230 },
           { user_id: 50005, display_name: '群成员', read_status: 'unread', read_at: 0 },
         ],
+      } })
+      if (url.endsWith('/api/v1/chats/contacts/list')) return json({ code: 200, data: {
+        items: [
+          { user_id: 20002, remark: '备注小林' },
+          { user_id: 30003, remark: '' },
+        ],
+        has_more: false,
       } })
       if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
         chat_session_uid: body.chat_session_uid,
@@ -2128,6 +2135,9 @@ describe('ArkmeService', () => {
     expect(calls.find(call => call.url.endsWith('/api/v1/chats/read-receipts/detail'))?.body).toEqual({
       chat_session_uid: 'chat-group', record_uid: 'chat-record-2', seq: 8,
     })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/chats/contacts/list'))).toMatchObject([
+      { body: { limit: 50, offset: 0 } },
+    ])
     await expect(service.reportMessage(groupTimeline.items[0]!.messageRef!, 2, {
       reason: '明确举报', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
     })).resolves.toMatchObject({ reportUid: 'report-1', status: 1 })

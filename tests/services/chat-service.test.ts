@@ -196,4 +196,60 @@ describe('ChatService', () => {
     expect(scheduleChatSessionProjection).toHaveBeenCalledOnce()
     expect(scheduleChatSessionProjection).toHaveBeenCalledWith('chat-2', 18)
   })
+
+  it('keeps the group nickname when contact remark enrichment fails', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(
+      config,
+      sessions,
+      { async uniqueCode() { return 'device-secret' } } as StateStore,
+      async input => {
+        const path = new URL(String(input)).pathname
+        if (path === '/api/v1/chats/read-receipts/detail') {
+          return new Response(JSON.stringify({ code: 200, data: {
+            chat_session_uid: 'group-1', record_uid: 'record-1', seq: 9,
+            items: [{
+              user_id: 7, member_name: '群昵称', display_name: '用户昵称',
+              read_status: 'unread', read_at: 0,
+            }],
+          } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        if (path === '/api/v1/auth/get-public-users-by-ids') {
+          return new Response(JSON.stringify({ code: 200, data: {
+            items: [{ user_id: 7, nick_name: '用户昵称' }],
+          } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        throw new Error(`unexpected path: ${path}`)
+      },
+    )
+    const profile = new ProfileService(runtime)
+    const source = new SourceService(runtime, profile, {
+      async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } },
+      recordItem() { return undefined },
+    })
+    const remarkLookup = vi.spyOn(source, 'privateRemarksByUserIds')
+      .mockRejectedValue(new Error('contacts unavailable'))
+    const media = new MediaService(runtime, profile, { async openWorldImageRef() { throw new Error('unused') } }, {
+      recordUid() { return '' },
+    })
+    const record = new RecordService(runtime, media, source)
+    const bot = new BotService(runtime, source)
+    const arko = new ArkoService(runtime, profile)
+    let chat!: ChatService
+    const polish = new GroupAiPolishService(runtime, source, {
+      async sendChatSourceTextRaw(...args) { return await chat.sendChatSourceTextRaw(...args) },
+    })
+    chat = new ChatService(runtime, source, profile, media, record, bot, arko, polish, {
+      emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {},
+    })
+    const sourceRef = await source.sealSourceRef(42, 'group_chat', 'group-1', '项目群')
+
+    await expect(chat.messageReadReceiptDetail(sourceRef, 'record-1', 9)).resolves.toMatchObject({
+      items: [{ displayName: '群昵称', readStatus: 'unread' }],
+    })
+    expect(remarkLookup).toHaveBeenCalledWith([7], {})
+  })
 })

@@ -26,6 +26,7 @@ vi.mock('../src/client/message-read-receipt-store.js', () => ({
 import {
   ArkmeMessageReadReceipt,
   ArkmeMessageReadReceiptLine,
+  arkmeMessageReadReceiptPanelLayout,
 } from '../src/client/ArkmeMessageReadReceipt.js'
 
 function source(kind: 'private_chat' | 'group_chat'): ArkmeSourceItem {
@@ -58,6 +59,27 @@ afterEach(() => {
 })
 
 describe('Arkme message read receipt UI', () => {
+  it('flips the detail panel above a lower-edge trigger using its measured height', () => {
+    expect(arkmeMessageReadReceiptPanelLayout(
+      { left: 900, right: 918, top: 620, bottom: 660, width: 18, height: 40 },
+      { width: 1_000, height: 700 },
+      170,
+    )).toEqual({
+      left: 632,
+      top: 440,
+      arrowPlacement: 'bottom',
+      arrowOffset: 260,
+    })
+  })
+
+  it('keeps a short flipped panel adjacent to the same lower-edge trigger', () => {
+    expect(arkmeMessageReadReceiptPanelLayout(
+      { left: 900, right: 918, top: 620, bottom: 660, width: 18, height: 40 },
+      { width: 1_000, height: 700 },
+      54,
+    )).toMatchObject({ top: 556, arrowPlacement: 'bottom' })
+  })
+
   it('renders private read truth without exposing member detail', () => {
     receiptMock.entry = { status: 'ready', summary: summary({ readCount: 1, unreadCount: 0, status: 'read' }) }
     act(() => { renderer = create(<ArkmeMessageReadReceipt source={source('private_chat')} item={message()} />) })
