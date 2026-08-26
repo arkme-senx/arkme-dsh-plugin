@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { create } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { formatLoginPhone, ArkmeLogin, type ArkmeLoginProps } from '../src/client/ArkmeLogin.js'
 import {
@@ -142,6 +142,103 @@ describe('ArkmeLogin', () => {
     expect(html).not.toContain('换账号登录')
     expect(html).not.toContain('微信扫码')
     expect(html).not.toContain('二维码加载中')
+  })
+
+  it('explains the two independent accounts without exposing a backend ticket', () => {
+    const html = renderLogin({
+      phoneBindingRequired: true,
+      mode: 'phone',
+      phoneConflict: {
+        status: 'phone-binding-conflict',
+        conflictRef: 'browser-safe-ref',
+        phoneMasked: '178****3182',
+        currentAccount: {
+          displayName: '扫码账号', arkmeId: 'scan-account', registeredAtMillis: 1_700_000_000_000,
+          avatarFallback: { kind: 'phone_default', colorIndex: 2, label: '扫' },
+        },
+        phoneAccount: {
+          displayName: '一雨今生', arkmeId: 'phone-account', registeredAtMillis: 1_600_000_000_000,
+          avatarFallback: { kind: 'phone_default', colorIndex: 5, label: '一' },
+        },
+        expiresAtMillis: Date.now() + 300_000,
+      },
+    })
+
+    expect(html).toContain('这个手机号已有账号')
+    expect(html).toContain('两个账号的数据不会合并')
+    expect(html).toContain('本次也不会变更微信绑定')
+    expect(html).toContain('178****3182')
+    expect(html).toContain('扫码账号')
+    expect(html).toContain('一雨今生')
+    expect(html).toContain('即我号：scan-account')
+    expect(html).toContain('即我号：phone-account')
+    expect(html).toContain('注册时间：')
+    expect(html).not.toContain('账号 ID')
+    expect(html).not.toContain('10001')
+    expect(html).not.toContain('10002')
+    expect(html).toContain('登录手机号账号（推荐）')
+    expect(html).toContain('将手机号换绑到扫码账号')
+    expect(html).toContain('换一个手机号')
+    expect(html).not.toContain('backend-ticket')
+    expect(html).not.toContain('browser-safe-ref')
+    expect(html).not.toContain('<div class="dsh-arkme-login-agreement">')
+  })
+
+  it('requires a second confirmation before moving the phone binding', async () => {
+    const onResolvePhoneConflict = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<ArkmeLogin
+        mode="phone"
+        phoneBindingRequired
+        phoneConflict={{
+          status: 'phone-binding-conflict',
+          conflictRef: 'browser-safe-ref',
+          phoneMasked: '178****3182',
+          currentAccount: {
+            displayName: '扫码账号', arkmeId: 'scan-account', registeredAtMillis: 1_700_000_000_000,
+          },
+          phoneAccount: {
+            displayName: '手机号账号', arkmeId: 'phone-account', registeredAtMillis: 1_600_000_000_000,
+          },
+          expiresAtMillis: Date.now() + 300_000,
+        }}
+        agreed
+        busy={false}
+        submitBusy={false}
+        error=""
+        phone="17871673182"
+        smsCode="123456"
+        smsCountdown={0}
+        testLoginEnabled={false}
+        testUserId=""
+        qrDataUrl=""
+        onModeChange={() => undefined}
+        onAgreementChange={() => undefined}
+        onPhoneChange={() => undefined}
+        onSmsCodeChange={() => undefined}
+        onTestUserIdChange={() => undefined}
+        onSendCode={() => undefined}
+        onVerifyCode={() => undefined}
+        onTestLogin={() => undefined}
+        onWechatLogin={() => undefined}
+        onCancelBinding={() => undefined}
+        onResolvePhoneConflict={onResolvePhoneConflict}
+      />)
+    })
+
+    const transferLabel = renderer!.root.findAllByType('strong')
+      .find(item => item.children.join('') === '将手机号换绑到扫码账号')
+    const transferOption = transferLabel?.parent
+    if (transferOption === null || transferOption === undefined) throw new Error('transfer option missing')
+    await act(async () => { transferOption.props.onClick() })
+    expect(onResolvePhoneConflict).not.toHaveBeenCalled()
+    expect(JSON.stringify(renderer!.toJSON())).toContain('两个账号的数据仍保持独立')
+    const confirm = renderer!.root.findAllByType('button')
+      .find(item => item.props['data-danger'] !== undefined)
+    if (confirm === undefined) throw new Error('transfer confirmation missing')
+    await act(async () => { confirm.props.onClick() })
+    expect(onResolvePhoneConflict).toHaveBeenCalledWith('transfer_to_current')
   })
 
   it('does not show binding progress before the verification submit starts', () => {

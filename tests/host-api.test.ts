@@ -53,8 +53,118 @@ function fakeService() {
     publishWorldFileAssets: vi.fn(async (input: unknown) => input),
     worldVoiceprintSocialContext: vi.fn(async (recordRef: string, options: unknown) => ({ recordRef, options })),
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
+    sendPhoneCode: vi.fn(async () => ({ sent: true })),
+    verifyPhoneCode: vi.fn(async () => ({ status: 'authenticated' })),
+    resolvePhoneBindingConflict: vi.fn(async (conflictRef: string, action: string) => ({ conflictRef, action })),
   }
 }
+
+describe('phone binding conflict Host boundary', () => {
+  it('requires the current DSH page origin before resolving an account choice', async () => {
+    const service = fakeService()
+    const options = { expectedPort: 0, allowNonLoopback: false }
+    const server = createServer(createArkmeHostApi(service as never, options))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    options.expectedPort = address.port
+    const endpoint = `http://127.0.0.1:${String(address.port)}/arkme-self/api`
+    const body = JSON.stringify({
+      operation: 'auth.phone.resolve',
+      params: {
+        conflictRef: 'browser-safe-ref',
+        action: 'login_phone_account',
+        conflict_ticket: 'must-not-forward',
+      },
+    })
+    try {
+      const rejected = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      })
+      expect(rejected.status).toBe(403)
+      expect(service.resolvePhoneBindingConflict).not.toHaveBeenCalled()
+
+      const accepted = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: `http://127.0.0.1:${String(address.port)}`,
+        },
+        body,
+      })
+      expect(accepted.status).toBe(200)
+      expect(service.resolvePhoneBindingConflict).toHaveBeenCalledWith('browser-safe-ref', 'login_phone_account')
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
+  })
+
+  it('dispatches only the opaque browser reference and validated action', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'auth.phone.resolve', {
+      conflictRef: ' browser-safe-ref ',
+      action: 'transfer_to_current',
+      conflict_ticket: 'must-not-forward',
+      phoneUserId: 999,
+    })
+    expect(service.resolvePhoneBindingConflict).toHaveBeenCalledWith('browser-safe-ref', 'transfer_to_current')
+    await expect(dispatchArkmeHostOperation(service as never, 'auth.phone.resolve', {
+      conflictRef: 'ref', action: 'merge_accounts',
+    })).rejects.toMatchObject({ code: 'phone-binding-conflict-action-invalid' })
+  })
+
+  it('keeps legacy phone requests origin-compatible and protects only the opt-in conflict path', async () => {
+    const service = fakeService()
+    const options = { expectedPort: 0, allowNonLoopback: false }
+    const server = createServer(createArkmeHostApi(service as never, options))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    options.expectedPort = address.port
+    const endpoint = `http://127.0.0.1:${String(address.port)}/arkme-self/api`
+    try {
+      for (const operation of ['auth.phone.send', 'auth.phone.verify']) {
+        const legacy = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operation,
+            params: operation.endsWith('send')
+              ? { phone: '17871673182', captcha: {} }
+              : { phone: '17871673182', code: '123456' },
+          }),
+        })
+        expect(legacy.status).toBe(200)
+
+        const conflictOptIn = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operation,
+            params: operation.endsWith('send')
+              ? { phone: '17871673182', captcha: {}, resolveConflict: true }
+              : { phone: '17871673182', code: '123456', resolveConflict: true },
+          }),
+        })
+        expect(conflictOptIn.status).toBe(403)
+      }
+      expect(service.sendPhoneCode).toHaveBeenCalledOnce()
+      expect(service.sendPhoneCode).toHaveBeenCalledWith('17871673182', {
+        lot_number: '', captcha_output: '', pass_token: '', gen_time: '',
+      }, { resolveConflict: false })
+      expect(service.verifyPhoneCode).toHaveBeenCalledOnce()
+      expect(service.verifyPhoneCode).toHaveBeenCalledWith('17871673182', '123456', { resolveConflict: false })
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
+  })
+})
 
 describe('World publish Host API dispatch', () => {
   it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {

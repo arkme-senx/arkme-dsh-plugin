@@ -13,6 +13,8 @@ const errorKeys: Readonly<Record<string, ArkmeLoginLocaleKey>> = {
   'captcha-required': 'error.captcha.required',
   'login-expired': 'error.login.required',
   'login-required': 'error.login.required',
+  'phone-binding-conflict-expired': 'error.conflict.expired',
+  'phone-binding-conflict-changed': 'error.conflict.changed',
 }
 
 /** Keep Host diagnostics out of the opposite-language UI while retaining stable code semantics. */

@@ -1,4 +1,8 @@
-import type { ChangeEvent } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
+import type {
+  ArkmePhoneBindingConflict, ArkmePhoneBindingConflictAccount, ArkmePhoneBindingConflictAction,
+} from '../types.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ARKME_WORDMARK_DATA_URL } from './arkme-wordmark.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
@@ -10,6 +14,8 @@ export interface ArkmeLoginProps {
   t?: ArkmeLoginTranslate
   mode: ArkmeLoginMode
   phoneBindingRequired?: boolean
+  phoneConflict?: ArkmePhoneBindingConflict
+  phoneConflictAction?: ArkmePhoneBindingConflictAction
   agreed: boolean
   busy: boolean
   submitBusy: boolean
@@ -30,6 +36,8 @@ export interface ArkmeLoginProps {
   onTestLogin: () => void
   onWechatLogin: () => void
   onCancelBinding: () => void
+  onResolvePhoneConflict?: (action: ArkmePhoneBindingConflictAction) => void
+  onChangeConflictPhone?: () => void
 }
 
 export function formatLoginPhone(value: string): string {
@@ -37,6 +45,41 @@ export function formatLoginPhone(value: string): string {
   return digits.replace(/^(\d{3})(\d{0,4})(\d{0,4}).*/, (_match, first, second, third) => (
     [first, second, third].filter(Boolean).join(' ')
   ))
+}
+
+export function formatLoginAccountRegistrationDate(value: number, locale: string): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'zh-CN', {
+    year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
+}
+
+function PhoneConflictAccountCard({
+  label,
+  account,
+  t,
+}: {
+  label: string
+  account: ArkmePhoneBindingConflictAccount
+  t: ArkmeLoginTranslate
+}) {
+  const registeredAt = formatLoginAccountRegistrationDate(account.registeredAtMillis, t('locale.id'))
+  return <div className="dsh-arkme-login-conflict-account">
+    <span>{label}</span>
+    <div className="dsh-arkme-login-conflict-account-body">
+      <ArkmeUserAvatar
+        {...(account.avatarRef === undefined ? {} : { avatarRef: account.avatarRef })}
+        {...(account.avatarFallback === undefined ? {} : { fallback: account.avatarFallback })}
+        size={44}
+        label={t('conflict.account.avatar', { name: account.displayName })}
+      />
+      <div className="dsh-arkme-login-conflict-account-identity">
+        <strong>{account.displayName}</strong>
+        <small>{t('conflict.account.arkme', { arkmeId: account.arkmeId })}</small>
+        <small>{t('conflict.account.registered', { date: registeredAt })}</small>
+      </div>
+    </div>
+  </div>
 }
 
 const loginStyles = `
@@ -130,6 +173,72 @@ const loginStyles = `
     font-size: 14px;
     line-height: 21px;
   }
+  .dsh-arkme-login-conflict { margin-top: 22px; }
+  .dsh-arkme-login-conflict-notice {
+    border: 1px solid var(--arkme-login-border);
+    border-radius: 14px;
+    padding: 11px 12px;
+    background: var(--arkme-login-accent-soft);
+    color: var(--arkme-login-text);
+    font-size: 13px;
+    line-height: 20px;
+  }
+  .dsh-arkme-login-conflict-accounts { margin-top: 14px; display: grid; gap: 10px; }
+  .dsh-arkme-login-conflict-account {
+    border: 1px solid var(--arkme-login-border);
+    border-radius: 14px;
+    padding: 12px 13px;
+    background: var(--arkme-login-subtle);
+  }
+  .dsh-arkme-login-conflict-account > span { display: block; color: var(--arkme-login-secondary); font-size: 12px; line-height: 18px; }
+  .dsh-arkme-login-conflict-account-body { margin-top: 8px; display: flex; min-width: 0; align-items: center; gap: 11px; }
+  .dsh-arkme-login-conflict-account-identity { min-width: 0; }
+  .dsh-arkme-login-conflict-account-identity > strong { display: block; overflow: hidden; color: var(--arkme-login-text); font-size: 14px; line-height: 20px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .dsh-arkme-login-conflict-account-identity > small { margin-top: 1px; display: block; overflow: hidden; color: var(--arkme-login-caption); font-size: 11px; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
+  .dsh-arkme-login-conflict-options { margin-top: 16px; display: grid; gap: 10px; }
+  .dsh-arkme-login-conflict-option {
+    width: 100%;
+    border: 1px solid var(--arkme-login-border);
+    border-radius: 14px;
+    padding: 11px 12px;
+    background: var(--arkme-login-surface);
+    color: var(--arkme-login-text);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+  }
+  .dsh-arkme-login-conflict-option:hover:not(:disabled) { border-color: var(--arkme-login-accent); background: var(--arkme-login-hover); }
+  .dsh-arkme-login-conflict-option:focus-visible { outline: 2px solid var(--arkme-login-accent); outline-offset: 2px; }
+  .dsh-arkme-login-conflict-option:disabled { cursor: default; opacity: .62; }
+  .dsh-arkme-login-conflict-option[data-primary='true'] { border-color: #171923; background: #171923; color: #fff; }
+  .dsh-arkme-login-conflict-option[data-primary='true'] > small { color: rgba(255,255,255,.72); }
+  .dsh-arkme-login-conflict-option > strong { display: block; font-size: 14px; line-height: 20px; font-weight: 600; }
+  .dsh-arkme-login-conflict-option > small { margin-top: 3px; display: block; color: var(--arkme-login-secondary); font-size: 12px; line-height: 18px; }
+  .dsh-arkme-login-conflict-confirm {
+    border: 1px solid color-mix(in srgb, var(--arkme-login-danger) 28%, transparent);
+    border-radius: 14px;
+    padding: 12px;
+    background: var(--arkme-login-danger-soft);
+    color: var(--arkme-login-danger);
+    font-size: 13px;
+    line-height: 20px;
+  }
+  .dsh-arkme-login-conflict-confirm-actions { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dsh-arkme-login-conflict-confirm-button {
+    height: 38px;
+    border: 1px solid var(--arkme-login-border);
+    border-radius: 10px;
+    background: var(--arkme-login-surface);
+    color: var(--arkme-login-text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .dsh-arkme-login-conflict-confirm-button[data-danger='true'] { border-color: var(--arkme-login-danger); background: var(--arkme-login-danger); color: #fff; }
+  .dsh-arkme-login-conflict-links { margin-top: 14px; display: flex; justify-content: center; gap: 18px; }
+  .dsh-arkme-login-conflict-link { border: 0; padding: 0; background: transparent; color: var(--arkme-login-secondary); cursor: pointer; font: inherit; font-size: 12px; line-height: 20px; }
+  .dsh-arkme-login-conflict-link:hover:not(:disabled) { color: var(--arkme-login-text); }
   .dsh-arkme-login-tabs-wrap { display: flex; justify-content: center; margin-top: 32px; }
   .dsh-arkme-login-tabs {
     display: inline-flex;
@@ -556,6 +665,8 @@ const loginStyles = `
 
 export function ArkmeLogin(props: ArkmeLoginProps) {
   const t = props.t ?? defaultArkmeLoginTranslate
+  const [confirmTransfer, setConfirmTransfer] = useState(false)
+  useEffect(() => { setConfirmTransfer(false) }, [props.phoneConflict?.conflictRef])
   const effectiveMode = props.phoneBindingRequired === true
     ? 'phone'
     : props.mode === 'test' && !props.testLoginEnabled ? 'wechat' : props.mode
@@ -585,14 +696,14 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
     <section className="dsh-arkme-login-card" aria-labelledby="dsh-arkme-login-title">
       <div className="dsh-arkme-login-content">
         <div className="dsh-arkme-login-brand">
-          <p>{props.phoneBindingRequired === true ? t('account.setup') : t('welcome')}</p>
+          <p>{props.phoneConflict !== undefined ? t('conflict.kicker') : props.phoneBindingRequired === true ? t('account.setup') : t('welcome')}</p>
           <h3 className="dsh-arkme-login-title" id="dsh-arkme-login-title">
-            {props.phoneBindingRequired === true ? t('title.binding') : t('title.login')}
+            {props.phoneConflict !== undefined ? t('conflict.title') : props.phoneBindingRequired === true ? t('title.binding') : t('title.login')}
           </h3>
-          <span>{props.phoneBindingRequired === true ? t('subtitle.binding') : t('subtitle.login')}</span>
+          <span>{props.phoneConflict !== undefined ? t('conflict.subtitle') : props.phoneBindingRequired === true ? t('subtitle.binding') : t('subtitle.login')}</span>
         </div>
 
-        {props.phoneBindingRequired === true && <>
+        {props.phoneBindingRequired === true && props.phoneConflict === undefined && <>
           <div className="dsh-arkme-login-notice" role="status">
             {t('binding.notice')}
           </div>
@@ -606,7 +717,50 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
           </div>
         </div>}
 
-        <div className="dsh-arkme-login-method">
+        {props.phoneConflict !== undefined ? <div className="dsh-arkme-login-conflict">
+          <div className="dsh-arkme-login-conflict-notice" role="status">{t('conflict.notice')}</div>
+          <div className="dsh-arkme-login-conflict-accounts">
+            <PhoneConflictAccountCard label={t('conflict.current.label')} account={props.phoneConflict.currentAccount} t={t} />
+            <PhoneConflictAccountCard label={t('conflict.phone.label', { phone: props.phoneConflict.phoneMasked })} account={props.phoneConflict.phoneAccount} t={t} />
+          </div>
+          <div className="dsh-arkme-login-conflict-options">
+            <button
+              type="button"
+              className="dsh-arkme-login-conflict-option"
+              data-primary="true"
+              disabled={props.busy}
+              onClick={() => { props.onResolvePhoneConflict?.('login_phone_account') }}
+            >
+              <strong>{props.phoneConflictAction === 'login_phone_account' && props.busy ? t('conflict.login.loading') : t('conflict.login.title')}</strong>
+              <small>{t('conflict.login.description')}</small>
+            </button>
+            {!confirmTransfer ? <button
+              type="button"
+              className="dsh-arkme-login-conflict-option"
+              disabled={props.busy}
+              onClick={() => { setConfirmTransfer(true) }}
+            >
+              <strong>{t('conflict.transfer.title')}</strong>
+              <small>{t('conflict.transfer.description')}</small>
+            </button> : <div className="dsh-arkme-login-conflict-confirm" role="alert">
+              {t('conflict.transfer.confirm')}
+              <div className="dsh-arkme-login-conflict-confirm-actions">
+                <button
+                  type="button"
+                  className="dsh-arkme-login-conflict-confirm-button"
+                  data-danger="true"
+                  disabled={props.busy}
+                  onClick={() => { props.onResolvePhoneConflict?.('transfer_to_current') }}
+                >{props.phoneConflictAction === 'transfer_to_current' && props.busy ? t('conflict.transfer.loading') : t('conflict.transfer.confirm.button')}</button>
+                <button type="button" className="dsh-arkme-login-conflict-confirm-button" disabled={props.busy} onClick={() => { setConfirmTransfer(false) }}>{t('conflict.transfer.back')}</button>
+              </div>
+            </div>}
+          </div>
+          <div className="dsh-arkme-login-conflict-links">
+            <button type="button" className="dsh-arkme-login-conflict-link" disabled={props.busy} onClick={props.onChangeConflictPhone}>{t('conflict.change.phone')}</button>
+            <button type="button" className="dsh-arkme-login-conflict-link" disabled={props.busy} onClick={props.onCancelBinding}>{t('conflict.cancel')}</button>
+          </div>
+        </div> : <div className="dsh-arkme-login-method">
           {effectiveMode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
             <div className="dsh-arkme-login-qr-title">{t('qr.title')}</div>
             <div
@@ -706,11 +860,11 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
               {props.busy ? t('login.submitting') : t('test.submit')}
             </button>
           </div>}
-        </div>
+        </div>}
 
         {props.error !== '' && <div className="dsh-arkme-login-error" role="alert">{props.error}</div>}
 
-        <div className="dsh-arkme-login-agreement">
+        {props.phoneConflict === undefined && <div className="dsh-arkme-login-agreement">
           <label className="dsh-arkme-login-check-label">
             <input
               type="checkbox"
@@ -725,7 +879,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
           <a className="dsh-arkme-login-link" href="https://www.arkme.ai/article/user-aggrement-v1.html" target="_blank" rel="noreferrer">{t('agreement.user')}</a>
           <span>{t('agreement.separator')}</span>
           <a className="dsh-arkme-login-link" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" target="_blank" rel="noreferrer">{t('agreement.privacy')}</a>
-        </div>
+        </div>}
       </div>
     </section>
   </div>

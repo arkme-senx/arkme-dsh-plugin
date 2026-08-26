@@ -7,8 +7,8 @@ import type { ArkmeAuthSnapshot, ArkmeUserProfileSnapshot } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeLogin, type ArkmeLoginMode, type ArkmeLoginProps } from './ArkmeLogin.js'
 import { arkmeAuthStore, type ArkmeAuthStoreSnapshot } from './auth-store.js'
-import { verifyPhoneCaptcha } from './geetest.js'
 import { arkmeUi } from './ui-controller.js'
+import { useArkmePhoneBindingFlow } from './arkme-phone-binding-flow.js'
 import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
 import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
@@ -164,9 +164,6 @@ export function useArkmeAuthFlow(
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [agreed, setAgreed] = useState(true)
   const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
-  const [phone, setPhone] = useState('')
-  const [smsCode, setSmsCode] = useState('')
-  const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
@@ -203,7 +200,6 @@ export function useArkmeAuthFlow(
       setLoginMode('phone')
       setAgreed(true)
       setQr('')
-      setSmsCode('')
       setError(t('error.binding.required'))
       if (bindingNotifiedUserIdRef.current !== snapshot.userId) {
         bindingNotifiedUserIdRef.current = snapshot.userId
@@ -221,6 +217,18 @@ export function useArkmeAuthFlow(
       if (snapshot.status === 'authenticated') setPhoneCheckRevision(value => value + 1)
     }
   }, [t])
+
+  const phoneBinding = useArkmePhoneBindingFlow({
+    ...(auth?.userId === undefined ? {} : { accountScopeUserId: auth.userId }),
+    agreed,
+    captchaId,
+    phoneBindingRequired,
+    t,
+    setBusy,
+    setSubmitBusy,
+    setError,
+    acceptAuthSnapshot: snapshot => { acceptAuthSnapshot(snapshot, { forcePhoneCheck: true }) },
+  })
 
   useEffect(() => {
     if (initialAuth === undefined) return
@@ -298,7 +306,6 @@ export function useArkmeAuthFlow(
         setLoginMode('phone')
         setAgreed(true)
         setQr('')
-        setSmsCode('')
         setError(t('error.binding.required'))
       })
       .catch(caught => {
@@ -309,7 +316,6 @@ export function useArkmeAuthFlow(
           setPhoneBindingGate('unknown')
           setLoginMode(testLoginEnabled ? 'test' : 'wechat')
           setQr('')
-          setSmsCode('')
           setError(arkmeLoginErrorMessage(caught, t))
           arkmeUi.authChanged(false)
           return
@@ -320,12 +326,6 @@ export function useArkmeAuthFlow(
       .finally(() => { if (active) setBusy(false) })
     return () => { active = false }
   }, [auth?.environment, auth?.status, auth?.userId, phoneCheckRevision, t, testLoginEnabled])
-
-  useEffect(() => {
-    if (smsCountdown <= 0) return
-    const timer = setTimeout(() => { setSmsCountdown(value => Math.max(0, value - 1)) }, 1000)
-    return () => { clearTimeout(timer) }
-  }, [smsCountdown])
 
   useEffect(() => {
     if (loginMode !== 'wechat' || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
@@ -380,51 +380,6 @@ export function useArkmeAuthFlow(
     void beginWechat()
   }, [agreed, auth, authView, beginWechat, loginMode, qr])
 
-  const sendCode = async () => {
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      setError(t('error.phone.eleven'))
-      return
-    }
-    setBusy(true)
-    setError('')
-    try {
-      const captcha = await verifyPhoneCaptcha(captchaId, phone)
-      await callArkme('auth.phone.send', { phone, captcha })
-      setSmsCountdown(60)
-    } catch (caught) {
-      setError(arkmeLoginErrorMessage(caught, t))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const verifyCode = async () => {
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      setError(t('error.phone.invalid'))
-      return
-    }
-    if (!/^\d{6}$/.test(smsCode)) {
-      setError(t('error.code.invalid'))
-      return
-    }
-    if (!agreed) {
-      setError(t('error.agreement.required'))
-      return
-    }
-    setBusy(true)
-    setSubmitBusy(true)
-    setError('')
-    try {
-      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
-      acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
-    } catch (caught) {
-      setError(arkmeLoginErrorMessage(caught, t))
-    } finally {
-      setSubmitBusy(false)
-      setBusy(false)
-    }
-  }
-
   const testLogin = async () => {
     const userId = Number(testUserId)
     if (!Number.isSafeInteger(userId) || userId <= 0) {
@@ -457,8 +412,7 @@ export function useArkmeAuthFlow(
       checkedUserIdRef.current = undefined
       setPhoneBindingGate('unknown')
       setPhoneCheckRevision(value => value + 1)
-      setPhone('')
-      setSmsCode('')
+      phoneBinding.reset()
       setQr('')
       setSubmitBusy(false)
       qrRequestStartedRef.current = false
@@ -499,22 +453,26 @@ export function useArkmeAuthFlow(
       busy,
       submitBusy,
       error,
-      phone,
-      smsCode,
-      smsCountdown,
+      phone: phoneBinding.phone,
+      smsCode: phoneBinding.smsCode,
+      smsCountdown: phoneBinding.smsCountdown,
+      ...(phoneBinding.phoneConflict === undefined ? {} : { phoneConflict: phoneBinding.phoneConflict }),
+      ...(phoneBinding.phoneConflictAction === undefined ? {} : { phoneConflictAction: phoneBinding.phoneConflictAction }),
       testLoginEnabled,
       testUserId,
       qrDataUrl: qr,
       onModeChange: changeLoginMode,
       onAgreementChange: setAgreed,
-      onPhoneChange: setPhone,
-      onSmsCodeChange: setSmsCode,
+      onPhoneChange: phoneBinding.setPhone,
+      onSmsCodeChange: phoneBinding.setSmsCode,
       onTestUserIdChange: setTestUserId,
-      onSendCode: () => { void sendCode() },
-      onVerifyCode: () => { void verifyCode() },
+      onSendCode: () => { void phoneBinding.sendCode() },
+      onVerifyCode: () => { void phoneBinding.verifyCode() },
       onTestLogin: () => { void testLogin() },
       onWechatLogin: () => { void beginWechat() },
       onCancelBinding: () => { void cancelBinding() },
+      onResolvePhoneConflict: action => { void phoneBinding.resolvePhoneConflict(action) },
+      onChangeConflictPhone: phoneBinding.changeConflictPhone,
     },
     phoneBindingGate,
     phoneBindingRequired,

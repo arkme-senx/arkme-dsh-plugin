@@ -11,7 +11,7 @@ import type {
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
 } from './types.js'
-import type { ArkmeCaptchaResult } from './types.js'
+import type { ArkmeCaptchaResult, ArkmePhoneBindingConflictAction } from './types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from './types.js'
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
@@ -380,6 +380,14 @@ function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
   }
 }
 
+function phoneBindingConflictActionParam(params: Record<string, unknown>): ArkmePhoneBindingConflictAction {
+  const action = stringParam(params, 'action')
+  if (action !== 'transfer_to_current' && action !== 'login_phone_account') {
+    throw new ArkmePluginError('phone-binding-conflict-action-invalid', '请选择有效的账号处理方式', false, 400)
+  }
+  return action
+}
+
 export interface ArkmeHostApiOptions {
   expectedPort: number
   allowNonLoopback: boolean
@@ -421,9 +429,18 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
-        .includes(request.operation) && origin === undefined) {
-        throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
+      const browserOnlyPhoneConflictOperation = request.operation === 'auth.phone.resolve'
+        || ((request.operation === 'auth.phone.send' || request.operation === 'auth.phone.verify')
+          && params.resolveConflict === true)
+      if ((browserOnlyPhoneConflictOperation
+        || ['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
+          .includes(request.operation)) && origin === undefined) {
+        throw new ArkmePluginError(
+          'origin-required',
+          browserOnlyPhoneConflictOperation ? '账号选择必须从当前 DSH 登录页面发起' : '扩展变更必须从当前 DSH 页面发起',
+          false,
+          403,
+        )
       }
       const value = await dispatchArkmeHostOperation(
         service,
@@ -492,10 +509,16 @@ export async function dispatchArkmeHostOperation(
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
       captchaParam(params),
+      { resolveConflict: params.resolveConflict === true },
     )
     case 'auth.phone.verify': return await service.verifyPhoneCode(
       stringParam(params, 'phone'),
       stringParam(params, 'code'),
+      { resolveConflict: params.resolveConflict === true },
+    )
+    case 'auth.phone.resolve': return await service.resolvePhoneBindingConflict(
+      stringParam(params, 'conflictRef').trim(),
+      phoneBindingConflictActionParam(params),
     )
     case 'auth.logout': return await service.logout()
     case 'voiceprint.status': return await service.myVoiceprint()

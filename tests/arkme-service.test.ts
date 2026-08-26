@@ -1555,6 +1555,149 @@ describe('ArkmeService', () => {
     expect(sessions.session?.userId).toBe(10001)
   })
 
+  it('keeps the backend conflict ticket Host-only and switches to the existing phone account', async () => {
+    const sessions = new MemorySessionStore()
+    const pendingSessions = new MemorySessionStore()
+    pendingSessions.session = { userId: 10001, accessToken: 'scan-access', refreshToken: 'scan-refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; authorization?: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({
+        url,
+        authorization: new Headers(init?.headers).get('Authorization') ?? undefined,
+        body,
+      })
+      if (url.endsWith('/bind-phone-send-code')) return json({ code: 200, data: { result: 1 } })
+      if (url.endsWith('/verify-bind-phone')) {
+        return json({ code: 200, data: {
+          result: 4,
+          conflict_ticket: 'backend-ticket-must-stay-host-only',
+          conflict_expires_at: Math.floor(Date.now() / 1000) + 300,
+          current_account: {
+            user_id: 10001, display_name: '扫码账号', jotmo_id: 'scan-account', registered_at_millis: 1_700_000_000_000,
+          },
+          phone_account: {
+            user_id: 10002, display_name: '手机号账号', jotmo_id: 'phone-account', registered_at_millis: 1_600_000_000_000,
+          },
+        } })
+      }
+      if (url.endsWith('/get-public-users-by-ids')) {
+        return json({ code: 200, data: { items: [
+          { user_id: 10001, jotmo_id: 'scan-account', nick_name: '扫码账号', head_img: 'phone_avatar://v1/2/扫' },
+          { user_id: 10002, jotmo_id: 'phone-account', nick_name: '手机号账号', head_img: 'phone_avatar://v1/5/手' },
+        ] } })
+      }
+      if (url.endsWith('/resolve-phone-binding-conflict')) {
+        return json({ code: 200, data: {
+          result: 1,
+          action: 'login_phone_account',
+          user_id: 10002,
+          access_token: 'phone-account-access',
+          refresh_token: 'phone-account-refresh',
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    }, pendingSessions)
+    const captcha = {
+      lot_number: 'lot-1', captcha_output: 'output-1', pass_token: 'pass-1', gen_time: '1700000000',
+    }
+
+    await expect(service.sendPhoneCode('13800138000', captcha, { resolveConflict: true })).resolves.toEqual({ sent: true })
+    const conflict = await service.verifyPhoneCode('13800138000', '123456', { resolveConflict: true })
+    expect(conflict).toMatchObject({
+      status: 'phone-binding-conflict',
+      phoneMasked: '138****8000',
+      currentAccount: {
+        displayName: '扫码账号', arkmeId: 'scan-account', registeredAtMillis: 1_700_000_000_000,
+        avatarFallback: { kind: 'phone_default', colorIndex: 2, label: '扫' },
+      },
+      phoneAccount: {
+        displayName: '手机号账号', arkmeId: 'phone-account', registeredAtMillis: 1_600_000_000_000,
+        avatarFallback: { kind: 'phone_default', colorIndex: 5, label: '手' },
+      },
+    })
+    if (conflict.status !== 'phone-binding-conflict') throw new Error('expected phone conflict')
+    expect(conflict.currentAccount).not.toHaveProperty('userId')
+    expect(conflict.phoneAccount).not.toHaveProperty('userId')
+    expect(conflict).not.toHaveProperty('conflict_ticket')
+    expect(conflict).not.toHaveProperty('backendTicket')
+
+    await expect(service.resolvePhoneBindingConflict(conflict.conflictRef, 'login_phone_account')).resolves.toEqual({
+      status: 'authenticated', environment: 'test', userId: 10002,
+    })
+    expect(requests[0]).toMatchObject({ body: { resolve_conflict: true } })
+    expect(requests[1]).toMatchObject({ body: { resolve_conflict: true } })
+    expect(requests[3]).toMatchObject({
+      authorization: 'Bearer scan-access',
+      body: {
+        conflict_ticket: 'backend-ticket-must-stay-host-only',
+        action: 'login_phone_account',
+        unique_code: 'dsh-device-1',
+      },
+    })
+    expect(sessions.session).toEqual({
+      userId: 10002, accessToken: 'phone-account-access', refreshToken: 'phone-account-refresh',
+    })
+    expect(pendingSessions.session).toBeUndefined()
+  })
+
+  it('keeps the scanned account session after an explicitly confirmed phone transfer', async () => {
+    const sessions = new MemorySessionStore()
+    const pendingSessions = new MemorySessionStore()
+    pendingSessions.session = { userId: 10001, accessToken: 'scan-access', refreshToken: 'scan-refresh' }
+    const state = new MemoryStateStore()
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push({ url, body })
+      if (url.endsWith('/verify-bind-phone')) {
+        return json({ code: 200, data: {
+          result: 4,
+          conflict_ticket: 'host-only-transfer-ticket',
+          conflict_expires_at: Math.floor(Date.now() / 1000) + 300,
+          current_account: {
+            user_id: 10001, display_name: '扫码账号', jotmo_id: 'scan-account', registered_at_millis: 1_700_000_000_000,
+          },
+          phone_account: {
+            user_id: 10002, display_name: '手机号账号', jotmo_id: 'phone-account', registered_at_millis: 1_600_000_000_000,
+          },
+        } })
+      }
+      if (url.endsWith('/get-public-users-by-ids')) {
+        return json({ code: 200, data: { items: [
+          { user_id: 10001, jotmo_id: 'scan-account', nick_name: '扫码账号', head_img: '' },
+          { user_id: 10002, jotmo_id: 'phone-account', nick_name: '手机号账号', head_img: '' },
+        ] } })
+      }
+      if (url.endsWith('/resolve-phone-binding-conflict')) {
+        return json({ code: 200, data: {
+          result: 1,
+          action: 'transfer_to_current',
+          user_id: 10001,
+        } })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    }, pendingSessions)
+
+    const conflict = await service.verifyPhoneCode('13800138000', '123456', { resolveConflict: true })
+    if (conflict.status !== 'phone-binding-conflict') throw new Error('expected phone conflict')
+    await expect(service.resolvePhoneBindingConflict(conflict.conflictRef, 'transfer_to_current')).resolves.toEqual({
+      status: 'authenticated', environment: 'test', userId: 10001,
+    })
+    expect(requests[2]).toMatchObject({ body: {
+      conflict_ticket: 'host-only-transfer-ticket',
+      action: 'transfer_to_current',
+      unique_code: 'dsh-device-1',
+    } })
+    expect(sessions.session).toEqual({
+      userId: 10001, accessToken: 'scan-access', refreshToken: 'scan-refresh',
+    })
+    expect(pendingSessions.session).toBeUndefined()
+  })
+
   it('reads uncategorized records and preserves stable cursor fields', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

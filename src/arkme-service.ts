@@ -102,6 +102,8 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmePhoneBindingConflictAction,
+  ArkmePhoneVerificationResult,
   ArkmeBotList,
   ArkmeBotProvider,
   ArkmeBotSummary,
@@ -1223,13 +1225,11 @@ export class ArkmeService {
     return await this.auth.testLogin(userId)
   }
 
-  async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult): Promise<{ sent: true }> {
-    return await this.auth.sendPhoneCode(phone, captcha)
-  }
+  async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult, options: { resolveConflict?: boolean } = {}): Promise<{ sent: true }> { return await this.auth.sendPhoneCode(phone, captcha, options) }
 
-  async verifyPhoneCode(phone: string, code: string): Promise<ArkmeAuthSnapshot> {
-    return await this.auth.verifyPhoneCode(phone, code)
-  }
+  async verifyPhoneCode(phone: string, code: string, options: { resolveConflict?: boolean } = {}): Promise<ArkmePhoneVerificationResult> { return await this.auth.verifyPhoneCode(phone, code, options) }
+
+  async resolvePhoneBindingConflict(conflictRef: string, action: ArkmePhoneBindingConflictAction): Promise<ArkmeAuthSnapshot> { return await this.auth.resolvePhoneBindingConflict(conflictRef, action) }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
     return await this.auth.logout()

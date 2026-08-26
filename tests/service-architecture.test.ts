@@ -37,7 +37,7 @@ const expectedPublicMethods = [
   'markSourceRead', 'listWechatConversations', 'readWechatMessages', 'getWechatConversationDetail',
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
   'listWechatLocations', 'readImage', 'beginWechatLogin', 'pollWechatLogin', 'testLogin',
-  'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
+  'sendPhoneCode', 'verifyPhoneCode', 'resolvePhoneBindingConflict', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
   'searchScene', 'searchRecordings', 'syncHistory', 'summary', 'list', 'calendarBuckets', 'calendarRecords',
   'listWorldRecords',

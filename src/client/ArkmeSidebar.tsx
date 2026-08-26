@@ -14,7 +14,6 @@ import type {
   ArkmeConversationMemberJoinEvent, ArkmeConversationMemberJoinPerson, ArkmeOpenPrivateChatResult,
 } from '../types.js'
 import { callArkme, ArkmeClientError } from './api.js'
-import { verifyPhoneCaptcha } from './geetest.js'
 import { ArkmeSourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeGroupChatControls } from './ArkmeGroupChatControls.js'
 import {
@@ -76,6 +75,7 @@ import {
 } from './interwoven-moments.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
+import { useArkmePhoneBindingFlow } from './arkme-phone-binding-flow.js'
 import {
   isCurrentRelatedRecordingRequest, mergeRelatedRecordingItems, RelatedRecordingDetail,
   RelatedRecordingsPanel, shouldShowPrivateChatActions, shouldShowRelatedRecordingsEntry,
@@ -842,9 +842,6 @@ export function ArkmeSurface({
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [agreed, setAgreed] = useState(true)
   const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
-  const [phone, setPhone] = useState('')
-  const [smsCode, setSmsCode] = useState('')
-  const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
@@ -1051,7 +1048,6 @@ export function ArkmeSurface({
       setLoginMode('phone')
       setAgreed(true)
       setQr('')
-      setSmsCode('')
       setError(t('error.binding.required'))
       if (bindingNotifiedUserIdRef.current !== snapshot.userId) {
         bindingNotifiedUserIdRef.current = snapshot.userId
@@ -1064,6 +1060,18 @@ export function ArkmeSurface({
       arkmeUi.authChanged(true, accountChanged)
     }
   }, [t])
+
+  const phoneBinding = useArkmePhoneBindingFlow({
+    ...(auth?.userId === undefined ? {} : { accountScopeUserId: auth.userId }),
+    agreed,
+    captchaId,
+    phoneBindingRequired,
+    t,
+    setBusy,
+    setSubmitBusy,
+    setError,
+    acceptAuthSnapshot,
+  })
 
   useEffect(() => {
     if (initialAuth === undefined) return
@@ -1539,12 +1547,6 @@ export function ArkmeSurface({
   }, [authenticated, hasMore, loadTimeline, loadingOlder, nextCursor])
 
   useEffect(() => {
-    if (smsCountdown <= 0) return
-    const timer = setTimeout(() => { setSmsCountdown(value => Math.max(0, value - 1)) }, 1000)
-    return () => { clearTimeout(timer) }
-  }, [smsCountdown])
-
-  useEffect(() => {
     if (!ownsWechatLogin || loginMode !== 'wechat' || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
     let stopped = false; let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
@@ -1567,24 +1569,6 @@ export function ArkmeSurface({
     catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
   }
 
-  const sendCode = async () => {
-    if (!/^1[3-9]\d{9}$/.test(phone)) { setError(t('error.phone.eleven')); return }
-    setBusy(true); setError('')
-    try { const captcha = await verifyPhoneCaptcha(captchaId, phone); await callArkme('auth.phone.send', { phone, captcha }); setSmsCountdown(60) }
-    catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
-  }
-
-  const verifyCode = async () => {
-    if (!/^1[3-9]\d{9}$/.test(phone)) { setError(t('error.phone.invalid')); return }
-    if (!/^\d{6}$/.test(smsCode)) { setError(t('error.code.invalid')); return }
-    if (!agreed) { setError(t('error.agreement.required')); return }
-    setBusy(true); setSubmitBusy(true); setError('')
-    try {
-      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
-      acceptAuthSnapshot(snapshot)
-    } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setSubmitBusy(false); setBusy(false) }
-  }
-
   const testLogin = async () => {
     const userId = Number(testUserId)
     if (!Number.isSafeInteger(userId) || userId <= 0) { setError(t('error.test.invalid')); return }
@@ -1602,8 +1586,7 @@ export function ArkmeSurface({
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.logout')
       ignoreStaleBindingAuthRef.current = true
       arkmeAuthStore.setAuth(snapshot)
-      setPhone('')
-      setSmsCode('')
+      phoneBinding.reset()
       setQr('')
       setSubmitBusy(false)
       qrRequestStartedRef.current = false
@@ -2191,22 +2174,26 @@ export function ArkmeSurface({
           busy={busy}
           submitBusy={submitBusy}
           error={error}
-          phone={phone}
-          smsCode={smsCode}
-          smsCountdown={smsCountdown}
+          phone={phoneBinding.phone}
+          smsCode={phoneBinding.smsCode}
+          smsCountdown={phoneBinding.smsCountdown}
+          {...(phoneBinding.phoneConflict === undefined ? {} : { phoneConflict: phoneBinding.phoneConflict })}
+          {...(phoneBinding.phoneConflictAction === undefined ? {} : { phoneConflictAction: phoneBinding.phoneConflictAction })}
           testLoginEnabled={testLoginEnabled}
           testUserId={testUserId}
           qrDataUrl={qr}
           onModeChange={changeLoginMode}
           onAgreementChange={setAgreed}
-          onPhoneChange={setPhone}
-          onSmsCodeChange={setSmsCode}
+          onPhoneChange={phoneBinding.setPhone}
+          onSmsCodeChange={phoneBinding.setSmsCode}
           onTestUserIdChange={setTestUserId}
-          onSendCode={() => { void sendCode() }}
-          onVerifyCode={() => { void verifyCode() }}
+          onSendCode={() => { void phoneBinding.sendCode() }}
+          onVerifyCode={() => { void phoneBinding.verifyCode() }}
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
           onCancelBinding={() => { void cancelBinding() }}
+          onResolvePhoneConflict={action => { void phoneBinding.resolvePhoneConflict(action) }}
+          onChangeConflictPhone={phoneBinding.changeConflictPhone}
         /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface

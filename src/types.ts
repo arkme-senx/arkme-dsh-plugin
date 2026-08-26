@@ -14,6 +14,28 @@ export interface ArkmeAuthSnapshot {
   expiresAtMillis?: number
 }
 
+export type ArkmePhoneBindingConflictAction = 'transfer_to_current' | 'login_phone_account'
+
+export interface ArkmePhoneBindingConflictAccount {
+  displayName: string
+  arkmeId: string
+  registeredAtMillis: number
+  avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
+}
+
+/** Browser-safe conflict projection. The backend proof ticket never crosses the Host boundary. */
+export interface ArkmePhoneBindingConflict {
+  status: 'phone-binding-conflict'
+  conflictRef: string
+  phoneMasked: string
+  currentAccount: ArkmePhoneBindingConflictAccount
+  phoneAccount: ArkmePhoneBindingConflictAccount
+  expiresAtMillis: number
+}
+
+export type ArkmePhoneVerificationResult = ArkmeAuthSnapshot | ArkmePhoneBindingConflict
+
 export interface ArkmeCaptchaResult {
   lot_number: string
   captcha_output: string
@@ -2244,6 +2266,7 @@ export type ArkmePluginOperation =
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
+  | 'auth.phone.resolve'
   | 'directory.list'
   | 'directory.contact.profile'
   | 'directory.contact.world'

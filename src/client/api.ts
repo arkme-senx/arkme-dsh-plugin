@@ -4,6 +4,7 @@ import type { ArkmePluginOperation } from '../types.js'
 export { ArkmeClientError } from '../sdk/index.js'
 
 type ArkmeUiOperation = ArkmePluginOperation
+  | 'auth.phone.resolve'
   | 'provider.instance'
   | 'directory.list'
   | 'directory.contact.profile'

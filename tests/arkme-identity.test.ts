@@ -59,6 +59,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('raw.jotmo_id', '')
     .replaceAll('raw.jotmoId', '')
     .replaceAll('item.jotmo_id', '')
+    .replaceAll('account.jotmo_id', '')
     .replaceAll('/api/v1/auth/check-jotmo-id-available', '')
     .replaceAll('/api/v1/auth/update-jotmo-id', '')
     .replaceAll('recipient_jotmo_id', '')
