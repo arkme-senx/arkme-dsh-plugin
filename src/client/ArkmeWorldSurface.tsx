@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
 import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
@@ -115,13 +116,14 @@ const styles: Record<string, CSSProperties> = {
   imageButton: { position: 'relative', minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: arkmeTheme.subtle, cursor: 'pointer' },
   imageOverflow: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(20,22,28,.52)', color: arkmeTheme.foreground, fontSize: 22, lineHeight: 1, fontWeight: 650, letterSpacing: '.01em', pointerEvents: 'none' },
   cardFooter: { minHeight: 24, marginTop: 9, paddingTop: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
-  extensionActivity: { marginTop: 13, padding: 14, display: 'grid', gridTemplateColumns: '48px minmax(0,1fr) auto', alignItems: 'center', gap: 12, border: `1px solid ${arkmeTheme.border}`, borderRadius: 13, background: arkmeTheme.subtle },
-  extensionActivityCopy: { minWidth: 0, display: 'grid', gap: 3 },
-  extensionActivityTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
-  extensionActivityMeta: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, color: arkmeTheme.secondary, fontSize: 10 },
-  extensionActivityDescription: { margin: 0, overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, color: arkmeTheme.secondary, fontSize: 11, lineHeight: '17px' },
-  extensionOpenButton: { minHeight: 32, padding: '0 12px', border: 0, borderRadius: 9, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' },
-  extensionBadge: { padding: '2px 6px', borderRadius: 999, background: arkmeTheme.accentSoft, color: arkmeTheme.accent, fontSize: 9, lineHeight: '14px' },
+  extensionActivity: { marginTop: 13, padding: '15px 16px', display: 'grid', gridTemplateColumns: '48px minmax(0,1fr) auto', alignItems: 'start', gap: 14, border: 0, borderRadius: 12, background: arkmeTheme.subtle },
+  extensionActivityIcon: { width: 48, height: 48, display: 'grid', placeItems: 'center', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 10, background: arkmeTheme.elevated },
+  extensionActivityCopy: { minWidth: 0, display: 'grid', gap: 4 },
+  extensionActivityTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 15, lineHeight: '21px', fontWeight: 650, letterSpacing: '-.01em' },
+  extensionActivityMeta: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5, color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '16px' },
+  extensionActivityMetaSeparator: { color: arkmeTheme.caption },
+  extensionActivityDescription: { maxWidth: '62ch', margin: '1px 0 0', overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, color: arkmeTheme.secondary, fontSize: 12, lineHeight: '19px' },
+  extensionOpenButton: { minHeight: 32, marginTop: -1, padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
   extensionShelf: { padding: '14px 15px', display: 'grid', gap: 11, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
   extensionShelfHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
   extensionShelfTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
@@ -950,18 +952,23 @@ function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: Arkm
 function WorldExtensionActivity({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(extensionId: string): void }) {
   const publication = item.extensionPublication
   if (publication === undefined) return null
-  return <section style={styles.extensionActivity} aria-label={`${publication.name}插件发布动态`}>
-    <ArkmeExtensionAvatar extensionId={publication.extensionId} {...(publication.iconRef === undefined ? {} : { iconRef: publication.iconRef })} size={48} />
+  return <section className="arkme-world-extension-activity" style={styles.extensionActivity} aria-label={`${publication.name}插件发布动态`} data-world-extension-activity="compact">
+    <span style={styles.extensionActivityIcon} aria-hidden>
+      <ArkmeExtensionAvatar extensionId={publication.extensionId} {...(publication.iconRef === undefined ? {} : { iconRef: publication.iconRef })} size={40} />
+    </span>
     <div style={styles.extensionActivityCopy}>
       <h2 style={styles.extensionActivityTitle}>{publication.name}</h2>
-      <div style={styles.extensionActivityMeta}>
+      <div style={styles.extensionActivityMeta} aria-label={`版本 ${publication.version}，已上架${publication.desktopRequired ? '，桌面端插件' : ''}`}>
         <span>v{publication.version}</span>
-        <span style={styles.extensionBadge}>已发布到市集</span>
-        {publication.desktopRequired && <span style={styles.extensionBadge}>桌面端插件</span>}
+        <span style={styles.extensionActivityMetaSeparator} aria-hidden>·</span>
+        <span>已上架</span>
+        {publication.desktopRequired && <><span style={styles.extensionActivityMetaSeparator} aria-hidden>·</span><span>桌面端</span></>}
       </div>
       {publication.description !== '' && <p style={styles.extensionActivityDescription}>{publication.description}</p>}
     </div>
-    <button type="button" style={styles.extensionOpenButton} onClick={() => { onOpen(publication.extensionId) }}>在市集中查看</button>
+    <button type="button" className="arkme-world-extension-open" style={styles.extensionOpenButton} aria-label={`在市集中查看${publication.name}`} data-world-extension-open="detail" onClick={() => { onOpen(publication.extensionId) }}>
+      查看详情<ArrowRight size={13} weight="bold" aria-hidden />
+    </button>
   </section>
 }
 
