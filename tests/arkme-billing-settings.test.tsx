@@ -31,19 +31,19 @@ const products: ArkmeBillingProduct[] = [
 ]
 
 describe('Arkme billing settings migration', () => {
-  it('places the balance below its title and renders recharge as the only trailing control', () => {
+  it('shows available and reserved balances with an accessible reservation explanation', () => {
     const markup = renderToStaticMarkup(<ArkmeBalanceSettingsRowView
       quotaState={{ kind: 'ready', quota: {
-        availableNanoCny: '12801736510', totalNanoCny: '12801736510', reservedNanoCny: '0', currency: 'CNY',
+        availableNanoCny: '12801736510', totalNanoCny: '13101736510', reservedNanoCny: '300000000', currency: 'CNY',
       } }}
       onOpen={noop}
     />)
 
-    expect(markup).toMatch(/当前余量[\s\S]*¥12\.80[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toMatch(/当前余额[\s\S]*¥12\.80[\s\S]*预占余额[\s\S]*¥0\.30[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+    expect(markup).toContain('class="arkme-redesign-reserved-help" tabindex="0" aria-label="预占余额说明" aria-describedby="arkme-reserved-balance-tooltip">?</span>')
+    expect(markup).toContain('id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的余额，任务完成后将返还剩余余额。</span>')
     expect(markup).toContain('>充值</button><span class="arkme-redesign-trailing-slot" aria-hidden="true"></span>')
-    expect(markup).not.toContain('<svg')
     expect(markup).not.toContain('总余额')
-    expect(markup).not.toContain('已预占')
   })
 
   it('renders a compact wrapping recharge dialog with only the temporarily enabled payment entry', () => {
@@ -64,6 +64,7 @@ describe('Arkme billing settings migration', () => {
 
     expect(markup).toContain('role="dialog"')
     expect(markup).toContain('aria-label="余额充值"')
+    expect(markup).toContain('<span>当前余额</span>')
     expect(markup).toMatch(/display:grid/)
     expect(markup).not.toMatch(/overflow-x:/)
     expect(markup).toMatch(/AI 余额 ¥10[\s\S]*AI 余额 ¥50[\s\S]*AI 余额 ¥100[\s\S]*AI 余额支付测试/)

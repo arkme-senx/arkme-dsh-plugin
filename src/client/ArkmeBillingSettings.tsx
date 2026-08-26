@@ -57,13 +57,29 @@ export interface ArkmeBalanceSettingsRowViewProps {
 export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewProps) {
   const description = props.quotaState.kind === 'ready'
     ? formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)
-    : props.quotaState.kind === 'loading' ? '正在加载余量…' : '余量读取失败，点击重试'
+    : props.quotaState.kind === 'loading' ? '正在加载余额…' : '余额读取失败，点击重试'
+  const reservedDescription = props.quotaState.kind === 'ready'
+    ? formatArkmeNanoCny(props.quotaState.quota.reservedNanoCny)
+    : props.quotaState.kind === 'loading' ? '正在加载…' : '读取失败'
 
   return <div className="arkme-redesign-setting-row arkme-redesign-balance-row">
     <button type="button" className="arkme-redesign-balance-main" onClick={props.onOpen}>
-      <strong>当前余量</strong>
+      <strong>当前余额</strong>
       <small>{description}</small>
     </button>
+    <div className="arkme-redesign-reserved-balance">
+      <span className="arkme-redesign-reserved-title">
+        <strong>预占余额</strong>
+        <span
+          className="arkme-redesign-reserved-help"
+          tabIndex={0}
+          aria-label="预占余额说明"
+          aria-describedby="arkme-reserved-balance-tooltip"
+        >?</span>
+        <span id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的余额，任务完成后将返还剩余余额。</span>
+      </span>
+      <small>{reservedDescription}</small>
+    </div>
     <button
       type="button"
       className="arkme-redesign-update-button arkme-redesign-recharge-trigger"
@@ -121,7 +137,7 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
 
       <div className="arkme-billing-dialog-body">
         <div className="arkme-billing-dialog-balance">
-          <span>当前余量</span>
+          <span>当前余额</span>
           <strong>{props.quotaState.kind === 'ready'
             ? formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)
             : props.quotaState.kind === 'loading' ? '正在加载…' : '读取失败'}</strong>
@@ -249,7 +265,7 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
         </>}
         {screen === 'pending' && qrDataUrl === '' && openUrl === '' && <p className="arkme-billing-error" role="alert">支付操作暂不可用</p>}
         {screen === 'pending' && <p>支付金额 {formatArkmeBillingPrice(props.order.amountMinor, props.order.currency)} · 剩余 {countdownText(props.order.expiresAtMillis - props.nowMillis)}</p>}
-        {screen === 'crediting' && <><strong>支付已确认，余额到账中…</strong><p>到账后会自动刷新当前余量。</p></>}
+        {screen === 'crediting' && <><strong>支付已确认，余额到账中…</strong><p>到账后会自动刷新当前余额。</p></>}
         {screen === 'paid' && <strong>支付成功，正在刷新余量…</strong>}
         {screen === 'expired' && <strong>支付凭据已过期，请重新生成。</strong>}
         {screen === 'closed' && <strong>订单已关闭。</strong>}

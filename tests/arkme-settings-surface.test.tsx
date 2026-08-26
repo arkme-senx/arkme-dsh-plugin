@@ -97,7 +97,7 @@ describe('ArkmeSettingsSurface', () => {
     try {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
       const authenticated = renderToStaticMarkup(<ArkmeSettingsSurface />)
-      expect(authenticated).toMatch(/当前余量[\s\S]*正在加载余量…[\s\S]*充值/)
+      expect(authenticated).toMatch(/当前余额[\s\S]*正在加载余额…[\s\S]*充值/)
       expect(authenticated).toContain('>退出登录<')
       expect(authenticated).toContain('>账户操作<')
       expect(authenticated.indexOf('>隐私条款<')).toBeLessThan(authenticated.indexOf('>账户操作<'))
