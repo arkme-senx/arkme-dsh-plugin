@@ -490,14 +490,14 @@ export class RecordService {
   recordTimelineItemFromRaw(
     raw: unknown,
     userId: number,
-    options: { displayItems?: unknown[]; mediaUnavailable?: boolean } = {},
+    options: { displayItems?: unknown[]; mediaUnavailable?: boolean; selfTopic?: ArkmeTimelineItem['selfTopic']; isMe?: boolean } = {},
   ): ArkmeTimelineItem {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       senderName: stringValue(item.nickname).trim() || '我',
-      isMe: numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
+      isMe: options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(item.title ?? core.title),
       textContent: stringValue(item.text_content ?? core.text_content),
@@ -509,6 +509,7 @@ export class RecordService {
       recordDurationMillis: numberValue(item.record_duration_millis ?? core.record_duration_millis),
       editDurationMillis: numberValue(item.edit_duration_millis ?? core.edit_duration_millis),
       contentBlocks: this.media.richContentBlocks(raw, userId, options.displayItems),
+      ...(options.selfTopic === undefined ? {} : { selfTopic: options.selfTopic }),
       ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }

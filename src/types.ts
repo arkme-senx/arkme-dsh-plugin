@@ -1174,6 +1174,15 @@ export interface ArkmeTimelineCursor {
   beforeSequence?: number
 }
 
+/** A browser-safe topic projection attached to an item in the aggregate self feed. */
+export interface ArkmeTimelineSelfTopic {
+  /** Browser-safe stable key for resolving the current topic from the self topic tree. */
+  topicHierarchyKey: string
+  /** Available immediately when the feed includes the topic title. */
+  sourceRef?: string
+  title?: string
+}
+
 export interface ArkmeTimelineItem {
   itemUid: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
@@ -1203,6 +1212,8 @@ export interface ArkmeTimelineItem {
   contentBlocks?: ArkmeContentBlock[]
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
+  /** Present only for a categorized record in the aggregate “发给自己” feed. */
+  selfTopic?: ArkmeTimelineSelfTopic
   /** Browser-safe Chat forward snapshot. It is present only for explicit `render_kind=forward_records` payloads. */
   forwardRecords?: ArkmeForwardRecordsPreview
 }

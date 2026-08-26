@@ -5,10 +5,10 @@ import { ArkmeConversationSurface } from '../src/client/ArkmeConversationSurface
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 import * as authFlowModule from '../src/client/arkme-auth-flow.js'
 import {
-  aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader,
+  aiPolishStatus, ArkmeTimelineAgentSourceBadge, ArkmeTimelineMessageHeader, ArkmeTimelineSelfTopicBadge,
   ArkmeTimelineDetailDrawer,
   arkmeSourceShowsMessageAvatars, arkmeTimelineAvatarRef, arkmeTimelineDetailSenderText, arkmeTimelineSenderName,
-  arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView,
+  arkmeArkoSurfaceKey, arkmeAuthenticatedAccountChanged, arkmeAuthView, arkmeTimelineSelfTopicSource,
   arkmeLoginNeedsPhoneBinding, arkmeShouldBeginWechat,
 } from '../src/client/ArkmeSidebar.js'
 import type { ArkmeSourceItem, ArkmeTimelineItem, ArkmeUserProfile } from '../src/types.js'
@@ -202,6 +202,25 @@ describe('Arkme persistent conversation frame', () => {
     expect(agentSourceHtml).toContain('Codex代发')
     expect(agentSourceHtml).toContain('data-arkme-agent-source="agent"')
     expect(agentSourceHtml).toContain('data-arkme-agent-source-icon="assistant"')
+  })
+
+  it('renders a categorized self-record badge that switches to its topic', () => {
+    const item: ArkmeTimelineItem = {
+      itemUid: 'record-topic-1', senderName: '我', isMe: true, sendAtMillis: 1,
+      title: '', textContent: '正文', status: 1,
+      selfTopic: { topicHierarchyKey: 'topic-key' },
+    }
+    const topic: ArkmeSourceItem = {
+      sourceRef: 'opaque-topic-ref', kind: 'topic', displayName: '即我产品思考',
+      topicHierarchyKey: 'topic-key', activeAtMillis: 0, unreadCount: 0,
+    }
+    expect(arkmeTimelineSelfTopicSource(item, [topic])).toBe(topic)
+    const markup = renderToStaticMarkup(createElement(ArkmeTimelineSelfTopicBadge, {
+      topic,
+      onSelect: () => {},
+    }))
+    expect(markup).toContain('data-arkme-self-topic-badge="即我产品思考"')
+    expect(markup).toContain('查看主题「即我产品思考」')
   })
 
   it('renders timeline detail images with the same rich media content as the message bubble', () => {

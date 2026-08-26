@@ -1410,7 +1410,7 @@ export class SourceService {
     return `arkme-chat-source-v1.${digest}`
   }
 
-  private async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
+  async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`topic-hierarchy-key-v1:${String(userId)}:${topicUid.trim()}`)
       .digest('base64url')

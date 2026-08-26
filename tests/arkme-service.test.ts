@@ -1682,6 +1682,7 @@ describe('ArkmeService', () => {
           },
         }, {
           record_uid: 'aggregate-topic', source_kind: 2, source_uid: 'topic-1', send_at: 109,
+          topic_core: { topic_uid: 'topic-1', title: '工作', privacy_state: 1 },
           record_core: {
             record_uid: 'aggregate-topic', owner_user_id: 10001, creator_user_id: 10001,
             title: '', text_content: '主题聚合内容', template_kind: 1, status: 1, version: 1, send_at: 109,
@@ -1720,7 +1721,7 @@ describe('ArkmeService', () => {
       source: { kind: 'send_to_self', displayName: '发给自己' },
       items: [
         { itemUid: 'aggregate-default', textContent: '未分类内容', isMe: true },
-        { itemUid: 'aggregate-topic', textContent: '主题聚合内容', isMe: true },
+        { itemUid: 'aggregate-topic', textContent: '主题聚合内容', isMe: true, selfTopic: { title: '工作' } },
       ],
       hasMore: true,
       nextCursor: { sendAtMillis: 108, itemUid: 'aggregate-next' },
