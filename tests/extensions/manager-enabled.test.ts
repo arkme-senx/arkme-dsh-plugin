@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packArkmeExtension } from '../../src/extensions/artifact.js'
-import { arkmeClientOwnerKey } from '../../src/extensions/client-owner.js'
+import { materializeCordisBundle } from '../../src/extensions/bundle-materializer.js'
+import { arkmeClientContentDigest } from '../../src/extensions/client-owner.js'
 import { ArkmeExtensionInstallStore } from '../../src/extensions/install-store.js'
 import { ArkmeExtensionManager } from '../../src/extensions/manager.js'
 import type { ArkmeInstalledExtension } from '../../src/extensions/types.js'
@@ -28,6 +29,53 @@ function installed(root: string, client: boolean): ArkmeInstalledExtension {
 }
 
 describe('extension desired enable state owner', () => {
+  it('leases a Bundle Client by canonical extension id and exact installed instance', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-client-lease-'))
+    directories.push(root)
+    const clientCode = 'return { apply() {} }'
+    const source = materializeCordisBundle({
+      packageName: '@example/weather', name: 'Weather', description: '', version: '1.0.0', clientCode,
+    })
+    const artifactPath = join(root, 'weather.tgz')
+    writeFileSync(artifactPath, source.bundle.bytes)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, true),
+      extensionId: 'ext-weather',
+      artifactSha256: source.bundle.bundleSha256,
+      artifactPath,
+      profilePackageName: '@example/weather',
+      profileBundlePath: artifactPath,
+      executionModel: 'arkme-sandboxed',
+      artifactContractVersion: 2,
+      installedAtMillis: 7,
+    })
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+    })
+
+    const state = manager.bundleClientState(
+      '@example/weather', '1.0.0', arkmeClientContentDigest(clientCode),
+    )
+    expect(state).toMatchObject({
+      extension_id: 'ext-weather', version: '1.0.0', mount: true, generation: 7,
+      instance_key: expect.stringMatching(/^instance-v1-[a-f0-9]{64}$/),
+    })
+    expect(manager.bundleClientState('@example/weather', '1.0.0', arkmeClientContentDigest('different')))
+      .toMatchObject({ extension_id: 'ext-weather', mount: false, reason: 'content-mismatch' })
+    await expect(manager.reportClientFailure({
+      identityKey: 'packageName', extensionId: '@example/weather', version: '1.0.0',
+      clientOwnerKey: arkmeClientContentDigest(clientCode), kind: 'duplicate-owner', message: 'legacy collision',
+    })).resolves.toEqual({ handled: true, disabled: false })
+    expect(store.get('ext-weather')?.enabled).toBe(true)
+    await expect(manager.reportClientFailure({
+      identityKey: 'packageName', extensionId: '@example/weather', version: '1.0.0',
+      clientInstanceKey: state.instance_key, kind: 'runtime-load-failed', message: 'slot collision',
+    })).resolves.toEqual({ handled: true, disabled: true })
+    expect(store.get('ext-weather')).toMatchObject({ enabled: false, active: false, lastError: 'slot collision' })
+    store.close()
+  })
+
   it('projects a quarantined persistent extension as disabled and inactive for the Client', () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-quarantined-'))
     directories.push(root)
@@ -300,7 +348,7 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
-  it('upgrades an old managed Client wrapper and replaces an identical unmanaged Profile package on startup', async () => {
+  it('upgrades an old managed Client wrapper and replaces an older package with the same extension id', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-owner-reconcile-'))
     directories.push(root)
     const profile = join(root, 'profile')
@@ -319,7 +367,8 @@ describe('extension desired enable state owner', () => {
     writeFileSync(join(bundle, 'installation.json'), JSON.stringify({ extension_id: 'ext-snake', version: '1.0.0' }))
     writeFileSync(join(bundle, 'activation.json'), JSON.stringify({ schema_version: 1, extension_id: 'ext-snake', enabled: true }))
     writeFileSync(join(local, 'package.json'), JSON.stringify({ name: 'dsh-snake-draggable' }))
-    writeFileSync(join(local, 'arkme', 'source.json'), JSON.stringify({ clientCode }))
+    writeFileSync(join(local, 'installation.json'), JSON.stringify({ extension_id: 'ext-snake', version: '0.9.0' }))
+    writeFileSync(join(local, 'arkme', 'source.json'), JSON.stringify({ clientCode: 'return { apply() { return "old" } }' }))
     writeFileSync(join(profile, 'package.json'), JSON.stringify({
       dependencies: {
         '@arkme-local/ext-managed': `link:${bundle}`,
@@ -351,12 +400,12 @@ describe('extension desired enable state owner', () => {
 
     const wrapper = readFileSync(join(bundle, 'lib', 'client.js'), 'utf8')
     expect(wrapper).toContain('extensions.client.failure')
-    expect(wrapper).toContain('"wrapperVersion":2')
-    expect(wrapper).toContain(arkmeClientOwnerKey(clientCode))
+    expect(wrapper).toContain('"wrapperVersion":3')
+    expect(wrapper).toContain(arkmeClientContentDigest(clientCode))
     expect(removeMany).toHaveBeenCalledWith(['dsh-snake-draggable'])
     await expect(manager.reportClientFailure({
       identityKey: 'extensionId', extensionId: 'ext-snake', version: '1.0.0',
-      clientOwnerKey: arkmeClientOwnerKey(clientCode), kind: 'runtime-load-failed', message: 'slot collision',
+      clientOwnerKey: arkmeClientContentDigest(clientCode), kind: 'runtime-load-failed', message: 'slot collision',
     })).resolves.toEqual({ handled: true, disabled: true })
     expect(setEnabled).toHaveBeenCalledWith('@arkme-local/ext-managed', false)
     expect(JSON.parse(readFileSync(join(bundle, 'activation.json'), 'utf8'))).toMatchObject({

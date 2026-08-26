@@ -9,7 +9,7 @@ import { materializeCordisBundle } from './bundle-materializer.js'
 import type { ArkmeBundlePublishSource, ArkmeNativeBundlePublishSource } from './bundle-artifact.js'
 import { bundleSha256, inspectBundleArtifact, inspectNativeBundleArtifactV3 } from './bundle-artifact.js'
 import {
-  activeProfileClientOwnerConflicts, arkmeClientOwnerKey, arkmeClientOwnerKeyFromSource,
+  activeProfileExtensionOwnerConflicts, arkmeClientContentDigest, arkmeClientContentDigestFromSource,
 } from './client-owner.js'
 import { arkmeBundleActive, deactivateArkmeBundle } from './bundle-runtime.js'
 import { ArkmeExtensionInstallStore } from './install-store.js'
@@ -70,7 +70,18 @@ export interface ArkmePersistentClientState {
   extension_id: string
   version: string
   mount: boolean
+  instance_key?: string
+  generation?: number
   reason?: 'not-installed' | 'version-mismatch' | 'runtime-mismatch' | 'disabled' | 'unavailable'
+}
+
+export interface ArkmeBundleClientState {
+  extension_id?: string
+  version: string
+  mount: boolean
+  instance_key?: string
+  generation?: number
+  reason?: 'not-installed' | 'version-mismatch' | 'disabled' | 'unavailable' | 'content-mismatch'
 }
 
 export interface ArkmePluginInventoryLike {
@@ -1048,14 +1059,55 @@ export class ArkmeExtensionManager {
     if (installed.active !== true || !this.persistentRuntimeMatches(stored)) {
       return { extension_id: extensionId, version, mount: false, reason: 'runtime-mismatch' }
     }
-    return { extension_id: extensionId, version, mount: true }
+    return {
+      extension_id: extensionId,
+      version,
+      mount: true,
+      instance_key: this.installedClientInstanceKey(stored),
+      generation: stored.installedAtMillis,
+    }
+  }
+
+  bundleClientState(packageNameValue: string, versionValue: string, contentDigestValue: string): ArkmeBundleClientState {
+    const packageName = packageNameValue.trim()
+    const version = versionValue.trim()
+    if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) {
+      return { version, mount: false, reason: 'not-installed' }
+    }
+    const stored = this.store.list().find(item => item.profilePackageName === packageName)
+    if (stored === undefined || stored.executionModel === undefined) {
+      return { version, mount: false, reason: 'not-installed' }
+    }
+    if (version === '' || stored.installedVersion !== version) {
+      return { extension_id: stored.extensionId, version, mount: false, reason: 'version-mismatch' }
+    }
+    const contentDigest = contentDigestValue.trim()
+    if (contentDigest === '' || this.installedClientContentDigest(stored) !== contentDigest) {
+      return { extension_id: stored.extensionId, version, mount: false, reason: 'content-mismatch' }
+    }
+    const installed = this.listInstalled().find(item => item.extensionId === stored.extensionId)
+    if (installed?.unavailable !== undefined) {
+      return { extension_id: stored.extensionId, version, mount: false, reason: 'unavailable' }
+    }
+    if (installed?.enabled !== true) {
+      return { extension_id: stored.extensionId, version, mount: false, reason: 'disabled' }
+    }
+    return {
+      extension_id: stored.extensionId,
+      version,
+      mount: true,
+      instance_key: this.installedClientInstanceKey(stored),
+      generation: stored.installedAtMillis,
+    }
   }
 
   async reportClientFailure(input: {
     identityKey: string
     extensionId: string
     version: string
-    clientOwnerKey: string
+    clientInstanceKey?: string
+    clientContentDigest?: string
+    clientOwnerKey?: string
     kind: string
     message: string
   }): Promise<{ handled: boolean; disabled: boolean }> {
@@ -1067,11 +1119,16 @@ export class ArkmeExtensionManager {
       ? this.store.get(requiredId(input.extensionId, 'extension_id'))
       : this.store.list().find(candidate => candidate.profilePackageName === input.extensionId.trim())
     if (item === undefined || item.installedVersion !== input.version.trim()) return { handled: false, disabled: false }
-    const expectedOwnerKey = this.installedClientOwnerKey(item)
-    if (expectedOwnerKey === undefined || expectedOwnerKey !== input.clientOwnerKey) {
+    const instanceKey = input.clientInstanceKey?.trim() ?? ''
+    const exactInstance = instanceKey !== '' && instanceKey === this.installedClientInstanceKey(item)
+    const legacyContentOwner = instanceKey === '' && input.clientOwnerKey !== undefined
+      && input.clientOwnerKey === this.installedClientContentDigest(item)
+    if (!exactInstance && !legacyContentOwner) {
       return { handled: false, disabled: false }
     }
-    const duplicate = input.kind === 'duplicate-owner'
+    // Wrappers before v3 treated matching source as ownership and reported collisions. Do not let
+    // that legacy heuristic disable the canonical extension selected by the Host install store.
+    if (input.kind === 'duplicate-owner') return { handled: true, disabled: false }
     const message = (input.message.trim() || 'extension client failed to load').slice(0, 2_000)
     if (item.executionModel === undefined && item.profileBundlePath !== undefined) {
       const bundleDirectory = this.resolveLegacyBundlePath(item.profileBundlePath)
@@ -1093,7 +1150,7 @@ export class ArkmeExtensionManager {
       ...item,
       enabled: false,
       active: false,
-      lastError: duplicate ? `检测到重复 Client owner：${message}` : message,
+      lastError: message,
     })
     return { handled: true, disabled: true }
   }
@@ -1370,8 +1427,9 @@ export class ArkmeExtensionManager {
         ...(unpacked.clientCode === undefined ? {} : { clientCode: unpacked.clientCode }),
         ...(this.options.clientApiPath === undefined ? {} : { clientApiPath: this.options.clientApiPath }),
       })
-      duplicatePackageNames = this.profileClientOwnerConflicts(
-        unpacked.clientCode === undefined ? undefined : arkmeClientOwnerKey(unpacked.clientCode),
+      duplicatePackageNames = this.profileExtensionOwnerConflicts(
+        extensionId,
+        unpacked.clientCode === undefined ? undefined : arkmeClientContentDigest(unpacked.clientCode),
         persistentBundle.packageName,
       )
       input.onProgress?.({ phase: 'registering', version: resolution.version, message: '正在加入 DSH 插件列表' })
@@ -1583,8 +1641,9 @@ export class ArkmeExtensionManager {
       throw new ArkmePluginError('extension-profile-install-unavailable', '当前 DSH 运行方式不支持安装原生 V3 Package', false, 503)
     }
     const desiredEnabled = previous?.enabled ?? true
-    const duplicatePackageNames = this.profileClientOwnerConflicts(
-      arkmeClientOwnerKeyFromSource(inspected.files),
+    const duplicatePackageNames = this.profileExtensionOwnerConflicts(
+      extensionId,
+      arkmeClientContentDigestFromSource(inspected.files),
       resolution.package_name,
     )
     input.onProgress?.({ phase: 'registering', version: resolution.version, message: '正在通过官方 DSH CLI 加入原生 V3 Package' })
@@ -1713,8 +1772,9 @@ export class ArkmeExtensionManager {
       throw new ArkmePluginError('extension-profile-install-unavailable', '当前 DSH 运行方式不支持安装 Bundle', false, 503)
     }
     const desiredEnabled = previous?.enabled ?? true
-    const duplicatePackageNames = this.profileClientOwnerConflicts(
-      arkmeClientOwnerKeyFromSource(inspected.files),
+    const duplicatePackageNames = this.profileExtensionOwnerConflicts(
+      extensionId,
+      arkmeClientContentDigestFromSource(inspected.files),
       resolution.package_name,
     )
     input.onProgress?.({ phase: 'registering', version: resolution.version, message: '正在通过 DSH CLI 加入 Bundle' })
@@ -1919,37 +1979,48 @@ export class ArkmeExtensionManager {
     return { restarting: true }
   }
 
-  private installedClientOwnerKey(item: ArkmeInstalledExtension): string | undefined {
+  private installedClientInstanceKey(item: ArkmeInstalledExtension): string {
+    return `instance-v1-${createHash('sha256').update([
+      item.extensionId,
+      item.profilePackageName ?? '',
+      item.installedVersion,
+      item.artifactSha256,
+    ].join('\0')).digest('hex')}`
+  }
+
+  private installedClientContentDigest(item: ArkmeInstalledExtension): string | undefined {
     if (!item.manifest.halves.client || !existsSync(item.artifactPath)) return undefined
     try {
       const bytes = readFileSync(item.artifactPath)
       if (sha256Hex(bytes) !== item.artifactSha256) return undefined
       if (item.executionModel === undefined) {
         const unpacked = unpackArkmeExtension(bytes)
-        return unpacked.clientCode === undefined ? undefined : arkmeClientOwnerKey(unpacked.clientCode)
+        return unpacked.clientCode === undefined ? undefined : arkmeClientContentDigest(unpacked.clientCode)
       }
       const inspected = item.artifactContractVersion === 3
         ? inspectNativeBundleArtifactV3(bytes)
         : inspectBundleArtifact(bytes)
-      return arkmeClientOwnerKeyFromSource(inspected.files)
+      return arkmeClientContentDigestFromSource(inspected.files)
     } catch {
       return undefined
     }
   }
 
-  private profileClientOwnerConflicts(
-    ownerKey: string | undefined,
+  private profileExtensionOwnerConflicts(
+    extensionId: string,
+    contentDigest: string | undefined,
     packageName: string,
   ): string[] {
-    if (ownerKey === undefined || this.options.profileDirectory === undefined) return []
-    const managedPackageNames = new Set(this.store.list()
-      .map(item => item.profilePackageName)
-      .filter((value): value is string => value !== undefined))
-    return activeProfileClientOwnerConflicts({
+    if (this.options.profileDirectory === undefined) return []
+    const managedPackageOwners = new Map(this.store.list()
+      .filter((item): item is ArkmeInstalledExtension & { profilePackageName: string } => item.profilePackageName !== undefined)
+      .map(item => [item.profilePackageName, item.extensionId]))
+    return activeProfileExtensionOwnerConflicts({
       profileDirectory: this.options.profileDirectory,
-      ownerKey,
+      extensionId,
+      ...(contentDigest === undefined ? {} : { contentDigest }),
       packageName,
-      managedPackageNames,
+      managedPackageOwners,
     })
   }
 
@@ -1990,7 +2061,11 @@ export class ArkmeExtensionManager {
     if (this.options.profileInstaller === undefined) return
     for (const item of this.store.list()) {
       if (!item.enabled || item.profilePackageName === undefined) continue
-      const conflicts = this.profileClientOwnerConflicts(this.installedClientOwnerKey(item), item.profilePackageName)
+      const conflicts = this.profileExtensionOwnerConflicts(
+        item.extensionId,
+        this.installedClientContentDigest(item),
+        item.profilePackageName,
+      )
       if (conflicts.length === 0) continue
       try {
         await this.removeProfilePackages(conflicts)

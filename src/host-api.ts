@@ -1240,6 +1240,8 @@ export async function dispatchArkmeHostOperation(
       identityKey: stringParam(params, 'identityKey'),
       extensionId: stringParam(params, 'extensionId'),
       version: stringParam(params, 'version'),
+      clientInstanceKey: stringParam(params, 'clientInstanceKey'),
+      clientContentDigest: stringParam(params, 'clientContentDigest'),
       clientOwnerKey: stringParam(params, 'clientOwnerKey'),
       kind: stringParam(params, 'kind'),
       message: stringParam(params, 'message'),
@@ -1247,6 +1249,11 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.persistent.client-state': return requireExtensionManager(extensionManager).persistentClientState(
       stringParam(params, 'extensionId'),
       stringParam(params, 'version'),
+    )
+    case 'extensions.bundle.client-state': return requireExtensionManager(extensionManager).bundleClientState(
+      stringParam(params, 'packageName'),
+      stringParam(params, 'version'),
+      stringParam(params, 'clientContentDigest'),
     )
     case 'extensions.persistent.invoke': {
       const extensionId = stringParam(params, 'extensionId')
