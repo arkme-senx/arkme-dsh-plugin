@@ -16,6 +16,7 @@ const expectedPublicMethods = [
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'resolveLinkMetadata',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
@@ -67,6 +68,7 @@ const expectedServiceFiles = [
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
   'voiceprint-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
+  'link-metadata-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -133,5 +135,15 @@ describe('Arkme service architecture', () => {
     expect(surface).not.toMatch(/\bfetch\s*\(/)
     expect(enrollmentClient).toContain('export interface ArkmeVoiceprintEnrollmentClient')
     expect(enrollmentClient).toContain('class SameOriginArkmeVoiceprintEnrollmentClient')
+  })
+
+  it('keeps link recognition separate from asynchronous metadata resolution', () => {
+    const parser = readFileSync(join(root, 'src/client/text-link-parser.ts'), 'utf8')
+    const presentation = readFileSync(join(root, 'src/client/ArkmeLinkText.tsx'), 'utf8')
+    const client = readFileSync(join(root, 'src/client/link-metadata-client.ts'), 'utf8')
+    expect(parser).not.toMatch(/\bfetch\s*\(|callArkme|useEffect|useState/)
+    expect(presentation).not.toMatch(/\bfetch\s*\(|callArkme/)
+    expect(client).toContain('export interface ArkmeLinkMetadataResolver')
+    expect(client).not.toMatch(/from ['"]\.\.\/services\//)
   })
 })

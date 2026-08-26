@@ -47,6 +47,11 @@ import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
 import {
+  ArkmeLinkMetadataService,
+  type ArkmeLinkDocumentReader,
+} from './services/link-metadata-service.js'
+import type { ArkmeLinkMetadata } from './link-metadata-contract.js'
+import {
   MAX_ARKME_IMAGE_BYTES,
   MediaService,
   type ArkmeMediaDescriptor,
@@ -273,6 +278,7 @@ export class ArkmeService {
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
   private readonly interwoven: InterwovenService
+  private readonly linkMetadata: ArkmeLinkMetadataService
   private readonly aiPolish: GroupAiPolishService
   private readonly chat: ChatService
   private readonly contact: ContactService
@@ -289,6 +295,7 @@ export class ArkmeService {
     private readonly pendingSessionStore?: ArkmeSessionStore,
     outgoingCallBroker = new ArkmeOutgoingCallBroker(),
     billingGateway?: ArkmeBillingGateway,
+    linkDocumentReader?: ArkmeLinkDocumentReader,
   ) {
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore)
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
@@ -339,6 +346,7 @@ export class ArkmeService {
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
+    this.linkMetadata = new ArkmeLinkMetadataService(linkDocumentReader)
     this.aiPolish = new GroupAiPolishService(this.runtime, this.source, {
       sendChatSourceTextRaw: async (...args) => await this.chat.sendChatSourceTextRaw(...args),
     })
@@ -697,9 +705,13 @@ export class ArkmeService {
     this.outgoingCall.dispose()
     this.interwoven.dispose()
     this.world.dispose()
+    this.linkMetadata.dispose()
   }
 
   requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
+  async resolveLinkMetadata(url: string): Promise<ArkmeLinkMetadata | null> {
+    return await this.linkMetadata.resolve(url)
+  }
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 

@@ -600,6 +600,7 @@ export async function dispatchArkmeHostOperation(
     case 'provider.instance': return { instanceId: ARKME_HOST_INSTANCE_ID }
     case 'provider.state': return await service.providerState()
     case 'chat.realtime.state': return service.chatRealtimeState()
+    case 'link.metadata': return await service.resolveLinkMetadata(stringParam(params, 'url'))
     case 'plugin.update.status': return await requireUpdateManager(updateManager).status()
     case 'plugin.update.check': return await requireUpdateManager(updateManager).check({ manual: true })
     case 'plugin.update.install': return await requireUpdateManager(updateManager).install()

@@ -5,6 +5,7 @@ export { ArkmeClientError } from '../sdk/index.js'
 
 type ArkmeUiOperation = ArkmePluginOperation
   | 'provider.instance'
+  | 'link.metadata'
   | 'directory.list'
   | 'directory.contact.profile'
   | 'directory.contact.world'

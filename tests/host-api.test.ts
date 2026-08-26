@@ -5,6 +5,7 @@ import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.
 
 function fakeService() {
   return {
+    resolveLinkMetadata: vi.fn(async (url: string) => ({ url, title: '即我 Jotmo' })),
     prepareOutgoingCall: vi.fn(async (input: unknown) => input),
     listCallHistory: vi.fn(async (input: unknown) => input),
     callDetail: vi.fn(async (callRef: string) => ({ callRef })),
@@ -147,6 +148,15 @@ describe('favorite sticker Host API dispatch', () => {
 })
 
 describe('World publish Host API dispatch', () => {
+  it('dispatches link title resolution through its dedicated infrastructure owner', async () => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'link.metadata', {
+      url: 'https://jotmo.ai/path',
+    })).resolves.toEqual({ url: 'https://jotmo.ai/path', title: '即我 Jotmo' })
+    expect(service.resolveLinkMetadata).toHaveBeenCalledWith('https://jotmo.ai/path')
+  })
+
   it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {
     let upstreamSignal: AbortSignal | undefined
     const generationStarted = Promise.withResolvers<void>()
