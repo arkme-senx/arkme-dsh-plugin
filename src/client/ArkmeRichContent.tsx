@@ -6,8 +6,8 @@ import { FileVideoIcon as FileVideo } from '@phosphor-icons/react/dist/csr/FileV
 import { arkmeTheme } from './arkme-theme.js'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
-import { arkmeEmojiTextRuns } from './arkme-emoji.js'
 import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 
 const mediaRoute = '/arkme-self/api/media'
 const textCollapseCharacterThreshold = 300
@@ -18,7 +18,6 @@ const mediaGap = 5
 const styles: Record<string, CSSProperties> = {
   stack: { width: 'max-content', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 },
   text: { width: 'max-content', maxWidth: '100%', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontSize: 14, lineHeight: 1.62 },
-  emojiInline: { display: 'inline-block', width: 22, height: 22, objectFit: 'contain', verticalAlign: '-6px' },
   collapsedText: { display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: textCollapseMaxLines },
   textFrame: { position: 'relative', width: '100%', maxWidth: '100%' },
   textFade: { position: 'absolute', right: 0, bottom: 22, left: 0, height: 28, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(255,255,255,0), var(--arkme-bubble-fade, rgba(238,243,255,.96)))' },
@@ -82,48 +81,6 @@ function shouldCollapseText(value: string): boolean {
   if (isEmojiOnly(value)) return false
   const newlineCount = (value.match(/\n/gu) ?? []).length
   return normalizedTextLength(value) > textCollapseCharacterThreshold || newlineCount > textCollapseNewlineThreshold
-}
-
-export interface ArkmeVisibleTextRun {
-  kind: 'text' | 'mention'
-  text: string
-}
-
-export function arkmeVisibleMentionRuns(text: string): ArkmeVisibleTextRun[] {
-  const runs: ArkmeVisibleTextRun[] = []
-  const pattern = /(^|[\s([{（【])(@[\p{L}\p{N}_\-·]+)/gmu
-  let cursor = 0
-  for (const match of text.matchAll(pattern)) {
-    const prefix = match[1] ?? ''
-    const value = match[2] ?? ''
-    const start = match.index + prefix.length
-    if (start > cursor) runs.push({ kind: 'text', text: text.slice(cursor, start) })
-    runs.push({ kind: 'mention', text: value })
-    cursor = start + value.length
-  }
-  if (cursor < text.length) runs.push({ kind: 'text', text: text.slice(cursor) })
-  return runs.length === 0 && text !== '' ? [{ kind: 'text', text }] : runs
-}
-
-function HighlightedText({ text }: { text: string }) {
-  return <>{arkmeVisibleMentionRuns(text).map((run, index) => <span
-    key={`${String(index)}:${run.kind}:${run.text}`}
-    style={run.kind === 'mention' ? { color: 'var(--dsw-alias-state-business-primary, #3964fe)' } : undefined}
-  >{run.text}</span>)}</>
-}
-
-export function ArkmeRichText({ text, highlightMentions = false }: { text: string; highlightMentions?: boolean }) {
-  return <>{arkmeEmojiTextRuns(text).map((run, index) => run.kind === 'emoji' && run.emoji !== undefined
-    ? <img
-      key={`${String(index)}:emoji:${run.emoji.id}`}
-      src={run.emoji.assetUrl}
-      alt={run.emoji.label}
-      title={run.emoji.label}
-      style={styles.emojiInline}
-      draggable={false}
-      data-arkme-rich-emoji={run.emoji.id}
-    />
-    : <span key={`${String(index)}:text`}>{highlightMentions ? <HighlightedText text={run.text} /> : run.text}</span>)}</>
 }
 
 function LongText({ text, highlightMentions = false, collapseText = true, expanded = false }: { text: string; highlightMentions?: boolean; collapseText?: boolean; expanded?: boolean }) {

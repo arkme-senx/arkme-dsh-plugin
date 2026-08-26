@@ -373,7 +373,7 @@ describe('Arkme search surface', () => {
     const onClick = vi.fn()
     const item: ArkmeSearchRecordItem = {
       ...arkmeResults().items[0]!,
-      templateKind, recordDurationMillis: 2_000,
+      templateKind, recordDurationMillis: 2_000, snippet: '转写 https://example.com',
     }
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<RecordRow item={item} onClick={onClick} />) })
@@ -382,8 +382,15 @@ describe('Arkme search surface', () => {
     await act(async () => { play.props.onClick({ stopPropagation }); await Promise.resolve() })
     expect(stopPropagation).toHaveBeenCalledOnce()
     expect(onClick).not.toHaveBeenCalled()
+    expect(renderer.root.findByProps({ 'data-arkme-text-link': 'true' }).props.href).toBe('https://example.com')
     const navigation = renderer.root.findByProps({ role: 'button' })
-    act(() => { navigation.props.onClick() })
+    const ElementStub = class {
+      closest(selector: string) { return selector.includes('a') ? this : null }
+    }
+    vi.stubGlobal('Element', ElementStub)
+    act(() => { navigation.props.onClick({ target: new ElementStub() }) })
+    expect(onClick).not.toHaveBeenCalled()
+    act(() => { navigation.props.onClick({ target: {} }) })
     expect(onClick).toHaveBeenCalledOnce()
     const target = {}
     act(() => { navigation.props.onKeyDown({ key: 'Enter', target, currentTarget: {}, preventDefault: vi.fn() }) })

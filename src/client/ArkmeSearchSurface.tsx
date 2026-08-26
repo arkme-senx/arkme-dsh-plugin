@@ -13,7 +13,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
 import { arkmeUi } from './ui-controller.js'
 import { ArkmeVoiceContent } from './ArkmeVoiceContent.js'
-import { ArkmeRichText } from './ArkmeRichContent.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 
 const assetRoot = '/arkme-self/api/call'
 const mediaRoute = '/arkme-self/api/media'
@@ -198,7 +198,10 @@ function AudioQuickRow({ item, asset, onOpen }: {
   }, [item])
   return <article style={styles.audioRow} data-arkme-search-voice="true">
     <div role="button" tabIndex={0} aria-label={`打开快记 ${recordTitle(item)}`} style={styles.audioNavigate}
-      onClick={onOpen}
+      onClick={event => {
+        if (event.target instanceof Element && event.target.closest('a') !== null) return
+        onOpen()
+      }}
       onKeyDown={event => {
         if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
         event.preventDefault(); onOpen()
