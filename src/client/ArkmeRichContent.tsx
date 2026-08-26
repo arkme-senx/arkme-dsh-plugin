@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { arkmeEmojiTextRuns } from './arkme-emoji.js'
+import { ArkmeVoiceContent, arkmeVoiceMediaUrl } from './ArkmeVoiceContent.js'
 
 const mediaRoute = '/arkme-self/api/media'
 const textCollapseCharacterThreshold = 300
@@ -23,10 +24,6 @@ const styles: Record<string, CSSProperties> = {
   mediaImage: { display: 'block', width: '100%', height: '100%', objectFit: 'cover' },
   videoPreview: { display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#111', pointerEvents: 'none' },
   videoBadge: { position: 'absolute', left: 6, bottom: 6, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 5px', borderRadius: 6, background: 'rgba(0,0,0,.62)', color: '#fff', fontSize: 10, lineHeight: '14px' },
-  audio: { width: 188, maxWidth: '100%', minHeight: 40, display: 'flex', alignItems: 'center', gap: 9, padding: '6px 10px', boxSizing: 'border-box', borderRadius: 10, background: 'rgba(127,127,127,.08)' },
-  audioButton: { width: 28, height: 28, flex: 'none', display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, padding: 0, background: 'var(--dsw-alias-state-business-primary, #3964fe)', color: '#fff', cursor: 'pointer' },
-  audioWave: { minWidth: 0, flex: 1, overflow: 'hidden', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 12, letterSpacing: 1, whiteSpace: 'nowrap' },
-  audioDuration: { flex: 'none', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 11 },
   file: { width: 220, maxWidth: '100%', height: 56, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', boxSizing: 'border-box', borderRadius: 8, color: 'inherit', background: 'rgba(127,127,127,.08)', textDecoration: 'none' },
   fileIconBox: { width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 8, background: 'var(--dsw-specific-input-major, #fff)' },
   fileIcon: { fontSize: 24, lineHeight: 1 },
@@ -128,8 +125,8 @@ export function ArkmeRichText({ text, highlightMentions = false }: { text: strin
     : <span key={`${String(index)}:text`}>{highlightMentions ? <HighlightedText text={run.text} /> : run.text}</span>)}</>
 }
 
-function LongText({ text, highlightMentions = false }: { text: string; highlightMentions?: boolean }) {
-  const collapsible = shouldCollapseText(text)
+function LongText({ text, highlightMentions = false, collapseText = true }: { text: string; highlightMentions?: boolean; collapseText?: boolean }) {
+  const collapsible = collapseText && shouldCollapseText(text)
   const [collapsed, setCollapsed] = useState(collapsible)
   const content = <ArkmeRichText text={text} highlightMentions={highlightMentions} />
   if (!collapsible) return <p style={styles.text}>{content}</p>
@@ -178,27 +175,6 @@ function MediaGallery({ blocks, onOpen, onFallback }: {
           </>}
       </button>
     })}
-  </div>
-}
-
-function AudioPlayer({ block, onFallback }: { block: ArkmeContentBlock; onFallback: (block: ArkmeContentBlock) => void }) {
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const [playing, setPlaying] = useState(false)
-  const toggle = () => {
-    const audio = audioRef.current
-    if (audio === null) return
-    if (audio.paused) {
-      void audio.play().then(() => { setPlaying(true) }).catch(() => { onFallback(block) })
-      return
-    }
-    audio.pause()
-    setPlaying(false)
-  }
-  return <div style={styles.audio} data-arkme-audio="compact">
-    <audio ref={audioRef} src={mediaUrl(block)} preload="metadata" aria-label={block.fileName} onEnded={() => { setPlaying(false) }} onError={() => { onFallback(block) }} />
-    <button type="button" style={styles.audioButton} aria-label={`${playing ? '暂停' : '播放'}语音 ${block.fileName}`} onClick={toggle}>{playing ? 'Ⅱ' : '▶'}</button>
-    <span style={styles.audioWave} aria-hidden>••••••••••••</span>
-    <span style={styles.audioDuration}>{durationLabel(block.durationSec)}</span>
   </div>
 }
 
@@ -449,11 +425,12 @@ function splitVisualRuns(blocks: ArkmeContentBlock[]): Array<ArkmeContentBlock |
   return rows
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false }: {
+export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true }: {
   item: ArkmeTimelineItem
   sourceRef?: string
   onLongArticleUpdated?: (detail: ArkmeLongArticleDetail) => void
   highlightMentions?: boolean
+  collapseText?: boolean
 }) {
   const blocks = [...(item.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
   const visualBlocks = blocks.filter(block => block.kind === 'image' || block.kind === 'video')
@@ -481,6 +458,19 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   }
   const isArticle = item.templateKind === 8 || item.displayKind === 1
   const text = item.textContent || (!isArticle && blocks.length === 0 ? item.title : '')
+  // Only a voice note's single audio owns its transcript. Generic/mixed
+  // attachments must keep their original ordering and separate body text.
+  const isVoiceNote = item.templateKind === 3 || item.templateKind === 4
+  const inlineVoice = !isArticle && (item.templateKind === undefined || isVoiceNote)
+    && blocks.length === 1 && blocks[0]?.kind === 'audio' ? blocks[0] : undefined
+  const renderVoice = (block: ArkmeContentBlock, withTranscript = false) => <ArkmeVoiceContent
+    key={block.mediaRef}
+    sourceKey={`${sourceRef ?? ''}:${item.itemUid}:${block.fileAssetUid ?? block.mediaRef}`}
+    src={arkmeVoiceMediaUrl(block.mediaRef)}
+    durationSeconds={block.durationSec ?? (isVoiceNote && item.recordDurationMillis !== undefined ? item.recordDurationMillis / 1000 : undefined)}
+    downloadName={block.fileName}
+    collapsible={withTranscript && collapseText && shouldCollapseText(text)}
+  >{withTranscript && text !== '' ? <ArkmeRichText text={text} highlightMentions={highlightMentions} /> : undefined}</ArkmeVoiceContent>
   const renderRows = splitVisualRuns(blocks).map((row, rowIndex) => {
     if (Array.isArray(row)) {
       const usable = row.filter(block => !failedRefs.has(block.mediaRef))
@@ -491,14 +481,16 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
       </div>
     }
     if (failedRefs.has(row.mediaRef)) return <FileCard key={row.mediaRef} block={row} fallback />
-    if (row.kind === 'audio') return <AudioPlayer key={row.mediaRef} block={row} onFallback={markFailed} />
+    if (row.kind === 'audio') return renderVoice(row)
     return <FileCard key={row.mediaRef} block={row} />
   })
 
   return <>
     <div style={styles.stack} data-arkme-message-content={isArticle ? 'article' : 'message'}>
-      {isArticle ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : text !== '' && <LongText text={text} highlightMentions={highlightMentions} />}
-      {renderRows}
+      {inlineVoice !== undefined ? renderVoice(inlineVoice, true) : <>
+        {isArticle ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : text !== '' && <LongText text={text} highlightMentions={highlightMentions} collapseText={collapseText} />}
+        {renderRows}
+      </>}
       {!isArticle && blocks.length === 0 && text === '' && <p style={styles.text}>
         {item.mediaUnavailable === true ? '媒体暂时无法加载' : '暂不支持的非文本内容'}
       </p>}
@@ -517,6 +509,22 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
       document.body,
     )}
   </>
+}
+
+/** The drawer keeps its existing text semantics while voice notes retain media. */
+export function ArkmeRecordDetailContent({ item, sourceRef, showOriginal = false }: {
+  item: ArkmeTimelineItem
+  sourceRef?: string | undefined
+  showOriginal?: boolean
+}) {
+  const text = showOriginal && item.aiPolish?.originalText !== undefined
+    ? item.aiPolish.originalText
+    : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined
+      ? item.aiPolish.polishedText : item.textContent
+  if (item.contentBlocks?.some(block => block.kind === 'audio') === true) {
+    return <ArkmeMessageContent item={{ ...item, textContent: text }} {...(sourceRef === undefined ? {} : { sourceRef })} collapseText={false} />
+  }
+  return <p style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 16, lineHeight: '26px' }}><ArkmeRichText text={text || item.title || '非文本内容'} /></p>
 }
 
 function attachmentType(asset: ArkmeUploadedAsset): { color: string; label: string } {

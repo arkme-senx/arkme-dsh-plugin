@@ -188,8 +188,11 @@ describe('Arkme search surface', () => {
     expect(content(renderer.toJSON())).toContain('0:12')
     const audioControl = renderer.root.findByProps({ 'aria-label': '播放语音，时长 0:12' })
     expect(audioControl.props.disabled).toBe(false)
-    const transcript = renderer.root.findAllByType('p').find(node => content(node.props.children) === '语音内容')
-    expect(transcript?.props.style).toMatchObject({ color: expect.stringContaining('label-primary'), fontSize: 14, fontWeight: 500 })
+    const transcript = renderer.root.findByProps({ 'data-arkme-voice-transcript': 'true' })
+    expect(content(transcript)).toBe('语音内容')
+    expect(renderer.root.findByProps({ 'data-arkme-voice': 'inline' }).props.style).toMatchObject({ color: 'inherit', fontSize: 15 })
+    expect(audioControl.props.style).toMatchObject({ background: 'transparent', border: 0, padding: 0, gap: 5 })
+    expect(audioControl.props.style.borderRadius).toBeUndefined()
     expect(renderer.root.findAllByType('audio')).toHaveLength(1)
     expect(renderer.root.findByType('audio').props.controls).toBeUndefined()
     expect(renderer.root.findByType('audio').props.src).toBe('/arkme-self/api/media?ref=voice-media-ref-1')
@@ -320,6 +323,7 @@ describe('Arkme search surface', () => {
   })
 
   it('resolves a chat voice lazily from its owning timeline before playback', async () => {
+    const audio = { src: '', play: vi.fn(async () => undefined), pause: vi.fn() }
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'search.history') return { items: [], hasMore: false }
       if (operation === 'search.scene') return {
@@ -346,7 +350,7 @@ describe('Arkme search surface', () => {
     })
     let renderer!: ReactTestRenderer
     await act(async () => {
-      renderer = create(<ArkmeSearchSurface variant="dialog" onClose={vi.fn()} />)
+      renderer = create(<ArkmeSearchSurface variant="dialog" onClose={vi.fn()} />, { createNodeMock: node => node.type === 'audio' ? audio : null })
       await Promise.resolve()
     })
     const audioTab = renderer.root.findAllByType('button').find(button => content(button.props.children) === '语音')
@@ -357,10 +361,36 @@ describe('Arkme search surface', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', {
       sourceRef: 'source-ref-1', limit: 100,
     }, expect.any(AbortSignal))
-    expect(renderer.root.findByType('audio').props.src).toBe('/arkme-self/api/media?ref=timeline-audio-ref')
-    const transcript = renderer.root.findAllByType('p').find(node => content(node.props.children) === '这段转写需要突出显示')
-    expect(transcript?.props.style.color).toContain('label-primary')
+    expect(audio.src).toBe('/arkme-self/api/media?ref=timeline-audio-ref')
+    expect(audio.play).toHaveBeenCalledOnce()
+    expect(renderer.root.findByProps({ 'data-arkme-voice': 'inline' }).props['data-arkme-voice-state']).toBe('playing')
+    const transcript = renderer.root.findByProps({ 'data-arkme-voice-transcript': 'true' })
+    expect(content(transcript)).toBe('这段转写需要突出显示')
     act(() => { renderer.unmount() })
+  })
+
+  it.each([3, 4])('uses inline voice kind %s for ordinary search hits even without voice metadata', async (templateKind) => {
+    const onClick = vi.fn()
+    const item: ArkmeSearchRecordItem = {
+      ...arkmeResults().items[0]!,
+      templateKind, recordDurationMillis: 2_000,
+    }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<RecordRow item={item} onClick={onClick} />) })
+    const play = renderer.root.findByProps({ 'aria-label': '播放语音，时长 0:02' })
+    const stopPropagation = vi.fn()
+    await act(async () => { play.props.onClick({ stopPropagation }); await Promise.resolve() })
+    expect(stopPropagation).toHaveBeenCalledOnce()
+    expect(onClick).not.toHaveBeenCalled()
+    const navigation = renderer.root.findByProps({ role: 'button' })
+    act(() => { navigation.props.onClick() })
+    expect(onClick).toHaveBeenCalledOnce()
+    const target = {}
+    act(() => { navigation.props.onKeyDown({ key: 'Enter', target, currentTarget: {}, preventDefault: vi.fn() }) })
+    expect(onClick).toHaveBeenCalledOnce()
+    act(() => { navigation.props.onKeyDown({ key: 'Enter', target, currentTarget: target, preventDefault: vi.fn() }) })
+    expect(onClick).toHaveBeenCalledTimes(2)
+    await act(async () => { renderer.unmount() })
   })
 
   it('separates the input clear action from the modal close action', async () => {

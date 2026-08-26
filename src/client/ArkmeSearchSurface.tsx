@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
-import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
-import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
@@ -14,6 +12,8 @@ import { ArkmeClientError, callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
 import { arkmeUi } from './ui-controller.js'
+import { ArkmeVoiceContent } from './ArkmeVoiceContent.js'
+import { ArkmeRichText } from './ArkmeRichContent.js'
 
 const assetRoot = '/arkme-self/api/call'
 const mediaRoute = '/arkme-self/api/media'
@@ -77,15 +77,9 @@ const styles: Record<string, CSSProperties> = {
   imageSection: { marginTop: 12 }, imageSectionTitle: { margin: '0 0 6px 2px', color: colors.tertiary, fontSize: 12, lineHeight: '18px', fontWeight: 400 }, imageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 0, background: arkmeTheme.subtle, cursor: 'pointer' },
   loadMoreSentinel: { minHeight: 44, display: 'grid', placeItems: 'center', marginTop: 8, color: colors.secondary, fontSize: 13 },
   retryLoadMore: { display: 'block', minWidth: 96, padding: '7px 16px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 13 },
-  audioRow: { minHeight: 68, margin: '0 7px 5px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 15, borderRadius: 12, background: colors.panel, boxShadow: '0 1px 3px rgba(60,60,67,.035)', boxSizing: 'border-box' },
-  audioControl: { minWidth: 74, display: 'flex', alignItems: 'center', gap: 8, flex: 'none' },
-  audioPlay: { width: 34, height: 34, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, borderRadius: '50%', background: colors.subtle, color: colors.text, cursor: 'pointer' },
-  audioPlayDisabled: { color: colors.tertiary, cursor: 'default' },
-  audioDuration: { minWidth: 32, color: colors.secondary, fontSize: 12, lineHeight: '18px', fontVariantNumeric: 'tabular-nums' },
-  audioNavigate: { minWidth: 0, flex: 1, padding: 0, border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', font: 'inherit' },
-  audioTranscript: { margin: 0, display: '-webkit-box', overflow: 'hidden', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: colors.text, fontSize: 14, lineHeight: '21px', fontWeight: 500 },
+  audioRow: { minHeight: 58, margin: '0 7px 5px', padding: '12px 14px', borderRadius: 12, background: colors.panel, boxShadow: '0 1px 3px rgba(60,60,67,.035)', boxSizing: 'border-box' },
+  audioNavigate: { minWidth: 0, color: colors.text, textAlign: 'left', cursor: 'pointer' },
   audioMeta: { display: 'block', marginTop: 5, color: colors.tertiary, fontSize: 11, lineHeight: '16px' },
-  audioElement: { display: 'none' },
   fileRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 8px', borderBottom: `1px solid ${colors.border}`, color: colors.text, textDecoration: 'none' }, fileIcon: { width: 38, height: 38, flex: 'none' }, fileText: { minWidth: 0, flex: 1 },
   linkCard: { display: 'block', marginTop: 10, padding: 12, border: `1px solid ${colors.border}`, borderRadius: 10, color: colors.text, textDecoration: 'none', overflow: 'hidden' },
   aiGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 12 }, aiCard: { minWidth: 0, overflow: 'hidden', border: `1px solid ${colors.border}`, borderRadius: 9 }, aiCover: { ...({ position: 'relative', width: '100%', aspectRatio: '16 / 9', display: 'grid', placeItems: 'center', overflow: 'hidden', padding: 0, border: 0, background: '#20242c', cursor: 'pointer' } as CSSProperties) }, aiBody: { padding: '9px 10px 11px' },
@@ -124,15 +118,6 @@ export interface ArkmeSearchSurfaceProps {
 function errorMessage(error: unknown): string { return error instanceof ArkmeClientError ? error.body.message : error instanceof Error ? error.message : String(error) }
 function dateTimeLabel(value: number): string { return Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '' }
 function displayUrl(item: ArkmeFileAssetDisplayItem | undefined): string { return item?.previewUrl || item?.downloadUrl || '' }
-function audioDurationLabel(durationMillis: number | undefined): string {
-  const totalSeconds = Math.max(0, Math.round((durationMillis ?? 0) / 1_000))
-  const hours = Math.floor(totalSeconds / 3_600)
-  const minutes = Math.floor((totalSeconds % 3_600) / 60)
-  const seconds = totalSeconds % 60
-  return hours > 0
-    ? `${String(hours)}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-    : `${String(minutes)}:${String(seconds).padStart(2, '0')}`
-}
 function mediaUrl(mediaRef: string): string { return `${mediaRoute}?ref=${encodeURIComponent(mediaRef)}` }
 function imageMonthLabel(value: number): string {
   const date = new Date(value)
@@ -162,6 +147,7 @@ function recordSummary(item: ArkmeSearchRecordItem): string {
   return normalizedSearchText(value) === normalizedSearchText(recordTitle(item)) ? '' : value
 }
 export function RecordRow({ item, onClick }: { item: ArkmeSearchRecordItem; onClick(): void }) {
+  if (item.voice !== undefined || item.templateKind === 3 || item.templateKind === 4) return <AudioQuickRow item={item} onOpen={onClick} />
   const summary = recordSummary(item)
   return <button type="button" style={styles.row} onClick={onClick}><p style={styles.title}>{recordTitle(item)}</p>{summary !== '' && <p style={styles.text}>{summary}</p>}<RecordMeta item={item} /></button>
 }
@@ -184,40 +170,25 @@ function AudioQuickRow({ item, asset, onOpen }: {
   onOpen(): void
 }) {
   const initialUrl = item.voice?.mediaRef === undefined ? displayUrl(asset) : mediaUrl(item.voice.mediaRef)
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const resolveAbort = useRef<AbortController>()
-  const [url, setUrl] = useState(initialUrl)
-  const [playing, setPlaying] = useState(false)
-  const [resolving, setResolving] = useState(false)
-  const [playWhenReady, setPlayWhenReady] = useState(false)
-  const duration = audioDurationLabel(item.voice?.durationMillis ?? item.recordDurationMillis)
+  const durationMillis = item.voice?.durationMillis ?? item.recordDurationMillis
   const transcript = item.snippet || item.textContent || '暂无转写内容'
   const sender = item.nickname || recordTitle(item)
-  useEffect(() => { setUrl(initialUrl) }, [initialUrl])
-  useEffect(() => () => { resolveAbort.current?.abort() }, [])
-  useEffect(() => {
-    if (!playWhenReady || url === '' || audioRef.current === null) return
-    setPlayWhenReady(false)
-    void audioRef.current.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
-  }, [playWhenReady, url])
-  const resolveFromConversation = useCallback(async (): Promise<string> => {
+  const resolveFromConversation = useCallback(async (signal: AbortSignal): Promise<string> => {
     if (item.targetSource === undefined) return ''
-    resolveAbort.current?.abort()
-    const controller = new AbortController()
-    resolveAbort.current = controller
     let cursor: ArkmeTimelineCursor | undefined
     for (let pageIndex = 0; pageIndex < 80; pageIndex += 1) {
+      if (signal.aborted) return ''
       const page = await callArkme<ArkmeTimelinePage>('source.timeline', {
         sourceRef: item.targetSource.sourceRef,
         limit: 100,
         ...(cursor === undefined ? {} : { cursor }),
-      }, controller.signal)
+      }, signal)
+      if (signal.aborted) return ''
       const target = page.items.find(candidate => candidate.itemUid === item.recordUid)
       if (target !== undefined) {
         const contentBlocks = target.contentBlocks ?? []
         const audio = contentBlocks.find(block => block.kind === 'audio'
           && (item.voice?.fileAssetUid === undefined || block.fileAssetUid === item.voice.fileAssetUid))
-          ?? contentBlocks.find(block => block.kind === 'audio')
         return audio === undefined ? '' : mediaUrl(audio.mediaRef)
       }
       if (!page.hasMore || page.nextCursor === undefined) return ''
@@ -225,48 +196,24 @@ function AudioQuickRow({ item, asset, onOpen }: {
     }
     return ''
   }, [item])
-  const togglePlayback = useCallback(async () => {
-    const audio = audioRef.current
-    if (url === '') {
-      if (resolving || item.targetSource === undefined) return
-      setResolving(true)
-      try {
-        const resolvedUrl = await resolveFromConversation()
-        if (resolvedUrl !== '') {
-          setUrl(resolvedUrl)
-          setPlayWhenReady(true)
-        }
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) setPlaying(false)
-      } finally { setResolving(false) }
-      return
-    }
-    if (audio === null) return
-    if (!audio.paused) {
-      audio.pause()
-      setPlaying(false)
-      return
-    }
-    void audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
-  }, [item.targetSource, resolveFromConversation, resolving, url])
-  const unavailable = url === '' && item.targetSource === undefined
-  return <article style={styles.audioRow}>
-    <div style={styles.audioControl}>
-      <button
-        type="button"
-        disabled={unavailable || resolving}
-        aria-label={resolving ? `正在加载语音，时长 ${duration}` : unavailable ? `语音暂不可播放，时长 ${duration}` : `${playing ? '暂停' : '播放'}语音，时长 ${duration}`}
-        title={resolving ? '正在加载' : unavailable ? '语音暂不可播放' : playing ? '暂停' : '播放'}
-        style={{ ...styles.audioPlay, ...(unavailable || resolving ? styles.audioPlayDisabled : {}) }}
-        onClick={() => { void togglePlayback() }}
-      >{playing ? <Pause size={15} weight="fill" aria-hidden /> : <Play size={15} weight="fill" aria-hidden />}</button>
-      <span style={styles.audioDuration}>{duration}</span>
+  return <article style={styles.audioRow} data-arkme-search-voice="true">
+    <div role="button" tabIndex={0} aria-label={`打开快记 ${recordTitle(item)}`} style={styles.audioNavigate}
+      onClick={onOpen}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+        event.preventDefault(); onOpen()
+      }}
+    >
+      <ArkmeVoiceContent
+        sourceKey={`${item.targetSource?.sourceRef ?? item.sourceUid ?? ''}:${item.recordUid}:${item.voice?.fileAssetUid ?? ''}`}
+        src={initialUrl}
+        durationSeconds={durationMillis === undefined ? undefined : durationMillis / 1000}
+        resolveSrc={item.targetSource === undefined ? undefined : resolveFromConversation}
+        downloadName={item.voice?.fileName}
+        collapsible={transcript.length > 300 || transcript.split('\n').length > 5}
+      ><ArkmeRichText text={transcript} /></ArkmeVoiceContent>
+      {isDshAgentInputRecord(item) ? <RecordMeta item={item} /> : <span style={styles.audioMeta}>{sender}{item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>}
     </div>
-    <button type="button" style={styles.audioNavigate} onClick={onOpen}>
-      <p style={styles.audioTranscript}>{transcript}</p>
-      <span style={styles.audioMeta}>{sender}{item.sourceTitle === undefined ? '' : ` · ${item.sourceTitle}`}{dateTimeLabel(item.sendAtMillis) === '' ? '' : ` · ${dateTimeLabel(item.sendAtMillis)}`}</span>
-    </button>
-    {url !== '' && <audio ref={audioRef} preload="none" src={url} style={styles.audioElement} onEnded={() => setPlaying(false)} onError={() => setPlaying(false)} />}
   </article>
 }
 function Status({ loading, error, empty }: { loading: boolean; error?: string; empty?: boolean }) {
