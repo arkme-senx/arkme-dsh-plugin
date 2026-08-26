@@ -86,7 +86,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
   })
 
-  it('switches between login and an account-bound source selection', () => {
+  it('opens DeepSeek Harness when a newly started client authenticates', () => {
     const controller = new ArkmeUiController()
     const listener = vi.fn()
     const unsubscribe = controller.subscribe(listener)
@@ -105,7 +105,7 @@ describe('ArkmeUiController', () => {
     controller.showLogin()
     expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' })
     controller.authChanged(true)
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
     expect(controller.getSnapshot().authRevision).toBe(1)
     controller.chatChanged()
@@ -300,12 +300,13 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('switches between Arkme conversations and the native DeepSeek Harness mode', () => {
+  it('keeps the native DeepSeek Harness as the current-runtime conversation', () => {
     const controller = new ArkmeUiController()
     controller.showHarness()
     expect(controller.getSnapshot().mode).toBe('harness')
+    controller.showRecordings()
     controller.showConversations()
-    expect(controller.getSnapshot().mode).toBe('source')
+    expect(controller.getSnapshot().mode).toBe('harness')
   })
 
   it('opens and closes the calendar without replacing the page underneath it', () => {
