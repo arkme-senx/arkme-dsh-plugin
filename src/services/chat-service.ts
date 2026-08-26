@@ -31,6 +31,7 @@ import type {
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
 } from '../types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS } from '../types.js'
 import { ArkoService } from './arko-service.js'
 import { BotService } from './bot-service.js'
 import { GroupAiPolishService } from './group-ai-polish-service.js'
@@ -62,7 +63,6 @@ interface OfficialAuthorPrivateChatCreateResult {
 // Mirrors the mobile contact-author backend contract used by /api/v1/private/create-chat-ref-asen.
 const OFFICIAL_AUTHOR_USER_ID = 11
 const OFFICIAL_AUTHOR_FALLBACK_DISPLAY_NAME = '即' + '我作者'
-const MAX_MESSAGE_READ_RECEIPT_ITEMS = 50
 
 export interface ArkmeChatRealtimePort {
   emitChatClientEvent(event: Parameters<import('./chat-realtime-service.js').ChatRealtimeService['emitChatClientEvent']>[0]): void
@@ -873,10 +873,10 @@ export class ChatService {
   }
 
   private requireReadReceiptItems(rawItems: readonly ArkmeMessageReadReceiptQueryItem[]): ArkmeMessageReadReceiptQueryItem[] {
-    if (rawItems.length < 1 || rawItems.length > MAX_MESSAGE_READ_RECEIPT_ITEMS) {
+    if (rawItems.length < 1 || rawItems.length > ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS) {
       throw new ArkmePluginError(
         'message-read-receipt-items-invalid',
-        `消息已读状态每次需要 1 至 ${String(MAX_MESSAGE_READ_RECEIPT_ITEMS)} 条消息`,
+        `消息已读状态每次需要 1 至 ${String(ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS)} 条消息`,
         false,
         400,
       )

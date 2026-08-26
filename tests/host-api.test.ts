@@ -31,6 +31,8 @@ function fakeService() {
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
     listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
+    messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
+    messageReadReceiptDetail: vi.fn(async (sourceRef: string, itemUid: string, sequence: number, options: unknown) => ({ sourceRef, itemUid, sequence, options })),
     officialAuthorProfile: vi.fn(async () => ({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })),
     openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
@@ -267,6 +269,36 @@ describe('conversation member Host API dispatch', () => {
       relationUid: 'relation-ref',
       humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
     })
+  })
+})
+
+describe('message read receipt Host API dispatch', () => {
+  it('forwards only opaque message identities and the request lifecycle signal', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.read-receipts.summary-list', {
+      sourceRef: 'source-ref',
+      items: [{ itemUid: 'record-1', sequence: 8, readerUserId: 999 }],
+      chatSessionUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.read-receipts.detail', {
+      sourceRef: 'source-ref', itemUid: 'record-1', sequence: 8, readerUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.messageReadReceiptSummaries).toHaveBeenCalledWith(
+      'source-ref', [{ itemUid: 'record-1', sequence: 8 }], { signal },
+    )
+    expect(service.messageReadReceiptDetail).toHaveBeenCalledWith(
+      'source-ref', 'record-1', 8, { signal },
+    )
+  })
+
+  it('rejects a non-array summary input before entering the Host owner', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.read-receipts.summary-list', {
+      sourceRef: 'source-ref', items: { itemUid: 'record-1', sequence: 8 },
+    })).rejects.toMatchObject({ code: 'message-read-receipt-items-invalid' })
+    expect(service.messageReadReceiptSummaries).not.toHaveBeenCalled()
   })
 })
 

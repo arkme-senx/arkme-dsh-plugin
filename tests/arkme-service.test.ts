@@ -817,6 +817,7 @@ describe('ArkmeService', () => {
         userProfile: true,
         imageRead: true,
         recordCalendar: true,
+        messageReadReceipts: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,
@@ -827,7 +828,7 @@ describe('ArkmeService', () => {
         extensionIcons: true,
         extensionPreviews: true,
       },
-      limits: { maxImageBytes: 2 * 1024 * 1024 },
+      limits: { maxImageBytes: 2 * 1024 * 1024, maxMessageReadReceiptItems: 50 },
     })
     await expect(service.providerState()).resolves.toEqual({
       contractVersion: 1,

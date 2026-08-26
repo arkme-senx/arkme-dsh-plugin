@@ -3,6 +3,7 @@ import type { ArkmeChatRealtimeState } from './types.js'
 
 export const ARKME_CHAT_SSE_PATH = '/api/v1/sse/chat/noty'
 export const ARKME_CHAT_RECEIVE_BIZ_TYPE = 17
+export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
@@ -31,10 +32,20 @@ export interface ArkmeProjectionInvalidatedHint {
   eventAtMillis: number
 }
 
+export interface ArkmeChatReadCursorAdvancedHint {
+  eventUid: string
+  chatSessionUid: string
+  readerUserId: number
+  readSequence: number
+  readAtMillis: number
+  eventAtMillis: number
+}
+
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
   cause: 'reconcile' | 'hint' | 'local'
   hint?: ArkmeChatReceiveHint
+  readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
   projectionInvalidation?: ArkmeProjectionInvalidatedHint
 }
 
@@ -69,6 +80,11 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
+function nonNegativeInteger(value: unknown): number | undefined {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : Number.NaN
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
 function decodeDataLine(line: string): Record<string, unknown> | undefined {
   const normalized = line.trimStart()
   if (!normalized.startsWith('data:')) return undefined
@@ -96,6 +112,29 @@ export function decodeArkmeChatReceiveDataLine(line: string): ArkmeChatReceiveHi
   if (eventUid === undefined || chatSessionUid === undefined || relationUid === undefined
     || latestSequence === undefined || senderUserId === undefined || eventAtMillis === undefined) return undefined
   return { eventUid, chatSessionUid, relationUid, latestSequence, senderUserId, eventAtMillis }
+}
+
+const READ_CURSOR_ADVANCED_FORBIDDEN_FIELDS = [
+  'receiver_user_ids', 'record_uid', 'record_body', 'rel_uid', 'latest_seq', 'sender_user_id',
+  'read_count', 'unread_count', 'total_member_count', 'payload',
+] as const
+
+/** Decode one metadata-only read-cursor invalidation. Counts remain owned by the Chat read-receipt API. */
+export function decodeArkmeChatReadCursorAdvancedDataLine(line: string): ArkmeChatReadCursorAdvancedHint | undefined {
+  const source = decodeDataLine(line)
+  if (source === undefined || positiveInteger(source.t) !== ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE) return undefined
+  if (READ_CURSOR_ADVANCED_FORBIDDEN_FIELDS.some(field => Object.hasOwn(source, field))) return undefined
+  const eventUid = nonEmptyString(source.event_uid)
+  const chatSessionUid = nonEmptyString(source.chat_session_uid)
+  const readerUserId = positiveInteger(source.reader_user_id)
+  const readSequence = positiveInteger(source.read_seq)
+  const readAtMillis = positiveInteger(source.read_at)
+  const eventAtMillis = positiveInteger(source.event_at)
+  const sourceClientId = source.source_client_id === undefined ? 0 : nonNegativeInteger(source.source_client_id)
+  if (eventUid === undefined || chatSessionUid === undefined || readerUserId === undefined
+    || readSequence === undefined || readAtMillis === undefined || eventAtMillis === undefined
+    || sourceClientId === undefined) return undefined
+  return { eventUid, chatSessionUid, readerUserId, readSequence, readAtMillis, eventAtMillis }
 }
 
 const PROJECTION_NAME_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
@@ -388,21 +427,29 @@ export class ArkmeChatRealtimeRuntime {
 
   private acceptLine(line: string): void {
     const projectionInvalidation = decodeArkmeProjectionInvalidatedDataLine(line)
-    const hint = projectionInvalidation === undefined ? decodeArkmeChatReceiveDataLine(line) : undefined
-    const eventUid = projectionInvalidation?.eventUid ?? hint?.eventUid
+    const readCursorAdvanced = projectionInvalidation === undefined
+      ? decodeArkmeChatReadCursorAdvancedDataLine(line)
+      : undefined
+    const hint = projectionInvalidation === undefined && readCursorAdvanced === undefined
+      ? decodeArkmeChatReceiveDataLine(line)
+      : undefined
+    const eventUid = projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
     this.seenEventUids.add(eventUid)
     if (this.seenEventUids.size > MAX_SEEN_EVENTS) {
       const oldest = this.seenEventUids.values().next().value as string | undefined
       if (oldest !== undefined) this.seenEventUids.delete(oldest)
     }
-    this.lastEventAtMillis = projectionInvalidation?.eventAtMillis ?? hint?.eventAtMillis
-    this.advanceRevision('hint', hint, projectionInvalidation)
+    this.lastEventAtMillis = projectionInvalidation?.eventAtMillis
+      ?? readCursorAdvanced?.eventAtMillis
+      ?? hint?.eventAtMillis
+    this.advanceRevision('hint', hint, readCursorAdvanced, projectionInvalidation)
   }
 
   private advanceRevision(
     cause: ArkmeChatRealtimeNotice['cause'],
     hint?: ArkmeChatReceiveHint,
+    readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint,
     projectionInvalidation?: ArkmeProjectionInvalidatedHint,
   ): void {
     this.revision += 1
@@ -411,6 +458,7 @@ export class ArkmeChatRealtimeRuntime {
       state,
       cause,
       ...(hint === undefined ? {} : { hint }),
+      ...(readCursorAdvanced === undefined ? {} : { readCursorAdvanced }),
       ...(projectionInvalidation === undefined ? {} : { projectionInvalidation }),
     }
     for (const listener of [...this.listeners]) listener(notice)
