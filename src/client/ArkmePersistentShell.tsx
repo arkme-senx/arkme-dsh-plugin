@@ -83,7 +83,7 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'arko' || harnessMode)
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode)
   useEffect(() => {
     if (authenticatedUserId === undefined) {
       setSendToSelfState(undefined)

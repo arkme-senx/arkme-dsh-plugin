@@ -8,8 +8,9 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
-  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'createBot', 'createBotSummary', 'revealBotSecret',
-  'openBotChat', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
+  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'listBotPrivateChatDirectory', 'createBot', 'createBotSummary', 'revealBotSecret',
+  'manageBotProfile', 'updateManagedBot', 'revealManagedBotToken', 'deleteManagedBot', 'botNotificationPreference', 'updateBotNotificationPreference',
+  'openBotChat', 'openBotPrivateChat', 'sendBotPrivateChatMessage', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',

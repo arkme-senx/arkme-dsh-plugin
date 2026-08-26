@@ -1,4 +1,4 @@
-import type { ArkmeSourceItem } from '../types.js'
+import type { ArkmeBotSummary, ArkmeSourceItem } from '../types.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
 
@@ -13,14 +13,23 @@ function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | 
     && JSON.stringify(left.groupAvatar) === JSON.stringify(right.groupAvatar)
 }
 
+function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.botRef === right.botRef && left.name === right.name && left.provider === right.provider
+    && left.description === right.description && left.status === right.status && left.avatarRef === right.avatarRef
+    && left.createdAtMillis === right.createdAtMillis && left.latestMessageAtMillis === right.latestMessageAtMillis
+    && left.latestMessagePreview === right.latestMessagePreview
+}
+
 export interface ArkmeUiState {
   authRevision: number
   chatRevision: number
   recordRevision: number
-  mode: 'login' | 'source' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
+  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'world' | 'search' | 'extensions' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness'
   productMode?: 'conversations' | 'contacts'
   selectedSource?: ArkmeSourceItem
+  selectedBot?: ArkmeBotSummary
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
@@ -47,6 +56,7 @@ type ArkmeConversationDestination =
   | { kind: 'harness' }
   | { kind: 'send_to_self' }
   | { kind: 'source'; source: ArkmeSourceItem }
+  | { kind: 'bot'; bot: ArkmeBotSummary }
 
 function sameWorldTarget(left: ArkmeWorldTarget | undefined, right: ArkmeWorldTarget | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
@@ -232,8 +242,9 @@ export class ArkmeUiController {
     const destination = this.lastConversationDestination
     this.publish({
       ...rest,
-      mode: destination?.kind === 'harness' ? 'harness' : 'source',
+      mode: destination?.kind === 'harness' ? 'harness' : destination?.kind === 'bot' ? 'bot' : 'source',
       ...(destination?.kind === 'source' ? { selectedSource: destination.source } : {}),
+      ...(destination?.kind === 'bot' ? { selectedBot: destination.bot } : {}),
     })
   }
 
@@ -281,8 +292,15 @@ export class ArkmeUiController {
   selectSource(source: ArkmeSourceItem): void {
     this.leaveContacts()
     this.lastConversationDestination = { kind: 'source', source }
-    const { calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
+    const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'source', selectedSource: source })
+  }
+
+  openBotConversation(bot: ArkmeBotSummary): void {
+    this.leaveContacts()
+    this.lastConversationDestination = { kind: 'bot', bot }
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'bot', selectedBot: bot })
   }
 
   showConversationTarget(source: ArkmeSourceItem, itemUid: string, sendAtMillis: number): void {
@@ -327,7 +345,8 @@ export class ArkmeUiController {
       && next.extensionAuthorFilter?.ownerUserId === this.state.extensionAuthorFilter?.ownerUserId
       && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
-      && sameSource(next.selectedSource, this.state.selectedSource)) return
+      && sameSource(next.selectedSource, this.state.selectedSource)
+      && sameBot(next.selectedBot, this.state.selectedBot)) return
     this.state = next
     for (const listener of this.listeners) listener()
   }

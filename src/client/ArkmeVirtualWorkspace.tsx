@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
 import type {
-  ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
+  ArkmeArkoHistoryPage, ArkmeArkoProfile, ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeSourceDirectory, ArkmeSourceItem, ArkmeSourceList,
   ArkmeTopicCreateResult,
 } from '../types.js'
 import type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
@@ -59,6 +60,15 @@ export interface ArkmeNavigationProps {
 }
 
 export const ARKME_TOPIC_HIERARCHY_MAX_LEVEL = 5
+
+/** Bot conversations are sorted with normal conversations by their real creation or message activity. */
+export function sortArkmeBotsByCreatedAt(bots: readonly ArkmeBotSummary[]): ArkmeBotSummary[] {
+  return [...bots].sort((left, right) => botActivityAtMillis(right) - botActivityAtMillis(left))
+}
+
+export function botActivityAtMillis(bot: ArkmeBotSummary): number {
+  return Math.max(bot.createdAtMillis ?? 0, bot.latestMessageAtMillis ?? 0)
+}
 
 export function arkmeRootDirectoryLoadState({
   authenticated, directory, baselineReady, isRefreshing, hasSources, error,
@@ -187,6 +197,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ff5f57',
     color: arkmeTheme.foreground, fontSize: 10, lineHeight: '17px',
   },
+  botBadge: { padding: '1px 6px', borderRadius: 999, background: arkmeTheme.subtle, color: colors.secondary, fontSize: 9, lineHeight: '15px', fontWeight: 600 },
   sourceAvatarWrap: { width: 44, height: 44, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center' },
   mentionUnread: {
     position: 'absolute', top: -2, right: -2, minWidth: 17, height: 17, padding: '0 5px',
@@ -794,6 +805,7 @@ export function ArkmeNavigation({
   const [sources, setSources] = useState<ArkmeSourceItem[]>(
     initialCache?.sources.root ?? [],
   )
+  const [bots, setBots] = useState<ArkmeBotSummary[]>([])
   const [collapsedSourceRefs, setCollapsedSourceRefs] = useState<Set<string>>(() => new Set())
   const [sourceSort, setSourceSort] = useState<ArkmeSourceSort>('default')
   const [hoveredSourceRef, setHoveredSourceRef] = useState<string>()
@@ -852,6 +864,10 @@ export function ArkmeNavigation({
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
   const rootSources = sources
+  const rootConversationRows = useMemo(() => [
+    ...rootSources.map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis })),
+    ...bots.map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot) })),
+  ].sort((left, right) => right.activeAtMillis - left.activeAtMillis), [bots, rootSources])
   const showArkoInSearch = true
   const sendToSelfPresentation = arkmeSendToSelfDirectoryPresentation(sendToSelfSource)
   const showSelfInSearch = true
@@ -972,6 +988,31 @@ export function ArkmeNavigation({
   }, [persistCache])
 
   useEffect(() => { reconcileAuth(auth) }, [auth, reconcileAuth])
+  useEffect(() => {
+    if (!authenticated) { setBots([]); return }
+    const controller = new AbortController()
+    void callArkme<{ items: ArkmeBotSummary[] }>('bots.private-chat.directory', undefined, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setBots(sortArkmeBotsByCreatedAt(value.items)) })
+      .catch(() => undefined)
+    return () => { controller.abort() }
+  }, [authenticated, auth?.userId])
+  useEffect(() => {
+    const removeDeletedBot = (event: Event) => {
+      const botRef = (event as CustomEvent<{ botRef?: unknown }>).detail?.botRef
+      if (typeof botRef !== 'string') return
+      setBots(current => current.filter(bot => bot.botRef !== botRef))
+    }
+    window.addEventListener('arkme-bot-deleted', removeDeletedBot)
+    return () => { window.removeEventListener('arkme-bot-deleted', removeDeletedBot) }
+  }, [])
+  useEffect(() => {
+    const selectedBot = ui.mode === 'bot' ? ui.selectedBot : undefined
+    if (selectedBot === undefined) return
+    setBots(current => sortArkmeBotsByCreatedAt([
+      selectedBot,
+      ...current.filter(item => item.botRef !== selectedBot.botRef),
+    ]))
+  }, [ui.mode, ui.selectedBot])
   useEffect(() => {
     activateNativeEntry()
   }, [activateNativeEntry, auth?.userId, currentSessionId, directory, ui.mode, ui.selectedSource?.sourceRef])
@@ -1240,12 +1281,11 @@ export function ArkmeNavigation({
     persistCache({ directory: 'root', sources: { root: reconciled }, selectedSourceRef: selected.sourceRef })
   }
 
-  const createdQuickAddBot = async (): Promise<void> => {
-    const refreshed = await arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
-    if (refreshed === undefined) return
-    setSources(refreshed)
-    arkmeChatDirectory.publish(refreshed)
-    persistCache({ directory: 'root', sources: { root: refreshed } })
+  const createdQuickAddBot = async (bot: ArkmeBotSummary): Promise<void> => {
+    activateNativeEntry()
+    setBots(current => sortArkmeBotsByCreatedAt([bot, ...current.filter(item => item.botRef !== bot.botRef)]))
+    arkmeUi.openBotConversation(bot)
+    onActivateSurface?.()
   }
 
   if (!wide) {
@@ -1376,7 +1416,26 @@ export function ArkmeNavigation({
           <div style={{ ...styles.status, color: '#c2413b' }}>会话加载失败，请重试</div>
           <button type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重新加载</button>
         </>}
-        {rootSources.map(source => {
+        {rootConversationRows.map(row => {
+          if (row.kind === 'bot') {
+            const { bot } = row
+            const selected = activeDirectoryEntryId === undefined && ui.mode === 'bot' && ui.selectedBot?.botRef === bot.botRef
+            return <button
+              key={bot.botRef} type="button" role="treeitem" aria-selected={selected}
+              style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }}
+              onClick={() => { activateNativeEntry(); arkmeUi.openBotConversation(bot); onActivateSurface?.() }}
+            >
+              <span style={styles.avatar} aria-hidden><RobotIcon size={22} weight="fill" /></span>
+              <span style={styles.chatContent}>
+                <span style={styles.chatTop}>
+                  <span style={styles.entryName}>{bot.name}</span><span style={styles.botBadge}>BOT</span>
+                  <span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(row.activeAtMillis)}</span>
+                </span>
+                <span style={styles.chatBottom}><span style={styles.preview}>{bot.latestMessagePreview || bot.description || '与 Bot 私聊'}</span></span>
+              </span>
+            </button>
+          }
+          const { source } = row
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
           const unreadPlacement = arkmeRootChatUnreadPlacement(source)
           const unreadText = source.unreadCount > 99 ? '99+' : source.unreadCount

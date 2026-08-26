@@ -5,8 +5,15 @@ import type { createOpenClawProvisioner, OpenClawProvisionResult } from '../open
 import { SecretValue } from '../secret-value.js'
 import type {
   ArkmeBotList,
+  ArkmeBotManageProfile,
+  ArkmeBotNotificationPreference,
+  ArkmeBotPrivateChatDirectory,
+  ArkmeBotPrivateChatConversation,
+  ArkmeBotPrivateChatMessage,
+  ArkmeBotPrivateChatSendResult,
   ArkmeBotStatus,
   ArkmeBotSummary,
+  ArkmeBotWebhookSecurity,
   ArkmeSourceItem,
 } from '../types.js'
 import type {
@@ -43,6 +50,14 @@ export interface ArkmeMentionableBot {
   name: string
 }
 
+export interface ArkmeBotManageUpdateInput {
+  name: string
+  description: string
+  avatar?: string
+  mentionEntryEnabled?: boolean
+  webhookSecurity?: ArkmeBotWebhookSecurity
+}
+
 interface ArkmeBotImageRefEntry extends ArkmeBotImageEntry { key: string }
 
 const BOT_REF_TTL_MILLIS = 30 * 60_000
@@ -61,6 +76,107 @@ export function arkmeNormalizeBotProvider(value: unknown): 'openclaw' | 'webhook
   const normalized = stringValue(value).trim().toLowerCase()
   if (normalized === 'openclaw' || normalized === 'webhook') return normalized
   return undefined
+}
+
+const BOT_CHAT_SESSION_UID_KEYS = [
+  'chat_session_uid',
+  'chatSessionUid',
+  'direct_chat_session_uid',
+  'directChatSessionUid',
+  'private_chat_session_uid',
+  'privateChatSessionUid',
+] as const
+
+/** Read the standard-session aliases accepted by the Flutter desktop client. */
+function botChatSessionUid(data: Record<string, unknown>): string | undefined {
+  const read = (value: Record<string, unknown>, allowUid = false): string | undefined => {
+    for (const key of BOT_CHAT_SESSION_UID_KEYS) {
+      const candidate = stringValue(value[key]).trim()
+      if (candidate !== '' && candidate !== 'null') return candidate
+    }
+    const uid = allowUid ? stringValue(value.uid).trim() : ''
+    return uid !== '' && uid !== 'null' ? uid : undefined
+  }
+  const direct = read(data)
+  if (direct !== undefined) return direct
+  for (const key of ['chat_session', 'direct_chat_session', 'private_chat_session']) {
+    const nested = read(objectValue(data[key]), true)
+    if (nested !== undefined) return nested
+  }
+  return undefined
+}
+
+/**
+ * Flutter accepts the legacy `session_id` returned by the Bot endpoint only
+ * after proving it resolves to a chat session. Keep the same guard here: a
+ * bot id (or a raw Bot topic id) must never become a generic chat source.
+ */
+function legacyBotChatSessionCandidate(value: unknown, botId: string): string | undefined {
+  const candidate = stringValue(value).trim()
+  if (candidate === '' || candidate === botId) return undefined
+  if (candidate.includes('_bot') && !candidate.startsWith('chat_session_')) return undefined
+  return candidate
+}
+
+function botPrivateChatTimestamp(value: unknown): number {
+  const numeric = numberValue(value)
+  if (numeric <= 0) return 0
+  if (numeric < 10_000_000_000) return numeric * 1_000
+
+  // The legacy Bot private-chat API returns Unix microseconds, while the
+  // browser (and the regular conversation directory) use milliseconds.
+  // Preserve millisecond inputs and normalize microseconds/nanoseconds.
+  let millis = numeric
+  while (millis >= 100_000_000_000_000) millis = Math.trunc(millis / 1_000)
+  return millis
+}
+
+function botWebhookSecurity(value: unknown): ArkmeBotWebhookSecurity {
+  const raw = objectValue(value)
+  return {
+    keywordEnabled: booleanValue(raw.keyword_enabled),
+    keyword: stringValue(raw.keyword).trim(),
+    tokenEnabled: booleanValue(raw.token_enabled ?? raw.signature_enabled),
+    ipWhitelistEnabled: booleanValue(raw.ip_whitelist_enabled),
+    ipWhitelist: listValue(raw.ip_whitelist).map(item => stringValue(item).trim()).filter(item => item !== '').slice(0, 100),
+  }
+}
+
+function botProfileSource(data: Record<string, unknown>): Record<string, unknown> {
+  const bot = objectValue(data.bot)
+  return Object.keys(bot).length === 0 ? data : bot
+}
+
+function botProfileSubjectUid(data: Record<string, unknown>): string {
+  const bot = botProfileSource(data)
+  return stringValue(bot.subject_uid ?? bot.topic_uid ?? data.subject_uid ?? data.topic_uid).trim()
+}
+
+function botPrivateChatMessage(value: unknown, fallbackContent = ''): ArkmeBotPrivateChatMessage {
+  const raw = objectValue(value)
+  const role = stringValue(raw.role).trim().toLowerCase() === 'user' ? 'user' : 'assistant'
+  return {
+    role,
+    content: stringValue(raw.content).trim() || fallbackContent,
+    status: stringValue(raw.status).trim() || 'sent',
+    createdAtMillis: botPrivateChatTimestamp(raw.created_at ?? raw.createdAt),
+  }
+}
+
+function botWithPrivateChatActivity(
+  bot: ArkmeBotSummary,
+  messages: readonly ArkmeBotPrivateChatMessage[],
+): ArkmeBotSummary {
+  const latest = messages.reduce<ArkmeBotPrivateChatMessage | undefined>((current, message) => {
+    if (current === undefined || message.createdAtMillis >= current.createdAtMillis) return message
+    return current
+  }, undefined)
+  if (latest === undefined) return bot
+  return {
+    ...bot,
+    ...(latest.createdAtMillis > 0 ? { latestMessageAtMillis: latest.createdAtMillis } : {}),
+    ...(latest.content === '' ? {} : { latestMessagePreview: latest.content }),
+  }
 }
 
 export class BotService {
@@ -215,6 +331,166 @@ export class BotService {
     return new SecretValue(token)
   }
 
+  async manageBotProfile(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotManageProfile> {
+    const session = await this.runtime.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    return await this.botManageProfileFromData(data, session.userId)
+  }
+
+  async updateManagedBot(
+    botRef: string,
+    input: ArkmeBotManageUpdateInput,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotManageProfile> {
+    const name = input.name.trim()
+    const description = input.description.trim()
+    if (name === '' || [...name].length > 50) throw new ArkmePluginError('bot-name-invalid', 'Bot 名称需为 1-50 个字符', false, 400)
+    if ([...description].length > 200) throw new ArkmePluginError('bot-description-invalid', 'Bot 简介不能超过 200 个字符', false, 400)
+    if (input.avatar !== undefined && !isArkmeBotAvatarRef(input.avatar)) throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const currentData = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    const current = botProfileSource(currentData)
+    const provider = arkmeNormalizeBotProvider(current.provider)
+    if (provider === undefined) throw new ArkmePluginError('bot-contract-invalid', 'Bot 配置响应不完整', true, 502)
+    const security = input.webhookSecurity
+    if (security !== undefined && provider !== 'webhook') {
+      throw new ArkmePluginError('bot-webhook-security-invalid', '仅 Webhook Bot 支持安全设置', false, 400)
+    }
+    await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/update', {
+        bot_id: reference.botId,
+        name,
+        description,
+        avatar: input.avatar ?? stringValue(current.avatar).trim(),
+        ...(input.mentionEntryEnabled === undefined ? {} : { mention_entry_enabled: input.mentionEntryEnabled }),
+        ...(security === undefined ? {} : { webhook_security: {
+          keyword_enabled: security.keywordEnabled,
+          keyword: security.keyword.trim(),
+          token_enabled: security.tokenEnabled,
+          ip_whitelist_enabled: security.ipWhitelistEnabled,
+          ip_whitelist: security.ipWhitelist.map(item => item.trim()).filter(item => item !== '').slice(0, 100),
+        } }),
+      }, session, options.signal,
+    )
+    const refreshed = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    return await this.botManageProfileFromData(refreshed, session.userId)
+  }
+
+  async revealManagedBotToken(botRef: string, options: { signal?: AbortSignal } = {}): Promise<{ token: string }> {
+    return { token: (await this.revealBotSecret(botRef, options)).reveal() }
+  }
+
+  async deleteManagedBot(botRef: string, confirmationName: string, options: { signal?: AbortSignal } = {}): Promise<void> {
+    const session = await this.runtime.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    if (confirmationName.trim() !== stringValue(botProfileSource(data).name).trim()) {
+      throw new ArkmePluginError('bot-delete-confirmation-invalid', '请输入完整 Bot 名称以确认删除', false, 400)
+    }
+    await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/delete', { bot_id: reference.botId }, session, options.signal,
+    )
+    this.deleteBotRef(botRef)
+  }
+
+  async botNotificationPreference(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> {
+    const { session, subjectUid } = await this.botNotificationTarget(botRef, options)
+    const data = await this.runtime.authenticatedSubjectPost<Record<string, unknown>>(
+      '/api/v1/subject/get-able-push-status', { subject_uid: subjectUid }, session, options.signal,
+    )
+    return { muted: data.able_push === false }
+  }
+
+  async updateBotNotificationPreference(
+    botRef: string,
+    muted: boolean,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotNotificationPreference> {
+    const { session, subjectUid } = await this.botNotificationTarget(botRef, options)
+    await this.runtime.authenticatedSubjectPost<Record<string, unknown>>(
+      '/api/v1/subject/set-able-push-status', { subject_uid: subjectUid, able_push: !muted }, session, options.signal,
+    )
+    return { muted }
+  }
+
+  private async botNotificationTarget(botRef: string, options: { signal?: AbortSignal } = {}): Promise<{ session: ArkmeSessionCredentials; subjectUid: string }> {
+    const session = await this.runtime.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/profile', { bot_id: reference.botId }, session, options.signal,
+    )
+    const subjectUid = botProfileSubjectUid(data)
+    if (subjectUid === '') throw new ArkmePluginError('bot-notification-unavailable', '当前 Bot 未返回可用私聊通知标识', false, 409)
+    return { session, subjectUid }
+  }
+
+  async openBotPrivateChat(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotPrivateChatConversation> {
+    const session = await this.runtime.requireSession()
+    const bot = (await this.listBots(options)).items.find(item => item.botRef === botRef)
+    if (bot === undefined) throw new ArkmePluginError('bot-ref-not-owned', '当前账号不存在该 Bot', false, 404)
+    return await this.openBotPrivateChatForSummary(bot, session, options.signal)
+  }
+
+  async listBotPrivateChatDirectory(options: { signal?: AbortSignal } = {}): Promise<ArkmeBotPrivateChatDirectory> {
+    const session = await this.runtime.requireSession()
+    const { items } = await this.listBots(options)
+    const hydrated = await Promise.all(items.map(async bot => {
+      try {
+        return (await this.openBotPrivateChatForSummary(bot, session, options.signal)).bot
+      } catch {
+        return bot
+      }
+    }))
+    return { items: hydrated }
+  }
+
+  private async openBotPrivateChatForSummary(
+    bot: ArkmeBotSummary,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeBotPrivateChatConversation> {
+    const reference = await this.openBotRef(bot.botRef, session.userId)
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/private-chat/open', { bot_id: reference.botId }, session, signal,
+    )
+    const messages = listValue(data.messages).map(message => botPrivateChatMessage(message))
+    return { bot: botWithPrivateChatActivity(bot, messages), messages }
+  }
+
+  async sendBotPrivateChatMessage(
+    botRef: string,
+    contentInput: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeBotPrivateChatSendResult> {
+    const content = contentInput.trim()
+    if (content === '') throw new ArkmePluginError('bot-private-chat-content-invalid', '请输入消息内容', false, 400)
+    if (content.length > 20_000) throw new ArkmePluginError('bot-private-chat-content-invalid', '消息不能超过 20000 个字符', false, 400)
+    const session = await this.runtime.requireSession()
+    const reference = await this.openBotRef(botRef, session.userId)
+    const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
+      '/api/v1/bot/private-chat/message/send', { bot_id: reference.botId, content }, session, options.signal,
+    )
+    const botMessages = [
+      ...listValue(data.bot_messages).map(message => botPrivateChatMessage(message)),
+      ...(Object.keys(objectValue(data.bot_message)).length === 0 ? [] : [botPrivateChatMessage(data.bot_message)]),
+    ]
+    return {
+      userMessage: botPrivateChatMessage(data.user_message, content),
+      botMessages,
+      status: stringValue(data.status).trim() || 'ok',
+    }
+  }
+
   async openBotChat(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceItem> {
     const session = await this.runtime.requireSession()
     const reference = await this.openBotRef(botRef, session.userId)
@@ -223,24 +499,31 @@ export class BotService {
     const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
       '/api/v1/bot/private-chat/open', { bot_id: reference.botId }, session, options.signal,
     )
-    const chatSessionUid = stringValue(data.chat_session_uid).trim()
-    if (chatSessionUid === '') {
-      throw new ArkmePluginError(
-        'bot-chat-source-unavailable',
-        '当前 Bot 私聊仍使用旧会话协议，暂时不能复用统一 source 读写链路',
-        false,
-        409,
-      )
+    const chatSessionUid = botChatSessionUid(data)
+    if (chatSessionUid !== undefined) {
+      const source: ArkmeSourceItem = {
+        sourceRef: await this.source.sealSourceRef(session.userId, 'private_chat', chatSessionUid, bot.name),
+        kind: 'private_chat',
+        displayName: bot.name,
+        activeAtMillis: 0,
+        unreadCount: 0,
+      }
+      this.source.setChatSourceByKey(`${String(session.userId)}:${chatSessionUid}`, source)
+      return source
     }
-    const source: ArkmeSourceItem = {
-      sourceRef: await this.source.sealSourceRef(session.userId, 'private_chat', chatSessionUid, bot.name),
-      kind: 'private_chat',
-      displayName: bot.name,
-      activeAtMillis: 0,
-      unreadCount: 0,
+
+    const legacySessionId = legacyBotChatSessionCandidate(data.session_id, reference.botId)
+    if (legacySessionId !== undefined) {
+      const source = await this.source.searchTargetSource(3, legacySessionId, bot.name, options.signal)
+      if (source !== undefined) return source
     }
-    this.source.setChatSourceByKey(`${String(session.userId)}:${chatSessionUid}`, source)
-    return source
+
+    throw new ArkmePluginError(
+      'bot-chat-source-unavailable',
+      '当前 Bot 私聊未返回可用会话，暂时不能复用统一 source 读写链路',
+      false,
+      409,
+    )
   }
 
   private async resolveBotConnectionMetadata(botRef: string, options: { signal?: AbortSignal } = {}): Promise<{ gatewayUrl: string; tokenPreview: string }> {
@@ -400,6 +683,7 @@ export class BotService {
     }
     const rawStatus = stringValue(raw.status).trim()
     const status: ArkmeBotStatus = rawStatus === 'online' || rawStatus === 'offline' ? rawStatus : 'unknown'
+    const createdAtMillis = botPrivateChatTimestamp(raw.created_at ?? raw.createdAt)
     return {
       botRef: this.sealBotRef(userId, botId, provider),
       name,
@@ -408,7 +692,29 @@ export class BotService {
       status,
       directChatAvailable: stringValue(raw.subject_uid).trim() !== ''
         || stringValue(raw.chat_session_uid).trim() !== '',
+      ...(createdAtMillis === 0 ? {} : { createdAtMillis }),
       ...this.botAvatarProjection(raw, userId, botId),
+    }
+  }
+
+  private async botManageProfileFromData(data: Record<string, unknown>, userId: number): Promise<ArkmeBotManageProfile> {
+    const raw = botProfileSource(data)
+    const summary = await this.botSummaryFromData(raw, userId)
+    const joinedGroups = listValue(data.joined_groups).map(value => objectValue(value)).map(group => ({
+      title: stringValue(group.subject_title).trim() || stringValue(group.subject_uid).trim() || '未命名群聊',
+      installedAtMillis: botPrivateChatTimestamp(group.installed_at),
+    }))
+    return {
+      ...summary,
+      mentionEntryEnabled: raw.mention_entry_enabled !== false,
+      tokenPreview: stringValue(raw.token_preview).trim(),
+      canRevealToken: raw.can_reveal_token !== false,
+      tokenRevealEnabled: data.token_reveal_enabled !== false,
+      gatewayUrl: stringValue(data.gateway_url).trim(),
+      webhookUrl: stringValue(data.webhook_url).trim(),
+      recordCount: Math.max(-1, Math.trunc(numberValue(raw.record_count))),
+      webhookSecurity: botWebhookSecurity(data.webhook_security ?? raw.webhook_security),
+      joinedGroups,
     }
   }
 

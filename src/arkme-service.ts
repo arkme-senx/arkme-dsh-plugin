@@ -28,7 +28,7 @@ import { AiVideoService } from './services/ai-video-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService } from './services/auth-service.js'
-import { BotService, type ArkmeBotRefPayload } from './services/bot-service.js'
+import { BotService, type ArkmeBotManageUpdateInput, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { CalendarService } from './services/calendar-service.js'
 import { CallHistoryService } from './services/call-history-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
@@ -101,6 +101,8 @@ import type {
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
   ArkmeBotList,
+  ArkmeBotManageProfile,
+  ArkmeBotNotificationPreference,
   ArkmeBotProvider,
   ArkmeBotSummary,
   ArkmeCalendarBucketPage,
@@ -414,6 +416,10 @@ export class ArkmeService {
     return await this.bot.listBots(options)
   }
 
+  async listBotPrivateChatDirectory(options: { signal?: AbortSignal } = {}) {
+    return await this.bot.listBotPrivateChatDirectory(options)
+  }
+
   async createBot(
     input: ArkmeBotCreateInput,
     options: { signal?: AbortSignal } = {},
@@ -432,8 +438,40 @@ export class ArkmeService {
     return await this.bot.revealBotSecret(botRef, options)
   }
 
+  async manageBotProfile(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotManageProfile> {
+    return await this.bot.manageBotProfile(botRef, options)
+  }
+
+  async updateManagedBot(botRef: string, input: ArkmeBotManageUpdateInput, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotManageProfile> {
+    return await this.bot.updateManagedBot(botRef, input, options)
+  }
+
+  async revealManagedBotToken(botRef: string, options: { signal?: AbortSignal } = {}): Promise<{ token: string }> {
+    return await this.bot.revealManagedBotToken(botRef, options)
+  }
+
+  async deleteManagedBot(botRef: string, confirmationName: string, options: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.bot.deleteManagedBot(botRef, confirmationName, options)
+  }
+
+  async botNotificationPreference(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> {
+    return await this.bot.botNotificationPreference(botRef, options)
+  }
+
+  async updateBotNotificationPreference(botRef: string, muted: boolean, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> {
+    return await this.bot.updateBotNotificationPreference(botRef, muted, options)
+  }
+
   async openBotChat(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceItem> {
     return await this.bot.openBotChat(botRef, options)
+  }
+
+  async openBotPrivateChat(botRef: string, options: { signal?: AbortSignal } = {}) {
+    return await this.bot.openBotPrivateChat(botRef, options)
+  }
+
+  async sendBotPrivateChatMessage(botRef: string, content: string, options: { signal?: AbortSignal } = {}) {
+    return await this.bot.sendBotPrivateChatMessage(botRef, content, options)
   }
 
   async listGroupBots(

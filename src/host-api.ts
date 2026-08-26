@@ -522,6 +522,36 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
   }
 }
 
+function botManageUpdateInputParam(params: Record<string, unknown>): {
+  name: string
+  description: string
+  avatar?: string
+  mentionEntryEnabled?: boolean
+  webhookSecurity?: { keywordEnabled: boolean; keyword: string; tokenEnabled: boolean; ipWhitelistEnabled: boolean; ipWhitelist: string[] }
+} {
+  const rawSecurity = params.webhookSecurity
+  const security = rawSecurity !== null && typeof rawSecurity === 'object' && !Array.isArray(rawSecurity)
+    ? rawSecurity as Record<string, unknown>
+    : undefined
+  const avatar = botAvatarParam(params)
+  const mentionEntryEnabled = typeof params.mentionEntryEnabled === 'boolean' ? params.mentionEntryEnabled : undefined
+  return {
+    name: stringParam(params, 'name'),
+    description: stringParam(params, 'description'),
+    ...(avatar === '' ? {} : { avatar }),
+    ...(mentionEntryEnabled === undefined ? {} : { mentionEntryEnabled }),
+    ...(security === undefined ? {} : { webhookSecurity: {
+      keywordEnabled: security.keywordEnabled === true,
+      keyword: stringParam(security, 'keyword'),
+      tokenEnabled: security.tokenEnabled === true,
+      ipWhitelistEnabled: security.ipWhitelistEnabled === true,
+      ipWhitelist: Array.isArray(security.ipWhitelist)
+        ? security.ipWhitelist.filter(item => typeof item === 'string').map(item => item.trim()).filter(item => item !== '').slice(0, 100)
+        : [],
+    } }),
+  }
+}
+
 export async function dispatchArkmeHostOperation(
   service: ArkmeService,
   operation: ArkmePluginRequest['operation'],
@@ -654,6 +684,34 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'bots.list': return await service.listBots(requestSignal === undefined ? {} : { signal: requestSignal })
+    case 'bots.manage.profile': return await service.manageBotProfile(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.update': return await service.updateManagedBot(
+      stringParam(params, 'botRef').trim(), botManageUpdateInputParam(params), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.reveal-token': return await service.revealManagedBotToken(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.delete': return await service.deleteManagedBot(
+      stringParam(params, 'botRef').trim(), stringParam(params, 'confirmationName'), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.notification.status': return await service.botNotificationPreference(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.notification.update': return await service.updateBotNotificationPreference(
+      stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.open': return await service.openBotPrivateChat(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.directory': return await service.listBotPrivateChatDirectory(
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.send': return await service.sendBotPrivateChatMessage(
+      stringParam(params, 'botRef').trim(), stringParam(params, 'content'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),

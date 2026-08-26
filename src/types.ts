@@ -343,12 +343,72 @@ export interface ArkmeBotSummary {
   description: string
   status: ArkmeBotStatus
   directChatAvailable: boolean
+  /** Creation time supplied by the Bot service, when available. */
+  createdAtMillis?: number
+  /** Latest private-chat message time, when the conversation directory has been hydrated. */
+  latestMessageAtMillis?: number
+  /** Safe preview of the latest private-chat message. */
+  latestMessagePreview?: string
   /** Account-bound opaque reference resolved through image.read. */
   avatarRef?: string
 }
 
 export interface ArkmeBotList {
   items: ArkmeBotSummary[]
+}
+
+/** Browser-safe projection of one message in the legacy Bot direct-chat protocol. */
+export interface ArkmeBotPrivateChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  status: string
+  createdAtMillis: number
+}
+
+export interface ArkmeBotPrivateChatConversation {
+  bot: ArkmeBotSummary
+  messages: ArkmeBotPrivateChatMessage[]
+}
+
+export interface ArkmeBotPrivateChatDirectory {
+  items: ArkmeBotSummary[]
+}
+
+/** Browser-safe projection of the Flutter desktop Bot settings profile. */
+export interface ArkmeBotManageProfile extends ArkmeBotSummary {
+  mentionEntryEnabled: boolean
+  tokenPreview: string
+  canRevealToken: boolean
+  tokenRevealEnabled: boolean
+  gatewayUrl: string
+  webhookUrl: string
+  recordCount: number
+  webhookSecurity: ArkmeBotWebhookSecurity
+  joinedGroups: ArkmeBotJoinedGroup[]
+}
+
+export interface ArkmeBotWebhookSecurity {
+  keywordEnabled: boolean
+  keyword: string
+  tokenEnabled: boolean
+  ipWhitelistEnabled: boolean
+  ipWhitelist: string[]
+}
+
+export interface ArkmeBotJoinedGroup {
+  title: string
+  installedAtMillis: number
+}
+
+export interface ArkmeBotNotificationPreference {
+  /** `true` means the current Bot direct chat will not receive push notifications. */
+  muted: boolean
+}
+
+export interface ArkmeBotPrivateChatSendResult {
+  userMessage: ArkmeBotPrivateChatMessage
+  botMessages: ArkmeBotPrivateChatMessage[]
+  status: string
 }
 
 export interface ArkmeConversationWriteResult {
@@ -2286,6 +2346,15 @@ export type ArkmePluginOperation =
   | 'group.create'
   | 'bots.list'
   | 'bots.create'
+  | 'bots.manage.profile'
+  | 'bots.manage.update'
+  | 'bots.manage.reveal-token'
+  | 'bots.manage.delete'
+  | 'bots.private-chat.notification.status'
+  | 'bots.private-chat.notification.update'
+  | 'bots.private-chat.directory'
+  | 'bots.private-chat.open'
+  | 'bots.private-chat.send'
   | 'records.summary'
   | 'records.cache'
   | 'records.refresh'

@@ -41,6 +41,7 @@ import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
+import { ArkmeBotConversationSurface } from './ArkmeBotConversationSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
@@ -791,7 +792,8 @@ export function ArkmeSurface({
   )
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
-  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'contact-add'
+  const botConversationVisible = ui.mode === 'bot' && ui.selectedBot !== undefined
+  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'contact-add' || botConversationVisible
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
@@ -810,7 +812,7 @@ export function ArkmeSurface({
     : activeSelfSourcesResolution?.status === 'ready'
       ? activeSelfSourcesResolution.error
       : undefined
-  const source = conversationBackdropVisible ? selectedSource ?? aggregateSource : undefined
+  const source = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
   const sourceProjectionRevision = source?.kind === 'private_chat' || source?.kind === 'group_chat'
     ? ui.chatRevision
     : ui.recordRevision
@@ -2317,7 +2319,7 @@ export function ArkmeSurface({
         />
       </aside>}
       <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
-        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && <header className="arkme-conversation-header" style={styles.header}>
+        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeSourceAvatar
               size={34}
@@ -2492,6 +2494,9 @@ export function ArkmeSurface({
           />
           : ui.mode === 'voiceprint' ? <ArkmeVoiceprintSurface />
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
+          : botConversationVisible && ui.selectedBot !== undefined ? <ArkmeBotConversationSurface
+            bot={ui.selectedBot} onConversationActivity={bot => { arkmeUi.openBotConversation(bot) }} onDeleted={() => { arkmeUi.showHarness() }}
+          />
           : source === undefined ? <div className="arkme-conversation-body" style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'
               ? <div role="alert" style={styles.loading}>

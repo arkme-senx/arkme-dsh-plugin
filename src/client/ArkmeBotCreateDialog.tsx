@@ -23,8 +23,8 @@ const styles: Record<string, CSSProperties> = {
     backdropFilter: 'var(--dsw-mask-blur, blur(2px))', WebkitBackdropFilter: 'var(--dsw-mask-blur, blur(2px))',
   },
   dialog: {
-    width: 'min(520px, calc(100vw - 32px))', height: 'auto', margin: 'auto', flex: 'none',
-    display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box', borderRadius: 16,
+    width: 'min(440px, calc(100vw - 32px))', height: 'auto', margin: 'auto', flex: 'none',
+    display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box', borderRadius: 14,
     border: `1px solid ${arkmeTheme.borderSoft}`, background: arkmeTheme.menu, color: arkmeTheme.text,
     boxShadow: 'var(--dsw-shadow-lv3, 0 18px 50px rgba(18, 22, 27, 0.24))',
   },
@@ -35,64 +35,65 @@ const styles: Record<string, CSSProperties> = {
     border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.tertiary,
     cursor: 'pointer', font: 'inherit', fontSize: 24, lineHeight: 1,
   },
-  body: { flex: 'none', minHeight: 0, overflow: 'visible', padding: '12px 16px 16px', boxSizing: 'border-box' },
-  intro: { margin: 0, color: arkmeTheme.secondary, fontSize: 14, lineHeight: 1.4 },
-  avatarCard: {
-    width: '100%', marginTop: 12, padding: 12, display: 'flex', alignItems: 'center', gap: 12,
-    boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 14,
-    background: arkmeTheme.layer1, color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  body: { flex: 'none', minHeight: 0, overflow: 'visible', padding: '16px 20px 18px', boxSizing: 'border-box' },
+  avatarPicker: { width: 76, height: 76, position: 'relative', margin: '0 auto', flex: 'none' },
+  avatarButton: {
+    width: 72, height: 72, display: 'grid', placeItems: 'center', padding: 0,
+    boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: '50%',
+    background: arkmeTheme.layer1, color: arkmeTheme.secondary, cursor: 'pointer',
   },
-  avatarAction: { position: 'relative', width: 56, height: 56, flex: 'none', display: 'grid', placeItems: 'center' },
   avatar: {
-    width: 52, height: 52, display: 'grid', placeItems: 'center', overflow: 'hidden', boxSizing: 'border-box',
-    border: `2px solid ${arkmeTheme.border}`, borderRadius: '50%', background: arkmeTheme.active, color: arkmeTheme.text,
+    width: 70, height: 70, display: 'grid', placeItems: 'center', overflow: 'hidden', boxSizing: 'border-box',
+    borderRadius: '50%', background: arkmeTheme.active, color: arkmeTheme.text,
   },
   avatarImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
   avatarEdit: {
-    position: 'absolute', right: 0, bottom: 0, width: 18, height: 18, display: 'grid', placeItems: 'center',
-    borderRadius: '50%', background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction,
-    boxShadow: '0 2px 6px rgba(0,0,0,.12)', transition: 'opacity 140ms ease',
+    width: 26, height: 26, position: 'absolute', right: 0, bottom: 0, display: 'grid', placeItems: 'center',
+    boxSizing: 'border-box', border: `2px solid ${arkmeTheme.menu}`, borderRadius: '50%',
+    background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, pointerEvents: 'none',
   },
-  cardCopy: { minWidth: 0, flex: 1 },
-  cardTitle: { margin: 0, color: arkmeTheme.text, fontSize: 16, lineHeight: '22px', fontWeight: 700 },
-  cardDescription: { margin: '4px 0 0', color: arkmeTheme.secondary, fontSize: 13, lineHeight: 1.45 },
-  field: { display: 'grid', gap: 6, marginTop: 12 },
-  label: { color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', fontWeight: 700 },
+  field: { display: 'grid', gap: 6, marginTop: 16 },
+  label: { color: arkmeTheme.text, fontSize: 13, lineHeight: '18px', fontWeight: 600 },
   input: {
     width: '100%', minHeight: 42, padding: '0 10px', boxSizing: 'border-box', outline: 0,
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 12, background: arkmeTheme.base,
     color: arkmeTheme.text, font: 'inherit', fontSize: 15, lineHeight: 1.45,
   },
-  textarea: { minHeight: 68, paddingTop: 10, paddingBottom: 10, resize: 'none' },
-  providerList: { display: 'grid', gap: 8 },
-  providerCard: {
-    width: '100%', minHeight: 64, padding: 12, display: 'flex', alignItems: 'center', gap: 12,
-    boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 14,
-    background: arkmeTheme.layer1, color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer', font: 'inherit',
+  textarea: { minHeight: 72, paddingTop: 10, paddingBottom: 10, resize: 'none' },
+  providerList: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 },
+  providerOption: {
+    minHeight: 42, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 8,
+    boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 10,
+    background: arkmeTheme.layer1, color: arkmeTheme.text, textAlign: 'left', cursor: 'pointer', font: 'inherit', fontSize: 14,
   },
   providerIcon: {
-    width: 36, height: 36, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: '50%',
-    background: arkmeTheme.base, color: arkmeTheme.secondary, fontSize: 20,
+    width: 22, height: 22, flex: 'none', display: 'grid', placeItems: 'center', color: arkmeTheme.secondary, fontSize: 16,
   },
-  radio: { width: 20, height: 20, flex: 'none', color: arkmeTheme.tertiary },
-  radioSelected: { color: arkmeTheme.text },
+  radio: { width: 18, height: 18, flex: 'none', marginLeft: 'auto', color: arkmeTheme.tertiary },
+  radioSelected: { color: arkmeTheme.primaryAction },
+  providerHint: { margin: '7px 0 0', color: arkmeTheme.secondary, fontSize: 12, lineHeight: '18px' },
   error: { margin: '12px 0 0', color: arkmeTheme.danger, fontSize: 12, lineHeight: '18px' },
+  footer: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 20 },
+  cancel: {
+    height: 40, padding: '0 14px', border: 0, borderRadius: 10, background: 'transparent', color: arkmeTheme.secondary,
+    cursor: 'pointer', font: 'inherit', fontSize: 14,
+  },
   submit: {
-    width: '100%', height: 44, marginTop: 16, border: 0, borderRadius: 12,
+    height: 40, padding: '0 16px', border: 0, borderRadius: 10,
     background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction,
-    cursor: 'pointer', font: 'inherit', fontSize: 16, fontWeight: 600,
+    cursor: 'pointer', font: 'inherit', fontSize: 14, fontWeight: 600,
   },
   hiddenInput: { display: 'none' },
 }
 
-const providerCopy: Record<ArkmeBotProvider, { title: string; description: string }> = {
+const providerCopy: Record<ArkmeBotProvider, { title: string; hint: string }> = {
   openclaw: {
     title: 'OpenClaw',
-    description: '连接本地 OpenClaw，用对话方式驱动你的桌面运行时',
+    hint: '连接本地 OpenClaw，在桌面运行 Bot。',
   },
   webhook: {
-    title: 'Webhook Bot',
-    description: '创建后自动生成 webhook 地址，外部系统可直接推送文本消息到这个 Bot',
+    title: 'Webhook',
+    hint: '创建后生成 Webhook 地址，供外部系统推送。',
   },
 }
 
@@ -100,7 +101,7 @@ function botErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function botAvatarMimeType(file: File): string {
+export function botAvatarMimeType(file: File): string {
   const mediaType = file.type.trim().toLowerCase()
   if (['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'].includes(mediaType)) return mediaType
   const fileName = file.name.trim().toLowerCase()
@@ -111,7 +112,7 @@ function botAvatarMimeType(file: File): string {
   return ''
 }
 
-async function uploadBotAvatar(file: File): Promise<string> {
+export async function uploadBotAvatar(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open('POST', '/arkme-self/api/upload')
@@ -131,7 +132,7 @@ async function uploadBotAvatar(file: File): Promise<string> {
   })
 }
 
-function ProviderCard({ provider, selected, disabled, onSelect }: {
+function ProviderOption({ provider, selected, disabled, onSelect }: {
   provider: ArkmeBotProvider
   selected: boolean
   disabled: boolean
@@ -140,15 +141,14 @@ function ProviderCard({ provider, selected, disabled, onSelect }: {
   const copy = providerCopy[provider]
   return <button
     type="button" role="radio" aria-checked={selected} disabled={disabled}
-    data-arkme-bot-provider={provider} style={styles.providerCard} onClick={onSelect}
+    data-arkme-bot-provider={provider}
+    style={{ ...styles.providerOption, ...(selected ? { borderColor: arkmeTheme.primaryAction, background: arkmeTheme.active } : {}) }}
+    onClick={onSelect}
   >
-    <span aria-hidden style={{ ...styles.providerIcon, ...(selected ? { color: arkmeTheme.text } : {}) }}>
+    <span aria-hidden style={{ ...styles.providerIcon, ...(selected ? { color: arkmeTheme.primaryAction } : {}) }}>
       {provider === 'openclaw' ? <span>🦞</span> : <WebhooksLogoIcon size={20} />}
     </span>
-    <span style={styles.cardCopy}>
-      <span style={{ ...styles.cardTitle, display: 'block' }}>{copy.title}</span>
-      <span style={{ ...styles.cardDescription, display: 'block' }}>{copy.description}</span>
-    </span>
+    <span>{copy.title}</span>
     {selected
       ? <CheckCircleIcon aria-hidden size={20} weight="fill" style={{ ...styles.radio, ...styles.radioSelected }} />
       : <CircleIcon aria-hidden size={20} style={styles.radio} />}
@@ -165,12 +165,13 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
   const [avatarFile, setAvatarFile] = useState<File>()
   const [avatarPreview, setAvatarPreview] = useState('')
   const [avatarPreviewFailed, setAvatarPreviewFailed] = useState(false)
-  const [avatarHovered, setAvatarHovered] = useState(false)
+  const [created, setCreated] = useState(false)
   const [busyLabel, setBusyLabel] = useState('')
   const [error, setError] = useState('')
   const nameInput = useRef<HTMLInputElement>(null)
   const avatarInput = useRef<HTMLInputElement>(null)
   const busy = busyLabel !== ''
+  const canSubmit = !busy && !created && name.trim() !== ''
 
   useEffect(() => { nameInput.current?.focus() }, [])
   useEffect(() => () => { if (avatarPreview !== '') URL.revokeObjectURL(avatarPreview) }, [avatarPreview])
@@ -195,7 +196,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
 
   const submit = async () => {
     const normalizedName = name.trim()
-    if (busy) return
+    if (busy || created) return
     if (normalizedName === '') { setError('请输入 Bot 名称'); nameInput.current?.focus(); return }
     setError('')
     try {
@@ -211,7 +212,13 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
         ...(description.trim() === '' ? {} : { description: description.trim() }),
         ...(avatar === '' ? {} : { avatar }),
       })
-      try { await onBotCreated?.(bot) } catch { /* Bot creation is authoritative; a list refresh failure must not invite a duplicate retry. */ }
+      try {
+        await onBotCreated?.(bot)
+      } catch (caught) {
+        setCreated(true)
+        setError(`Bot 已创建，但无法打开私聊：${botErrorMessage(caught)}`)
+        return
+      }
       onClose()
     } catch (caught) {
       setError(botErrorMessage(caught))
@@ -226,67 +233,56 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
   >
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-add-bot-title" style={styles.dialog}>
       <header style={styles.header}>
-        <h2 id="arkme-add-bot-title" style={styles.heading}>添加 Bot</h2>
+        <h2 id="arkme-add-bot-title" style={styles.heading}>创建 Bot</h2>
         <button type="button" style={styles.close} aria-label="关闭" disabled={busy} onClick={onClose}>×</button>
       </header>
       <div style={styles.body}>
-        <p style={styles.intro}>创建一个新的 Bot 入口。OpenClaw 适合本地驱动，Webhook Bot 适合外部系统推送。</p>
-        <button
-          type="button" style={styles.avatarCard} disabled={busy}
-          aria-label="选择 Bot 头像" onClick={() => { avatarInput.current?.click() }}
-          onMouseEnter={() => { if (!busy) setAvatarHovered(true) }}
-          onMouseLeave={() => { setAvatarHovered(false) }}
-        >
-          <span style={styles.avatarAction}>
-            <span style={styles.avatar} aria-hidden>
-              {avatarPreview !== '' && !avatarPreviewFailed
-                ? <img src={avatarPreview} alt="" style={styles.avatarImage} onError={() => { setAvatarPreviewFailed(true) }} />
-                : <RobotIcon size={30} weight="fill" />}
-            </span>
-            <span style={{ ...styles.avatarEdit, opacity: avatarHovered ? 1 : 0 }} aria-hidden><PencilSimpleIcon size={12} weight="bold" /></span>
-          </span>
-          <span style={styles.cardCopy}>
-            <span style={{ ...styles.cardTitle, display: 'block' }}>Bot 头像</span>
-            <span style={{ ...styles.cardDescription, display: 'block' }}>
-              {avatarFile === undefined ? '默认会使用统一 bot 头像，点此可改成自定义头像' : '已选择自定义头像，点此可重新更换'}
-            </span>
-          </span>
-        </button>
         <input
           ref={avatarInput} type="file" tabIndex={-1} style={styles.hiddenInput} accept={BOT_AVATAR_ACCEPT}
           aria-label="选择 Bot 头像文件" disabled={busy}
           onChange={event => { chooseAvatar(event.currentTarget.files?.[0]); event.currentTarget.value = '' }}
         />
 
-        <label style={styles.field}>
-          <span style={styles.label}>Bot 名称</span>
-          <input
-            ref={nameInput} style={styles.input} value={name} disabled={busy} maxLength={64}
-            placeholder="例如：我的自动化助手" onChange={event => { setName(event.currentTarget.value); setError('') }}
-            onKeyDown={event => { if (event.key === 'Enter') void submit() }}
-          />
-        </label>
+        <div style={styles.avatarPicker}>
+          <button type="button" style={styles.avatarButton} disabled={busy} aria-label="上传 Bot 头像" title="上传头像" onClick={() => { avatarInput.current?.click() }}>
+            <span style={styles.avatar} aria-hidden>
+              {avatarPreview !== '' && !avatarPreviewFailed
+                ? <img src={avatarPreview} alt="" style={styles.avatarImage} onError={() => { setAvatarPreviewFailed(true) }} />
+                : <RobotIcon size={32} weight="fill" />}
+            </span>
+          </button>
+          <span style={styles.avatarEdit} aria-hidden><PencilSimpleIcon size={14} weight="bold" /></span>
+        </div>
+
+        <input
+          ref={nameInput} style={{ ...styles.input, marginTop: 16 }} value={name} disabled={busy} maxLength={64}
+          placeholder="给 Bot 起个名字" onChange={event => { setName(event.currentTarget.value); setError('') }}
+          onKeyDown={event => { if (event.key === 'Enter') void submit() }}
+        />
 
         <fieldset style={{ ...styles.field, marginInline: 0, padding: 0, border: 0 }}>
           <legend style={{ ...styles.label, padding: 0 }}>接入方式</legend>
           <div role="radiogroup" aria-label="Bot 接入方式" style={styles.providerList}>
-            <ProviderCard provider="openclaw" selected={provider === 'openclaw'} disabled={busy} onSelect={() => { setProvider('openclaw') }} />
-            <ProviderCard provider="webhook" selected={provider === 'webhook'} disabled={busy} onSelect={() => { setProvider('webhook') }} />
+            <ProviderOption provider="openclaw" selected={provider === 'openclaw'} disabled={busy} onSelect={() => { setProvider('openclaw') }} />
+            <ProviderOption provider="webhook" selected={provider === 'webhook'} disabled={busy} onSelect={() => { setProvider('webhook') }} />
           </div>
+          <p style={styles.providerHint}>{providerCopy[provider].hint}</p>
         </fieldset>
-
         <label style={styles.field}>
-          <span style={styles.label}>说明（可选）</span>
+          <span style={styles.label}>简介（可选）</span>
           <textarea
             style={{ ...styles.input, ...styles.textarea }} value={description} disabled={busy} maxLength={200}
             rows={3} placeholder="描述这个 Bot 的用途" onChange={event => { setDescription(event.currentTarget.value); setError('') }}
           />
         </label>
         {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
-        <button
-          type="button" style={styles.submit} disabled={busy}
-          onClick={() => { void submit() }}
-        >{busyLabel || '确认创建'}</button>
+        <footer style={styles.footer}>
+          <button type="button" style={styles.cancel} disabled={busy} onClick={onClose}>取消</button>
+          <button
+            type="button" style={{ ...styles.submit, ...(canSubmit ? {} : { opacity: .45, cursor: 'not-allowed' }) }} disabled={!canSubmit}
+            onClick={() => { void submit() }}
+          >{busyLabel || '创建 Bot'}</button>
+        </footer>
       </div>
     </section>
   </div>

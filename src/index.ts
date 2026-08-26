@@ -459,6 +459,7 @@ function validateConfig(ctx: Context, config: Config): void {
   if (config.environment === 'prod') {
     const testDefaults = [
       config.authBaseUrl,
+      config.subjectBaseUrl,
       config.recordBaseUrl,
       config.dataBaseUrl,
       config.chatBaseUrl,
