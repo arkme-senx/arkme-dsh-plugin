@@ -22,7 +22,7 @@ const expectedPublicMethods = [
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
-  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'listSources', 'listSourceMembers', 'sourceMemberRecords',
+  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'createTopicsBatch', 'listSources', 'listSourceMembers', 'sourceMemberRecords',
   'dshBetaCommunityEntryState', 'interwovenMoments', 'interwovenMomentDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeGroupAvatarPresentation,
@@ -9,6 +9,8 @@ import type {
   ArkmeSourceKind,
   ArkmeSourceList,
   ArkmeTimelineItem,
+  ArkmeTopicBatchCreateResult,
+  ArkmeTopicBatchItemDisposition,
   ArkmeTopicCreateResult,
 } from '../types.js'
 import { ProfileService, type ArkmePublicProfile } from './profile-service.js'
@@ -133,6 +135,53 @@ function chatUnreadMentionState(unread: Record<string, unknown>): boolean | unde
   const rawCount = unread.unread_attention_count ?? unread.unreadAttentionCount
   if (rawCount === undefined || rawCount === null) return undefined
   return integerLikeValue(rawCount) > 0
+}
+
+function requiredTopicHierarchyParents(value: unknown): Map<string, string> {
+  if (!Array.isArray(value)) {
+    throw new ArkmePluginError('topic-hierarchy-contract-invalid', '主题层级响应不完整', true, 502)
+  }
+  const parents = new Map<string, string>()
+  for (const raw of value) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new ArkmePluginError('topic-hierarchy-contract-invalid', '主题层级响应条目无效', true, 502)
+    }
+    const relation = raw as Record<string, unknown>
+    if (relation.rel_kind !== 1 || relation.status !== 1) {
+      throw new ArkmePluginError('topic-hierarchy-contract-invalid', '主题层级响应状态无效', true, 502)
+    }
+    const parentTopicUid = typeof relation.parent_topic_uid === 'string' ? relation.parent_topic_uid.trim() : ''
+    const childTopicUid = typeof relation.child_topic_uid === 'string' ? relation.child_topic_uid.trim() : ''
+    if (parentTopicUid === '' || childTopicUid === '' || parentTopicUid === childTopicUid) {
+      throw new ArkmePluginError('topic-hierarchy-contract-invalid', '主题层级响应身份无效', true, 502)
+    }
+    const existingParent = parents.get(childTopicUid)
+    if (existingParent !== undefined) {
+      throw new ArkmePluginError('topic-hierarchy-contract-invalid', '主题层级响应存在重复子主题', true, 502)
+    }
+    parents.set(childTopicUid, parentTopicUid)
+  }
+  return parents
+}
+
+function topicBatchUid(clientMutationId: string, parentTopicUid: string | undefined, index: number): string {
+  const placementScope = parentTopicUid === undefined ? 'root' : `parent:${parentTopicUid}`
+  const bytes = createHash('sha256').update(`dsh-arkme:topic-batch:${clientMutationId}:${placementScope}:${String(index)}`).digest().subarray(0, 16)
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function topicDisplayTitle(title: string, topicUid: string): string {
+  const normalized = title.trim()
+  if (normalized !== '') return normalized
+  const stableLabel = createHash('sha256').update(topicUid).digest('hex').slice(0, 8)
+  return `未命名主题 · ${stableLabel}`
+}
+
+function isTopicBatchDisposition(value: string): value is ArkmeTopicBatchItemDisposition {
+  return ['accepted', 'idempotent', 'failed_before_create', 'failed_cleaned', 'outcome_unknown'].includes(value)
 }
 
 function encodeOpaqueJson(value: unknown): string {
@@ -409,12 +458,79 @@ export class SourceService {
   }
 
   async createTopic(titleInput: string, parentSourceRef?: string): Promise<ArkmeTopicCreateResult> {
-    const session = await this.runtime.requireSession()
     const title = titleInput.trim()
     if (title === '' || Array.from(title).length > 100) {
       throw new ArkmePluginError('topic-title-invalid', '主题名称不能为空或超过 100 个字符', false)
     }
 
+    // Preserve the existing top-level create contract. Batch creation has
+    // stricter same-placement semantics and must not silently change this
+    // established single-topic UI operation.
+    if (parentSourceRef === undefined) {
+      const session = await this.runtime.requireSession()
+      const createdAtMillis = Date.now()
+      let created: Record<string, unknown>
+      try {
+        created = await this.runtime.authenticatedPost<Record<string, unknown>>(
+          '/api/v1/topics/create',
+          { title, show_in_home: true, privacy_state: 1, extra: { source: 'dsh-arkme' } },
+          session,
+        )
+      } finally {
+        this.invalidateSourceListCache(session.userId, 'send_to_self')
+      }
+      const topicUid = stringValue(created.topic_uid).trim()
+      if (topicUid === '' || numberValue(created.status) !== 1) {
+        throw new ArkmePluginError('topic-create-contract-invalid', '主题创建响应不完整', true, 502)
+      }
+      return {
+        source: {
+          sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, title),
+          kind: 'topic',
+          displayName: title,
+          activeAtMillis: createdAtMillis,
+          unreadCount: 0,
+          recordCount: 0,
+        },
+      }
+    }
+
+    const result = await this.createTopicsBatch([title], randomUUID(), parentSourceRef)
+    const item = result.items[0]
+    if (item?.succeeded === true && item.source !== undefined) return { source: item.source }
+    if (item?.disposition === 'failed_cleaned') {
+      throw new ArkmePluginError('topic-hierarchy-bind-failed', '未能创建子主题，已自动清理，请重试', true, 409)
+    }
+    if (item?.disposition === 'failed_before_create') {
+      throw new ArkmePluginError('topic-create-failed', item.errorMessage ?? '主题未创建', false, 409)
+    }
+    throw new ArkmePluginError(
+      'topic-create-outcome-unknown',
+      '主题创建终态暂时无法确认，请刷新主题列表后再决定是否重试',
+      false,
+      409,
+    )
+  }
+
+  async createTopicsBatch(
+    titlesInput: readonly string[],
+    clientMutationId: string,
+    parentSourceRef?: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeTopicBatchCreateResult> {
+    const titles = titlesInput.map(title => title.trim())
+    if (titles.length === 0 || titles.length > 20 || titles.some(title => title === '' || Array.from(title).length > 100)) {
+      throw new ArkmePluginError('topic-batch-invalid', '每批必须包含 1 到 20 个不超过 100 个字符的主题名称', false)
+    }
+    if (new Set(titles).size !== titles.length) {
+      throw new ArkmePluginError('topic-batch-invalid', '同一批次不能包含重复主题名称', false)
+    }
+    const normalizedMutationId = clientMutationId.trim().toLowerCase()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalizedMutationId)) {
+      throw new ArkmePluginError('topic-batch-mutation-id-invalid', '主题批量操作身份无效', false)
+    }
+
+    const session = await this.runtime.requireSession()
     let parentTopicUid: string | undefined
     if (parentSourceRef !== undefined) {
       const parent = await this.openSourceRef(parentSourceRef, session.userId)
@@ -424,83 +540,120 @@ export class SourceService {
       parentTopicUid = parent.ownerRef
     }
 
-    const createdAtMillis = Date.now()
-    const created = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/topics/create',
-      {
-        title,
-        show_in_home: true,
-        privacy_state: 1,
-        extra: { source: 'dsh-arkme' },
-      },
-      session,
-    )
-    const topicUid = stringValue(created.topic_uid).trim()
-    if (topicUid === '' || numberValue(created.status) !== 1) {
-      throw new ArkmePluginError('topic-create-contract-invalid', '主题创建响应不完整', true, 502)
+    const requested = titles.map((title, index) => ({
+      topic_uid: topicBatchUid(normalizedMutationId, parentTopicUid, index),
+      title,
+    }))
+    let data: Record<string, unknown>
+    try {
+      data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        parentSourceRef === undefined ? '/api/v1/topics/batch-create' : '/api/v1/topics/children/batch-create',
+        {
+          ...(parentSourceRef === undefined
+            ? {}
+            : { parent_topic_uid: parentTopicUid }),
+          items: requested,
+        },
+        session,
+        signal,
+      )
+    } finally {
+      this.invalidateSourceListCache(session.userId, 'send_to_self')
+    }
+    const rawItems = listValue(data.items)
+    if (rawItems.length !== requested.length) {
+      throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应条目数不完整', true, 502)
+    }
+    const ownerSucceededCount = data.succeeded_count
+    const ownerFailedCount = data.failed_count
+    if (typeof ownerSucceededCount !== 'number' || typeof ownerFailedCount !== 'number'
+      || !Number.isSafeInteger(ownerSucceededCount) || !Number.isSafeInteger(ownerFailedCount)
+      || ownerSucceededCount < 0 || ownerFailedCount < 0
+      || ownerSucceededCount + ownerFailedCount !== requested.length) {
+      throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应计数无效', true, 502)
     }
 
-    const sourceRef = await this.sealSourceRef(session.userId, 'topic', topicUid, title)
-    if (parentTopicUid !== undefined) {
-      try {
-        const bound = await this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/topics/hierarchy/bind',
-          { parent_topic_uid: parentTopicUid, child_topic_uid: topicUid },
-          session,
-        )
-        if (numberValue(objectValue(bound.relation).status) !== 1) {
-          throw new ArkmePluginError('topic-hierarchy-bind-contract-invalid', '子主题层级响应不完整', true, 502)
-        }
-      } catch (bindError) {
-        try {
-          const rolledBack = await this.runtime.authenticatedPost<Record<string, unknown>>(
-            '/api/v1/topics/update',
-            {
-              topic_uid: topicUid,
-              title,
-              show_in_home: true,
-              privacy_state: 1,
-              status: 2,
-              extra: { source: 'dsh-arkme' },
-            },
-            session,
-          )
-          if (stringValue(rolledBack.topic_uid).trim() !== topicUid || !booleanValue(rolledBack.updated)) {
-            throw new ArkmePluginError('topic-rollback-contract-invalid', '子主题清理响应不完整', true, 502)
-          }
-        } catch {
-          return {
-            source: {
-              sourceRef,
-              kind: 'topic',
-              displayName: title,
-              activeAtMillis: createdAtMillis,
-              unreadCount: 0,
-              recordCount: 0,
-            },
-            warning: '主题已创建，但父子关系添加及自动清理均未完成，请在根主题列表中检查后重试',
-          }
-        }
-        throw new ArkmePluginError(
-          'topic-hierarchy-bind-failed',
-          '未能创建子主题，已自动清理，请重试',
-          true,
-          409,
-          { cause: bindError },
-        )
+    const rawByRequestedUid = new Map<string, Record<string, unknown>>()
+    for (const raw of rawItems) {
+      const item = objectValue(raw)
+      const requestedTopicUid = item.requested_topic_uid
+      if (typeof requestedTopicUid !== 'string') {
+        throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应身份无效', true, 502)
       }
+      if (requestedTopicUid === '' || rawByRequestedUid.has(requestedTopicUid)) {
+        throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应身份无效', true, 502)
+      }
+      rawByRequestedUid.set(requestedTopicUid, item)
     }
 
+    const createdAtMillis = Date.now()
+    const items = await Promise.all(requested.map(async request => {
+      const raw = rawByRequestedUid.get(request.topic_uid)
+      if (raw === undefined) {
+        throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应缺少请求身份', true, 502)
+      }
+      const optionalStringFields = ['topic_uid', 'title', 'parent_topic_uid', 'error_code', 'error_message'] as const
+      if (typeof raw.disposition !== 'string' || typeof raw.succeeded !== 'boolean'
+        || optionalStringFields.some(field => raw[field] !== undefined && typeof raw[field] !== 'string')
+        || (raw.status !== undefined && (typeof raw.status !== 'number' || !Number.isSafeInteger(raw.status)))) {
+        throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应字段类型无效', true, 502)
+      }
+      const disposition = raw.disposition
+      const succeeded = raw.succeeded
+      const topicUid = stringValue(raw.topic_uid)
+      const successDisposition = disposition === 'accepted' || disposition === 'idempotent'
+      const responseParentTopicUid = stringValue(raw.parent_topic_uid)
+      const responseTitle = stringValue(raw.title)
+      const status = raw.status ?? 0
+      const errorCode = stringValue(raw.error_code)
+      const errorMessage = stringValue(raw.error_message)
+      const emptyFact = topicUid === '' && responseTitle === '' && status === 0
+      const exactActiveFact = topicUid === request.topic_uid && responseTitle === request.title && status === 1
+      const exactDeletedFact = topicUid === request.topic_uid && responseTitle === request.title && status === 2
+      const validFailureFact = disposition === 'failed_before_create'
+        ? (emptyFact || exactActiveFact)
+        : disposition === 'failed_cleaned'
+          ? exactDeletedFact
+          : disposition === 'outcome_unknown'
+            ? (emptyFact || exactActiveFact || exactDeletedFact)
+            : false
+      if (
+        !isTopicBatchDisposition(disposition) ||
+        succeeded !== successDisposition ||
+        responseParentTopicUid !== (parentTopicUid ?? '') ||
+        (succeeded && (!exactActiveFact || errorCode !== '' || errorMessage !== '')) ||
+        (!succeeded && (!validFailureFact || errorCode.trim() === '' || errorCode !== errorCode.trim()
+          || errorMessage.trim() === '' || errorMessage !== errorMessage.trim()))
+      ) {
+        throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应终态无效', true, 502)
+      }
+      return {
+        title: request.title,
+        disposition,
+        succeeded,
+        ...(succeeded ? {
+          source: {
+            sourceRef: await this.sealSourceRef(session.userId, 'topic', topicUid, request.title),
+            ...(parentSourceRef === undefined ? {} : { parentSourceRef }),
+            kind: 'topic' as const,
+            displayName: request.title,
+            activeAtMillis: createdAtMillis,
+            unreadCount: 0,
+            recordCount: 0,
+          },
+        } : {}),
+        ...(errorCode === '' ? {} : { errorCode }),
+        ...(errorMessage === '' ? {} : { errorMessage }),
+      }
+    }))
+    if (items.filter(item => item.succeeded).length !== ownerSucceededCount) {
+      throw new ArkmePluginError('topic-batch-contract-invalid', '主题批量创建响应计数与逐项终态不一致', true, 502)
+    }
     return {
-      source: {
-        sourceRef,
-        ...(parentSourceRef !== undefined ? { parentSourceRef } : {}),
-        kind: 'topic',
-        displayName: title,
-        activeAtMillis: createdAtMillis,
-        unreadCount: 0,
-        recordCount: 0,
-      },
+      ...(parentSourceRef === undefined ? {} : { parentSourceRef }),
+      items,
+      succeededCount: ownerSucceededCount,
+      failedCount: ownerFailedCount,
     }
   }
 
@@ -562,18 +715,16 @@ export class SourceService {
         throw new ArkmePluginError('source-cursor-invalid', '发给自己的主题目录不支持该分页游标', false)
       }
       const [data, hierarchyData] = await Promise.all([
-        this.runtime.authenticatedPost<Record<string, unknown>>(
-          '/api/v1/topics/display/list',
-          { limit: Math.min(100, Math.max(1, limit)) },
-          session,
-          options.signal,
-        ),
+        this.listAllTopicDisplayItems(session, options.signal),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/hierarchy/relations/list',
           {},
           session,
           options.signal,
-        ).catch(() => undefined),
+        ).catch(error => {
+          if (options.signal?.aborted === true) throw error
+          return undefined
+        }),
       ])
       options.signal?.throwIfAborted()
       const [summaryResult, latestRecordsResult] = await Promise.allSettled([
@@ -624,35 +775,36 @@ export class SourceService {
         recordCount: number
       }> = []
       const seenTopicUids = new Set<string>()
-      const parentTopicUidByChild = new Map<string, string>()
-      for (const raw of listValue(hierarchyData?.relations)) {
-        const relation = objectValue(raw)
-        if (numberValue(relation.rel_kind) !== 1 || numberValue(relation.status) !== 1) continue
-        const parentTopicUid = stringValue(relation.parent_topic_uid).trim()
-        const childTopicUid = stringValue(relation.child_topic_uid).trim()
-        if (parentTopicUid === '' || childTopicUid === '' || parentTopicUid === childTopicUid) continue
-        parentTopicUidByChild.set(childTopicUid, parentTopicUid)
-      }
+      const parentTopicUidByChild = hierarchyData === undefined
+        ? undefined
+        : requiredTopicHierarchyParents(hierarchyData.relations)
       for (const raw of listValue(data.items)) {
         const item = objectValue(raw)
         const core = objectValue(item.topic_core)
         const summary = objectValue(item.summary)
         const latest = objectValue(item.latest_record_core)
-        const parent = objectValue(
+        const embeddedParent = objectValue(
           core.parent_topic_core ?? core.parent_topic ?? item.parent_topic_core ?? item.parent_topic,
         )
-        const topicUid = stringValue(core.topic_uid).trim()
-        const title = stringValue(core.title).trim()
-        if (topicUid === '' || title === '' || seenTopicUids.has(topicUid)) continue
+        const topicUid = typeof core.topic_uid === 'string' ? core.topic_uid.trim() : ''
+        if (topicUid === '' || seenTopicUids.has(topicUid)) {
+          throw new ArkmePluginError('topic-page-contract-invalid', '主题分页响应身份无效', true, 502)
+        }
+        if (typeof core.title !== 'string') {
+          throw new ArkmePluginError('topic-page-contract-invalid', '主题分页响应字段无效', true, 502)
+        }
         seenTopicUids.add(topicUid)
-        const parentTopicUid = stringValue(
-          parentTopicUidByChild.get(topicUid)
-          ?? core.parent_topic_uid ?? core.parent_uid ?? item.parent_topic_uid ?? item.parent_uid
-          ?? parent.topic_uid ?? parent.uid,
+        const title = topicDisplayTitle(core.title, topicUid)
+        const fallbackParentTopicUid = stringValue(
+          core.parent_topic_uid ?? core.parent_uid ?? item.parent_topic_uid ?? item.parent_uid
+          ?? embeddedParent.topic_uid ?? embeddedParent.uid,
         ).trim()
+        const parentTopicUid = parentTopicUidByChild === undefined
+          ? (fallbackParentTopicUid === '' || fallbackParentTopicUid === topicUid ? undefined : fallbackParentTopicUid)
+          : parentTopicUidByChild.get(topicUid)
         topicDescriptors.push({
           topicUid,
-          ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
+          ...(parentTopicUid === undefined ? {} : { parentTopicUid }),
           title,
           latestPreview: textPreview(latest),
           latestMessageAtMillis: numberValue(latest.send_at ?? summary.latest_send_at),
@@ -818,6 +970,49 @@ export class SourceService {
       ...(hasMore && Object.keys(nextPageCursor).length > 0
         ? { nextCursor: this.encodeCursor(nextPageCursor) }
         : {}),
+    }
+  }
+
+  private async listAllTopicDisplayItems(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const items: unknown[] = []
+    const seenCursors = new Set<string>()
+    let pageCursor: Record<string, unknown> | undefined
+    let offset = 0
+    for (;;) {
+      const page = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/display/list',
+        {
+          limit: 100,
+          ...(pageCursor === undefined ? (offset === 0 ? {} : { offset }) : { page_cursor: pageCursor }),
+        },
+        session,
+        signal,
+      )
+      if (!Array.isArray(page.items) || (page.has_more !== undefined && typeof page.has_more !== 'boolean')) {
+        throw new ArkmePluginError('topic-page-contract-invalid', '主题分页响应不完整', true, 502)
+      }
+      items.push(...page.items)
+      if (page.has_more !== true) return { items }
+
+      const nextPageCursor = objectValue(page.next_page_cursor)
+      if (Object.keys(nextPageCursor).length > 0) {
+        const signature = JSON.stringify(nextPageCursor)
+        if (seenCursors.has(signature)) {
+          throw new ArkmePluginError('topic-page-contract-invalid', '主题分页游标没有向前推进', true, 502)
+        }
+        seenCursors.add(signature)
+        pageCursor = nextPageCursor
+        continue
+      }
+
+      const nextOffset = Math.trunc(numberValue(page.next_offset))
+      if (nextOffset <= offset) {
+        throw new ArkmePluginError('topic-page-contract-invalid', '主题分页偏移没有向前推进', true, 502)
+      }
+      offset = nextOffset
     }
   }
 

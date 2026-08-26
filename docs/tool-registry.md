@@ -29,6 +29,10 @@ Business and hybrid profiles expose `arkme_extension_preview_add`, `arkme_extens
 
 Business and hybrid profiles expose `arkme_group_member_candidates` and `arkme_group_member_add`. Candidate discovery accepts only an account-bound group `source_ref`, excludes current members and returns signed, opaque `candidate_ref` values for people from the signed-in user's private chats. The write Tool accepts 1-20 unchanged candidate refs, requires explicit-user-write confirmation, reports each outcome independently, and sends private invitation links when the group's join policy requires approval. Raw user IDs are never exposed to the model.
 
+## Topic batch Tools
+
+Business and hybrid profiles expose `arkme_topics_create` for root topics and `arkme_topic_children_create` for direct children. Both accept 1-20 final titles, require a later conversational confirmation, derive stable per-call mutation identities, and return one owner receipt per title. Child creation additionally requires an unchanged topic `source_ref` from `arkme_sources_list`; title matching is never used to guess the parent. The Record owner executes each batch sequentially. Only the same stable mutation identity can produce an idempotent success; an active same-name topic with a different identity is left untouched and reported as a failed item. The owner verifies child placement after writing and cleans up only a topic newly accepted by the failed item. `outcome_unknown` is never presented as success or retried automatically.
+
 ## Adding a tool
 
 1. Add one module under `src/tools/business`, `src/tools/atomic` or `src/tools/system`.

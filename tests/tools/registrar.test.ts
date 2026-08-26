@@ -101,6 +101,8 @@ describe('registerArkmeTools', () => {
       'arkme_record_calendar_read',
       'arkme_images_list',
       'arkme_record_create',
+      'arkme_topics_create',
+      'arkme_topic_children_create',
       'arkme_bots_list',
       'arkme_bot_create',
       'arkme_bot_openclaw_connect',
@@ -181,6 +183,45 @@ describe('registerArkmeTools', () => {
     expect((await disabled.systemPrompt.assemble()).sections.some(
       section => section.name === 'tool:arkme-conversational-confirmation',
     )).toBe(false)
+  })
+
+  it('requires a later direct confirmation before creating a topic batch', async () => {
+    const ctx = await setup()
+    const createTopicsBatch = vi.fn(async () => ({
+      items: [{ title: '原则', disposition: 'accepted' as const, succeeded: true }],
+      succeededCount: 1,
+      failedCount: 0,
+    }))
+    await mountArkmeTools(ctx, 'business', { ...ports, createTopicsBatch } as unknown as ArkmeToolPorts)
+    const events: Array<Record<string, unknown>> = [
+      { seq: 0, type: 'turn/start', data: { turn: 1 } },
+      { seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: '创建一个叫原则的顶层主题' }], source: { kind: 'user' } } },
+      { seq: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'prepare', name: 'arkme_topics_create', arguments: '{}' } },
+    ]
+    const agent = {
+      id: SessionId('session-topic-create'),
+      session: { get events() { return events } },
+    } as unknown as Agent
+    const signal = new AbortController().signal
+    const args = { titles: ['原则'] }
+
+    const prepared = await ctx.tools.execute({
+      callId: CallId('prepare'), name: 'arkme_topics_create', arguments: args, agent, signal,
+    })
+    expect(prepared.isError).toBe(false)
+    expect(prepared.isError ? '' : prepared.value).toContain('confirmation_required')
+    expect(createTopicsBatch).not.toHaveBeenCalled()
+
+    events.push(
+      { seq: 3, type: 'turn/end', data: { turn: 1, reason: 'completed' } },
+      { seq: 4, type: 'turn/start', data: { turn: 2 } },
+      { seq: 5, type: 'user/message', data: { content: [{ type: 'text', text: '确认创建' }], source: { kind: 'user' } } },
+    )
+    const confirmed = await ctx.tools.execute({
+      callId: CallId('confirmed'), name: 'arkme_topics_create', arguments: args, agent, signal,
+    })
+    expect(confirmed.isError).toBe(false)
+    expect(createTopicsBatch).toHaveBeenCalledOnce()
   })
 
   it('requires a later direct confirmation before sending a World voiceprint invite', async () => {

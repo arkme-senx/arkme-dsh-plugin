@@ -26,7 +26,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
     },
     features: capabilities.features,
     availableMethods: [
-      'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
+      'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'createTopicsBatch', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
     ],
     limits: capabilities.limits,
     securityRules: [

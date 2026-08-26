@@ -34,7 +34,7 @@ describe('Arkme SDK', () => {
       })
     })
     const sdk = createArkmeSdk({ fetchImpl: fetchImpl as typeof fetch })
-    const mutationId = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+    const mutationId = 'CCFE56CA-4D7A-4C95-B383-FCE1C65A635B'
     const asset = await sdk.upload(new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' }), { fileName: 'a.png' })
 
     await sdk.publishWorldText({ clientMutationId: mutationId, textContent: '文字正文' })
@@ -193,6 +193,42 @@ describe('Arkme SDK', () => {
     await expect(sdk.createBot({
       name: '错误头像', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
     })).rejects.toThrow('file_asset reference')
+  })
+
+  it('creates topic batches with an explicit stable mutation identity', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'topic.batch-create') return success({
+          parentSourceRef: request.params?.parentSourceRef,
+          items: [
+            { title: '原则', disposition: 'accepted', succeeded: true },
+            { title: '复盘', disposition: 'idempotent', succeeded: true },
+          ],
+          succeededCount: 2,
+          failedCount: 0,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+    const mutationId = 'CCFE56CA-4D7A-4C95-B383-FCE1C65A635B'
+
+    await expect(sdk.createTopicsBatch([' 原则 ', '复盘'], {
+      parentSourceRef: 'arkme-source-v1.parent', clientMutationId: mutationId,
+    })).resolves.toMatchObject({ succeededCount: 2, failedCount: 0 })
+    expect(calls).toEqual([{
+      operation: 'topic.batch-create',
+      params: {
+        titles: ['原则', '复盘'],
+        parentSourceRef: 'arkme-source-v1.parent',
+        clientMutationId: mutationId.toLowerCase(),
+      },
+    }])
+    await expect(sdk.createTopicsBatch(['原则', ' 原则 ']))
+      .rejects.toThrow('titles must be unique')
+    expect(calls).toHaveLength(1)
   })
 
   it('manages extension previews through same-origin Host operations', async () => {

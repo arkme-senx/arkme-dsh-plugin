@@ -703,7 +703,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
     const dayStamp = new Date(2023, 10, 15).getTime()
-    const service = new ArkmeService(config, sessions, state, async input => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
         return json({ code: 500, message: '说话人服务暂不可用' })
@@ -818,6 +818,7 @@ describe('ArkmeService', () => {
         imageRead: true,
         recordCalendar: true,
         messageReadReceipts: true,
+        topicBatchCreate: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,
@@ -1689,7 +1690,7 @@ describe('ArkmeService', () => {
     expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
   })
 
-  it('creates root topics and binds child topics without exposing server topic UIDs', async () => {
+  it('preserves single-root creation and uses the batch owner for child placement without exposing server topic UIDs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -1709,9 +1710,21 @@ describe('ArkmeService', () => {
       }
       if (url.endsWith('/api/v1/topics/create')) {
         createCount += 1
-        return json({ code: 0, data: { topic_uid: `topic-created-${createCount}`, status: 1 } })
+        return json({ code: 0, data: { topic_uid: `topic-created-${createCount}`, title: body.title, status: 1 } })
       }
-      if (url.endsWith('/api/v1/topics/hierarchy/bind')) return json({ code: 0, data: { relation: { status: 1 } } })
+      if (url.endsWith('/api/v1/topics/children/batch-create')) {
+        createCount += 1
+        const requested = (body.items as Array<{ topic_uid: string; title: string }>)[0]!
+        return json({ code: 0, data: { items: [{
+          requested_topic_uid: requested.topic_uid,
+          topic_uid: requested.topic_uid,
+          title: requested.title,
+          parent_topic_uid: 'topic-parent',
+          status: 1,
+          disposition: 'accepted',
+          succeeded: true,
+        }], succeeded_count: 1, failed_count: 0 } })
+      }
       throw new Error(`unexpected ${url}`)
     })
 
@@ -1726,16 +1739,15 @@ describe('ArkmeService', () => {
     })
     expect(root.source.sourceRef).not.toContain('topic-created-1')
     expect(child.source.sourceRef).not.toContain('topic-created-2')
-    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/create')).map(call => call.body)).toEqual([
-      { title: '旅行', show_in_home: true, privacy_state: 1, extra: { source: 'dsh-arkme' } },
-      { title: '路线', show_in_home: true, privacy_state: 1, extra: { source: 'dsh-arkme' } },
-    ])
-    expect(calls.find(call => call.url.endsWith('/api/v1/topics/hierarchy/bind'))?.body).toEqual({
-      parent_topic_uid: 'topic-parent', child_topic_uid: 'topic-created-2',
+    expect(calls.find(call => call.url.endsWith('/api/v1/topics/create'))?.body).toMatchObject({
+      title: '旅行', show_in_home: true, privacy_state: 1,
+    })
+    expect(calls.find(call => call.url.endsWith('/api/v1/topics/children/batch-create'))?.body).toMatchObject({
+      parent_topic_uid: 'topic-parent', items: [{ title: '路线' }],
     })
   })
 
-  it('rolls back a newly created topic when child hierarchy binding fails', async () => {
+  it('surfaces the owner-confirmed cleanup when child placement fails', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -1749,9 +1761,15 @@ describe('ArkmeService', () => {
       }] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
-      if (url.endsWith('/api/v1/topics/create')) return json({ code: 0, data: { topic_uid: 'topic-created', status: 1 } })
-      if (url.endsWith('/api/v1/topics/hierarchy/bind')) throw new Error('bind unavailable')
-      if (url.endsWith('/api/v1/topics/update')) return json({ code: 0, data: { topic_uid: 'topic-created', updated: true } })
+      if (url.endsWith('/api/v1/topics/children/batch-create')) {
+        const requested = (body.items as Array<{ topic_uid: string; title: string }>)[0]!
+        return json({ code: 0, data: { items: [{
+          requested_topic_uid: requested.topic_uid, topic_uid: requested.topic_uid, title: requested.title,
+          parent_topic_uid: 'topic-parent',
+          status: 2, disposition: 'failed_cleaned', succeeded: false,
+          error_code: 'topic_depth_exceeded', error_message: 'topic hierarchy depth exceeded',
+        }], succeeded_count: 0, failed_count: 1 } })
+      }
       throw new Error(`unexpected ${url}`)
     })
 
@@ -1760,54 +1778,52 @@ describe('ArkmeService', () => {
       code: 'topic-hierarchy-bind-failed',
       retryable: true,
     })
-    expect(calls.find(call => call.url.endsWith('/api/v1/topics/update'))?.body).toEqual({
-      topic_uid: 'topic-created',
-      title: '未绑定子主题',
-      show_in_home: true,
-      privacy_state: 1,
-      status: 2,
-      extra: { source: 'dsh-arkme' },
-    })
+    expect(calls.filter(call => call.url.endsWith('/api/v1/topics/children/batch-create'))).toHaveLength(1)
   })
 
-  it('returns an explicit partial result only when hierarchy binding and rollback both fail', async () => {
+  it('fails closed when the owner cannot confirm the child placement outcome', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
-    const service = new ArkmeService(config, sessions, state, async input => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '工作', update_at: 100 },
       }] } })
       if (url.endsWith('/api/v1/topics/hierarchy/relations/list')) return json({ code: 0, data: { relations: [] } })
       if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
-      if (url.endsWith('/api/v1/topics/create')) return json({ code: 0, data: { topic_uid: 'topic-created', status: 1 } })
-      if (url.endsWith('/api/v1/topics/hierarchy/bind')) throw new Error('bind unavailable')
-      if (url.endsWith('/api/v1/topics/update')) throw new Error('rollback unavailable')
+      if (url.endsWith('/api/v1/topics/children/batch-create')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { items: Array<{ topic_uid: string; title: string }> }
+        const requested = body.items[0]!
+        return json({ code: 0, data: { items: [{
+          requested_topic_uid: requested.topic_uid, topic_uid: requested.topic_uid, title: requested.title,
+          parent_topic_uid: 'topic-parent',
+          status: 1, disposition: 'outcome_unknown', succeeded: false,
+          error_code: 'topic_placement_unknown', error_message: 'owner read unavailable',
+        }], succeeded_count: 0, failed_count: 1 } })
+      }
       throw new Error(`unexpected ${url}`)
     })
 
     const parent = (await service.listSources('send_to_self')).items.find(item => item.kind === 'topic')!
-    const result = await service.createTopic('未绑定子主题', parent.sourceRef)
-
-    expect(result.warning).toContain('自动清理均未完成')
-    expect(result.source).toMatchObject({ kind: 'topic', displayName: '未绑定子主题' })
-    expect(result.source).not.toHaveProperty('parentSourceRef')
+    await expect(service.createTopic('未绑定子主题', parent.sourceRef)).rejects.toMatchObject({
+      code: 'topic-create-outcome-unknown',
+      retryable: false,
+    })
   })
 
-  it('defers hierarchy depth authority to bind when the relation snapshot contains hidden ancestors', async () => {
+  it('defers hierarchy depth authority to the unified owner when the directory snapshot has hidden ancestors', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
-    let createCalls = 0
-    let bindCalls = 0
+    let ownerCalls = 0
     let relationListCalls = 0
     const relations = [
       ['level-1', 'level-2'], ['level-2', 'level-3'], ['level-3', 'level-4'], ['level-4', 'topic-parent'],
     ].map(([parent, child]) => ({
       parent_topic_uid: parent, child_topic_uid: child, rel_kind: 1, status: 1,
     }))
-    const service = new ArkmeService(config, sessions, state, async input => {
+    const service = new ArkmeService(config, sessions, state, async (input, init) => {
       const url = String(input)
       if (url.endsWith('/api/v1/topics/display/list')) return json({ code: 0, data: { items: [{
         topic_core: { topic_uid: 'topic-parent', title: '第五级', update_at: 100 },
@@ -1817,13 +1833,15 @@ describe('ArkmeService', () => {
         return json({ code: 0, data: { relations } })
       }
       if (url.endsWith('/api/v1/records/uncategorized/summary')) throw new Error('summary unavailable')
-      if (url.endsWith('/api/v1/topics/create')) {
-        createCalls += 1
-        return json({ code: 0, data: { topic_uid: 'topic-created', status: 1 } })
-      }
-      if (url.endsWith('/api/v1/topics/hierarchy/bind')) {
-        bindCalls += 1
-        return json({ code: 0, data: { relation: { status: 1 } } })
+      if (url.endsWith('/api/v1/topics/children/batch-create')) {
+        ownerCalls += 1
+        const body = JSON.parse(String(init?.body ?? '{}')) as { items: Array<{ topic_uid: string }> }
+        return json({ code: 0, data: { items: [{
+          requested_topic_uid: body.items[0]!.topic_uid,
+          topic_uid: body.items[0]!.topic_uid, title: '可创建子主题', status: 1,
+          parent_topic_uid: 'topic-parent',
+          disposition: 'accepted', succeeded: true,
+        }], succeeded_count: 1, failed_count: 0 } })
       }
       throw new Error(`unexpected ${url}`)
     })
@@ -1832,8 +1850,7 @@ describe('ArkmeService', () => {
     await expect(service.createTopic('可创建子主题', parent.sourceRef)).resolves.toMatchObject({
       source: { displayName: '可创建子主题', parentSourceRef: parent.sourceRef },
     })
-    expect(createCalls).toBe(1)
-    expect(bindCalls).toBe(1)
+    expect(ownerCalls).toBe(1)
     expect(relationListCalls).toBe(1)
   })
 
@@ -1862,7 +1879,9 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
-    const fetchImpl = vi.fn<typeof fetch>(async () => json({ code: 0, data: { items: [] } }))
+    const fetchImpl = vi.fn<typeof fetch>(async input => String(input).endsWith('/api/v1/topics/hierarchy/relations/list')
+      ? json({ code: 0, data: { relations: [] } })
+      : json({ code: 0, data: { items: [] } }))
     const service = new ArkmeService(config, sessions, state, fetchImpl)
     const source = (await service.listSources('send_to_self')).items[0]!
     const callsBeforeAccountSwitch = fetchImpl.mock.calls.length

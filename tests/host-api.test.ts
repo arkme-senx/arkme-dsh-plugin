@@ -22,6 +22,8 @@ function fakeService() {
     searchContact: vi.fn(async (identifier: string) => ({ identifier })),
     addContact: vi.fn(async (_contactRef: string, options: unknown) => options),
     createGroup: vi.fn(async (title: string, clientMutationId: string) => ({ title, clientMutationId })),
+    createTopic: vi.fn(async (title: string, parentSourceRef?: string) => ({ title, parentSourceRef })),
+    createTopicsBatch: vi.fn(async (titles: string[], clientMutationId: string, parentSourceRef?: string) => ({ titles, clientMutationId, parentSourceRef })),
     createBotSummary: vi.fn(async (input: unknown) => input),
     aiVideoList: vi.fn(async (input: unknown) => input),
     queryFileAssets: vi.fn(async (input: unknown) => input),
@@ -369,6 +371,39 @@ describe('outgoing call Host API dispatch', () => {
     await expect(dispatchArkmeHostOperation(service as never, 'bots.create', {
       name: '错误头像 Bot', provider: 'openclaw', avatar: 'https://untrusted.example/avatar.png',
     })).rejects.toMatchObject({ code: 'bot-avatar-invalid' })
+  })
+
+  it('never downgrades an invalid child-topic parent into a root batch', async () => {
+    const service = fakeService()
+    const mutationId = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+
+    await dispatchArkmeHostOperation(service as never, 'topic.batch-create', {
+      titles: ['原则'], clientMutationId: mutationId, parentSourceRef: 'arkme-source-v1.parent',
+    })
+    expect(service.createTopicsBatch).toHaveBeenCalledWith(
+      ['原则'], mutationId, 'arkme-source-v1.parent', undefined,
+    )
+
+    await dispatchArkmeHostOperation(service as never, 'topic.batch-create', {
+      titles: ['原则'], clientMutationId: mutationId, parentSourceRef: '',
+    })
+    await expect(dispatchArkmeHostOperation(service as never, 'topic.batch-create', {
+      titles: ['原则', 42], clientMutationId: mutationId,
+    })).rejects.toMatchObject({ code: 'string-list-param-invalid' })
+    expect(service.createTopicsBatch).toHaveBeenCalledTimes(2)
+    expect(service.createTopicsBatch.mock.calls[1]?.[2]).toBe('')
+  })
+
+  it('never downgrades an explicit empty single-topic parent into a root create', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'topic.create', {
+      title: '原则', parentSourceRef: '',
+    })
+    await dispatchArkmeHostOperation(service as never, 'topic.create', { title: '顶级主题' })
+
+    expect(service.createTopic).toHaveBeenNthCalledWith(1, '原则', '')
+    expect(service.createTopic).toHaveBeenNthCalledWith(2, '顶级主题', undefined)
   })
 
   it('rejects an unknown outgoing media type before calling the service', async () => {

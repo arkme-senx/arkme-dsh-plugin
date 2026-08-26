@@ -64,6 +64,7 @@ import type {
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
   ArkmeTimelinePage,
+  ArkmeTopicBatchCreateResult,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
   ArkmeWorldAuthorLabel,
@@ -191,6 +192,9 @@ export type {
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
+  ArkmeTopicBatchCreateItemResult,
+  ArkmeTopicBatchCreateResult,
+  ArkmeTopicBatchItemDisposition,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
   ArkmeForwardTranscriptSegment,
@@ -1042,6 +1046,29 @@ export class ArkmeSdk {
       directory,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    }, options.signal)
+  }
+
+  /** Create 1-20 root topics or direct children with stable per-item receipts. */
+  async createTopicsBatch(
+    titles: readonly string[],
+    options: { parentSourceRef?: string; clientMutationId?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeTopicBatchCreateResult> {
+    const normalizedTitles = titles.map(title => title.trim())
+    if (normalizedTitles.length === 0 || normalizedTitles.length > 20 || normalizedTitles.some(title => title === '' || Array.from(title).length > 100)) {
+      throw new TypeError('Arkme topic batch must contain 1-20 titles of at most 100 characters')
+    }
+    if (new Set(normalizedTitles).size !== normalizedTitles.length) {
+      throw new TypeError('Arkme topic batch titles must be unique')
+    }
+    const clientMutationId = (options.clientMutationId ?? crypto.randomUUID()).trim().toLowerCase()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(clientMutationId)) {
+      throw new TypeError('Arkme topic batch mutation id must be a UUID')
+    }
+    return await this.call<ArkmeTopicBatchCreateResult>('topic.batch-create', {
+      titles: normalizedTitles,
+      clientMutationId,
+      ...(options.parentSourceRef === undefined ? {} : { parentSourceRef: options.parentSourceRef }),
     }, options.signal)
   }
 

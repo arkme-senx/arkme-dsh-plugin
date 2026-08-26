@@ -188,6 +188,22 @@ function stringListParam(params: Record<string, unknown>, key: string): string[]
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+function requiredStringListParam(params: Record<string, unknown>, key: string): string[] {
+  const value = params[key]
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new ArkmePluginError('string-list-param-invalid', `${key}必须是字符串数组`, false, 400)
+  }
+  return value
+}
+
+function optionalOpaqueStringParam(params: Record<string, unknown>, key: string): string | undefined {
+  if (!(key in params) || params[key] === undefined) return undefined
+  if (typeof params[key] !== 'string') {
+    throw new ArkmePluginError('string-param-invalid', `${key}必须是字符串`, false, 400)
+  }
+  return params[key]
+}
+
 function optionalPositiveIntegerParam(params: Record<string, unknown>, key: string): number | undefined {
   const value = params[key]
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
@@ -851,7 +867,13 @@ export async function dispatchArkmeHostOperation(
     case 'dsh-beta-community.join': return await service.joinDSHBetaCommunity()
     case 'topic.create': return await service.createTopic(
       stringParam(params, 'title'),
-      stringParam(params, 'parentSourceRef') || undefined,
+      optionalOpaqueStringParam(params, 'parentSourceRef'),
+    )
+    case 'topic.batch-create': return await service.createTopicsBatch(
+      requiredStringListParam(params, 'titles'),
+      stringParam(params, 'clientMutationId'),
+      optionalOpaqueStringParam(params, 'parentSourceRef'),
+      requestSignal,
     )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
