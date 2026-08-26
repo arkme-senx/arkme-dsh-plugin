@@ -47,13 +47,16 @@ export function resolveArkmeEmojiPanelGeometry({ caret, editor, panelWidth, pane
   viewportHeight: number
 }): ArkmeEmojiPanelGeometry {
   const margin = 12
+  const arrowOffset = 10
   const maxLeft = Math.max(margin, viewportWidth - panelWidth - margin)
   const left = Math.max(margin, Math.min(editor.left, maxLeft))
-  const availableAbove = caret.top - margin
-  const availableBelow = viewportHeight - caret.bottom - margin
+  const availableAbove = editor.top - margin - arrowOffset
+  const availableBelow = viewportHeight - editor.bottom - margin - arrowOffset
   const placement = availableAbove < panelHeight && availableBelow > availableAbove ? 'below' : 'above'
   const maxTop = Math.max(margin, viewportHeight - panelHeight - margin)
-  const preferredTop = placement === 'above' ? caret.top - panelHeight : caret.bottom
+  const preferredTop = placement === 'above'
+    ? editor.top - arrowOffset - panelHeight
+    : editor.bottom + arrowOffset
   const top = Math.max(margin, Math.min(preferredTop, maxTop))
   const caretCenterX = (caret.left + caret.right) / 2
   const arrowCenterX = Math.max(18, Math.min(caretCenterX - left, panelWidth - 18))

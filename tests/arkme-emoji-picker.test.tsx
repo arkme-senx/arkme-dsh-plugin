@@ -61,8 +61,8 @@ describe('Arkme emoji composer', () => {
       editor, panelWidth: 476, panelHeight: 368, viewportWidth: 800, viewportHeight: 700,
     })
 
-    expect(first).toMatchObject({ placement: 'above', left: 40, top: 132, arrowCenterX: 81 })
-    expect(first.top + 368).toBeLessThanOrEqual(500)
+    expect(first).toMatchObject({ placement: 'above', left: 40, top: 52, arrowCenterX: 81 })
+    expect(first.top + 368 + 10).toBeLessThanOrEqual(editor.top)
     expect(typed).toMatchObject({ left: first.left, top: first.top, arrowCenterX: 261 })
   })
 
@@ -71,7 +71,7 @@ describe('Arkme emoji composer', () => {
       caret: { left: 80, top: 40, right: 82, bottom: 61, width: 2, height: 21 },
       editor: { left: 20, top: 20, right: 620, bottom: 120, width: 600, height: 100 },
       panelWidth: 476, panelHeight: 368, viewportWidth: 800, viewportHeight: 700,
-    })).toMatchObject({ placement: 'below', left: 20, top: 61, arrowCenterX: 61 })
+    })).toMatchObject({ placement: 'below', left: 20, top: 130, arrowCenterX: 61 })
   })
 
   it('opens the DSH-styled panel, supports continuous selection, and closes on scope change', () => {
