@@ -30,7 +30,7 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { ArkmeRecordingSurface } from './ArkmeRecordingSurface.js'
 import { ArkmeCallSurface } from './ArkmeCallSurface.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
-import { ArkmeAttachmentDraftTile, ArkmeMessageContent, ArkmeRichText } from './ArkmeRichContent.js'
+import { ArkmeAttachmentDraftTile, ArkmeMessageContent, ArkmeRecordDetailContent, ArkmeRichText } from './ArkmeRichContent.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
@@ -343,9 +343,10 @@ function arkmeTimelineDetailText(item: ArkmeTimelineItem, showOriginal: boolean,
 }
 
 export function ArkmeTimelineDetailDrawer({
-  item, showOriginal, onClose, onToggleOriginal,
+  item, sourceRef, showOriginal, onClose, onToggleOriginal,
 }: {
   item: ArkmeTimelineItem
+  sourceRef?: string | undefined
   showOriginal: boolean
   onClose: () => void
   onToggleOriginal: () => void
@@ -369,7 +370,9 @@ export function ArkmeTimelineDetailDrawer({
         </button>}
       {hasRichMedia
         ? <div style={styles.detailText} data-arkme-timeline-detail-rich-content>
-          <ArkmeMessageContent item={{ ...item, textContent: detailText }} />
+          {item.contentBlocks?.some(block => block.kind === 'audio') === true
+            ? <ArkmeRecordDetailContent item={item} sourceRef={sourceRef} showOriginal={showOriginal} />
+            : <ArkmeMessageContent item={{ ...item, textContent: detailText }} />}
         </div>
         : <p style={styles.detailText}><ArkmeRichText text={detailText} /></p>}
     </div>
@@ -2356,6 +2359,7 @@ export function ArkmeSurface({
                             setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
                           }}
                           onKeyDown={event => {
+                            if (event.target !== event.currentTarget) return
                             if (event.key !== 'Enter' && event.key !== ' ') return
                             event.preventDefault(); setDetailItemUid(item.itemUid); setShowOriginal(false); setDrawer('detail')
                           }}
@@ -2504,6 +2508,7 @@ export function ArkmeSurface({
         </>}
         {drawer === 'detail' && detailItem !== undefined && detailItem.forwardRecords === undefined && <ArkmeTimelineDetailDrawer
           item={detailItem}
+          sourceRef={source?.sourceRef}
           showOriginal={showOriginal}
           onClose={() => { setDrawer(undefined) }}
           onToggleOriginal={() => { setShowOriginal(value => !value) }}
