@@ -7,7 +7,8 @@ import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './out
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
   ArkmeBillingPaymentMethod, ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind,
-  ArkmeBotMentionInput, ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
+  ArkmeBotMentionInput, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
+  ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -420,6 +421,27 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   }
 }
 
+function favoriteStickerItemParam(params: Record<string, unknown>): ArkmeFavoriteStickerAddInput {
+  if (params.item === null || typeof params.item !== 'object' || Array.isArray(params.item)) {
+    throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
+  }
+  const item = params.item as Record<string, unknown>
+  return {
+    fileAssetUid: stringParam(item, 'fileAssetUid'),
+    fileName: stringParam(item, 'fileName'),
+    mimeType: stringParam(item, 'mimeType'),
+    size: Math.max(0, Math.trunc(numberParam(item, 'size', 0))),
+    fileKind: 1,
+    ...(item.isAnimated === true ? { isAnimated: true } : {}),
+  }
+}
+
+function favoriteStickerManageActionParam(params: Record<string, unknown>): ArkmeFavoriteStickerManageAction {
+  const action = stringParam(params, 'action')
+  if (action === 'move-to-front' || action === 'delete') return action
+  throw new ArkmePluginError('favorite-sticker-manage-invalid', '收藏表情管理操作无效', false, 400)
+}
+
 function worldPublishFileAssetsParam(params: Record<string, unknown>): ArkmeWorldPublishFileAsset[] {
   const rawAssets = Array.isArray(params.fileAssets) ? params.fileAssets : []
   if (rawAssets.length === 0 || rawAssets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES) {
@@ -563,6 +585,9 @@ export async function dispatchArkmeHostOperation(
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
     case 'auth.poll': return await service.pollWechatLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.begin': return await service.beginJiwoLogin()
+    case 'auth.app.poll': return await service.pollJiwoLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.cancel': return await service.cancelJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
@@ -1080,6 +1105,19 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
     )
+    case 'favorite-stickers.list': return await service.favoriteStickers()
+    case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
+    case 'favorite-stickers.send': return await service.sendFavoriteSticker(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'fileAssetUid'),
+      {
+        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+      },
+    )
+    case 'favorite-stickers.manage': return await service.manageFavoriteSticker(
+      stringParam(params, 'fileAssetUid'), favoriteStickerManageActionParam(params),
+    )
     case 'source.long-article.detail': return await service.longArticleDetail(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'itemUid'),
@@ -1234,6 +1272,10 @@ export async function dispatchArkmeHostOperation(
 	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
 		stringParam(params, 'shareRef'),
 	)
+	case 'extensions.share.resolve': {
+		const item = await requireExtensionManager(extensionManager).resolveSharedCatalogDetail(stringParam(params, 'shareRef'))
+		return (await enrichExtensionAuthors(service, [item]))[0]
+	}
     case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
       extensionId: stringParam(params, 'extensionId'),
     })

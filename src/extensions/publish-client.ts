@@ -330,6 +330,10 @@ export class ExtensionPublishClient {
 		return await this.post('/api/public/v1/extensions/share/detail', { share_ref: shareRef }, signal)
 	}
 
+	async resolveSharedCatalogTarget(shareRef: string, signal?: AbortSignal): Promise<{ extension_id: string }> {
+		return await this.post('/api/v1/extensions/share/resolve', { share_ref: shareRef }, signal)
+	}
+
   async list(input: {
     query?: string
     sort?: ArkmeExtensionCatalogSort

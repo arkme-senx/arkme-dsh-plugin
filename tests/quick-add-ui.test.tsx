@@ -22,6 +22,22 @@ describe('Arkme quick-add UI', () => {
     expect(markup).not.toContain('>添加联系人<')
   })
 
+  it('layers the menu above later sidebar rows without escaping the shell overlay', () => {
+    const button = renderToStaticMarkup(<ArkmeQuickAddButton
+      onContactAdd={vi.fn()}
+      onSourceCreated={vi.fn()}
+    />)
+    const menu = renderToStaticMarkup(<ArkmeQuickAddMenu
+      onContactAdd={vi.fn()}
+      onCreateGroup={vi.fn()}
+      onAddBot={vi.fn()}
+    />)
+
+    expect(button).toContain('position:relative;z-index:10')
+    expect(menu).toContain('position:absolute;z-index:1')
+    expect(quickAddSource).not.toContain('zIndex: 90')
+  })
+
   it('renders the desktop menu order and all three transplanted icon resources', () => {
     const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
       onContactAdd={vi.fn()}

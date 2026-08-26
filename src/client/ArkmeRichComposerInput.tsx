@@ -31,6 +31,17 @@ export interface ArkmeRichComposerHandle {
   readonly selectionEnd: number
   focus(options?: FocusOptions): void
   setSelectionRange(start: number, end: number): void
+  getCaretGeometry(): ArkmeComposerCaretGeometry | undefined
+  getEditorGeometry(): ArkmeComposerCaretGeometry | undefined
+}
+
+export interface ArkmeComposerCaretGeometry {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
 }
 
 export interface ArkmeRichComposerInputProps {
@@ -158,6 +169,29 @@ function setEditorSelection(root: HTMLElement, start: number, end: number): void
   selection.addRange(range)
 }
 
+function rectGeometry(rect: Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>): ArkmeComposerCaretGeometry {
+  return {
+    left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+    width: rect.width, height: rect.height,
+  }
+}
+
+function editorCaretGeometry(root: HTMLElement, offset: number): ArkmeComposerCaretGeometry {
+  const point = pointForSemanticOffset(root, offset)
+  const range = document.createRange()
+  range.setStart(point.node, point.offset)
+  range.collapse(true)
+  const rect = range.getClientRects().item(0) ?? range.getBoundingClientRect()
+  if (rect.width > 0 || rect.height > 0) return rectGeometry(rect)
+  const rootRect = root.getBoundingClientRect()
+  const computed = getComputedStyle(root)
+  const lineHeight = Number.parseFloat(computed.lineHeight) || Number.parseFloat(computed.fontSize) * 1.5 || 21
+  return {
+    left: rootRect.left, top: rootRect.top, right: rootRect.left + 2, bottom: rootRect.top + lineHeight,
+    width: 2, height: lineHeight,
+  }
+}
+
 function emojiAtomSemanticOffset(root: HTMLElement, target: EventTarget | null): number | undefined {
   if (!(target instanceof Element)) return undefined
   const atom = target.closest<HTMLElement>('[data-arkme-editable-emoji]')
@@ -253,6 +287,16 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       },
       focus(options?: FocusOptions) { editorRef.current?.focus(options) },
       setSelectionRange(start: number, end: number) { applySelection(start, end) },
+      getCaretGeometry() {
+        const root = editorRef.current
+        if (root === null) return undefined
+        selectionRef.current = editorSelection(root, selectionRef.current)
+        return editorCaretGeometry(root, selectionRef.current.end)
+      },
+      getEditorGeometry() {
+        const root = editorRef.current
+        return root === null ? undefined : rectGeometry(root.getBoundingClientRect())
+      },
     }))
 
     useLayoutEffect(() => {

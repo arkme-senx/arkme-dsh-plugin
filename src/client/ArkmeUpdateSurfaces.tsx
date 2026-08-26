@@ -65,7 +65,7 @@ function percentage(downloaded: number | undefined, total: number | undefined): 
   return Math.max(0, Math.min(100, Math.round((downloaded ?? 0) / total * 100)))
 }
 
-function pluginProgress(phase: ArkmePluginUpdateInstallPhase | undefined, busy: boolean): number | undefined {
+function pluginProgress(phase: ArkmePluginUpdateInstallPhase | undefined): number | undefined {
   switch (phase) {
     case 'preparing': return 12
     case 'downloading': return 36
@@ -73,7 +73,7 @@ function pluginProgress(phase: ArkmePluginUpdateInstallPhase | undefined, busy: 
     case 'installing': return 78
     case 'restarting': return 94
     case 'succeeded': return 100
-    default: return busy ? 8 : undefined
+    default: return undefined
   }
 }
 
@@ -148,7 +148,9 @@ function pluginItem(snapshot: ArkmePluginUpdateStoreSnapshot): ArkmeUpdateItem |
   const install = snapshot.install
   if (status === undefined && install === undefined) return undefined
   const active = install !== undefined && ACTIVE_PLUGIN_PHASES.has(install.phase)
-  const activeDisplay = active || (snapshot.busy && status?.checking !== true)
+  // A status refresh/acknowledgement is not an install. In particular, a slow
+  // update check must never leave the global UI looking like an 8% install.
+  const activeDisplay = active
   const ready = install?.phase === 'succeeded'
   const failed = install?.phase === 'failed' || install?.phase === 'rolled-back' || snapshot.installError.trim() !== ''
   const available = status?.availability === 'available' && !activeDisplay && !ready && !failed
@@ -156,7 +158,7 @@ function pluginItem(snapshot: ArkmePluginUpdateStoreSnapshot): ArkmeUpdateItem |
   const latestVersion = versionLabel(status?.latestVersion ?? install?.targetVersion)
   const error = snapshot.installError.trim() || (failed ? install?.message : undefined)
   const installBlockedReason = status === undefined ? undefined : blockedReason(status)
-  const progress = pluginProgress(install?.phase, snapshot.busy)
+  const progress = pluginProgress(install?.phase)
   return {
     target: 'plugin',
     instanceKey: `plugin:${install?.jobId ?? latestVersion}`,

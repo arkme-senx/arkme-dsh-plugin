@@ -25,6 +25,7 @@ export interface ArkmeClientConfig {
   captchaId: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
+  jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
   shareWebsite: string
@@ -1364,6 +1365,8 @@ export interface ArkmeContentBlock {
   size: number
   durationSec?: number
   sortOrder: number
+  /** Backend media render role. 3 means a standalone chat sticker. */
+  renderRole?: 1 | 3
 }
 
 export interface ArkmeUploadedAsset {
@@ -1373,6 +1376,35 @@ export interface ArkmeUploadedAsset {
   size: number
   fileKind: 1 | 2 | 3 | 4
 }
+
+export interface ArkmeFavoriteSticker {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+  isAnimated: boolean
+  isAvailable: boolean
+  mediaRef?: string
+  unavailableReason?: string
+}
+
+export interface ArkmeFavoriteStickerList {
+  items: ArkmeFavoriteSticker[]
+  itemCount: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeFavoriteStickerAddInput {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+  isAnimated?: boolean
+}
+
+export type ArkmeFavoriteStickerManageAction = 'move-to-front' | 'delete'
 
 export interface ArkmeRichSendInput {
   title?: string
@@ -2301,6 +2333,9 @@ export type ArkmePluginOperation =
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
+  | 'auth.app.begin'
+  | 'auth.app.poll'
+  | 'auth.app.cancel'
   | 'auth.test.login'
   | 'auth.phone.send'
   | 'auth.phone.verify'
@@ -2390,6 +2425,10 @@ export type ArkmePluginOperation =
   | 'chat.private.open'
   | 'chat.member.private.open'
   | 'source.send-rich'
+  | 'favorite-stickers.list'
+  | 'favorite-stickers.add'
+  | 'favorite-stickers.send'
+  | 'favorite-stickers.manage'
   | 'source.long-article.detail'
   | 'source.long-article.update'
   | 'source.long-article.draft.get'
@@ -2413,6 +2452,7 @@ export type ArkmePluginOperation =
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'
+	| 'extensions.share.resolve'
   | 'extensions.installed-list'
   | 'extensions.enabled-state'
   | 'extensions.persistent.client-state'

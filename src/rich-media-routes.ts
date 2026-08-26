@@ -93,11 +93,16 @@ export function createArkmeUploadHandler(service: ArkmeService, options: ArkmeRi
 
 export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRichMediaRouteOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => { controller.abort(new Error('媒体读取超时')) }, 2_000)
+    const abortOnClose = () => { controller.abort(new Error('媒体请求已取消')) }
+    res.once('close', abortOnClose)
     try {
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new ArkmePluginError('method-not-allowed', '只允许 GET 或 HEAD 请求', false, 405)
       assertLocalRequest(req, options)
       const ref = new URL(req.url ?? '/', `http://127.0.0.1:${String(options.expectedPort)}`).searchParams.get('ref') ?? ''
-      const { response, descriptor } = await service.fetchMedia(ref, headerText(req, 'range') || undefined)
+      const { response, descriptor } = await service.fetchMedia(ref, headerText(req, 'range') || undefined, controller.signal)
+      clearTimeout(timeout)
       const contentType = response.headers.get('content-type') ?? descriptor.mimeType
       const cacheableImage = contentType.toLowerCase().startsWith('image/') && response.status === 200
       const headers: Record<string, string> = {
@@ -121,6 +126,9 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
         res.writeHead(known.httpStatus, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(encoded), 'Cache-Control': 'no-store' })
         res.end(encoded)
       } else res.destroy(error instanceof Error ? error : undefined)
+    } finally {
+      clearTimeout(timeout)
+      res.removeListener('close', abortOnClose)
     }
   }
 }

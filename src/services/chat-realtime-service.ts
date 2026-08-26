@@ -199,6 +199,7 @@ export class ChatRealtimeService {
   private async reconcileChatNotificationBaseline(connectionGeneration: number): Promise<void> {
     try {
       const session = await this.runtime.requireSession()
+      this.notificationBaselineSequences.clear()
       const sequences = new Map<string, number>()
       let cursor: string | undefined
       for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {

@@ -33,7 +33,7 @@ import {
 import { AiVideoService } from './services/ai-video-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
-import { AuthService } from './services/auth-service.js'
+import { AuthService, jiwoScanLoginAvailable } from './services/auth-service.js'
 import { BotService, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { CalendarService } from './services/calendar-service.js'
 import { CallHistoryService } from './services/call-history-service.js'
@@ -135,7 +135,7 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeDirectTextSendResult,
-  ArkmeFileAssetDisplayItem,
+  ArkmeFileAssetDisplayItem, ArkmeFavoriteStickerList, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
   ArkmeGroupActionResult,
   ArkmeGroupAiPolishMutationResult,
   ArkmeGroupAiPolishNotice,
@@ -487,6 +487,7 @@ export class ArkmeService {
       captchaId: this.config.geetestCaptchaId,
       environment: this.config.environment,
       testLoginEnabled: this.config.environment === 'test',
+      jiwoScanLoginEnabled: jiwoScanLoginAvailable(this.config),
       callAssetBasePath: `${this.config.routePath}/call`,
       voiceprintEnrollmentPath: `${this.config.routePath}/voiceprint/enroll`,
       shareWebsite: this.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE,
@@ -1164,14 +1165,12 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceText(sourceRef, textContent, options)
   }
-
   async retryGroupAiPolish(
     retryRef: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceSendResult> {
     return await this.aiPolish.retryGroupAiPolish(retryRef, options)
   }
-
   async sendSourceRich(
     sourceRef: string,
     input: ArkmeRichSendInput,
@@ -1179,11 +1178,13 @@ export class ArkmeService {
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
-
+  async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
+  async addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.addFavoriteSticker(item, signal) }
+  async sendFavoriteSticker(sourceRef: string, fileAssetUid: string, options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.sendFavoriteSticker(sourceRef, fileAssetUid, options) }
+  async manageFavoriteSticker(fileAssetUid: string, action: ArkmeFavoriteStickerManageAction, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.manageFavoriteSticker(fileAssetUid, action, signal) }
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
     return await this.chat.longArticleDetail(sourceRef, itemUid, signal)
   }
-
   async updateLongArticle(
     sourceRef: string,
     itemUid: string,
@@ -1214,8 +1215,9 @@ export class ArkmeService {
   async fetchMedia(
     mediaRef: string,
     range?: string,
+    signal?: AbortSignal,
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
-    return await this.chat.fetchMedia(mediaRef, range)
+    return await this.chat.fetchMedia(mediaRef, range, signal)
   }
 
   async sendDirectText(
@@ -1298,13 +1300,11 @@ export class ArkmeService {
     return await this.media.readImage(imageRef, options)
   }
 
-  async beginWechatLogin(): Promise<ArkmeAuthSnapshot> {
-    return await this.auth.beginWechatLogin()
-  }
-
-  async pollWechatLogin(attemptId: string): Promise<ArkmeAuthSnapshot> {
-    return await this.auth.pollWechatLogin(attemptId)
-  }
+  async beginWechatLogin(): Promise<ArkmeAuthSnapshot> { return await this.auth.beginWechatLogin() }
+  async pollWechatLogin(attemptId: string): Promise<ArkmeAuthSnapshot> { return await this.auth.pollWechatLogin(attemptId) }
+  async beginJiwoLogin(): Promise<ArkmeAuthSnapshot> { return await this.auth.beginJiwoLogin() }
+  async pollJiwoLogin(attemptId: string): Promise<ArkmeAuthSnapshot> { return await this.auth.pollJiwoLogin(attemptId) }
+  async cancelJiwoLogin(attemptId: string): Promise<{ canceled: true }> { return await this.auth.cancelJiwoLogin(attemptId) }
 
   async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {
     return await this.auth.testLogin(userId)

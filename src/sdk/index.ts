@@ -27,6 +27,9 @@ import type {
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeConversationMemberList,
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
@@ -138,6 +141,10 @@ export type {
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteSticker,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeContentKind,
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
@@ -740,6 +747,14 @@ export class ArkmeSdk {
 		return await this.call<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef: normalized }, signal)
 	}
 
+	async extensionShareCatalogDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+		const normalized = shareRef.trim()
+		if (!/^extshare_[0-9a-f]{32}$/.test(normalized)) {
+			throw new TypeError('Arkme extension share reference is invalid')
+		}
+		return await this.call<ArkmeExtensionCatalogItem>('extensions.share.resolve', { shareRef: normalized }, signal)
+	}
+
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
   async readImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {
     if (imageRef.trim() === '') throw new TypeError('Arkme image reference must not be empty')
@@ -1237,6 +1252,41 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
     }, options.signal)
+  }
+
+  async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> {
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
+  }
+
+  async addFavoriteSticker(
+    item: ArkmeFavoriteStickerAddInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (item.fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.add', { item }, signal)
+  }
+
+  async sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    if (sourceRef.trim() === '' || fileAssetUid.trim() === '') throw new TypeError('Arkme sticker destination and asset must not be empty')
+    return await this.call<ArkmeSourceSendResult>('favorite-stickers.send', {
+      sourceRef,
+      fileAssetUid,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.manage', { fileAssetUid, action }, signal)
   }
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {

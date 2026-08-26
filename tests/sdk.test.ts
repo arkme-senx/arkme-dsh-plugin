@@ -18,6 +18,27 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('manages account-scoped favorite stickers through the public typed SDK', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({ items: [], itemCount: 0, updatedAtMillis: 1 })
+      },
+    })
+
+    const item = { fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1 as const }
+    await expect(sdk.addFavoriteSticker(item)).resolves.toMatchObject({ itemCount: 0 })
+    await expect(sdk.manageFavoriteSticker('asset-12345678', 'move-to-front')).resolves.toMatchObject({ itemCount: 0 })
+    expect(calls).toEqual([
+      { operation: 'favorite-stickers.add', params: { item } },
+      { operation: 'favorite-stickers.manage', params: { fileAssetUid: 'asset-12345678', action: 'move-to-front' } },
+    ])
+    await expect(sdk.addFavoriteSticker({ ...item, fileAssetUid: ' ' })).rejects.toThrow(/must not be empty/)
+    await expect(sdk.manageFavoriteSticker(' ', 'delete')).rejects.toThrow(/must not be empty/)
+  })
+
   it('uploads World images as raw files and keeps text and file-asset publish operations separate', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -666,6 +687,9 @@ describe('Arkme SDK', () => {
 				rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
 			})
 		}
+		if (request.operation === 'extensions.share.resolve') {
+			return success({ extension_id: 'ext-public-1', name: '天气', description: '天气扩展', visibility: 'public' })
+		}
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -693,6 +717,9 @@ describe('Arkme SDK', () => {
 		await expect(sdk.extensionShareDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
 			name: '天气', share_scope: 'link_readonly',
 		})
+		await expect(sdk.extensionShareCatalogDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
+			extension_id: 'ext-public-1', name: '天气', visibility: 'public',
+		})
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
       { operation: 'extensions.mine.publish', params: {
@@ -712,6 +739,9 @@ describe('Arkme SDK', () => {
 			extensionId: 'ext-1', clientMutationId: '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8',
 		} },
 		{ operation: 'extensions.share.detail', params: {
+			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
+		} },
+		{ operation: 'extensions.share.resolve', params: {
 			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
 		} },
     ])

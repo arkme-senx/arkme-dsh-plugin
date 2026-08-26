@@ -186,6 +186,16 @@ describe('Bundle v2 publish client', () => {
 		}, undefined)
 	})
 
+	it('resolves a public share target through the authenticated transport', async () => {
+		const post = vi.fn(async () => ({ extension_id: 'ext-1' }))
+		const client = new ExtensionPublishClient(post)
+		await expect(client.resolveSharedCatalogTarget('extshare_0123456789abcdef0123456789abcdef'))
+			.resolves.toEqual({ extension_id: 'ext-1' })
+		expect(post).toHaveBeenCalledWith('/api/v1/extensions/share/resolve', {
+			share_ref: 'extshare_0123456789abcdef0123456789abcdef',
+		}, undefined)
+	})
+
   it('marks only upload-pending completion conflicts as retryable', async () => {
     for (const message of ['制品尚未上传完成（服务错误码 40901）', '源码尚未上传完成（服务错误码 40901）']) {
       const client = new ExtensionPublishClient(async (): Promise<never> => {

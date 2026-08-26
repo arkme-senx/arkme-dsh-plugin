@@ -167,6 +167,18 @@ describe('Arkme rich content presentation', () => {
     expect(html).not.toContain('暂不支持的非文本内容')
   })
 
+  it('renders standalone favorite stickers without forcing them into the media grid', () => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'sticker-1', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+      title: '', textContent: '', contentBlocks: [{
+        kind: 'image', mediaRef: 'sticker-ref', fileAssetUid: 'asset-12345678', fileName: 'cat.gif',
+        mimeType: 'image/gif', size: 1, sortOrder: 0, renderRole: 3,
+      }],
+    }} />)
+    expect(html).toContain('data-arkme-chat-sticker="true"')
+    expect(html).not.toContain('data-arkme-media-count=')
+  })
+
   it('collapses desktop long text to five lines but leaves emoji-only text expanded', () => {
     const longHtml = renderToStaticMarkup(<ArkmeMessageContent item={{
       itemUid: 'long', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,

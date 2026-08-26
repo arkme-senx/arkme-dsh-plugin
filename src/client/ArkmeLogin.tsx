@@ -4,7 +4,7 @@ import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
 } from './arkme-login-locales.js'
 
-export type ArkmeLoginMode = 'wechat' | 'phone' | 'test'
+export type ArkmeLoginMode = 'jiwo' | 'wechat' | 'phone' | 'test'
 
 export interface ArkmeLoginProps {
   t?: ArkmeLoginTranslate
@@ -18,6 +18,7 @@ export interface ArkmeLoginProps {
   smsCode: string
   smsCountdown: number
   testLoginEnabled: boolean
+  jiwoScanLoginEnabled: boolean
   testUserId: string
   qrDataUrl: string
   onModeChange: (mode: ArkmeLoginMode) => void
@@ -29,6 +30,7 @@ export interface ArkmeLoginProps {
   onVerifyCode: () => void
   onTestLogin: () => void
   onWechatLogin: () => void
+  onJiwoLogin: () => void
   onCancelBinding: () => void
 }
 
@@ -440,6 +442,7 @@ const loginStyles = `
   .dsh-arkme-login-tabs-wrap { justify-content: flex-start; margin-top: 28px; }
   .dsh-arkme-login-tabs { width: 232px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 3px; border-radius: 11px; background: var(--arkme-login-subtle); }
   .dsh-arkme-login-tabs:has(.dsh-arkme-login-tab:nth-child(3)) { width: 330px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dsh-arkme-login-tabs:has(.dsh-arkme-login-tab:nth-child(4)) { width: 390px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .dsh-arkme-login-tab { height: 34px; padding: 0 9px; border-radius: 9px; color: var(--arkme-login-secondary); font-size: 12px; font-weight: 400; }
   .dsh-arkme-login-tab:hover { color: var(--arkme-login-text); }
   .dsh-arkme-login-tab[aria-selected='true'] { color: var(--arkme-login-text); font-weight: 500; box-shadow: var(--dsw-shadow-lv1, 0 1px 4px rgba(30,32,38,.1)); }
@@ -620,7 +623,11 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
   const t = props.t ?? defaultArkmeLoginTranslate
   const effectiveMode = props.phoneBindingRequired === true
     ? 'phone'
-    : props.mode === 'test' && !props.testLoginEnabled ? 'wechat' : props.mode
+    : props.mode === 'jiwo' && !props.jiwoScanLoginEnabled
+      ? 'wechat'
+      : props.mode === 'test' && !props.testLoginEnabled
+        ? props.jiwoScanLoginEnabled ? 'jiwo' : 'wechat'
+        : props.mode
   const changePhone = (event: ChangeEvent<HTMLInputElement>) => {
     props.onPhoneChange(event.target.value.replace(/\D/g, '').slice(0, 11))
   }
@@ -660,6 +667,7 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
 
         {props.phoneBindingRequired !== true && <div className="dsh-arkme-login-tabs-wrap">
           <div className="dsh-arkme-login-tabs" role="tablist" aria-label={t('tabs.aria')}>
+            {props.jiwoScanLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'jiwo'} onClick={() => { props.onModeChange('jiwo') }}>{t('tab.jiwo')}</button>}
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'wechat'} onClick={() => { props.onModeChange('wechat') }}>{t('tab.wechat')}</button>
             <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'phone'} onClick={() => { props.onModeChange('phone') }}>{t('tab.phone')}</button>
             {props.testLoginEnabled && <button type="button" className="dsh-arkme-login-tab" role="tab" aria-selected={props.mode === 'test'} onClick={() => { props.onModeChange('test') }}>{t('tab.test')}</button>}
@@ -667,25 +675,27 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
         </div>}
 
         <div className="dsh-arkme-login-method">
-          {effectiveMode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
-            <div className="dsh-arkme-login-qr-title">{t('qr.title')}</div>
+          {effectiveMode === 'jiwo' || effectiveMode === 'wechat' ? <div className="dsh-arkme-login-qr-panel" role="tabpanel">
+            <div className="dsh-arkme-login-qr-title">{t(effectiveMode === 'jiwo' ? 'qr.jiwo.title' : 'qr.title')}</div>
             <div
               className="dsh-arkme-login-qr-frame"
               data-state={props.qrDataUrl !== '' ? 'ready' : props.error !== '' && !props.busy ? 'error' : 'loading'}
             >
               {props.qrDataUrl === ''
                 ? props.error !== '' && !props.busy
-                  ? <button type="button" className="dsh-arkme-login-qr-relogin" onClick={props.onWechatLogin}>{t('qr.relogin')}</button>
+                  ? <button type="button" className="dsh-arkme-login-qr-relogin" onClick={effectiveMode === 'jiwo' ? props.onJiwoLogin : props.onWechatLogin}>{t('qr.relogin')}</button>
                   : <span className="dsh-arkme-login-qr-loading">{t('qr.loading')}</span>
                 : <button
                     type="button"
                     className="dsh-arkme-login-qr-refresh"
-                    aria-label={props.busy ? t('qr.refreshing.aria') : t('qr.refresh.aria')}
+                    aria-label={props.busy
+                      ? t(effectiveMode === 'jiwo' ? 'qr.jiwo.refreshing.aria' : 'qr.refreshing.aria')
+                      : t(effectiveMode === 'jiwo' ? 'qr.jiwo.refresh.aria' : 'qr.refresh.aria')}
                     aria-busy={props.busy}
                     disabled={props.busy}
-                    onClick={props.onWechatLogin}
+                    onClick={effectiveMode === 'jiwo' ? props.onJiwoLogin : props.onWechatLogin}
                   >
-                    <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt={t('qr.alt')} />
+                    <img className="dsh-arkme-login-qr-image" src={props.qrDataUrl} alt={t(effectiveMode === 'jiwo' ? 'qr.jiwo.alt' : 'qr.alt')} />
                     <span className="dsh-arkme-login-qr-refresh-overlay" aria-hidden>
                       {props.busy ? t('qr.refreshing') : t('qr.refresh')}
                     </span>

@@ -851,6 +851,21 @@ export class MediaService {
     return this.issueMediaRef(viewerUserId, descriptor, stableIdentity)
   }
 
+  favoriteStickerMediaRef(raw: unknown, viewerUserId: number): string | undefined {
+    const item = objectValue(raw)
+    const remoteUrl = stringValue(item.preview_url ?? item.download_url).trim()
+    if (remoteUrl === '') return undefined
+    const fileAssetUid = stringValue(item.file_asset_uid).trim()
+    const fileName = stringValue(item.file_name).trim() || '收藏表情'
+    const mimeType = stringValue(item.mime_type).trim() || 'image/*'
+    return this.issueMediaRef(viewerUserId, {
+      remoteUrl,
+      mimeType,
+      fileName,
+      size: Math.max(0, Math.trunc(numberValue(item.file_size ?? item.size))),
+    }, fileAssetUid === '' ? undefined : `favorite-sticker:${fileAssetUid}`)
+  }
+
   private issueMediaRef(
     viewerUserId: number,
     descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
@@ -929,6 +944,9 @@ export class MediaService {
         size: Math.max(0, Math.trunc(numberValue(item.size))),
         ...(numberValue(item.duration_sec) > 0 ? { durationSec: numberValue(item.duration_sec) } : {}),
         sortOrder: Math.trunc(numberValue(item.sort_order ?? index)),
+        ...([1, 3].includes(Math.trunc(numberValue(item.render_role)))
+          ? { renderRole: Math.trunc(numberValue(item.render_role)) as 1 | 3 }
+          : {}),
       }]
     }).sort((left, right) => left.sortOrder - right.sortOrder)
   }

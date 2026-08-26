@@ -23,6 +23,81 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatService', () => {
+  it('moves and deletes favorite stickers while preserving only stable server fields', async () => {
+    let items: Record<string, unknown>[] = [
+      { file_asset_uid: 'asset-first-1234', file_name: 'first.png', mime_type: 'image/png', file_kind: 1, file_size: 10, signed_url: 'drop-me' },
+      { file_asset_uid: 'asset-second-123', file_name: 'second.gif', mime_type: 'image/gif', file_kind: 1, file_size: 20, is_animated: true, signed_url: 'drop-me' },
+    ]
+    const setBodies: Record<string, unknown>[] = []
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path.endsWith('/get')) return { items, updated_at_millis: 1 }
+        setBodies.push(body)
+        items = body.items as Record<string, unknown>[]
+        return {}
+      }),
+    }
+    const media = { favoriteStickerMediaRef: (raw: Record<string, unknown>) => `favorite:${String(raw.file_asset_uid)}` }
+    const chat = new ChatService(
+      runtime as never, {} as never, {} as never, media as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    const added = await chat.addFavoriteSticker({
+      fileAssetUid: 'asset-new-12345', fileName: 'new.gif', mimeType: 'image/gif', fileKind: 1, size: 30,
+    })
+    expect(added.items.map(item => item.fileAssetUid)).toEqual(['asset-new-12345', 'asset-first-1234', 'asset-second-123'])
+    expect(setBodies[0]).toMatchObject({ items: [
+      { file_asset_uid: 'asset-new-12345', file_name: 'new.gif', mime_type: 'image/gif', file_kind: 1, file_size: 30, is_animated: true },
+      { file_asset_uid: 'asset-first-1234' },
+      { file_asset_uid: 'asset-second-123' },
+    ] })
+    expect(JSON.stringify(setBodies[0])).not.toContain('signed_url')
+
+    const moved = await chat.manageFavoriteSticker('asset-second-123', 'move-to-front')
+    expect(moved.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123', 'asset-new-12345', 'asset-first-1234'])
+    expect(setBodies[1]).toMatchObject({ items: [
+      { file_asset_uid: 'asset-second-123', file_name: 'second.gif', mime_type: 'image/gif', file_kind: 1, file_size: 20, is_animated: true },
+      { file_asset_uid: 'asset-new-12345', file_name: 'new.gif', mime_type: 'image/gif', file_kind: 1, file_size: 30, is_animated: true },
+      { file_asset_uid: 'asset-first-1234', file_name: 'first.png', mime_type: 'image/png', file_kind: 1, file_size: 10 },
+    ] })
+    expect(JSON.stringify(setBodies[1])).not.toContain('signed_url')
+
+    const deleted = await chat.manageFavoriteSticker('asset-first-1234', 'delete')
+    expect(deleted.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123', 'asset-new-12345'])
+  })
+
+  it('serializes concurrent favorite sticker mutations so additions cannot overwrite each other', async () => {
+    let items: Record<string, unknown>[] = [
+      { file_asset_uid: 'asset-existing-1', file_name: 'existing.png', mime_type: 'image/png', file_kind: 1, file_size: 10 },
+    ]
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path.endsWith('/get')) {
+          await Promise.resolve()
+          return { items, updated_at_millis: 1 }
+        }
+        await Promise.resolve()
+        items = body.items as Record<string, unknown>[]
+        return {}
+      }),
+    }
+    const media = { favoriteStickerMediaRef: (raw: Record<string, unknown>) => `favorite:${String(raw.file_asset_uid)}` }
+    const chat = new ChatService(
+      runtime as never, {} as never, {} as never, media as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await Promise.all([
+      chat.addFavoriteSticker({ fileAssetUid: 'asset-added-one', fileName: 'one.png', mimeType: 'image/png', fileKind: 1, size: 11 }),
+      chat.addFavoriteSticker({ fileAssetUid: 'asset-added-two', fileName: 'two.png', mimeType: 'image/png', fileKind: 1, size: 12 }),
+    ])
+
+    expect(items.map(item => item.file_asset_uid)).toEqual(['asset-added-two', 'asset-added-one', 'asset-existing-1'])
+  })
+
   it('preserves forwarded recording segments and safe media without leaking source identities', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

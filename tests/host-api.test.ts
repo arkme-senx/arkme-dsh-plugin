@@ -39,6 +39,10 @@ function fakeService() {
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
+    favoriteStickers: vi.fn(async () => ({ items: [], itemCount: 0, updatedAtMillis: 0 })),
+    addFavoriteSticker: vi.fn(async (item: unknown) => item),
+    manageFavoriteSticker: vi.fn(async (fileAssetUid: string, action: string) => ({ fileAssetUid, action })),
+    sendFavoriteSticker: vi.fn(async (_sourceRef: string, _fileAssetUid: string, options: unknown) => options),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
     updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
     getLongArticleDraft: vi.fn(async () => undefined),
@@ -112,6 +116,33 @@ describe('billing Host API dispatch', () => {
       .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
     await dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId, accessToken: 'secret' })
     expect(service.billingOrderStatus).toHaveBeenCalledWith(orderId)
+  })
+})
+
+describe('favorite sticker Host API dispatch', () => {
+  it('forwards one bounded favorite sticker addition', async () => {
+    const service = fakeService()
+    const item = {
+      fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1,
+      isAnimated: true,
+    }
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.add', { item, signedUrl: 'must-not-forward' })
+
+    expect(service.addFavoriteSticker).toHaveBeenCalledWith(item)
+  })
+
+  it('forwards only the bounded sticker id and management action', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'move-to-front', accountId: 999, signedUrl: 'must-not-forward',
+    })
+
+    expect(service.manageFavoriteSticker).toHaveBeenCalledWith('asset-12345678', 'move-to-front')
+    await expect(dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'replace',
+    })).rejects.toMatchObject({ code: 'favorite-sticker-manage-invalid' })
   })
 })
 

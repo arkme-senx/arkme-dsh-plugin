@@ -1,5 +1,6 @@
 import type { ArkmeSourceItem } from '../types.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
+import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
 
 function sameSource(left: ArkmeSourceItem | undefined, right: ArkmeSourceItem | undefined): boolean {
   if (left === undefined || right === undefined) return left === right
@@ -23,6 +24,7 @@ export interface ArkmeUiState {
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
+  extensionShareAction?: ArkmeExtensionShareAction
   extensionDetailId?: string
   extensionAuthorFilter?: ArkmeExtensionAuthorFilter
   calendarOpen?: boolean
@@ -182,7 +184,7 @@ export class ArkmeUiController {
   showExtensions(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    const { extensionShareRef: _extensionShareRef, extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutExtensionIntent } = rest
+    const { extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction, extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutExtensionIntent } = rest
     this.publish({ ...withoutExtensionIntent, mode: 'extensions' })
   }
 
@@ -197,6 +199,7 @@ export class ArkmeUiController {
       calendarOpen: _calendarOpen,
       productMode: _productMode,
       extensionShareRef: _extensionShareRef,
+      extensionShareAction: _extensionShareAction,
       extensionDetailId: _extensionDetailId,
       ...rest
     } = this.state
@@ -211,7 +214,7 @@ export class ArkmeUiController {
     this.leaveContacts()
     const normalized = extensionId.trim()
     if (normalized === '') throw new TypeError('插件 ID 不能为空')
-    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, extensionShareRef: _extensionShareRef, extensionAuthorFilter: _extensionAuthorFilter, ...rest } = this.state
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction, extensionAuthorFilter: _extensionAuthorFilter, ...rest } = this.state
     this.publish({ ...rest, mode: 'extensions', extensionDetailId: normalized })
   }
 
@@ -248,15 +251,20 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'harness' })
   }
 
-  openExtensionShare(shareRef: string): void {
+  openExtensionShare(shareRef: string, action?: ArkmeExtensionShareAction): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    const { extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutDetail } = rest
-    this.publish({ ...withoutDetail, mode: 'extensions', extensionShareRef: shareRef })
+    const { extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, extensionShareAction: _extensionShareAction, ...withoutDetail } = rest
+    this.publish({
+      ...withoutDetail,
+      mode: 'extensions',
+      extensionShareRef: shareRef,
+      ...(action === undefined ? {} : { extensionShareAction: action }),
+    })
   }
 
   dismissExtensionShare(): void {
-    const { extensionShareRef: _extensionShareRef, ...rest } = this.state
+    const { extensionShareRef: _extensionShareRef, extensionShareAction: _extensionShareAction, ...rest } = this.state
     this.publish(rest)
   }
 
@@ -304,6 +312,7 @@ export class ArkmeUiController {
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef
+      && next.extensionShareAction === this.state.extensionShareAction
       && next.extensionDetailId === this.state.extensionDetailId
       && next.extensionAuthorFilter?.ownerUserId === this.state.extensionAuthorFilter?.ownerUserId
       && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
