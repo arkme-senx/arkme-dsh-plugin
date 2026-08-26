@@ -6,6 +6,7 @@ import { packArkmeExtension } from '../../src/extensions/artifact.js'
 import { arkmeClientOwnerKey } from '../../src/extensions/client-owner.js'
 import { ArkmeExtensionInstallStore } from '../../src/extensions/install-store.js'
 import { ArkmeExtensionManager } from '../../src/extensions/manager.js'
+import { ArkmeExtensionProfileInstaller } from '../../src/extensions/profile-installer.js'
 import type { ArkmeInstalledExtension } from '../../src/extensions/types.js'
 
 const directories: string[] = []
@@ -200,6 +201,22 @@ describe('extension desired enable state owner', () => {
     store.close()
   })
 
+  it('does not advertise a Profile restart when a Client extension has no Profile package', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-client-session-only-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    const { profilePackageName: _package, profileBundlePath: _bundle, ...sessionOnly } = installed(root, true)
+    store.put(sessionOnly)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+    })
+
+    await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-client', enabled: false }))
+      .resolves.toMatchObject({ enabled: false, active: false, restart_required: false })
+    await expect(manager.restartProfileChange('ext-client')).rejects.toThrow('没有等待重启的变更')
+    store.close()
+  })
+
   it('keeps a native Bundle active until restart while persisting the disabled Profile layer', async () => {
     const root = mkdtempSync(join(tmpdir(), 'arkme-extension-native-enabled-'))
     directories.push(root)
@@ -232,6 +249,112 @@ describe('extension desired enable state owner', () => {
       expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: true }),
     ])
     expect(manager.listInstalled()[0]).not.toHaveProperty('profileBundlePath')
+    store.close()
+  })
+
+  it('uses the current DSH Loader inventory instead of stale persisted activity after restart', () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-native-restarted-'))
+    directories.push(root)
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, false), extensionId: 'ext-native', enabled: false, active: true,
+      profilePackageName: 'deepseek-pet', executionModel: 'dsh-native',
+    })
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}',
+      pluginInventory: { list: () => ({ entries: [] }) },
+    })
+
+    expect(manager.listInstalled()).toEqual([
+      expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: false }),
+    ])
+    expect(manager.listInstalled()[0]).not.toHaveProperty('restartRequired')
+    store.close()
+  })
+
+  it('heals an idempotently disabled native Bundle after DSH re-adds its Profile layer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-native-drift-'))
+    directories.push(root)
+    const profile = join(root, 'profiles', 'web')
+    mkdirSync(profile, { recursive: true })
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: { 'deepseek-pet': '1.0.0' },
+      dsh: { profile: { bundles: ['deepseek-pet'] } },
+    }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, false), extensionId: 'ext-native', enabled: false, active: false,
+      profilePackageName: 'deepseek-pet', executionModel: 'dsh-native',
+    })
+    const installer = new ArkmeExtensionProfileInstaller({
+      dshHome: root, profileName: 'web', execPath: process.execPath, dshBinPath: '/dsh/bin', run: vi.fn(),
+    })
+    const restart = vi.fn(async () => undefined)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
+      profileInstaller: {
+        install: vi.fn(), installTarball: vi.fn(), remove: vi.fn(),
+        setEnabled: installer.setEnabled.bind(installer), restart,
+      },
+      pluginInventory: {
+        list: () => ({ entries: [{
+          entryId: 'deepseek-pet', moduleName: 'deepseek-pet', enabled: true, fiberPhase: 'active',
+        }] }),
+      },
+    })
+
+    await expect(manager.setEnabled({ agent: undefined, extensionId: 'ext-native', enabled: false }))
+      .resolves.toMatchObject({ enabled: false, active: true, restart_required: true })
+    expect(JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')))
+      .toMatchObject({ dsh: { profile: { bundles: [] } } })
+    await manager.restartProfileChange('ext-native')
+    expect(restart).toHaveBeenCalledWith(expect.objectContaining({
+      extensionId: 'ext-native', packageName: 'deepseek-pet', expectActive: false,
+      activationChange: true, previousProfileIncluded: true,
+    }))
+    store.close()
+  })
+
+  it('repairs disabled Profile drift on Host startup and exposes the pending restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-startup-drift-'))
+    directories.push(root)
+    const profile = join(root, 'profiles', 'web')
+    mkdirSync(profile, { recursive: true })
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: { 'deepseek-pet': '1.0.0' },
+      dsh: { profile: { bundles: ['deepseek-pet'] } },
+    }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, false), extensionId: 'ext-native', enabled: false, active: false,
+      profilePackageName: 'deepseek-pet', executionModel: 'dsh-native',
+    })
+    const installer = new ArkmeExtensionProfileInstaller({
+      dshHome: root, profileName: 'web', execPath: process.execPath, dshBinPath: '/dsh/bin', run: vi.fn(),
+    })
+    const restart = vi.fn(async () => undefined)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
+      profileInstaller: {
+        install: vi.fn(), installTarball: vi.fn(), remove: vi.fn(),
+        setEnabled: installer.setEnabled.bind(installer), restart,
+      },
+      pluginInventory: {
+        list: () => ({ entries: [{
+          entryId: 'deepseek-pet', moduleName: 'deepseek-pet', enabled: true, fiberPhase: 'active',
+        }] }),
+      },
+    })
+
+    await manager.reconcileInstallationMetrics()
+    expect(JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')))
+      .toMatchObject({ dsh: { profile: { bundles: [] } } })
+    expect(manager.listInstalled()).toEqual([
+      expect.objectContaining({ extensionId: 'ext-native', enabled: false, active: true, restartRequired: true }),
+    ])
+    expect(manager.enabledState('ext-native')).toMatchObject({ restart_required: true })
+    await manager.restartProfileChange('ext-native')
+    expect(restart).toHaveBeenCalledWith(expect.objectContaining({ activationChange: true, expectActive: false }))
     store.close()
   })
 

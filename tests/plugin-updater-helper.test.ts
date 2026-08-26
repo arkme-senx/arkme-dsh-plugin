@@ -91,6 +91,7 @@ describe('companion plugin updater', () => {
         targetArtifactSha512: createHash('sha512').update(update.artifactBytes).digest('hex'),
         appVersion: '1.2.0',
         dshVersion: '0.1.0-rc.8',
+        disabledProfilePackages: ['deepseek-pet'],
         execArgv: ['--import', 'tsx/esm'],
         restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
       })
@@ -122,6 +123,7 @@ describe('companion plugin updater', () => {
         preparePackageManager: () => undefined,
         spawnUpdater,
         requestShutdown,
+        disabledProfilePackages: () => ['deepseek-pet'],
       },
     })
 
@@ -446,6 +448,10 @@ describe('companion plugin updater', () => {
       '--import', 'tsx/esm', '/tmp/dsh.js',
       'plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme',
     ])
+    expect(() => parsePluginUpdaterPlan({
+      ...plan,
+      disabledProfilePackages: ['../outside-profile'],
+    })).toThrow('updater plan is incomplete')
     expect(() => assertTargetArtifactIntegrity(plan)).not.toThrow()
     await writeFile(targetArtifactPath, 'tampered tgz')
     expect(() => assertTargetArtifactIntegrity(plan)).toThrow(/digest/i)
@@ -599,7 +605,11 @@ describe('companion plugin updater', () => {
     await mkdir(stateDirectory, { recursive: true })
     const profileDirectory = join(root, 'profiles', 'web')
     await mkdir(profileDirectory, { recursive: true })
-    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.19.0' }))
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({
+      packageManager: 'pnpm@11.19.0',
+      dependencies: { '@senguoyun/dsh-arkme': 'file:current.tgz', 'deepseek-pet': '1.0.0' },
+      dsh: { profile: { bundles: ['@senguoyun/dsh-arkme'] } },
+    }))
     await writeFile(versionPath, '0.1.3')
     await writeFile(fakeDsh, `
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -617,6 +627,10 @@ if (args[0] === 'plugin') {
   const packageDir = join(process.env.DSH_HOME, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme')
   mkdirSync(packageDir, { recursive: true })
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@senguoyun/dsh-arkme', version }))
+  const profilePath = join(process.env.DSH_HOME, 'profiles', 'web', 'package.json')
+  const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+  profile.dsh.profile.bundles = Object.keys(profile.dependencies)
+  writeFileSync(profilePath, JSON.stringify(profile))
   process.exit(0)
 }
 if (args[0] === 'web') {
@@ -665,6 +679,7 @@ if (args[0] === 'web') {
       previousVersion: '0.1.3',
       previousSpec: 'link:/Applications/Arkme.app/plugin',
       previousArtifactPath,
+      disabledProfilePackages: ['deepseek-pet'],
       targetVersion: '0.1.4',
       targetArtifactPath,
       targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
@@ -701,6 +716,10 @@ if (args[0] === 'web') {
       ])
       expect(trace.some(args => args.includes(`file:${targetArtifactPath}`))).toBe(true)
       expect(trace.flat()).not.toContain('@senguoyun/dsh-arkme@0.1.4')
+      const converged = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dsh: { profile: { bundles: string[] } }
+      }
+      expect(converged.dsh.profile.bundles).not.toContain('deepseek-pet')
 
       process.kill(serverPid, 'SIGTERM')
       serverPid = undefined
@@ -732,6 +751,10 @@ if (args[0] === 'web') {
         ['plugin', '--profile', 'web', 'add', `file:${previousArtifactPath}`],
       ])
       expect(rollbackTrace.some(args => args.includes(`file:${previousArtifactPath}`))).toBe(true)
+      const rolledBackProfile = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dsh: { profile: { bundles: string[] } }
+      }
+      expect(rolledBackProfile.dsh.profile.bundles).not.toContain('deepseek-pet')
     } finally {
       if (serverPid !== undefined && Number.isSafeInteger(serverPid)) {
         try { process.kill(serverPid, 'SIGTERM') } catch { /* already stopped */ }

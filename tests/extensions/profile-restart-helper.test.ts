@@ -45,6 +45,18 @@ describe('Bundle v2 profile restart plan', () => {
     const parsed = parseExtensionProfileRestartPlan({ ...v2Plan(), previousBundlePath: undefined })
     expect(extensionProfileRollbackArgs(parsed)).toEqual(['remove', '@example/install-bundle'])
   })
+
+  it('accepts an activation-only restart with an explicit previous Profile projection', () => {
+    const previousInstalled = installed('ext-bundle', '/isolated/artifacts/bundle.tgz', '/isolated/artifacts/bundle.tgz')
+    const parsed = parseExtensionProfileRestartPlan({
+      ...v2Plan(), schemaVersion: 3, activationChange: true, previousProfileIncluded: true, previousInstalled,
+      expectActive: false,
+    })
+    expect(parsed).toMatchObject({
+      schemaVersion: 3, activationChange: true, previousProfileIncluded: true, expectActive: false,
+    })
+    expect(() => extensionProfileRollbackArgs(parsed)).toThrow('does not use DSH plugin commands')
+  })
 })
 
 const directories: string[] = []
@@ -183,6 +195,58 @@ describe('desktop-managed extension profile restart', () => {
       profileBundlePath: previous.profileBundlePath,
       active: false,
     })
+    reopened.close()
+  })
+
+  it('rolls an activation-only restart back to its previous Bundle projection without a DSH plugin command', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-managed-profile-activation-'))
+    directories.push(root)
+    const profileDirectory = join(root, 'profiles', 'web')
+    await mkdir(profileDirectory, { recursive: true })
+    const previous = installed('ext-test', join(root, 'bundle.tgz'), join(root, 'bundle.tgz'))
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({
+      dependencies: { [previous.profilePackageName!]: '1.0.0' },
+      dsh: { profile: { bundles: [] } },
+    }))
+    const planPath = join(root, 'restart.json')
+    const plan: ArkmeExtensionProfileRestartPlan = {
+      schemaVersion: 3,
+      parentPid: process.pid,
+      execPath: process.execPath,
+      dshBinPath: '/fixture/dsh.js',
+      execArgv: [],
+      restartArgv: ['dsh', 'web'],
+      dshHome: root,
+      profileName: 'web',
+      packageName: previous.profilePackageName!,
+      extensionId: previous.extensionId,
+      expectActive: false,
+      cleanupPaths: [],
+      installStoreDirectory: join(root, 'extensions'),
+      previousInstalled: previous,
+      activationChange: true,
+      previousProfileIncluded: true,
+      healthUrl: 'http://127.0.0.1:41234/arkme-self/api',
+      logPath: join(root, 'restart.log'),
+    }
+    await writeFile(planPath, JSON.stringify(plan), { mode: 0o600 })
+    const current = { ...previous, enabled: false, active: false }
+    const store = new ArkmeExtensionInstallStore(plan.installStoreDirectory)
+    store.put(current)
+    store.close()
+    const profileCommand = vi.fn(() => true)
+    const start = vi.fn()
+
+    await rollbackManagedExtensionProfileRestart(planPath, { profileCommand, start })
+
+    expect(profileCommand).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+    const manifest = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+      dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.dsh.profile.bundles).toEqual([previous.profilePackageName])
+    const reopened = new ArkmeExtensionInstallStore(plan.installStoreDirectory)
+    expect(reopened.get(plan.extensionId)).toMatchObject({ enabled: true, active: false })
     reopened.close()
   })
 })

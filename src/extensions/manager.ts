@@ -173,6 +173,7 @@ function requireBundleUploadSlots(session: import('./types.js').ArkmeBundlePubli
 function installedView(
   item: ArkmeInstalledExtension,
   unavailable?: ArkmeExtensionUnavailableView,
+  restartRequired = false,
 ): ArkmeInstalledExtensionView {
   return {
     extensionId: item.extensionId,
@@ -186,6 +187,7 @@ function installedView(
     updateChannel: item.updateChannel,
     installedAtMillis: item.installedAtMillis,
     lastCheckedAtMillis: item.lastCheckedAtMillis,
+    ...(restartRequired ? { restartRequired: true } : {}),
     ...(unavailable === undefined ? {} : { unavailable }),
   }
 }
@@ -198,6 +200,8 @@ interface PendingProfileChange {
   previousBundlePath?: string
   cleanupPaths: string[]
   previousInstalled?: ArkmeInstalledExtension
+  activationChange?: true
+  previousProfileIncluded?: boolean
 }
 
 function requiredId(value: string, label: string): string {
@@ -396,6 +400,22 @@ export class ArkmeExtensionManager {
 
   /** Reconcile this Profile once during Host startup; failures remain compatible with older services. */
   async reconcileInstallationMetrics(): Promise<void> {
+    const repaired = await this.restoreDisabledProfileLayers('')
+    const current = new Map(this.listInstalled().map(item => [item.extensionId, item]))
+    for (const item of repaired) {
+      if (item.profilePackageName === undefined) continue
+      const loaded = current.get(item.extensionId)?.active === true
+      if (!loaded && !item.manifest.halves.client) continue
+      this.pendingProfileChanges.set(item.extensionId, {
+        extensionId: item.extensionId,
+        packageName: item.profilePackageName,
+        expectActive: false,
+        cleanupPaths: [],
+        previousInstalled: item,
+        activationChange: true,
+        previousProfileIncluded: true,
+      })
+    }
     this.refreshPersistentClientWrappers()
     await this.reconcileProfileClientOwners()
     await this.syncInstallationSnapshot()
@@ -974,9 +994,12 @@ export class ArkmeExtensionManager {
         entry.moduleName === effective.profilePackageName && entry.enabled && entry.fiberPhase === 'active')
       const active = effective.executionModel === undefined
         ? effective.enabled && this.persistentRuntimeMatches(effective)
-        : loaderActive || effective.active || (effective.executionModel === 'arkme-sandboxed'
-          && effective.profilePackageName !== undefined && arkmeBundleActive(effective.profilePackageName))
-      return installedView({ ...effective, active }, state.unavailable)
+        : effective.executionModel === 'dsh-native'
+          ? loaderActive
+          : loaderActive || effective.active || (effective.profilePackageName !== undefined
+            && arkmeBundleActive(effective.profilePackageName))
+      const restartRequired = this.pendingProfileChanges.has(effective.extensionId)
+      return installedView({ ...effective, active }, state.unavailable, restartRequired)
     })
   }
 
@@ -1028,6 +1051,7 @@ export class ArkmeExtensionManager {
       installed: true,
       enabled: installed.enabled && (this.store.get(extensionId)?.executionModel !== undefined || installed.active),
       active: installed.active,
+      ...(installed.restartRequired ? { restart_required: true } : {}),
       ...(installed.unavailable === undefined ? {} : { unavailable: installed.unavailable }),
     }
   }
@@ -1115,23 +1139,6 @@ export class ArkmeExtensionManager {
     }
     const current = this.listInstalled().find(item => item.extensionId === extensionId)
     const currentActive = current?.active === true
-    if ((current?.enabled ?? installed.enabled) === input.enabled) {
-      const restartRequired = input.enabled
-        ? !currentActive
-        : installed.manifest.halves.client && installed.profilePackageName !== undefined
-      return {
-        extension_id: extensionId,
-        installed: true,
-        enabled: input.enabled,
-        active: currentActive,
-        restart_required: restartRequired,
-        message: input.enabled
-          ? currentActive ? '扩展已启用' : '扩展已设为启用，重启 DSH 后生效'
-          : restartRequired ? '扩展已关闭，重启 DSH 后 Client 界面完全移除' : '扩展已关闭',
-        ...(current?.unavailable === undefined ? {} : { unavailable: current.unavailable }),
-      }
-    }
-
     const profilePackageName = installed.profilePackageName
     const legacyProfileBundle = installed.executionModel === undefined
       && installed.profileBundlePath !== undefined && !installed.profileBundlePath.endsWith('.tgz')
@@ -1139,6 +1146,31 @@ export class ArkmeExtensionManager {
       : undefined
     if (profilePackageName !== undefined && this.options.profileInstaller === undefined) {
       throw new ArkmePluginError('extension-profile-toggle-unavailable', '当前 DSH 运行方式不支持修改扩展启用状态', false, 503)
+    }
+    const previousProfileIncluded = profilePackageName !== undefined && this.profileContains(profilePackageName, true)
+    if ((current?.enabled ?? installed.enabled) === input.enabled) {
+      if (legacyProfileBundle !== undefined) this.writeActivation(legacyProfileBundle, extensionId, input.enabled)
+      if (profilePackageName !== undefined) await this.options.profileInstaller?.setEnabled(profilePackageName, input.enabled)
+      const profileProjectionChanged = profilePackageName !== undefined && previousProfileIncluded !== input.enabled
+      const needsRestart = currentActive !== input.enabled || profileProjectionChanged
+        || this.pendingProfileChanges.has(extensionId)
+      if (needsRestart && profilePackageName !== undefined) {
+        this.rememberActivationRestart(installed, previousProfileIncluded, input.enabled)
+      } else {
+        this.pendingProfileChanges.delete(extensionId)
+      }
+      const restartRequired = this.pendingProfileChanges.has(extensionId)
+      return {
+        extension_id: extensionId,
+        installed: true,
+        enabled: input.enabled,
+        active: currentActive,
+        restart_required: restartRequired,
+        message: input.enabled
+          ? currentActive && !profileProjectionChanged ? '扩展已启用' : '扩展已设为启用，重启 DSH 后生效'
+          : restartRequired ? '扩展已关闭，重启 DSH 后完全停用' : '扩展已关闭',
+        ...(current?.unavailable === undefined ? {} : { unavailable: current.unavailable }),
+      }
     }
 
     if (!input.enabled) {
@@ -1182,7 +1214,13 @@ export class ArkmeExtensionManager {
       const { lastError: _lastError, dynamicPluginId: _pluginId, dynamicPackageId: _packageId, ...retained } = installed
       this.store.put({ ...retained, enabled: false, active: activeUntilRestart })
       this.activeAgents.delete(extensionId)
-      const restartRequired = activeUntilRestart || installed.manifest.halves.client
+      const needsRestart = activeUntilRestart || installed.manifest.halves.client
+      if (needsRestart && profilePackageName !== undefined) {
+        this.rememberActivationRestart(installed, previousProfileIncluded, false)
+      } else {
+        this.pendingProfileChanges.delete(extensionId)
+      }
+      const restartRequired = this.pendingProfileChanges.has(extensionId)
       return {
         extension_id: extensionId,
         installed: true,
@@ -1218,7 +1256,7 @@ export class ArkmeExtensionManager {
       }
     }
     const activationFailed = activationError !== ''
-    const restartRequired = activationFailed ? false : !active || installed.manifest.halves.client
+    const needsRestart = !activationFailed && (!active || installed.manifest.halves.client)
     const { lastError: _lastError, ...retained } = installed
     this.store.put({
       ...retained,
@@ -1226,6 +1264,12 @@ export class ArkmeExtensionManager {
       active,
       ...(activationError === '' ? {} : { lastError: activationError }),
     })
+    if (needsRestart && profilePackageName !== undefined) {
+      this.rememberActivationRestart(installed, previousProfileIncluded, true)
+    } else {
+      this.pendingProfileChanges.delete(extensionId)
+    }
+    const restartRequired = this.pendingProfileChanges.has(extensionId)
     return {
       extension_id: extensionId,
       installed: true,
@@ -2135,13 +2179,34 @@ export class ArkmeExtensionManager {
     }
   }
 
-  private async restoreDisabledProfileLayers(exceptExtensionId: string): Promise<void> {
-    if (this.options.profileInstaller === undefined) return
+  private async restoreDisabledProfileLayers(exceptExtensionId: string): Promise<ArkmeInstalledExtension[]> {
+    const repaired: ArkmeInstalledExtension[] = []
+    if (this.options.profileInstaller === undefined) return repaired
     for (const item of this.store.list()) {
       if (item.extensionId === exceptExtensionId || item.enabled || item.profilePackageName === undefined) continue
       if (!this.profileContains(item.profilePackageName, false)) continue
+      const included = this.profileContains(item.profilePackageName, true)
       await this.options.profileInstaller.setEnabled(item.profilePackageName, false)
+      if (included) repaired.push(item)
     }
+    return repaired
+  }
+
+  private rememberActivationRestart(
+    previousInstalled: ArkmeInstalledExtension,
+    previousProfileIncluded: boolean,
+    expectActive: boolean,
+  ): void {
+    if (previousInstalled.profilePackageName === undefined) return
+    this.pendingProfileChanges.set(previousInstalled.extensionId, {
+      extensionId: previousInstalled.extensionId,
+      packageName: previousInstalled.profilePackageName,
+      expectActive,
+      cleanupPaths: [],
+      previousInstalled,
+      activationChange: true,
+      previousProfileIncluded,
+    })
   }
 
   private persistArtifact(extensionId: string, version: string, bytes: Uint8Array, filename = 'extension.arkext'): string {

@@ -522,7 +522,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onRestart }: {
-  kind: 'apply' | 'remove' | 'unavailable'
+  kind: 'apply' | 'disable' | 'remove' | 'unavailable'
   restarting: boolean
   onLater(): void
   onRestart(): void
@@ -534,6 +534,8 @@ export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onResta
       <p style={styles.restartDescription}>
         {kind === 'unavailable'
           ? `${ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE} 请联系插件作者或安装兼容版本后重试。`
+          : kind === 'disable'
+          ? '扩展关闭状态已保存，重启后会停止当前进程中仍在运行的界面和能力。'
           : kind === 'remove'
           ? '扩展已卸载，重启后会从当前页面完全移除。'
           : '扩展已安装到插件列表，重启后立即生效。'}
@@ -1577,8 +1579,8 @@ export function mergeInstalledExtensionCatalogItem(
   }
 }
 
-function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
-  if (!item.enabled) return '已关闭'
+export function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
+  if (!item.enabled) return item.active || item.restartRequired ? '已关闭，重启后完全停用' : '已关闭'
   return item.active ? '已启用' : '已启用，尚未加载'
 }
 
@@ -1623,7 +1625,10 @@ export function ArkmeMarketplace({
   const [actionBusyExtensionId, setActionBusyExtensionId] = useState<string>()
   const [installError, setInstallError] = useState('')
   const [restartNotice, setRestartNotice] = useState('')
-  const [restartPrompt, setRestartPrompt] = useState<{ extensionId: string; kind: 'apply' | 'remove' | 'unavailable' }>()
+  const [restartPrompt, setRestartPrompt] = useState<{
+    extensionId: string
+    kind: 'apply' | 'disable' | 'remove' | 'unavailable'
+  }>()
   const [uninstallConfirmExtensionId, setUninstallConfirmExtensionId] = useState<string>()
   const [query, setQuery] = useState('')
   const [restarting, setRestarting] = useState(false)
@@ -1668,6 +1673,7 @@ export function ArkmeMarketplace({
   const detailDialogRef = useRef<HTMLElement>(null)
   const openedInitialExtensionIdRef = useRef<string>()
   const detailReturnFocus = useRef<HTMLElement>()
+  const promptedRestartExtensions = useRef(new Set<string>())
 
   const categoryOptions = marketplaceCategoryOptions(
     classificationTree,
@@ -1694,6 +1700,17 @@ export function ArkmeMarketplace({
 
   const acceptInstalled = (local: ArkmeInstalledExtensionView[]): void => {
     setInstalled(local)
+    const repairPending = local.find(item => item.restartRequired === true && item.unavailable === undefined)
+    if (repairPending !== undefined && !promptedRestartExtensions.current.has(repairPending.extensionId)) {
+      promptedRestartExtensions.current.add(repairPending.extensionId)
+      setRestartNotice(repairPending.enabled
+        ? '扩展启用状态等待重启后生效。'
+        : '已修复扩展关闭状态；重启后会完全停用当前仍在运行的界面和能力。')
+      setRestartPrompt({
+        extensionId: repairPending.extensionId,
+        kind: repairPending.enabled ? 'apply' : 'disable',
+      })
+    }
     if (typeof window === 'undefined') return
     let pendingExtensionId: string | null = null
     try { pendingExtensionId = window.sessionStorage.getItem(PENDING_EXTENSION_RESTART_KEY) } catch { return }
@@ -1787,7 +1804,7 @@ export function ArkmeMarketplace({
       if (target === 'discover') {
         void callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal)
           .then(local => {
-            if (sequence === requestSequence.current) setInstalled(local)
+            if (sequence === requestSequence.current) acceptInstalled(local)
           })
           .catch(() => undefined)
         void callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
@@ -2142,18 +2159,25 @@ export function ArkmeMarketplace({
       const result = await callArkme<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled })
       setInstalled(current => current.map(item => {
         if (item.extensionId !== extensionId) return item
-        const { unavailable: _unavailable, ...retained } = item
+        const { unavailable: _unavailable, restartRequired: _restartRequired, ...retained } = item
         return {
           ...retained,
           enabled: result.enabled,
           active: result.active,
+          ...(result.restart_required ? { restartRequired: true } : {}),
           ...(result.unavailable === undefined ? {} : { unavailable: result.unavailable }),
         }
       }))
       if (result.unavailable !== undefined) {
         setRestartNotice('')
         setRestartPrompt({ extensionId, kind: 'unavailable' })
-      } else setRestartNotice(result.message)
+      } else {
+        setRestartNotice(result.message)
+        if (result.restart_required) {
+          promptedRestartExtensions.current.add(extensionId)
+          setRestartPrompt({ extensionId, kind: result.enabled ? 'apply' : 'disable' })
+        }
+      }
     } catch (caught) {
       setInstallError(caught instanceof Error ? caught.message : String(caught))
     } finally {
