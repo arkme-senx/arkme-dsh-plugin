@@ -160,7 +160,9 @@ describe('Arkme message read receipt UI', () => {
     })
 
     const line = renderer.root.findByProps({ 'data-arkme-message-content-line': 'item-8' })
-    expect(line.props.style).toMatchObject({ display: 'flex', alignItems: 'flex-end', maxWidth: '100%' })
+    expect(line.props.style).toMatchObject({
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', maxWidth: '100%',
+    })
     expect(line.children).toHaveLength(2)
     expect(line.children[0]?.type).toBe(ArkmeMessageReadReceipt)
     expect(line.children[1]?.props['data-test-message-bubble']).toBe('true')

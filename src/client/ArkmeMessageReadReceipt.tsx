@@ -441,6 +441,9 @@ export function ArkmeMessageReadReceiptLine(props: {
     data-arkme-message-content-line={props.item.itemUid}
     style={{
       maxWidth: '100%', minWidth: 0, display: 'flex', alignItems: 'flex-end',
+      // A self-message body may occupy the full available width for long content.
+      // Keep its bubble/receipt pair pinned to the right edge in that case.
+      justifyContent: props.item.isMe ? 'flex-end' : 'flex-start',
       ...(props.wide === true ? { width: '100%' } : {}),
     }}
   >
