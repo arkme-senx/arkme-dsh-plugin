@@ -1,6 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
-import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
+import { ArkmeEmojiPicker, resolveArkmeEmojiPanelGeometry } from '../src/client/ArkmeEmojiPicker.js'
 import { arkmeComposerToolButtonStyle } from '../src/client/ArkmeComposerToolButton.js'
 import {
   arkmeDefaultEmojis, insertArkmeEmojiAtSelection, nextArkmeRecentEmojiIds,
@@ -50,6 +50,30 @@ describe('Arkme emoji composer', () => {
       .toEqual(['joy_face', 'thumb_up'])
   })
 
+  it('keeps the bubble outside the caret line and moves its arrow with the caret', () => {
+    const editor = { left: 40, top: 430, right: 640, bottom: 540, width: 600, height: 110 }
+    const first = resolveArkmeEmojiPanelGeometry({
+      caret: { left: 120, top: 500, right: 122, bottom: 521, width: 2, height: 21 },
+      editor, panelWidth: 476, panelHeight: 368, viewportWidth: 800, viewportHeight: 700,
+    })
+    const typed = resolveArkmeEmojiPanelGeometry({
+      caret: { left: 300, top: 500, right: 302, bottom: 521, width: 2, height: 21 },
+      editor, panelWidth: 476, panelHeight: 368, viewportWidth: 800, viewportHeight: 700,
+    })
+
+    expect(first).toMatchObject({ placement: 'above', left: 40, top: 132, arrowCenterX: 81 })
+    expect(first.top + 368).toBeLessThanOrEqual(500)
+    expect(typed).toMatchObject({ left: first.left, top: first.top, arrowCenterX: 261 })
+  })
+
+  it('flips the caret bubble below when there is not enough room above', () => {
+    expect(resolveArkmeEmojiPanelGeometry({
+      caret: { left: 80, top: 40, right: 82, bottom: 61, width: 2, height: 21 },
+      editor: { left: 20, top: 20, right: 620, bottom: 120, width: 600, height: 100 },
+      panelWidth: 476, panelHeight: 368, viewportWidth: 800, viewportHeight: 700,
+    })).toMatchObject({ placement: 'below', left: 20, top: 61, arrowCenterX: 61 })
+  })
+
   it('opens the DSH-styled panel, supports continuous selection, and closes on scope change', () => {
     const selected: string[] = []
     let renderer!: ReactTestRenderer
@@ -70,7 +94,10 @@ describe('Arkme emoji composer', () => {
     act(() => { trigger.props.onClick() })
     expect(triggerButton.props.style).toEqual(arkmeComposerToolButtonStyle)
     const panel = renderer.root.findByProps({ 'data-arkme-emoji-panel': true })
-    expect(panel.props.style).toMatchObject({ left: 0, bottom: 44 })
+    expect(panel.props.style).toMatchObject({ position: 'relative', width: '100%' })
+    expect(renderer.root.findByProps({ 'data-arkme-emoji-panel-shell': 'true' }).props.style)
+      .toMatchObject({ position: 'fixed' })
+    expect(renderer.root.findByProps({ 'data-arkme-emoji-panel-arrow': 'true' })).toBeDefined()
     expect(renderer.root.findByProps({ 'data-arkme-emoji-picker': true }).props.style).toMatchObject({ position: 'relative' })
     expect(renderer.root.findAllByProps({ 'data-arkme-emoji-id': 'angry_face' })).toHaveLength(1)
     expect(renderer.root.findByProps({ 'data-arkme-emoji-id': 'angry_face' }).findByType('img').props.src)

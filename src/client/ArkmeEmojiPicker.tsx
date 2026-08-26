@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   ArkmeFavoriteSticker, ArkmeFavoriteStickerList, ArkmeFavoriteStickerSaveInput, ArkmeSourceSendResult, ArkmeUploadedAsset,
 } from '../types.js'
@@ -9,6 +10,7 @@ import {
 } from './arkme-emoji.js'
 import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeComposerEmojiIcon } from './ArkmeComposerToolIcon.js'
+import type { ArkmeComposerCaretGeometry } from './ArkmeRichComposerInput.js'
 
 const recentStorageKey = 'arkme:chat-emoji:recent:v1'
 export const arkmeDefaultEmojiGridColumns = 14
@@ -29,6 +31,35 @@ interface ArkmeFavoriteStickerMenuState {
   kind: 'remote' | 'pending'
 }
 
+export interface ArkmeEmojiPanelGeometry {
+  left: number
+  top: number
+  arrowCenterX: number
+  placement: 'above' | 'below'
+}
+
+export function resolveArkmeEmojiPanelGeometry({ caret, editor, panelWidth, panelHeight, viewportWidth, viewportHeight }: {
+  caret: ArkmeComposerCaretGeometry
+  editor: ArkmeComposerCaretGeometry
+  panelWidth: number
+  panelHeight: number
+  viewportWidth: number
+  viewportHeight: number
+}): ArkmeEmojiPanelGeometry {
+  const margin = 12
+  const maxLeft = Math.max(margin, viewportWidth - panelWidth - margin)
+  const left = Math.max(margin, Math.min(editor.left, maxLeft))
+  const availableAbove = caret.top - margin
+  const availableBelow = viewportHeight - caret.bottom - margin
+  const placement = availableAbove < panelHeight && availableBelow > availableAbove ? 'below' : 'above'
+  const maxTop = Math.max(margin, viewportHeight - panelHeight - margin)
+  const preferredTop = placement === 'above' ? caret.top - panelHeight : caret.bottom
+  const top = Math.max(margin, Math.min(preferredTop, maxTop))
+  const caretCenterX = (caret.left + caret.right) / 2
+  const arrowCenterX = Math.max(18, Math.min(caretCenterX - left, panelWidth - 18))
+  return { left, top, arrowCenterX, placement }
+}
+
 const styles: Record<string, CSSProperties> = {
   host: { position: 'relative', flex: 'none' },
   triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' },
@@ -37,11 +68,19 @@ const styles: Record<string, CSSProperties> = {
     appearance: 'none', WebkitAppearance: 'none',
     background: 'transparent', color: 'var(--dsw-alias-label-secondary, #68707c)', cursor: 'pointer',
   },
+  panelShell: { position: 'fixed', zIndex: 110, width: 'min(476px, calc(100vw - 24px))' },
   panel: {
-    position: 'absolute', zIndex: 30, left: 0, bottom: 44, width: 'min(476px, calc(100vw - 48px))',
+    position: 'relative', width: '100%',
     maxHeight: 'min(368px, calc(100vh - 120px))', overflow: 'hidden', padding: 0,
     boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l1, #e7e9ec)', borderRadius: 12,
     background: 'var(--dsw-specific-input-major, #fff)', boxShadow: '0 12px 34px rgba(20, 24, 31, .16)',
+  },
+  panelArrow: {
+    position: 'absolute', zIndex: 1, width: 12, height: 12,
+    transform: 'translateX(-50%) rotate(45deg)',
+    background: 'var(--dsw-specific-input-major, #fff)',
+    borderColor: 'var(--dsw-alias-border-l1, #e7e9ec)', borderStyle: 'solid',
+    pointerEvents: 'none',
   },
   section: { margin: 0 },
   sectionSpaced: { margin: '18px 0 0' },
@@ -202,10 +241,12 @@ function EmojiGrid({ emojis, layout = 'compact', onSelect }: {
   </div>
 }
 
-export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: {
+export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeometry, getEditorGeometry, onBeforeToggle, onSelect, onUploadSticker, onStickerSent, onError }: {
   disabled: boolean
   scopeKey: string | undefined
   sourceRef?: string
+  getCaretGeometry?: () => ArkmeComposerCaretGeometry | undefined
+  getEditorGeometry?: () => ArkmeComposerCaretGeometry | undefined
   onBeforeToggle?: () => void
   onSelect(emoji: ArkmeEmoji): void
   onUploadSticker?: (file: File) => Promise<ArkmeUploadedAsset>
@@ -213,6 +254,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle
   onError?: (message: string) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
   const stickerInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'emoji' | 'favorite'>('emoji')
@@ -225,6 +267,7 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle
   const [previewRevision, setPreviewRevision] = useState(0)
   const [contextMenu, setContextMenu] = useState<ArkmeFavoriteStickerMenuState>()
   const [recentIds, setRecentIds] = useState<string[]>(loadRecentEmojiIds)
+  const [panelGeometry, setPanelGeometry] = useState<ArkmeEmojiPanelGeometry>()
   const previousScopeKey = useRef(scopeKey)
   const recentEmojis = recentIds.map(id => arkmeEmojiById[id]).filter((emoji): emoji is ArkmeEmoji => emoji !== undefined)
 
@@ -240,7 +283,9 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle
   useEffect(() => {
     if (!open || typeof document === 'undefined') return
     const closeOnPointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && hostRef.current?.contains(event.target) !== true) setOpen(false)
+      if (event.target instanceof Node
+        && hostRef.current?.contains(event.target) !== true
+        && panelRef.current?.contains(event.target) !== true) setOpen(false)
       setContextMenu(undefined)
     }
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
@@ -251,6 +296,44 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [open])
+
+  const updatePanelGeometry = () => {
+    if (!open || typeof window === 'undefined') return
+    const hostRect = hostRef.current?.getBoundingClientRect()
+    const fallbackGeometry = hostRect === undefined ? undefined : {
+      left: hostRect.left, top: hostRect.top, right: hostRect.right, bottom: hostRect.bottom,
+      width: hostRect.width, height: hostRect.height,
+    }
+    const caret = getCaretGeometry?.() ?? fallbackGeometry
+    const editor = getEditorGeometry?.() ?? fallbackGeometry
+    if (caret === undefined || editor === undefined) return
+    const panelRect = panelRef.current?.getBoundingClientRect()
+    const panelWidth = panelRect?.width || Math.min(476, Math.max(280, window.innerWidth - 24))
+    const panelHeight = panelRect?.height || 368
+    const next = resolveArkmeEmojiPanelGeometry({
+      caret, editor, panelWidth, panelHeight,
+      viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+    })
+    setPanelGeometry(current => current !== undefined
+      && current.left === next.left && current.top === next.top
+      && current.arrowCenterX === next.arrowCenterX && current.placement === next.placement
+      ? current : next)
+  }
+
+  useLayoutEffect(() => { updatePanelGeometry() })
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    const update = () => { requestAnimationFrame(updatePanelGeometry) }
+    document.addEventListener('selectionchange', update)
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      document.removeEventListener('selectionchange', update)
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [open, getCaretGeometry, getEditorGeometry])
 
   useEffect(() => {
     pendingStickersRef.current = pendingStickers
@@ -399,7 +482,17 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle
       onMouseDown={event => { onBeforeToggle?.(); event.preventDefault() }}
       onClick={() => { setOpen(value => !value) }}
     ><span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span></ArkmeComposerToolButton>
-    {open && <section role="dialog" aria-label="表情选择器" style={styles.panel} data-arkme-emoji-panel>
+    {open && (() => {
+      const shell = <div
+        style={{
+          ...styles.panelShell,
+          left: panelGeometry?.left ?? 0,
+          top: panelGeometry?.top ?? 0,
+          visibility: panelGeometry === undefined && typeof document !== 'undefined' ? 'hidden' : 'visible',
+        }}
+        data-arkme-emoji-panel-shell="true"
+        data-placement={panelGeometry?.placement ?? 'above'}
+      ><section ref={panelRef} role="dialog" aria-label="表情选择器" style={styles.panel} data-arkme-emoji-panel>
       {tab === 'emoji' ? <div style={styles.body}>{recentEmojis.length > 0 && <div style={styles.section}>
         <div style={styles.titleRow}><span style={styles.title}>最近使用</span></div>
         <EmojiGrid emojis={recentEmojis} onSelect={select} />
@@ -483,6 +576,18 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, onBeforeToggle
           </>
         })()}
       </div>}
-    </section>}
+      </section><span
+        aria-hidden
+        data-arkme-emoji-panel-arrow="true"
+        style={{
+          ...styles.panelArrow,
+          left: panelGeometry?.arrowCenterX ?? 18,
+          ...(panelGeometry?.placement === 'below'
+            ? { top: -6, borderWidth: '1px 0 0 1px' }
+            : { bottom: -6, borderWidth: '0 1px 1px 0' }),
+        }}
+      /></div>
+      return typeof document === 'undefined' ? shell : createPortal(shell, document.body)
+    })()}
   </div>
 }
