@@ -151,6 +151,8 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    outputs:
+      version: ${{ steps.npm.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -173,9 +175,14 @@ jobs:
       - name: 生成固定发布包
         id: pack
         run: |
-          pack_json=$(npm pack --json --ignore-scripts)
-          tarball=$(printf '%s' "$pack_json" | node -e "const fs = require('node:fs'); const result = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(result[0].filename)")
-          test -n "$tarball"
+          pack_directory=$(mktemp -d)
+          npm pack --ignore-scripts --pack-destination "$pack_directory" >/dev/null
+          tarball_count=$(find "$pack_directory" -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')
+          if [ "$tarball_count" -ne 1 ]; then
+            echo "固定打包目录中应当恰好生成一个 .tgz，实际为 $tarball_count 个。" >&2
+            exit 1
+          fi
+          tarball=$(find "$pack_directory" -maxdepth 1 -type f -name '*.tgz' -print -quit)
           integrity=$(node -e "const fs = require('node:fs'); const crypto = require('node:crypto'); const data = fs.readFileSync(process.argv[1]); process.stdout.write('sha512-' + crypto.createHash('sha512').update(data).digest('base64'))" "$tarball")
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
           echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
@@ -238,4 +245,87 @@ jobs:
           fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$RELEASE_SHA" --title "$tag" --generate-notes
+          fi
+
+  sync-dev:
+    needs: [prepare, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+      - name: 通过合并拉取请求同步 master 到 dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          git fetch origin master dev
+          sync_sha=$(git rev-parse origin/master)
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" "$sync_sha"; then
+            echo "当前 master $sync_sha 不包含已发布提交 $RELEASE_SHA，拒绝同步。" >&2
+            exit 1
+          fi
+          if git merge-base --is-ancestor "$sync_sha" origin/dev; then
+            echo "dev 已包含 master $sync_sha，无需重复同步。"
+            exit 0
+          fi
+
+          branch="sync/master-to-dev/v${VERSION}-${sync_sha:0:12}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            remote_sha=$(git ls-remote --heads origin "$branch" | awk '{print $1}')
+            if [ "$remote_sha" != "$sync_sha" ]; then
+              echo "远端同步分支 $branch 指向 $remote_sha，预期为 $sync_sha，拒绝覆盖。" >&2
+              exit 1
+            fi
+          else
+            git push origin "$sync_sha:refs/heads/$branch"
+          fi
+
+          pr_json=$(gh pr list --repo "$GH_REPO" --base dev --head "$branch" --state all --limit 1 \
+            --json url,state)
+          pr_url=$(printf '%s' "$pr_json" | jq -r '.[0].url // empty')
+          pr_state=$(printf '%s' "$pr_json" | jq -r '.[0].state // empty')
+          if [ -z "$pr_url" ]; then
+            body_file=$(mktemp)
+            printf '%s\n' \
+              '## 自动同步发版历史' \
+              '' \
+              "- npm 版本：v${VERSION}" \
+              "- 已发布提交：${RELEASE_SHA}" \
+              "- 同步 master：${sync_sha}" \
+              '- 使用 merge commit 保留 master 与 dev 两条父链，不重写 dev 历史。' \
+              '' \
+              "<!-- automatic-master-dev-sync:${sync_sha} -->" > "$body_file"
+            pr_url=$(gh pr create --repo "$GH_REPO" --base dev --head "$branch" \
+              --title "chore(sync): 同步 master v${VERSION} 到 dev" --body-file "$body_file")
+            pr_state=OPEN
+          fi
+          if [ "$pr_state" = "CLOSED" ]; then
+            echo "同步 PR $pr_url 已关闭但未合并，拒绝静默重建或覆盖。" >&2
+            exit 1
+          fi
+          if [ "$pr_state" != "MERGED" ]; then
+            gh pr merge "$pr_url" --repo "$GH_REPO" --merge --delete-branch \
+              --subject "chore(sync): 合并 master v${VERSION} 到 dev" \
+              --body "automatic-master-dev-sync:${sync_sha}"
+          fi
+
+          git fetch origin dev
+          if ! git merge-base --is-ancestor "$sync_sha" origin/dev; then
+            echo "同步 PR 完成后，dev 仍未包含 master $sync_sha。" >&2
+            exit 1
+          fi
+          master_tree=$(git rev-parse "$sync_sha^{tree}")
+          dev_tree=$(git rev-parse "origin/dev^{tree}")
+          if [ "$master_tree" = "$dev_tree" ]; then
+            echo "dev 与同步时的 master 代码树完全一致：$master_tree"
+          else
+            echo "dev 已包含 master，但同步期间保留了 dev 上的后续提交；未重写历史。"
           fi
