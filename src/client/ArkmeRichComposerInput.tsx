@@ -55,6 +55,7 @@ export interface ArkmeRichComposerInputProps {
   disabled: boolean
   style: CSSProperties
   onTextChange(text: string): void
+  onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
   onPaste?(event: ClipboardEvent<HTMLDivElement>): void
   onKeyDown?(event: KeyboardEvent<HTMLDivElement>): void
 }
@@ -250,7 +251,7 @@ function renderEditorContents(
 export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
     className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
-    onTextChange, onPaste, onKeyDown,
+    onTextChange, onSelectionChange, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
     const valueRef = useRef(value)
@@ -321,6 +322,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = selection
       pendingSelectionRef.current = selection
       onTextChange(nextText)
+      onSelectionChange?.(nextText, selection.start, selection.end)
     }
 
     const insertNewline = (root: HTMLDivElement) => {
@@ -358,7 +360,10 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
             insertNewline(event.currentTarget)
           }
         }}
-        onKeyUp={event => { selectionRef.current = editorSelection(event.currentTarget, selectionRef.current) }}
+        onKeyUp={event => {
+          selectionRef.current = editorSelection(event.currentTarget, selectionRef.current)
+          onSelectionChange?.(editorSemanticText(event.currentTarget), selectionRef.current.start, selectionRef.current.end)
+        }}
         onMouseUp={event => {
           const selection = editorSelection(event.currentTarget, selectionRef.current)
           const atomOffset = selection.start === selection.end
@@ -369,6 +374,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
             return
           }
           selectionRef.current = selection
+          onSelectionChange?.(editorSemanticText(event.currentTarget), selection.start, selection.end)
         }}
       />
     </div>

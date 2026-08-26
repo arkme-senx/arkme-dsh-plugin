@@ -13,6 +13,7 @@ import type {
 } from '../types.js'
 import { ProfileService, type ArkmePublicProfile } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -20,6 +21,12 @@ export interface ArkmeSourceRefPayload {
   kind: ArkmeSourceKind
   ownerRef: string
   displayName: string
+  botGroupTarget?: ArkmeGroupBotBindingTarget
+}
+
+export interface ArkmeGroupBotBindingTarget {
+  rmSubjectId?: number
+  subjectUid?: string
 }
 
 export interface ArkmeGroupAvatarSnapshotProjection {
@@ -57,6 +64,76 @@ function integerIdentifierValue(value: unknown): number {
 
 function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
+
+function integerLikeValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return Math.trunc(parsed)
+  }
+  return 0
+}
+
+function sanitizeGroupBotBindingTarget(value: unknown): ArkmeGroupBotBindingTarget | undefined {
+  const raw = objectValue(value)
+  const rmSubjectId = integerLikeValue(raw.rmSubjectId ?? raw.rm_subject_id)
+  const subjectUid = stringValue(raw.subjectUid ?? raw.subject_uid).trim()
+  const target: ArkmeGroupBotBindingTarget = {
+    ...(rmSubjectId > 0 ? { rmSubjectId } : {}),
+    ...(subjectUid === '' ? {} : { subjectUid }),
+  }
+  return Object.keys(target).length === 0 ? undefined : target
+}
+
+export function arkmeGroupBotBindingTargetFromBundle(
+  bundle: Record<string, unknown>,
+): ArkmeGroupBotBindingTarget | undefined {
+  const chatSession = objectValue(bundle.session)
+  const rmSubjectId = integerLikeValue(
+    bundle.rm_subject_id ?? bundle.rmSubjectId
+    ?? bundle.subject_id ?? bundle.subjectId
+    ?? bundle.shared_topic_id ?? bundle.sharedTopicId
+    ?? chatSession.rm_subject_id ?? chatSession.rmSubjectId
+    ?? chatSession.subject_id ?? chatSession.subjectId
+    ?? chatSession.shared_topic_id ?? chatSession.sharedTopicId,
+  )
+  const subjectUid = stringValue(
+    bundle.subject_uid ?? bundle.subjectUid
+    ?? chatSession.subject_uid ?? chatSession.subjectUid,
+  ).trim()
+  if (rmSubjectId > 0) return { rmSubjectId }
+  if (subjectUid !== '') return { subjectUid }
+  return undefined
+}
+
+export function arkmeGroupBotBindingBody(
+  source: Pick<ArkmeSourceRefPayload, 'ownerRef' | 'botGroupTarget'>,
+): Record<string, unknown> {
+  const target = source.botGroupTarget
+  if (target?.rmSubjectId !== undefined && target.rmSubjectId > 0) return { rm_subject_id: target.rmSubjectId }
+  if (target?.subjectUid !== undefined && target.subjectUid.trim() !== '') return { subject_uid: target.subjectUid.trim() }
+  return { subject_uid: source.ownerRef }
+}
+
+function backendBooleanValue(value: unknown): boolean | undefined {
+  if (value === null || value === undefined) return undefined
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1') return true
+    if (normalized === 'false' || normalized === '0') return false
+  }
+  return undefined
+}
+
+function chatUnreadMentionState(unread: Record<string, unknown>): boolean | undefined {
+  const explicit = backendBooleanValue(unread.has_unread_attention ?? unread.hasUnreadAttention)
+  if (explicit !== undefined) return explicit
+  const rawCount = unread.unread_attention_count ?? unread.unreadAttentionCount
+  if (rawCount === undefined || rawCount === null) return undefined
+  return integerLikeValue(rawCount) > 0
+}
 
 function encodeOpaqueJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
@@ -444,9 +521,11 @@ export class SourceService {
     this.sourceListInFlight.set(cacheKey, pending)
     try {
       const result = await pending
-      this.sourceListCache.delete(cacheKey)
-      this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
-      this.pruneSourceListCache()
+      if (this.sourceListInFlight.get(cacheKey) === pending) {
+        this.sourceListCache.delete(cacheKey)
+        this.sourceListCache.set(cacheKey, { value: cloneSourceList(result), expiresAtMillis: Date.now() + SOURCE_LIST_CACHE_TTL_MS })
+        this.pruneSourceListCache()
+      }
       return cloneSourceList(result)
     } finally {
       if (this.sourceListInFlight.get(cacheKey) === pending) this.sourceListInFlight.delete(cacheKey)
@@ -487,21 +566,26 @@ export class SourceService {
           '/api/v1/topics/display/list',
           { limit: Math.min(100, Math.max(1, limit)) },
           session,
+          options.signal,
         ),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/topics/hierarchy/relations/list',
           {},
           session,
+          options.signal,
         ).catch(() => undefined),
       ])
+      options.signal?.throwIfAborted()
       const [summaryResult, latestRecordsResult] = await Promise.allSettled([
         this.recordReader.summary(),
         this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/records/uncategorized/query',
           { limit: 10 },
           session,
+          options.signal,
         ),
       ])
+      options.signal?.throwIfAborted()
       const cached = summaryResult.status === 'rejected' || latestRecordsResult.status === 'rejected'
         ? await this.runtime.stateStore.cachedSnapshot(session.userId).catch(() => undefined)
         : undefined
@@ -668,14 +752,35 @@ export class SourceService {
         )
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const preview = textPreview(latestPayload)
+      const unreadCount = Math.max(0, Math.trunc(numberValue(unread.unread_count)))
+      const latestRelation = objectValue(latestPreview.relation)
+      const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
+      const latestPreviewMentionsViewer = latestSenderUserId !== session.userId
+        && arkmeMentionMetadataMentionsViewer(latestRecord, latestPayload, session.userId)
+      const backendMentionState = chatUnreadMentionState(unread)
+      const hasUnreadMention = kind !== 'group_chat'
+        ? undefined
+        : unreadCount <= 0
+          ? false
+          : backendMentionState === undefined && !latestPreviewMentionsViewer
+            ? undefined
+            : backendMentionState === true || latestPreviewMentionsViewer
+      const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
       const item: ArkmeSourceItem = {
-        sourceRef: await this.sealSourceRef(session.userId, kind, uid, displayName),
+        sourceRef: await this.sealSourceRef(
+          session.userId,
+          kind,
+          uid,
+          displayName,
+          botGroupTarget === undefined ? {} : { botGroupTarget },
+        ),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
         displayName,
         ...(preview === '' ? {} : { latestPreview: preview }),
         activeAtMillis: numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
-        unreadCount: numberValue(unread.unread_count),
+        unreadCount,
+        ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
         isMuted,
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
           ? { latestSequence: numberValue(unread.session_last_seq ?? chatSession.last_seq) }
@@ -718,10 +823,15 @@ export class SourceService {
 
   invalidateSourceListCache(userId: number, directory?: ArkmeSourceDirectory): void {
     const prefix = `${String(userId)}:`
+    const matches = (key: string): boolean => (
+      key.startsWith(prefix)
+      && (directory === undefined || key.startsWith(`${prefix}${directory}:`))
+    )
     for (const key of this.sourceListCache.keys()) {
-      if (!key.startsWith(prefix)) continue
-      if (directory !== undefined && !key.startsWith(`${prefix}${directory}:`)) continue
-      this.sourceListCache.delete(key)
+      if (matches(key)) this.sourceListCache.delete(key)
+    }
+    for (const key of this.sourceListInFlight.keys()) {
+      if (matches(key)) this.sourceListInFlight.delete(key)
     }
   }
 
@@ -862,8 +972,17 @@ export class SourceService {
     kind: ArkmeSourceKind,
     ownerRef: string,
     displayName: string,
+    options: { botGroupTarget?: ArkmeGroupBotBindingTarget } = {},
   ): Promise<string> {
-    const payload = encodeOpaqueJson({ version: 1, userId, kind, ownerRef, displayName } satisfies ArkmeSourceRefPayload)
+    const botGroupTarget = kind === 'group_chat' ? sanitizeGroupBotBindingTarget(options.botGroupTarget) : undefined
+    const payload = encodeOpaqueJson({
+      version: 1,
+      userId,
+      kind,
+      ownerRef,
+      displayName,
+      ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
+    } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `arkme-source-v1.${payload}.${signature}`
   }
@@ -892,6 +1011,10 @@ export class SourceService {
       kind: isSourceKind(kind) ? kind : 'default_category',
       ownerRef: stringValue(parsed.ownerRef).trim(),
       displayName: stringValue(parsed.displayName).trim(),
+      ...(kind === 'group_chat' ? (() => {
+        const botGroupTarget = sanitizeGroupBotBindingTarget(parsed.botGroupTarget)
+        return botGroupTarget === undefined ? {} : { botGroupTarget }
+      })() : {}),
     }
     if (parsed.version !== 1 || result.userId !== expectedUserId || !isSourceKind(kind)
       || result.ownerRef === '' || result.displayName === '') {
@@ -905,7 +1028,13 @@ export class SourceService {
       ? await this.chatDirectorySourceKey(source.userId, source.ownerRef)
       : undefined
     return {
-      sourceRef: await this.sealSourceRef(source.userId, source.kind, source.ownerRef, source.displayName),
+      sourceRef: await this.sealSourceRef(
+        source.userId,
+        source.kind,
+        source.ownerRef,
+        source.displayName,
+        source.botGroupTarget === undefined ? {} : { botGroupTarget: source.botGroupTarget },
+      ),
       ...(sourceKey === undefined ? {} : { sourceKey }),
       kind: source.kind,
       displayName: source.displayName,
@@ -948,8 +1077,25 @@ export class SourceService {
       latestItem?.sequence ?? 0,
       cached?.latestSequence ?? 0,
     )
+    const unreadCount = Math.max(0, Math.trunc(numberValue(unread.unread_count)))
+    const latestMentionsViewer = latestItem?.isMe === false && latestItem.mentionsViewer === true
+    const backendMentionState = chatUnreadMentionState(unread)
+    const hasUnreadMention = kind !== 'group_chat'
+      ? undefined
+      : unreadCount <= 0
+        ? false
+        : backendMentionState === undefined && !latestMentionsViewer
+          ? cached?.hasUnreadMention
+          : backendMentionState === true || latestMentionsViewer
+    const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
     return {
-      sourceRef: await this.sealSourceRef(session.userId, kind, uid, displayName),
+      sourceRef: await this.sealSourceRef(
+        session.userId,
+        kind,
+        uid,
+        displayName,
+        botGroupTarget === undefined ? {} : { botGroupTarget },
+      ),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
       displayName,
@@ -961,7 +1107,8 @@ export class SourceService {
         numberValue(bundle.sort_active_at ?? chatSession.last_active_at),
         latestItem?.sendAtMillis ?? 0,
       ),
-      unreadCount: Math.max(0, Math.trunc(numberValue(unread.unread_count))),
+      unreadCount,
+      ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
       isMuted,
       ...(latestSequence > 0 ? { latestSequence } : {}),
     }

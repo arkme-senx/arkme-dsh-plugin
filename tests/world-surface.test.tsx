@@ -66,6 +66,25 @@ const item: ArkmeWorldFeedItem = {
   extendCount: 2,
 }
 
+const extensionPublicationItem: ArkmeWorldFeedItem = {
+  ...item,
+  recordRef: 'world_extension_1',
+  headline: '',
+  textContent: '',
+  extendCount: 0,
+  recordType: 'extension_publication',
+  extensionPublication: {
+    extensionId: 'arkme-tic-tac-toe',
+    version: '1.0.4',
+    name: '井字棋（联机版）',
+    description: '通过 Arkme 私聊进行公平、轻松的井字棋联机对战。',
+    previewRefs: [],
+    visibility: 'public',
+    desktopRequired: true,
+    publishedAtMillis: item.publishedAtMillis,
+  },
+}
+
 const interactions: ArkmeWorldInteractionItem[] = [
   {
     interactionRef: 'comment_1', parentRef: 'world_1', authorName: '阿七', textContent: '第一条评论',
@@ -146,6 +165,24 @@ describe('Arkme native World surface', () => {
     expect(previewMarkup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
     expect(styleForDataAttribute(previewMarkup, 'data-world-comment-level', 'root'))
       .toContain('color:var(--dsw-alias-label-secondary, #68707c)')
+  })
+
+  it('renders extension publications as compact feed-native attachments', () => {
+    const markup = render({ status: 'success', items: [extensionPublicationItem] }, new Set())
+    const activityStyle = styleForDataAttribute(markup, 'data-world-extension-activity', 'compact')
+
+    expect(activityStyle).toContain('grid-template-columns:48px minmax(0,1fr) auto')
+    expect(activityStyle).toContain('border:0')
+    expect(activityStyle).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(markup).toContain('>井字棋（联机版）<')
+    expect(markup).toContain('>v1.0.4<')
+    expect(markup).toContain('>已上架<')
+    expect(markup).toContain('>桌面端<')
+    expect(markup).toContain('>查看详情<')
+    expect(markup).toContain('aria-label="在市集中查看井字棋（联机版）"')
+    expect(markup).not.toContain('在市集中查看</button>')
+    expect(styleForDataAttribute(markup, 'data-world-extension-open', 'detail'))
+      .toContain('background:transparent')
   })
 
   it('keeps the expanded comment panel and composer on one semantic surface', () => {

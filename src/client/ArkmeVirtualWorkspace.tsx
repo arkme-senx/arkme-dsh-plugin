@@ -92,6 +92,7 @@ const colors = {
   border: arkmeTheme.borderSoft,
   active: '#f1f2f6',
   accent: '#9eadff',
+  mention: '#20c66a',
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -180,10 +181,18 @@ const styles: Record<string, CSSProperties> = {
     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     color: colors.secondary, fontSize: 11, lineHeight: '16px',
   },
+  mentionPreviewPrefix: { color: colors.mention, fontWeight: 600 },
   unread: {
     minWidth: 17, height: 17, padding: '0 5px', boxSizing: 'border-box', borderRadius: 999,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#ff5f57',
     color: arkmeTheme.foreground, fontSize: 10, lineHeight: '17px',
+  },
+  sourceAvatarWrap: { width: 44, height: 44, flex: 'none', position: 'relative', display: 'grid', placeItems: 'center' },
+  mentionUnread: {
+    position: 'absolute', top: -2, right: -2, minWidth: 17, height: 17, padding: '0 5px',
+    boxSizing: 'border-box', borderRadius: 999, display: 'inline-flex', alignItems: 'center',
+    justifyContent: 'center', background: colors.mention, color: arkmeTheme.foreground,
+    border: `2px solid ${colors.panel}`, fontSize: 10, lineHeight: '13px', fontWeight: 700,
   },
   avatar: {
     width: 38, height: 38, flex: 'none', position: 'relative', overflow: 'hidden', borderRadius: 999,
@@ -491,6 +500,32 @@ function timeLabel(value: number): string {
   if (day === start - 86_400_000) return `昨天 ${time}`
   if (day > start - 7 * 86_400_000) return new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(date)
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date)
+}
+
+export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
+  const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
+  return `${mentionPrefix}${preview}`.trim()
+}
+
+export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPrefix: string; preview: string } {
+  const preview = (source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : '')).replace(/\s+/g, ' ').trim()
+  const mentionPrefix = source.kind === 'group_chat' && source.hasUnreadMention === true && preview !== ''
+    ? '[有人@我] '
+    : ''
+  return { mentionPrefix, preview }
+}
+
+export function arkmeRootChatUnreadPlacement(source: ArkmeSourceItem): 'avatar' | 'inline' | 'none' {
+  if (source.unreadCount <= 0) return 'none'
+  return source.kind === 'group_chat' && source.hasUnreadMention === true ? 'avatar' : 'inline'
+}
+
+function ArkmeRootChatPreview({ source }: { source: ArkmeSourceItem }) {
+  const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
+  return <span style={styles.preview}>
+    {mentionPrefix !== '' && <span style={styles.mentionPreviewPrefix}>{mentionPrefix}</span>}
+    {preview}
+  </span>
 }
 
 export interface ArkmeTopicTreeRowProps {
@@ -946,9 +981,9 @@ export function ArkmeNavigation({
     return () => { directoryRequestAbortRef.current?.abort() }
   }, [authenticated, directory, loadDirectory])
   useEffect(() => {
-    if (!authenticated || directory !== 'send_to_self' || ui.chatRevision === 0) return
+    if (!authenticated || directory !== 'send_to_self' || ui.recordRevision === 0) return
     void loadDirectory('send_to_self')
-  }, [authenticated, directory, loadDirectory, ui.chatRevision])
+  }, [authenticated, directory, loadDirectory, ui.recordRevision])
   useEffect(() => {
     if (!authenticated || directory !== 'root') return
     let active = true
@@ -1343,6 +1378,8 @@ export function ArkmeNavigation({
         </>}
         {rootSources.map(source => {
           const selected = activeDirectoryEntryId === undefined && ui.mode === 'source' && ui.selectedSource?.sourceRef === source.sourceRef
+          const unreadPlacement = arkmeRootChatUnreadPlacement(source)
+          const unreadText = source.unreadCount > 99 ? '99+' : source.unreadCount
           return <button
             key={source.sourceRef} type="button" role="treeitem" aria-selected={selected}
             ref={node => {
@@ -1351,20 +1388,23 @@ export function ArkmeNavigation({
             }}
             style={{ ...styles.chatRow, ...(selected ? styles.chatRowActive : {}) }} onClick={() => { selectSource(source) }}
           >
-            <ArkmeSourceAvatar
-              {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
-              {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
-              {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
-            />
+            <span style={styles.sourceAvatarWrap}>
+              <ArkmeSourceAvatar
+                {...(source.avatarRef === undefined ? {} : { avatarRef: source.avatarRef })}
+                {...(source.avatarRefs === undefined ? {} : { avatarRefs: source.avatarRefs })}
+                {...(source.groupAvatar === undefined ? {} : { groupAvatar: source.groupAvatar })}
+              />
+              {unreadPlacement === 'avatar' && <span style={styles.mentionUnread}>{unreadText}</span>}
+            </span>
             <span style={styles.chatContent}>
               <span style={styles.chatTop}>
                 <span style={styles.chatName}>{source.displayName}</span>
                 <span style={styles.chatTime}>{timeLabel(source.activeAtMillis)}</span>
               </span>
               <span style={styles.chatBottom}>
-                <span style={styles.preview}>{source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : '')}</span>
+                <ArkmeRootChatPreview source={source} />
                 {source.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
-                {source.unreadCount > 0 && <span style={styles.unread}>{source.unreadCount > 99 ? '99+' : source.unreadCount}</span>}
+                {unreadPlacement === 'inline' && <span style={styles.unread}>{unreadText}</span>}
               </span>
             </span>
           </button>

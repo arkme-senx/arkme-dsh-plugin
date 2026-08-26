@@ -10,6 +10,7 @@ import type {
   ArkmeFavoriteStickerAddInput,
   ArkmeFavoriteStickerManageAction,
   ArkmeMessageReadReceiptQueryItem,
+  ArkmeBotMentionInput,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -315,8 +316,9 @@ function humanMentionsParam(params: Record<string, unknown>): ArkmeHumanMentionI
       throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
     }
     const item = value as Record<string, unknown>
+    const all = item.all === true
     return {
-      memberRef: stringParam(item, 'memberRef'),
+      ...(all ? { all } : { memberRef: stringParam(item, 'memberRef') }),
       startIndex: numberParam(item, 'startIndex', -1),
       length: numberParam(item, 'length', 0),
     }
@@ -337,15 +339,42 @@ function messageReadReceiptItemsParam(params: Record<string, unknown>): ArkmeMes
   })
 }
 
+function botMentionsParam(params: Record<string, unknown>): ArkmeBotMentionInput[] {
+  const values = params.botMentions
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 参数无效', false, 400)
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return {
+      botRef: stringParam(item, 'botRef'),
+      startIndex: numberParam(item, 'startIndex', -1),
+      length: numberParam(item, 'length', 0),
+    }
+  })
+}
+
+function botRefsParam(params: Record<string, unknown>): string[] {
+  const values = params.botRefs
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用参数无效', false, 400)
+  return values.map(value => String(value).trim())
+}
+
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
+  const humanMentions = humanMentionsParam(params)
+  const botMentions = botMentionsParam(params)
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
-    ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
+    ...(humanMentions.length === 0 ? {} : { humanMentions }),
+    ...(botMentions.length === 0 ? {} : { botMentions }),
     assets: rawAssets.flatMap(raw => {
       if (raw === null || typeof raw !== 'object') return []
       const asset = raw as Record<string, unknown>
@@ -624,6 +653,7 @@ export async function dispatchArkmeHostOperation(
         ...(avatar === '' ? {} : { avatar }),
       })
     }
+    case 'bots.list': return await service.listBots(requestSignal === undefined ? {} : { signal: requestSignal })
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
@@ -896,16 +926,23 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'sequence', 0),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
-    case 'source.send-text': return await service.sendSourceText(
-      stringParam(params, 'sourceRef'),
-      stringParam(params, 'textContent'),
-      {
-        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
-        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
-        ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
-        ...(humanMentionsParam(params).length === 0 ? {} : { humanMentions: humanMentionsParam(params) }),
-      },
-    )
+    case 'source.send-text': {
+      const botRefs = botRefsParam(params)
+      const humanMentions = humanMentionsParam(params)
+      const botMentions = botMentionsParam(params)
+      return await service.sendSourceText(
+        stringParam(params, 'sourceRef'),
+        stringParam(params, 'textContent'),
+        {
+          ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+          ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+          ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
+          ...(botRefs.length === 0 ? {} : { botRefs }),
+          ...(humanMentions.length === 0 ? {} : { humanMentions }),
+          ...(botMentions.length === 0 ? {} : { botMentions }),
+        },
+      )
+    }
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
     )

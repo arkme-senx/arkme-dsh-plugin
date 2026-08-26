@@ -20,7 +20,8 @@ describe('Arkme navigation cache', () => {
     const storage = new MemoryStorage()
     const source = {
       sourceRef: 'source-private', kind: 'private_chat' as const, displayName: '联系人',
-      activeAtMillis: 1, unreadCount: 2, latestPreview: '你好', avatarRef: 'avatar-ref', isMuted: true,
+      activeAtMillis: 1, unreadCount: 2, latestPreview: '你好', avatarRef: 'avatar-ref',
+      hasUnreadMention: true, isMuted: true,
     }
     const cache: ArkmeNavigationCache = {
       version: 1, userId: 10001, directory: 'root', selectedSourceRef: source.sourceRef,

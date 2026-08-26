@@ -553,6 +553,14 @@ describe('Arkme SDK', () => {
       recordUid: 'record-mention-1', relationUid: 'rel-mention-1',
       humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
     })).resolves.toMatchObject({ itemUid: 'record-mention-1' })
+    await expect(sdk.sendText('source-1', '@所有人 请看', {
+      recordUid: 'record-all-mention-1', relationUid: 'rel-all-mention-1',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })).resolves.toMatchObject({ itemUid: 'record-all-mention-1' })
+    await expect(sdk.sendText('source-1', '@总结助手 请看', {
+      recordUid: 'record-bot-mention-1', relationUid: 'rel-bot-mention-1',
+      botMentions: [{ botRef: 'bot-1', startIndex: 0, length: 5 }],
+    })).resolves.toMatchObject({ itemUid: 'record-bot-mention-1' })
     expect(calls).toMatchObject([
       { operation: 'sources.list', params: { directory: 'root' } },
       { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
@@ -588,6 +596,26 @@ describe('Arkme SDK', () => {
           recordUid: 'record-mention-1',
           relationUid: 'rel-mention-1',
           humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@所有人 请看',
+          recordUid: 'record-all-mention-1',
+          relationUid: 'rel-all-mention-1',
+          humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@总结助手 请看',
+          recordUid: 'record-bot-mention-1',
+          relationUid: 'rel-bot-mention-1',
+          botMentions: [{ botRef: 'bot-1', startIndex: 0, length: 5 }],
         },
       },
     ])

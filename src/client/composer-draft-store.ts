@@ -7,7 +7,9 @@ export interface ArkmeComposerAttachment {
 }
 
 export interface ArkmeComposerMention {
-  memberRef: string
+  memberRef?: string
+  botRef?: string
+  all?: boolean
   displayName: string
   startIndex: number
   length: number
@@ -262,18 +264,24 @@ export class ArkmeComposerDraftStore {
     return start + 1
   }
 
-  insertMention(
+  private insertMentionToken(
     key: string | undefined,
-    memberRef: string,
+    mention: Pick<ArkmeComposerMention, 'memberRef' | 'botRef' | 'all'>,
     displayName: string,
     selectionStart: number,
     selectionEnd = selectionStart,
   ): number | undefined {
-    if (key === undefined || memberRef.trim() === '' || displayName.trim() === '') return undefined
+    const normalizedDisplayName = displayName.trim()
+    const normalizedMemberRef = mention.memberRef?.trim()
+    const normalizedBotRef = mention.botRef?.trim()
+    if (key === undefined || normalizedDisplayName === '') return undefined
+    if (mention.all !== true
+      && (normalizedMemberRef === undefined || normalizedMemberRef === '')
+      && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
     const current = this.get(key)
     const start = Math.max(0, Math.min(current.text.length, Math.trunc(selectionStart)))
     const end = Math.max(start, Math.min(current.text.length, Math.trunc(selectionEnd)))
-    const token = `@${displayName.trim()}`
+    const token = `@${normalizedDisplayName}`
     const inserted = `${token} `
     const text = current.text.slice(0, start) + inserted + current.text.slice(end)
     const mentions = reconcileArkmeComposerMentions(
@@ -283,7 +291,13 @@ export class ArkmeComposerDraftStore {
     ).map(mention => mention.startIndex >= start
       ? { ...mention, startIndex: mention.startIndex + inserted.length }
       : mention)
-    mentions.push({ memberRef: memberRef.trim(), displayName: displayName.trim(), startIndex: start, length: token.length })
+    if (mention.all === true) {
+      mentions.push({ all: true, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+    } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
+      mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+    } else {
+      mentions.push({ memberRef: normalizedMemberRef!, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+    }
     mentions.sort((left, right) => left.startIndex - right.startIndex)
     const emojis = reconcileArkmeComposerEmojis(
       current.text,
@@ -294,6 +308,34 @@ export class ArkmeComposerDraftStore {
       : emoji)
     this.store(key, { text, attachments: current.attachments, mentions, emojis })
     return start + inserted.length
+  }
+
+  insertMention(
+    key: string | undefined,
+    memberRef: string,
+    displayName: string,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+  ): number | undefined {
+    return this.insertMentionToken(key, { memberRef }, displayName, selectionStart, selectionEnd)
+  }
+
+  insertAllMention(
+    key: string | undefined,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+  ): number | undefined {
+    return this.insertMentionToken(key, { all: true }, '所有人', selectionStart, selectionEnd)
+  }
+
+  insertBotMention(
+    key: string | undefined,
+    botRef: string,
+    displayName: string,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+  ): number | undefined {
+    return this.insertMentionToken(key, { botRef }, displayName, selectionStart, selectionEnd)
   }
 
   deleteMentionAtSelection(

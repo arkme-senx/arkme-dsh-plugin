@@ -6,6 +6,7 @@ const CLIENT_EXTERNALS = [
   'react-dom',
   'react-dom/client',
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-slots',
 ]
 

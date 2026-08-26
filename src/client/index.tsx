@@ -20,6 +20,7 @@ import { arkmeUi } from './ui-controller.js'
 import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
+import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
@@ -194,6 +195,11 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: install redesign visual system')
 
+  ctx.effect(
+    () => installArkmeAccountSettingsNavIcon(),
+    'dsh-arkme: render account settings navigation icon',
+  )
+
   ctx.effect(() => {
     let disposeConversation: (() => void) | undefined
     let disposeDetails: (() => void) | undefined
@@ -227,7 +233,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'arkme-account',
-    order: 1000,
+    order: -1,
     label: '我的账户',
   }, ArkmeDshSettingsSection))
 

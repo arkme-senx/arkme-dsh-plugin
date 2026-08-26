@@ -183,6 +183,32 @@ describe('Arkme composer draft store', () => {
     expect(store.get(key).mentions).toEqual([])
   })
 
+  it('inserts @所有人 as an atomic all mention without a member reference', () => {
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'group_chat', sourceRef: 'group:8' })
+    store.setText(key, '提醒开会')
+
+    expect(store.insertAllMention(key, 0)).toBe(5)
+    expect(store.get(key)).toMatchObject({
+      text: '@所有人 提醒开会',
+      mentions: [{ all: true, displayName: '所有人', startIndex: 0, length: 4 }],
+    })
+    expect(store.deleteMentionAtSelection(key, 4, 4, 'backward')).toBe(0)
+    expect(store.get(key)).toMatchObject({ text: '提醒开会', mentions: [] })
+  })
+
+  it('inserts a Bot mention with its opaque Bot reference and text range', () => {
+    const store = new ArkmeComposerDraftStore()
+    const key = arkmeSourceComposerDraftKey(1001, { kind: 'private_chat', sourceRef: 'chat:bot' })
+    store.setText(key, '帮我总结')
+
+    expect(store.insertBotMention(key, 'bot-ref', '总结助手', 0)).toBe(6)
+    expect(store.get(key)).toMatchObject({
+      text: '@总结助手 帮我总结',
+      mentions: [{ botRef: 'bot-ref', displayName: '总结助手', startIndex: 0, length: 5 }],
+    })
+  })
+
   it('renders structured mention ranges as blue-ready runs without guessing plain @ text', () => {
     const mentions = [{ memberRef: 'member-ref', displayName: '小林', startIndex: 1, length: 3 }]
     expect(arkmeMentionTextRuns('请@小林 处理 @普通文字', mentions)).toEqual([
