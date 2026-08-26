@@ -18,6 +18,7 @@ export interface ArkmeChatProjectionReader {
 }
 
 const MAX_PROJECTION_RETRIES = 5
+const NOTIFICATION_BASELINE_REUSE_MS = 60_000
 
 export interface PendingChatNotificationHint {
   hint: ArkmeChatReceiveHint
@@ -54,6 +55,8 @@ export class ChatRealtimeService {
   private readonly notificationBaselineSequences = new Map<string, number>()
   private notificationBaselineRetryTimer: ReturnType<typeof setTimeout> | undefined
   private notificationBaselineRetryCount = 0
+  private notificationBaselineCompletedAtMillis = 0
+  private notificationBaselineUserId: number | undefined
   private chatClientRevision = 0
 
   constructor(
@@ -89,6 +92,8 @@ export class ChatRealtimeService {
     this.projectionRetryCounts.clear()
     this.notificationBaselineSequences.clear()
     this.notificationBaselineGeneration = 0
+    this.notificationBaselineCompletedAtMillis = 0
+    this.notificationBaselineUserId = undefined
     this.chatClientListeners.clear()
   }
 
@@ -106,6 +111,8 @@ export class ChatRealtimeService {
       this.projectionRetryCounts.clear()
       this.notificationBaselineSequences.clear()
       this.notificationBaselineGeneration = 0
+      this.notificationBaselineCompletedAtMillis = 0
+      this.notificationBaselineUserId = undefined
     }
   }
 
@@ -131,7 +138,6 @@ export class ChatRealtimeService {
     if (notice.cause === 'reconcile') {
       const generation = notice.state.connectionGeneration
       this.notificationBaselineGeneration = 0
-      this.notificationBaselineSequences.clear()
       this.notificationBaselineRetryCount = 0
       if (this.notificationBaselineRetryTimer !== undefined) clearTimeout(this.notificationBaselineRetryTimer)
       this.notificationBaselineRetryTimer = undefined
@@ -199,6 +205,22 @@ export class ChatRealtimeService {
   private async reconcileChatNotificationBaseline(connectionGeneration: number): Promise<void> {
     try {
       const session = await this.runtime.requireSession()
+      const canReuseBaseline = this.notificationBaselineUserId === session.userId
+        && this.notificationBaselineCompletedAtMillis > 0
+        && Date.now() - this.notificationBaselineCompletedAtMillis < NOTIFICATION_BASELINE_REUSE_MS
+      if (canReuseBaseline) {
+        const state = this.chatRealtime.state()
+        if (!state.connected || state.connectionGeneration !== connectionGeneration) return
+        this.notificationBaselineGeneration = connectionGeneration
+        this.notificationBaselineRetryCount = 0
+        console.info('dsh-arkme: reconcile_reused', {
+          connectionGeneration,
+          sessionCount: this.notificationBaselineSequences.size,
+        })
+        return
+      }
+      this.notificationBaselineSequences.clear()
+      this.notificationBaselineUserId = undefined
       const sequences = new Map<string, number>()
       let cursor: string | undefined
       for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
@@ -221,6 +243,8 @@ export class ChatRealtimeService {
       for (const [uid, sequence] of sequences) this.notificationBaselineSequences.set(uid, sequence)
       this.notificationBaselineGeneration = connectionGeneration
       this.notificationBaselineRetryCount = 0
+      this.notificationBaselineCompletedAtMillis = Date.now()
+      this.notificationBaselineUserId = session.userId
       console.info('dsh-arkme: reconcile_completed', {
         connectionGeneration,
         sessionCount: sequences.size,
