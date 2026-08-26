@@ -18,6 +18,23 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('manages account-scoped favorite stickers through the public typed SDK', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({ items: [], itemCount: 0, updatedAtMillis: 1 })
+      },
+    })
+
+    await expect(sdk.manageFavoriteSticker('asset-12345678', 'move-to-front')).resolves.toMatchObject({ itemCount: 0 })
+    expect(calls).toEqual([{
+      operation: 'favorite-stickers.manage', params: { fileAssetUid: 'asset-12345678', action: 'move-to-front' },
+    }])
+    await expect(sdk.manageFavoriteSticker(' ', 'delete')).rejects.toThrow(/must not be empty/)
+  })
+
   it('uploads World images as raw files and keeps text and file-asset publish operations separate', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -37,6 +37,10 @@ function fakeService() {
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
+    favoriteStickers: vi.fn(async () => ({ items: [], itemCount: 0, updatedAtMillis: 0 })),
+    saveFavoriteStickers: vi.fn(async (items: unknown) => items),
+    manageFavoriteSticker: vi.fn(async (fileAssetUid: string, action: string) => ({ fileAssetUid, action })),
+    sendFavoriteSticker: vi.fn(async (_sourceRef: string, _fileAssetUid: string, options: unknown) => options),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
     updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
     getLongArticleDraft: vi.fn(async () => undefined),
@@ -55,6 +59,21 @@ function fakeService() {
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
   }
 }
+
+describe('favorite sticker Host API dispatch', () => {
+  it('forwards only the bounded sticker id and management action', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'move-to-front', accountId: 999, signedUrl: 'must-not-forward',
+    })
+
+    expect(service.manageFavoriteSticker).toHaveBeenCalledWith('asset-12345678', 'move-to-front')
+    await expect(dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'replace',
+    })).rejects.toMatchObject({ code: 'favorite-sticker-manage-invalid' })
+  })
+})
 
 describe('World publish Host API dispatch', () => {
   it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {

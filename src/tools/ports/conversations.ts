@@ -4,6 +4,8 @@ import type {
   ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceReadResult, ArkmeSourceSendResult,
   ArkmeMessageReadReceiptDetail, ArkmeMessageReadReceiptQueryItem, ArkmeMessageReadReceiptSummaryList,
   ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerManageAction,
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
@@ -61,6 +63,17 @@ export interface ArkmeConversationToolPort {
       agentAuthored?: boolean
     },
   ): Promise<ArkmeSourceSendResult>
+  favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList>
+  sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options?: { recordUid?: string; relationUid?: string; signal?: AbortSignal },
+  ): Promise<ArkmeSourceSendResult>
+  manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList>
   sendDirectText(
     recipientArkmeId: string,
     textContent: string,

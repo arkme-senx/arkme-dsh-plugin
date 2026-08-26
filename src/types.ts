@@ -1205,6 +1205,8 @@ export interface ArkmeContentBlock {
   size: number
   durationSec?: number
   sortOrder: number
+  /** Backend media render role. 3 means a standalone chat sticker. */
+  renderRole?: 1 | 3
 }
 
 export interface ArkmeUploadedAsset {
@@ -1214,6 +1216,35 @@ export interface ArkmeUploadedAsset {
   size: number
   fileKind: 1 | 2 | 3 | 4
 }
+
+export interface ArkmeFavoriteSticker {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+  isAnimated: boolean
+  isAvailable: boolean
+  mediaRef?: string
+  unavailableReason?: string
+}
+
+export interface ArkmeFavoriteStickerList {
+  items: ArkmeFavoriteSticker[]
+  itemCount: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeFavoriteStickerSaveInput {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+  isAnimated?: boolean
+}
+
+export type ArkmeFavoriteStickerManageAction = 'move-to-front' | 'delete'
 
 export interface ArkmeRichSendInput {
   title?: string
@@ -2209,6 +2240,10 @@ export type ArkmePluginOperation =
   | 'chat.private.open'
   | 'chat.member.private.open'
   | 'source.send-rich'
+  | 'favorite-stickers.list'
+  | 'favorite-stickers.save'
+  | 'favorite-stickers.send'
+  | 'favorite-stickers.manage'
   | 'source.long-article.detail'
   | 'source.long-article.update'
   | 'source.long-article.draft.get'

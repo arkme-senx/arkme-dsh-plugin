@@ -21,6 +21,7 @@ const styles: Record<string, CSSProperties> = {
   mediaGrid: { display: 'grid', gap: mediaGap, maxWidth: '100%' },
   mediaTile: { position: 'relative', display: 'block', width: '100%', aspectRatio: '1', overflow: 'hidden', border: 0, padding: 0, borderRadius: 8, background: 'rgba(127,127,127,.10)', cursor: 'pointer' },
   mediaImage: { display: 'block', width: '100%', height: '100%', objectFit: 'cover' },
+  sticker: { display: 'block', width: 148, maxWidth: '42vw', height: 148, maxHeight: '24vh', objectFit: 'contain', cursor: 'pointer' },
   videoPreview: { display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#111', pointerEvents: 'none' },
   videoBadge: { position: 'absolute', left: 6, bottom: 6, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 5px', borderRadius: 6, background: 'rgba(0,0,0,.62)', color: '#fff', fontSize: 10, lineHeight: '14px' },
   audio: { width: 188, maxWidth: '100%', minHeight: 40, display: 'flex', alignItems: 'center', gap: 9, padding: '6px 10px', boxSizing: 'border-box', borderRadius: 10, background: 'rgba(127,127,127,.08)' },
@@ -438,6 +439,10 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose }: {
 function splitVisualRuns(blocks: ArkmeContentBlock[]): Array<ArkmeContentBlock | ArkmeContentBlock[]> {
   const rows: Array<ArkmeContentBlock | ArkmeContentBlock[]> = []
   for (const block of blocks) {
+    if (block.renderRole === 3 && block.kind === 'image') {
+      rows.push(block)
+      continue
+    }
     if (block.kind !== 'image' && block.kind !== 'video') {
       rows.push(block)
       continue
@@ -491,6 +496,17 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
       </div>
     }
     if (failedRefs.has(row.mediaRef)) return <FileCard key={row.mediaRef} block={row} fallback />
+    if (row.renderRole === 3 && row.kind === 'image') return <img
+      key={row.mediaRef}
+      src={mediaUrl(row)}
+      alt={row.fileName}
+      title={row.fileName}
+      draggable={false}
+      style={styles.sticker}
+      data-arkme-chat-sticker="true"
+      onClick={() => { setPreview(row) }}
+      onError={() => { markFailed(row) }}
+    />
     if (row.kind === 'audio') return <AudioPlayer key={row.mediaRef} block={row} onFallback={markFailed} />
     return <FileCard key={row.mediaRef} block={row} />
   })

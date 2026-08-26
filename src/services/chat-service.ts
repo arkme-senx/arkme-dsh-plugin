@@ -8,6 +8,10 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeDirectTextSendResult,
   ArkmeForwardRecordPreviewItem,
+  ArkmeFavoriteSticker,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupMemberRole,
@@ -1270,6 +1274,164 @@ export class ChatService {
         localState: 'synced',
       }
     }
+
+  private async favoriteStickerDocument(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<{ root: Record<string, unknown>; items: Record<string, unknown>[] }> {
+    const root = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/favorite-stickers/get', {}, session, signal,
+    )
+    return { root, items: listValue(root.items).map(objectValue) }
+  }
+
+  private favoriteStickerView(raw: Record<string, unknown>, viewerUserId: number): ArkmeFavoriteSticker | undefined {
+    const fileAssetUid = stringValue(raw.file_asset_uid).trim()
+    if (fileAssetUid === '') return undefined
+    const mimeType = stringValue(raw.mime_type).trim() || 'image/*'
+    const fileName = stringValue(raw.file_name).trim() || '收藏表情'
+    const mediaRef = this.media.favoriteStickerMediaRef(raw, viewerUserId)
+    const serverAvailable = raw.is_available !== false
+    return {
+      fileAssetUid,
+      fileName,
+      mimeType,
+      size: Math.max(0, Math.trunc(numberValue(raw.file_size ?? raw.size))),
+      fileKind: 1,
+      isAnimated: booleanValue(raw.is_animated) || mimeType.toLowerCase() === 'image/gif',
+      isAvailable: serverAvailable && mediaRef !== undefined,
+      ...(mediaRef === undefined ? {} : { mediaRef }),
+      ...(!serverAvailable || mediaRef === undefined
+        ? { unavailableReason: stringValue(raw.unavailable_reason).trim() || '表情已不可用' }
+        : {}),
+    }
+  }
+
+  async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> {
+    const session = await this.runtime.requireSession()
+    const { root, items } = await this.favoriteStickerDocument(session, signal)
+    const projected = items.flatMap(item => {
+      const view = this.favoriteStickerView(item, session.userId)
+      return view === undefined ? [] : [view]
+    })
+    return {
+      items: projected,
+      itemCount: projected.length,
+      updatedAtMillis: Math.max(0, Math.trunc(numberValue(root.updated_at_millis ?? root.updated_at))),
+    }
+  }
+
+  async saveFavoriteStickers(
+    items: readonly ArkmeFavoriteStickerSaveInput[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (items.length > 200) throw new ArkmePluginError('favorite-stickers-limit', '收藏表情最多 200 个', false, 400)
+    const normalized = items.map(item => {
+      const fileAssetUid = item.fileAssetUid.trim()
+      if (!/^[A-Za-z0-9._:-]{8,256}$/.test(fileAssetUid) || item.fileKind !== 1 || !item.mimeType.toLowerCase().startsWith('image/')) {
+        throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
+      }
+      return {
+        file_asset_uid: fileAssetUid,
+        file_name: item.fileName.trim() || '收藏表情',
+        mime_type: item.mimeType.trim().toLowerCase(),
+        file_kind: 1,
+        file_size: Math.max(0, Math.trunc(item.size)),
+        is_animated: item.isAnimated === true || item.mimeType.toLowerCase() === 'image/gif',
+      }
+    })
+    const session = await this.runtime.requireSession()
+    await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/favorite-stickers/set', { items: normalized }, session, signal,
+    )
+    return await this.favoriteStickers(signal)
+  }
+
+  async manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    const normalizedUid = fileAssetUid.trim()
+    if (!/^[A-Za-z0-9._:-]{8,256}$/.test(normalizedUid) || (action !== 'move-to-front' && action !== 'delete')) {
+      throw new ArkmePluginError('favorite-sticker-manage-invalid', '收藏表情管理参数无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const { items } = await this.favoriteStickerDocument(session, signal)
+    const targetIndex = items.findIndex(item => stringValue(item.file_asset_uid).trim() === normalizedUid)
+    if (targetIndex < 0) throw new ArkmePluginError('favorite-sticker-not-found', '收藏表情不存在', false, 404)
+    const nextItems = [...items]
+    const [target] = nextItems.splice(targetIndex, 1)
+    if (action === 'move-to-front' && target !== undefined) nextItems.unshift(target)
+    await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/favorite-stickers/set', { items: nextItems.map(item => ({
+        file_asset_uid: stringValue(item.file_asset_uid).trim(),
+        file_id: stringValue(item.file_id).trim(),
+        file_hash: stringValue(item.file_hash).trim(),
+        file_name: stringValue(item.file_name).trim(),
+        mime_type: stringValue(item.mime_type).trim(),
+        file_kind: Math.trunc(numberValue(item.file_kind)),
+        file_type: Math.trunc(numberValue(item.file_type)),
+        is_animated: booleanValue(item.is_animated),
+        file_size: Math.max(0, Math.trunc(numberValue(item.file_size))),
+        file_create_at: Math.max(0, Math.trunc(numberValue(item.file_create_at))),
+        file_push_at: Math.max(0, Math.trunc(numberValue(item.file_push_at))),
+      })) }, session, signal,
+    )
+    return await this.favoriteStickers(signal)
+  }
+
+  async sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('favorite-sticker-chat-required', '收藏表情只能发送到聊天', false, 400)
+    }
+    const { items } = await this.favoriteStickerDocument(session, options.signal)
+    const sticker = items.find(item => stringValue(item.file_asset_uid).trim() === fileAssetUid.trim())
+    if (sticker === undefined || sticker.is_available === false) {
+      throw new ArkmePluginError('favorite-sticker-unavailable', '该收藏表情已不可用', false, 404)
+    }
+    const recordUid = options.recordUid?.trim() || randomUUID()
+    const relationUid = options.relationUid?.trim() || randomUUID()
+    const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/records/send', {
+        chat_session_uid: source.ownerRef,
+        record_uid: recordUid,
+        rel_uid: relationUid,
+        template_kind: 2,
+        text_content: '',
+        content_payload: {
+          payload_kind: 2,
+          schema_version: 1,
+          text_state: 4,
+          media_refs: [{
+            file_asset_uid: stringValue(sticker.file_asset_uid).trim(),
+            ...(stringValue(sticker.file_id).trim() === '' ? {} : { file_id: stringValue(sticker.file_id).trim() }),
+            content_file_role: 1,
+            render_role: 3,
+            sort_order: 0,
+            file_kind: 1,
+            file_type: Math.trunc(numberValue(sticker.file_type)),
+            mime_type: stringValue(sticker.mime_type).trim(),
+            file_name: stringValue(sticker.file_name).trim(),
+          }],
+        },
+        send_at: Date.now(),
+      }, session, options.signal,
+    )
+    return {
+      sourceRef,
+      itemUid: stringValue(result.record_uid).trim() || recordUid,
+      status: numberValue(result.audit_status ?? result.status),
+      sequence: numberValue(result.seq),
+      localState: 'synced',
+    }
+  }
   
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
       return await this.record.longArticleDetail(sourceRef, itemUid, signal)

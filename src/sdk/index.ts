@@ -25,6 +25,9 @@ import type {
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeConversationMemberList,
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
@@ -133,6 +136,10 @@ export type {
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteSticker,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerSaveInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeContentKind,
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
@@ -1172,6 +1179,40 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
     }, options.signal)
+  }
+
+  async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> {
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
+  }
+
+  async saveFavoriteStickers(
+    items: readonly ArkmeFavoriteStickerSaveInput[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.save', { items }, signal)
+  }
+
+  async sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    if (sourceRef.trim() === '' || fileAssetUid.trim() === '') throw new TypeError('Arkme sticker destination and asset must not be empty')
+    return await this.call<ArkmeSourceSendResult>('favorite-stickers.send', {
+      sourceRef,
+      fileAssetUid,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.manage', { fileAssetUid, action }, signal)
   }
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {

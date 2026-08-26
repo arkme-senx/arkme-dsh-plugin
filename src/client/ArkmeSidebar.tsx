@@ -2447,7 +2447,14 @@ export function ArkmeSurface({
             <div style={styles.tools}><div style={styles.toolGroup}><button ref={addMenuTriggerRef} type="button" style={styles.plus} aria-label="添加内容" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => { setAddMenuOpen(value => !value) }}>+</button><ArkmeEmojiPicker
               disabled={busy}
               scopeKey={composerDraftKey}
+              {...(source?.kind === 'private_chat' || source?.kind === 'group_chat' ? { sourceRef: source.sourceRef } : {})}
               onSelect={insertEmoji}
+              onUploadSticker={async file => {
+                if (composerDraftKey === undefined) throw new Error('请先选择聊天')
+                return await uploadFile(file, composerDraftKey)
+              }}
+              onStickerSent={async () => { await loadTimeline() }}
+              onError={message => { setError(message) }}
             /></div><button
               type="button"
               style={{ ...styles.send, opacity: canSend ? 1 : .4 }}
