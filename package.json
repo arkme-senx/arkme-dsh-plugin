@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -65,10 +65,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.22 更新",
-      "summary": "新增联系人目录与未标记说话人管理，完善通话、微信扫码登录、富表情、群聊和世界交互，并增强应用内更新、暗色主题与配置兼容性。",
-      "publishedAt": "2026-08-25T10:58:34.000Z",
-      "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
+      "title": "Arkme 插件 0.1.23 更新",
+      "summary": "feat(self): 优化快记主题归属与对齐",
+      "publishedAt": "2026-08-26T09:35:38.574Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.23"
     }
   },
   "scripts": {
