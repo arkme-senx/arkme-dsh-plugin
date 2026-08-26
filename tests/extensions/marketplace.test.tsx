@@ -13,6 +13,7 @@ import {
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
   extensionAuthorWorldTarget, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
+  extensionEnabledLabel,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
   extensionVersionLabel, installedExtensionCatalogItem, mergeInstalledExtensionCatalogItem,
   extensionNativeInstallWarning, filterMarketplaceMenuOptions, formatCompactCount, formatExtensionBytes, formatMarketplaceDate, marketplaceCategoryOptions, marketplaceListParams, MyExtensionCard, shouldLoadMoreDiscoverPage,
@@ -647,6 +648,9 @@ describe('Arkme marketplace UI', () => {
     const unavailable = renderToStaticMarkup(<ArkmeExtensionRestartDialog
       kind="unavailable" restarting={false} onLater={() => {}} onRestart={() => {}}
     />)
+    const disable = renderToStaticMarkup(<ArkmeExtensionRestartDialog
+      kind="disable" restarting={false} onLater={() => {}} onRestart={() => {}}
+    />)
 
     expect(ARKME_EXTENSION_RESTART_SURFACE).toContain('--dsw-specific-menu')
     expect(ready).toContain('role="alertdialog"')
@@ -665,6 +669,15 @@ describe('Arkme marketplace UI', () => {
     expect(unavailable).not.toContain('需要重启 DSH')
     expect(unavailable).not.toContain('立即重启')
     expect(unavailable).not.toContain('harness.defineTool')
+    expect(disable).toContain('扩展关闭状态已保存')
+    expect(disable).toContain('立即重启')
+  })
+
+  it('distinguishes a disabled desired state from a Bundle that is still active until restart', () => {
+    expect(extensionEnabledLabel({ enabled: false, active: false } as never)).toBe('已关闭')
+    expect(extensionEnabledLabel({ enabled: false, active: true } as never)).toBe('已关闭，重启后完全停用')
+    expect(extensionEnabledLabel({ enabled: false, active: false, restartRequired: true } as never))
+      .toBe('已关闭，重启后完全停用')
   })
 
   it('opens the unavailable dialog instead of retrying restart for a quarantined extension', () => {

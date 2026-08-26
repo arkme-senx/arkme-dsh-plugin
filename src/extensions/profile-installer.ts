@@ -1,11 +1,12 @@
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, statSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { localExtensionPnpmArgs, prepareProfilePackageManager } from '../profile-package-manager.js'
 import { securePrivateDirectory, securePrivateFile, securePrivateFileSync } from '../private-filesystem.js'
+import { applyArkmeProfileBundlePolicy, isArkmeProfilePackageName } from './profile-bundle-policy.js'
 import type { ArkmeExtensionProfileRestartPlan } from './profile-restart-helper.js'
 import type { ArkmeInstalledExtension } from './types.js'
 
@@ -86,31 +87,9 @@ export class ArkmeExtensionProfileInstaller {
   /** Keep the dependency installed while changing whether its public Profile bundle layer composes at boot. */
   async setEnabled(packageName: string, enabled: boolean): Promise<void> {
     await this.mutate(async () => {
-      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
+      if (!isArkmeProfilePackageName(packageName)) throw new Error('扩展 Bundle 包名无效')
       const profileDirectory = join(this.options.dshHome, 'profiles', this.options.profileName)
-      const manifestPath = join(profileDirectory, 'package.json')
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-        dependencies?: Record<string, string>
-        dsh?: { profile?: { bundles?: string[] } }
-      }
-      if (manifest.dependencies?.[packageName] === undefined) throw new Error('扩展尚未安装到当前 DSH Profile')
-      const bundles = manifest.dsh?.profile?.bundles
-      if (!Array.isArray(bundles) || bundles.some(value => typeof value !== 'string')) {
-        throw new Error('DSH Profile Bundle 配置无效')
-      }
-      const nextBundles = bundles.filter(value => value !== packageName)
-      if (enabled) nextBundles.push(packageName)
-      if (nextBundles.length === bundles.length && nextBundles.every((value, index) => value === bundles[index])) return
-      manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: nextBundles } }
-      const temporary = join(profileDirectory, `.package.${randomUUID()}.tmp`)
-      try {
-        await writeFile(temporary, `${JSON.stringify(manifest, undefined, 2)}\n`, { mode: 0o600, flag: 'wx' })
-        await securePrivateFile(temporary)
-        await rename(temporary, manifestPath)
-      } finally {
-        await rm(temporary, { force: true }).catch(() => undefined)
-        try { await securePrivateFile(manifestPath) } catch { /* Preserve the original error when replacement failed. */ }
-      }
+      applyArkmeProfileBundlePolicy(profileDirectory, [{ packageName, enabled }])
     })
   }
 
@@ -122,13 +101,15 @@ export class ArkmeExtensionProfileInstaller {
     cleanupPaths?: string[]
     previousInstalled?: ArkmeInstalledExtension
     expectActive: boolean
+    activationChange?: true
+    previousProfileIncluded?: boolean
   }): Promise<void> {
     await this.mutationTail
     if (this.options.stateDirectory === undefined || this.options.healthUrl === undefined
       || this.options.helperPath === undefined || this.options.restartArgv === undefined
       || this.options.installStoreDirectory === undefined) return
     const plan: ArkmeExtensionProfileRestartPlan = {
-      schemaVersion: input.targetBundlePath?.endsWith('.tgz') === true
+      schemaVersion: input.activationChange === true ? 3 : input.targetBundlePath?.endsWith('.tgz') === true
         || input.previousBundlePath?.endsWith('.tgz') === true
         || input.previousInstalled?.executionModel !== undefined ? 2 : 1,
       parentPid: process.pid,
@@ -146,6 +127,10 @@ export class ArkmeExtensionProfileInstaller {
       ...(input.cleanupPaths === undefined ? {} : { cleanupPaths: input.cleanupPaths }),
       installStoreDirectory: this.options.installStoreDirectory,
       ...(input.previousInstalled === undefined ? {} : { previousInstalled: input.previousInstalled }),
+      ...(input.activationChange === true ? {
+        activationChange: true as const,
+        previousProfileIncluded: input.previousProfileIncluded === true,
+      } : {}),
       healthUrl: this.options.healthUrl,
       logPath: join(this.options.stateDirectory, 'extension-profile-restart.log'),
     }

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ArkmeExtensionInstallResolution } from './types.js'
-import { arkmeClientOwnerKey } from './client-owner.js'
+import { arkmeClientContentDigest } from './client-owner.js'
 import { ARKME_CLIENT_WRAPPER_VERSION, renderPersistentClientBundle } from './persistent-client-bundle.js'
 
 export const ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION = 1 as const
@@ -244,7 +244,7 @@ export function materializePersistentExtensionBundle(input: {
     dsh: {
       bundle: { patch: './cordis.patch.yml' },
       ...(input.clientCode === undefined ? {} : {
-        arkme: { clientOwnerKey: arkmeClientOwnerKey(input.clientCode) },
+        arkme: { clientContentDigest: arkmeClientContentDigest(input.clientCode) },
       }),
       ...(input.clientCode === undefined ? {} : {
         client: {

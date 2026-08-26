@@ -282,7 +282,9 @@ describe('Arkme SDK', () => {
     })
 
     await expect(sdk.installedExtensions()).resolves.toEqual(installed)
-    await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({ enabled: false })
+    await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({
+      enabled: false, active: false, restart_required: true,
+    })
     expect(calls).toEqual([
       { operation: 'extensions.installed-list' },
       { operation: 'extensions.enabled.set', params: { extensionId: 'ext-1', enabled: false } },

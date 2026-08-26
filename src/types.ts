@@ -2375,6 +2375,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.client.failure'
+  | 'extensions.bundle.client-state'
   | 'extensions.persistent.invoke'
   | 'extensions.bundle.invoke'
 

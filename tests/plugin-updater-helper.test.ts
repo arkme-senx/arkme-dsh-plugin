@@ -91,6 +91,7 @@ describe('companion plugin updater', () => {
         targetArtifactSha512: createHash('sha512').update(update.artifactBytes).digest('hex'),
         appVersion: '1.2.0',
         dshVersion: '0.1.0-rc.8',
+        disabledProfilePackages: ['deepseek-pet'],
         execArgv: ['--import', 'tsx/esm'],
         restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
       })
@@ -122,6 +123,7 @@ describe('companion plugin updater', () => {
         preparePackageManager: () => undefined,
         spawnUpdater,
         requestShutdown,
+        disabledProfilePackages: () => ['deepseek-pet'],
       },
     })
 
@@ -446,6 +448,10 @@ describe('companion plugin updater', () => {
       '--import', 'tsx/esm', '/tmp/dsh.js',
       'plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme',
     ])
+    expect(() => parsePluginUpdaterPlan({
+      ...plan,
+      disabledProfilePackages: ['../outside-profile'],
+    })).toThrow('updater plan is incomplete')
     expect(() => assertTargetArtifactIntegrity(plan)).not.toThrow()
     await writeFile(targetArtifactPath, 'tampered tgz')
     expect(() => assertTargetArtifactIntegrity(plan)).toThrow(/digest/i)
@@ -599,7 +605,11 @@ describe('companion plugin updater', () => {
     await mkdir(stateDirectory, { recursive: true })
     const profileDirectory = join(root, 'profiles', 'web')
     await mkdir(profileDirectory, { recursive: true })
-    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.19.0' }))
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({
+      packageManager: 'pnpm@11.19.0',
+      dependencies: { '@senguoyun/dsh-arkme': 'file:current.tgz', 'deepseek-pet': '1.0.0' },
+      dsh: { profile: { bundles: ['@senguoyun/dsh-arkme'] } },
+    }))
     await writeFile(versionPath, '0.1.3')
     await writeFile(fakeDsh, `
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -617,6 +627,12 @@ if (args[0] === 'plugin') {
   const packageDir = join(process.env.DSH_HOME, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme')
   mkdirSync(packageDir, { recursive: true })
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@senguoyun/dsh-arkme', version }))
+  const profilePath = join(process.env.DSH_HOME, 'profiles', 'web', 'package.json')
+  const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+  profile.dsh.profile.bundles = version === process.env.FAKE_INVALID_POLICY_VERSION
+    ? null
+    : Object.keys(profile.dependencies)
+  writeFileSync(profilePath, JSON.stringify(profile))
   process.exit(0)
 }
 if (args[0] === 'web') {
@@ -665,6 +681,7 @@ if (args[0] === 'web') {
       previousVersion: '0.1.3',
       previousSpec: 'link:/Applications/Arkme.app/plugin',
       previousArtifactPath,
+      disabledProfilePackages: ['deepseek-pet'],
       targetVersion: '0.1.4',
       targetArtifactPath,
       targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
@@ -680,6 +697,7 @@ if (args[0] === 'web') {
       version: process.env.FAKE_VERSION_PATH,
       pid: process.env.FAKE_PID_PATH,
       fail: process.env.FAKE_FAIL_VERSION,
+      invalidPolicy: process.env.FAKE_INVALID_POLICY_VERSION,
     }
     process.env.FAKE_TRACE_PATH = tracePath
     process.env.FAKE_VERSION_PATH = versionPath
@@ -701,11 +719,16 @@ if (args[0] === 'web') {
       ])
       expect(trace.some(args => args.includes(`file:${targetArtifactPath}`))).toBe(true)
       expect(trace.flat()).not.toContain('@senguoyun/dsh-arkme@0.1.4')
+      const converged = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dsh: { profile: { bundles: string[] } }
+      }
+      expect(converged.dsh.profile.bundles).not.toContain('deepseek-pet')
 
       process.kill(serverPid, 'SIGTERM')
       serverPid = undefined
       await new Promise(resolve => setTimeout(resolve, 300))
       process.env.FAKE_FAIL_VERSION = '0.1.4'
+      process.env.FAKE_INVALID_POLICY_VERSION = '0.1.3'
       const rollbackParent = spawn(process.execPath, ['-e', ''])
       const rollbackParentPid = rollbackParent.pid
       if (rollbackParentPid === undefined) throw new Error('missing rollback parent pid')
@@ -723,6 +746,7 @@ if (args[0] === 'web') {
       serverPid = Number(await readFile(pidPath, 'utf8'))
       const rolledBack = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(rolledBack).toMatchObject({ phase: 'rolled-back', previousVersion: '0.1.3' })
+      expect(rolledBack?.message).toContain('部分已关闭扩展的 Profile 状态未能收敛')
       expect(await readFile(versionPath, 'utf8')).toBe('0.1.3')
       const rollbackTrace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
         .map(line => JSON.parse(line) as string[])
@@ -732,6 +756,10 @@ if (args[0] === 'web') {
         ['plugin', '--profile', 'web', 'add', `file:${previousArtifactPath}`],
       ])
       expect(rollbackTrace.some(args => args.includes(`file:${previousArtifactPath}`))).toBe(true)
+      const rolledBackProfile = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dsh: { profile: { bundles: string[] | null } }
+      }
+      expect(rolledBackProfile.dsh.profile.bundles).toBeNull()
     } finally {
       if (serverPid !== undefined && Number.isSafeInteger(serverPid)) {
         try { process.kill(serverPid, 'SIGTERM') } catch { /* already stopped */ }
@@ -744,6 +772,8 @@ if (args[0] === 'web') {
       else process.env.FAKE_PID_PATH = previousEnv.pid
       if (previousEnv.fail === undefined) delete process.env.FAKE_FAIL_VERSION
       else process.env.FAKE_FAIL_VERSION = previousEnv.fail
+      if (previousEnv.invalidPolicy === undefined) delete process.env.FAKE_INVALID_POLICY_VERSION
+      else process.env.FAKE_INVALID_POLICY_VERSION = previousEnv.invalidPolicy
     }
   }, 15_000)
 
@@ -928,13 +958,14 @@ if (args[0] === 'web') {
       healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
       logPath: join(root, 'helper.log'),
     }))
-    const runRollbackInstall = vi.fn(() => true)
+    const runRollbackInstall = vi.fn(() => ({ packageRestored: true, profilePolicyRestored: false }))
     await rollbackManagedPluginUpdate(planPath, { runRollbackInstall })
     expect(runRollbackInstall).toHaveBeenCalledOnce()
     await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
       phase: 'rolled-back',
       previousVersion: '0.1.3',
+      message: expect.stringContaining('部分已关闭扩展的 Profile 状态未能收敛'),
     })
   })
 })

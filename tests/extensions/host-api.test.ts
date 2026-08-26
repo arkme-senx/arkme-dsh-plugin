@@ -137,7 +137,8 @@ describe('marketplace Host BFF', () => {
       'extensions.client.failure',
       {
         identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
-        clientOwnerKey: `client-v1-${'a'.repeat(64)}`,
+        clientInstanceKey: `instance-v1-${'a'.repeat(64)}`,
+        clientContentDigest: `client-v1-${'b'.repeat(64)}`,
         kind: 'runtime-load-failed', message: 'slot collision',
       },
       undefined,
@@ -145,9 +146,32 @@ describe('marketplace Host BFF', () => {
     )).resolves.toEqual({ handled: true, disabled: true })
     expect(reportClientFailure).toHaveBeenCalledWith({
       identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
-      clientOwnerKey: `client-v1-${'a'.repeat(64)}`,
+      clientInstanceKey: `instance-v1-${'a'.repeat(64)}`,
+      clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+      clientOwnerKey: '',
       kind: 'runtime-load-failed', message: 'slot collision',
     })
+  })
+
+  it('resolves a Bundle Client owner through the Host install store', async () => {
+    const bundleClientState = vi.fn(() => ({
+      extension_id: 'ext-1', version: '1.0.0', mount: true,
+      instance_key: `instance-v1-${'a'.repeat(64)}`, generation: 7,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.bundle.client-state',
+      {
+        packageName: '@example/weather', version: '1.0.0',
+        clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+      },
+      undefined,
+      { bundleClientState } as never,
+    )).resolves.toMatchObject({ extension_id: 'ext-1', mount: true, generation: 7 })
+    expect(bundleClientState).toHaveBeenCalledWith(
+      '@example/weather', '1.0.0', `client-v1-${'b'.repeat(64)}`,
+    )
   })
 
   it('routes user-triggered extension audit through the Host manager', async () => {
