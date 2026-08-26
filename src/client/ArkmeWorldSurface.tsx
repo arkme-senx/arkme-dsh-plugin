@@ -24,15 +24,17 @@ import type {
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldVoiceprintSocialContext,
 } from '../types.js'
+import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../extensions/types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
 import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
 import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 import { arkmeEmojiPlainText } from './arkme-emoji.js'
 import { arkmeTheme } from './arkme-theme.js'
-import type { ArkmeWorldTarget } from './ui-controller.js'
+import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
 import { downloadWorldVoiceprintAudio, playPreparedWorldVoiceprintAudio, playWorldVoiceprintChunkQueue } from './world-voiceprint-playback.js'
 
@@ -113,6 +115,24 @@ const styles: Record<string, CSSProperties> = {
   imageButton: { position: 'relative', minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: arkmeTheme.subtle, cursor: 'pointer' },
   imageOverflow: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(20,22,28,.52)', color: arkmeTheme.foreground, fontSize: 22, lineHeight: 1, fontWeight: 650, letterSpacing: '.01em', pointerEvents: 'none' },
   cardFooter: { minHeight: 24, marginTop: 9, paddingTop: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
+  extensionActivity: { marginTop: 13, padding: 14, display: 'grid', gridTemplateColumns: '48px minmax(0,1fr) auto', alignItems: 'center', gap: 12, border: `1px solid ${arkmeTheme.border}`, borderRadius: 13, background: arkmeTheme.subtle },
+  extensionActivityCopy: { minWidth: 0, display: 'grid', gap: 3 },
+  extensionActivityTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
+  extensionActivityMeta: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, color: arkmeTheme.secondary, fontSize: 10 },
+  extensionActivityDescription: { margin: 0, overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, color: arkmeTheme.secondary, fontSize: 11, lineHeight: '17px' },
+  extensionOpenButton: { minHeight: 32, padding: '0 12px', border: 0, borderRadius: 9, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' },
+  extensionBadge: { padding: '2px 6px', borderRadius: 999, background: arkmeTheme.accentSoft, color: arkmeTheme.accent, fontSize: 9, lineHeight: '14px' },
+  extensionShelf: { padding: '14px 15px', display: 'grid', gap: 11, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
+  extensionShelfHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
+  extensionShelfTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
+  extensionShelfCount: { color: arkmeTheme.secondary, fontSize: 10 },
+  extensionShelfList: { display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8 },
+  extensionShelfItem: { minWidth: 0, padding: 10, display: 'grid', gridTemplateColumns: '38px minmax(0,1fr)', alignItems: 'center', gap: 10, border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer', textAlign: 'left', font: 'inherit' },
+  extensionShelfItemCopy: { minWidth: 0, display: 'grid', gap: 2 },
+  extensionShelfItemName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 600 },
+  extensionShelfItemDescription: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.secondary, fontSize: 10 },
+  extensionShelfFooter: { display: 'flex', justifyContent: 'flex-end' },
+  extensionShelfViewAll: { minHeight: 30, padding: '0 9px', border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 },
   linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButton: { padding: '3px 0', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   commentButtonActive: { color: arkmeTheme.accent, fontWeight: 600 },
@@ -927,7 +947,70 @@ function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: Arkm
   return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
 }
 
-function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor }: {
+function WorldExtensionActivity({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(extensionId: string): void }) {
+  const publication = item.extensionPublication
+  if (publication === undefined) return null
+  return <section style={styles.extensionActivity} aria-label={`${publication.name}插件发布动态`}>
+    <ArkmeExtensionAvatar extensionId={publication.extensionId} {...(publication.iconRef === undefined ? {} : { iconRef: publication.iconRef })} size={48} />
+    <div style={styles.extensionActivityCopy}>
+      <h2 style={styles.extensionActivityTitle}>{publication.name}</h2>
+      <div style={styles.extensionActivityMeta}>
+        <span>v{publication.version}</span>
+        <span style={styles.extensionBadge}>已发布到市集</span>
+        {publication.desktopRequired && <span style={styles.extensionBadge}>桌面端插件</span>}
+      </div>
+      {publication.description !== '' && <p style={styles.extensionActivityDescription}>{publication.description}</p>}
+    </div>
+    <button type="button" style={styles.extensionOpenButton} onClick={() => { onOpen(publication.extensionId) }}>在市集中查看</button>
+  </section>
+}
+
+export const WORLD_EXTENSION_SHELF_PREVIEW_LIMIT = 6
+
+export function worldExtensionShelfPreview(
+  items: readonly ArkmeExtensionCatalogItem[],
+  limit = WORLD_EXTENSION_SHELF_PREVIEW_LIMIT,
+): ArkmeExtensionCatalogItem[] {
+  return items.slice(0, Math.max(0, Math.trunc(limit)))
+}
+
+function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
+  ownerUserId: number
+  ownerName: string
+  onOpen(extensionId: string): void
+  onOpenAll(ownerUserId: number, ownerName: string): void
+}) {
+  const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeExtensionCatalogItem[]; total: number; message?: string }>({ status: 'loading', items: [], total: 0 })
+  useEffect(() => {
+    const controller = new AbortController()
+    setState({ status: 'loading', items: [], total: 0 })
+    void callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: WORLD_EXTENSION_SHELF_PREVIEW_LIMIT, ownerUserId }, controller.signal)
+      .then(page => {
+        if (controller.signal.aborted) return
+        const items = worldExtensionShelfPreview(page.items.filter(item => item.visibility === 'public' && item.status !== 'deleted'))
+        setState({ status: 'ready', items, total: Math.max(page.total, items.length) })
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setState({ status: 'error', items: [], total: 0, message: messageOf(error, '公开插件暂时无法加载') })
+      })
+    return () => { controller.abort() }
+  }, [ownerUserId])
+  if (state.status === 'loading') return <section style={styles.extensionShelf} data-world-extension-shelf="loading"><span role="status" style={styles.extensionShelfCount}>正在加载公开插件…</span></section>
+  if (state.status === 'error') return <section style={styles.extensionShelf} data-world-extension-shelf="error"><span role="alert" style={styles.extensionShelfCount}>{state.message}</span></section>
+  if (state.items.length === 0) return null
+  return <section style={styles.extensionShelf} aria-label="当前公开插件" data-world-extension-shelf="ready">
+    <header style={styles.extensionShelfHeader}><h2 style={styles.extensionShelfTitle}>当前公开插件</h2><span style={styles.extensionShelfCount}>共 {state.total} 个</span></header>
+    <div style={styles.extensionShelfList}>{state.items.map(extension => <button key={extension.extension_id} type="button" style={styles.extensionShelfItem} onClick={() => { onOpen(extension.extension_id) }}>
+      <ArkmeExtensionAvatar extensionId={extension.extension_id} {...(extension.icon_ref === undefined ? {} : { iconRef: extension.icon_ref })} size={38} />
+      <span style={styles.extensionShelfItemCopy}><span style={styles.extensionShelfItemName}>{extension.name}</span><span style={styles.extensionShelfItemDescription}>{extension.description || `v${extension.latest_stable_version ?? extension.version ?? ''}`}</span></span>
+    </button>)}</div>
+    {state.total > state.items.length && <footer style={styles.extensionShelfFooter}>
+      <button type="button" style={styles.extensionShelfViewAll} onClick={() => { onOpenAll(ownerUserId, ownerName) }}>查看全部 {state.total} 个</button>
+    </footer>}
+  </section>
+}
+
+function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
@@ -938,6 +1021,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint(item: ArkmeWorldFeedItem): void
   onOpenAuthor?(item: ArkmeWorldFeedItem): void
+  onOpenExtension(extensionId: string): void
 }) {
   const [previewIndex, setPreviewIndex] = useState<number>()
   const [interactionCount, setInteractionCount] = useState<{ count: number; hasMore: boolean }>()
@@ -970,7 +1054,7 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
           {item.authorRef === undefined
             ? <strong style={styles.author}>{item.authorName}</strong>
             : <button type="button" style={styles.authorButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
-          {playable
+          {item.extensionPublication === undefined && (playable
             ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? `正在生成${item.authorName}的声纹，点击停止` : voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
@@ -978,19 +1062,21 @@ function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, intera
             </button>
             : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
               <Microphone size={17} weight="light" />
-            </button>}
+            </button>)}
         </span>
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
-    {item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
+    {item.extensionPublication !== undefined
+      ? <WorldExtensionActivity item={item} onOpen={onOpenExtension} />
+      : <>{item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
     {item.textContent.trim() !== '' && <WorldCollapsibleText
       recordRef={item.recordRef}
       authorName={item.authorName}
       textContent={item.textContent}
       hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
-    />}
-    {visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
+    />}</>}
+    {item.extensionPublication === undefined && visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
       const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
       return <button
         key={imageRef}
@@ -1093,10 +1179,12 @@ export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLo
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onLoadMore }: {
+export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
   target?: ArkmeWorldTarget
+  catalogOwnerUserId?: number
+  catalogOwnerName?: string
   voiceprintPlayableRefs: ReadonlySet<string>
   voiceprintRecordRef: string | undefined
   voiceprintLoadingRecordRef?: string
@@ -1111,6 +1199,8 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
   onOpenAuthor?(item: ArkmeWorldFeedItem): void
+  onOpenExtension(extensionId: string): void
+  onOpenAllExtensions?(ownerUserId: number, ownerName: string): void
   onLoadMore?(): void
 }) {
   const interactionItem = interactionRecordRef === undefined
@@ -1162,13 +1252,20 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
       <div key={scope} ref={bindScrollRoot} style={styles.body} data-world-feed-pane="true" data-world-scroll-container="true" data-world-scope={scope}>
-        {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
-        {state.status === 'loading' && <div role="status" style={styles.notice}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
-        {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
-        {state.status === 'empty' && <ArkmeWorldEmptyNotice style={styles.emptyNotice}>
+        <div style={styles.feed} data-world-content-stack="true">
+        {catalogOwnerUserId !== undefined && <WorldExtensionShelf
+          ownerUserId={catalogOwnerUserId}
+          ownerName={catalogOwnerName ?? target?.displayName ?? '我'}
+          onOpen={onOpenExtension}
+          onOpenAll={onOpenAllExtensions ?? (() => {})}
+        />}
+        {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error), width: '100%', margin: 0 }}>{actionMessage}</div>}
+        {state.status === 'loading' && <div role="status" style={{ ...styles.notice, width: '100%', margin: 0 }}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
+        {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow, width: '100%', margin: 0 }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
+        {state.status === 'empty' && <ArkmeWorldEmptyNotice style={{ ...styles.emptyNotice, width: '100%', margin: 0 }}>
           {target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}
         </ArkmeWorldEmptyNotice>}
-        {state.status === 'success' && <div style={styles.feed}>
+        {state.status === 'success' && <>
           {state.message !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error, width: '100%', margin: 0 }}>{state.message}</div>}
           {state.items.map(item => <WorldCard
             key={item.recordRef}
@@ -1182,6 +1279,7 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
             onToggleVoiceprint={onToggleVoiceprint}
             onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
             {...(onOpenAuthor === undefined ? {} : { onOpenAuthor })}
+            onOpenExtension={onOpenExtension}
           />)}
           {state.hasMore && onLoadMore !== undefined && <WorldInfiniteScrollTrigger
             key={`${scope}:${String(state.nextOffset ?? 'more')}:${String(state.items.length)}`}
@@ -1190,7 +1288,8 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
             error={state.message !== undefined}
             onLoadMore={onLoadMore}
           />}
-        </div>}
+        </>}
+        </div>
       </div>
     </div>
   </>
@@ -1479,7 +1578,7 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeConversationMembe
   }
 }
 
-export function ArkmeWorldSurface({ target, onBackToWorld, onSourceActivated }: { target?: ArkmeWorldTarget; onBackToWorld?(): void; onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void } = {}) {
+export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSourceActivated }: { target?: ArkmeWorldTarget; currentUserId?: number; onBackToWorld?(): void; onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void } = {}) {
   const [scope, setScope] = useState<WorldScope>('all')
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
@@ -1821,7 +1920,10 @@ export function ArkmeWorldSurface({ target, onBackToWorld, onSourceActivated }: 
   }
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
-    <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })} voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
+    <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
+      {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
+      {...(target?.displayName !== undefined ? { catalogOwnerName: target.displayName } : scope === 'mine' ? { catalogOwnerName: '我' } : {})}
+      voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
       {...(voiceprintLoadingRecordRef === undefined ? {} : { voiceprintLoadingRecordRef })}
       {...(interactionRecordRef === undefined ? {} : { interactionRecordRef })}
       {...(actionMessage === undefined ? {} : { actionMessage })}
@@ -1831,7 +1933,9 @@ export function ArkmeWorldSurface({ target, onBackToWorld, onSourceActivated }: 
         if (state.nextOffset === undefined) return
         if (target === undefined) load(scope, state.nextOffset)
         else loadUser(target, state.nextOffset)
-      }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }} />
+      }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
+      onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
+      onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={result => {
       setLoaded(current => ({ ...current, all: false, mine: false }))
       setActionMessage(result.visibility === 'pending_review' ? '已提交审核，可稍后在“我的世界”查看' : '已发布到世界')

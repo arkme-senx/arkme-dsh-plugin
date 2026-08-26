@@ -21,8 +21,15 @@ export interface ArkmeUiState {
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number }
   recordingTarget?: { dateStamp: number; startAtMillis: number }
   extensionShareRef?: string
+  extensionDetailId?: string
+  extensionAuthorFilter?: ArkmeExtensionAuthorFilter
   calendarOpen?: boolean
   worldTarget?: ArkmeWorldTarget
+}
+
+export interface ArkmeExtensionAuthorFilter {
+  ownerUserId: number
+  ownerName: string
 }
 
 export interface ArkmeWorldTarget {
@@ -169,8 +176,37 @@ export class ArkmeUiController {
   showExtensions(): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    const { extensionShareRef: _extensionShareRef, ...withoutShare } = rest
-    this.publish({ ...withoutShare, mode: 'extensions' })
+    const { extensionShareRef: _extensionShareRef, extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutExtensionIntent } = rest
+    this.publish({ ...withoutExtensionIntent, mode: 'extensions' })
+  }
+
+  showAuthorExtensions(ownerUserId: number, ownerName: string): void {
+    this.leaveContacts()
+    if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new TypeError('插件作者用户 ID 必须是正整数')
+    const normalizedOwnerName = ownerName.replace(/\s+/g, ' ').trim()
+    if (normalizedOwnerName === '') throw new TypeError('插件作者名称不能为空')
+    const {
+      selectedSource: _selectedSource,
+      recordingTarget: _recordingTarget,
+      calendarOpen: _calendarOpen,
+      productMode: _productMode,
+      extensionShareRef: _extensionShareRef,
+      extensionDetailId: _extensionDetailId,
+      ...rest
+    } = this.state
+    this.publish({
+      ...rest,
+      mode: 'extensions',
+      extensionAuthorFilter: { ownerUserId, ownerName: normalizedOwnerName },
+    })
+  }
+
+  showExtensionDetail(extensionId: string): void {
+    this.leaveContacts()
+    const normalized = extensionId.trim()
+    if (normalized === '') throw new TypeError('插件 ID 不能为空')
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, extensionShareRef: _extensionShareRef, extensionAuthorFilter: _extensionAuthorFilter, ...rest } = this.state
+    this.publish({ ...rest, mode: 'extensions', extensionDetailId: normalized })
   }
 
   showConversations(): void {
@@ -209,7 +245,8 @@ export class ArkmeUiController {
   openExtensionShare(shareRef: string): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'extensions', extensionShareRef: shareRef })
+    const { extensionDetailId: _extensionDetailId, extensionAuthorFilter: _extensionAuthorFilter, ...withoutDetail } = rest
+    this.publish({ ...withoutDetail, mode: 'extensions', extensionShareRef: shareRef })
   }
 
   dismissExtensionShare(): void {
@@ -260,6 +297,9 @@ export class ArkmeUiController {
       && next.recordingTarget?.dateStamp === this.state.recordingTarget?.dateStamp
       && next.recordingTarget?.startAtMillis === this.state.recordingTarget?.startAtMillis
       && next.extensionShareRef === this.state.extensionShareRef
+      && next.extensionDetailId === this.state.extensionDetailId
+      && next.extensionAuthorFilter?.ownerUserId === this.state.extensionAuthorFilter?.ownerUserId
+      && next.extensionAuthorFilter?.ownerName === this.state.extensionAuthorFilter?.ownerName
       && sameWorldTarget(next.worldTarget, this.state.worldTarget)
       && sameSource(next.selectedSource, this.state.selectedSource)) return
     this.state = next

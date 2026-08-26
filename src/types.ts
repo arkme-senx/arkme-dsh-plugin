@@ -384,6 +384,20 @@ export interface ArkmeWorldAvatarFallback {
   label: string
 }
 
+/** Immutable display snapshot emitted after one extension version becomes public. */
+export interface ArkmeWorldExtensionPublication {
+  extensionId: string
+  version: string
+  name: string
+  description: string
+  iconRef?: string
+  previewRefs: string[]
+  visibility: 'public'
+  runtimeDshRange?: string
+  desktopRequired: boolean
+  publishedAtMillis: number
+}
+
 export interface ArkmeWorldFeedItem {
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
@@ -402,6 +416,8 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
+  recordType?: 'extension_publication'
+  extensionPublication?: ArkmeWorldExtensionPublication
 }
 
 export interface ArkmeWorldFeedPage {

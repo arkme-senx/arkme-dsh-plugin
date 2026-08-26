@@ -2263,6 +2263,7 @@ export function ArkmeSurface({
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
           : ui.mode === 'world' ? <ArkmeWorldSurface
             {...(ui.worldTarget === undefined ? {} : { target: ui.worldTarget })}
+            {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
             onBackToWorld={() => { arkmeUi.showWorld() }}
             onSourceActivated={activateSource}
           />
@@ -2273,6 +2274,8 @@ export function ArkmeSurface({
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
             {...(selfProfile?.avatarRef.trim() ? { currentUserAvatarRef: selfProfile.avatarRef.trim() } : {})}
             {...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
+            {...(ui.extensionDetailId === undefined ? {} : { initialExtensionId: ui.extensionDetailId })}
+            {...(ui.extensionAuthorFilter === undefined ? {} : { initialAuthorFilter: ui.extensionAuthorFilter })}
             onShareExit={() => { arkmeUi.dismissExtensionShare() }}
             onPrivateChatOpened={activateSource}
           />
