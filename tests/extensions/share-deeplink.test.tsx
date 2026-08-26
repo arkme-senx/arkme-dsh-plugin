@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ArkmeSharedExtensionDetail } from '../../src/client/ArkmeSharedExtensionDetail.js'
-import { extensionShareRefFromHash } from '../../src/client/extension-share-deeplink.js'
+import {
+	extensionShareIntentFromHash,
+	extensionShareRefFromHash,
+	observeExtensionShareDeepLinks,
+} from '../../src/client/extension-share-deeplink.js'
 import { ArkmeUiController } from '../../src/client/ui-controller.js'
 
 const SHARE_REF = 'extshare_0123456789abcdef0123456789abcdef'
@@ -9,7 +13,16 @@ const SHARE_REF = 'extshare_0123456789abcdef0123456789abcdef'
 describe('extension share DSH deep link', () => {
 	it('accepts only the exact fragment route', () => {
 		expect(extensionShareRefFromHash(`#/arkme/extensions/share/${SHARE_REF}`)).toBe(SHARE_REF)
+		expect(extensionShareIntentFromHash(`#/arkme/extensions/share/${SHARE_REF}/author-chat`)).toEqual({
+			shareRef: SHARE_REF,
+			action: 'author-chat',
+		})
+		expect(extensionShareIntentFromHash(`#/arkme/extensions/share/${SHARE_REF}/author-world`)).toEqual({
+			shareRef: SHARE_REF,
+			action: 'author-world',
+		})
 		expect(extensionShareRefFromHash(`#/arkme/extensions/share/${SHARE_REF}?install=1`)).toBeUndefined()
+		expect(extensionShareRefFromHash(`#/arkme/extensions/share/${SHARE_REF}/profile`)).toBeUndefined()
 		expect(extensionShareRefFromHash('#/arkme/extensions/share/bad')).toBeUndefined()
 	})
 
@@ -21,12 +34,60 @@ describe('extension share DSH deep link', () => {
 		})
 		controller.dismissExtensionShare()
 		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
+		controller.openExtensionShare(SHARE_REF, 'author-world')
+		expect(controller.getSnapshot()).toMatchObject({
+			extensionShareRef: SHARE_REF,
+			extensionShareAction: 'author-world',
+		})
+		controller.dismissExtensionShare()
+		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareAction')
 		controller.openExtensionShare(SHARE_REF)
 		const latestShareRef = 'extshare_fedcba9876543210fedcba9876543210'
 		controller.openExtensionShare(latestShareRef)
 		expect(controller.getSnapshot()).toMatchObject({ extensionShareRef: latestShareRef })
 		controller.dismissExtensionShare()
 		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
+	})
+
+	it('atomically replaces a resolved share intent with the standard marketplace detail intent', () => {
+		const controller = new ArkmeUiController()
+		controller.openExtensionShare(SHARE_REF)
+
+		controller.showExtensionDetail('extension-public-1')
+
+		expect(controller.getSnapshot()).toMatchObject({
+			mode: 'extensions',
+			extensionDetailId: 'extension-public-1',
+		})
+		expect(controller.getSnapshot()).not.toHaveProperty('extensionShareRef')
+	})
+
+	it('observes startup and runtime deep links, including reopening the same share', () => {
+		const target = new EventTarget()
+		const location = {
+			hash: `#/arkme/extensions/share/${SHARE_REF}`,
+			pathname: '/',
+			search: '?profile=web',
+		} as Location
+		const replaceState = vi.fn((_state: unknown, _unused: string, _url?: string | URL | null) => {
+			location.hash = ''
+		})
+		const history = { state: { from: 'desktop' }, replaceState } as unknown as History
+		const onOpen = vi.fn()
+
+		const dispose = observeExtensionShareDeepLinks(location, history, target, onOpen)
+		expect(onOpen).toHaveBeenLastCalledWith({ shareRef: SHARE_REF })
+		expect(replaceState).toHaveBeenLastCalledWith(history.state, '', '/?profile=web')
+
+		location.hash = `#/arkme/extensions/share/${SHARE_REF}/author-chat`
+		target.dispatchEvent(new Event('hashchange'))
+		expect(onOpen).toHaveBeenCalledTimes(2)
+		expect(onOpen).toHaveBeenLastCalledWith({ shareRef: SHARE_REF, action: 'author-chat' })
+
+		dispose()
+		location.hash = '#/arkme/extensions/share/extshare_fedcba9876543210fedcba9876543210'
+		target.dispatchEvent(new Event('hashchange'))
+		expect(onOpen).toHaveBeenCalledTimes(2)
 	})
 
 	it('renders a read-only shared detail without install, comment, or management actions', () => {

@@ -2435,8 +2435,10 @@ export function ArkmeSurface({
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
             {...(selfProfile?.avatarRef.trim() ? { currentUserAvatarRef: selfProfile.avatarRef.trim() } : {})}
             {...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
+            {...(ui.extensionShareAction === undefined ? {} : { shareAction: ui.extensionShareAction })}
             {...(ui.extensionDetailId === undefined ? {} : { initialExtensionId: ui.extensionDetailId })}
             {...(ui.extensionAuthorFilter === undefined ? {} : { initialAuthorFilter: ui.extensionAuthorFilter })}
+            onShareResolved={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
             onShareExit={() => { arkmeUi.dismissExtensionShare() }}
             onPrivateChatOpened={activateSource}
           />

@@ -28,6 +28,7 @@ import { ArkmeSharedExtensionDetail as SharedExtensionDetailView } from './Arkme
 import { appendExtensionDiscoverPage, extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
 import { resolveExtensionSharePresentation } from './extension-share-presentation.js'
+import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
@@ -1157,6 +1158,23 @@ export function extensionAuthorWorldTarget(
   }
 }
 
+export async function executeExtensionShareAuthorAction(
+  item: ArkmeExtensionCatalogItem,
+  action: ArkmeExtensionShareAction,
+  handlers: {
+    openPrivateChat(target: ArkmeWorldTarget): Promise<void>
+    openWorld(target: ArkmeWorldTarget): void
+  },
+): Promise<void> {
+  const target = extensionAuthorWorldTarget(item)
+  if (target === undefined) throw new Error('该扩展没有可操作的 Arkme 站内作者')
+  if (action === 'author-world') {
+    handlers.openWorld(target)
+    return
+  }
+  await handlers.openPrivateChat(target)
+}
+
 export function ArkmeExtensionAuthorPopover({
   item,
   open,
@@ -1593,15 +1611,18 @@ export function extensionEnableUnavailable(
 }
 
 export function ArkmeMarketplace({
-  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, initialExtensionId, initialAuthorFilter, onShareExit, onClose,
+  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, shareAction, initialExtensionId, initialAuthorFilter,
+  onShareResolved, onShareExit, onClose,
   displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
 }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
   currentUserAvatarRef?: string | undefined
   shareRef?: string | undefined
+  shareAction?: ArkmeExtensionShareAction | undefined
   initialExtensionId?: string | undefined
   initialAuthorFilter?: MarketplaceAuthorFilter | undefined
+  onShareResolved?(extensionId: string): void
   onShareExit?(): void
   onClose?: (() => void) | undefined
   displayMode?: 'dialog' | 'page'
@@ -1960,13 +1981,36 @@ export function ArkmeMarketplace({
     setTab('discover')
     void load('discover', 'initial', true)
     void resolveExtensionSharePresentation(shareRef, controller.signal)
-      .then(presentation => {
+      .then(async presentation => {
         if (controller.signal.aborted) return
         if (presentation.kind === 'catalog') {
-          setDetailRequestedExtensionId(presentation.detail.extension_id); setDetail(presentation.detail); setDetailBusy(false)
+          if (shareAction !== undefined) {
+            await executeExtensionShareAuthorAction(presentation.detail, shareAction, {
+              openWorld: target => {
+                onShareExit?.()
+                arkmeUi.showUserWorld(target)
+              },
+              openPrivateChat: async target => {
+                const result = await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
+                  peerUserId: target.userId,
+                  displayName: target.displayName,
+                }, controller.signal)
+                if (controller.signal.aborted) return
+                onShareExit?.()
+                onPrivateChatOpened?.(result.source)
+              },
+            })
+            return
+          }
           preserveResolvedShareDetail.current = true
-          onShareExit?.()
+          if (onShareResolved !== undefined) {
+            onShareResolved(presentation.detail.extension_id)
+          } else {
+            setDetailRequestedExtensionId(presentation.detail.extension_id); setDetail(presentation.detail); setDetailBusy(false)
+            onShareExit?.()
+          }
         } else {
+          if (shareAction !== undefined) throw new Error('当前分享链接无法解析 Arkme 作者')
           setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setSharedDetail(presentation.detail)
         }
       })
@@ -1977,7 +2021,7 @@ export function ArkmeMarketplace({
         }
       })
     return () => { controller.abort() }
-  }, [shareRef])
+  }, [shareRef, shareAction])
 
   const switchTab = (target: Tab) => {
     if (shareRef !== undefined) { setSharedDetail(undefined); onShareExit?.() }
