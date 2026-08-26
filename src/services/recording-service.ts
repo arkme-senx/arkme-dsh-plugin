@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { projectRecordingTranscripts, projectRecordingVersions } from '../recording-presentation.js'
 import type {
   ArkmeRecordingCalendarMonth,
@@ -10,6 +11,16 @@ import type {
   ArkmeRecordingVersion,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import type { ArkmePublicProfile } from './profile-service.js'
+
+export interface ArkmeRecordingProfileReader {
+  publicProfileSummariesByUserIds(
+    userIds: readonly number[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<number, ArkmePublicProfile>>
+  sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string>
+}
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -17,6 +28,20 @@ function numberValue(value: unknown): number {
 
 function listValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
+}
+
+function positiveUserId(value: unknown): number | undefined {
+  const numeric = numberValue(value)
+  const userId = Math.trunc(numeric)
+  return Number.isSafeInteger(userId) && userId > 0 ? userId : undefined
+}
+
+function speakerUserIds(speakerData: readonly unknown[]): number[] {
+  return [...new Set(speakerData.flatMap(raw => {
+    const speaker = objectValue(raw)
+    const userId = positiveUserId(speaker.ref_usr_id ?? speaker.ref_user_id ?? speaker.user_id)
+    return userId === undefined ? [] : [userId]
+  }))]
 }
 
 function encodeOpaqueJson(value: unknown): string {
@@ -34,7 +59,10 @@ function safeFailureMessage(error: unknown): string {
 }
 
 export class RecordingService {
-  constructor(private readonly runtime: ServiceRuntime) {}
+  constructor(
+    private readonly runtime: ServiceRuntime,
+    private readonly profile?: ArkmeRecordingProfileReader,
+  ) {}
 
   async recordingCalendar(
     fromStamp: number,
@@ -82,7 +110,10 @@ export class RecordingService {
     const session = await this.runtime.requireSession()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        '/api/v1/audio/one-day-trans-v2',
+        // Keep the same transcript contract as the Flutter desktop client.
+        // The v2 endpoint omits the session-to-speaker bindings needed to
+        // resolve a labelled person from get-speaker-ls.
+        '/api/v1/audio/one-day-trans',
         { start_at: date, tz_offset: -dayStart.getTimezoneOffset() * 60_000 },
         session,
         signal,
@@ -99,7 +130,9 @@ export class RecordingService {
     const speakerData = speakerResult.status === 'fulfilled'
       ? listValue(speakerResult.value.spk_ls)
       : []
-    const items = projectRecordingTranscripts(transcriptResult.value, speakerData)
+    const userIds = speakerUserIds(speakerData)
+    const profilesByUserId = await this.recordingSpeakerProfiles(userIds, session, signal)
+    const items = projectRecordingTranscripts(transcriptResult.value, speakerData, profilesByUserId)
     return {
       state: items.length > 0 ? 'ready' : 'empty',
       items,
@@ -217,6 +250,33 @@ export class RecordingService {
       .update(`arkme-recording-cursor:${String(userId)}`)
       .digest()
   }
+
+  private async recordingSpeakerProfiles(
+    userIds: readonly number[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<number, { displayName: string; avatarRef?: string }>> {
+    if (this.profile === undefined) return new Map()
+    if (userIds.length === 0) return new Map()
+    try {
+      const publicProfiles = await this.profile.publicProfileSummariesByUserIds(userIds, session, signal)
+      const entries = await Promise.all([...publicProfiles].map(async ([userId, profile]) => {
+        const displayName = profile.displayName.trim() || profile.nickname.trim()
+        const avatarRef = profile.avatarUrl === undefined
+          ? undefined
+          : await this.profile!.sealProfileImageRef(session.userId, userId)
+        return [userId, {
+          displayName,
+          ...(avatarRef === undefined ? {} : { avatarRef }),
+        }] as const
+      }))
+      return new Map(entries)
+    } catch {
+      // Optional identity enrichment must never hide a readable transcript.
+      return new Map()
+    }
+  }
+
 
   private recordingDayStart(dateStamp: number): Date {
     const date = Math.trunc(dateStamp)

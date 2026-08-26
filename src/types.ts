@@ -1760,6 +1760,8 @@ export interface ArkmeRecordingTranscriptItem {
   speakerNumber: number
   speakerColorIndex: number
   speakerLabel: string
+  /** Opaque image reference for a speaker already associated with an Arkme user. */
+  speakerAvatarRef?: string
   isSelf: boolean
   isBackground: boolean
   text: string

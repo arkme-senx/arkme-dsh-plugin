@@ -53,6 +53,25 @@ describe('recording presentation', () => {
     ])
   })
 
+  it('uses the labelled speaker name and associated avatar when available', () => {
+    const items = projectRecordingTranscripts({
+      session_ls: [{
+        id: 'session-1', belong_usr: 7, start_at: 1_700_000_000_000,
+        spk_ls: [{ num: 1, spk_id: 'speaker-1' }],
+      }],
+      child_ls: [{
+        id: 'child-1', session_id: 'session-1', start_at: 0,
+        asr: [{ s: 0, e: 1_000, n: 1, t: '已标记的发言', effective_spk_id: 'speaker-1' }],
+      }],
+    }, [{ speaker_id: 'speaker-1', ref_usr_id: 42, nick_name: '英梦华' }], new Map([
+      [42, { displayName: '小林', avatarRef: 'arkme-profile-image-v1.avatar' }],
+    ]))
+
+    expect(items).toEqual([expect.objectContaining({
+      speakerLabel: '英梦华', speakerAvatarRef: 'arkme-profile-image-v1.avatar', isSelf: false,
+    })])
+  })
+
   it('parses structured and markdown timeline answers into the same display shape', () => {
     expect(parseRecordingTimeline({
       timelines: [{

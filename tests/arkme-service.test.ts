@@ -610,14 +610,14 @@ describe('ArkmeService', () => {
       const authorization = new Headers(init?.headers).get('Authorization') ?? ''
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, authorization, body })
-      if (url === 'https://audio.test/api/v1/audio/one-day-trans-v2' && !rejected) {
+      if (url === 'https://audio.test/api/v1/audio/one-day-trans' && !rejected) {
         rejected = true
         return json({}, 401)
       }
       if (url === 'https://auth.test/api/public/v1/auth/new-short') {
         return json({ code: 200, data: { access_token: 'renewed' } })
       }
-      if (url.endsWith('/api/v1/audio/one-day-trans-v2')) {
+      if (url.endsWith('/api/v1/audio/one-day-trans')) {
         return json({ code: 200, data: {
           session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
             spk_ls: [{ num: 1, spk_id: 'speaker-1' }] }],
@@ -626,7 +626,13 @@ describe('ArkmeService', () => {
         } })
       }
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
-        return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 10001 }] } })
+        return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 20002, nick_name: '英梦华' }] } })
+      }
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        return json({ code: 200, data: { items: [{
+          user_id: 20002, nick_name: 'Jotmoer',
+          head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+        }] } })
       }
       if (url.endsWith('/api/v1/summary/list-timeline-by-range') && body.kind === 1) {
         return json({ code: 200, data: { audio_summary_ls: [
@@ -643,12 +649,14 @@ describe('ArkmeService', () => {
     expect(day).toMatchObject({
       dateStamp: dayStamp,
       totalDurationMillis: 6_000,
-      transcript: { state: 'ready', items: [{ speakerLabel: '说话人 1', startAtMillis: dayStamp + 1_600 }] },
+      transcript: { state: 'ready', items: [{
+        speakerLabel: '英梦华', speakerAvatarRef: expect.stringMatching(/^arkme-profile-image-v1\./), startAtMillis: dayStamp + 1_600,
+      }] },
       timeline: { state: 'ready', items: [{ id: 'timeline-1', selectable: true }] },
       summary: { state: 'error', items: [] },
     })
     expect(sessions.session?.accessToken).toBe('renewed')
-    expect(requests.filter(item => item.url.endsWith('/one-day-trans-v2')).map(item => item.authorization))
+    expect(requests.filter(item => item.url.endsWith('/one-day-trans')).map(item => item.authorization))
       .toEqual(['Bearer expired', 'Bearer renewed'])
     expect(requests.filter(item => item.url.endsWith('/list-timeline-by-range')).map(item => item.body.kind).sort())
       .toEqual([1, 2])

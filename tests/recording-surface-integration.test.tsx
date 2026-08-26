@@ -12,7 +12,8 @@ describe('recording surface integration', () => {
       userId: 10001,
     }} />)
 
-    expect(markup).toContain('>时间与内容<')
+    expect(markup).toContain('>全天候录音<')
+    expect(markup).toContain('>查看每天的录音、转写、总结与时间轴。<')
     expect(markup).toContain('>当天时间轴<')
     expect(markup).toContain('aria-label="录音列表"')
     expect(markup).not.toContain('data-arkme-owned="directory-pane"')

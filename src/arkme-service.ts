@@ -281,8 +281,8 @@ export class ArkmeService {
     this.arrangement = new ArrangementService(this.runtime)
     this.calendar = new CalendarService(this.runtime, this.privacy)
     this.wechat = new WechatService(this.runtime)
-    this.recording = new RecordingService(this.runtime)
     this.profile = new ProfileService(this.runtime)
+    this.recording = new RecordingService(this.runtime, this.profile)
     this.callHistory = new CallHistoryService(this.runtime, this.profile)
     this.extensionReview = new ExtensionReviewService(this.runtime, this.profile, {
       createTextForConversation: async (recordUid, textContent) => {

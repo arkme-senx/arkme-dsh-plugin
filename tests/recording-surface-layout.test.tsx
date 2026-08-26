@@ -1,8 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ComponentType } from 'react'
 import { readFile } from 'node:fs/promises'
-import type { ArkmeRecordingCalendarDay } from '../src/types.js'
 import * as recordingSurface from '../src/client/ArkmeRecordingSurface.js'
 
 const { ArkmeRecordingSurface } = recordingSurface
@@ -25,12 +23,11 @@ describe('ArkmeRecordingSurface layout', () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
     const root = matchStyle(markup, /^<div style="([^"]+)"/)
 
-    expect(root.get('grid-template-columns')).toBe('326px minmax(0,1fr)')
+    expect(root.get('grid-template-columns')).toBe('384px minmax(0,1fr)')
     expect(markup).toContain('aria-label="上个月"')
     expect(markup).toContain('aria-label="下个月"')
-    expect(markup).toContain('aria-label="展开整月日历"')
-    expect(markup).toContain('aria-expanded="false"')
-    expect(markup).toContain('>展开月历<')
+    expect(markup).toContain('>回到今日</button>')
+    expect(markup).not.toContain('展开月历')
     expect(markup).toContain('>当天时间轴<')
     expect(markup).toContain('>转写</button>')
     expect(markup).toContain('>总结</button>')
@@ -50,16 +47,26 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(source).toMatch(/trackSegment: \{[^}]*background: colors\.text/)
     expect(source).toMatch(/event: \{[^\n]*background: colors\.layer1/)
     expect(source).not.toContain("selected ? { background: '#fff' }")
-    expect(source).toContain('selected ? { background: colors.onPrimaryAction }')
+    expect(source).toContain('selected ? styles.selectedMonthDuration')
   })
 
-  it('provides a whole-month calendar expansion with future dates disabled', async () => {
+  it('keeps the whole-month calendar open with a return-to-today action and future dates disabled', async () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain("const [calendarExpanded, setCalendarExpanded] = useState(false)")
-    expect(source).toContain('calendarExpanded ? <>')
-    expect(source).toContain("aria-label={calendarExpanded ? '收起整月日历' : '展开整月日历'}")
+    expect(source).not.toContain('calendarExpanded')
+    expect(source).toContain('>回到今日</button>')
+    expect(source).toContain("const canJumpToday = dateKey(selectedDate) !== dateKey(today)")
     expect(source).toContain('disabled={future}')
+  })
+
+  it('uses Flutter-style daily recording duration labels without a calendar shadow', async () => {
+    const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
+
+    expect(recordingSurface.recordingCalendarDuration(36 * 60_000)).toBe('0.6h')
+    expect(recordingSurface.recordingCalendarDuration(90 * 60_000)).toBe('1.5h')
+    expect(source).toContain("monthDurationBrief: { background: '#f5e4e2', color: '#9d331a' }")
+    expect(source).toContain('meta.durationMillis <= 60 * 60 * 1_000 ? styles.monthDurationBrief')
+    expect(source).not.toMatch(/calendar: \{[^}]*boxShadow/)
   })
 
   it('keeps the page fixed and scrolls only the recording analysis pane', async () => {
@@ -70,66 +77,6 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(root.get('overflow')).toBe('hidden')
     expect(source).toContain("pane: { minWidth: 0, minHeight: 0")
     expect(source).toContain("overflowY: 'auto', overscrollBehavior: 'contain'")
-  })
-
-  it('shows the complete calendar duration in compact hours', () => {
-    type CalendarCellProps = {
-      date: Date
-      meta: ArkmeRecordingCalendarDay
-      selected: boolean
-      isToday: boolean
-      onClick(): void
-    }
-    const RecordingCalendarCell = (recordingSurface as unknown as {
-      RecordingCalendarCell?: ComponentType<CalendarCellProps>
-    }).RecordingCalendarCell
-
-    expect(RecordingCalendarCell).toBeDefined()
-    if (RecordingCalendarCell === undefined) return
-
-    const markup = renderToStaticMarkup(<RecordingCalendarCell
-      date={new Date(2026, 6, 9)}
-      meta={{ dateStamp: new Date(2026, 6, 9).getTime(), durationMillis: 42 * 60_000, hasRecording: true, unreviewedCount: 1 }}
-      selected={false}
-      isToday={false}
-      onClick={() => {}}
-    />)
-
-    expect(markup).toContain('>9<')
-    expect(markup).toContain('>0.7h<')
-    expect(markup).not.toContain('text-overflow:ellipsis')
-    expect(markup).not.toContain('aria-hidden')
-    expect(markup).not.toContain('>1</span>')
-  })
-
-  it('keeps compact fixed rows so calendar dates stay aligned', () => {
-    type CalendarCellProps = {
-      date: Date
-      meta: ArkmeRecordingCalendarDay
-      selected: boolean
-      isToday: boolean
-      onClick(): void
-    }
-    const RecordingCalendarCell = (recordingSurface as unknown as {
-      RecordingCalendarCell?: ComponentType<CalendarCellProps>
-    }).RecordingCalendarCell
-
-    expect(RecordingCalendarCell).toBeDefined()
-    if (RecordingCalendarCell === undefined) return
-
-    const markup = renderToStaticMarkup(<RecordingCalendarCell
-      date={new Date(2026, 6, 9)}
-      meta={{ dateStamp: new Date(2026, 6, 9).getTime(), durationMillis: 42 * 60_000, hasRecording: true, unreviewedCount: 0 }}
-      selected={false}
-      isToday={false}
-      onClick={() => {}}
-    />)
-    const cell = matchStyle(markup, /^<button[^>]*style="([^"]+)"/)
-
-    expect(cell.get('display')).toBe('grid')
-    expect(cell.get('grid-template-rows')).toBe('18px 18px')
-    expect(cell.get('height')).toBe('53px')
-    expect(markup).toContain('grid-row:1;line-height:24px')
   })
 
   it('shows a stable speaker color dot beside the numeric speaker label', () => {

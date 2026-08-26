@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
-import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
-import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { ClockCounterClockwise } from '@phosphor-icons/react/dist/icons/ClockCounterClockwise'
 import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
@@ -14,6 +13,7 @@ import type {
   ArkmeRecordingVersion,
 } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeUi } from './ui-controller.js'
 
@@ -55,33 +55,31 @@ function speakerColorAt(index: number): string {
 }
 
 const styles: Record<string, CSSProperties> = {
-  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '326px minmax(0,1fr)', color: colors.text, background: colors.base },
+  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '384px minmax(0,1fr)', color: colors.text, background: colors.base },
   browser: { minWidth: 0, minHeight: 0, padding: '30px 15px 17px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', borderRight: `1px solid ${colors.border}`, background: colors.base },
-  browserHeading: { padding: '0 1px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  eyebrow: { margin: '0 0 4px', color: colors.tertiary, fontSize: 11 },
-  browserTitle: { margin: 0, fontSize: 22, lineHeight: 1.15, letterSpacing: '-.035em', fontWeight: 600 },
-  calendar: { marginTop: 22, padding: '13px 11px 11px', border: `1px solid ${colors.border}`, borderRadius: 15, background: colors.layer1 },
-  monthHeader: { height: 25, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  monthTitle: { margin: 0, fontSize: 12, fontWeight: 500 },
-  iconButton: { width: 25, height: 25, display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 7, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
-  week: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 2 },
-  day: { position: 'relative', display: 'grid', gridTemplateRows: '18px 18px', alignContent: 'center', justifyItems: 'center', gap: 1, minWidth: 0, height: 53, padding: '6px 2px', boxSizing: 'border-box', border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit' },
-  dayDate: { gridRow: 1, lineHeight: '24px' },
-  weekName: { fontSize: 9, fontWeight: 400 },
-  weekNumber: { fontSize: 12, fontWeight: 500 },
-  daySelected: { background: colors.primaryAction, color: colors.onPrimaryAction, boxShadow: arkmeTheme.shadow },
-  dayToday: { boxShadow: `inset 0 0 0 1px ${colors.border}` },
-  duration: { position: 'absolute', bottom: 5, width: 4, height: 4, overflow: 'hidden', color: 'transparent', borderRadius: '50%', background: colors.accent },
-  monthWeekdays: { height: 19, display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', alignItems: 'center', color: colors.tertiary, textAlign: 'center' },
-  monthWeekday: { fontSize: 9, fontWeight: 400 },
-  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 2 },
-  monthSpacer: { minWidth: 0, height: 33 },
-  monthDay: { position: 'relative', minWidth: 0, height: 33, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit' },
-  monthDayNumber: { fontSize: 11, fontWeight: 500 },
+  browserHeading: { padding: '0 1px' },
+  browserTitle: { margin: 0, fontSize: 19, lineHeight: '26px', letterSpacing: '-.02em', fontWeight: 650 },
+  browserSubtitle: { margin: '5px 0 0', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
+  calendar: { width: 354, marginTop: 22, padding: '16px 17px 18px', boxSizing: 'border-box', border: '1px solid rgba(216,217,221,.9)', borderRadius: 18, background: 'rgba(255,255,255,.98)' },
+  monthHeader: { height: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  navCluster: { display: 'flex', alignItems: 'center', gap: 3 },
+  iconButton: { width: 27, height: 27, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 8, background: 'transparent', color: '#777b84', cursor: 'pointer', font: 'inherit', lineHeight: 1 },
+  navDisabled: { opacity: .32, cursor: 'default' },
+  caretLeft: { transform: 'rotate(180deg)' },
+  monthTitle: { margin: '0 0 0 9px', fontSize: 13, lineHeight: '20px', fontWeight: 500 },
+  todayButton: { width: 'auto', height: 27, flex: 'none', padding: '0 7px', border: 0, borderRadius: 8, background: 'transparent', color: '#747984', cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 400 },
+  todayDisabled: { color: colors.tertiary, opacity: .45, cursor: 'default' },
+  daySelected: { borderColor: colors.primaryAction, background: colors.primaryAction, color: colors.onPrimaryAction },
+  monthWeekdays: { height: 32, marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', alignItems: 'center', color: '#9a9da5', textAlign: 'center' },
+  monthWeekday: { fontSize: 10, lineHeight: '16px', fontWeight: 400 },
+  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(7,minmax(0,1fr))', gap: 4 },
+  monthSpacer: { minWidth: 0, height: 45 },
+  monthDay: { position: 'relative', minWidth: 0, height: 45, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3, padding: 0, boxSizing: 'border-box', borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11, background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit' },
+  monthDayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
   monthDayDisabled: { opacity: .32, cursor: 'default' },
-  monthDuration: { position: 'absolute', bottom: 3, width: 3, height: 3, overflow: 'hidden', color: 'transparent', borderRadius: '50%', background: colors.accent },
-  calendarFooter: { height: 25, marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
-  calendarToggle: { height: 25, padding: '0 5px 0 8px', display: 'flex', alignItems: 'center', gap: 3, border: 0, borderRadius: 7, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
+  monthDuration: { minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878', fontSize: 9, lineHeight: '9px', fontWeight: 500 },
+  monthDurationBrief: { background: '#f5e4e2', color: '#9d331a' },
+  selectedMonthDuration: { background: 'transparent', color: colors.onPrimaryAction },
   dayLabel: { margin: '21px 3px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   dayLabelTitle: { fontSize: 12, fontWeight: 500 },
   dayLabelMeta: { color: colors.tertiary, fontSize: 10, fontStyle: 'normal' },
@@ -154,10 +152,6 @@ function dateKey(value: number | Date): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
 }
 
-function shiftDay(value: Date, amount: number): Date {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate() + amount)
-}
-
 function shiftMonth(value: Date, amount: number): Date {
   const target = new Date(value.getFullYear(), value.getMonth() + amount, 1)
   const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()
@@ -189,23 +183,10 @@ function shortDuration(milliseconds: number): string {
   return rest === 0 ? `${hours}小时` : `${hours}小时${rest}分`
 }
 
-function calendarDuration(milliseconds: number): string {
+export function recordingCalendarDuration(milliseconds: number): string {
   if (milliseconds <= 0) return ''
-  const roundedHours = Math.max(0.1, Math.round(milliseconds / 360_000) / 10)
-  return `${roundedHours.toFixed(1)}h`
-}
-
-export function RecordingCalendarCell({ date, meta, selected, isToday, onClick }: {
-  date: Date
-  meta: ArkmeRecordingCalendarDay | undefined
-  selected: boolean
-  isToday: boolean
-  onClick(): void
-}) {
-  return <button type="button" style={{ ...styles.day, ...(isToday ? styles.dayToday : {}), ...(selected ? styles.daySelected : {}) }} aria-pressed={selected} onClick={onClick}>
-    <span style={styles.dayDate}>{date.getDate()}</span>
-    {meta !== undefined && meta.durationMillis > 0 && <span style={styles.duration}>{calendarDuration(meta.durationMillis)}</span>}
-  </button>
+  const hours = Math.max(.1, Math.round(milliseconds / 360_000) / 10)
+  return `${hours.toFixed(1)}h`
 }
 
 export function RecordingSpeakerLabel({ label, colorIndex, isBackground }: {
@@ -218,6 +199,17 @@ export function RecordingSpeakerLabel({ label, colorIndex, isBackground }: {
     <span>{label}</span>
     {isBackground && <span style={styles.background}>背景音</span>}
   </span>
+}
+
+function RecordingSpeakerAvatar({ label, colorIndex, avatarRef }: {
+  label: string
+  colorIndex: number
+  avatarRef?: string
+}) {
+  if (avatarRef !== undefined) {
+    return <ArkmeUserAvatar avatarRef={avatarRef} size={32} label={`${label}的头像`} />
+  }
+  return <span aria-hidden style={{ ...styles.transcriptAvatar, background: speakerColorAt(colorIndex) }}>{label.slice(0, 1) || '声'}</span>
 }
 
 function fullDuration(milliseconds: number): string {
@@ -290,7 +282,6 @@ export function ArkmeRecordingSurface() {
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const [selectedDate, setSelectedDate] = useState(today)
   const [visibleMonth, setVisibleMonth] = useState(monthStart(today))
-  const [calendarExpanded, setCalendarExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState<RecordingTab>('transcript')
   const [calendar, setCalendar] = useState<ArkmeRecordingCalendarMonth>()
   const [day, setDay] = useState<ArkmeRecordingDay>()
@@ -339,11 +330,6 @@ export function ArkmeRecordingSurface() {
   }, [selectedDate])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
-  const weekDates = useMemo(() => {
-    const mondayOffset = (selectedDate.getDay() + 6) % 7
-    const monday = shiftDay(selectedDate, -mondayOffset)
-    return Array.from({ length: 7 }, (_, index) => shiftDay(monday, index))
-  }, [selectedDate])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
   const selectedCalendarDay = calendarByDay.get(dateKey(selectedDate))
   const totalDuration = selectedCalendarDay?.durationMillis ?? day?.totalDurationMillis ?? 0
@@ -355,6 +341,8 @@ export function ArkmeRecordingSurface() {
   const recordingRange = firstTranscript !== undefined && lastTranscript !== undefined
     ? `${timeLabel(firstTranscript.startAtMillis).slice(0, 5)}–${timeLabel(lastTranscript.endAtMillis).slice(0, 5)}`
     : totalDuration > 0 ? fullDuration(totalDuration).replace('当天录音 ', '') : '暂无录音'
+  const canGoNext = visibleMonth < monthStart(today)
+  const canJumpToday = dateKey(selectedDate) !== dateKey(today) || visibleMonth.getTime() !== monthStart(today).getTime()
 
   const chooseDate = (value: Date) => {
     const normalized = startOfLocalDay(value)
@@ -368,7 +356,8 @@ export function ArkmeRecordingSurface() {
     const section = day?.transcript
     if (dayLoading || section === undefined || section.state !== 'ready') return <SectionState section={section} loading={dayLoading} />
     return <ul style={styles.transcriptList}>{section.items.map(item => <li key={item.itemId} style={styles.transcript}>
-      <span aria-hidden style={{ ...styles.transcriptAvatar, background: speakerColorAt(item.speakerColorIndex) }}>{item.speakerLabel.slice(0, 1) || '声'}</span>
+      <RecordingSpeakerAvatar label={item.speakerLabel} colorIndex={item.speakerColorIndex}
+        {...(item.speakerAvatarRef === undefined ? {} : { avatarRef: item.speakerAvatarRef })} />
       <span style={styles.transcriptBody}>
         <span style={styles.transcriptHeader}>
           <strong style={{ fontSize: 12, fontWeight: 500 }}>{item.speakerLabel}</strong>
@@ -418,59 +407,45 @@ export function ArkmeRecordingSurface() {
 
   return <div style={styles.root}>
     <aside style={styles.browser} aria-label="录音列表">
-      <header style={styles.browserHeading}><div><p style={styles.eyebrow}>录音</p><h1 style={styles.browserTitle}>时间与内容</h1></div></header>
+      <header style={styles.browserHeading}>
+        <h2 style={styles.browserTitle}>全天候录音</h2>
+        <p style={styles.browserSubtitle}>查看每天的录音、转写、总结与时间轴。</p>
+      </header>
       <section style={styles.calendar} aria-label="选择录音日期">
         <header style={styles.monthHeader}>
-          <button type="button" style={styles.iconButton} aria-label="上个月" onClick={() => { chooseDate(shiftMonth(selectedDate, -1)) }}><ArrowLeft size={15} aria-hidden /></button>
-          <strong style={styles.monthTitle}>{new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(visibleMonth)}</strong>
-          <button type="button" style={styles.iconButton} aria-label="下个月" onClick={() => { chooseDate(shiftMonth(selectedDate, 1)) }}><ArrowRight size={15} aria-hidden /></button>
+          <div style={styles.navCluster}>
+            <button type="button" style={styles.iconButton} aria-label="上个月" onClick={() => { setVisibleMonth(value => shiftMonth(value, -1)) }}><CaretRight size={16} style={styles.caretLeft} aria-hidden /></button>
+            <button type="button" disabled={!canGoNext} style={{ ...styles.iconButton, ...(!canGoNext ? styles.navDisabled : {}) }} aria-label="下个月" onClick={() => { if (canGoNext) setVisibleMonth(value => shiftMonth(value, 1)) }}><CaretRight size={16} aria-hidden /></button>
+          </div>
+          <h2 style={styles.monthTitle}>{new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(visibleMonth)}</h2>
+          <button type="button" disabled={!canJumpToday} style={{ ...styles.todayButton, ...(!canJumpToday ? styles.todayDisabled : {}) }} onClick={() => { setVisibleMonth(monthStart(today)); setSelectedDate(today) }}>回到今日</button>
         </header>
-        {calendarExpanded ? <>
-          <div style={styles.monthWeekdays} aria-hidden="true">
-            {['一', '二', '三', '四', '五', '六', '日'].map(value => <span key={value} style={styles.monthWeekday}>{value}</span>)}
-          </div>
-          <div style={styles.monthGrid}>
-            {monthDates.map((value, index) => {
-              if (value === undefined) return <span key={`empty-${index}`} aria-hidden="true" style={styles.monthSpacer} />
-              const meta = calendarByDay.get(dateKey(value))
-              const selected = dateKey(value) === dateKey(selectedDate)
-              const future = value.getTime() > today.getTime()
-              return <button
-                key={value.getTime()}
-                type="button"
-                style={{ ...styles.monthDay, ...(dateKey(value) === dateKey(today) ? styles.dayToday : {}), ...(selected ? styles.daySelected : {}), ...(future ? styles.monthDayDisabled : {}) }}
-                aria-label={new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(value)}
-                aria-pressed={selected}
-                disabled={future}
-                onClick={() => { chooseDate(value) }}
-              >
-                <strong style={styles.monthDayNumber}>{value.getDate()}</strong>
-                {meta !== undefined && (meta.hasRecording || meta.durationMillis > 0) && <i aria-hidden style={{ ...styles.monthDuration, ...(selected ? { background: colors.onPrimaryAction } : {}) }} />}
-              </button>
-            })}
-          </div>
-        </> : <div style={styles.week}>
-          {weekDates.map(value => {
+        <div style={styles.monthWeekdays} aria-hidden="true">
+          {['一', '二', '三', '四', '五', '六', '日'].map(value => <span key={value} style={styles.monthWeekday}>{value}</span>)}
+        </div>
+        <div style={styles.monthGrid}>
+          {monthDates.map((value, index) => {
+            if (value === undefined) return <span key={`empty-${index}`} aria-hidden="true" style={styles.monthSpacer} />
             const meta = calendarByDay.get(dateKey(value))
             const selected = dateKey(value) === dateKey(selectedDate)
-            return <button key={value.getTime()} type="button" style={{ ...styles.day, ...(dateKey(value) === dateKey(today) ? styles.dayToday : {}), ...(selected ? styles.daySelected : {}) }} aria-pressed={selected} onClick={() => { chooseDate(value) }}>
-              <span style={styles.weekName}>{new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(value).replace('周', '')}</span>
-              <strong style={styles.weekNumber}>{value.getDate()}</strong>
-              {meta !== undefined && (meta.hasRecording || meta.durationMillis > 0) && <i aria-hidden style={{ ...styles.duration, ...(selected ? { background: colors.onPrimaryAction } : {}) }} />}
+            const future = value.getTime() > today.getTime()
+            return <button
+              key={value.getTime()}
+              type="button"
+              style={{ ...styles.monthDay, ...(selected ? styles.daySelected : {}), ...(future ? styles.monthDayDisabled : {}) }}
+              aria-label={new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(value)}
+              aria-pressed={selected}
+              disabled={future}
+              onClick={() => { chooseDate(value) }}
+            >
+              <strong style={styles.monthDayNumber}>{value.getDate()}</strong>
+              {meta !== undefined && meta.durationMillis > 0 && <span style={{
+                ...styles.monthDuration,
+                ...(meta.durationMillis <= 60 * 60 * 1_000 ? styles.monthDurationBrief : {}),
+                ...(selected ? styles.selectedMonthDuration : {}),
+              }}>{recordingCalendarDuration(meta.durationMillis)}</span>}
             </button>
           })}
-        </div>}
-        <div style={styles.calendarFooter}>
-          <button
-            type="button"
-            style={styles.calendarToggle}
-            aria-label={calendarExpanded ? '收起整月日历' : '展开整月日历'}
-            aria-expanded={calendarExpanded}
-            onClick={() => { setCalendarExpanded(value => !value) }}
-          >
-            <span>{calendarExpanded ? '收起月历' : '展开月历'}</span>
-            <CaretDown size={12} aria-hidden style={{ transform: calendarExpanded ? 'rotate(180deg)' : undefined, transition: 'transform .18s ease' }} />
-          </button>
         </div>
       </section>
       <div style={styles.dayLabel}><span style={styles.dayLabelTitle}>{dayLabel}{dateKey(selectedDate) === dateKey(today) ? ' · 今天' : ''}</span><em style={styles.dayLabelMeta}>{totalDuration > 0 ? '1 段录音' : '暂无录音'}</em></div>
@@ -482,7 +457,7 @@ export function ArkmeRecordingSurface() {
             <span style={styles.rowCopy}><strong style={styles.rowTitle}>{dayLabel}的录音</strong><small style={styles.rowMeta}>{recordingRange} · {shortDuration(totalDuration) || '不足1分钟'}</small></span>
             <ArrowRight size={15} aria-hidden />
           </button>
-        </div> : <div style={styles.empty}><span style={styles.emptyIcon}><Waveform size={19} aria-hidden /></span><strong style={styles.emptyTitle}>这一天没有录音</strong><p style={styles.emptyText}>选择有圆点的日期查看录音。</p></div>}
+        </div> : <div style={styles.empty}><span style={styles.emptyIcon}><Waveform size={19} aria-hidden /></span><strong style={styles.emptyTitle}>这一天没有录音</strong><p style={styles.emptyText}>选择显示时长的日期查看录音。</p></div>}
     </aside>
 
     <section style={styles.content} aria-label="录音详情">
