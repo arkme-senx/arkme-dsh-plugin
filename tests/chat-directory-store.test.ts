@@ -170,17 +170,48 @@ describe('ArkmeChatDirectoryStore', () => {
     const store = new ArkmeChatDirectoryStore()
     const source = {
       sourceRef: 'source-1', kind: 'group_chat' as const, displayName: '项目群',
-      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+      activeAtMillis: 10, unreadCount: 2, hasUnreadMention: true, latestSequence: 8,
     }
     store.publish([source])
 
     store.updateReadAck('source-1', 'chat:group-1', 8, 0)
-    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, hasUnreadMention: false, latestSequence: 8 })
     expect(store.totalUnreadCount()).toBe(0)
 
     store.upsert({ ...source, unreadCount: 2, activeAtMillis: 11, latestSequence: 8 }, 'chat:group-1')
-    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, hasUnreadMention: false, latestSequence: 8 })
     expect(store.totalUnreadCount()).toBe(0)
+  })
+
+  it('preserves unread mention flags when realtime projections omit the backend flag', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const mentioned = {
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 1, hasUnreadMention: true, latestSequence: 8,
+    }
+    store.publish([mentioned])
+
+    store.upsert({
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 11, unreadCount: 1, latestSequence: 9,
+    }, 'chat:group-1')
+
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, hasUnreadMention: true, latestSequence: 9 })
+  })
+
+  it('clears an old unread mention flag when a newer projection explicitly says false', () => {
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([{
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat', displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 2, hasUnreadMention: true, latestSequence: 8,
+    }])
+
+    store.upsert({
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat', displayName: '项目群',
+      activeAtMillis: 11, unreadCount: 1, hasUnreadMention: false, latestSequence: 9,
+    }, 'chat:group-1')
+
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, hasUnreadMention: false, latestSequence: 9 })
   })
 
   it('keeps the read watermark when a renamed projection changes sourceRef', () => {

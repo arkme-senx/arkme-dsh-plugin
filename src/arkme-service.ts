@@ -168,8 +168,7 @@ import type {
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
-  ArkmeRichSendInput,
-  ArkmeHumanMentionInput,
+  ArkmeRichSendInput, ArkmeBotMentionInput, ArkmeHumanMentionInput,
   ArkmeSearchHistoryResult,
   ArkmeSearchSceneKind,
   ArkmeSelfRecordItem,
@@ -286,7 +285,7 @@ export class ArkmeService {
       this.runtime,
       this.profile,
       { openWorldImageRef: async (imageRef, viewerUserId) => await this.openWorldImageRef(imageRef, viewerUserId) },
-      { recordUid: raw => this.recordUid(raw) },
+      { recordUid: raw => this.recordUid(raw) }, { openBotImageRef: async (imageRef, viewerUserId) => await this.bot.openBotImageRef(imageRef, viewerUserId) },
     )
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
@@ -1071,6 +1070,7 @@ export class ArkmeService {
       relationUid?: string
       botRefs?: readonly string[]
       humanMentions?: readonly ArkmeHumanMentionInput[]
+      botMentions?: readonly ArkmeBotMentionInput[]
       signal?: AbortSignal
       agentAuthored?: boolean
     } = {},

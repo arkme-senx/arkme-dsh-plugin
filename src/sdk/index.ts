@@ -11,6 +11,8 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeBotList,
+  ArkmeBotMentionInput,
   ArkmeBotProvider,
   ArkmeBotSummary,
   ArkmeCalendarBucketPage,
@@ -585,6 +587,10 @@ export class ArkmeSdk {
       title: normalizedTitle,
       clientMutationId,
     }, options.signal)
+  }
+
+  async listBots(signal?: AbortSignal): Promise<ArkmeBotList> {
+    return await this.call<ArkmeBotList>('bots.list', undefined, signal)
   }
 
   /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
@@ -1174,6 +1180,8 @@ export class ArkmeSdk {
       relationUid?: string
       agentAuthored?: boolean
       humanMentions?: readonly ArkmeHumanMentionInput[]
+      botMentions?: readonly ArkmeBotMentionInput[]
+      botRefs?: readonly string[]
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1187,6 +1195,8 @@ export class ArkmeSdk {
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
       ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
+      ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
+      ...(options.botRefs === undefined ? {} : { botRefs: options.botRefs }),
     }, options.signal)
   }
 

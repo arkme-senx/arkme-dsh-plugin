@@ -343,6 +343,8 @@ export interface ArkmeBotSummary {
   description: string
   status: ArkmeBotStatus
   directChatAvailable: boolean
+  /** Account-bound opaque reference resolved through image.read. */
+  avatarRef?: string
 }
 
 export interface ArkmeBotList {
@@ -1041,6 +1043,7 @@ export interface ArkmeSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
   latestSequence?: number
@@ -1079,6 +1082,8 @@ export interface ArkmeTimelineItem {
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
   isMe: boolean
+  /** Browser-safe projection of whether this incoming message mentions the current viewer. */
+  mentionsViewer?: boolean
   sendAtMillis: number
   title: string
   textContent: string
@@ -1262,10 +1267,18 @@ export interface ArkmeRichSendInput {
   thinkingDurationMillis?: number
   assets?: ArkmeUploadedAsset[]
   humanMentions?: ArkmeHumanMentionInput[]
+  botMentions?: ArkmeBotMentionInput[]
 }
 
 export interface ArkmeHumanMentionInput {
-  memberRef: string
+  memberRef?: string
+  all?: boolean
+  startIndex: number
+  length: number
+}
+
+export interface ArkmeBotMentionInput {
+  botRef: string
   startIndex: number
   length: number
 }
@@ -1536,6 +1549,7 @@ export interface ArkmeGroupBotCandidate {
   name: string
   description: string
   installed: boolean
+  avatarRef?: string
 }
 
 export interface ArkmeGroupBotCandidateList {
@@ -2181,6 +2195,7 @@ export type ArkmePluginOperation =
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'
+  | 'bots.list'
   | 'bots.create'
   | 'records.summary'
   | 'records.cache'
