@@ -198,6 +198,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'extensions',
       extensionAuthorFilter: { ownerUserId: 7, ownerName: 'Lucis 测试' },
     })
@@ -206,6 +207,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'extensions',
     })
     expect(() => { controller.showAuthorExtensions(0, '无效') }).toThrow('插件作者用户 ID')
