@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { FileTextIcon as FileText } from '@phosphor-icons/react/dist/csr/FileText'
+import { FileAudioIcon as FileAudio } from '@phosphor-icons/react/dist/csr/FileAudio'
+import { FileVideoIcon as FileVideo } from '@phosphor-icons/react/dist/csr/FileVideo'
+import { arkmeTheme } from './arkme-theme.js'
 import type { ArkmeContentBlock, ArkmeLongArticleDetail, ArkmeTimelineItem, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { arkmeEmojiTextRuns } from './arkme-emoji.js'
@@ -13,7 +17,7 @@ const mediaGap = 5
 
 const styles: Record<string, CSSProperties> = {
   stack: { width: 'max-content', maxWidth: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 },
-  text: { width: 'max-content', maxWidth: '100%', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontSize: 14, lineHeight: '22px' },
+  text: { width: 'max-content', maxWidth: '100%', margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', fontSize: 14, lineHeight: 1.62 },
   emojiInline: { display: 'inline-block', width: 22, height: 22, objectFit: 'contain', verticalAlign: '-6px' },
   collapsedText: { display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: textCollapseMaxLines },
   textFrame: { position: 'relative', width: '100%', maxWidth: '100%' },
@@ -24,26 +28,22 @@ const styles: Record<string, CSSProperties> = {
   mediaImage: { display: 'block', width: '100%', height: '100%', objectFit: 'cover' },
   videoPreview: { display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#111', pointerEvents: 'none' },
   videoBadge: { position: 'absolute', left: 6, bottom: 6, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 5px', borderRadius: 6, background: 'rgba(0,0,0,.62)', color: '#fff', fontSize: 10, lineHeight: '14px' },
-  file: { width: 220, maxWidth: '100%', height: 56, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', boxSizing: 'border-box', borderRadius: 8, color: 'inherit', background: 'rgba(127,127,127,.08)', textDecoration: 'none' },
+  file: { width: 220, maxWidth: '100%', height: 56, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', boxSizing: 'border-box', borderRadius: 8, color: 'inherit', background: 'transparent', textDecoration: 'none' },
   fileIconBox: { width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 8, background: 'var(--dsw-specific-input-major, #fff)' },
   fileIcon: { fontSize: 24, lineHeight: 1 },
   fileName: { minWidth: 0, display: '-webkit-box', overflow: 'hidden', overflowWrap: 'anywhere', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, fontSize: 12, lineHeight: '18px' },
-  article: { width: 400, maxWidth: '100%', display: 'flex', flexDirection: 'column', padding: 10, boxSizing: 'border-box', borderRadius: 8, background: 'rgba(127,127,127,.06)', color: 'inherit' },
+  article: { width: 400, maxWidth: '100%', display: 'flex', flexDirection: 'column', padding: 0, boxSizing: 'border-box', borderRadius: 0, background: 'transparent', color: 'inherit' },
   articleButton: { border: 0, font: 'inherit', textAlign: 'left', cursor: 'pointer' },
   articleHeading: { display: 'flex', alignItems: 'center', gap: 6 },
   articleIcon: { width: 16, height: 16, flex: 'none', color: 'var(--dsw-alias-state-business-primary, #8295e8)' },
   articleTitle: { margin: 0, minWidth: 0, display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflowWrap: 'anywhere', fontSize: 15, lineHeight: '22px', fontWeight: 600 },
-  articlePreview: { maxWidth: 'calc(100% - 22px)', margin: '4px 0 0 22px', display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 14, lineHeight: '20px' },
-  articleMeta: { margin: '8px 0 0 22px', display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 12, lineHeight: '14px' },
+  articlePreview: { maxWidth: '100%', margin: '8px 0 0', display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary, #68707c)', fontSize: 14, lineHeight: '20px' },
+  articleMeta: { margin: '8px 0 0', display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 12, lineHeight: '14px' },
   articleWordIcon: { width: 14, height: 14, flex: 'none' },
-  forwardCard: {
-    width: 'min(400px, 100%)', minWidth: 0, padding: '12px 16px', boxSizing: 'border-box', overflow: 'hidden',
-    border: '1px solid var(--dsw-alias-border-l2, #e2e5e9)', borderRadius: 18,
-    background: 'var(--dsw-specific-input-major, #fff)', color: 'var(--dsw-alias-label-primary, #17191c)',
-  },
-  forwardTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, lineHeight: '22px', fontWeight: 600 },
-  forwardLines: { marginTop: 4, display: 'flex', flexDirection: 'column', gap: 1 },
-  forwardLine: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-tertiary, #9097a1)', fontSize: 14, lineHeight: '20px' },
+  forwardCard: { width: '100%', minWidth: 0, overflow: 'hidden', color: arkmeTheme.text },
+  forwardTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', fontWeight: 600 },
+  forwardLines: { marginTop: 7, display: 'flex', flexDirection: 'column', gap: 0 },
+  forwardLine: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.secondary, fontSize: 13, lineHeight: 1.65 },
   previewOverlay: { position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: 48, boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
   previewBody: { position: 'relative', width: 'min(960px, 90vw)', height: 'min(720px, 82vh)' },
   previewViewport: { width: '100%', height: '100%', overflowX: 'hidden', overscrollBehavior: 'contain', scrollbarGutter: 'stable', touchAction: 'none' },
@@ -125,11 +125,11 @@ export function ArkmeRichText({ text, highlightMentions = false }: { text: strin
     : <span key={`${String(index)}:text`}>{highlightMentions ? <HighlightedText text={run.text} /> : run.text}</span>)}</>
 }
 
-function LongText({ text, highlightMentions = false, collapseText = true }: { text: string; highlightMentions?: boolean; collapseText?: boolean }) {
-  const collapsible = collapseText && shouldCollapseText(text)
+function LongText({ text, highlightMentions = false, collapseText = true, expanded = false }: { text: string; highlightMentions?: boolean; collapseText?: boolean; expanded?: boolean }) {
+  const collapsible = collapseText && !expanded && shouldCollapseText(text)
   const [collapsed, setCollapsed] = useState(collapsible)
   const content = <ArkmeRichText text={text} highlightMentions={highlightMentions} />
-  if (!collapsible) return <p style={styles.text}>{content}</p>
+  if (!collapsible) return <p style={{ ...styles.text, ...(expanded ? { width: '100%', lineHeight: 1.7 } : {}) }}>{content}</p>
   return <div style={styles.textFrame} data-arkme-text-collapsible="true">
     <p style={{ ...styles.text, ...(collapsed ? styles.collapsedText : {}) }}>{content}</p>
     {collapsed && <span aria-hidden style={styles.textFade} />}
@@ -180,15 +180,9 @@ function MediaGallery({ blocks, onOpen, onFallback }: {
 
 function FileCard({ block, fallback = false }: { block: ArkmeContentBlock; fallback?: boolean }) {
   return <a href={mediaUrl(block)} download={block.fileName} style={styles.file} data-arkme-file-card={fallback ? 'fallback' : 'file'}>
-    <span style={styles.fileIconBox}><span style={styles.fileIcon} aria-hidden>{block.kind === 'audio' ? '🔊' : block.kind === 'video' ? '🎞️' : '📄'}</span></span>
+    <span style={styles.fileIconBox} aria-hidden>{block.kind === 'audio' ? <FileAudio size={23} /> : block.kind === 'video' ? <FileVideo size={23} /> : <FileText size={23} />}</span>
     <span style={styles.fileName}>{block.fileName || '未知文件'}</span>
   </a>
-}
-
-function LongArticleIcon() {
-  return <svg style={styles.articleIcon} viewBox="0 0 36 36" fill="none" aria-hidden focusable="false">
-    <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M10 7C8.343 7 7 8.343 7 10v16c0 1.657 1.343 3 3 3h16c1.657 0 3-1.343 3-3V10c0-1.657-1.343-3-3-3H10Zm2 5a1 1 0 1 0 0 2h12a1 1 0 1 0 0-2H12Zm-1 6a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H12a1 1 0 0 1-1-1Zm1 4a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-6Z" />
-  </svg>
 }
 
 function LongArticleWordCountIcon() {
@@ -204,7 +198,6 @@ function ArticleCard({ title, text, onOpen }: { title: string; text: string; onO
   const count = normalizedTextLength(text)
   return <button type="button" style={{ ...styles.article, ...styles.articleButton }} data-arkme-long-article="preview" data-arkme-long-article-inner="true" aria-label={`查看长文 ${heading}`} onClick={onOpen}>
     <div style={styles.articleHeading}>
-      <LongArticleIcon />
       <h3 style={styles.articleTitle}>{heading}</h3>
     </div>
     {hasTitle && text.trim() !== '' && <p style={{ ...styles.articlePreview, WebkitLineClamp: 2 }}>{text}</p>}
@@ -425,8 +418,9 @@ function splitVisualRuns(blocks: ArkmeContentBlock[]): Array<ArkmeContentBlock |
   return rows
 }
 
-export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true }: {
+export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble' }: {
   item: ArkmeTimelineItem
+  presentation?: 'bubble' | 'detail'
   sourceRef?: string
   onLongArticleUpdated?: (detail: ArkmeLongArticleDetail) => void
   highlightMentions?: boolean
@@ -438,13 +432,14 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   const [articleOpen, setArticleOpen] = useState(false)
   const [failedRefs, setFailedRefs] = useState<Set<string>>(() => new Set())
   if (item.forwardRecords !== undefined) {
-    const itemLines = item.forwardRecords.items.map(value => {
-      const summary = value.textContent || value.title || value.contentLabel || '非文本内容'
-      return `${value.senderName}：${summary}`
+    const itemLines = item.forwardRecords.items.flatMap(value => {
+      if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
+      const summary = value.textContent || value.title || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
+      return [`${value.senderName}：${summary}`]
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
     return <div style={styles.forwardCard} data-arkme-forward-records-card="true">
-      <p style={styles.forwardTitle}>{item.forwardRecords.title}</p>
+      <p style={styles.forwardTitle} title={item.forwardRecords.title}>{item.forwardRecords.title}</p>
       <div style={styles.forwardLines}>
         {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
           key={`${String(index)}:${line}`}
@@ -469,7 +464,7 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
     src={arkmeVoiceMediaUrl(block.mediaRef)}
     durationSeconds={block.durationSec ?? (isVoiceNote && item.recordDurationMillis !== undefined ? item.recordDurationMillis / 1000 : undefined)}
     downloadName={block.fileName}
-    collapsible={withTranscript && collapseText && shouldCollapseText(text)}
+    collapsible={withTranscript && presentation !== 'detail' && collapseText && shouldCollapseText(text)}
   >{withTranscript && text !== '' ? <ArkmeRichText text={text} highlightMentions={highlightMentions} /> : undefined}</ArkmeVoiceContent>
   const renderRows = splitVisualRuns(blocks).map((row, rowIndex) => {
     if (Array.isArray(row)) {
@@ -486,11 +481,15 @@ export function ArkmeMessageContent({ item, sourceRef, onLongArticleUpdated, hig
   })
 
   return <>
-    <div style={styles.stack} data-arkme-message-content={isArticle ? 'article' : 'message'}>
+    <div style={{ ...styles.stack, ...(presentation === 'detail' ? { width: '100%' } : {}) }} data-arkme-message-content={isArticle ? 'article' : 'message'} data-arkme-content-presentation={presentation}>
       {inlineVoice !== undefined ? renderVoice(inlineVoice, true) : <>
-        {isArticle ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : text !== '' && <LongText text={text} highlightMentions={highlightMentions} collapseText={collapseText} />}
+        {isArticle && presentation === 'bubble' ? <ArticleCard title={item.title} text={item.textContent} onOpen={() => { setArticleOpen(true) }} /> : <>
+          {isArticle && item.title && <h3 style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>{item.title}</h3>}
+          {text !== '' && <LongText text={text} highlightMentions={highlightMentions} collapseText={collapseText} expanded={presentation === 'detail'} />}
+        </>}
         {renderRows}
       </>}
+      {item.mediaUnavailable === true && (blocks.length > 0 || text !== '') && <p style={{ ...styles.text, color: arkmeTheme.tertiary, fontSize: 12 }}>部分媒体暂时无法加载，请刷新对话后重试</p>}
       {!isArticle && blocks.length === 0 && text === '' && <p style={styles.text}>
         {item.mediaUnavailable === true ? '媒体暂时无法加载' : '暂不支持的非文本内容'}
       </p>}

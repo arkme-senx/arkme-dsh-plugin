@@ -8,6 +8,7 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeDirectTextSendResult,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupMemberRole,
@@ -1540,11 +1541,19 @@ export class ChatService {
       if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
   
       const projectedItems: ArkmeForwardRecordPreviewItem[] = []
+      let truncated = false
+      let remainingSegments = 2_000
+      const epochMillis = (value: unknown): number => {
+        const time = numberValue(value)
+        return Number.isFinite(time) && time > 0 && time < 8.64e15
+          ? Math.trunc(time < 1e12 ? time * 1000 : time) : 0
+      }
       const appendItems = async (values: unknown[], depth: number): Promise<void> => {
-        const sorted = values.map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
+        if (values.length > 100) truncated = true
+        const sorted = values.slice(0, 100).map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
           .sort((left, right) => (left.order || left.index) - (right.order || right.index))
         for (const entry of sorted) {
-          if (projectedItems.length >= 100) return
+          if (projectedItems.length >= 100) { truncated = true; return }
           const item = objectValue(entry.value)
           const nestedForward = objectValue(item.forward_records ?? item.forwardRecords)
           if (depth < 4
@@ -1552,12 +1561,43 @@ export class ChatService {
             await appendItems(listValue(nestedForward.items), depth + 1)
             continue
           }
+          if (depth >= 4 && Object.keys(nestedForward).length > 0) truncated = true
           const senderUserId = numberValue(item.source_sender_user_id ?? item.sourceSenderUserId ?? item.owner_id ?? item.ownerId)
           const senderName = stringValue(
             item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
           ).trim() || 'Arkme用户'
           const textContent = stringValue(item.text ?? item.text_preview ?? item.textPreview).trim()
           const title = stringValue(item.title).trim()
+          const rawType = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
+          const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
+            rawType === 'record' || rawType === 'chat_record' || rawType === 'long_recording_segments'
+              || rawType === 'agent' || rawType === 'ai_letter' ? rawType : 'unknown'
+          const files = listValue(item.files)
+          const contentBlocks = this.media.forwardContentBlocks(files, viewerUserId)
+          const call = objectValue(item.call_record_snapshot ?? item.callRecordSnapshot)
+          const recordingSegments = listValue(item.long_recording_segments ?? item.longRecordingSegments)
+          const rawSegments = recordingSegments.length > 0 ? recordingSegments : listValue(call.transcript_segments ?? call.transcriptSegments)
+          const segmentValues = rawSegments.slice(0, Math.min(500, remainingSegments))
+          remainingSegments -= segmentValues.length
+          const segments: ArkmeForwardTranscriptSegment[] = segmentValues.map(value => {
+            const segment = objectValue(value)
+            const offset = (value: unknown) => Math.max(0, Math.trunc(numberValue(value)))
+            const startMillis = offset(segment.start_millis ?? segment.startMillis ?? segment.start_ms ?? segment.startMs)
+            const endMillis = Math.max(startMillis, offset(segment.end_millis ?? segment.endMillis ?? segment.end_ms ?? segment.endMs))
+            const speakerNumber = offset(segment.speaker_number ?? segment.speakerNumber)
+            const speakerName = stringValue(segment.speaker_label ?? segment.speakerLabel ?? segment.speaker_name ?? segment.speakerName).trim()
+              || (speakerNumber > 0 ? `说话人 ${String(speakerNumber)}` : senderName)
+            const audioUrl = stringValue(segment.audio_url ?? segment.audioUrl).trim()
+            const segmentMedia = audioUrl === '' ? [] : this.media.forwardContentBlocks([{
+              type: 2, name: '通话片段', mime_type: 'audio/wav', download_url: audioUrl,
+              duration_sec: (endMillis - startMillis) / 1000,
+            }], viewerUserId)
+            return {
+              speakerName, textContent: stringValue(segment.text ?? segment.text_content ?? segment.textContent), startMillis, endMillis,
+              ...(segmentMedia.length === 0 ? {} : { contentBlocks: segmentMedia }),
+              ...(audioUrl !== '' && segmentMedia.length === 0 ? { mediaUnavailable: true as const } : {}),
+            }
+          })
           const imageCount = Math.max(0, Math.trunc(numberValue(item.image_count ?? item.imageCount)))
           const voiceCount = Math.max(0, Math.trunc(numberValue(item.voice_count ?? item.voiceCount)))
           const fileCount = Math.max(0, Math.trunc(numberValue(item.file_count ?? item.fileCount)))
@@ -1571,9 +1611,14 @@ export class ChatService {
           projectedItems.push({
             senderName,
             ...(senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, senderUserId) } : {}),
-            sendAtMillis: numberValue(item.send_at ?? item.sendAt),
+            sendAtMillis: epochMillis(item.send_at ?? item.sendAt),
             title,
             textContent,
+            sourceType,
+            ...(contentBlocks.length === 0 ? {} : { contentBlocks }),
+            ...(files.length > contentBlocks.length ? { mediaUnavailable: true } : {}),
+            ...(segments.length === 0 ? {} : { segments }),
+            ...(segmentValues.length < rawSegments.length || files.length > 32 ? { truncated: true } : {}),
             ...(contentLabel === undefined ? {} : { contentLabel }),
           })
         }
@@ -1582,12 +1627,13 @@ export class ChatService {
   
       const summaryLines = listValue(payload.summary_lines ?? payload.summaryLines)
         .map(value => stringValue(value).trim()).filter(value => value !== '')
-      const createdAtMillis = numberValue(payload.created_at ?? payload.createdAt) || fallbackCreatedAtMillis
+      const createdAtMillis = epochMillis(payload.created_at ?? payload.createdAt) || epochMillis(fallbackCreatedAtMillis)
       return {
         title: stringValue(payload.title).trim() || '转发快记',
         createdAtMillis,
         summaryLines,
         items: projectedItems,
+        ...(truncated ? { truncated: true } : {}),
       }
     }
   

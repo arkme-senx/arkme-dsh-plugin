@@ -566,6 +566,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,

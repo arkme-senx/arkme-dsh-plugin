@@ -800,6 +800,34 @@ export class MediaService {
     return { displayItemsByRecordUid, unavailableRecordUids }
   }
 
+  /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
+  forwardContentBlocks(files: unknown[], viewerUserId: number): ArkmeContentBlock[] {
+    if (this.runtime.config.richMediaRenderEnabled === false) return []
+    const displayItems = files.slice(0, 32).map(objectValue).flatMap((file, index) => {
+      if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
+      const trustedUrl = (raw: unknown): string | undefined => {
+        const value = safeHttpsUrl(raw)
+        if (value === undefined) return undefined
+        const url = new URL(value)
+        return url.port === '' && url.hash === '' && (allowedSignedImageHost(this.runtime.config.environment, url.hostname)
+          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
+      }
+      const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
+      const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)
+      return [{
+        // Do not copy file/source IDs into the public projection or stable media cache.
+        file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
+        file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
+        mime_type: stringValue(file.mime_type ?? file.mimeType),
+        size: numberValue(file.size), sort_order: numberValue(file.order ?? file.sort_order ?? index),
+        duration_sec: numberValue(file.duration_sec ?? file.durationSec),
+        ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
+        ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
+      }]
+    })
+    return this.richContentBlocks({}, viewerUserId, displayItems)
+  }
+
   issueImageMediaRef(
     viewerUserId: number,
     descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
