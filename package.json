@@ -66,8 +66,8 @@
       "schemaVersion": 1,
       "level": "normal",
       "title": "Arkme 插件 0.1.23 更新",
-      "summary": "feat(self): 优化快记主题归属与对齐",
-      "publishedAt": "2026-08-26T09:35:38.574Z",
+      "summary": "release: 集成 dev 并完善自动发版历史同步",
+      "publishedAt": "2026-08-26T09:53:15.817Z",
       "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.23"
     }
   },
