@@ -232,11 +232,18 @@ function runTargetRemove(plan: PluginUpdaterPlan): boolean {
   return result.status === 0
 }
 
-function runRollbackInstall(plan: PluginUpdaterPlan): boolean {
+export interface PluginRollbackInstallResult {
+  packageRestored: boolean
+  profilePolicyRestored: boolean
+}
+
+function runRollbackInstall(plan: PluginUpdaterPlan): PluginRollbackInstallResult {
   const fallbackSpec = plan.previousArtifactPath === undefined
     ? plan.previousSpec
     : `file:${plan.previousArtifactPath}`
-  if (plan.previousArtifactPath === undefined && !isLocalPackageSpec(fallbackSpec)) return false
+  if (plan.previousArtifactPath === undefined && !isLocalPackageSpec(fallbackSpec)) {
+    return { packageRestored: false, profilePolicyRestored: false }
+  }
   spawnSync(plan.execPath, buildTargetRemoveArgs(plan), {
     env: { ...process.env, DSH_HOME: plan.dshHome },
     stdio: 'inherit',
@@ -248,12 +255,12 @@ function runRollbackInstall(plan: PluginUpdaterPlan): boolean {
     stdio: 'inherit',
     shell: false,
   })
-  if (result.status !== 0) return false
+  if (result.status !== 0) return { packageRestored: false, profilePolicyRestored: false }
   try {
     reconcilePluginUpdaterProfilePolicy(plan)
-    return true
+    return { packageRestored: true, profilePolicyRestored: true }
   } catch {
-    return false
+    return { packageRestored: true, profilePolicyRestored: false }
   }
 }
 
@@ -364,18 +371,21 @@ async function rollbackAndRestart(
   store: PluginUpdateInstallStateStore,
   rolledBackMessage: string,
 ): Promise<void> {
-  const rolledBack = runRollbackInstall(plan)
-  if (!rolledBack) {
+  const rollback = runRollbackInstall(plan)
+  if (!rollback.packageRestored) {
     await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
     return
   }
   restartDsh(plan)
   const healthy = await waitForHealthy(plan, plan.previousVersion)
+  const policyWarning = rollback.profilePolicyRestored
+    ? ''
+    : '；部分已关闭扩展的 Profile 状态未能收敛'
   await writePhase(
     store,
     plan,
     healthy ? 'rolled-back' : 'failed',
-    healthy ? rolledBackMessage : '已恢复旧版本文件，但 DSH 未能自动启动。',
+    healthy ? `${rolledBackMessage}${policyWarning}` : `已恢复旧版本文件，但 DSH 未能自动启动${policyWarning}。`,
   )
 }
 
@@ -506,11 +516,14 @@ export async function rollbackManagedPluginUpdate(
   const plan = parsePluginUpdaterPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
   const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
   const ops = managedOperations(overrides)
-  if (!ops.runRollbackInstall(plan)) {
+  const rollback = ops.runRollbackInstall(plan)
+  if (!rollback.packageRestored) {
     await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
     throw new Error('managed plugin update rollback failed')
   }
-  await writePhase(store, plan, 'rolled-back', '已恢复旧版本文件，正在由 Arkme 重启 DSH…')
+  await writePhase(store, plan, 'rolled-back', rollback.profilePolicyRestored
+    ? '已恢复旧版本文件，正在由 Arkme 重启 DSH…'
+    : '已恢复旧版本文件；部分已关闭扩展的 Profile 状态未能收敛，正在由 Arkme 重启 DSH…')
   await unlink(planPath)
 }
 

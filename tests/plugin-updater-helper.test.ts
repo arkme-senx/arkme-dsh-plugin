@@ -629,7 +629,9 @@ if (args[0] === 'plugin') {
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@senguoyun/dsh-arkme', version }))
   const profilePath = join(process.env.DSH_HOME, 'profiles', 'web', 'package.json')
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
-  profile.dsh.profile.bundles = Object.keys(profile.dependencies)
+  profile.dsh.profile.bundles = version === process.env.FAKE_INVALID_POLICY_VERSION
+    ? null
+    : Object.keys(profile.dependencies)
   writeFileSync(profilePath, JSON.stringify(profile))
   process.exit(0)
 }
@@ -695,6 +697,7 @@ if (args[0] === 'web') {
       version: process.env.FAKE_VERSION_PATH,
       pid: process.env.FAKE_PID_PATH,
       fail: process.env.FAKE_FAIL_VERSION,
+      invalidPolicy: process.env.FAKE_INVALID_POLICY_VERSION,
     }
     process.env.FAKE_TRACE_PATH = tracePath
     process.env.FAKE_VERSION_PATH = versionPath
@@ -725,6 +728,7 @@ if (args[0] === 'web') {
       serverPid = undefined
       await new Promise(resolve => setTimeout(resolve, 300))
       process.env.FAKE_FAIL_VERSION = '0.1.4'
+      process.env.FAKE_INVALID_POLICY_VERSION = '0.1.3'
       const rollbackParent = spawn(process.execPath, ['-e', ''])
       const rollbackParentPid = rollbackParent.pid
       if (rollbackParentPid === undefined) throw new Error('missing rollback parent pid')
@@ -742,6 +746,7 @@ if (args[0] === 'web') {
       serverPid = Number(await readFile(pidPath, 'utf8'))
       const rolledBack = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(rolledBack).toMatchObject({ phase: 'rolled-back', previousVersion: '0.1.3' })
+      expect(rolledBack?.message).toContain('部分已关闭扩展的 Profile 状态未能收敛')
       expect(await readFile(versionPath, 'utf8')).toBe('0.1.3')
       const rollbackTrace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
         .map(line => JSON.parse(line) as string[])
@@ -752,9 +757,9 @@ if (args[0] === 'web') {
       ])
       expect(rollbackTrace.some(args => args.includes(`file:${previousArtifactPath}`))).toBe(true)
       const rolledBackProfile = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
-        dsh: { profile: { bundles: string[] } }
+        dsh: { profile: { bundles: string[] | null } }
       }
-      expect(rolledBackProfile.dsh.profile.bundles).not.toContain('deepseek-pet')
+      expect(rolledBackProfile.dsh.profile.bundles).toBeNull()
     } finally {
       if (serverPid !== undefined && Number.isSafeInteger(serverPid)) {
         try { process.kill(serverPid, 'SIGTERM') } catch { /* already stopped */ }
@@ -767,6 +772,8 @@ if (args[0] === 'web') {
       else process.env.FAKE_PID_PATH = previousEnv.pid
       if (previousEnv.fail === undefined) delete process.env.FAKE_FAIL_VERSION
       else process.env.FAKE_FAIL_VERSION = previousEnv.fail
+      if (previousEnv.invalidPolicy === undefined) delete process.env.FAKE_INVALID_POLICY_VERSION
+      else process.env.FAKE_INVALID_POLICY_VERSION = previousEnv.invalidPolicy
     }
   }, 15_000)
 
@@ -951,13 +958,14 @@ if (args[0] === 'web') {
       healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
       logPath: join(root, 'helper.log'),
     }))
-    const runRollbackInstall = vi.fn(() => true)
+    const runRollbackInstall = vi.fn(() => ({ packageRestored: true, profilePolicyRestored: false }))
     await rollbackManagedPluginUpdate(planPath, { runRollbackInstall })
     expect(runRollbackInstall).toHaveBeenCalledOnce()
     await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
       phase: 'rolled-back',
       previousVersion: '0.1.3',
+      message: expect.stringContaining('部分已关闭扩展的 Profile 状态未能收敛'),
     })
   })
 })

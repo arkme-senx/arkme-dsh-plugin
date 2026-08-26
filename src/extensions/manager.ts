@@ -400,7 +400,10 @@ export class ArkmeExtensionManager {
 
   /** Reconcile this Profile once during Host startup; failures remain compatible with older services. */
   async reconcileInstallationMetrics(): Promise<void> {
-    const repaired = await this.restoreDisabledProfileLayers('')
+    const repairFailures: Array<{ extensionId: string; error: unknown }> = []
+    const repaired = await this.restoreDisabledProfileLayers('', (item, error) => {
+      repairFailures.push({ extensionId: item.extensionId, error })
+    })
     const current = new Map(this.listInstalled().map(item => [item.extensionId, item]))
     for (const item of repaired) {
       if (item.profilePackageName === undefined) continue
@@ -419,6 +422,12 @@ export class ArkmeExtensionManager {
     this.refreshPersistentClientWrappers()
     await this.reconcileProfileClientOwners()
     await this.syncInstallationSnapshot()
+    if (repairFailures.length > 0) {
+      throw new AggregateError(
+        repairFailures.map(item => item.error),
+        `无法收敛 ${repairFailures.map(item => item.extensionId).join('、')} 的关闭状态`,
+      )
+    }
   }
 
   /** Profile-only extensions can be removed without touching a legacy dynamic Agent. */
@@ -2179,15 +2188,23 @@ export class ArkmeExtensionManager {
     }
   }
 
-  private async restoreDisabledProfileLayers(exceptExtensionId: string): Promise<ArkmeInstalledExtension[]> {
+  private async restoreDisabledProfileLayers(
+    exceptExtensionId: string,
+    onError?: (item: ArkmeInstalledExtension, error: unknown) => void,
+  ): Promise<ArkmeInstalledExtension[]> {
     const repaired: ArkmeInstalledExtension[] = []
     if (this.options.profileInstaller === undefined) return repaired
     for (const item of this.store.list()) {
       if (item.extensionId === exceptExtensionId || item.enabled || item.profilePackageName === undefined) continue
       if (!this.profileContains(item.profilePackageName, false)) continue
       const included = this.profileContains(item.profilePackageName, true)
-      await this.options.profileInstaller.setEnabled(item.profilePackageName, false)
-      if (included) repaired.push(item)
+      try {
+        await this.options.profileInstaller.setEnabled(item.profilePackageName, false)
+        if (included) repaired.push(item)
+      } catch (error) {
+        if (onError === undefined) throw error
+        onError(item, error)
+      }
     }
     return repaired
   }
@@ -2198,14 +2215,16 @@ export class ArkmeExtensionManager {
     expectActive: boolean,
   ): void {
     if (previousInstalled.profilePackageName === undefined) return
+    const existing = this.pendingProfileChanges.get(previousInstalled.extensionId)
+    const rollbackBaseline = existing?.activationChange === true ? existing : undefined
     this.pendingProfileChanges.set(previousInstalled.extensionId, {
       extensionId: previousInstalled.extensionId,
       packageName: previousInstalled.profilePackageName,
       expectActive,
       cleanupPaths: [],
-      previousInstalled,
+      previousInstalled: rollbackBaseline?.previousInstalled ?? previousInstalled,
       activationChange: true,
-      previousProfileIncluded,
+      previousProfileIncluded: rollbackBaseline?.previousProfileIncluded ?? previousProfileIncluded,
     })
   }
 
