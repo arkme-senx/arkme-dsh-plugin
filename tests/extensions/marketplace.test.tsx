@@ -116,6 +116,8 @@ describe('Arkme marketplace UI', () => {
     const html = renderToStaticMarkup(<ArkmeMarketplace displayMode="page" />)
     expect(html).toContain('role="region"')
     expect(html).not.toContain('aria-modal="true"')
+    expect(html).toMatch(/<section style="[^"]*background:var\(--dsw-alias-bg-base, #ffffff\)[^"]*" role="region"/)
+    expect(html).toMatch(/<div style="[^"]*background:var\(--dsw-alias-bg-base, #ffffff\)[^"]*" aria-label="Arkme 市集"/)
     expect(html.match(/data-market-header-layer=/g)).toHaveLength(2)
     expect(html).toContain('data-market-header-layer="primary"')
     expect(html).toContain('data-market-header-layer="secondary"')

@@ -88,7 +88,7 @@ const styles: Record<string, CSSProperties> = {
   pageBackdrop: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' },
   pageDialog: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
-    background: colors.surface,
+    background: arkmeTheme.base,
   },
   detailModalBackdrop: {
     position: 'fixed', zIndex: 100, inset: 0, display: 'grid', placeItems: 'center', padding: 16,
@@ -133,6 +133,7 @@ const styles: Record<string, CSSProperties> = {
     width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column',
     background: colors.surface, color: colors.text, fontFamily: 'var(--dsw-font-family, inherit)',
   },
+  pageShell: { background: arkmeTheme.base },
   embeddedFrame: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' },
   embeddedDialog: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden',
@@ -2529,7 +2530,7 @@ export function ArkmeMarketplace({
     {...(displayMode === 'dialog' ? { role: 'dialog', 'aria-modal': true } : { role: 'region' })}
     aria-labelledby="arkme-marketplace-title"
   >
-  <div style={styles.shell} aria-label="Arkme 市集">
+  <div style={{ ...styles.shell, ...(displayMode === 'page' ? styles.pageShell : {}) }} aria-label="Arkme 市集">
     {displayMode === 'dialog' && <header style={styles.header}>
       <h2 id="arkme-marketplace-title" style={styles.title}>市集</h2>
       {detail?.share !== undefined && <button
