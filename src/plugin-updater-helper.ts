@@ -8,6 +8,7 @@ import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
 import { writePluginUpdateInstallReceipt } from './plugin-update-install-receipt.js'
 import { ARKME_PLUGIN_PACKAGE_NAME } from './plugin-update-artifact.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
+import { detachManagedProfilePluginLink } from './profile-plugin-entry.js'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
 
 const PARENT_EXIT_TIMEOUT_MS = 20_000
@@ -203,7 +204,8 @@ function runTargetInstall(plan: PluginUpdaterPlan): boolean {
   return result.status === 0
 }
 
-function runTargetRemove(plan: PluginUpdaterPlan): boolean {
+async function runTargetRemove(plan: PluginUpdaterPlan): Promise<boolean> {
+  await detachManagedProfilePluginLink({ dshHome: plan.dshHome, profileName: plan.profileName })
   const result = spawnSync(plan.execPath, buildTargetRemoveArgs(plan), {
     env: { ...process.env, DSH_HOME: plan.dshHome },
     stdio: 'inherit',
@@ -212,11 +214,12 @@ function runTargetRemove(plan: PluginUpdaterPlan): boolean {
   return result.status === 0
 }
 
-function runRollbackInstall(plan: PluginUpdaterPlan): boolean {
+async function runRollbackInstall(plan: PluginUpdaterPlan): Promise<boolean> {
   const fallbackSpec = plan.previousArtifactPath === undefined
     ? plan.previousSpec
     : `file:${plan.previousArtifactPath}`
   if (plan.previousArtifactPath === undefined && !isLocalPackageSpec(fallbackSpec)) return false
+  await detachManagedProfilePluginLink({ dshHome: plan.dshHome, profileName: plan.profileName })
   spawnSync(plan.execPath, buildTargetRemoveArgs(plan), {
     env: { ...process.env, DSH_HOME: plan.dshHome },
     stdio: 'inherit',
@@ -287,7 +290,7 @@ async function waitForHealthy(plan: PluginUpdaterPlan, expectedVersion: string):
 }
 
 export interface ManagedPluginUpdateOperations {
-  runRollbackInstall: typeof runRollbackInstall
+  runRollbackInstall: (plan: PluginUpdaterPlan) => boolean | Promise<boolean>
   waitForHealthy: typeof waitForHealthy
   writeInstallReceipt: typeof writePluginUpdateInstallReceipt
 }
@@ -338,7 +341,7 @@ async function rollbackAndRestart(
   store: PluginUpdateInstallStateStore,
   rolledBackMessage: string,
 ): Promise<void> {
-  const rolledBack = runRollbackInstall(plan)
+  const rolledBack = await runRollbackInstall(plan)
   if (!rolledBack) {
     await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
     return
@@ -399,7 +402,7 @@ export async function runPluginUpdater(planPath: string): Promise<void> {
   }
 
   await writePhase(store, plan, 'installing', `正在安装 ${plan.targetVersion}…`)
-  if (!runTargetRemove(plan)) {
+  if (!await runTargetRemove(plan)) {
     await writePhase(store, plan, 'failed', '旧版本清理失败，正在恢复旧版本…')
     await rollbackAndRestart(plan, store, '旧版本清理失败，已自动恢复旧版本。')
     return
@@ -472,7 +475,7 @@ export async function rollbackManagedPluginUpdate(
   const plan = parsePluginUpdaterPlan(JSON.parse(await readFile(planPath, 'utf8')) as unknown)
   const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
   const ops = managedOperations(overrides)
-  if (!ops.runRollbackInstall(plan)) {
+  if (!await ops.runRollbackInstall(plan)) {
     await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
     throw new Error('managed plugin update rollback failed')
   }

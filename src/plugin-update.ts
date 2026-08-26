@@ -21,6 +21,7 @@ import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
 import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from './plugin-update-policy.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
+import { detachManagedProfilePluginLink } from './profile-plugin-entry.js'
 import type { PluginUpdaterPlan } from './plugin-updater-helper.js'
 import { assertTargetArtifactIntegrity, buildTargetInstallArgs } from './plugin-updater-helper.js'
 import type {
@@ -482,6 +483,7 @@ export class ArkmePluginUpdateManager {
   }
 
   private async runProfilePluginRemove(plan: PluginUpdaterPlan): Promise<void> {
+    await detachManagedProfilePluginLink({ dshHome: plan.dshHome, profileName: plan.profileName })
     await this.runProfilePluginCommand(plan, [
       ...plan.execArgv,
       plan.dshBinPath,
