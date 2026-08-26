@@ -13,7 +13,22 @@ import { ArkmeComposerEmojiIcon } from './ArkmeComposerToolIcon.js'
 import type { ArkmeComposerCaretGeometry } from './ArkmeRichComposerInput.js'
 
 const recentStorageKey = 'arkme:chat-emoji:recent:v1'
-const favoriteStickerLoadTimeoutMs = 15_000
+const favoriteStickerLoadAttemptTimeoutMs = 6_000
+const favoriteStickerLoadAttempts = 2
+const favoriteStickerRetryDelayMs = 400
+
+function waitForFavoriteStickerRetry(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise(resolve => {
+    const timer = setTimeout(done, favoriteStickerRetryDelayMs)
+    function done() {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    signal.addEventListener('abort', done, { once: true })
+  })
+}
 export const arkmeDefaultEmojiGridColumns = 14
 
 interface ArkmePendingFavoriteSticker {
@@ -357,39 +372,66 @@ export function ArkmeEmojiPicker({ disabled, scopeKey, sourceRef, getCaretGeomet
 
   const loadStickers = async () => {
     stickerLoadAbortRef.current?.abort()
-    const controller = new AbortController()
-    stickerLoadAbortRef.current = controller
-    let timedOut = false
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        timedOut = true
-        controller.abort()
-        reject(new Error('收藏表情加载超时，请重试'))
-      }, favoriteStickerLoadTimeoutMs)
-    })
+    const loadController = new AbortController()
+    stickerLoadAbortRef.current = loadController
     setLoadPhase('loading')
-    try {
-      const result = await Promise.race([
-        callArkme<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, controller.signal),
-        timeoutPromise,
-      ])
-      if (disposedRef.current || controller.signal.aborted) return
-      setStickers(result.items)
-      setPreviewFailedIds(new Set())
-      setPreviewRevision(value => value + 1)
-      setLoadPhase('success')
-    } catch (caught) {
-      if (disposedRef.current || (controller.signal.aborted && !timedOut)) return
-      const message = timedOut
+    let lastError: unknown
+    let lastAttemptTimedOut = false
+    for (let attempt = 0; attempt < favoriteStickerLoadAttempts; attempt += 1) {
+      const attemptController = new AbortController()
+      const abortAttempt = () => attemptController.abort(loadController.signal.reason)
+      loadController.signal.addEventListener('abort', abortAttempt, { once: true })
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      let timedOut = false
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            attemptController.abort()
+            reject(new Error('收藏表情加载超时，请重试'))
+          }, favoriteStickerLoadAttemptTimeoutMs)
+        })
+        const result = await Promise.race([
+          callArkme<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, attemptController.signal),
+          timeoutPromise,
+        ])
+        if (disposedRef.current || loadController.signal.aborted) {
+          if (stickerLoadAbortRef.current === loadController) stickerLoadAbortRef.current = undefined
+          return
+        }
+        setStickers(result.items)
+        setPreviewFailedIds(new Set())
+        setPreviewRevision(value => value + 1)
+        setLoadPhase('success')
+        if (stickerLoadAbortRef.current === loadController) stickerLoadAbortRef.current = undefined
+        return
+      } catch (caught) {
+        if (disposedRef.current || loadController.signal.aborted) {
+          if (stickerLoadAbortRef.current === loadController) stickerLoadAbortRef.current = undefined
+          return
+        }
+        lastError = caught
+        lastAttemptTimedOut = timedOut
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout)
+        loadController.signal.removeEventListener('abort', abortAttempt)
+      }
+      if (attempt + 1 < favoriteStickerLoadAttempts) {
+        await waitForFavoriteStickerRetry(loadController.signal)
+        if (disposedRef.current || loadController.signal.aborted) {
+          if (stickerLoadAbortRef.current === loadController) stickerLoadAbortRef.current = undefined
+          return
+        }
+      }
+    }
+    if (!disposedRef.current && !loadController.signal.aborted) {
+      const message = lastAttemptTimedOut
         ? '收藏表情加载超时，请重试'
-        : caught instanceof Error ? caught.message : '收藏表情加载失败'
+        : lastError instanceof Error ? lastError.message : '收藏表情加载失败'
       setLoadPhase('error')
       onError?.(message)
-    } finally {
-      if (timeout !== undefined) clearTimeout(timeout)
-      if (stickerLoadAbortRef.current === controller) stickerLoadAbortRef.current = undefined
     }
+    if (stickerLoadAbortRef.current === loadController) stickerLoadAbortRef.current = undefined
   }
 
   useEffect(() => {

@@ -188,6 +188,36 @@ describe('Arkme emoji composer', () => {
     }
   })
 
+  it('recovers automatically when the first favorite sticker request fails transiently', async () => {
+    vi.useFakeTimers()
+    callArkme.mockReset()
+    let favoriteCalls = 0
+    callArkme.mockImplementation(async (operation: string) => {
+      if (operation !== 'favorite-stickers.list') throw new Error(`unexpected operation: ${operation}`)
+      favoriteCalls += 1
+      if (favoriteCalls === 1) throw new Error('服务器繁忙')
+      return favoriteList
+    })
+    let renderer!: ReactTestRenderer
+    try {
+      await act(async () => {
+        renderer = create(<ArkmeEmojiPicker
+          disabled={false} scopeKey="private:1" sourceRef="source-ref" onSelect={() => undefined}
+        />)
+      })
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '选择表情' }).props.onClick() })
+      await act(async () => { renderer.root.findByProps({ 'aria-label': '收藏表情' }).props.onClick() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+
+      expect(favoriteCalls).toBe(2)
+      expect(renderer.root.findByProps({ 'aria-label': '发送first.gif' })).toBeDefined()
+      expect(renderer.root.findAllByProps({ children: '加载失败' })).toHaveLength(0)
+    } finally {
+      if (renderer !== undefined) await act(async () => { renderer.unmount() })
+      vi.useRealTimers()
+    }
+  })
+
   it('does not save an uploading sticker after the user deletes it', async () => {
     let finishUpload!: (asset: {
       fileAssetUid: string; fileName: string; mimeType: string; size: number; fileKind: 1
