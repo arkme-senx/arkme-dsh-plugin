@@ -33,6 +33,7 @@ export class ArkmeAuthStore {
   }
 
   private inFlight: Promise<ArkmeAuthSnapshot> | undefined
+  private authGeneration = 0
   private readonly listeners = new Set<() => void>()
 
   readonly getSnapshot = (): ArkmeAuthStoreSnapshot => this.state
@@ -44,6 +45,7 @@ export class ArkmeAuthStore {
 
   setAuth(auth: ArkmeAuthSnapshot): void {
     if (sameAuth(this.state.auth, auth) && this.state.checked && !this.state.busy && this.state.error === '') return
+    this.authGeneration += 1
     this.publish({ ...this.state, auth, checked: true, busy: false, error: '', revision: nextRevision(this.state) })
   }
 
@@ -53,21 +55,28 @@ export class ArkmeAuthStore {
 
   async refresh(): Promise<ArkmeAuthSnapshot> {
     if (this.inFlight !== undefined) return await this.inFlight
+    const authGeneration = this.authGeneration
     this.publish({ ...this.state, busy: true, error: '', revision: nextRevision(this.state) })
     const pending = Promise.all([
       callArkme<ArkmeAuthSnapshot>('auth.status'),
       callArkme<ArkmeClientConfig>('auth.config'),
     ]).then(([auth, config]) => {
+      const currentAuth = this.state.auth
+      const preservePendingAttempt = currentAuth?.status === 'pending'
+        && (auth.status === 'logged-out' || auth.status === 'expired')
+      const effectiveAuth = this.authGeneration === authGeneration && !preservePendingAttempt
+        ? auth
+        : currentAuth ?? auth
       this.publish({
         ...this.state,
-        auth,
+        auth: effectiveAuth,
         config,
         checked: true,
         busy: false,
         error: '',
         revision: nextRevision(this.state),
       })
-      return auth
+      return effectiveAuth
     }).catch(error => {
       const message = error instanceof Error ? error.message : String(error)
       this.publish({ ...this.state, checked: true, busy: false, error: message, revision: nextRevision(this.state) })

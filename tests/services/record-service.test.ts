@@ -82,6 +82,189 @@ describe('RecordService', () => {
     expect(requestBody).not.toHaveProperty('file_assets')
   })
 
+  it('creates a DSH Agent input Record through the fixed-source route', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let requestPath = ''
+    let requestBody: Record<string, unknown> | undefined
+    const fetchImpl = vi.fn(async (input, init) => {
+      requestPath = String(input)
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({ code: 0, data: { record_uid: requestBody.record_uid, status: 1 } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, {
+      async openWorldImageRef() { throw new Error('unexpected') },
+    }, { recordUid() { return '' } })
+    const service = new RecordService(runtime, media, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+
+    await expect(service.createDSHAgentInputText(
+      'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
+      '用户在 DSH 的输入',
+      1713830400000,
+    )).resolves.toEqual({ recordUid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b', status: 1 })
+    expect(requestPath).toBe('https://record.test/api/v1/records/dsh-agent-input/create')
+    expect(requestBody).toEqual({
+      record_uid: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
+      template_kind: 1,
+      title: '',
+      text_content: '用户在 DSH 的输入',
+      send_at: 1713830400000,
+    })
+    expect(requestBody).not.toHaveProperty('creation_source')
+  })
+
+  it('excludes DSH Agent input records from the default category page', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let cachedPage: unknown
+    const stateStore = {
+      async cachePage(_userId: number, page: unknown) { cachedPage = page },
+    } as StateStore
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: {
+      items: [{
+        record_uid: 'dsh-input-1',
+        send_at: 200,
+        record_core: {
+          record_uid: 'dsh-input-1',
+          title: '',
+          text_content: '不应出现在默认分类',
+          template_kind: 1,
+          status: 1,
+          version: 1,
+          creation_source: 3,
+          send_at: 200,
+        },
+      }, {
+        record_uid: 'normal-1',
+        send_at: 190,
+        record_core: {
+          record_uid: 'normal-1',
+          title: '',
+          text_content: '普通发给自己',
+          template_kind: 1,
+          status: 1,
+          version: 1,
+          creation_source: 0,
+          send_at: 190,
+        },
+      }],
+      has_more: false,
+    } }), { status: 200 })) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, stateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, {
+      async openWorldImageRef() { throw new Error('unexpected') },
+    }, { recordUid() { return '' } })
+    const service = new RecordService(runtime, media, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+
+    await expect(service.list(30)).resolves.toMatchObject({
+      items: [{ recordUid: 'normal-1', textContent: '普通发给自己' }],
+      hasMore: false,
+    })
+    expect(cachedPage).toMatchObject({
+      items: [{ recordUid: 'normal-1' }],
+      hasMore: false,
+    })
+  })
+
+  it('backfills default category pages after filtering DSH Agent input records', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const requestBodies: Record<string, unknown>[] = []
+    const fetchImpl = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      requestBodies.push(body)
+      const firstPage = body.cursor_record_uid === undefined
+      if (firstPage) return new Response(JSON.stringify({ code: 0, data: {
+        items: [{
+          record_uid: 'dsh-input-1',
+          send_at: 200,
+          record_core: {
+            record_uid: 'dsh-input-1',
+            title: '',
+            text_content: '被过滤',
+            template_kind: 1,
+            status: 1,
+            version: 1,
+            creation_source: 3,
+            send_at: 200,
+          },
+        }],
+        has_more: true,
+        next_cursor_send_at: 200,
+        next_cursor_record_uid: 'dsh-input-1',
+      } }), { status: 200 })
+      return new Response(JSON.stringify({ code: 0, data: {
+        items: [{
+          record_uid: 'normal-2',
+          send_at: 190,
+          record_core: {
+            record_uid: 'normal-2',
+            title: '',
+            text_content: '补拉出来的普通内容',
+            template_kind: 1,
+            status: 1,
+            version: 1,
+            send_at: 190,
+          },
+        }],
+        has_more: false,
+      } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {
+      async cachePage() {},
+    } as StateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, {
+      async openWorldImageRef() { throw new Error('unexpected') },
+    }, { recordUid() { return '' } })
+    const service = new RecordService(runtime, media, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+
+    await expect(service.list(1)).resolves.toMatchObject({
+      items: [{ recordUid: 'normal-2', textContent: '补拉出来的普通内容' }],
+      hasMore: false,
+    })
+    expect(requestBodies).toEqual([
+      { limit: 1 },
+      { limit: 1, cursor_send_at: 200, cursor_record_uid: 'dsh-input-1' },
+    ])
+  })
+
+  it('identifies DSH Agent input from record core creation source', () => {
+    const runtime = new ServiceRuntime(config, {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }, {} as StateStore, vi.fn<typeof fetch>())
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, {
+      async openWorldImageRef() { throw new Error('unexpected') },
+    }, { recordUid() { return '' } })
+    const service = new RecordService(runtime, media, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+
+    expect(service.isDSHAgentInput({
+      record_core: { record_uid: 'dsh-input-1', creation_source: '3' },
+    })).toBe(true)
+    expect(service.isDSHAgentInput({
+      record_core: { record_uid: 'agent-1', creation_source: 1 },
+    })).toBe(false)
+  })
+
   it('rejects invalid file-asset records before making a Record request', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

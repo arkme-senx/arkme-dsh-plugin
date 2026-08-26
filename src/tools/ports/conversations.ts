@@ -1,7 +1,8 @@
 import type {
   ArkmeConversationMemberList, ArkmeConversationMemberRecordMode, ArkmeConversationMemberRecordPage,
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
-  ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
+  ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceReadResult, ArkmeSourceSendResult,
+  ArkmeMessageReadReceiptDetail, ArkmeMessageReadReceiptQueryItem, ArkmeMessageReadReceiptSummaryList,
   ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
 } from '../../types.js'
 
@@ -14,6 +15,22 @@ export interface ArkmeConversationToolPort {
     sourceRef: string,
     options?: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal },
   ): Promise<ArkmeTimelinePage>
+  messageReadReceiptSummaries(
+    sourceRef: string,
+    items: readonly ArkmeMessageReadReceiptQueryItem[],
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeMessageReadReceiptSummaryList>
+  messageReadReceiptDetail(
+    sourceRef: string,
+    itemUid: string,
+    sequence: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeMessageReadReceiptDetail>
+  markSourceRead(
+    sourceRef: string,
+    readSequence: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeSourceReadResult>
   listSourceMembers(sourceRef: string, options?: { activeOnly?: boolean; signal?: AbortSignal }): Promise<ArkmeConversationMemberList>
   sourceMemberRecords(
     sourceRef: string,

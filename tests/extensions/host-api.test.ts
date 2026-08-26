@@ -119,6 +119,27 @@ describe('marketplace Host BFF', () => {
     expect(persistentClientState).toHaveBeenCalledWith('ext-1', '1.0.0')
   })
 
+  it('routes isolated Client failures to the exact installed extension owner', async () => {
+    const reportClientFailure = vi.fn(async () => ({ handled: true, disabled: true }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.client.failure',
+      {
+        identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
+        clientOwnerKey: `client-v1-${'a'.repeat(64)}`,
+        kind: 'runtime-load-failed', message: 'slot collision',
+      },
+      undefined,
+      { reportClientFailure } as never,
+    )).resolves.toEqual({ handled: true, disabled: true })
+    expect(reportClientFailure).toHaveBeenCalledWith({
+      identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
+      clientOwnerKey: `client-v1-${'a'.repeat(64)}`,
+      kind: 'runtime-load-failed', message: 'slot collision',
+    })
+  })
+
   it('routes user-triggered extension audit through the Host manager', async () => {
     const auditExtension = vi.fn(async () => ({
       extension_id: 'ext-1', trigger: 'market_detail', verdict: 'review', risk_level: 'medium',

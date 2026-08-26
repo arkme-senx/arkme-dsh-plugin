@@ -1,3 +1,5 @@
+import { arkmeClientOwnerKey } from './client-owner.js'
+
 interface PersistentClientSpec {
   extensionId: string
   version: string
@@ -6,7 +8,11 @@ interface PersistentClientSpec {
   apiPath: string
   operation?: 'extensions.persistent.invoke' | 'extensions.bundle.invoke'
   identityKey?: 'extensionId' | 'packageName'
+  clientOwnerKey?: string
+  wrapperVersion?: number
 }
+
+export const ARKME_CLIENT_WRAPPER_VERSION = 2
 
 /** This function is serialized into each generated browser bundle. It must stay closure-free. */
 function persistentClientFactory(requireModule: (id: string) => unknown, spec: PersistentClientSpec): unknown {
@@ -40,6 +46,30 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
       throw error
     }
     return envelope.value
+  }
+  const identityKey = spec.identityKey ?? 'extensionId'
+  const identity = `${identityKey}:${spec.extensionId}`
+  const ownerRank = identityKey === 'extensionId' ? 2 : 1
+  const registryProperty = '__arkmeExtensionClientOwnersV1'
+  const browser = globalThis as typeof globalThis & {
+    [registryProperty]?: Map<string, { identity: string; rank: number; deactivate(): void }>
+  }
+  const owners = browser[registryProperty] ?? new Map<string, { identity: string; rank: number; deactivate(): void }>()
+  browser[registryProperty] = owners
+  const reportFailure = (error: unknown, kind: 'runtime-load-failed' | 'duplicate-owner'): void => {
+    const message = (error !== null && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : String(error)).trim().slice(0, 2_000)
+    void callOperation('extensions.client.failure', {
+      identityKey,
+      extensionId: spec.extensionId,
+      version: spec.version,
+      clientOwnerKey: spec.clientOwnerKey ?? '',
+      kind,
+      message: message || 'extension client failed to load',
+    }).catch(reportError => {
+      console.error(`[arkme-extension:${spec.extensionId}] failed to report Client isolation`, reportError)
+    })
   }
   let deactivateClient: (() => void) | undefined
   const callHost = async (method: string, args: unknown = null): Promise<unknown> => {
@@ -103,23 +133,7 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
   return {
     name: `arkme-extension-client:${spec.extensionId}`,
     async apply(ctx: any) {
-      if (spec.identityKey !== 'packageName') {
-        const state = await callOperation('extensions.persistent.client-state', {
-          extensionId: spec.extensionId,
-          version: spec.version,
-        }) as {
-          mount?: boolean
-        }
-        if (state.mount !== true) return
-      }
       const styles = new Styles()
-      const traps = {
-        setTimeout: unavailable('setTimeout'), setInterval: unavailable('setInterval'),
-        clearTimeout: unavailable('clearTimeout'), clearInterval: unavailable('clearInterval'),
-        fetch: unavailable('fetch'), require: unavailable('require'),
-      }
-      const parameters = ['React', 'console', 'styles', 'host', 'harness', ...Object.keys(traps), 'process', 'Buffer']
-      const closure = new Function(...parameters, `return (async () => {\n${spec.code}\n})()`)
       const taggedConsole = {
         ...console,
         log: (...args: unknown[]) => console.log(`[arkme-extension:${spec.extensionId}]`, ...args),
@@ -127,40 +141,89 @@ function persistentClientFactory(requireModule: (id: string) => unknown, spec: P
         warn: (...args: unknown[]) => console.warn(`[arkme-extension:${spec.extensionId}]`, ...args),
         error: (...args: unknown[]) => console.error(`[arkme-extension:${spec.extensionId}]`, ...args),
       }
-      const harness = new Proxy({}, { get(_target, property) { throw new Error(`harness.${String(property)} belongs to the Host half`) } })
-      const evaluated = await closure(
-        React, taggedConsole, styles, { call: callHost }, harness, ...Object.values(traps), undefined, undefined,
-      )
-      const isFunction = typeof evaluated === 'function'
-      if (!isFunction && (evaluated === null || typeof evaluated !== 'object' || typeof evaluated.apply !== 'function')) {
-        throw new Error('persistent extension client code did not return a Cordis plugin')
-      }
-      const applyEvaluated = isFunction ? evaluated : evaluated.apply.bind(evaluated)
-      const guarded = {
-        ...(isFunction ? {} : evaluated),
-        name: `arkme-extension-client:${spec.extensionId}`,
-        apply(childCtx: unknown, config?: unknown) { return applyEvaluated(guardedContext(childCtx), config) },
-      }
-      ctx.effect(() => () => styles.dispose(), `arkme-extension:${spec.extensionId}:styles`)
-      const fiber = ctx.plugin(guarded) as { dispose?(): unknown; then?: unknown }
-      const deactivate = () => {
+      let fiber: { dispose?(): unknown; then?: unknown } | undefined
+      let deactivate: (() => void) | undefined
+      try {
+        if (identityKey !== 'packageName') {
+          const state = await callOperation('extensions.persistent.client-state', {
+            extensionId: spec.extensionId,
+            version: spec.version,
+          }) as { mount?: boolean }
+          if (state.mount !== true) return
+        }
+        if (spec.clientOwnerKey !== undefined) {
+          const current = owners.get(spec.clientOwnerKey)
+          if (current !== undefined && current.identity !== identity) {
+            if (current.rank >= ownerRank) {
+              taggedConsole.warn(`Client owner ${spec.clientOwnerKey} is already active as ${current.identity}; skipping duplicate`)
+              reportFailure(new Error(`Client owner is already active as ${current.identity}`), 'duplicate-owner')
+              return
+            }
+            current.deactivate()
+          }
+        }
+        const traps = {
+          setTimeout: unavailable('setTimeout'), setInterval: unavailable('setInterval'),
+          clearTimeout: unavailable('clearTimeout'), clearInterval: unavailable('clearInterval'),
+          fetch: unavailable('fetch'), require: unavailable('require'),
+        }
+        const parameters = ['React', 'console', 'styles', 'host', 'harness', ...Object.keys(traps), 'process', 'Buffer']
+        const closure = new Function(...parameters, `return (async () => {\n${spec.code}\n})()`)
+        const harness = new Proxy({}, { get(_target, property) { throw new Error(`harness.${String(property)} belongs to the Host half`) } })
+        const evaluated = await closure(
+          React, taggedConsole, styles, { call: callHost }, harness, ...Object.values(traps), undefined, undefined,
+        )
+        const isFunction = typeof evaluated === 'function'
+        if (!isFunction && (evaluated === null || typeof evaluated !== 'object' || typeof evaluated.apply !== 'function')) {
+          throw new Error('persistent extension client code did not return a Cordis plugin')
+        }
+        const applyEvaluated = isFunction ? evaluated : evaluated.apply.bind(evaluated)
+        const guarded = {
+          ...(isFunction ? {} : evaluated),
+          name: `arkme-extension-client:${spec.extensionId}`,
+          apply(childCtx: unknown, config?: unknown) { return applyEvaluated(guardedContext(childCtx), config) },
+        }
+        fiber = ctx.plugin(guarded) as { dispose?(): unknown; then?: unknown }
+        deactivate = () => {
+          styles.dispose()
+          void Promise.resolve(fiber?.dispose?.()).catch(() => undefined)
+        }
+        deactivateClient = deactivate
+        if (spec.clientOwnerKey !== undefined) {
+          owners.set(spec.clientOwnerKey, { identity, rank: ownerRank, deactivate })
+        }
+        ctx.effect(() => () => {
+          styles.dispose()
+          if (deactivateClient === deactivate) deactivateClient = undefined
+          if (spec.clientOwnerKey !== undefined && owners.get(spec.clientOwnerKey)?.identity === identity) {
+            owners.delete(spec.clientOwnerKey)
+          }
+        }, `arkme-extension:${spec.extensionId}:client-fiber`)
+        await fiber
+      } catch (error) {
+        deactivate?.()
         styles.dispose()
-        void Promise.resolve(fiber.dispose?.()).catch(() => undefined)
-      }
-      deactivateClient = deactivate
-      ctx.effect(() => () => {
         if (deactivateClient === deactivate) deactivateClient = undefined
-      }, `arkme-extension:${spec.extensionId}:client-fiber`)
-      await fiber
+        if (spec.clientOwnerKey !== undefined && owners.get(spec.clientOwnerKey)?.identity === identity) {
+          owners.delete(spec.clientOwnerKey)
+        }
+        taggedConsole.error('Client load failed and was isolated; DSH will continue without this extension', error)
+        reportFailure(error, 'runtime-load-failed')
+      }
     },
   }
 }
 
 export function renderPersistentClientBundle(packageName: string, spec: PersistentClientSpec): string {
+  const renderedSpec: PersistentClientSpec = {
+    ...spec,
+    clientOwnerKey: spec.clientOwnerKey ?? arkmeClientOwnerKey(spec.code),
+    wrapperVersion: ARKME_CLIENT_WRAPPER_VERSION,
+  }
   return [
     `window.__ModuleLoader__.load({ id: ${JSON.stringify(packageName)}, factory: (require) => {`,
     `  const __name = (target, value) => Object.defineProperty(target, 'name', { value, configurable: true })`,
-    `  return (${persistentClientFactory.toString()})(require, ${JSON.stringify(spec)})`,
+    `  return (${persistentClientFactory.toString()})(require, ${JSON.stringify(renderedSpec)})`,
     `} })`,
     '',
   ].join('\n')

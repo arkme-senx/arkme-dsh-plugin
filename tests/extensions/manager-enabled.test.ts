@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { packArkmeExtension } from '../../src/extensions/artifact.js'
+import { arkmeClientOwnerKey } from '../../src/extensions/client-owner.js'
 import { ArkmeExtensionInstallStore } from '../../src/extensions/install-store.js'
 import { ArkmeExtensionManager } from '../../src/extensions/manager.js'
 import type { ArkmeInstalledExtension } from '../../src/extensions/types.js'
@@ -295,6 +297,73 @@ describe('extension desired enable state owner', () => {
       .resolves.toMatchObject({ installed: false })
     expect(remove).toHaveBeenCalledWith('@arkme-local/ext-2222222222222222')
     expect(setEnabled).not.toHaveBeenCalled()
+    store.close()
+  })
+
+  it('upgrades an old managed Client wrapper and replaces an identical unmanaged Profile package on startup', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-extension-owner-reconcile-'))
+    directories.push(root)
+    const profile = join(root, 'profile')
+    const bundle = join(profile, 'arkme-extensions', 'managed', '1.0.0')
+    const local = join(root, 'dsh-snake-draggable')
+    mkdirSync(join(bundle, 'lib'), { recursive: true })
+    mkdirSync(join(local, 'arkme'), { recursive: true })
+    const clientCode = 'return { apply() {} }'
+    const artifact = packArkmeExtension({
+      name: 'Snake', description: '', version: '1.0.0', arkmeProviderContract: 1,
+      hostCode: 'return { apply() {} }', clientCode,
+    })
+    const artifactPath = join(root, 'snake.arkext')
+    writeFileSync(artifactPath, artifact.bytes)
+    writeFileSync(join(bundle, 'lib', 'client.js'), 'legacy wrapper without failure isolation')
+    writeFileSync(join(bundle, 'installation.json'), JSON.stringify({ extension_id: 'ext-snake', version: '1.0.0' }))
+    writeFileSync(join(bundle, 'activation.json'), JSON.stringify({ schema_version: 1, extension_id: 'ext-snake', enabled: true }))
+    writeFileSync(join(local, 'package.json'), JSON.stringify({ name: 'dsh-snake-draggable' }))
+    writeFileSync(join(local, 'arkme', 'source.json'), JSON.stringify({ clientCode }))
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: {
+        '@arkme-local/ext-managed': `link:${bundle}`,
+        'dsh-snake-draggable': `link:${local}`,
+      },
+      dsh: { profile: { bundles: ['@arkme-local/ext-managed', 'dsh-snake-draggable'] } },
+    }))
+    const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+    store.put({
+      ...installed(root, true),
+      extensionId: 'ext-snake',
+      installedVersion: '1.0.0',
+      artifactSha256: artifact.artifactSha256,
+      artifactPath,
+      manifest: artifact.manifest,
+      profilePackageName: '@arkme-local/ext-managed',
+      profileBundlePath: bundle,
+    })
+    const removeMany = vi.fn(async () => undefined)
+    const setEnabled = vi.fn(async () => undefined)
+    const manager = new ArkmeExtensionManager({} as never, store, {} as never, {
+      artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}', profileDirectory: profile,
+      profileInstaller: {
+        install: vi.fn(), installTarball: vi.fn(), remove: vi.fn(), removeMany, restart: vi.fn(), setEnabled,
+      },
+    })
+
+    await manager.reconcileInstallationMetrics()
+
+    const wrapper = readFileSync(join(bundle, 'lib', 'client.js'), 'utf8')
+    expect(wrapper).toContain('extensions.client.failure')
+    expect(wrapper).toContain('"wrapperVersion":2')
+    expect(wrapper).toContain(arkmeClientOwnerKey(clientCode))
+    expect(removeMany).toHaveBeenCalledWith(['dsh-snake-draggable'])
+    await expect(manager.reportClientFailure({
+      identityKey: 'extensionId', extensionId: 'ext-snake', version: '1.0.0',
+      clientOwnerKey: arkmeClientOwnerKey(clientCode), kind: 'runtime-load-failed', message: 'slot collision',
+    })).resolves.toEqual({ handled: true, disabled: true })
+    expect(setEnabled).toHaveBeenCalledWith('@arkme-local/ext-managed', false)
+    expect(JSON.parse(readFileSync(join(bundle, 'activation.json'), 'utf8'))).toMatchObject({
+      enabled: false,
+      quarantine: { code: 'runtime-load-failed', message: 'slot collision' },
+    })
+    expect(store.get('ext-snake')).toMatchObject({ enabled: false, active: false, lastError: 'slot collision' })
     store.close()
   })
 })

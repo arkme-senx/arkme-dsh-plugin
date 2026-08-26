@@ -168,9 +168,10 @@ describe('AuthService', () => {
         expires_at: 1_700_000_300_000,
       })
       if (url.endsWith('/cancel')) return json({ status: 'canceled' })
-      if (url.endsWith('/wechat-login-qrcode')) return json({
+      if (url.endsWith('/wechat-oauth-login-qrcode')) return json({
         url: 'https://weixin.qq.com/q/example',
         scene_str: 'scene-example',
+        poll_token: 'poll-token-example',
         expire_seconds: 300,
       })
       throw new Error(`unexpected URL ${url}`)
@@ -189,7 +190,7 @@ describe('AuthService', () => {
       expect(requests.map(request => request.url)).toEqual([
         'https://jotmo.senguo.me/api/public/v1/auth/app-scan-login/start',
         'https://jotmo.senguo.me/api/public/v1/auth/app-scan-login/cancel',
-        'https://jotmo.senguo.me/api/public/v1/auth/wechat-login-qrcode',
+        'https://jotmo.senguo.me/api/public/v1/auth/wechat-oauth-login-qrcode',
       ])
     } finally {
       now.mockRestore()

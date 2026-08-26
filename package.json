@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -46,8 +46,10 @@
     },
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-theme",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-sidebar"
@@ -59,9 +61,9 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.21 更新",
-      "summary": "新增独立联系人板块，支持群聊、Bot、未标记说话人、团队和联系人目录，并展示联系人资料与世界内容。",
-      "publishedAt": "2026-08-23T14:51:41.000Z",
+      "title": "Arkme 插件 0.1.22 更新",
+      "summary": "新增联系人目录与未标记说话人管理，完善通话、微信扫码登录、富表情、群聊和世界交互，并增强应用内更新、暗色主题与配置兼容性。",
+      "publishedAt": "2026-08-25T10:58:34.000Z",
       "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
     }
   },
@@ -81,6 +83,7 @@
     "@phosphor-icons/react": "2.1.10",
     "ali-oss": "6.23.0",
     "jsqr": "1.4.0",
+    "mediabunny": "1.55.2",
     "pinyin-pro": "3.29.3",
     "qrcode-generator": "2.0.4",
     "semver": "7.8.5",
@@ -90,8 +93,10 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-attachment": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.5",

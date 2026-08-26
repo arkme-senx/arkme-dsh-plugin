@@ -318,8 +318,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 @media (prefers-reduced-motion: reduce) {
   .arkme-conversation-records-reveal { animation: none; }
 }
-.arkme-redesign-route-chats [aria-label="打开快记详情"] { border-radius: 5px 16px 16px 16px !important; }
-.arkme-redesign-route-chats [data-arkme-message-content] p { font-size: 14px !important; line-height: 22px !important; }
+.arkme-redesign-route-chats [data-arkme-content-presentation="bubble"] p { font-size: 14px; line-height: 1.62; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }
 .arkme-redesign-route-chats .arkme-conversation-composer-inner {
   width: 100% !important;
@@ -461,19 +460,23 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-plugins-page .arkme-extension-center-embedded main > [role="alert"] { grid-column: 1 / -1; }
 @keyframes arkme-icon-spin { to { transform: rotate(360deg); } }
 .arkme-icon-spin { animation: arkme-icon-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  [data-arkme-voice] .arkme-icon-spin { animation: none; }
+}
 
-.arkme-redesign-settings-page { overflow: hidden; background: #fff; }
-.arkme-redesign-settings-surface { width: 100%; height: 100%; overflow-y: auto; color: #20232c; background: #fff; }
-.arkme-redesign-settings-shell { width: min(760px, calc(100% - 96px)); margin: 0 auto; padding: 58px 0 68px; }
-.arkme-redesign-settings-profile { padding: 0 4px 32px; display: flex; align-items: center; gap: 16px; }
+.arkme-redesign-settings-surface { width: 100%; height: auto; overflow: visible; color: #20232c; background: transparent; }
+.arkme-redesign-settings-shell { width: 100%; box-sizing: border-box; margin: 0; padding: 0; }
+.arkme-redesign-settings-profile { padding: 0 0 24px; display: flex; align-items: center; gap: 16px; }
 .arkme-redesign-settings-profile > div:last-child { min-width: 0; }
 .arkme-redesign-settings-profile h1 { margin: 0 0 6px; overflow: hidden; color: #20232c; font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.03em; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-redesign-settings-profile p { margin: 0; overflow: hidden; color: #858992; font-size: 13px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
-.arkme-redesign-settings-group { margin: 0 0 28px; overflow: hidden; border: 1px solid #e1e2e5; border-radius: 16px; background: #fff; scroll-margin-top: 24px; }
-.arkme-redesign-settings-group h2 { margin: 0 16px; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
-.arkme-redesign-settings-group > div { padding: 0 16px; }
+.arkme-redesign-settings-group { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid #e1e2e5; border-radius: 0; background: transparent; }
+.arkme-redesign-settings-group:last-child { border-bottom: 0; }
+.arkme-redesign-settings-group h2 { margin: 0; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
+.arkme-redesign-settings-group > div { padding: 0; }
 .arkme-redesign-setting-row {
   width: 100%;
+  box-sizing: border-box;
   min-height: 54px;
   padding: 9px 1px;
   display: grid;
@@ -768,8 +771,6 @@ body[data-ds-dark-theme] .arkme-redesign-content,
 body[data-ds-dark-theme] .arkme-redesign-feature-page,
 body[data-ds-dark-theme] .arkme-redesign-recordings-page,
 body[data-ds-dark-theme] .arkme-redesign-plugins-page,
-body[data-ds-dark-theme] .arkme-redesign-settings-page,
-body[data-ds-dark-theme] .arkme-redesign-settings-surface,
 body[data-ds-dark-theme] .arkme-redesign-model-settings,
 body[data-ds-dark-theme] .arkme-redesign-details {
   background: var(--dsw-alias-bg-base);
@@ -888,10 +889,14 @@ body[data-ds-dark-theme] .arkme-redesign-placeholder h1 {
 }
 
 body[data-ds-dark-theme] .arkme-redesign-task-list,
-body[data-ds-dark-theme] .arkme-redesign-settings-group,
 body[data-ds-dark-theme] .arkme-redesign-model-settings > header button,
 body[data-ds-dark-theme] .arkme-redesign-plugins-page .arkme-extension-card {
   background: var(--dsw-alias-bg-layer-1) !important;
+}
+body[data-ds-dark-theme] .arkme-redesign-settings-surface,
+body[data-ds-dark-theme] .arkme-redesign-settings-group {
+  color: var(--dsw-alias-label-primary);
+  background: transparent !important;
 }
 body[data-ds-dark-theme] .arkme-redesign-route-chats .arkme-conversation-surface,
 body[data-ds-dark-theme] .arkme-redesign-plugins-page .arkme-extension-center-embedded > section {
@@ -1260,4 +1265,43 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
 }
 @media (prefers-reduced-motion: reduce) {
   .arkme-contact-directory-caret { transition: none; }
+}
+
+/* Chat-specific colors follow DSH's single light/dark owner. */
+.arkme-conversation-surface {
+  --arkme-chat-self-bubble: #eef1f8;
+  --arkme-chat-other-bubble: #f3f4f6;
+}
+body[data-ds-dark-theme] .arkme-conversation-surface {
+  --arkme-chat-self-bubble: #2c3142;
+  --arkme-chat-other-bubble: #282a31;
+  --arkme-audio-control: #8995c5;
+}
+[data-arkme-message-direction]:focus-visible,
+[data-arkme-note-detail] button:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
+  outline-offset: 2px;
+}
+
+.arkme-world-extension-open:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06)) !important;
+}
+.arkme-world-extension-open:active {
+  background: var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10)) !important;
+}
+.arkme-world-extension-open:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
+  outline-offset: 2px;
+}
+@media (max-width: 680px) {
+  .arkme-world-extension-activity {
+    grid-template-columns: 48px minmax(0, 1fr) !important;
+    gap: 11px !important;
+    padding: 13px !important;
+  }
+  .arkme-world-extension-open {
+    grid-column: 2;
+    justify-self: start;
+    margin: 0 0 0 -8px !important;
+  }
 }

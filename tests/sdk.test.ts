@@ -92,6 +92,29 @@ describe('Arkme SDK', () => {
     ])
   })
 
+  it('opens a searched contact private chat through the public SDK without adding contacts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'chat.private.open-from-contact') return success({
+          source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '木白', activeAtMillis: 1, unreadCount: 0 },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.openPrivateChatFromContact('arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432'))
+      .resolves.toMatchObject({ source: { sourceRef: 'source-ref', displayName: '木白' } })
+    expect(calls).toEqual([
+      {
+        operation: 'chat.private.open-from-contact',
+        params: { contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432' },
+      },
+    ])
+  })
+
   it('reads call history and retries summaries through same-origin opaque refs', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -363,10 +386,14 @@ describe('Arkme SDK', () => {
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
               recordCalendar: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
+              messageReadReceipts: true,
               extensionManagement: true,
               extensionIcons: true,
             },
-            limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
+            limits: {
+              maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152,
+              maxMessageReadReceiptItems: 50,
+            },
           })
         }
         if (request.operation === 'records.search') {
@@ -398,7 +425,8 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true },
+      limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
     await expect(sdk.profile({ refresh: true })).resolves.toMatchObject({
@@ -456,10 +484,24 @@ describe('Arkme SDK', () => {
         })
         if (request.operation === 'source.members') return success({
           source: { sourceRef: 'source-1' }, items: [{ memberRef: 'member-1', displayName: '小林' }], total: 1, activeCount: 1,
+          joinEvents: [{
+            eventId: 'join-1', action: 'invite', occurredAtMillis: 1,
+            inviter: { memberRef: 'member-1', displayName: '小林', isSelf: false },
+            invitees: [{ memberRef: 'member-2', displayName: '小张', isSelf: false }],
+          }],
         })
         if (request.operation === 'source.member-records') return success({
           source: { sourceRef: 'source-1' }, member: { memberRef: 'member-1', displayName: '小林' },
           mode: 'mentioned', items: [], hasMore: false,
+        })
+        if (request.operation === 'source.read-receipts.summary-list') return success({
+          sourceRef: 'source-1', conversationKind: 'private_chat',
+          items: [{ itemUid: 'record-1', sequence: 8, readCount: 1, unreadCount: 0, totalMemberCount: 1, status: 'read' }],
+        })
+        if (request.operation === 'source.read-receipts.detail') return success({
+          sourceRef: 'source-1', itemUid: 'record-1', sequence: 8,
+          readCount: 1, unreadCount: 0, totalMemberCount: 1,
+          items: [{ memberRef: 'member-1', displayName: '小林', readStatus: 'read', readAtMillis: 123 }],
         })
         if (request.operation === 'source.send-text') return success({
           sourceRef: 'source-1', itemUid: request.params?.recordUid, status: 1, localState: 'synced',
@@ -470,9 +512,15 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.listSources('root')).resolves.toMatchObject({ directory: 'root' })
     await expect(sdk.readSource('source-1')).resolves.toMatchObject({ source: { displayName: '小林' } })
-    await expect(sdk.listSourceMembers('source-1')).resolves.toMatchObject({ activeCount: 1 })
+    await expect(sdk.listSourceMembers('source-1')).resolves.toMatchObject({
+      activeCount: 1, joinEvents: [{ eventId: 'join-1', action: 'invite' }],
+    })
     await expect(sdk.sourceMemberRecords('source-1', 'member-1', 'mentioned', { limit: 12, beforeSequence: 44 }))
       .resolves.toMatchObject({ mode: 'mentioned' })
+    await expect(sdk.messageReadReceiptSummaries('source-1', [{ itemUid: 'record-1', sequence: 8 }]))
+      .resolves.toMatchObject({ conversationKind: 'private_chat', items: [{ status: 'read' }] })
+    await expect(sdk.messageReadReceiptDetail('source-1', 'record-1', 8))
+      .resolves.toMatchObject({ items: [{ memberRef: 'member-1', readStatus: 'read' }] })
     await expect(sdk.sendText('source-1', '你好', { recordUid: 'record-1', relationUid: 'rel-1' }))
       .resolves.toMatchObject({ itemUid: 'record-1' })
     await expect(sdk.sendText('source-1', '代发', {
@@ -484,6 +532,14 @@ describe('Arkme SDK', () => {
       recordUid: 'record-mention-1', relationUid: 'rel-mention-1',
       humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
     })).resolves.toMatchObject({ itemUid: 'record-mention-1' })
+    await expect(sdk.sendText('source-1', '@所有人 请看', {
+      recordUid: 'record-all-mention-1', relationUid: 'rel-all-mention-1',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })).resolves.toMatchObject({ itemUid: 'record-all-mention-1' })
+    await expect(sdk.sendText('source-1', '@总结助手 请看', {
+      recordUid: 'record-bot-mention-1', relationUid: 'rel-bot-mention-1',
+      botMentions: [{ botRef: 'bot-1', startIndex: 0, length: 5 }],
+    })).resolves.toMatchObject({ itemUid: 'record-bot-mention-1' })
     expect(calls).toMatchObject([
       { operation: 'sources.list', params: { directory: 'root' } },
       { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
@@ -491,6 +547,14 @@ describe('Arkme SDK', () => {
       {
         operation: 'source.member-records',
         params: { sourceRef: 'source-1', memberRef: 'member-1', mode: 'mentioned', limit: 12, beforeSequence: 44 },
+      },
+      {
+        operation: 'source.read-receipts.summary-list',
+        params: { sourceRef: 'source-1', items: [{ itemUid: 'record-1', sequence: 8 }] },
+      },
+      {
+        operation: 'source.read-receipts.detail',
+        params: { sourceRef: 'source-1', itemUid: 'record-1', sequence: 8 },
       },
       { operation: 'source.send-text', params: { sourceRef: 'source-1', textContent: '你好', recordUid: 'record-1', relationUid: 'rel-1' } },
       {
@@ -511,6 +575,26 @@ describe('Arkme SDK', () => {
           recordUid: 'record-mention-1',
           relationUid: 'rel-mention-1',
           humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@所有人 请看',
+          recordUid: 'record-all-mention-1',
+          relationUid: 'rel-all-mention-1',
+          humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@总结助手 请看',
+          recordUid: 'record-bot-mention-1',
+          relationUid: 'rel-bot-mention-1',
+          botMentions: [{ botRef: 'bot-1', startIndex: 0, length: 5 }],
         },
       },
     ])

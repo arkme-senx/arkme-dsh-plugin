@@ -23,6 +23,10 @@ export interface ArkmeWorldImageReader {
   openWorldImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
 }
 
+export interface ArkmeBotImageReader {
+  openBotImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
+}
+
 export interface ArkmeRecordIdentity {
   recordUid(raw: unknown): string
 }
@@ -263,6 +267,7 @@ export class MediaService {
     private readonly profile: ProfileService,
     private readonly worldImages: ArkmeWorldImageReader,
     private readonly recordIdentity: ArkmeRecordIdentity,
+    private readonly botImages?: ArkmeBotImageReader,
   ) {}
 
   dispose(): void {
@@ -572,6 +577,16 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
+      if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
+      const reference = await this.botImages.openBotImageRef(imageRef, session.userId)
+      return await this.downloadSignedImage(
+        trustedSignedImageUrl(this.runtime.config.environment, reference.sourceUrl),
+        byteLimit,
+        signal,
+        this.runtime.requestScope(session.userId),
+      )
+    }
     if (imageRef.trim().startsWith('arkme-media-v1.')) {
       const { response, descriptor } = await this.fetchMedia(imageRef.trim(), undefined, signal)
       if (!descriptor.mimeType.trim().toLowerCase().startsWith('image/')) {
@@ -694,6 +709,75 @@ export class MediaService {
     })
   }
 
+  private async queryRecordMediaDisplayItems(
+    recordUids: string[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<string, unknown[]>> {
+    const expectedRecordUids = [...new Set(recordUids.map(value => value.trim()).filter(value => value !== ''))]
+    const displayItemsByRecordUid = new Map<string, unknown[]>()
+    if (expectedRecordUids.length === 0) return displayItemsByRecordUid
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/media/batch-list',
+      { record_uids: expectedRecordUids },
+      session,
+      signal,
+      {
+        lane: 'interactive-read',
+        scope: 'record-media-page',
+        key: expectedRecordUids.join(','),
+        cacheMs: 1_000,
+      },
+    )
+    // The deployed Record owner names the per-record projection array `items`.
+    // Accept the older `results` draft as a read-only compatibility fallback.
+    for (const rawResult of listValue(data.items ?? data.results)) {
+      const result = objectValue(rawResult)
+      const recordUid = stringValue(result.record_uid).trim()
+      if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
+      displayItemsByRecordUid.set(recordUid, listValue(result.items))
+    }
+    return displayItemsByRecordUid
+  }
+
+  async issueSearchAudioMediaRefs(
+    requests: Array<{ recordUid: string; fileAssetUid: string }>,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const normalized = [...new Map(requests.map(request => {
+      const recordUid = request.recordUid.trim()
+      const fileAssetUid = request.fileAssetUid.trim()
+      return [`${recordUid}\0${fileAssetUid}`, { recordUid, fileAssetUid }] as const
+    }).filter(([, request]) => request.recordUid !== '' && request.fileAssetUid !== '')).values()].slice(0, 50)
+    const mediaRefs = new Map<string, string>()
+    if (normalized.length === 0 || this.runtime.config.richMediaRenderEnabled === false) return mediaRefs
+    const session = await this.runtime.requireSession()
+    const displayItemsByRecordUid = await this.queryRecordMediaDisplayItems(
+      normalized.map(request => request.recordUid),
+      session,
+      signal,
+    )
+    for (const request of normalized) {
+      const rawItem = (displayItemsByRecordUid.get(request.recordUid) ?? []).find(raw => {
+        return stringValue(objectValue(raw).file_asset_uid).trim() === request.fileAssetUid
+      })
+      const item = objectValue(rawItem)
+      const remoteUrl = safeHttpsUrl(item.download_url ?? item.preview_url)
+      if (remoteUrl === undefined) continue
+      const parsedUrl = new URL(remoteUrl)
+      const mimeType = stringValue(item.mime_type).trim() || 'audio/mpeg'
+      if (!allowedSignedAudioHost(this.runtime.config.environment, parsedUrl.hostname) || !mimeType.startsWith('audio/')) continue
+      const key = `${request.recordUid}\0${request.fileAssetUid}`
+      mediaRefs.set(key, this.issueMediaRef(session.userId, {
+        remoteUrl,
+        mimeType,
+        fileName: stringValue(item.file_name).trim() || '语音',
+        size: Math.max(0, numberValue(item.size)),
+      }, `search-audio\0${key}`))
+    }
+    return mediaRefs
+  }
+
   async hydrateRecordMediaPage(
     rawItems: unknown[],
     session: ArkmeSessionCredentials,
@@ -712,25 +796,8 @@ export class MediaService {
       return { displayItemsByRecordUid, unavailableRecordUids }
     }
     try {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/records/media/batch-list',
-        { record_uids: expectedRecordUids },
-        session,
-        signal,
-        {
-          lane: 'interactive-read',
-          scope: 'record-media-page',
-          key: expectedRecordUids.join(','),
-          cacheMs: 1_000,
-        },
-      )
-      // The deployed Record owner names the per-record projection array `items`.
-      // Accept the older `results` draft as a read-only compatibility fallback.
-      for (const rawResult of listValue(data.items ?? data.results)) {
-        const result = objectValue(rawResult)
-        const recordUid = stringValue(result.record_uid).trim()
-        if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
-        const items = listValue(result.items)
+      const queriedItems = await this.queryRecordMediaDisplayItems(expectedRecordUids, session, signal)
+      for (const [recordUid, items] of queriedItems) {
         displayItemsByRecordUid.set(recordUid, items)
         const hasDeliverableItem = items.some(rawItem => {
           const item = objectValue(rawItem)
@@ -746,6 +813,34 @@ export class MediaService {
       for (const recordUid of expectedRecordUids) unavailableRecordUids.add(recordUid)
     }
     return { displayItemsByRecordUid, unavailableRecordUids }
+  }
+
+  /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
+  forwardContentBlocks(files: unknown[], viewerUserId: number): ArkmeContentBlock[] {
+    if (this.runtime.config.richMediaRenderEnabled === false) return []
+    const displayItems = files.slice(0, 32).map(objectValue).flatMap((file, index) => {
+      if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
+      const trustedUrl = (raw: unknown): string | undefined => {
+        const value = safeHttpsUrl(raw)
+        if (value === undefined) return undefined
+        const url = new URL(value)
+        return url.port === '' && url.hash === '' && (allowedSignedImageHost(this.runtime.config.environment, url.hostname)
+          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
+      }
+      const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
+      const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)
+      return [{
+        // Do not copy file/source IDs into the public projection or stable media cache.
+        file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
+        file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
+        mime_type: stringValue(file.mime_type ?? file.mimeType),
+        size: numberValue(file.size), sort_order: numberValue(file.order ?? file.sort_order ?? index),
+        duration_sec: numberValue(file.duration_sec ?? file.durationSec),
+        ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
+        ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
+      }]
+    })
+    return this.richContentBlocks({}, viewerUserId, displayItems)
   }
 
   issueImageMediaRef(

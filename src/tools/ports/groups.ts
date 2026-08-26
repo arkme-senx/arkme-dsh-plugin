@@ -1,4 +1,6 @@
-import type { ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeSourceItem } from '../../types.js'
+import type {
+  ArkmeGroupActionResult, ArkmeGroupMemberAddResult, ArkmeGroupMemberCandidateList, ArkmeSourceItem,
+} from '../../types.js'
 
 export interface ArkmeGroupToolPort {
   createGroup(
@@ -6,6 +8,11 @@ export interface ArkmeGroupToolPort {
     clientMutationId: string,
     options?: { signal?: AbortSignal },
   ): Promise<ArkmeSourceItem>
+  renameGroup(
+    sourceRef: string,
+    title: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupActionResult>
   listGroupMemberCandidates(
     sourceRef: string,
     options?: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal },

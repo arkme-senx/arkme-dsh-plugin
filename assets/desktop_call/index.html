@@ -24,10 +24,11 @@
         const listeners = [];
         window.JotmoDesktopCallBridge = {
           postMessage(message) {
+            const payload = typeof message === "string" ? message : JSON.stringify(message);
             parent.postMessage({
               channel: "jotmo-desktop-call",
               callRequestId: context.callRequestId,
-              message,
+              message: payload,
             }, location.origin);
           },
         };
@@ -65,7 +66,8 @@
           }
         };
         ["process", "global", "module", "require"].forEach(blockGlobal);
-        import("./bundle.js").catch((error) => {
+        const bundleUrl = `./bundle.js?callRequestId=${encodeURIComponent(context.callRequestId || "idle")}`;
+        import(bundleUrl).catch((error) => {
           window.__JOTMO_DESKTOP_CALL_HOST__.postFlutterMessage(JSON.stringify({
             type: "fatal_error",
             message: error instanceof Error ? error.message : "呼叫界面加载失败",

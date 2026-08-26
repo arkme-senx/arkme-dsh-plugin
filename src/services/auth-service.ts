@@ -7,6 +7,7 @@ interface WechatLoginAttempt {
   kind: 'wechat'
   attemptId: string
   sceneStr: string
+  pollToken: string
   qrContent: string
   expiresAtMillis: number
 }
@@ -22,7 +23,7 @@ interface JiwoLoginAttempt {
 
 type LoginAttempt = WechatLoginAttempt | JiwoLoginAttempt
 
-interface QrResponse { url?: unknown; scene_str?: unknown; expire_seconds?: unknown }
+interface QrResponse { url?: unknown; scene_str?: unknown; poll_token?: unknown; expire_seconds?: unknown }
 interface ScanResponse { access_token?: unknown; refresh_token?: unknown; user_id?: unknown }
 interface TestLoginResponse { access_token?: unknown; refresh_token?: unknown }
 interface BindPhoneResponse { result?: unknown }
@@ -132,12 +133,13 @@ export class AuthService {
     await this.cancelAllJiwoLoginAttempts()
     const data = await this.runtime.post<QrResponse>(
       this.runtime.config.authBaseUrl,
-      '/api/public/v1/auth/wechat-login-qrcode',
+      '/api/public/v1/auth/wechat-oauth-login-qrcode',
       {},
       undefined,
       [200],
     )
     const sceneStr = stringValue(data.scene_str).trim()
+    const pollToken = stringValue(data.poll_token).trim()
     const qrContent = stringValue(data.url).trim()
     const expireSeconds = Math.max(30, numberValue(data.expire_seconds) || 300)
     if (qrContent === '' && sceneStr !== '') {
@@ -148,7 +150,7 @@ export class AuthService {
         503,
       )
     }
-    if (sceneStr === '' || qrContent === '') {
+    if (sceneStr === '' || pollToken === '' || qrContent === '') {
       throw new ArkmePluginError('login-contract-invalid', 'Arkme 登录二维码响应不完整', true, 502)
     }
     const attemptId = crypto.randomUUID()
@@ -156,6 +158,7 @@ export class AuthService {
       kind: 'wechat',
       attemptId,
       sceneStr,
+      pollToken,
       qrContent,
       expiresAtMillis: Date.now() + expireSeconds * 1000,
     }
@@ -181,9 +184,10 @@ export class AuthService {
     }
     const data = await this.runtime.post<ScanResponse>(
       this.runtime.config.authBaseUrl,
-      '/api/public/v1/auth/wechat-scan-login',
+      '/api/public/v1/auth/wechat-oauth-login-poll',
       {
         scene_str: attempt.sceneStr,
+        poll_token: attempt.pollToken,
         unique_code: await this.runtime.stateStore.uniqueCode(),
         ref: 0,
         keep_cancel: true,

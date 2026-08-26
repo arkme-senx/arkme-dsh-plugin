@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest'
 
 const arkoSource = readFileSync(new URL('../src/client/ArkmeArkoSurface.tsx', import.meta.url), 'utf8')
 const sidebarSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+const emojiPickerSource = readFileSync(new URL('../src/client/ArkmeEmojiPicker.tsx', import.meta.url), 'utf8')
+const toolButtonSource = readFileSync(new URL('../src/client/ArkmeComposerToolButton.tsx', import.meta.url), 'utf8')
+const toolIconSource = readFileSync(new URL('../src/client/ArkmeComposerToolIcon.tsx', import.meta.url), 'utf8')
 const presentationModuleUrl = new URL('../src/client/conversation-composer-presentation.ts', import.meta.url)
 
 describe('Arkme conversation composer presentation', () => {
@@ -48,12 +51,32 @@ describe('Arkme conversation composer presentation', () => {
       expect(source).toContain('...arkmeConversationComposerLayout.composerInner')
       expect(source).toContain('...arkmeConversationComposerLayout.textarea')
       expect(source).toContain('...arkmeConversationComposerLayout.tools')
-      expect(source).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
       expect(source).not.toMatch(/Math\.min\(textarea\.scrollHeight,\s*(180|336)\)/)
     }
+    expect(arkoSource).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
+    expect(sidebarSource).toContain('<ArkmeRichComposerInput')
+    expect(sidebarSource).toContain('onSelectionChange={updateMentionTrigger}')
+    expect(sidebarSource).not.toContain('<ArkmeMentionTextarea')
 
     expect(arkoSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")
     expect(arkoSource).toContain("callArkme<ArkmeArkoCancelResult>('arko.cancel'")
     expect(arkoSource).toContain("callArkme<ArkmeArkoModelCatalog>('arko.model.activate'")
+  })
+
+  it('preserves the original add button while aligning the static emoji tool to it', () => {
+    expect(sidebarSource).toContain("plus: { width: 34, height: 34, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 22, lineHeight: '30px' }")
+    expect(sidebarSource).toContain('<button ref={addMenuTriggerRef} type="button" style={styles.plus}')
+    expect(sidebarSource).toContain('>+</button><ArkmeEmojiPicker')
+    expect(sidebarSource).not.toContain('ArkmeComposerPlusIcon')
+    expect(emojiPickerSource).toContain('<ArkmeComposerToolButton')
+    expect(emojiPickerSource).toContain("triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' }")
+    expect(emojiPickerSource).toContain('<span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span>')
+    expect(toolButtonSource).toContain("width: 34")
+    expect(toolButtonSource).toContain("height: 34")
+    expect(toolButtonSource).toContain("transition: 'none'")
+    expect(toolButtonSource).not.toContain('onMouseEnter')
+    expect(toolButtonSource).not.toContain('onMouseLeave')
+    expect(toolIconSource).toContain('viewBox="0 0 20 20"')
+    expect(toolIconSource.match(/strokeWidth="1\.5"/gu)).toHaveLength(2)
   })
 })

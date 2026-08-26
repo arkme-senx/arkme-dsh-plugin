@@ -66,11 +66,19 @@ export class ArkmeExtensionProfileInstaller {
   }
 
   async remove(packageName: string): Promise<void> {
+    await this.removeMany([packageName])
+  }
+
+  async removeMany(packageNames: readonly string[]): Promise<void> {
     await this.mutate(async () => {
-      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) throw new Error('扩展 Bundle 包名无效')
+      const unique = [...new Set(packageNames)]
+      if (unique.length === 0) return
+      if (unique.some(packageName => !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName))) {
+        throw new Error('扩展 Bundle 包名无效')
+      }
       await this.run([
         'plugin', '--profile', this.options.profileName,
-        ...localExtensionPnpmArgs(['remove', packageName]),
+        ...localExtensionPnpmArgs(['remove', ...unique]),
       ])
     })
   }

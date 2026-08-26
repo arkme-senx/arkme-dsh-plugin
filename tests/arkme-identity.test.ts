@@ -78,6 +78,7 @@ function withoutOpenClawProtocolNames(file: string, content: string): string {
 function withoutArkmeIdCompatibilityAliases(file: string, content: string): string {
   const localizedUiFiles = new Set([
     join(root, 'src/client/ArkmeLogin.tsx'),
+    join(root, 'src/client/arkme-login-locales.ts'),
     join(root, 'src/client/ArkmeSettingsSurface.tsx'),
   ])
   if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
@@ -115,6 +116,7 @@ function withoutApprovedJiwoScanLoginFeature(file: string, content: string): str
     join(root, 'src/client/ArkmeLogin.tsx'),
     join(root, 'src/client/ArkmeSidebar.tsx'),
     join(root, 'src/client/arkme-auth-flow.tsx'),
+    join(root, 'src/client/arkme-login-locales.ts'),
     join(root, 'src/host-api.ts'),
     join(root, 'src/index.ts'),
     join(root, 'src/services/auth-service.ts'),

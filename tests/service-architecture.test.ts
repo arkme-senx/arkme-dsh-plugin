@@ -30,7 +30,7 @@ const expectedPublicMethods = [
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
-  'openPrivateChatFromUser', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'relatedRecordingEligibility', 'relatedRecordings',
+  'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'relatedRecordingEligibility', 'relatedRecordings',
   'recordRelatedRecordingsToolEvent', 'reportMessage', 'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -52,7 +52,7 @@ const expectedPublicMethods = [
   'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
-  'createText', 'createTextForConversation', 'pendingWrites',
+  'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
   'retryPending', 'extensionPost',
 ].sort()
 

@@ -14,7 +14,9 @@ import type {
 } from '../types.js'
 import { MediaService } from './media-service.js'
 import { RecordService } from './record-service.js'
+import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
+import { ARKME_DSH_AGENT_INPUT_CREATION_SOURCE, isDshAgentInputSourceTitle } from '../dsh-agent-input-source.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -28,6 +30,7 @@ export class SearchService {
     private readonly runtime: ServiceRuntime,
     private readonly record: RecordService,
     private readonly media: MediaService,
+    private readonly source?: SourceService,
   ) {}
 
   async searchRecords(options: {
@@ -71,7 +74,34 @@ export class SearchService {
       session,
       options.signal,
     )
-    return this.recordSearchResult(data)
+    return await this.withNavigationTargets(this.recordSearchResult(data), options.signal)
+  }
+
+  private async withAudioMediaRefs(
+    result: ArkmeRecordSearchResult,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordSearchResult> {
+    const requests = result.items.flatMap(item => item.voice === undefined || item.sourceKind === 3 ? [] : [{
+      recordUid: item.recordUid,
+      fileAssetUid: item.voice.fileAssetUid,
+    }])
+    if (requests.length === 0) return result
+    let mediaRefs: Map<string, string>
+    try {
+      mediaRefs = await this.media.issueSearchAudioMediaRefs(requests, signal)
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      console.warn('dsh-arkme: Search voice media hydration failed:', error instanceof Error ? error.message : String(error))
+      return result
+    }
+    return {
+      ...result,
+      items: result.items.map(item => {
+        if (item.voice === undefined) return item
+        const mediaRef = mediaRefs.get(`${item.recordUid}\0${item.voice.fileAssetUid}`)
+        return mediaRef === undefined ? item : { ...item, voice: { ...item.voice, mediaRef } }
+      }),
+    }
   }
 
   async searchHistory(limit = 10): Promise<ArkmeSearchHistoryResult> {
@@ -140,7 +170,45 @@ export class SearchService {
       session,
       options.signal,
     )
-    return this.recordSearchResult(data)
+    const result = await this.withNavigationTargets(this.recordSearchResult(data), options.signal)
+    return options.scene === 'audio' ? await this.withAudioMediaRefs(result, options.signal) : result
+  }
+
+  private async withNavigationTargets(
+    result: ArkmeRecordSearchResult,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordSearchResult> {
+    if (this.source === undefined || result.items.length === 0) return result
+    const targets = new Map<string, ArkmeSearchRecordItem>()
+    const aggregateTitleByKey = new Map(result.sourceAggregates.map(item => [
+      `${String(item.sourceKind)}:${item.sourceUid}`,
+      item.title,
+    ]))
+    for (const item of result.items) {
+      const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
+      targets.set(`${String(item.sourceKind)}:${sourceUid}`, item)
+    }
+    const sourceByKey = new Map<string, Awaited<ReturnType<SourceService['searchTargetSource']>>>()
+    for (const [key, item] of targets) {
+      try {
+        sourceByKey.set(key, await this.source.searchTargetSource(
+          item.sourceKind,
+          item.sourceUid ?? item.routeTargetUid ?? '',
+          item.sourceTitle ?? aggregateTitleByKey.get(key) ?? '',
+          signal,
+        ))
+      } catch {
+        sourceByKey.set(key, undefined)
+      }
+    }
+    return {
+      ...result,
+      items: result.items.map(item => {
+        const sourceUid = item.sourceUid ?? item.routeTargetUid ?? ''
+        const targetSource = sourceByKey.get(`${String(item.sourceKind)}:${sourceUid}`)
+        return targetSource === undefined ? item : { ...item, targetSource }
+      }),
+    }
   }
 
   /** Build the desktop image library from the mixed image/video scene. */
@@ -306,6 +374,13 @@ export class SearchService {
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
     const linkMatch = textContent.match(/https:\/\/[^\s<>()]+/u)
+    const sourceTitle = stringValue(topic.title ?? chat.title).trim()
+    const creationSource = Math.trunc(numberValue(core.creation_source ?? item.creation_source))
+    const normalizedCreationSource = creationSource > 0
+      ? creationSource
+      : isDshAgentInputSourceTitle(sourceTitle)
+        ? ARKME_DSH_AGENT_INPUT_CREATION_SOURCE
+        : 0
     return {
       recordUid,
       sourceKind: Math.trunc(numberValue(item.source_kind)),
@@ -319,7 +394,8 @@ export class SearchService {
       ...(stringValue(core.nickname).trim() === '' ? {} : { nickname: stringValue(core.nickname).trim() }),
       ...(numberValue(core.template_kind) <= 0 ? {} : { templateKind: Math.trunc(numberValue(core.template_kind)) }),
       ...(numberValue(core.display_kind) <= 0 ? {} : { displayKind: Math.trunc(numberValue(core.display_kind)) }),
-      ...(stringValue(topic.title ?? chat.title).trim() === '' ? {} : { sourceTitle: stringValue(topic.title ?? chat.title).trim() }),
+      ...(normalizedCreationSource <= 0 ? {} : { creationSource: normalizedCreationSource }),
+      ...(sourceTitle === '' ? {} : { sourceTitle }),
       media,
       files,
       ...(voice === undefined ? {} : { voice }),

@@ -38,6 +38,7 @@ export class OutgoingCallUiController {
     const sourceRef = request.sourceRef.trim()
     const displayName = request.displayName.trim()
     if (sourceRef === '' || displayName === '') throw new TypeError('私聊呼叫目标无效')
+    console.info('ArkmeCallDiag ui_controller request', { sourceRef, displayName, mediaType: request.mediaType })
     this.snapshot = { pending: { sourceRef, displayName, mediaType: request.mediaType } }
     this.listeners.forEach(listener => { listener() })
   }
@@ -45,10 +46,12 @@ export class OutgoingCallUiController {
   consume(): OutgoingCallUiRequest | undefined {
     const pending = this.snapshot.pending
     if (pending !== undefined) this.snapshot = {}
+    if (pending !== undefined) console.info('ArkmeCallDiag ui_controller consume', pending)
     return pending
   }
 
   notifySettled(event: OutgoingCallUiSettledEvent): void {
+    console.info('ArkmeCallDiag ui_controller settled', event)
     this.settledListeners.forEach(listener => { listener(event) })
   }
 }

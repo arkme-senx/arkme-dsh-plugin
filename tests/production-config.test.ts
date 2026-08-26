@@ -32,6 +32,7 @@ describe('production plugin configuration', () => {
     expect(patch).toContain('relatedRecordingsEnabled: true')
     expect(patch).not.toContain('relatedRecordingSharingEnabled:')
     expect(patch).toContain('interwovenMomentsEnabled: true')
+    expect(patch).toContain('chatMemberJoinEventsEnabled: true')
     expect(patch).toContain('richMediaRenderEnabled: true')
     expect(patch).toContain('richMediaSendEnabled: true')
     expect(patch).toContain('maxUploadBytes: 104857600')

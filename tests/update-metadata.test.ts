@@ -15,7 +15,7 @@ describe('published update metadata', () => {
     }
 
     expect(manifest.name).toBe('@senguoyun/dsh-arkme')
-    expect(manifest.version).toBe('0.1.21')
+    expect(manifest.version).toBe('0.1.22')
     expect(manifest.arkme?.updateNotice).toMatchObject({
       schemaVersion: 1,
       title: `Arkme 插件 ${manifest.version} 更新`,

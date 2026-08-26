@@ -9,6 +9,10 @@ import { ArkmeLogin, type ArkmeLoginMode, type ArkmeLoginProps } from './ArkmeLo
 import { arkmeAuthStore, type ArkmeAuthStoreSnapshot } from './auth-store.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { arkmeUi } from './ui-controller.js'
+import { arkmeLoginErrorMessage, arkmeStoredLoginErrorMessage } from './arkme-login-errors.js'
+import {
+  defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
+} from './arkme-login-locales.js'
 
 export type ArkmeAuthView = 'checking' | 'login' | 'content'
 export type ArkmePhoneBindingGate = 'unknown' | 'checking' | 'ready' | 'required'
@@ -116,39 +120,41 @@ export function ArkmeAuthChecking({
   error,
   busy,
   onRetry,
-  statusText = '正在确认 Arkme 登录状态…',
+  t = defaultArkmeLoginTranslate,
+  statusText,
 }: {
   error: string
   busy: boolean
   onRetry(): void
+  t?: ArkmeLoginTranslate
   statusText?: string
 }) {
   return <div style={styles.checking}>
     <div style={styles.checkingContent}>
-      <span role="status">{error === '' ? statusText : error}</span>
+      <span role="status">{error === '' ? statusText ?? t('gate.checking.arkme') : error}</span>
       {error !== '' && <button
         type="button"
         style={styles.retry}
         disabled={busy}
         onClick={onRetry}
-      >{busy ? '正在重试...' : '重新检查'}</button>}
+      >{busy ? t('gate.retrying') : t('gate.retry')}</button>}
     </div>
   </div>
 }
 
 export function ArkmeAuthFlowContent({ flow }: { flow: ArkmeAuthFlowController }) {
   if (flow.authView === 'checking') {
-    return <ArkmeAuthChecking error={flow.error} busy={flow.busy} onRetry={flow.retry} />
+    return <ArkmeAuthChecking
+      error={flow.error}
+      busy={flow.busy}
+      onRetry={flow.retry}
+      t={flow.loginProps.t ?? defaultArkmeLoginTranslate}
+    />
   }
   if (flow.authView === 'login') {
     return <div style={styles.loginBody}><ArkmeLogin {...flow.loginProps} /></div>
   }
   return null
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof ArkmeClientError) return error.body.message
-  return error instanceof Error ? error.message : String(error)
 }
 
 function qrDataUrl(content: string): string {
@@ -162,7 +168,10 @@ function initialPhoneBindingGate(auth: ArkmeAuthSnapshot | undefined): ArkmePhon
   return auth?.status === 'binding-required' ? 'required' : 'unknown'
 }
 
-export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthFlowController {
+export function useArkmeAuthFlow(
+  options: ArkmeAuthFlowOptions = {},
+  t: ArkmeLoginTranslate = defaultArkmeLoginTranslate,
+): ArkmeAuthFlowController {
   const { initialAuth, initialPhoneBindingGate: initialGate } = options
   const storeSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -172,7 +181,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
   const auth = storeSnapshot.auth ?? initialAuth
   const [busy, setBusy] = useState(false)
   const [submitBusy, setSubmitBusy] = useState(false)
-  const [error, setError] = useState(initialAuth?.status === 'binding-required' ? '请先绑定手机号，再继续使用 Arkme' : '')
+  const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [agreed, setAgreed] = useState(true)
   const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'jiwo')
   const [phone, setPhone] = useState('')
@@ -197,6 +206,14 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
   const authenticated = auth?.status === 'authenticated' && phoneBindingGate === 'ready'
   const authView = arkmeAuthView(auth, phoneBindingGate)
   const phoneBindingRequired = arkmeLoginNeedsPhoneBinding(auth, phoneBindingGate)
+  const localeId = t('locale.id')
+  const localeIdRef = useRef(localeId)
+
+  useEffect(() => {
+    if (localeIdRef.current === localeId) return
+    localeIdRef.current = localeId
+    if (authView === 'login') setError('')
+  }, [authView, localeId])
 
   const acceptAuthSnapshot = useCallback((snapshot: ArkmeAuthSnapshot, acceptOptions: { forcePhoneCheck?: boolean } = {}) => {
     const previous = arkmeAuthStore.getSnapshot().auth
@@ -210,7 +227,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       setAgreed(true)
       setQr('')
       setSmsCode('')
-      setError('请先绑定手机号，再继续使用 Arkme')
+      setError(t('error.binding.required'))
       if (bindingNotifiedUserIdRef.current !== snapshot.userId) {
         bindingNotifiedUserIdRef.current = snapshot.userId
         arkmeUi.authChanged(false)
@@ -226,7 +243,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       setPhoneBindingGate('unknown')
       if (snapshot.status === 'authenticated') setPhoneCheckRevision(value => value + 1)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     if (initialAuth === undefined) return
@@ -257,8 +274,10 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
   }, [auth?.status, phoneBindingRequired, storeSnapshot.config])
 
   useEffect(() => {
-    if (storeSnapshot.error !== '' && authView === 'login') setError(storeSnapshot.error)
-  }, [authView, storeSnapshot.error])
+    if (storeSnapshot.error !== '' && authView === 'login') {
+      setError(arkmeStoredLoginErrorMessage(storeSnapshot.error, t))
+    }
+  }, [authView, storeSnapshot.error, t])
 
   const refreshAuth = useCallback(async () => {
     setBusy(true)
@@ -278,11 +297,11 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
           : config?.testLoginEnabled === true ? 'test' : 'wechat')
       }
     } catch (caught) {
-      setError(errorMessage(caught))
+      setError(arkmeLoginErrorMessage(caught, t))
     } finally {
       setBusy(false)
     }
-  }, [acceptAuthSnapshot])
+  }, [acceptAuthSnapshot, t])
 
   useEffect(() => { void refreshAuth() }, [refreshAuth])
 
@@ -312,7 +331,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
         setAgreed(true)
         setQr('')
         setSmsCode('')
-        setError('请先绑定手机号，再继续使用 Arkme')
+        setError(t('error.binding.required'))
       })
       .catch(caught => {
         if (!active) return
@@ -323,16 +342,16 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
           setLoginMode(jiwoScanLoginEnabled ? 'jiwo' : testLoginEnabled ? 'test' : 'wechat')
           setQr('')
           setSmsCode('')
-          setError(errorMessage(caught))
+          setError(arkmeLoginErrorMessage(caught, t))
           arkmeUi.authChanged(false)
           return
         }
         setPhoneBindingGate('unknown')
-        setError(errorMessage(caught))
+        setError(arkmeLoginErrorMessage(caught, t))
       })
       .finally(() => { if (active) setBusy(false) })
     return () => { active = false }
-  }, [auth?.environment, auth?.status, auth?.userId, jiwoScanLoginEnabled, phoneCheckRevision, testLoginEnabled])
+  }, [auth?.environment, auth?.status, auth?.userId, jiwoScanLoginEnabled, phoneCheckRevision, t, testLoginEnabled])
 
   useEffect(() => {
     if (smsCountdown <= 0) return
@@ -357,17 +376,17 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
           return
         }
       } catch (caught) {
-        if (!stopped) setError(errorMessage(caught))
+        if (!stopped) setError(arkmeLoginErrorMessage(caught, t))
       }
       if (!stopped) timer = setTimeout(() => { void poll() }, 1200)
     }
     timer = setTimeout(() => { void poll() }, 1200)
     return () => { stopped = true; clearTimeout(timer) }
-  }, [acceptAuthSnapshot, agreed, auth?.attemptId, auth?.status, loginMode])
+  }, [acceptAuthSnapshot, agreed, auth?.attemptId, auth?.status, loginMode, t])
 
   const beginQrLogin = useCallback(async (mode: 'jiwo' | 'wechat') => {
     if (!agreed) {
-      setError('请阅读并同意用户协议和隐私条款')
+      setError(t('error.agreement.required'))
       return
     }
     setBusy(true)
@@ -381,11 +400,11 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       currentJiwoAttemptRef.current = mode === 'jiwo' ? snapshot.attemptId : undefined
       setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent))
     } catch (caught) {
-      if (flowRevision === qrFlowRevisionRef.current) setError(errorMessage(caught))
+      if (flowRevision === qrFlowRevisionRef.current) setError(arkmeLoginErrorMessage(caught, t))
     } finally {
       if (flowRevision === qrFlowRevisionRef.current) setBusy(false)
     }
-  }, [acceptAuthSnapshot, agreed])
+  }, [acceptAuthSnapshot, agreed, t])
 
   const beginWechat = useCallback(async () => {
     await beginQrLogin('wechat')
@@ -424,7 +443,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
 
   const sendCode = async () => {
     if (!/^1[3-9]\d{9}$/.test(phone)) {
-      setError('请输入正确的 11 位手机号')
+      setError(t('error.phone.eleven'))
       return
     }
     setBusy(true)
@@ -434,7 +453,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       await callArkme('auth.phone.send', { phone, captcha })
       setSmsCountdown(60)
     } catch (caught) {
-      setError(errorMessage(caught))
+      setError(arkmeLoginErrorMessage(caught, t))
     } finally {
       setBusy(false)
     }
@@ -442,15 +461,15 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
 
   const verifyCode = async () => {
     if (!/^1[3-9]\d{9}$/.test(phone)) {
-      setError('请输入正确的手机号')
+      setError(t('error.phone.invalid'))
       return
     }
     if (!/^\d{6}$/.test(smsCode)) {
-      setError('请输入验证码')
+      setError(t('error.code.invalid'))
       return
     }
     if (!agreed) {
-      setError('请阅读并同意用户协议和隐私条款')
+      setError(t('error.agreement.required'))
       return
     }
     setBusy(true)
@@ -460,7 +479,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.phone.verify', { phone, code: smsCode })
       acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
     } catch (caught) {
-      setError(errorMessage(caught))
+      setError(arkmeLoginErrorMessage(caught, t))
     } finally {
       setSubmitBusy(false)
       setBusy(false)
@@ -470,11 +489,11 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
   const testLogin = async () => {
     const userId = Number(testUserId)
     if (!Number.isSafeInteger(userId) || userId <= 0) {
-      setError('请输入有效的测试账号 user_id')
+      setError(t('error.test.invalid'))
       return
     }
     if (!agreed) {
-      setError('请阅读并同意用户协议和隐私条款')
+      setError(t('error.agreement.required'))
       return
     }
     setBusy(true)
@@ -483,7 +502,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.test.login', { userId })
       acceptAuthSnapshot(snapshot, { forcePhoneCheck: true })
     } catch (caught) {
-      setError(errorMessage(caught))
+      setError(arkmeLoginErrorMessage(caught, t))
     } finally {
       setBusy(false)
     }
@@ -507,7 +526,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
       setLoginMode(jiwoScanLoginEnabled ? 'jiwo' : testLoginEnabled ? 'test' : 'wechat')
       arkmeUi.authChanged(false)
     } catch (caught) {
-      setError(errorMessage(caught))
+      setError(arkmeLoginErrorMessage(caught, t))
     } finally {
       setBusy(false)
     }
@@ -545,6 +564,7 @@ export function useArkmeAuthFlow(options: ArkmeAuthFlowOptions = {}): ArkmeAuthF
     busy,
     error,
     loginProps: {
+      t,
       mode: loginMode,
       phoneBindingRequired,
       agreed,

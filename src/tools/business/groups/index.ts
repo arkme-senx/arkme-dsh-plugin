@@ -1,4 +1,5 @@
 import { createGroupToolModule } from './create.js'
+import { renameGroupToolModule } from './rename.js'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { defineArkmeCoreToolModule } from '../../contract/module.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
@@ -50,4 +51,4 @@ const add = defineArkmeCoreToolModule({
 })
 
 export const groupMemberToolModules: readonly ArkmeToolModule[] = [candidates, add]
-export const groupToolModules = [createGroupToolModule] as const
+export const groupToolModules = [createGroupToolModule, renameGroupToolModule] as const

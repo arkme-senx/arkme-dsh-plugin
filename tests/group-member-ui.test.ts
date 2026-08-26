@@ -54,5 +54,9 @@ describe('group member add UI', () => {
     expect(source).toContain('setAddMembersOpen(false)')
     expect(source).toContain('setSettingsOpen(false)')
     expect(source).toContain('setRenameOpen(false)')
+
+    const sidebarSource = readFileSync(join(process.cwd(), 'src/client/ArkmeSidebar.tsx'), 'utf8')
+    expect(sidebarSource).toContain('member.avatarRef === undefined')
+    expect(sidebarSource).toContain('<RobotIcon size={14} weight="fill" />')
   })
 })

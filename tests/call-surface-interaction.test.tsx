@@ -108,6 +108,7 @@ describe('ArkmeCallSurface interactions', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -159,7 +160,7 @@ describe('ArkmeCallSurface interactions', () => {
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.placeholder).toBe('输入即我号或昵称')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.color).toBe('var(--dsw-alias-label-primary, #17191c)')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.fontSize).toBe(12)
-    expect(buttonByLabel(renderer, '和重复名视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.style.filter)
+    expect(buttonByLabel(renderer, '和即我作者视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.style.filter)
       .toBe('var(--arkme-call-video-icon-filter, none)')
   })
 
@@ -576,7 +577,190 @@ describe('ArkmeCallSurface interactions', () => {
       await tick()
     })
 
-    expect(buttonByLabel(renderer, '和菜市场视频通话').props.style).toEqual(buttonByLabel(renderer, '和菜市场语音通话').props.style)
+    expect(buttonByLabel(renderer, '和即我作者视频通话').props.style).toEqual(buttonByLabel(renderer, '和即我作者语音通话').props.style)
+    const recommendation = renderer.root.findByProps({ 'aria-label': '推荐联系人' })
+    expect(textContent(recommendation)).toContain('即我作者')
+    expect(textContent(recommendation)).toContain('即我作者 · 推荐')
+    expect(textContent(recommendation)).not.toContain('菜市场')
+    const picker = renderer.root.findByProps({ 'aria-label': '选择通话联系人' })
+    expect(picker.props.style.overflowY).toBe('auto')
+    expect(picker.props.style.height).toBe('min(620px, calc(100vh - 48px))')
+    expect(renderer.root.findByProps({ 'data-arkme-call-picker-list': 'true' }).props.style.overflowY).toBe('visible')
+  })
+
+  it('renders the official author public profile without opening a private chat', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      if (operation === 'chat.official-author.profile') return {
+        userId: 11,
+        displayName: '阿森',
+        avatarRef: 'author-avatar-ref',
+      }
+      if (operation === 'image.read') return {
+        mediaType: 'image/png',
+        dataBase64: 'iVBORw0KGgo=',
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+      await tick()
+      await tick()
+    })
+
+    const recommendation = renderer.root.findByProps({ 'aria-label': '推荐联系人' })
+    expect(textContent(recommendation)).toContain('阿森')
+    expect(textContent(recommendation)).toContain('即我作者 · 推荐')
+    expect(buttonByLabel(renderer, '和阿森视频通话')).toBeTruthy()
+    expect(mocks.callArkme).toHaveBeenCalledWith('chat.official-author.profile', {}, expect.any(AbortSignal))
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('chat.official-author.private.open')
+  })
+
+  it('deduplicates the official author from private and recent contacts by user identity', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return {
+        items: [],
+        recentContacts: [
+          { userId: 11, displayName: 'Tison' },
+          { userId: 77, displayName: '小林' },
+        ],
+        hasMore: false,
+      }
+      if (operation === 'sources.list') return {
+        directory: 'root',
+        items: [
+          {
+            sourceRef: 'author-source',
+            sourceKey: 'source-key-author',
+            peerUserId: 11,
+            kind: 'private_chat',
+            displayName: 'Tison',
+            activeAtMillis: 2,
+            unreadCount: 0,
+          },
+          {
+            sourceRef: 'xiaolin-source',
+            sourceKey: 'source-key-xiaolin',
+            peerUserId: 77,
+            kind: 'private_chat',
+            displayName: '小林',
+            activeAtMillis: 1,
+            unreadCount: 0,
+          },
+        ],
+        hasMore: false,
+      }
+      if (operation === 'chat.official-author.profile') return {
+        userId: 11,
+        displayName: 'Tison@即我',
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+      await tick()
+    })
+
+    const picker = renderer.root.findByProps({ 'aria-label': '选择通话联系人' })
+    const content = textContent(picker)
+    expect(content).toContain('Tison@即我')
+    expect(content).toContain('即我作者 · 推荐')
+    expect(content).not.toContain('Tison私聊联系人')
+    expect(content).not.toContain('Tison最近联系人')
+    expect(buttonByTexts(renderer, '小林', '私聊联系人')).toBeTruthy()
+  })
+
+  it('opens the official author chat owner before starting a recommended author call', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return {
+        directory: 'root',
+        items: [{
+          sourceRef: 'source-market',
+          kind: 'private_chat',
+          displayName: '菜市场',
+          activeAtMillis: 1,
+          unreadCount: 0,
+        }],
+        hasMore: false,
+      }
+      if (operation === 'chat.official-author.private.open') return {
+        source: {
+          sourceRef: 'source-official-author',
+          kind: 'private_chat',
+          displayName: '真正作者',
+          activeAtMillis: 2,
+          unreadCount: 0,
+        },
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+    })
+
+    await act(async () => {
+      buttonByLabel(renderer, '和即我作者视频通话').props.onClick()
+      await tick()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('chat.official-author.private.open')
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('chat.private.open', expect.anything())
+    expect(mocks.outgoingCallRequest).toHaveBeenCalledWith({
+      sourceRef: 'source-official-author',
+      displayName: '真正作者',
+      mediaType: 'video',
+    })
+  })
+
+  it('keeps the contact picker open when choosing a contact row call type', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return {
+        directory: 'root',
+        items: [{
+          sourceRef: 'source-lucis',
+          kind: 'private_chat',
+          displayName: 'lucis',
+          activeAtMillis: 1,
+          unreadCount: 0,
+        }],
+        hasMore: false,
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+    })
+
+    await act(async () => {
+      buttonByTexts(renderer, 'lucis', '私聊联系人').props.onClick({
+        currentTarget: {
+          getBoundingClientRect: () => ({ left: 230, top: 260 }),
+        },
+      })
+      await tick()
+    })
+
+    expect(renderer.root.findByProps({ 'aria-label': '选择通话联系人' })).toBeTruthy()
+    expect(renderer.root.findByProps({ 'aria-label': '选择和lucis的通话方式' })).toBeTruthy()
   })
 
   it('starts calls directly from recent-contact picker action icons', async () => {
@@ -613,7 +797,7 @@ describe('ArkmeCallSurface interactions', () => {
     })
 
     expect(buttonByLabel(renderer, '直接和lucis视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.src)
-      .toBe('/arkme-self/api/call/jotmo-video-linear.svg')
+      .toBe('/arkme-self/api/call/arkme-video-linear.svg')
 
     await act(async () => {
       buttonByLabel(renderer, '直接和lucis视频通话').props.onClick()
@@ -641,6 +825,95 @@ describe('ArkmeCallSurface interactions', () => {
       sourceRef: 'source-lucis',
       displayName: 'lucis',
       mediaType: 'audio',
+    })
+  })
+
+  it('starts a call by searching an exact Arkme id in the picker', async () => {
+    vi.useFakeTimers()
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return { items: [], recentContacts: [], hasMore: false }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      if (operation === 'contacts.search') return {
+        contactRef: 'arkme-contact-v1.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        identifierKind: 'arkme_id',
+        displayName: '木白',
+        arkmeId: 'mbr_sylj',
+        avatarRef: 'avatar-mubai',
+        registered: true,
+        inviteBySms: false,
+        canAdd: false,
+        isSelf: false,
+      }
+      if (operation === 'image.read') return { mediaType: 'image/png', dataBase64: 'iVBORw0KGgo=' }
+      if (operation === 'chat.private.open-from-contact') return {
+        source: {
+          sourceRef: 'source-mubai',
+          kind: 'private_chat',
+          displayName: '木白',
+          activeAtMillis: 2,
+          unreadCount: 0,
+        },
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface initialPickerOpen />)
+      await tick()
+      await tick()
+    })
+
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.onChange({
+        currentTarget: { value: '@mbr' },
+      })
+      await tick()
+    })
+
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('contacts.search', expect.anything(), expect.anything())
+    const pickerContent = textContent(renderer.root.findByProps({ 'aria-label': '选择通话联系人' }).props.children)
+    expect(pickerContent).toContain('搜索结果')
+    expect(pickerContent).not.toContain('最近联系人')
+
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.onChange({
+        currentTarget: { value: '@mbr_sylj' },
+      })
+      await tick()
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(279)
+      await tick()
+    })
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('contacts.search', expect.anything(), expect.anything())
+
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+      await tick()
+      await tick()
+      await tick()
+    })
+
+    expect(textContent(renderer.toJSON())).toContain('木白')
+    expect(textContent(renderer.toJSON())).toContain('即我号 · 可发起通话')
+
+    await act(async () => {
+      buttonByLabel(renderer, '直接和木白视频通话').props.onClick()
+      await tick()
+      await tick()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith('contacts.search', { identifier: '@mbr_sylj' }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('chat.private.open-from-contact', {
+      contactRef: 'arkme-contact-v1.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    })
+    expect(mocks.callArkme).not.toHaveBeenCalledWith('contacts.add', expect.anything())
+    expect(mocks.outgoingCallRequest).toHaveBeenCalledWith({
+      sourceRef: 'source-mubai',
+      displayName: '木白',
+      mediaType: 'video',
     })
   })
 
@@ -679,6 +952,43 @@ describe('ArkmeCallSurface interactions', () => {
     expect(content).toContain('视频通话')
     expect(content).toContain('仅使用麦克风')
     expect(content).toContain('使用摄像头和麦克风')
+  })
+
+  it('anchors the recent-contact call-type picker near the clicked contact', async () => {
+    vi.stubGlobal('window', { innerWidth: 1200, innerHeight: 800 })
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'calls.history.list') return {
+        items: [],
+        recentContacts: [{ userId: 77, displayName: '小林' }],
+        hasMore: false,
+      }
+      if (operation === 'sources.list') return { directory: 'root', items: [], hasMore: false }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeCallSurface />)
+      await tick()
+      await tick()
+    })
+
+    expect(renderer.root.findByProps({ 'data-arkme-call-recent-contacts': 'rail' }).props.style.margin).toBe('0 0 13px')
+
+    await act(async () => {
+      buttonByLabel(renderer, '选择小林通话方式').props.onClick({
+        currentTarget: {
+          getBoundingClientRect: () => ({ left: 92, top: 118 }),
+        },
+      })
+      await tick()
+    })
+
+    const typePicker = renderer.root.findByProps({ 'aria-label': '选择和小林的通话方式' })
+    expect(typePicker.props['data-arkme-call-type-picker-placement']).toBe('anchored')
+    expect(typePicker.props.style.position).toBe('absolute')
+    expect(typePicker.props.style.left).toBe(82)
+    expect(typePicker.props.style.top).toBe(104)
   })
 
   it('shows an empty transcript state and no video record for an unanswered cancelled video call', async () => {

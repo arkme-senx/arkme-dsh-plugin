@@ -1,0 +1,7 @@
+body { margin: 0; font-family: system-ui, sans-serif; background: #e8e8e8; }
+main { padding: 28px; margin: 20px auto; box-sizing: border-box; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #2b2b2b); }
+main[data-dark="true"] { --dsw-alias-bg-base: #202020; --dsw-alias-label-primary: #eee; --dsw-alias-label-secondary: #aaa; --dsw-alias-label-tertiary: #999; --dsw-alias-bg-layer-1: #292929; --dsw-specific-input-major: #292929; --dsw-alias-bg-module-platform: #292929; }
+h1 { font-size: 21px; } h2 { font-size: 15px; margin: 0 0 20px; } header p { font-size: 12px; color: #999; }
+section { margin-top: 26px; padding-top: 22px; border-top: 1px solid #8883; }
+article { margin: 16px 0; } .sender { display: block; font-size: 12px; margin-bottom: 7px; color: #999; }
+.existing-message-container { width: fit-content; max-width: 100%; box-sizing: border-box; padding: 10px 13px; background: #8881; border-radius: 5px 16px 16px 16px; }

@@ -1,0 +1,73 @@
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { describe, expect, it, vi } from 'vitest'
+import { ArkmeEmojiPicker } from '../src/client/ArkmeEmojiPicker.js'
+import { arkmeComposerToolButtonStyle } from '../src/client/ArkmeComposerToolButton.js'
+import {
+  arkmeDefaultEmojis, insertArkmeEmojiAtSelection, nextArkmeRecentEmojiIds,
+} from '../src/client/arkme-emoji.js'
+
+describe('Arkme emoji composer', () => {
+  it('keeps the desktop catalog order, rich tokens, and custom SVG assets', () => {
+    expect(arkmeDefaultEmojis).toHaveLength(56)
+    expect(arkmeDefaultEmojis.slice(0, 3)).toMatchObject([
+      { id: 'angry_face', unicode: '😡', label: '生气' },
+      { id: 'awkward_face', unicode: '😐', label: '尴尬' },
+      { id: 'heart_eyes', unicode: '😍', label: '喜欢' },
+    ])
+    expect(arkmeDefaultEmojis[0]).toMatchObject({ assetIndex: 1, token: '[jm_emoji:angry_face]' })
+    expect(arkmeDefaultEmojis[0]?.assetUrl).toMatch(/^data:image\/svg\+xml;base64,/u)
+  })
+
+  it('inserts an emoji at the current selection and returns the next caret', () => {
+    const emoji = arkmeDefaultEmojis[3]!
+    expect(insertArkmeEmojiAtSelection('你好世界', emoji, 2, 3)).toEqual({
+      text: `你好${emoji.token}界`,
+      caretIndex: 2 + emoji.token.length,
+    })
+    expect(insertArkmeEmojiAtSelection('1234', emoji, 4, 4, 5)).toBeUndefined()
+  })
+
+  it('deduplicates recent selections, removes unknown ids, and caps the row', () => {
+    expect(nextArkmeRecentEmojiIds(['thumb_up', 'missing', 'joy_face'], 'joy_face', 2))
+      .toEqual(['joy_face', 'thumb_up'])
+  })
+
+  it('opens the DSH-styled panel, supports continuous selection, and closes on scope change', () => {
+    const selected: string[] = []
+    let renderer!: ReactTestRenderer
+    act(() => {
+      renderer = create(<ArkmeEmojiPicker
+        disabled={false}
+        scopeKey="private:1"
+        onSelect={emoji => { selected.push(emoji.id) }}
+      />)
+    })
+
+    const trigger = renderer.root.findByProps({ 'aria-label': '选择表情' })
+    const triggerButton = renderer.root.findAllByType('button')
+      .find(node => node.props['data-arkme-composer-tool'] === 'emoji')!
+    expect(triggerButton.props.style).toEqual(arkmeComposerToolButtonStyle)
+    expect(triggerButton.props.onMouseEnter).toBeUndefined()
+    expect(triggerButton.props.onMouseLeave).toBeUndefined()
+    act(() => { trigger.props.onClick() })
+    expect(triggerButton.props.style).toEqual(arkmeComposerToolButtonStyle)
+    const panel = renderer.root.findByProps({ 'data-arkme-emoji-panel': true })
+    expect(panel.props.style).toMatchObject({ left: 0, bottom: 'calc(100% + 8px)' })
+    expect(renderer.root.findByProps({ 'data-arkme-emoji-picker': true }).props.style).not.toHaveProperty('position')
+    expect(renderer.root.findAllByProps({ 'data-arkme-emoji-id': 'angry_face' })).toHaveLength(1)
+    expect(renderer.root.findByProps({ 'data-arkme-emoji-id': 'angry_face' }).findByType('img').props.src)
+      .toMatch(/^data:image\/svg\+xml;base64,/u)
+    expect(renderer.root.findByProps({ children: '创作者：牛mo王' })).toBeDefined()
+
+    act(() => { renderer.root.findByProps({ 'data-arkme-emoji-id': 'angry_face' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-arkme-emoji-id': 'heart_eyes' }).props.onClick() })
+    expect(selected).toEqual(['angry_face', 'heart_eyes'])
+    expect(renderer.root.findByProps({ 'data-arkme-emoji-panel': true })).toBeDefined()
+
+    act(() => {
+      renderer.update(<ArkmeEmojiPicker disabled={false} scopeKey="group:2" onSelect={vi.fn()} />)
+    })
+    expect(renderer.root.findAllByProps({ 'data-arkme-emoji-panel': true })).toHaveLength(0)
+    act(() => { renderer.unmount() })
+  })
+})

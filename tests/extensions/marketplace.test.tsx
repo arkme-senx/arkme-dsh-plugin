@@ -133,6 +133,17 @@ describe('Arkme marketplace UI', () => {
     expect(html).not.toContain('排序接口完成后启用')
   })
 
+  it('renders an initial exact author filter when opened from a World plugin preview', () => {
+    const html = renderToStaticMarkup(<ArkmeMarketplace
+      displayMode="page"
+      initialAuthorFilter={{ ownerUserId: 7, ownerName: '泡泡' }}
+    />)
+
+    expect(html).toContain('data-marketplace-author-filter="true"')
+    expect(html).toContain('泡泡 的全部插件')
+    expect(html).toContain('aria-label="清除作者 泡泡 筛选"')
+  })
+
   it('keeps only copy-link and close actions in the detail modal header', () => {
     const html = renderToStaticMarkup(<ArkmeExtensionDetailHeader
       title="天气助手"

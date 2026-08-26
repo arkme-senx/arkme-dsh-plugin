@@ -28,6 +28,9 @@ function fakeService(): ArkmeCoreToolPorts & {
   calendarRecords: ReturnType<typeof vi.fn>
   createTextForConversation: ReturnType<typeof vi.fn>
   setArkmeIdOnce: ReturnType<typeof vi.fn>
+  searchContact: ReturnType<typeof vi.fn>
+  addContact: ReturnType<typeof vi.fn>
+  openPrivateChatFromContact: ReturnType<typeof vi.fn>
   arkoAsk: ReturnType<typeof vi.fn>
   arkoCancel: ReturnType<typeof vi.fn>
   arkoEnsureSession: ReturnType<typeof vi.fn>
@@ -38,6 +41,7 @@ function fakeService(): ArkmeCoreToolPorts & {
   listCallHistory: ReturnType<typeof vi.fn>
   callDetail: ReturnType<typeof vi.fn>
   retryCallSummary: ReturnType<typeof vi.fn>
+  renameGroup: ReturnType<typeof vi.fn>
 } {
   return {
     providerCapabilities: () => ({
@@ -151,6 +155,22 @@ function fakeService(): ArkmeCoreToolPorts & {
       canUpdate: false,
       revision: 9,
     })),
+    searchContact: vi.fn(async (identifier: string) => ({
+      contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432',
+      identifierKind: 'arkme_id' as const,
+      displayName: identifier,
+      registered: true,
+      inviteBySms: false,
+      canAdd: false,
+      isSelf: false,
+    })),
+    addContact: vi.fn(async (contactRef: string) => ({
+      state: 'ready' as const,
+      source: { sourceRef: `source:${contactRef}`, kind: 'private_chat' as const, displayName: '林林', activeAtMillis: 1, unreadCount: 0 },
+    })),
+    openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({
+      source: { sourceRef: `source:${contactRef}`, kind: 'private_chat' as const, displayName: '林林', activeAtMillis: 1, unreadCount: 0 },
+    })),
     arkoProfile: vi.fn(async () => ({
       displayName: 'Arko',
       version: 2,
@@ -212,6 +232,34 @@ function fakeService(): ArkmeCoreToolPorts & {
       source: { sourceRef, kind: 'private_chat' as const, displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
       items: [], hasMore: false,
     })),
+    messageReadReceiptSummaries: vi.fn(async (sourceRef: string, messages: Array<{ itemUid: string; sequence: number }>) => ({
+      sourceRef,
+      conversationKind: 'private_chat' as const,
+      items: messages.map(message => ({
+        ...message,
+        readCount: 1,
+        unreadCount: 0,
+        totalMemberCount: 1,
+        status: 'read' as const,
+      })),
+    })),
+    messageReadReceiptDetail: vi.fn(async (sourceRef: string, itemUid: string, sequence: number) => ({
+      sourceRef,
+      itemUid,
+      sequence,
+      readCount: 1,
+      unreadCount: 1,
+      totalMemberCount: 2,
+      items: [
+        { memberRef: 'member-read', displayName: '已读成员', readStatus: 'read' as const, readAtMillis: 123 },
+        { memberRef: 'member-unread', displayName: '未读成员', readStatus: 'unread' as const },
+      ],
+    })),
+    markSourceRead: vi.fn(async (sourceRef: string, readSequence: number) => ({
+      sourceRef,
+      effectiveReadSequence: readSequence,
+      unreadCount: 0,
+    })),
     reportMessage: vi.fn(async (messageRef: string, _reportType: 1 | 2 | 3 | 4) => ({
       messageRef, reportUid: 'report-1', status: 1,
     })),
@@ -241,6 +289,16 @@ function fakeService(): ArkmeCoreToolPorts & {
     })),
     confirmDisableGroupAiPolish: vi.fn(async () => ({
       groupName: '产品群', enabled: false, ruleName: '友好简洁', changed: true,
+    })),
+    renameGroup: vi.fn(async (sourceRef: string, title: string) => ({
+      source: {
+        sourceRef,
+        kind: 'group_chat' as const,
+        displayName: title,
+        activeAtMillis: 0,
+        unreadCount: 0,
+      },
+      status: 'ok' as const,
     })),
     requestOutgoingCall: vi.fn(async (_sourceRef: string, mediaType: 'audio' | 'video') => ({
       status: 'calling' as const,
@@ -753,6 +811,68 @@ describe('Arkme conversation tools', () => {
     expect(service.arkoProfile).not.toHaveBeenCalled()
   })
 
+  it('reads self-sent private/group message receipt summaries and group member detail', async () => {
+    const service = fakeService()
+    const tools = createArkmeCoreToolDefinitions(service)
+    const summaries = tools.find(definition => definition.name === 'arkme_message_read_statuses')!
+    const detail = tools.find(definition => definition.name === 'arkme_message_read_members')!
+    const signal = new AbortController().signal
+
+    const summaryOutput = await summaries.execute({
+      source_ref: 'source-private-1',
+      messages: [{ item_uid: 'record-self-1', sequence: 8 }],
+    }, { signal } as never)
+    expect(summaryOutput).toContain('"status": "read"')
+    expect(service.messageReadReceiptSummaries).toHaveBeenCalledWith(
+      'source-private-1',
+      [{ itemUid: 'record-self-1', sequence: 8 }],
+      { signal },
+    )
+
+    const detailOutput = await detail.execute({
+      source_ref: 'source-group-1',
+      item_uid: 'record-self-2',
+      sequence: 11,
+    }, { signal } as never)
+    expect(detailOutput).toContain('"readStatus": "unread"')
+    expect(service.messageReadReceiptDetail).toHaveBeenCalledWith(
+      'source-group-1', 'record-self-2', 11, { signal },
+    )
+  })
+
+  it('lists only current-account unread conversations and explicitly advances one read cursor', async () => {
+    const service = fakeService()
+    service.listSources.mockResolvedValueOnce({
+      directory: 'root',
+      items: [
+        { sourceRef: 'source-unread', kind: 'private_chat', displayName: '小林', activeAtMillis: 2, unreadCount: 3, latestSequence: 12 },
+        { sourceRef: 'source-read', kind: 'group_chat', displayName: '项目群', activeAtMillis: 1, unreadCount: 0, latestSequence: 8 },
+      ],
+      hasMore: true,
+      nextCursor: 'next-root-page',
+    })
+    const tools = createArkmeCoreToolDefinitions(service)
+    const unread = tools.find(definition => definition.name === 'arkme_unread_conversations')!
+    const markRead = tools.find(definition => definition.name === 'arkme_conversation_mark_read')!
+    const signal = new AbortController().signal
+
+    const unreadOutput = await unread.execute({ limit: 50 }, { signal } as never)
+    expect(unreadOutput).toContain('小林')
+    expect(unreadOutput).not.toContain('项目群')
+    expect(unreadOutput).toContain('"unreadConversationCount": 1')
+    expect(unreadOutput).toContain('"unreadMessageCount": 3')
+    expect(unreadOutput).toContain('"nextCursor": "next-root-page"')
+    expect(service.listSources).toHaveBeenCalledWith('root', { limit: 50, signal })
+
+    const markOutput = await markRead.execute({
+      source_ref: 'source-unread',
+      read_sequence: 12,
+    }, { signal } as never)
+    expect(markOutput).toContain('"effectiveReadSequence": 12')
+    expect(markOutput).toContain('"unreadCount": 0')
+    expect(service.markSourceRead).toHaveBeenCalledWith('source-unread', 12, { signal })
+  })
+
   it('reports only an opaque message reference with a stable retry identity', async () => {
     const service = fakeService()
     const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_message_report')!
@@ -799,6 +919,87 @@ describe('Arkme conversation tools', () => {
     expect(enabled).toContain('"enabled": true')
   })
 
+  it('renames one exact group source through an explicit write tool', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_group_rename')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { group_source_ref: 'arkme-source-v1.group.sig', title: '新产品群' },
+      { signal } as never,
+    ) as string
+
+    expect(service.renameGroup).toHaveBeenCalledWith(
+      'arkme-source-v1.group.sig', '新产品群', signal,
+    )
+    expect(output).toContain('"displayName": "新产品群"')
+    expect(output).toContain('"status": "ok"')
+    expect(tool.description).toContain('explicit')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_group_rename')
+  })
+
+  it('requires conversational confirmation before the registered group rename writes', async () => {
+    const definitions: Array<{
+      name: string
+      execute(args: Record<string, unknown>, exec: Record<string, unknown>): Promise<unknown>
+    }> = []
+    const service = fakeService()
+    const ctx = {
+      systemPrompt: { section: vi.fn() },
+      tools: { register: vi.fn(definition => { definitions.push(definition) }) },
+      on: vi.fn(),
+      inject: vi.fn(),
+      get: vi.fn(),
+    }
+    registerArkmeTools(ctx as never, service as never)
+    const rename = definitions.find(definition => definition.name === 'arkme_group_rename')!
+    const args = {
+      group_source_ref: 'arkme-source-v1.group.sig',
+      title: '新产品群',
+    }
+    const events: Array<Record<string, unknown>> = [
+      {
+        seq: 1,
+        type: 'user/message',
+        data: {
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: '把产品群改名为新产品群' }],
+        },
+      },
+    ]
+    const agent = { id: 'session-group-rename', session: { events } }
+
+    const preview = await rename.execute(args, {
+      agent,
+      callId: 'rename-prepare',
+      signal: new AbortController().signal,
+    }) as string
+
+    expect(preview).toContain('"status": "confirmation_required"')
+    expect(preview).toContain('新产品群')
+    expect(service.renameGroup).not.toHaveBeenCalled()
+
+    events.push({
+      seq: 2,
+      type: 'user/message',
+      data: {
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: '确认修改' }],
+      },
+    })
+    const result = await rename.execute(args, {
+      agent,
+      callId: 'rename-confirm',
+      signal: new AbortController().signal,
+    }) as string
+
+    expect(result).toContain('"status": "ok"')
+    expect(service.renameGroup).toHaveBeenCalledWith(
+      'arkme-source-v1.group.sig', '新产品群', expect.any(AbortSignal),
+    )
+  })
+
   it('direct-sends to an explicit recipient with stable hidden ids and no text echo', async () => {
     const service = fakeService()
     const tool = createArkmeCoreToolDefinitions(service)
@@ -837,6 +1038,28 @@ describe('Arkme conversation tools', () => {
       expect(parameters).toContain(name)
       expect(ARKME_TOOL_PROMPT).toContain(name)
     }
+  })
+
+  it('opens a searched contact private chat through the contact tool without adding contacts', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service)
+      .find(definition => definition.name === 'arkme_contact_private_chat_open')!
+    const signal = new AbortController().signal
+
+    const output = await tool.execute(
+      { contact_ref: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432' },
+      { callId: 'contact-open-1', signal } as never,
+    ) as string
+
+    expect(service.openPrivateChatFromContact).toHaveBeenCalledWith(
+      'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432',
+      { signal },
+    )
+    expect(service.addContact).not.toHaveBeenCalled()
+    expect(output).toContain('Arkme 私聊打开结果')
+    expect(output).toContain('"sourceRef": "source:arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432"')
+    expect(tool.description).toContain('without adding it as a contact')
+    expect(ARKME_TOOL_PROMPT).toContain('arkme_contact_private_chat_open')
   })
 
   it('starts an explicitly requested outgoing private call through the source port', async () => {

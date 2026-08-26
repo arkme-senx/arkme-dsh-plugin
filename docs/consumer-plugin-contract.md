@@ -2,7 +2,7 @@
 
 `@senguoyun/dsh-arkme` owns authentication, OS credential-store access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
 
-The bundled UI uses only official DSH slots: `sidebar.footer.action` owns the launcher, inline Arkme directory, and a non-modal translucent React portal that floats the Arkme message surface over the center column; `settings.general.item` owns account controls. The plugin never registers or replaces `conversation`, so the native DSH Conversation remains mounted and remains perceptible through and around the frosted card. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
+The bundled UI uses only official DSH slots. `sidebar`, `conversation`, and `details` compose the resident Arkme product shell; `settings.section` owns the single `arkme-account` section inside native DSH Settings; `shell.overlay` owns lifecycle dialogs. DSH owns Settings chrome, ordering, and scrolling, while `ArkmeSettingsSurface` owns only Arkme account content and actions. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
 
 ## Browser SDK
 
@@ -106,6 +106,10 @@ Plugin update discovery and acknowledgement are lifecycle concerns owned by the 
 Chat items returned by `readSource()` may include an opaque sender `avatarRef`. Consumers resolve it with `readImage()` and must not infer or construct avatar URLs from sender identity.
 
 Timeline items may include `contentBlocks` for image, video, audio, and file content. Long articles use the owner contract's `templateKind: 8`; `displayKind: 1` remains accepted only as a compatibility signal for previously sent plugin records. Each block's `mediaRef` is account-bound and short-lived. Render it with `sdk.mediaUrl(mediaRef)`; never decode or persist it. `upload()` sends a browser file only to the same-origin plugin route and returns an Arkme asset descriptor for `sendRich()`.
+
+`capabilities().features.forwardContent === true` advertises expanded `readSource()` forward snapshots. `forwardRecords.items` may contain `sourceType`, `segments` (speaker, full text, relative start/end milliseconds), `contentBlocks` and `mediaUnavailable`. Segment audio also uses `contentBlocks`, never raw URLs. The same snapshot is returned to the built-in UI and `arkme_source_read`. Missing optional fields on older Providers mean text-only rendering, not an error. Unknown source types remain `unknown`; filenames must not determine recording type. No original chat name or source access is implied. A transcript with no attachment is not playable. `truncated` marks bounded output (100 flattened records, nesting depth four; up to 500 segments per record / 2000 total; 32 attachments per record). Display it as partial, never silently claim a complete archive.
+
+Consumers retain no additional resources for a one-shot `readSource()`. If they call `subscribe()`, invoke its returned unsubscribe function on disposal. Refresh the received timeline when a media reference expires; do not query the private original recording or cache/decode its reference. Unsupported `contractVersion` is rejected by `capabilities()`; an absent optional `forwardContent` feature falls back to the existing text snapshot.
 
 Long-article detail and update calls always include the opaque `sourceRef` and stable record UID. The Provider reloads the Record owner detail, verifies source membership and author ownership, and forwards the current `version` to the existing CAS update endpoint. A failed or stale update must retain the editor content and must never be retried by creating a second record. Draft helpers persist only title, body and duration in Provider state and isolate them by account, source and edited record.
 

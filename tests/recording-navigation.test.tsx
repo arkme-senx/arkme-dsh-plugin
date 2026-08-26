@@ -89,10 +89,15 @@ describe('Arko navigation entry', () => {
     expect(ArkmeArkoRow).toBeDefined()
     if (ArkmeArkoRow === undefined) return
 
+    const latestAtMillis = Date.now()
+    const expectedTime = new Intl.DateTimeFormat('zh-CN', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(latestAtMillis))
     const markup = renderToStaticMarkup(<ArkmeArkoRow
       selected
       displayName="小可"
       latestPreview="刚刚完成了资料整理"
+      latestAtMillis={latestAtMillis}
       onClick={vi.fn()}
     />)
     expect(markup).toContain('role="treeitem"')
@@ -107,11 +112,15 @@ describe('Arko navigation entry', () => {
     expect(markup).toContain('>AI</span>')
     expect(markup).not.toContain('>Agent</span>')
     expect(markup).toContain('刚刚完成了资料整理')
+    expect(markup).toContain('<time')
+    expect(markup).toContain('dateTime=')
+    expect(markup).toContain(`>${expectedTime}</time>`)
   })
 
   it('keeps the product description only when no conversation exists yet', () => {
     const markup = renderToStaticMarkup(<navigation.ArkmeArkoRow selected={false} onClick={vi.fn()} />)
     expect(markup).toContain('对话并处理 Arkme 业务')
+    expect(markup).not.toContain('<time')
   })
 })
 

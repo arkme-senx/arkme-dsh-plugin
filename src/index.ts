@@ -9,6 +9,7 @@ import Schema from '@deepseek-ai/schemastery'
 export { createOpenClawCliAdapter } from './openclaw/index.js'
 import { createOpenClawCliAdapter, createOpenClawCommandRunner, createOpenClawFileSecretStore, createOpenClawProvisioner } from './openclaw/index.js'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
@@ -72,6 +73,7 @@ export interface Config {
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   interwovenMomentsEnabled: boolean
+  chatMemberJoinEventsEnabled: boolean
   richMediaRenderEnabled: boolean
   richMediaSendEnabled: boolean
   maxUploadBytes: number
@@ -96,7 +98,7 @@ export const Config: Schema<Config> = Schema.object({
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
-  dataBaseUrl: Schema.string().default('https://jotmo-data.senguo.me'),
+  dataBaseUrl: Schema.string().default(''),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -117,6 +119,7 @@ export const Config: Schema<Config> = Schema.object({
   relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
+  chatMemberJoinEventsEnabled: Schema.boolean().default(true),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
   allowNonLoopback: Schema.boolean().default(false),
@@ -175,7 +178,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  validateConfig(ctx, config)
+  config = resolveArkmeConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
@@ -261,6 +264,7 @@ export function apply(ctx: Context, config: Config): void {
   let extensionInstallTasks: ArkmeExtensionInstallTasks | undefined
   let ownedExtensionInventory: ArkmeOwnedExtensionInventory | undefined
   ctx.provide('arkmeData', service)
+  registerDSHAgentInputRecordSync(ctx, service)
   registerArkmeTools(ctx, service, config.toolProfile)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
@@ -431,6 +435,19 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 
+export function resolveArkmeConfig(ctx: Context, config: Config): Config {
+  const resolved = config.dataBaseUrl.trim() === ''
+    ? {
+        ...config,
+        dataBaseUrl: config.environment === 'prod'
+          ? 'https://data.jotmo.cc'
+          : 'https://jotmo-data.senguo.me',
+      }
+    : config
+  validateConfig(ctx, resolved)
+  return resolved
+}
+
 function validateConfig(ctx: Context, config: Config): void {
   if (config.environment === 'prod' && !config.allowProduction) {
     throw new Error('dsh-arkme: production environment requires allowProduction: true')
@@ -549,6 +566,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,

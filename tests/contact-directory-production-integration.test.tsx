@@ -16,6 +16,7 @@ vi.mock('../src/client/ArkmeVirtualWorkspace.js', () => ({
 }))
 
 import { apply } from '../src/client/index.js'
+import { createClientLocaleStub } from './client-locale-stub.js'
 
 type Registered = { name: string; component: ComponentType<Record<string, unknown>> }
 
@@ -46,6 +47,7 @@ function applyProductionSeats(): Map<string, ComponentType<Record<string, unknow
       },
     },
     layout: { toggleSidebar: vi.fn(), closeDetails: vi.fn() },
+    locale: createClientLocaleStub(),
     effect: (factory: () => unknown, label: string) => {
       if (label.includes('official settings sidebar') || label.includes('conversation seats')) factory()
       return () => undefined

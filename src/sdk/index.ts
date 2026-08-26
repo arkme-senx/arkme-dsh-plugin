@@ -1,4 +1,4 @@
-import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
@@ -11,6 +11,8 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeBotList,
+  ArkmeBotMentionInput,
   ArkmeBotProvider,
   ArkmeBotSummary,
   ArkmeCalendarBucketPage,
@@ -40,6 +42,10 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptSummaryList,
+  ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
@@ -158,6 +164,13 @@ export type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptMember,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptStatus,
+  ArkmeMessageReadReceiptSummary,
+  ArkmeMessageReadReceiptSummaryList,
+  ArkmeOfficialAuthorProfile,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
@@ -180,6 +193,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
@@ -549,6 +563,13 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Open a private chat for a registered candidate returned by searchContact without adding it as a contact. */
+  async openPrivateChatFromContact(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    const ref = contactRef.trim()
+    if (!/^arkme-contact-v1\.[0-9a-f-]{36}$/i.test(ref)) throw new TypeError('Arkme contact reference is invalid')
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.private.open-from-contact', { contactRef: ref }, signal)
+  }
+
   /** Create an initially owner-only group chat with an idempotent client mutation id. */
   async createGroup(
     title: string,
@@ -566,6 +587,10 @@ export class ArkmeSdk {
       title: normalizedTitle,
       clientMutationId,
     }, options.signal)
+  }
+
+  async listBots(signal?: AbortSignal): Promise<ArkmeBotList> {
+    return await this.call<ArkmeBotList>('bots.list', undefined, signal)
   }
 
   /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
@@ -763,6 +788,16 @@ export class ArkmeSdk {
   async openWorldAuthorPrivateChat(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
     if (authorRef.trim() === '') throw new TypeError('Arkme World author reference must not be empty')
     return await this.call<ArkmeOpenPrivateChatResult>('chat.world.private.open', { authorRef }, signal)
+  }
+
+  /** Open or reuse the same private chat used by the mobile "联系作者" entry. */
+  async openOfficialAuthorPrivateChat(signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.official-author.private.open', {}, signal)
+  }
+
+  /** Read the browser-safe public profile for the mobile "联系作者" entry without creating a chat. */
+  async officialAuthorProfile(signal?: AbortSignal): Promise<ArkmeOfficialAuthorProfile> {
+    return await this.call<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, signal)
   }
 
   /** Resolve viewer-local labels for visible World authors without exposing their user IDs. */
@@ -1092,6 +1127,51 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  async messageReadReceiptSummaries(
+    sourceRef: string,
+    items: readonly ArkmeMessageReadReceiptQueryItem[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageReadReceiptSummaryList> {
+    const normalizedSourceRef = sourceRef.trim()
+    if (normalizedSourceRef === '' || items.length < 1 || items.length > ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS) {
+      throw new TypeError(`Arkme message read receipts require one source and 1-${String(ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS)} messages`)
+    }
+    const seen = new Set<string>()
+    const normalizedItems = items.map(item => {
+      const itemUid = item.itemUid.trim()
+      const sequence = Math.trunc(item.sequence)
+      const key = `${itemUid}\u0000${String(sequence)}`
+      if (itemUid === '' || !Number.isSafeInteger(item.sequence) || sequence <= 0 || seen.has(key)) {
+        throw new TypeError('Arkme message read receipt item identity is invalid or duplicated')
+      }
+      seen.add(key)
+      return { itemUid, sequence }
+    })
+    return await this.call<ArkmeMessageReadReceiptSummaryList>(
+      'source.read-receipts.summary-list',
+      { sourceRef: normalizedSourceRef, items: normalizedItems },
+      signal,
+    )
+  }
+
+  async messageReadReceiptDetail(
+    sourceRef: string,
+    itemUid: string,
+    sequence: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageReadReceiptDetail> {
+    const normalizedSourceRef = sourceRef.trim()
+    const normalizedItemUid = itemUid.trim()
+    if (normalizedSourceRef === '' || normalizedItemUid === '' || !Number.isSafeInteger(sequence) || sequence <= 0) {
+      throw new TypeError('Arkme group message read receipt identity is invalid')
+    }
+    return await this.call<ArkmeMessageReadReceiptDetail>(
+      'source.read-receipts.detail',
+      { sourceRef: normalizedSourceRef, itemUid: normalizedItemUid, sequence },
+      signal,
+    )
+  }
+
   async sendText(
     sourceRef: string,
     textContent: string,
@@ -1100,6 +1180,8 @@ export class ArkmeSdk {
       relationUid?: string
       agentAuthored?: boolean
       humanMentions?: readonly ArkmeHumanMentionInput[]
+      botMentions?: readonly ArkmeBotMentionInput[]
+      botRefs?: readonly string[]
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1113,6 +1195,8 @@ export class ArkmeSdk {
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
       ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
+      ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
+      ...(options.botRefs === undefined ? {} : { botRefs: options.botRefs }),
     }, options.signal)
   }
 

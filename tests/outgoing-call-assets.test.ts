@@ -46,7 +46,10 @@ describe('outgoing call assets', () => {
     const document = response.body.toString('utf8')
     expect(document).toContain('<div id="app"></div>')
     expect(document).toContain('channel: "jotmo-desktop-call"')
-    expect(document).toContain('import("./bundle.js")')
+    expect(document).toContain('const payload = typeof message === "string" ? message : JSON.stringify(message);')
+    expect(document).toContain('message: payload')
+    expect(document).toContain('const bundleUrl = `./bundle.js?callRequestId=${encodeURIComponent(context.callRequestId || "idle")}`;')
+    expect(document).toContain('import(bundleUrl)')
     expect(document).toContain('message: error instanceof Error ? error.message : "呼叫界面加载失败"')
     expect(document).not.toContain('payload: { message: error')
   })
@@ -57,7 +60,7 @@ describe('outgoing call assets', () => {
     const manifest = await request('/arkme-self/api/call/manifest.json')
     const demoPeer = await request('/arkme-self/api/call/call-demo-peer.png')
     const demoSelf = await request('/arkme-self/api/call/call-demo-self.png')
-    const demoVideoIcon = await request('/arkme-self/api/call/jotmo-video-linear.svg')
+    const demoVideoIcon = await request('/arkme-self/api/call/arkme-video-linear.svg')
 
     expect(bundle).toMatchObject({ status: 200, headers: expect.objectContaining({
       'Content-Type': 'text/javascript; charset=utf-8',
@@ -143,6 +146,22 @@ describe('outgoing call assets', () => {
     expect(post).toContain('const postedToWebHost = postToWebHostBridge(payload);')
     expect(post).toContain('if (postedToWebHost) {')
     expect(post).toContain('return true;')
+  })
+
+  it('serializes web host bridge diagnostics with the same string envelope as terminal events', async () => {
+    const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
+    const bridge = bundle.slice(bundle.indexOf('function postToWebHostBridge(message)'), bundle.indexOf('function escapeHtml(value)'))
+
+    expect(bridge).toContain('const payload = typeof message === "string" ? message : safeJsonStringify(message);')
+    expect(bridge).toContain('message: payload')
+  })
+
+  it('cache-busts the iframe document from the host using each call request id', async () => {
+    const host = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'ArkmeOutgoingCallHost.tsx'), 'utf8')
+
+    expect(host).toContain("const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`")
+    expect(host).toContain('src={callFrameUrl}')
+    expect(host).toContain('const attachCallFrame = useCallback(')
   })
 
   it('sends a web host terminal hint before video SDK cleanup can block hangup close', async () => {

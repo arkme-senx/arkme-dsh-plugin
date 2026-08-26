@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ArkmeExtensionInstallResolution } from './types.js'
-import { renderPersistentClientBundle } from './persistent-client-bundle.js'
+import { arkmeClientOwnerKey } from './client-owner.js'
+import { ARKME_CLIENT_WRAPPER_VERSION, renderPersistentClientBundle } from './persistent-client-bundle.js'
 
 export const ARKME_PERSISTENT_BUNDLE_FORMAT_VERSION = 1 as const
 
@@ -47,6 +48,36 @@ function packageIdentity(extensionId: string): { packageName: string; entryId: s
 function writeSecure(path: string, content: string): void {
   writeFileSync(path, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
   chmodSync(path, 0o600)
+}
+
+function replaceSecure(path: string, content: string): void {
+  try { if (readFileSync(path, 'utf8') === content) return } catch { /* Missing or unreadable wrappers are replaced below. */ }
+  const temporary = `${path}.${randomUUID()}.tmp`
+  writeSecure(temporary, content)
+  try {
+    renameSync(temporary, path)
+    chmodSync(path, 0o600)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
+export function refreshPersistentClientWrapper(input: {
+  bundleDirectory: string
+  packageName: string
+  extensionId: string
+  version: string
+  name: string
+  clientCode: string
+  clientApiPath?: string
+}): void {
+  replaceSecure(join(input.bundleDirectory, 'lib', 'client.js'), renderPersistentClientBundle(input.packageName, {
+    extensionId: input.extensionId,
+    version: input.version,
+    name: input.name,
+    code: input.clientCode,
+    apiPath: input.clientApiPath ?? '/arkme-self/api',
+  }))
 }
 
 function activationText(
@@ -181,6 +212,7 @@ export function materializePersistentExtensionBundle(input: {
             && manifest.dsh?.client?.inject?.length === 0
             && clientBundle?.includes('extensions.persistent.invoke') === true
             && clientBundle.includes('extensions.persistent.client-state')
+            && clientBundle.includes(`\"wrapperVersion\":${String(ARKME_CLIENT_WRAPPER_VERSION)}`)
           )
           if (manifest.exports?.['.'] === './lib/index.js'
             && manifest.exports?.['./package.json'] === './package.json' && clientReady) {
@@ -211,6 +243,9 @@ export function materializePersistentExtensionBundle(input: {
     },
     dsh: {
       bundle: { patch: './cordis.patch.yml' },
+      ...(input.clientCode === undefined ? {} : {
+        arkme: { clientOwnerKey: arkmeClientOwnerKey(input.clientCode) },
+      }),
       ...(input.clientCode === undefined ? {} : {
         client: {
           inject: [],

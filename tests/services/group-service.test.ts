@@ -49,6 +49,45 @@ describe('GroupService', () => {
     })
   })
 
+  it('invalidates the root directory cache after a group rename', async () => {
+    let renamed = false
+    let directoryReads = 0
+    const { source, service } = fixture(async input => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith('/chats/list')) {
+        directoryReads += 1
+        return new Response(JSON.stringify({ code: 200, data: { items: [{
+          session: {
+            chat_session_uid: 'group-1', session_kind: 2,
+            title: renamed ? 'Harness3' : 'harness2', last_active_at: 123, last_seq: 9,
+          },
+          unread_snapshot: { unread_count: 2, session_last_seq: 9 },
+        }] } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/rename')) {
+        renamed = true
+        return new Response(JSON.stringify({ code: 200, data: {
+          session: {
+            chat_session_uid: 'group-1', session_kind: 2,
+            title: 'Harness3', last_active_at: 123, last_seq: 9,
+          },
+          unread_snapshot: { unread_count: 2, session_last_seq: 9 },
+        } }), { status: 200 })
+      }
+      if (path.endsWith('/chats/group-avatar-snapshots')) {
+        return new Response(JSON.stringify({ code: 200, data: { items: [] } }), { status: 200 })
+      }
+      throw new Error(`unexpected ${path}`)
+    })
+    const before = await source.listSources('root')
+
+    await service.renameGroup(before.items[0]!.sourceRef, 'Harness3')
+    const after = await source.listSources('root')
+
+    expect(after.items[0]?.displayName).toBe('Harness3')
+    expect(directoryReads).toBe(2)
+  })
+
   it('lists account-bound private-chat candidates and adds one idempotently', async () => {
     const calls: Array<{ path: string; body: Record<string, unknown> }> = []
     const { source, service } = fixture(async (input, init) => {
