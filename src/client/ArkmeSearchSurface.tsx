@@ -67,10 +67,11 @@ const styles: Record<string, CSSProperties> = {
   sourceRowActive: { background: 'rgba(10, 132, 255, .075)' }, sourceMarker: { position: 'absolute', left: 0, top: 10, bottom: 10, width: 2, borderRadius: '0 4px 4px 0', background: '#0a84ff' },
   sourcePrompt: { padding: '62px 20px', textAlign: 'center', color: colors.tertiary, fontSize: 13 },
   quickShell: { width: '100%' },
-  quickHeader: { width: '100%' }, quickTopRow: { display: 'flex', alignItems: 'center', gap: 8 },
+  quickHeader: { width: '100%', flex: 'none' }, quickTopRow: { display: 'flex', alignItems: 'center', gap: 8 },
   back: { width: 32, height: 44, display: 'grid', placeItems: 'center', flex: 'none', padding: 0, border: 0, borderRadius: 8, background: 'transparent', cursor: 'pointer' },
   quickSearch: { height: 44, flex: 1, display: 'flex', alignItems: 'center', gap: 5, padding: '0 10px', boxSizing: 'border-box', border: '1px solid transparent', borderRadius: 12, background: colors.subtle }, quickSearchIcon: { width: 26, height: 26, flex: 'none' }, quickInput: { flex: 1, minWidth: 0, height: '100%', border: 0, outline: 0, padding: 0, background: 'transparent', color: colors.text, font: 'inherit', fontSize: 16 },
   quickBody: { paddingBottom: 40 },
+  quickDialogBody: { minHeight: 0, flex: 1, overflowY: 'auto', overscrollBehaviorY: 'contain' },
   summary: { display: 'inline-block', margin: '12px 2px 4px', padding: '2px 8px', borderRadius: 4, background: colors.subtle, color: colors.secondary, fontSize: 10 }, month: { margin: '16px 2px 8px', fontSize: 13, fontWeight: 600 },
   mediaGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 3 }, mediaButton: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 4, background: arkmeTheme.subtle, cursor: 'pointer' }, mediaImage: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' }, play: { position: 'absolute', inset: 0, margin: 'auto', width: 38, height: 38, padding: 9, borderRadius: 999, background: 'rgba(0,0,0,.52)', boxSizing: 'border-box' }, duration: { position: 'absolute', right: 4, bottom: 4, padding: '1px 4px', borderRadius: 4, background: 'rgba(0,0,0,.58)', color: arkmeTheme.foreground, fontSize: 9 },
   imageSection: { marginTop: 12 }, imageSectionTitle: { margin: '0 0 6px 2px', color: colors.tertiary, fontSize: 12, lineHeight: '18px', fontWeight: 400 }, imageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', padding: 0, border: 0, borderRadius: 0, background: arkmeTheme.subtle, cursor: 'pointer' },
@@ -305,6 +306,7 @@ export function ArkmeSearchSurface({
   const searchAbort = useRef<AbortController>()
   const quickRequestAbort = useRef<AbortController>()
   const imageLoadMoreSentinel = useRef<HTMLDivElement>(null)
+  const quickScroll = useRef<HTMLElement>(null)
   const imageLoadMoreInFlight = useRef(false)
 
   useEffect(() => { void callArkme<ArkmeSearchHistoryResult>('search.history', { limit: 10 }).then(value => setHistory(value.items.map(item => item.keyword))).catch(() => undefined) }, [])
@@ -410,13 +412,13 @@ export function ArkmeSearchSurface({
 
   useEffect(() => {
     const target = imageLoadMoreSentinel.current
-    if (quick !== 'image' || target === null || !imageHasMore || imageCursor === '' || recordError !== '') return
+    if (loading || query.trim() !== '' || quick !== 'image' || target === null || !imageHasMore || imageCursor === '' || recordError !== '') return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) void loadMoreImages()
-    }, { rootMargin: '240px 0px' })
+    }, { root: variant === 'dialog' ? quickScroll.current : null, rootMargin: '240px 0px' })
     observer.observe(target)
     return () => observer.disconnect()
-  }, [imageCursor, imageHasMore, loadMoreImages, quick, recordError])
+  }, [imageCursor, imageHasMore, loadMoreImages, loading, query, quick, recordError, variant])
 
   const leaveQuick = useCallback(() => { quickRequestAbort.current?.abort(); quickRequestAbort.current = undefined; searchAbort.current?.abort(); searchAbort.current = undefined; requestId.current += 1; quickRef.current = undefined; setQuick(undefined); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setImages(undefined); setImageCursor(''); setImageHasMore(false); setVideos(undefined); setAudioRecords(undefined); setRecordError(''); setRecordingError(''); setDshError(''); setLoading(false); setLoadingMore(false) }, [])
   useEffect(() => () => { quickRequestAbort.current?.abort(); searchAbort.current?.abort() }, [])
@@ -544,7 +546,7 @@ export function ArkmeSearchSurface({
           <div style={styles.quickChips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
         </section>
       </div> : searchResults}
-    </div> : <div style={styles.quickShell}>
+    </div> : <div style={{ ...styles.quickShell, ...(variant === 'dialog' ? styles.column : {}) }}>
       <header style={styles.quickHeader}>
         <div style={styles.quickTopRow}><button type="button" aria-label="返回搜索" title="返回搜索" style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button><div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder="搜索快记" aria-label="搜索快记" onChange={event => setQuery(event.target.value)} />{query !== '' && <button type="button" aria-label="清空搜索" style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>{onClose !== undefined && <button type="button" aria-label="关闭全局搜索" style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}</div>
         <div style={styles.tabs}>{hasQuery
@@ -555,7 +557,7 @@ export function ArkmeSearchSurface({
           })}
         </div>
       </header>
-      <main style={styles.quickBody}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
     </div>}
     {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>

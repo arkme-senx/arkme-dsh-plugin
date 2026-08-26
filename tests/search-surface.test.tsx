@@ -197,6 +197,105 @@ describe('Arkme search surface', () => {
     act(() => { renderer.unmount() })
   })
 
+  it.each(['dialog', 'page'] as const)('keeps long quick-find content scrollable in %s layout', async variant => {
+    const count = 60
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'images.list') return {
+        items: Array.from({ length: count }, (_, index) => ({
+          itemKey: `image-${index}`, mediaRef: `image-ref-${index}`, recordUid: `record-${index}`,
+          sendAtMillis: 1, fileName: `图片-${index}.png`, recordTitle: `图片-${index}`,
+        })),
+        hasMore: false,
+      }
+      if (operation === 'ai-video.list') return {
+        items: Array.from({ length: count }, (_, index) => ({
+          jobId: `video-${index}`, title: `视频-${index}`, status: 'running', progress: 50,
+          createdAtMillis: 1,
+        })),
+        hasMore: false,
+      }
+      if (operation === 'search.scene') return {
+        ...arkmeResults(),
+        items: Array.from({ length: count }, (_, index) => ({
+          ...arkmeResults().items[0], recordUid: `voice-${index}`,
+          voice: { fileAssetUid: `voice-asset-${index}`, mediaRef: `voice-ref-${index}`, durationMillis: 12_000 },
+        })),
+      }
+      if (operation === 'search.records') return arkmeResults()
+      if (operation === 'search.history.create') return { created: true }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<ArkmeSearchSurface variant={variant} />) })
+    for (const [label, itemType] of [['图片', 'img'], ['AI 视频', 'article'], ['语音', 'audio']] as const) {
+      await act(async () => {
+        renderer.root.findAllByType('button').find(button => content(button.props.children) === label)?.props.onClick()
+      })
+      const body = renderer.root.findByType('main')
+      expect(body.findAllByType(itemType)).toHaveLength(count)
+      if (variant === 'dialog') {
+        expect(body.parent?.props.style).toMatchObject({ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 })
+        expect(renderer.root.findByType('header').props.style).toMatchObject({ flex: 'none' })
+        expect(body.props.style).toMatchObject({ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehaviorY: 'contain' })
+        expect(body.props.tabIndex).toBe(0)
+      } else {
+        expect(body.props.style.overflowY).toBeUndefined()
+        expect(body.parent?.props.style.flex).toBeUndefined()
+      }
+    }
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '搜索快记' }).props.onChange({ target: { value: '发布会' } })
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    expect(content(renderer.toJSON())).toContain('发布会快记')
+    if (variant === 'dialog') expect(renderer.root.findByType('main').props.style.overflowY).toBe('auto')
+    act(() => { renderer.unmount() })
+  })
+
+  it.each(['dialog', 'page'] as const)('loads the next image page against the %s scroll viewport', async variant => {
+    const scrollNode = {}
+    const observerOptions: IntersectionObserverInit[] = []
+    const disconnect = vi.fn()
+    let intersect!: (entries: Array<{ isIntersecting: boolean }>) => void
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: typeof intersect, options: IntersectionObserverInit) {
+        intersect = callback
+        observerOptions.push(options)
+      }
+      observe() {}
+      disconnect = disconnect
+    })
+    mocks.callArkme.mockImplementation(async (operation: string, params?: { cursor?: string }) => {
+      if (operation === 'search.history') return { items: [], hasMore: false }
+      if (operation === 'images.list') return {
+        items: [{
+          itemKey: params?.cursor ?? 'first', mediaRef: 'image-ref', recordUid: 'image-record',
+          sendAtMillis: 1, fileName: `${params?.cursor ?? 'first'}.png`, recordTitle: '图片',
+        }],
+        hasMore: params?.cursor === undefined, nextCursor: params?.cursor === undefined ? 'next' : undefined,
+      }
+      throw new Error(`unexpected Arkme call: ${operation}`)
+    })
+    let renderer!: ReactTestRenderer
+    await act(async () => {
+      renderer = create(<ArkmeSearchSurface variant={variant} />, {
+        createNodeMock: element => element.type === 'main' ? scrollNode : {},
+      })
+    })
+    await act(async () => {
+      renderer.root.findAllByType('button').find(button => content(button.props.children) === '图片')?.props.onClick()
+    })
+    expect(observerOptions).toHaveLength(1)
+    expect(observerOptions[0]?.root).toBe(variant === 'dialog' ? scrollNode : null)
+    expect(observerOptions[0]?.rootMargin).toBe('240px 0px')
+    await act(async () => { intersect([{ isIntersecting: true }]) })
+    expect(mocks.callArkme).toHaveBeenCalledWith('images.list', { limit: 50, cursor: 'next' })
+    expect(renderer.root.findByType('main').findAllByType('img')).toHaveLength(2)
+    act(() => { renderer.unmount() })
+    expect(disconnect).toHaveBeenCalled()
+  })
+
   it('opens a concrete search hit in its owning conversation instead of a detail modal', async () => {
     const onOpenRecord = vi.fn()
     let renderer!: ReactTestRenderer
