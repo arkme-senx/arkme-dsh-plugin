@@ -3,6 +3,10 @@
   "version": "0.1.22",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arkme-senx/arkme-dsh-plugin.git"
+  },
   "publishConfig": {
     "access": "public"
   },

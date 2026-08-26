@@ -13,7 +13,10 @@ jobs:
   enforce-organization-members-only:
     if: >-
       !contains(fromJSON('["MEMBER", "OWNER"]'),
-      github.event.pull_request.author_association)
+      github.event.pull_request.author_association) &&
+      !(github.event.pull_request.user.login == 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
