@@ -2639,7 +2639,6 @@ export function ArkmeSurface({
               {...(source?.kind === 'private_chat' || source?.kind === 'group_chat' ? { sourceRef: source.sourceRef } : {})}
               getCaretGeometry={() => textareaRef.current?.getCaretGeometry()}
               getEditorGeometry={() => textareaRef.current?.getEditorGeometry()}
-              onBeforeToggle={() => { textareaRef.current?.focus({ preventScroll: true }) }}
               onSelect={insertEmoji}
               onUploadSticker={async file => {
                 if (composerDraftKey === undefined) throw new Error('请先选择聊天')
