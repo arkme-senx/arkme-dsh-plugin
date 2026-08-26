@@ -15,6 +15,7 @@ import {
 import { arkmeConversationComposerLayout } from '../src/client/conversation-composer-presentation.js'
 import {
   appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
+  arkmeSelfTopicOptions, arkmeSelfTopicSelectionLabel,
   truncateArkmeSourceBreadcrumbTrail,
 } from '../src/client/ArkmeSourceBreadcrumb.js'
 import type { ArkmeSourceItem } from '../src/types.js'
@@ -291,31 +292,23 @@ describe('topic create UI', () => {
     expect(appendArkmeSourceBreadcrumbTrail(trail, aggregate, sources)).toEqual([])
 
     const markup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
-      trail={[rootTopic, leafTopic]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
+      selectedSource={leafTopic} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
     />)
-    expect(markup).toContain('aria-label="当前主题路径"')
-    expect(markup).not.toContain('data-arkme-source-breadcrumb-icon="true"')
-    expect(markup).not.toContain('<svg')
-    expect(markup).toContain('data-arkme-source-breadcrumb-path="true"')
-    expect(markup).toContain('data-arkme-source-breadcrumb-current="true"')
-    expect(markup.indexOf('data-arkme-source-breadcrumb-path="true"'))
-      .toBeLessThan(markup.indexOf('data-arkme-source-breadcrumb-current="true"'))
-    expect(markup).toContain('flex:1 1 auto')
+    expect(markup).toContain('aria-label="发给自己主题"')
+    expect(markup).toContain('data-arkme-self-topic-root="true"')
+    expect(markup).toContain('data-arkme-self-topic-selector="true"')
     expect(markup).toContain('发给自己')
-    expect(markup).toContain('产品研发')
-    expect(markup).not.toContain('DSH 插件')
-    expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('#8e9199')
     expect(markup).toContain('发布流程')
 
-    const aggregateMarkup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
-      trail={[]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
-    />)
-    expect(aggregateMarkup).toContain('aria-current="page"')
-    expect(aggregateMarkup).not.toContain('主题目录')
-    expect(aggregateMarkup).not.toContain('data-arkme-source-breadcrumb-path="true"')
-    expect(aggregateMarkup).toContain('#171923')
-    expect(aggregateMarkup).not.toContain('#a0a3aa')
+    expect(arkmeSelfTopicSelectionLabel(undefined)).toBe('全部主题')
+    expect(arkmeSelfTopicSelectionLabel(aggregate)).toBe('全部主题')
+    expect(arkmeSelfTopicSelectionLabel(leafTopic)).toBe('发布流程')
+    expect(arkmeSelfTopicOptions(sources)).toEqual([
+      { source: defaultCategory, depth: 0 },
+      { source: rootTopic, depth: 0 },
+      { source: childTopic, depth: 1 },
+      { source: leafTopic, depth: 2 },
+    ])
   })
 
   it('rebinds rotated source references without duplicating the visited destination', () => {

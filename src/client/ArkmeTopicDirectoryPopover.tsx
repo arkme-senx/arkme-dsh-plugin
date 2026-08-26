@@ -26,6 +26,7 @@ import { arkmeTheme } from './arkme-theme.js'
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
   selectedSource: ArkmeSourceItem | undefined
+  trigger?: 'button' | 'none'
   onSelect(source: ArkmeSourceItem): void
   onSelectionInvalidated(): void
   onSelfSourcesResolution(userId: number, resolution: ArkmeSelfSourcesResolution): void
@@ -162,7 +163,7 @@ function cacheWithTopics(
 }
 
 export function ArkmeTopicDirectoryPopover({
-  userId, selectedSource, onSelect, onSelectionInvalidated, onSelfSourcesResolution, retryRevision,
+  userId, selectedSource, trigger = 'button', onSelect, onSelectionInvalidated, onSelfSourcesResolution, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   const initialCache = useMemo(() => readNavigationCache(userId), [userId])
   const requestRef = useRef<AbortController>()
@@ -362,12 +363,12 @@ export function ArkmeTopicDirectoryPopover({
   }
 
   return <>
-    <button
+    {trigger === 'button' && <button
       ref={triggerRef} type="button" aria-label="打开主题" title="主题" aria-haspopup="dialog" aria-expanded={open}
       data-arkme-topic-directory-trigger="leading"
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
       onClick={() => { setOpen(value => !value) }}
-    ><ListBullets size={17} aria-hidden /></button>
+    ><ListBullets size={17} aria-hidden /></button>}
     {open && <div ref={popoverRef} role="dialog" aria-label="主题" style={styles.popover}>
       <div style={styles.head}>
         <h3 style={styles.heading}>主题</h3>

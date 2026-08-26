@@ -39,8 +39,7 @@ import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
-  appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
-  truncateArkmeSourceBreadcrumbTrail,
+  ArkmeSourceBreadcrumb,
 } from './ArkmeSourceBreadcrumb.js'
 import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution,
@@ -787,7 +786,6 @@ export function ArkmeSurface({
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
-  const [selfBreadcrumbTrail, setSelfBreadcrumbTrail] = useState<ArkmeSourceItem[]>([])
   const activeSelfSourcesResolution = selfSourcesResolution === undefined
     || selfSourcesResolution.userId !== authenticatedUserId
     ? undefined
@@ -796,16 +794,6 @@ export function ArkmeSurface({
   const selfSources = activeSelfSourcesResolution?.status === 'ready'
     ? activeSelfSourcesResolution.sources
     : EMPTY_SELF_SOURCES
-  const selfSourcesRef = useRef(selfSources)
-  selfSourcesRef.current = selfSources
-  const breadcrumbUserIdRef = useRef(authenticatedUserId)
-  useEffect(() => {
-    const accountChanged = breadcrumbUserIdRef.current !== authenticatedUserId
-    breadcrumbUserIdRef.current = authenticatedUserId
-    setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(
-      accountChanged ? [] : current, selectedSource, selfSources,
-    ))
-  }, [authenticatedUserId, selectedSource, selfSources])
   const source = conversationBackdropVisible ? selectedSource ?? aggregateSource : undefined
   const composerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
   useSyncExternalStore(
@@ -1979,15 +1967,9 @@ export function ArkmeSurface({
     }
   }, [memberMenu])
   const activateSelfSource = useCallback((nextSource: ArkmeTimelinePage['source']) => {
-    setSelfBreadcrumbTrail(current => appendArkmeSourceBreadcrumbTrail(current, nextSource, selfSourcesRef.current))
-    activateSource(nextSource)
-  }, [activateSource])
-  const activateBreadcrumbSource = useCallback((trailIndex: number, nextSource: ArkmeTimelinePage['source']) => {
-    setSelfBreadcrumbTrail(current => truncateArkmeSourceBreadcrumbTrail(current, trailIndex))
     activateSource(nextSource)
   }, [activateSource])
   const activateSendToSelf = useCallback(() => {
-    setSelfBreadcrumbTrail([])
     arkmeUi.focusSendToSelf()
     arkmeUi.chatChanged()
   }, [])
@@ -1998,7 +1980,6 @@ export function ArkmeSurface({
     setSelfSourcesResolution({ userId, resolution })
   }, [])
   const invalidateTopicSelection = useCallback(() => {
-    setSelfBreadcrumbTrail([])
     arkmeUi.focusSendToSelf()
   }, [])
 
@@ -2105,9 +2086,6 @@ export function ArkmeSurface({
     [chatDirectory, detailState],
   )
   const showMessageAvatars = arkmeSourceShowsMessageAvatars(source)
-  const selfBreadcrumbLabel = isArkmeSelfWorkspaceSource(selectedSource)
-    ? arkmeSourceBreadcrumb(selfBreadcrumbTrail, selfSources).map(segment => segment.label).join(' / ')
-    : undefined
   const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
     : ui.mode === 'calls' ? '通话'
     : ui.mode === 'world' ? '世界'
@@ -2115,7 +2093,7 @@ export function ArkmeSurface({
     : ui.mode === 'extensions' ? '市集'
     : ui.mode === 'voiceprint' ? '声纹管理'
     : ui.mode === 'arko' ? 'Arko'
-    : conversationBackdropVisible ? selfBreadcrumbLabel ?? arkmeSourceDestinationLabel(selectedSource)
+    : conversationBackdropVisible ? arkmeSourceDestinationLabel(selectedSource)
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
@@ -2167,6 +2145,7 @@ export function ArkmeSurface({
               key={auth.userId}
               userId={auth.userId}
               selectedSource={selectedSource}
+              trigger="none"
               onSelect={activateSelfSource}
               onSelectionInvalidated={invalidateTopicSelection}
               onSelfSourcesResolution={acceptSelfSourcesResolution}
@@ -2175,9 +2154,9 @@ export function ArkmeSurface({
           <div style={styles.titleGroup}>
             {authenticated && conversationBackdropVisible && isArkmeSelfWorkspaceSource(selectedSource)
               ? <ArkmeSourceBreadcrumb
-                trail={selfBreadcrumbTrail}
+                selectedSource={selectedSource}
                 sources={selfSources}
-                onSelect={activateBreadcrumbSource}
+                onSelect={activateSelfSource}
                 onSelectAggregate={activateSendToSelf}
               />
               : <div style={styles.titleBlock}>
