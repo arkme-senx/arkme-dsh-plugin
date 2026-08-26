@@ -529,6 +529,7 @@ button.arkme-redesign-update-button:disabled { opacity: .55; cursor: default; }
   grid-template-columns: max-content max-content minmax(0, 1fr) 18px;
   column-gap: 20px;
 }
+.arkme-redesign-balance-row.is-without-reserved { grid-template-columns: max-content minmax(0, 1fr) 18px; }
 .arkme-redesign-balance-main {
   min-width: 0;
   padding: 0;

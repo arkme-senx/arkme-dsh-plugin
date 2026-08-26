@@ -58,16 +58,19 @@ export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewPr
   const description = props.quotaState.kind === 'ready'
     ? formatArkmeNanoCny(props.quotaState.quota.availableNanoCny)
     : props.quotaState.kind === 'loading' ? '正在加载余额…' : '余额读取失败，点击重试'
-  const reservedDescription = props.quotaState.kind === 'ready'
-    ? formatArkmeNanoCny(props.quotaState.quota.reservedNanoCny)
-    : props.quotaState.kind === 'loading' ? '正在加载…' : '读取失败'
+  const reservedNanoCny = props.quotaState.kind === 'ready'
+    ? props.quotaState.quota.reservedNanoCny
+    : undefined
+  const showReserved = reservedNanoCny !== undefined
+    && /^(?:0|[1-9]\d*)$/.test(reservedNanoCny)
+    && BigInt(reservedNanoCny) > 0n
 
-  return <div className="arkme-redesign-setting-row arkme-redesign-balance-row">
+  return <div className={`arkme-redesign-setting-row arkme-redesign-balance-row${showReserved ? '' : ' is-without-reserved'}`}>
     <button type="button" className="arkme-redesign-balance-main" onClick={props.onOpen}>
       <strong>当前余额</strong>
       <small>{description}</small>
     </button>
-    <div className="arkme-redesign-reserved-balance">
+    {showReserved && <div className="arkme-redesign-reserved-balance">
       <span className="arkme-redesign-reserved-title">
         <strong>预占余额</strong>
         <span
@@ -78,8 +81,8 @@ export function ArkmeBalanceSettingsRowView(props: ArkmeBalanceSettingsRowViewPr
         >?</span>
         <span id="arkme-reserved-balance-tooltip" role="tooltip">当前运行的任务预先占用的余额，任务完成后将返还剩余余额。</span>
       </span>
-      <small>{reservedDescription}</small>
-    </div>
+      <small>{formatArkmeNanoCny(reservedNanoCny)}</small>
+    </div>}
     <button
       type="button"
       className="arkme-redesign-update-button arkme-redesign-recharge-trigger"

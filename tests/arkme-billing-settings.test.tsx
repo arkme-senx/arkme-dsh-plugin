@@ -46,6 +46,24 @@ describe('Arkme billing settings migration', () => {
     expect(markup).not.toContain('总余额')
   })
 
+  it.each([
+    ['zero reserved balance', { kind: 'ready', quota: {
+      availableNanoCny: '12801736510', totalNanoCny: '12801736510', reservedNanoCny: '0', currency: 'CNY',
+    } }],
+    ['invalid reserved balance', { kind: 'ready', quota: {
+      availableNanoCny: '12801736510', totalNanoCny: '12801736510', reservedNanoCny: 'invalid', currency: 'CNY',
+    } }],
+    ['loading balance', { kind: 'loading' }],
+    ['failed balance', { kind: 'error', message: '读取失败' }],
+  ] as const)('hides reservation details for %s', (_caseName, quotaState) => {
+    const markup = renderToStaticMarkup(<ArkmeBalanceSettingsRowView quotaState={quotaState} onOpen={noop} />)
+
+    expect(markup).toContain('arkme-redesign-balance-row is-without-reserved')
+    expect(markup).not.toContain('预占余额')
+    expect(markup).not.toContain('arkme-reserved-balance-tooltip')
+    expect(markup).toMatch(/当前余额[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
+  })
+
   it('renders a compact wrapping recharge dialog with only the temporarily enabled payment entry', () => {
     const markup = renderToStaticMarkup(<ArkmeRechargeDialogView
       quotaState={{ kind: 'ready', quota: {

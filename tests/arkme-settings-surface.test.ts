@@ -56,6 +56,7 @@ describe('ArkmeSettingsSurface', () => {
 
   it('keeps the reserved balance 20px from the current balance and anchors its tooltip above the help icon', () => {
     expect(redesignCss).toMatch(/\.arkme-redesign-balance-row \{[^}]*grid-template-columns: max-content max-content minmax\(0, 1fr\) 18px;[^}]*column-gap: 20px;/)
+    expect(redesignCss).toMatch(/\.arkme-redesign-balance-row\.is-without-reserved \{[^}]*grid-template-columns: max-content minmax\(0, 1fr\) 18px;/)
     expect(redesignCss).toMatch(/\.arkme-redesign-reserved-title > \[role="tooltip"\] \{[^}]*bottom: calc\(100% \+ 8px\);[^}]*left: calc\(100% - 7\.5px\);/)
     expect(redesignCss).not.toMatch(/\.arkme-redesign-reserved-help:hover\s*\{/)
   })
