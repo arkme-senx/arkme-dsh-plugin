@@ -1929,6 +1929,9 @@ describe('ArkmeService', () => {
         items: [
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
           { user_id: 20002, nick_name: '小林', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/20002/peer.png?x-oss-signature=peer' },
+          { user_id: 30003, nick_name: '公开用户昵称小周' },
+          { user_id: 40004, nick_name: '公开用户昵称小吴' },
+          { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
       if (url.endsWith('/api/v1/chat/timeline/page')) return json({ code: 200, data: {
@@ -1975,8 +1978,16 @@ describe('ArkmeService', () => {
         record_uid: body.record_uid,
         seq: body.seq,
         items: [
-          { user_id: 20002, display_name: '小林', read_status: 'read', read_at: 220 },
-          { user_id: 30003, display_name: '小周', read_status: 'unread', read_at: 0 },
+          {
+            user_id: 20002, remark: '备注小林', member_name: '群昵称小林', display_name: '用户昵称小林',
+            read_status: 'read', read_at: 220,
+          },
+          {
+            user_id: 30003, remark: '', member_name: '群昵称小周', display_name: '用户昵称小周',
+            read_status: 'unread', read_at: 0,
+          },
+          { user_id: 40004, display_name: '用户昵称小吴', read_status: 'read', read_at: 230 },
+          { user_id: 50005, display_name: '群成员', read_status: 'unread', read_at: 0 },
         ],
       } })
       if (url.endsWith('/api/v1/chats/cursor/update')) return json({ code: 200, data: {
@@ -2085,20 +2096,31 @@ describe('ArkmeService', () => {
       sourceRef: groupRef,
       itemUid: 'chat-record-2',
       sequence: 8,
-      readCount: 1,
-      unreadCount: 1,
-      totalMemberCount: 2,
+      readCount: 2,
+      unreadCount: 2,
+      totalMemberCount: 4,
       items: [
         {
           memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
-          displayName: '小林',
+          displayName: '备注小林',
           readStatus: 'read',
           readAtMillis: 220,
           avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
         },
         {
           memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
-          displayName: '小周',
+          displayName: '群昵称小周',
+          readStatus: 'unread',
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '用户昵称小吴',
+          readStatus: 'read',
+          readAtMillis: 230,
+        },
+        {
+          memberRef: expect.stringMatching(/^arkme-chat-member-v1\./),
+          displayName: '公开用户昵称小赵',
           readStatus: 'unread',
         },
       ],
