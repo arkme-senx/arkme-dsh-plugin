@@ -2,9 +2,69 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ArkmeAttachmentDraftTile, ArkmeMediaPreview, ArkmeMessageContent, ArkmeRecordDetailContent, arkmeContainedImageRect, arkmeImagePreviewAnchoredTop, arkmeImagePreviewDragTop, arkmeNextImagePreviewMode } from '../src/client/ArkmeRichContent.js'
 import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu } from '../src/client/ArkmeSidebar.js'
 
 describe('Arkme rich content presentation', () => {
+  it('gives every forwarded transcript segment its own avatar, including consecutive turns by the same speaker', () => {
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'forward-speakers', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '录音转写', createdAtMillis: 0, summaryLines: [], items: [{
+        senderName: '录音作者', avatarRef: 'author-avatar', sendAtMillis: 0, title: '', textContent: '',
+        segments: ['甲', '乙', '乙', '甲'].map((speakerName, index) => ({
+          speakerName, textContent: `第${index + 1}段正文`, startMillis: index * 1000, endMillis: (index + 1) * 1000,
+        })),
+      }] },
+    }} />)
+    expect(html.match(/data-arkme-forward-segment="true"/gu)).toHaveLength(4)
+    expect(html.match(/aria-label="转写说话人头像"/gu) ?? []).toHaveLength(4)
+    expect(html).toContain('第4段正文')
+    expect(html).not.toContain('<audio')
+  })
+
+  it('keeps recording detail text, speaker offsets and only authorized audio, including partial states', () => {
+    const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
+      itemUid: 'forward', senderName: '转发者', isMe: true, sendAtMillis: 0, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '录音转写', createdAtMillis: 0, summaryLines: [], truncated: true, items: [{
+        senderName: '原作者', sendAtMillis: 0, title: '', textContent: '单独的摘要', sourceType: 'long_recording_segments',
+        segments: [{ speakerName: '说话人甲', textContent: '完整片段'.repeat(100), startMillis: 60000, endMillis: 90000 }],
+      }] },
+    }} />)
+    expect(html).toContain('单独的摘要')
+    expect(html).toContain('完整片段'.repeat(100))
+    expect(html).toContain('说话人甲')
+    expect(html).toContain('01:00–01:30')
+    expect(html).toContain('当前展示部分转发记录')
+    expect(html).not.toContain('1970')
+    expect(html).not.toContain('<audio')
+    expect(html).not.toContain('data-arkme-text-collapsible')
+    expect(html).toContain('width:min(372px, 100%)')
+  })
+  it('shows a single-line forward heading and at most three summary lines without a nested card shell', () => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent item={{
+      itemUid: 'forward', senderName: '我', isMe: true, sendAtMillis: 1, status: 1, title: '', textContent: '',
+      forwardRecords: { title: '会议讨论', createdAtMillis: 1, summaryLines: [], items: Array.from({ length: 4 }, (_, i) => ({
+        senderName: '同事', sendAtMillis: 1, title: '', textContent: `摘要${i}`,
+      })) },
+    }} />)
+    expect(html).toContain('摘要2')
+    expect(html).not.toContain('摘要3')
+    expect(html).toContain('white-space:nowrap')
+    expect(html).toContain('font-size:14px')
+    expect(html).not.toContain('border:1px solid')
+    expect(html).not.toContain('background:')
+  })
+
+  it('keeps the complete text and article body readable in detail presentation', () => {
+    const html = renderToStaticMarkup(<ArkmeMessageContent presentation="detail" item={{
+      itemUid: 'article', senderName: '我', isMe: true, sendAtMillis: 1, status: 1,
+      title: '长文标题', textContent: '完整正文'.repeat(100), displayKind: 1,
+    }} />)
+    expect(html).toContain('长文标题')
+    expect(html).toContain('完整正文'.repeat(100))
+    expect(html).not.toContain('data-arkme-long-article="preview"')
+    expect(html).not.toContain('data-arkme-text-collapsible')
+  })
   it('contains the whole image initially and exposes fixed-width zoom without horizontal overflow', () => {
     const image = { kind: 'image' as const, mediaRef: 'long-image-ref', fileName: 'long.png', mimeType: 'image/png', size: 1, sortOrder: 0 }
     const html = renderToStaticMarkup(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => undefined} onClose={() => undefined} />)
@@ -55,9 +115,8 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('data-arkme-long-article="preview"')
     expect(html).toContain('data-arkme-long-article-inner="true"')
     expect(html).toContain('aria-label="查看长文 长文标题"')
-    expect(html).toContain('background:rgba(127,127,127,.06)')
-    expect(html).toContain('margin:4px 0 0 22px')
-    expect(html).toContain('margin:8px 0 0 22px')
+    expect(html).not.toContain('background:rgba(127,127,127,.06)')
+    expect(html).toContain('margin:8px 0 0')
     expect(html).toContain('<svg')
     expect(html).not.toContain('📝')
     expect(html).toContain('4字')

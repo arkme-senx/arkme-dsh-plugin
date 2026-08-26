@@ -878,6 +878,8 @@ export interface ArkmeProviderCapabilities {
     imageLibrary?: true
     sourceDirectory: true
     sourceTimeline: true
+    /** Forward snapshots include typed transcripts and account-bound attachment references. */
+    forwardContent?: true
     sourceTextSend: true
     /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
     messageReadReceipts?: true
@@ -1146,6 +1148,18 @@ export interface ArkmeForwardRecordsPreview {
   createdAtMillis: number
   summaryLines: string[]
   items: ArkmeForwardRecordPreviewItem[]
+  /** The bounded snapshot omitted additional records or nested content. */
+  truncated?: true
+}
+
+export interface ArkmeForwardTranscriptSegment {
+  speakerName: string
+  textContent: string
+  /** Offsets in the forwarded recording, not wall-clock timestamps. */
+  startMillis: number
+  endMillis: number
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: true
 }
 
 export interface ArkmeForwardRecordPreviewItem {
@@ -1156,6 +1170,11 @@ export interface ArkmeForwardRecordPreviewItem {
   title: string
   textContent: string
   contentLabel?: string
+  sourceType?: 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
+  segments?: ArkmeForwardTranscriptSegment[]
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: true
+  truncated?: true
 }
 
 export interface ArkmeTimelineAgentSource {

@@ -198,6 +198,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,

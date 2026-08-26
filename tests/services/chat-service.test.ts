@@ -9,6 +9,9 @@ import { ProfileService } from '../../src/services/profile-service.js'
 import { RecordService } from '../../src/services/record-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { SourceService } from '../../src/services/source-service.js'
+import { dispatchArkmeHostOperation } from '../../src/host-api.js'
+import { createArkmeSdk } from '../../src/sdk/index.js'
+import { createArkmeCoreToolDefinitions } from '../../src/tools/index.js'
 
 const config: ArkmeServiceConfig = {
   environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
@@ -53,6 +56,64 @@ describe('ChatService', () => {
     expect(deleted.items.map(item => item.fileAssetUid)).toEqual(['asset-second-123'])
   })
 
+  it('preserves forwarded recording segments and safe media without leaking source identities', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const runtime = new ServiceRuntime(config, sessions, { async uniqueCode() { return 'device-secret' } } as StateStore)
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, { async openWorldImageRef() { throw new Error('unused') } }, { recordUid() { return '' } })
+    // This projection must not query the private source, even for playable attachments.
+    const chat = new ChatService(runtime, {} as SourceService, profile, media, {} as RecordService, {} as BotService, {} as ArkoService, {} as GroupAiPolishService, {
+      emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {},
+    })
+    const result = await chat.chatForwardRecordsPreview({ content_payload: {
+      render_kind: 'forward_records', title: '会议快记', created_at: 1700000000,
+      items: [{
+        source_type: 'long_recording_segments', source_chat_session_uid: 'private-source', record_uid: 'private-record',
+        owner_name: '小林', send_at: 1700000000, text: '完整内容',
+        long_recording_segments: [{ speaker_number: 2, speaker_label: '同事', text: '讨论内容', start_millis: 1230, end_millis: 4560 }],
+        files: [{ type: 2, name: '会议.m4a', mime_type: 'audio/mp4', download_url: 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/a.m4a?Signature=private-signature' }],
+      }, {
+        source_type: 'chat_record', owner_name: '小乙',
+        call_record_snapshot: { transcript_segments: [{ speaker_name: '小乙', text: '通话内容', start_ms: 0, end_ms: 1500, audio_url: 'https://jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com/b.wav' }] },
+      }],
+    } }, 42, 1)
+    expect(result).toMatchObject({ title: '会议快记', createdAtMillis: 1700000000000, items: [{
+      sourceType: 'long_recording_segments', sendAtMillis: 1700000000000,
+      segments: [{ speakerName: '同事', textContent: '讨论内容', startMillis: 1230, endMillis: 4560 }],
+      contentBlocks: [{ kind: 'audio', fileName: '会议.m4a', mediaRef: expect.any(String) }],
+    }, { segments: [{ speakerName: '小乙', textContent: '通话内容', contentBlocks: [{ kind: 'audio', mediaRef: expect.any(String) }] }] }] })
+    expect(JSON.stringify(result)).not.toMatch(/private-source|private-record|private-signature|https:/)
+    const readSource = vi.fn(async () => ({ source: { sourceRef: 'received-source' }, items: [{ forwardRecords: result }], hasMore: false }))
+    const owner = { readSource }
+    const hostResult = await dispatchArkmeHostOperation(owner as never, 'source.timeline', { sourceRef: 'received-source' })
+    const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
+      const { operation, params } = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({ ok: true, value: await dispatchArkmeHostOperation(owner as never, operation, params) }))
+    } })
+    expect(await sdk.readSource('received-source')).toEqual(hostResult)
+    const tool = createArkmeCoreToolDefinitions(owner as never).find(tool => tool.name === 'arkme_source_read')!
+    const toolResult = await tool.execute({ source_ref: 'received-source' }, { signal: new AbortController().signal } as never)
+    expect(toolResult).toContain('讨论内容')
+    expect(toolResult).toContain('"startMillis": 1230')
+    expect(toolResult).not.toMatch(/private-source|private-record|private-signature|https:/)
+    const legacy = await chat.chatForwardRecordsPreview({ content_payload: {
+      renderKind: 'forward_records', title: '', summaryLines: ['原作者：旧快照'], items: [],
+    } }, 42, 0)
+    expect(legacy).toEqual({ title: '转发快记', createdAtMillis: 0, summaryLines: ['原作者：旧快照'], items: [] })
+    const many = await chat.chatForwardRecordsPreview({ content_payload: {
+      render_kind: 'forward_records', items: Array.from({ length: 101 }, (_, i) => ({
+        owner_name: '作者', text: `条目${i}`, long_recording_segments: i === 0 ? Array.from({ length: 501 }, () => ({ text: '片段' })) : [],
+      })),
+    } }, 42, 0)
+    expect(many?.items).toHaveLength(100)
+    expect(many?.truncated).toBe(true)
+    expect(many?.items[0]?.segments).toHaveLength(500)
+    expect(many?.items[0]?.truncated).toBe(true)
+    expect(many?.items[0]?.segments?.[0]?.contentBlocks).toBeUndefined()
+  })
   it('projects, groups, and redacts group member join metadata', async () => {
     const events = await projectArkmeConversationMemberJoinEvents([
       {

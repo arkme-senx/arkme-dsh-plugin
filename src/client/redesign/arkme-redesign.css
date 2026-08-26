@@ -318,8 +318,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 @media (prefers-reduced-motion: reduce) {
   .arkme-conversation-records-reveal { animation: none; }
 }
-.arkme-redesign-route-chats [aria-label="打开快记详情"] { border-radius: 5px 16px 16px 16px !important; }
-.arkme-redesign-route-chats [data-arkme-message-content] p { font-size: 14px !important; line-height: 22px !important; }
+.arkme-redesign-route-chats [data-arkme-content-presentation="bubble"] p { font-size: 14px; line-height: 1.62; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }
 .arkme-redesign-route-chats .arkme-conversation-composer-inner {
   width: 100% !important;
@@ -1266,4 +1265,20 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
 }
 @media (prefers-reduced-motion: reduce) {
   .arkme-contact-directory-caret { transition: none; }
+}
+
+/* Chat-specific colors follow DSH's single light/dark owner. */
+.arkme-conversation-surface {
+  --arkme-chat-self-bubble: #eef1f8;
+  --arkme-chat-other-bubble: #f3f4f6;
+}
+body[data-ds-dark-theme] .arkme-conversation-surface {
+  --arkme-chat-self-bubble: #2c3142;
+  --arkme-chat-other-bubble: #282a31;
+  --arkme-audio-control: #8995c5;
+}
+[data-arkme-message-direction]:focus-visible,
+[data-arkme-note-detail] button:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
+  outline-offset: 2px;
 }

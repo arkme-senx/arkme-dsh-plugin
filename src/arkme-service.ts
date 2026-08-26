@@ -36,10 +36,7 @@ import { ChatService } from './services/chat-service.js'
 import { ContactService } from './services/contact-service.js'
 import { ContactDirectoryService } from './services/contact-directory-service.js'
 import { CommunityService } from './services/community-service.js'
-import {
-  ExtensionReviewService,
-  type ArkmeExtensionAuthorProjection,
-} from './services/extension-review-service.js'
+import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './services/extension-review-service.js'
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
@@ -491,6 +488,7 @@ export class ArkmeService {
         imageLibrary: true,
         sourceDirectory: true,
         sourceTimeline: true,
+        forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
