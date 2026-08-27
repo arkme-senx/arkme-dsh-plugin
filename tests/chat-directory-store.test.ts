@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+
+const { callArkmeMock } = vi.hoisted(() => ({ callArkmeMock: vi.fn() }))
+
+vi.mock('../src/client/api.js', () => ({ callArkme: callArkmeMock }))
+
 import {
   ArkmeChatDirectoryStore, ArkmeChatTimelineDeltaStore, ArkmeInterwovenInvalidationStore,
 } from '../src/client/chat-directory-store.js'
@@ -115,6 +120,30 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(loadPage).toHaveBeenCalledTimes(4)
   })
 
+  it('loads the root directory in 20-item pages while continuing through the server cursor', async () => {
+    callArkmeMock.mockReset()
+      .mockResolvedValueOnce({
+        directory: 'root',
+        items: [{ sourceRef: 'source-1', kind: 'private_chat', displayName: '第一', activeAtMillis: 2, unreadCount: 0 }],
+        hasMore: true,
+        nextCursor: 'next-page',
+      })
+      .mockResolvedValueOnce({
+        directory: 'root',
+        items: [{ sourceRef: 'source-2', kind: 'group_chat', displayName: '第二', activeAtMillis: 1, unreadCount: 0 }],
+        hasMore: false,
+      })
+    const store = new ArkmeChatDirectoryStore()
+
+    await expect(store.refreshRoot({ force: true })).resolves.toHaveLength(2)
+    expect(callArkmeMock).toHaveBeenNthCalledWith(1, 'sources.list', {
+      directory: 'root', limit: 20, refresh: true,
+    })
+    expect(callArkmeMock).toHaveBeenNthCalledWith(2, 'sources.list', {
+      directory: 'root', limit: 20, cursor: 'next-page', refresh: true,
+    })
+  })
+
   it('publishes refresh state while a directory request is in flight', async () => {
     const page = {
       directory: 'root' as const,
@@ -170,17 +199,48 @@ describe('ArkmeChatDirectoryStore', () => {
     const store = new ArkmeChatDirectoryStore()
     const source = {
       sourceRef: 'source-1', kind: 'group_chat' as const, displayName: '项目群',
-      activeAtMillis: 10, unreadCount: 2, latestSequence: 8,
+      activeAtMillis: 10, unreadCount: 2, hasUnreadMention: true, latestSequence: 8,
     }
     store.publish([source])
 
     store.updateReadAck('source-1', 'chat:group-1', 8, 0)
-    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, hasUnreadMention: false, latestSequence: 8 })
     expect(store.totalUnreadCount()).toBe(0)
 
     store.upsert({ ...source, unreadCount: 2, activeAtMillis: 11, latestSequence: 8 }, 'chat:group-1')
-    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, latestSequence: 8 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 0, hasUnreadMention: false, latestSequence: 8 })
     expect(store.totalUnreadCount()).toBe(0)
+  })
+
+  it('preserves unread mention flags when realtime projections omit the backend flag', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const mentioned = {
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 1, hasUnreadMention: true, latestSequence: 8,
+    }
+    store.publish([mentioned])
+
+    store.upsert({
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat' as const, displayName: '项目群',
+      activeAtMillis: 11, unreadCount: 1, latestSequence: 9,
+    }, 'chat:group-1')
+
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, hasUnreadMention: true, latestSequence: 9 })
+  })
+
+  it('clears an old unread mention flag when a newer projection explicitly says false', () => {
+    const store = new ArkmeChatDirectoryStore()
+    store.publish([{
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat', displayName: '项目群',
+      activeAtMillis: 10, unreadCount: 2, hasUnreadMention: true, latestSequence: 8,
+    }])
+
+    store.upsert({
+      sourceRef: 'source-1', sourceKey: 'chat:group-1', kind: 'group_chat', displayName: '项目群',
+      activeAtMillis: 11, unreadCount: 1, hasUnreadMention: false, latestSequence: 9,
+    }, 'chat:group-1')
+
+    expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, hasUnreadMention: false, latestSequence: 9 })
   })
 
   it('keeps the read watermark when a renamed projection changes sourceRef', () => {

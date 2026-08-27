@@ -31,6 +31,17 @@ export interface ArkmeRichComposerHandle {
   readonly selectionEnd: number
   focus(options?: FocusOptions): void
   setSelectionRange(start: number, end: number): void
+  getCaretGeometry(): ArkmeComposerCaretGeometry | undefined
+  getEditorGeometry(): ArkmeComposerCaretGeometry | undefined
+}
+
+export interface ArkmeComposerCaretGeometry {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
 }
 
 export interface ArkmeRichComposerInputProps {
@@ -44,6 +55,7 @@ export interface ArkmeRichComposerInputProps {
   disabled: boolean
   style: CSSProperties
   onTextChange(text: string): void
+  onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
   onPaste?(event: ClipboardEvent<HTMLDivElement>): void
   onKeyDown?(event: KeyboardEvent<HTMLDivElement>): void
 }
@@ -157,6 +169,29 @@ function setEditorSelection(root: HTMLElement, start: number, end: number): void
   selection.addRange(range)
 }
 
+function rectGeometry(rect: Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>): ArkmeComposerCaretGeometry {
+  return {
+    left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+    width: rect.width, height: rect.height,
+  }
+}
+
+function editorCaretGeometry(root: HTMLElement, offset: number): ArkmeComposerCaretGeometry {
+  const point = pointForSemanticOffset(root, offset)
+  const range = document.createRange()
+  range.setStart(point.node, point.offset)
+  range.collapse(true)
+  const rect = range.getClientRects().item(0) ?? range.getBoundingClientRect()
+  if (rect.width > 0 || rect.height > 0) return rectGeometry(rect)
+  const rootRect = root.getBoundingClientRect()
+  const computed = getComputedStyle(root)
+  const lineHeight = Number.parseFloat(computed.lineHeight) || Number.parseFloat(computed.fontSize) * 1.5 || 21
+  return {
+    left: rootRect.left, top: rootRect.top, right: rootRect.left + 2, bottom: rootRect.top + lineHeight,
+    width: 2, height: lineHeight,
+  }
+}
+
 function emojiAtomSemanticOffset(root: HTMLElement, target: EventTarget | null): number | undefined {
   if (!(target instanceof Element)) return undefined
   const atom = target.closest<HTMLElement>('[data-arkme-editable-emoji]')
@@ -216,7 +251,7 @@ function renderEditorContents(
 export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
     className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
-    onTextChange, onPaste, onKeyDown,
+    onTextChange, onSelectionChange, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
     const valueRef = useRef(value)
@@ -252,6 +287,16 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       },
       focus(options?: FocusOptions) { editorRef.current?.focus(options) },
       setSelectionRange(start: number, end: number) { applySelection(start, end) },
+      getCaretGeometry() {
+        const root = editorRef.current
+        if (root === null) return undefined
+        selectionRef.current = editorSelection(root, selectionRef.current)
+        return editorCaretGeometry(root, selectionRef.current.end)
+      },
+      getEditorGeometry() {
+        const root = editorRef.current
+        return root === null ? undefined : rectGeometry(root.getBoundingClientRect())
+      },
     }))
 
     useLayoutEffect(() => {
@@ -277,6 +322,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
       selectionRef.current = selection
       pendingSelectionRef.current = selection
       onTextChange(nextText)
+      onSelectionChange?.(nextText, selection.start, selection.end)
     }
 
     const insertNewline = (root: HTMLDivElement) => {
@@ -314,7 +360,10 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
             insertNewline(event.currentTarget)
           }
         }}
-        onKeyUp={event => { selectionRef.current = editorSelection(event.currentTarget, selectionRef.current) }}
+        onKeyUp={event => {
+          selectionRef.current = editorSelection(event.currentTarget, selectionRef.current)
+          onSelectionChange?.(editorSemanticText(event.currentTarget), selectionRef.current.start, selectionRef.current.end)
+        }}
         onMouseUp={event => {
           const selection = editorSelection(event.currentTarget, selectionRef.current)
           const atomOffset = selection.start === selection.end
@@ -325,6 +374,7 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
             return
           }
           selectionRef.current = selection
+          onSelectionChange?.(editorSemanticText(event.currentTarget), selection.start, selection.end)
         }}
       />
     </div>

@@ -27,6 +27,8 @@ import { ArkmeExtensionSourceLink } from './ArkmeExtensionShare.js'
 import { ArkmeSharedExtensionDetail as SharedExtensionDetailView } from './ArkmeSharedExtensionDetail.js'
 import { appendExtensionDiscoverPage, extensionTabSelection, mergeExtensionDiscoverItems } from './extension-market-model.js'
 import { callArkme } from './api.js'
+import { resolveExtensionSharePresentation } from './extension-share-presentation.js'
+import type { ArkmeExtensionShareAction } from './extension-share-deeplink.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { myExtensionBadges, myExtensionPrimaryAction, myExtensionWarningText, nextExtensionPublishMutation,
   type ExtensionPublishMutation,
@@ -83,7 +85,7 @@ const styles: Record<string, CSSProperties> = {
   pageBackdrop: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' },
   pageDialog: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
-    background: colors.surface,
+    background: arkmeTheme.base,
   },
   detailModalBackdrop: {
     position: 'fixed', zIndex: 100, inset: 0, display: 'grid', placeItems: 'center', padding: 16,
@@ -128,6 +130,7 @@ const styles: Record<string, CSSProperties> = {
     width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column',
     background: colors.surface, color: colors.text, fontFamily: 'var(--dsw-font-family, inherit)',
   },
+  pageShell: { background: arkmeTheme.base },
   embeddedFrame: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' },
   embeddedDialog: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden',
@@ -521,7 +524,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onRestart }: {
-  kind: 'apply' | 'remove' | 'unavailable'
+  kind: 'apply' | 'disable' | 'remove' | 'unavailable'
   restarting: boolean
   onLater(): void
   onRestart(): void
@@ -533,6 +536,8 @@ export function ArkmeExtensionRestartDialog({ kind, restarting, onLater, onResta
       <p style={styles.restartDescription}>
         {kind === 'unavailable'
           ? `${ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE} 请联系插件作者或安装兼容版本后重试。`
+          : kind === 'disable'
+          ? '扩展关闭状态已保存，重启后会停止当前进程中仍在运行的界面和能力。'
           : kind === 'remove'
           ? '扩展已卸载，重启后会从当前页面完全移除。'
           : '扩展已安装到插件列表，重启后立即生效。'}
@@ -555,7 +560,7 @@ const PENDING_EXTENSION_RESTART_KEY = 'arkme.extension.pending-restart'
 
 const TAB_LABELS: Record<Tab, string> = { discover: '发现', installed: '已安装', mine: '我的扩展', updates: '更新' }
 type MarketplaceCategory = string
-type MarketplaceAuthorFilter = {
+export type MarketplaceAuthorFilter = {
   ownerUserId: number
   ownerName: string
 }
@@ -1153,6 +1158,23 @@ export function extensionAuthorWorldTarget(
   }
 }
 
+export async function executeExtensionShareAuthorAction(
+  item: ArkmeExtensionCatalogItem,
+  action: ArkmeExtensionShareAction,
+  handlers: {
+    openPrivateChat(target: ArkmeWorldTarget): Promise<void>
+    openWorld(target: ArkmeWorldTarget): void
+  },
+): Promise<void> {
+  const target = extensionAuthorWorldTarget(item)
+  if (target === undefined) throw new Error('该扩展没有可操作的 Arkme 站内作者')
+  if (action === 'author-world') {
+    handlers.openWorld(target)
+    return
+  }
+  await handlers.openPrivateChat(target)
+}
+
 export function ArkmeExtensionAuthorPopover({
   item,
   open,
@@ -1576,8 +1598,8 @@ export function mergeInstalledExtensionCatalogItem(
   }
 }
 
-function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
-  if (!item.enabled) return '已关闭'
+export function extensionEnabledLabel(item: ArkmeInstalledExtensionView): string {
+  if (!item.enabled) return item.active || item.restartRequired ? '已关闭，重启后完全停用' : '已关闭'
   return item.active ? '已启用' : '已启用，尚未加载'
 }
 
@@ -1589,13 +1611,18 @@ export function extensionEnableUnavailable(
 }
 
 export function ArkmeMarketplace({
-  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, onShareExit, onClose,
+  currentSessionId, currentUserId, currentUserAvatarRef, shareRef, shareAction, initialExtensionId, initialAuthorFilter,
+  onShareResolved, onShareExit, onClose,
   displayMode = 'dialog', onPrivateChatOpened, sortingEnabled = true,
 }: {
   currentSessionId?: string | undefined
   currentUserId?: number | undefined
   currentUserAvatarRef?: string | undefined
   shareRef?: string | undefined
+  shareAction?: ArkmeExtensionShareAction | undefined
+  initialExtensionId?: string | undefined
+  initialAuthorFilter?: MarketplaceAuthorFilter | undefined
+  onShareResolved?(extensionId: string): void
   onShareExit?(): void
   onClose?: (() => void) | undefined
   displayMode?: 'dialog' | 'page'
@@ -1620,7 +1647,10 @@ export function ArkmeMarketplace({
   const [actionBusyExtensionId, setActionBusyExtensionId] = useState<string>()
   const [installError, setInstallError] = useState('')
   const [restartNotice, setRestartNotice] = useState('')
-  const [restartPrompt, setRestartPrompt] = useState<{ extensionId: string; kind: 'apply' | 'remove' | 'unavailable' }>()
+  const [restartPrompt, setRestartPrompt] = useState<{
+    extensionId: string
+    kind: 'apply' | 'disable' | 'remove' | 'unavailable'
+  }>()
   const [uninstallConfirmExtensionId, setUninstallConfirmExtensionId] = useState<string>()
   const [query, setQuery] = useState('')
   const [restarting, setRestarting] = useState(false)
@@ -1649,7 +1679,7 @@ export function ArkmeMarketplace({
   const [discoverNextCursor, setDiscoverNextCursor] = useState<string>()
   const [loadingMoreDiscover, setLoadingMoreDiscover] = useState(false)
   const [loadMoreDiscoverError, setLoadMoreDiscoverError] = useState('')
-  const [authorFilter, setAuthorFilter] = useState<MarketplaceAuthorFilter>()
+  const [authorFilter, setAuthorFilter] = useState<MarketplaceAuthorFilter | undefined>(() => initialAuthorFilter)
   const [authorCardOpen, setAuthorCardOpen] = useState(false)
   const [authorActionBusy, setAuthorActionBusy] = useState(false)
   const [authorActionError, setAuthorActionError] = useState('')
@@ -1663,7 +1693,10 @@ export function ArkmeMarketplace({
   const publishMutation = useRef<ExtensionPublishMutation>()
   const editMutation = useRef<ExtensionEditMutation>()
   const detailDialogRef = useRef<HTMLElement>(null)
+  const openedInitialExtensionIdRef = useRef<string>()
   const detailReturnFocus = useRef<HTMLElement>()
+  const promptedRestartExtensions = useRef(new Set<string>())
+  const preserveResolvedShareDetail = useRef(false)
 
   const categoryOptions = marketplaceCategoryOptions(
     classificationTree,
@@ -1675,12 +1708,14 @@ export function ArkmeMarketplace({
   const classificationHint = classificationStatusHint(classificationTree.status, classificationTree.message)
 
   const closeDetail = (restoreFocus = true) => {
+    const dismissPendingShare = shareRef !== undefined && sharedDetail === undefined
     setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setDetailError('')
     setInstallTask(undefined); setInstallError(''); setUninstallConfirmExtensionId(undefined); setDeleteConfirmExtensionId(undefined)
     setShareNotice(''); setAuthorCardOpen(false); setAuthorActionError('')
     const target = detailReturnFocus.current
     detailReturnFocus.current = undefined
     if (restoreFocus && target !== undefined && typeof window !== 'undefined') window.setTimeout(() => { target.focus() }, 0)
+    if (dismissPendingShare) onShareExit?.()
   }
 
   const hostInstance = async (): Promise<string | undefined> => {
@@ -1690,6 +1725,17 @@ export function ArkmeMarketplace({
 
   const acceptInstalled = (local: ArkmeInstalledExtensionView[]): void => {
     setInstalled(local)
+    const repairPending = local.find(item => item.restartRequired === true && item.unavailable === undefined)
+    if (repairPending !== undefined && !promptedRestartExtensions.current.has(repairPending.extensionId)) {
+      promptedRestartExtensions.current.add(repairPending.extensionId)
+      setRestartNotice(repairPending.enabled
+        ? '扩展启用状态等待重启后生效。'
+        : '已修复扩展关闭状态；重启后会完全停用当前仍在运行的界面和能力。')
+      setRestartPrompt({
+        extensionId: repairPending.extensionId,
+        kind: repairPending.enabled ? 'apply' : 'disable',
+      })
+    }
     if (typeof window === 'undefined') return
     let pendingExtensionId: string | null = null
     try { pendingExtensionId = window.sessionStorage.getItem(PENDING_EXTENSION_RESTART_KEY) } catch { return }
@@ -1765,6 +1811,7 @@ export function ArkmeMarketplace({
   const load = async (
     target: Tab,
     mode: 'initial' | 'refresh' = extensionTabLoadMode(loadedTabs, target),
+    preserveDetail = false,
   ) => {
     const sequence = ++requestSequence.current
     requestController.current?.abort()
@@ -1777,13 +1824,14 @@ export function ArkmeMarketplace({
     const controller = new AbortController()
     requestController.current = controller
     if (mode === 'initial') setLoadingTab(target)
-    setError(''); setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError(''); setInstallError('')
+    setError(''); setInstallError('')
+    if (!preserveDetail) { setDetail(undefined); setDetailRequestedExtensionId(undefined); setDetailError('') }
     setAuditResult(undefined); setAuditError('')
     try {
       if (target === 'discover') {
         void callArkme<ArkmeInstalledExtensionView[]>('extensions.installed-list', undefined, controller.signal)
           .then(local => {
-            if (sequence === requestSequence.current) setInstalled(local)
+            if (sequence === requestSequence.current) acceptInstalled(local)
           })
           .catch(() => undefined)
         void callArkme<ArkmeExtensionCatalogPage>('extensions.my-list', undefined, controller.signal)
@@ -1913,6 +1961,10 @@ export function ArkmeMarketplace({
 
   useEffect(() => {
     if (shareRef !== undefined) return
+    if (preserveResolvedShareDetail.current) {
+      preserveResolvedShareDetail.current = false
+      return
+    }
     const timer = window.setTimeout(() => { void load('discover', 'initial') }, searchQuery.trim() === '' ? 0 : 250)
     return () => {
       window.clearTimeout(timer)
@@ -1924,15 +1976,52 @@ export function ArkmeMarketplace({
   useEffect(() => {
     if (shareRef === undefined) return
     const controller = new AbortController()
-    setSharedDetail(undefined); setSharedDetailBusy(true); setDetail(undefined); setError('')
-    void callArkme<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef }, controller.signal)
-      .then(value => { setSharedDetail(value) })
-      .catch(caught => {
-        if ((caught as Error).name !== 'AbortError') setError(caught instanceof Error ? caught.message : String(caught))
+    setSharedDetail(undefined); setSharedDetailBusy(false); setDetail(undefined); setError('')
+    setDetailRequestedExtensionId(`share:${shareRef}`); setDetailBusy(true); setDetailError('')
+    setTab('discover')
+    void load('discover', 'initial', true)
+    void resolveExtensionSharePresentation(shareRef, controller.signal)
+      .then(async presentation => {
+        if (controller.signal.aborted) return
+        if (presentation.kind === 'catalog') {
+          if (shareAction !== undefined) {
+            await executeExtensionShareAuthorAction(presentation.detail, shareAction, {
+              openWorld: target => {
+                onShareExit?.()
+                arkmeUi.showUserWorld(target)
+              },
+              openPrivateChat: async target => {
+                const result = await callArkme<ArkmeOpenPrivateChatResult>('chat.private.open', {
+                  peerUserId: target.userId,
+                  displayName: target.displayName,
+                }, controller.signal)
+                if (controller.signal.aborted) return
+                onShareExit?.()
+                onPrivateChatOpened?.(result.source)
+              },
+            })
+            return
+          }
+          preserveResolvedShareDetail.current = true
+          if (onShareResolved !== undefined) {
+            onShareResolved(presentation.detail.extension_id)
+          } else {
+            setDetailRequestedExtensionId(presentation.detail.extension_id); setDetail(presentation.detail); setDetailBusy(false)
+            onShareExit?.()
+          }
+        } else {
+          if (shareAction !== undefined) throw new Error('当前分享链接无法解析 Arkme 作者')
+          setDetailRequestedExtensionId(undefined); setDetail(undefined); setDetailBusy(false); setSharedDetail(presentation.detail)
+        }
       })
-      .finally(() => { if (!controller.signal.aborted) setSharedDetailBusy(false) })
+      .catch(caught => {
+        if ((caught as Error).name !== 'AbortError' && !controller.signal.aborted) {
+          setDetailBusy(false)
+          setDetailError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
     return () => { controller.abort() }
-  }, [shareRef])
+  }, [shareRef, shareAction])
 
   const switchTab = (target: Tab) => {
     if (shareRef !== undefined) { setSharedDetail(undefined); onShareExit?.() }
@@ -2005,6 +2094,23 @@ export function ArkmeMarketplace({
     catch (caught) { setDetailError(caught instanceof Error ? caught.message : String(caught)) }
     finally { setDetailBusy(false) }
   }
+
+  useEffect(() => {
+    const extensionId = initialExtensionId?.trim()
+    if (extensionId === undefined || extensionId === '' || openedInitialExtensionIdRef.current === extensionId) return
+    openedInitialExtensionIdRef.current = extensionId
+    void inspect(extensionId)
+  }, [initialExtensionId])
+
+  useEffect(() => {
+    if (initialAuthorFilter === undefined) return
+    setTab('discover')
+    setCategory('all')
+    setAuthorFilter(current => current?.ownerUserId === initialAuthorFilter.ownerUserId
+      && current.ownerName === initialAuthorFilter.ownerName
+      ? current
+      : initialAuthorFilter)
+  }, [initialAuthorFilter?.ownerUserId, initialAuthorFilter?.ownerName])
 
   const runAudit = async (extensionId: string) => {
     setAuditBusyExtensionId(extensionId); setAuditError(''); setAuditResult(undefined)
@@ -2121,18 +2227,25 @@ export function ArkmeMarketplace({
       const result = await callArkme<ArkmeExtensionEnabledResult>('extensions.enabled.set', { extensionId, enabled })
       setInstalled(current => current.map(item => {
         if (item.extensionId !== extensionId) return item
-        const { unavailable: _unavailable, ...retained } = item
+        const { unavailable: _unavailable, restartRequired: _restartRequired, ...retained } = item
         return {
           ...retained,
           enabled: result.enabled,
           active: result.active,
+          ...(result.restart_required ? { restartRequired: true } : {}),
           ...(result.unavailable === undefined ? {} : { unavailable: result.unavailable }),
         }
       }))
       if (result.unavailable !== undefined) {
         setRestartNotice('')
         setRestartPrompt({ extensionId, kind: 'unavailable' })
-      } else setRestartNotice(result.message)
+      } else {
+        setRestartNotice(result.message)
+        if (result.restart_required) {
+          promptedRestartExtensions.current.add(extensionId)
+          setRestartPrompt({ extensionId, kind: result.enabled ? 'apply' : 'disable' })
+        }
+      }
     } catch (caught) {
       setInstallError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -2443,7 +2556,7 @@ export function ArkmeMarketplace({
     {...(displayMode === 'dialog' ? { role: 'dialog', 'aria-modal': true } : { role: 'region' })}
     aria-labelledby="arkme-marketplace-title"
   >
-  <div style={styles.shell} aria-label="Arkme 市集">
+  <div style={{ ...styles.shell, ...(displayMode === 'page' ? styles.pageShell : {}) }} aria-label="Arkme 市集">
     {displayMode === 'dialog' && <header style={styles.header}>
       <h2 id="arkme-marketplace-title" style={styles.title}>市集</h2>
       {detail?.share !== undefined && <button
@@ -2475,7 +2588,7 @@ export function ArkmeMarketplace({
         placeholder="搜索扩展、功能或作者…"
       />
       {authorFilter !== undefined && <span style={styles.marketplaceAuthorFilter} data-marketplace-author-filter="true">
-        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName} 的全部插件</span>
+        <span style={styles.marketplaceAuthorFilterLabel}>{authorFilter.ownerName === '我' ? '我的全部插件' : `${authorFilter.ownerName} 的全部插件`}</span>
         <button
           type="button"
           style={styles.marketplaceAuthorFilterClear}

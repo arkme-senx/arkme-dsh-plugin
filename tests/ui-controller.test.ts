@@ -42,6 +42,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'recordings',
     })
 
@@ -50,6 +51,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'source',
       selectedSource: source,
       calendarOpen: true,
@@ -61,6 +63,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'world',
     })
 
@@ -69,6 +72,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'arko',
     })
     controller.authChanged(true)
@@ -82,7 +86,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
   })
 
-  it('switches between login and an account-bound source selection', () => {
+  it('opens DeepSeek Harness when a newly started client authenticates', () => {
     const controller = new ArkmeUiController()
     const listener = vi.fn()
     const unsubscribe = controller.subscribe(listener)
@@ -97,16 +101,20 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.focusSendToSelf()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, mode: 'source' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'source' })
     controller.showLogin()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, mode: 'login' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' })
     controller.authChanged(true)
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
     expect(controller.getSnapshot().authRevision).toBe(1)
     controller.chatChanged()
     expect(controller.getSnapshot().chatRevision).toBe(1)
-    expect(listener).toHaveBeenCalledTimes(5)
+    expect(controller.getSnapshot().recordRevision).toBe(0)
+    controller.recordChanged()
+    expect(controller.getSnapshot().chatRevision).toBe(1)
+    expect(controller.getSnapshot().recordRevision).toBe(1)
+    expect(listener).toHaveBeenCalledTimes(6)
     unsubscribe()
   })
 
@@ -119,7 +127,7 @@ describe('ArkmeUiController', () => {
     controller.showSearch()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'search',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'search',
     })
   })
 
@@ -133,7 +141,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
     })
     controller.showConversations()
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
@@ -147,7 +155,7 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     controller.showContactAdd()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'contact-add',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'contact-add',
       selectedSource: source,
     })
     controller.showConversations()
@@ -160,7 +168,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
     })
   })
 
@@ -180,6 +188,29 @@ describe('ArkmeUiController', () => {
     controller.consumeConversationTarget(target?.revision ?? 0)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     expect(controller.getSnapshot().conversationTarget).toBeUndefined()
+  })
+
+  it('opens the marketplace with an exact author filter and clears it for normal marketplace navigation', () => {
+    const controller = new ArkmeUiController()
+
+    controller.showAuthorExtensions(7, '  Lucis   测试  ')
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0,
+      chatRevision: 0,
+      recordRevision: 0,
+      mode: 'extensions',
+      extensionAuthorFilter: { ownerUserId: 7, ownerName: 'Lucis 测试' },
+    })
+
+    controller.showExtensions()
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0,
+      chatRevision: 0,
+      recordRevision: 0,
+      mode: 'extensions',
+    })
+    expect(() => { controller.showAuthorExtensions(0, '无效') }).toThrow('插件作者用户 ID')
   })
 
   it('opens one user World homepage and clears the target when returning to the public World', () => {
@@ -210,7 +241,7 @@ describe('ArkmeUiController', () => {
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'world',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'world',
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
@@ -224,7 +255,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
     })
   })
 
@@ -250,7 +281,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
     })
   })
 
@@ -269,12 +300,13 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('switches between Arkme conversations and the native DeepSeek Harness mode', () => {
+  it('keeps the native DeepSeek Harness as the current-runtime conversation', () => {
     const controller = new ArkmeUiController()
     controller.showHarness()
     expect(controller.getSnapshot().mode).toBe('harness')
+    controller.showRecordings()
     controller.showConversations()
-    expect(controller.getSnapshot().mode).toBe('source')
+    expect(controller.getSnapshot().mode).toBe('harness')
   })
 
   it('opens and closes the calendar without replacing the page underneath it', () => {

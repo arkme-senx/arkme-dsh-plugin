@@ -183,7 +183,10 @@ describe('RecordService', () => {
       async write() {}, async delete() {},
     }
     const requestBodies: Record<string, unknown>[] = []
-    const fetchImpl = vi.fn(async (_input, init) => {
+    const fetchImpl = vi.fn(async (input, init) => {
+      if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
+      }
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requestBodies.push(body)
       const firstPage = body.cursor_record_uid === undefined

@@ -23,6 +23,10 @@ export interface ArkmeWorldImageReader {
   openWorldImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
 }
 
+export interface ArkmeBotImageReader {
+  openBotImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
+}
+
 export interface ArkmeRecordIdentity {
   recordUid(raw: unknown): string
 }
@@ -263,6 +267,7 @@ export class MediaService {
     private readonly profile: ProfileService,
     private readonly worldImages: ArkmeWorldImageReader,
     private readonly recordIdentity: ArkmeRecordIdentity,
+    private readonly botImages?: ArkmeBotImageReader,
   ) {}
 
   dispose(): void {
@@ -572,6 +577,16 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
+      if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
+      const reference = await this.botImages.openBotImageRef(imageRef, session.userId)
+      return await this.downloadSignedImage(
+        trustedSignedImageUrl(this.runtime.config.environment, reference.sourceUrl),
+        byteLimit,
+        signal,
+        this.runtime.requestScope(session.userId),
+      )
+    }
     if (imageRef.trim().startsWith('arkme-media-v1.')) {
       const { response, descriptor } = await this.fetchMedia(imageRef.trim(), undefined, signal)
       if (!descriptor.mimeType.trim().toLowerCase().startsWith('image/')) {
@@ -683,15 +698,65 @@ export class MediaService {
     const payload = jsonObjectValue(record.payload)
     const core = objectValue(root.record_core)
     return jsonObjectValue(
-      root.content_payload ?? payload.content_payload ?? record.content_payload ?? core.content_payload,
+      root.content_payload ?? root.contentPayload
+        ?? payload.content_payload ?? payload.contentPayload
+        ?? record.content_payload ?? record.contentPayload
+        ?? core.content_payload ?? core.contentPayload,
     )
   }
 
+  /**
+   * Older quick-record projections carry their voice outside media_refs.  The
+   * Flutter clients accept these payload forms, so normalize them before the
+   * shared display-item hydration and rich-content renderer see the record.
+   */
+  private recordVoiceMediaRef(raw: unknown): Record<string, unknown> | undefined {
+    const root = objectValue(raw)
+    const record = objectValue(root.record)
+    const payload = jsonObjectValue(record.payload)
+    const core = objectValue(root.record_core)
+    const contentPayload = this.recordContentPayload(raw)
+    const candidates = [
+      contentPayload.voice, contentPayload.voice_media, contentPayload.voiceMedia,
+      payload.voice, payload.voice_media, payload.voiceMedia,
+      record.voice, record.voice_media, record.voiceMedia,
+      core.voice, core.voice_media, core.voiceMedia,
+      root.voice, root.voice_media, root.voiceMedia,
+    ]
+    for (const candidate of candidates) {
+      const voice = jsonObjectValue(candidate)
+      const fileAssetUid = [
+        voice.source_file_asset_uid, voice.sourceFileAssetUid,
+        voice.file_asset_uid, voice.fileAssetUid,
+        voice.file_id, voice.fileId, voice.uid,
+      ].map(value => stringValue(value).trim()).find(value => value !== '')
+      if (fileAssetUid === undefined) continue
+      const durationSeconds = numberValue(voice.duration_sec ?? voice.durationSec ?? voice.duration)
+      const durationMillis = numberValue(voice.duration_millis ?? voice.durationMillis ?? voice.duration_ms)
+      return {
+        ...voice,
+        file_asset_uid: fileAssetUid,
+        file_kind: 2,
+        ...(stringValue(voice.mime_type ?? voice.mimeType).trim() === '' ? {} : {
+          mime_type: stringValue(voice.mime_type ?? voice.mimeType).trim(),
+        }),
+        ...(durationSeconds > 0 ? { duration_sec: durationSeconds }
+          : durationMillis > 0 ? { duration_sec: Math.ceil(durationMillis / 1000) }
+            : {}),
+      }
+    }
+    return undefined
+  }
+
   private recordMediaRefs(raw: unknown): Record<string, unknown>[] {
-    return listValue(this.recordContentPayload(raw).media_refs).map(objectValue).filter(item => {
-      return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
-        && stringValue(item.file_asset_uid).trim() !== ''
-    })
+    const contentPayload = this.recordContentPayload(raw)
+    const voiceRef = this.recordVoiceMediaRef(raw)
+    const refs = [
+      ...listValue(contentPayload.media_refs ?? contentPayload.mediaRefs).map(objectValue),
+      ...(voiceRef === undefined ? [] : [voiceRef]),
+    ].filter(item => Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
+      && stringValue(item.file_asset_uid).trim() !== '')
+    return [...new Map(refs.map(item => [stringValue(item.file_asset_uid).trim(), item])).values()]
   }
 
   private async queryRecordMediaDisplayItems(
@@ -800,12 +865,55 @@ export class MediaService {
     return { displayItemsByRecordUid, unavailableRecordUids }
   }
 
+  /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
+  forwardContentBlocks(files: unknown[], viewerUserId: number): ArkmeContentBlock[] {
+    if (this.runtime.config.richMediaRenderEnabled === false) return []
+    const displayItems = files.slice(0, 32).map(objectValue).flatMap((file, index) => {
+      if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
+      const trustedUrl = (raw: unknown): string | undefined => {
+        const value = safeHttpsUrl(raw)
+        if (value === undefined) return undefined
+        const url = new URL(value)
+        return url.port === '' && url.hash === '' && (allowedSignedImageHost(this.runtime.config.environment, url.hostname)
+          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
+      }
+      const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
+      const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)
+      return [{
+        // Do not copy file/source IDs into the public projection or stable media cache.
+        file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
+        file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
+        mime_type: stringValue(file.mime_type ?? file.mimeType),
+        size: numberValue(file.size), sort_order: numberValue(file.order ?? file.sort_order ?? index),
+        duration_sec: numberValue(file.duration_sec ?? file.durationSec),
+        ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
+        ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
+      }]
+    })
+    return this.richContentBlocks({}, viewerUserId, displayItems)
+  }
+
   issueImageMediaRef(
     viewerUserId: number,
     descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
     stableIdentity: string,
   ): string {
     return this.issueMediaRef(viewerUserId, descriptor, stableIdentity)
+  }
+
+  favoriteStickerMediaRef(raw: unknown, viewerUserId: number): string | undefined {
+    const item = objectValue(raw)
+    const remoteUrl = stringValue(item.preview_url ?? item.download_url).trim()
+    if (remoteUrl === '') return undefined
+    const fileAssetUid = stringValue(item.file_asset_uid).trim()
+    const fileName = stringValue(item.file_name).trim() || '收藏表情'
+    const mimeType = stringValue(item.mime_type).trim() || 'image/*'
+    return this.issueMediaRef(viewerUserId, {
+      remoteUrl,
+      mimeType,
+      fileName,
+      size: Math.max(0, Math.trunc(numberValue(item.file_size ?? item.size))),
+    }, fileAssetUid === '' ? undefined : `favorite-sticker:${fileAssetUid}`)
   }
 
   private issueMediaRef(
@@ -859,7 +967,7 @@ export class MediaService {
       const uid = stringValue(item.file_asset_uid).trim()
       if (uid !== '') displayByAsset.set(uid, item)
     }
-    const mediaRefs = listValue(contentPayload.media_refs).map(objectValue)
+    const mediaRefs = this.recordMediaRefs(raw)
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
       : displayItems
@@ -886,6 +994,9 @@ export class MediaService {
         size: Math.max(0, Math.trunc(numberValue(item.size))),
         ...(numberValue(item.duration_sec) > 0 ? { durationSec: numberValue(item.duration_sec) } : {}),
         sortOrder: Math.trunc(numberValue(item.sort_order ?? index)),
+        ...([1, 3].includes(Math.trunc(numberValue(item.render_role)))
+          ? { renderRole: Math.trunc(numberValue(item.render_role)) as 1 | 3 }
+          : {}),
       }]
     }).sort((left, right) => left.sortOrder - right.sortOrder)
   }

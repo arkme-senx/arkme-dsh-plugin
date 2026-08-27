@@ -5,6 +5,7 @@ import type {
   ArkmeCalendarRecordItem,
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue } from './service.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
 
 const MAX_CALENDAR_RANGE_DAYS = 62
 const MAX_DAY_RECORD_LIMIT = 50
@@ -77,7 +78,10 @@ function sourceKind(raw: Record<string, unknown>): ArkmeCalendarRecordItem['sour
 }
 
 export class CalendarService {
-  constructor(private readonly runtime: ServiceRuntime) {}
+  constructor(
+    private readonly runtime: ServiceRuntime,
+    private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
+  ) {}
 
   async bucketPage(options: {
     startDate: string
@@ -97,6 +101,7 @@ export class CalendarService {
     }
     const timezone = readTimezone(options.timezone)
     const session = await this.runtime.requireSession()
+    await this.privacy.lockedRecordUids(session, options.signal)
     const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
       '/api/v1/calendar/buckets/query',
       {
@@ -139,6 +144,7 @@ export class CalendarService {
     const cursorSendAt = Math.trunc(options.cursor?.sendAtMillis ?? 0)
     const cursorRecordUid = options.cursor?.recordUid.trim() ?? ''
     const session = await this.runtime.requireSession()
+    const lockedRecordUids = await this.privacy.lockedRecordUids(session, options.signal)
     const data = await this.runtime.authenticatedCalendarPost<Record<string, unknown>>(
       '/api/v1/calendar/records/query',
       {
@@ -166,7 +172,9 @@ export class CalendarService {
       bucketDate,
       timezone: stringValue(data.timezone).trim() || timezone,
       refreshedAtMillis: Date.now(),
-      items: listValue(data.items).map(raw => this.dayRecord(raw)).filter(
+      items: listValue(data.items).filter(raw => !arkmePrivacyLockedRecord(raw)
+        && !lockedRecordUids.has(stringValue(objectValue(raw).record_uid ?? objectValue(objectValue(raw).record_core).record_uid).trim()))
+        .map(raw => this.dayRecord(raw)).filter(
         (item): item is ArkmeCalendarRecordItem => item !== undefined,
       ),
       hasMore: data.has_more === true,
@@ -178,11 +186,14 @@ export class CalendarService {
     const item = objectValue(raw)
     const bucketDate = stringValue(item.bucket_date).trim()
     if (bucketDate === '') return undefined
-    const count = Math.max(0, Math.trunc(numberValue(item.count)))
+    const protectedCount = Math.max(0, Math.trunc(numberValue(item.protected_count)))
+    // Older backends may still report the protected count despite the request
+    // flag. Do not let that count disclose private-record presence in Arkme.
+    const count = Math.max(0, Math.trunc(numberValue(item.count)) - protectedCount)
     return {
       bucketDate,
       count,
-      protectedCount: Math.max(0, Math.trunc(numberValue(item.protected_count))),
+      protectedCount: 0,
       hasRecords: count > 0,
       ...(numberValue(item.first_send_at) > 0
         ? { firstSendAtMillis: Math.trunc(numberValue(item.first_send_at)) }
@@ -197,10 +208,11 @@ export class CalendarService {
     const sendAtMillis = Math.trunc(numberValue(item.send_at ?? core.send_at))
     if (recordUid === '' || sendAtMillis <= 0) return undefined
     const accessState = contentAccessState(core.content_access_state)
+    if (accessState === 'protected' || arkmePrivacyLockedRecord(item)) return undefined
     const available = accessState === 'available'
     const title = available ? clippedText(core.title, 500) : ''
     const textContent = available ? clippedText(core.text_content, 4_000) : ''
-    const preview = title || clippedText(textContent, 160) || (available ? '无文字内容' : '受保护内容')
+    const preview = title || clippedText(textContent, 160) || '无文字内容'
     const topic = objectValue(item.topic_core)
     const isUncategorized = booleanValue(item.is_uncategorized)
     const hasManualEdit = booleanValue(core.has_manual_edit)
@@ -217,7 +229,7 @@ export class CalendarService {
       creationSource: Math.trunc(numberValue(core.creation_source)),
       templateKind: Math.trunc(numberValue(core.template_kind)),
       displayKind: Math.trunc(numberValue(core.display_kind)),
-      protected: accessState === 'protected',
+      protected: false,
       ...(isUncategorized === undefined ? {} : { isUncategorized }),
       ...(hasManualEdit === undefined ? {} : { hasManualEdit }),
       ...(hasPolish === undefined ? {} : { hasPolish }),

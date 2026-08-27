@@ -22,6 +22,22 @@ describe('Arkme quick-add UI', () => {
     expect(markup).not.toContain('>添加联系人<')
   })
 
+  it('layers the menu above later sidebar rows without escaping the shell overlay', () => {
+    const button = renderToStaticMarkup(<ArkmeQuickAddButton
+      onContactAdd={vi.fn()}
+      onSourceCreated={vi.fn()}
+    />)
+    const menu = renderToStaticMarkup(<ArkmeQuickAddMenu
+      onContactAdd={vi.fn()}
+      onCreateGroup={vi.fn()}
+      onAddBot={vi.fn()}
+    />)
+
+    expect(button).toContain('position:relative;z-index:10')
+    expect(menu).toContain('position:absolute;z-index:1')
+    expect(quickAddSource).not.toContain('zIndex: 90')
+  })
+
   it('renders the desktop menu order and all three transplanted icon resources', () => {
     const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
       onContactAdd={vi.fn()}
@@ -67,19 +83,20 @@ describe('Arkme quick-add UI', () => {
 })
 
 describe('Arkme desktop Bot create dialog', () => {
-  it('transplants the desktop Bot form hierarchy and both provider choices', () => {
+  it('keeps the avatar above the unlabeled name field and always shows optional fields', () => {
     const markup = renderToStaticMarkup(<ArkmeBotCreateDialog onClose={vi.fn()} />)
-    expect(markup).toContain('添加 Bot')
-    expect(markup).toContain('创建一个新的 Bot 入口。OpenClaw 适合本地驱动，Webhook Bot 适合外部系统推送。')
-    expect(markup).toContain('Bot 头像')
-    expect(markup).toContain('默认会使用统一 bot 头像，点此可改成自定义头像')
-    expect(markup).toContain('例如：我的自动化助手')
+    expect(markup).toContain('创建 Bot')
+    expect(markup).toContain('给 Bot 起个名字')
     expect(markup).toContain('接入方式')
-    expect(markup).toContain('连接本地 OpenClaw，用对话方式驱动你的桌面运行时')
-    expect(markup).toContain('创建后自动生成 webhook 地址，外部系统可直接推送文本消息到这个 Bot')
-    expect(markup).toContain('描述这个 Bot 的用途')
-    expect(markup).toContain('确认创建')
-    expect(markup).toContain('width:min(520px, calc(100vw - 32px))')
+    expect(markup).toContain('OpenClaw')
+    expect(markup).toContain('Webhook')
+    expect(markup).toContain('aria-label="上传 Bot 头像"')
+    expect(markup).toContain('title="上传头像"')
+    expect(markup).toContain('简介（可选）')
+    expect(markup).not.toContain('更多设置')
+    expect(markup).not.toContain('Bot 名称')
+    expect(markup).toContain('创建 Bot')
+    expect(markup).toContain('width:min(440px, calc(100vw - 32px))')
     expect(markup).toContain('height:auto')
     expect(markup).toContain('data-arkme-bot-provider="openclaw"')
     expect(markup).toContain('data-arkme-bot-provider="webhook"')
@@ -93,13 +110,22 @@ describe('Arkme desktop Bot create dialog', () => {
     expect(source).toContain("...(avatar === '' ? {} : { avatar })")
   })
 
-  it('expands the whole form without an internal dialog scrollbar', () => {
+  it('does not silently invite a duplicate Bot when the new private chat cannot open', () => {
     const source = readFileSync(new URL('../src/client/ArkmeBotCreateDialog.tsx', import.meta.url), 'utf8')
-    expect(source).toContain("width: 'min(520px, calc(100vw - 32px))', height: 'auto', margin: 'auto', flex: 'none'")
+    expect(source).toContain('setCreated(true)')
+    expect(source).toContain('Bot 已创建，但无法打开私聊')
+    expect(source).toContain('const canSubmit = !busy && !created && name.trim() !== \'\'')
+  })
+
+  it('keeps optional fields visible without an internal dialog scrollbar', () => {
+    const source = readFileSync(new URL('../src/client/ArkmeBotCreateDialog.tsx', import.meta.url), 'utf8')
+    expect(source).toContain("width: 'min(440px, calc(100vw - 32px))', height: 'auto', margin: 'auto', flex: 'none'")
     expect(source).toContain("body: { flex: 'none', minHeight: 0, overflow: 'visible'")
     expect(source).not.toContain("body: { flex: 1, minHeight: 0, overflowY: 'auto'")
     expect(source).toContain("display: 'flex', padding: 16, overflowY: 'auto'")
-    expect(source).toContain("textarea: { minHeight: 68, paddingTop: 10, paddingBottom: 10, resize: 'none' }")
-    expect(source).toContain("width: '100%', height: 44, marginTop: 16")
+    expect(source).toContain("textarea: { minHeight: 72, paddingTop: 10, paddingBottom: 10, resize: 'none' }")
+    expect(source).not.toContain('moreOpen')
+    expect(source).not.toContain('moreToggle')
+    expect(source).toContain("disabled={!canSubmit}")
   })
 })

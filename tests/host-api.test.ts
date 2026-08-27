@@ -31,12 +31,18 @@ function fakeService() {
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
     listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
+    messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
+    messageReadReceiptDetail: vi.fn(async (sourceRef: string, itemUid: string, sequence: number, options: unknown) => ({ sourceRef, itemUid, sequence, options })),
     officialAuthorProfile: vi.fn(async () => ({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })),
     openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
     sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
+    favoriteStickers: vi.fn(async () => ({ items: [], itemCount: 0, updatedAtMillis: 0 })),
+    addFavoriteSticker: vi.fn(async (item: unknown) => item),
+    manageFavoriteSticker: vi.fn(async (fileAssetUid: string, action: string) => ({ fileAssetUid, action })),
+    sendFavoriteSticker: vi.fn(async (_sourceRef: string, _fileAssetUid: string, options: unknown) => options),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
     updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
     getLongArticleDraft: vi.fn(async () => undefined),
@@ -53,8 +59,92 @@ function fakeService() {
     publishWorldFileAssets: vi.fn(async (input: unknown) => input),
     worldVoiceprintSocialContext: vi.fn(async (recordRef: string, options: unknown) => ({ recordRef, options })),
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
+    billingQuota: vi.fn(async () => ({
+      availableNanoCny: '1200', totalNanoCny: '1500', reservedNanoCny: '300', currency: 'CNY',
+    })),
+    billingProducts: vi.fn(async () => ({ items: [] })),
+    createBillingOrder: vi.fn(async (input: unknown) => input),
+    billingOrderStatus: vi.fn(async (orderId: string) => ({ orderId, status: 'pending' })),
   }
 }
+
+describe('billing Host API dispatch', () => {
+  it('dispatches quota and product reads without browser account fields', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'billing.quota', { userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'billing.products', { accessToken: 'secret' })
+
+    expect(service.billingQuota).toHaveBeenCalledWith()
+    expect(service.billingProducts).toHaveBeenCalledWith()
+  })
+
+  it('passes only the normalized order creation identity to the service', async () => {
+    const service = fakeService()
+    const clientRequestId = '8e37aebc-e2ba-4db2-b589-da729867410c'
+
+    await dispatchArkmeHostOperation(service as never, 'billing.order.create', {
+      productId: 'product-1', paymentMethod: 'wechat_native', clientRequestId,
+      amountMinor: 1, userId: 999,
+    })
+
+    expect(service.createBillingOrder).toHaveBeenCalledWith({
+      productId: 'product-1', paymentMethod: 'wechat_native', clientRequestId,
+    })
+  })
+
+  it.each([
+    [{ productId: '', paymentMethod: 'wechat_native', clientRequestId: '8e37aebc-e2ba-4db2-b589-da729867410c' }, 'billing-product-id-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'card', clientRequestId: '8e37aebc-e2ba-4db2-b589-da729867410c' }, 'billing-payment-method-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'alipay_pc_web', clientRequestId: '' }, 'billing-client-request-id-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'alipay_pc_web', clientRequestId: 'request-1' }, 'billing-client-request-id-invalid'],
+  ])('rejects invalid order creation parameters', async (params, code) => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.create', params))
+      .rejects.toMatchObject({ code })
+    expect(service.createBillingOrder).not.toHaveBeenCalled()
+  })
+
+  it('requires an order UUID and does not forward unknown status fields', async () => {
+    const service = fakeService()
+    const orderId = '755a40f2-b5a5-420f-a7c5-1e4543cf016c'
+
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId: '' }))
+      .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId: 'order-1' }))
+      .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
+    await dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId, accessToken: 'secret' })
+    expect(service.billingOrderStatus).toHaveBeenCalledWith(orderId)
+  })
+})
+
+describe('favorite sticker Host API dispatch', () => {
+  it('forwards one bounded favorite sticker addition', async () => {
+    const service = fakeService()
+    const item = {
+      fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1,
+      isAnimated: true,
+    }
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.add', { item, signedUrl: 'must-not-forward' })
+
+    expect(service.addFavoriteSticker).toHaveBeenCalledWith(item)
+  })
+
+  it('forwards only the bounded sticker id and management action', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'move-to-front', accountId: 999, signedUrl: 'must-not-forward',
+    })
+
+    expect(service.manageFavoriteSticker).toHaveBeenCalledWith('asset-12345678', 'move-to-front')
+    await expect(dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'replace',
+    })).rejects.toMatchObject({ code: 'favorite-sticker-manage-invalid' })
+  })
+})
 
 describe('World publish Host API dispatch', () => {
   it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {
@@ -267,6 +357,62 @@ describe('conversation member Host API dispatch', () => {
       relationUid: 'relation-ref',
       humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
     })
+  })
+
+  it('keeps @所有人 human mention intent without requiring a member ref', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ all: true, memberRef: 'browser-owned', startIndex: 0, length: 4 }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@所有人 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })
+  })
+
+  it('keeps structured Bot mention ranges without exposing browser-owned fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@总结助手 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5, botId: 'browser-owned' }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@总结助手 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5 }],
+    })
+  })
+})
+
+describe('message read receipt Host API dispatch', () => {
+  it('forwards only opaque message identities and the request lifecycle signal', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.read-receipts.summary-list', {
+      sourceRef: 'source-ref',
+      items: [{ itemUid: 'record-1', sequence: 8, readerUserId: 999 }],
+      chatSessionUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.read-receipts.detail', {
+      sourceRef: 'source-ref', itemUid: 'record-1', sequence: 8, readerUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.messageReadReceiptSummaries).toHaveBeenCalledWith(
+      'source-ref', [{ itemUid: 'record-1', sequence: 8 }], { signal },
+    )
+    expect(service.messageReadReceiptDetail).toHaveBeenCalledWith(
+      'source-ref', 'record-1', 8, { signal },
+    )
+  })
+
+  it('rejects a non-array summary input before entering the Host owner', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.read-receipts.summary-list', {
+      sourceRef: 'source-ref', items: { itemUid: 'record-1', sequence: 8 },
+    })).rejects.toMatchObject({ code: 'message-read-receipt-items-invalid' })
+    expect(service.messageReadReceiptSummaries).not.toHaveBeenCalled()
   })
 })
 

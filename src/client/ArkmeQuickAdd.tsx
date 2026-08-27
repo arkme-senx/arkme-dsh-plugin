@@ -10,14 +10,15 @@ import { arkmeTheme } from './arkme-theme.js'
 type QuickAddDialogKind = 'group' | 'bot'
 
 const style: Record<string, CSSProperties> = {
-  anchor: { position: 'relative', zIndex: 90, flex: 'none' },
+  // Keep the menu above later sidebar rows without escaping the frame-wide overlay layer.
+  anchor: { position: 'relative', zIndex: 10, flex: 'none' },
   trigger: {
     width: 40, height: 40, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.menu, color: '#555a64',
     cursor: 'pointer', font: 'inherit', fontSize: 23, lineHeight: 1, fontWeight: 300, outline: 0,
   },
   menu: {
-    position: 'absolute', zIndex: 90, top: 36, right: 0, width: 176, padding: '6px 10px',
+    position: 'absolute', zIndex: 1, top: 36, right: 0, width: 176, padding: '6px 10px',
     boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2, #e3e4e8)', borderRadius: 18,
     background: 'var(--dsw-specific-menu, rgba(255,255,255,.98))', color: 'var(--dsw-alias-label-primary, #1a1c21)',
     boxShadow: 'var(--dsw-shadow-lv3, 0 20px 56px rgba(30,34,43,.16), 0 2px 8px rgba(30,34,43,.08))',

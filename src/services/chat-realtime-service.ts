@@ -144,16 +144,40 @@ export class ChatRealtimeService {
       void this.invalidateRecordProjection()
       return
     }
-    if (notice.cause === 'hint' && notice.projectionInvalidation?.projection === 'record') {
+    if (notice.cause === 'projection-invalidation'
+      && notice.projectionInvalidation?.projection === 'record') {
       void this.invalidateRecordProjection()
       return
     }
-    if (notice.cause === 'hint' && notice.hint !== undefined) {
+    if (notice.cause === 'chat-hint' && notice.readCursorAdvanced !== undefined) {
+      void this.handleReadCursorAdvanced(notice.readCursorAdvanced)
+      return
+    }
+    if (notice.cause === 'chat-hint' && notice.hint !== undefined) {
       this.scheduleChatSessionProjection(
         notice.hint.chatSessionUid,
         notice.hint.latestSequence,
         { hint: notice.hint, connectionGeneration: notice.state.connectionGeneration, attempts: 0 },
       )
+    }
+  }
+
+  private async handleReadCursorAdvanced(hint: NonNullable<ArkmeChatRealtimeNotice['readCursorAdvanced']>): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      if (hint.readerUserId === session.userId) {
+        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.readSequence)
+        return
+      }
+      this.emitChatClientEvent({
+        type: 'read-receipts-invalidated',
+        revision: this.nextChatClientRevision(),
+        sourceKey: await this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid),
+        throughSequence: hint.readSequence,
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Chat read receipt invalidation failed:', safeFailureMessage(error))
     }
   }
 
@@ -175,6 +199,7 @@ export class ChatRealtimeService {
   private async reconcileChatNotificationBaseline(connectionGeneration: number): Promise<void> {
     try {
       const session = await this.runtime.requireSession()
+      this.notificationBaselineSequences.clear()
       const sequences = new Map<string, number>()
       let cursor: string | undefined
       for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {

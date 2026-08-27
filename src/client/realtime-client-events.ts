@@ -6,6 +6,7 @@ import {
 } from './chat-directory-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { forgetNavigationProviderInstance } from './navigation-cache.js'
+import { arkmeMessageReadReceipts } from './message-read-receipt-store.js'
 import {
   reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
 } from './provider-instance-runtime.js'
@@ -23,18 +24,27 @@ export function useArkmeRealtimeClientEvents(
   useEffect(() => {
     if (auth?.status !== 'authenticated' || auth.userId === undefined) {
       arkmeChatDirectory.activateAccount(undefined)
+      arkmeMessageReadReceipts.activateAccount(undefined)
       return
     }
     const authenticatedUserId = auth.userId
     arkmeChatDirectory.activateAccount(authenticatedUserId)
+    arkmeMessageReadReceipts.activateAccount(authenticatedUserId)
     let stopped = false
     let observedRevision: number | undefined
+    let events: EventSource | undefined
+    const updateForeground = () => {
+      arkmeMessageReadReceipts.setForeground(typeof document === 'undefined' || document.visibilityState !== 'hidden')
+    }
+    const reconcileReceipts = () => { arkmeMessageReadReceipts.reconcile() }
+    const browserDocument = typeof document === 'undefined' ? undefined : document
+    const browserWindow = typeof window === 'undefined' ? undefined : window
     const refreshUnread = async (force = false) => {
       await arkmeChatDirectory.refreshRoot({ force })
     }
     if (refreshDirectoryBaseline) void refreshUnread().catch(() => undefined)
-    const events = new EventSource('/arkme-self/api/events')
-    events.onopen = () => {
+    const handleOpen = () => {
+      reconcileReceipts()
       void reconcileArkmeProviderInstance()
         .then(async changed => {
           if (!changed || stopped) return
@@ -52,7 +62,7 @@ export function useArkmeRealtimeClientEvents(
         })
         .catch(() => undefined)
     }
-    events.onmessage = event => {
+    const handleMessage = (event: MessageEvent<string>) => {
       if (stopped) return
       try {
         const update = JSON.parse(event.data) as ArkmeChatClientEvent
@@ -61,6 +71,7 @@ export function useArkmeRealtimeClientEvents(
         observedRevision = update.revision
         if (update.type === 'reconcile') {
           arkmeInterwovenInvalidation.invalidate()
+          reconcileReceipts()
           if (update.refresh === 'none') return
           void refreshUnread(update.refresh === 'force')
             .then(() => { if (!stopped) arkmeUi.chatChanged() })
@@ -83,9 +94,14 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'projection-invalidated') {
           if (update.projection !== 'record') return
           arkmeInterwovenInvalidation.invalidate()
-          arkmeUi.chatChanged()
+          arkmeUi.recordChanged()
           return
         }
+        if (update.type === 'read-receipts-invalidated') {
+          arkmeMessageReadReceipts.invalidate(update.sourceKey, update.throughSequence)
+          return
+        }
+        if (update.type !== 'sessions-delta') return
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({
           source: item.source,
           ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),
@@ -97,9 +113,31 @@ export function useArkmeRealtimeClientEvents(
         arkmeInterwovenInvalidation.invalidate()
       } catch { /* Ignore malformed local frames; EventSource keeps the channel alive. */ }
     }
+    const disconnectEvents = () => {
+      events?.close()
+      events = undefined
+    }
+    const connectEvents = () => {
+      if (stopped || events !== undefined || browserDocument?.visibilityState === 'hidden') return
+      const next = new EventSource('/arkme-self/api/events')
+      next.onopen = handleOpen
+      next.onmessage = handleMessage
+      events = next
+    }
+    const handleVisibilityChange = () => {
+      updateForeground()
+      if (browserDocument?.visibilityState === 'hidden') disconnectEvents()
+      else connectEvents()
+    }
+    updateForeground()
+    connectEvents()
+    browserDocument?.addEventListener('visibilitychange', handleVisibilityChange)
+    browserWindow?.addEventListener('focus', reconcileReceipts)
     return () => {
       stopped = true
-      events.close()
+      disconnectEvents()
+      browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
+      browserWindow?.removeEventListener('focus', reconcileReceipts)
     }
   }, [auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline])
 }

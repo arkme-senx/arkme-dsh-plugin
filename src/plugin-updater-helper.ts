@@ -13,6 +13,9 @@ import {
 import { ARKME_PLUGIN_PACKAGE_NAME } from './plugin-update-artifact.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
 import { detachManagedProfilePluginLink } from './profile-plugin-entry.js'
+import {
+  applyArkmeProfileBundlePolicy, isArkmeProfilePackageName, type ArkmeProfileBundlePolicyResult,
+} from './extensions/profile-bundle-policy.js'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
 
 const PARENT_EXIT_TIMEOUT_MS = 20_000
@@ -36,6 +39,7 @@ export interface PluginUpdaterPlan {
   appVersion?: string
   dshVersion?: string
   previousArtifactPath?: string
+  disabledProfilePackages?: string[]
   stateDirectory: string
   healthUrl: string
   logPath: string
@@ -71,6 +75,9 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
   const appVersion = nonEmptyString(source.appVersion, 128)
   const dshVersion = nonEmptyString(source.dshVersion, 128)
   const previousArtifactPath = nonEmptyString(source.previousArtifactPath, 4096)
+  const disabledProfilePackages = source.disabledProfilePackages === undefined
+    ? []
+    : stringArray(source.disabledProfilePackages, { allowEmpty: true })
   const stateDirectory = nonEmptyString(source.stateDirectory)
   const healthUrl = nonEmptyString(source.healthUrl)
   const logPath = nonEmptyString(source.logPath)
@@ -79,6 +86,8 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
     || dshBinPath === undefined
     || dshHome === undefined || profileName === undefined || previousVersion === undefined
     || previousSpec === undefined || targetVersion === undefined || targetArtifactPath === undefined
+    || disabledProfilePackages === undefined || disabledProfilePackages.length > 1_000
+    || disabledProfilePackages.some(packageName => !isArkmeProfilePackageName(packageName))
     || stateDirectory === undefined || healthUrl === undefined
     || logPath === undefined || restartArgv === undefined || source.parentPid === undefined
     || typeof source.parentPid !== 'number' || !Number.isSafeInteger(source.parentPid) || source.parentPid <= 0) {
@@ -113,10 +122,21 @@ export function parsePluginUpdaterPlan(value: unknown): PluginUpdaterPlan {
     ...(appVersion === undefined ? {} : { appVersion }),
     ...(dshVersion === undefined ? {} : { dshVersion }),
     ...(previousArtifactPath === undefined ? {} : { previousArtifactPath }),
+    ...(disabledProfilePackages.length === 0 ? {} : {
+      disabledProfilePackages: [...new Set(disabledProfilePackages)],
+    }),
     stateDirectory,
     healthUrl: url.toString(),
     logPath,
   }
+}
+
+/** Re-apply the disabled Arkme extension layers after DSH reconciles installed Bundle dependencies. */
+export function reconcilePluginUpdaterProfilePolicy(plan: PluginUpdaterPlan): ArkmeProfileBundlePolicyResult {
+  return applyArkmeProfileBundlePolicy(
+    join(plan.dshHome, 'profiles', plan.profileName),
+    (plan.disabledProfilePackages ?? []).map(packageName => ({ packageName, enabled: false })),
+  )
 }
 
 function processAlive(pid: number): boolean {
@@ -218,11 +238,18 @@ async function runTargetRemove(plan: PluginUpdaterPlan): Promise<boolean> {
   return result.status === 0
 }
 
-async function runRollbackInstall(plan: PluginUpdaterPlan): Promise<boolean> {
+export interface PluginRollbackInstallResult {
+  packageRestored: boolean
+  profilePolicyRestored: boolean
+}
+
+async function runRollbackInstall(plan: PluginUpdaterPlan): Promise<PluginRollbackInstallResult> {
   const fallbackSpec = plan.previousArtifactPath === undefined
     ? plan.previousSpec
     : `file:${plan.previousArtifactPath}`
-  if (plan.previousArtifactPath === undefined && !isLocalPackageSpec(fallbackSpec)) return false
+  if (plan.previousArtifactPath === undefined && !isLocalPackageSpec(fallbackSpec)) {
+    return { packageRestored: false, profilePolicyRestored: false }
+  }
   await detachManagedProfilePluginLink({ dshHome: plan.dshHome, profileName: plan.profileName })
   spawnSync(plan.execPath, buildTargetRemoveArgs(plan), {
     env: { ...process.env, DSH_HOME: plan.dshHome },
@@ -235,7 +262,13 @@ async function runRollbackInstall(plan: PluginUpdaterPlan): Promise<boolean> {
     stdio: 'inherit',
     shell: false,
   })
-  return result.status === 0
+  if (result.status !== 0) return { packageRestored: false, profilePolicyRestored: false }
+  try {
+    reconcilePluginUpdaterProfilePolicy(plan)
+    return { packageRestored: true, profilePolicyRestored: true }
+  } catch {
+    return { packageRestored: true, profilePolicyRestored: false }
+  }
 }
 
 function installedProfileVersion(plan: PluginUpdaterPlan): string {
@@ -294,7 +327,9 @@ async function waitForHealthy(plan: PluginUpdaterPlan, expectedVersion: string):
 }
 
 export interface ManagedPluginUpdateOperations {
-  runRollbackInstall: (plan: PluginUpdaterPlan) => boolean | Promise<boolean>
+  runRollbackInstall: (
+    plan: PluginUpdaterPlan,
+  ) => PluginRollbackInstallResult | Promise<PluginRollbackInstallResult>
   waitForHealthy: typeof waitForHealthy
   writeInstallReceipt: typeof writePluginUpdateInstallReceipt
 }
@@ -364,8 +399,17 @@ async function rollbackAndRestart(
   rolledBackMessage: string,
 ): Promise<void> {
   logStage(plan, 'rollback-started')
-  const rolledBack = await runRollbackInstall(plan)
-  if (!rolledBack) {
+  let rollback: PluginRollbackInstallResult
+  try {
+    rollback = await runRollbackInstall(plan)
+  } catch (error) {
+    logStage(plan, 'rollback-failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+    await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
+    return
+  }
+  if (!rollback.packageRestored) {
     logStage(plan, 'rollback-failed', { error: 'rollback install command failed' })
     await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
     return
@@ -375,11 +419,14 @@ async function rollbackAndRestart(
   logStage(plan, 'rollback-health-check-started')
   const healthy = await waitForHealthy(plan, plan.previousVersion)
   logStage(plan, healthy ? 'rollback-health-check-passed' : 'rollback-health-check-failed')
+  const policyWarning = rollback.profilePolicyRestored
+    ? ''
+    : '；部分已关闭扩展的 Profile 状态未能收敛'
   await writePhase(
     store,
     plan,
     healthy ? 'rolled-back' : 'failed',
-    healthy ? rolledBackMessage : '已恢复旧版本文件，但 DSH 未能自动启动。',
+    healthy ? `${rolledBackMessage}${policyWarning}` : `已恢复旧版本文件，但 DSH 未能自动启动${policyWarning}。`,
   )
 }
 
@@ -460,6 +507,14 @@ export async function runPluginUpdater(planPath: string): Promise<void> {
     return
   }
   logStage(plan, 'profile-add-completed', { durationMs: Date.now() - addStartedAt })
+  try {
+    reconcilePluginUpdaterProfilePolicy(plan)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    await writePhase(store, plan, 'failed', `已安装新版本，但恢复已关闭扩展状态失败：${detail}`)
+    await rollbackAndRestart(plan, store, '扩展关闭状态收敛失败，已自动恢复旧版本。')
+    return
+  }
   const installedVersion = installedProfileVersion(plan)
   logStage(plan, 'installed-version-checked', { installedVersion })
   if (semver.valid(installedVersion) === null || semver.lt(installedVersion, plan.targetVersion)) {
@@ -568,13 +623,25 @@ export async function rollbackManagedPluginUpdate(
   const store = new PluginUpdateInstallStateStore(plan.stateDirectory)
   const ops = managedOperations(overrides)
   logStage(plan, 'rollback-started')
-  if (!await ops.runRollbackInstall(plan)) {
+  let rollback: PluginRollbackInstallResult
+  try {
+    rollback = await ops.runRollbackInstall(plan)
+  } catch (error) {
+    logStage(plan, 'rollback-failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+    await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
+    throw new Error('managed plugin update rollback failed', { cause: error })
+  }
+  if (!rollback.packageRestored) {
     logStage(plan, 'rollback-failed', { error: 'rollback install command failed' })
     await writePhase(store, plan, 'failed', '更新失败，旧版本恢复也失败；请使用更新命令手动修复。')
     throw new Error('managed plugin update rollback failed')
   }
   logStage(plan, 'rollback-completed')
-  await writePhase(store, plan, 'rolled-back', '已恢复旧版本文件，正在由 Arkme 重启 DSH…')
+  await writePhase(store, plan, 'rolled-back', rollback.profilePolicyRestored
+    ? '已恢复旧版本文件，正在由 Arkme 重启 DSH…'
+    : '已恢复旧版本文件；部分已关闭扩展的 Profile 状态未能收敛，正在由 Arkme 重启 DSH…')
   await unlink(planPath)
 }
 

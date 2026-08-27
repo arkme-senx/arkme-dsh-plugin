@@ -2,6 +2,7 @@ import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { callArkme } from './api.js'
 
 const DEFAULT_ROOT_CACHE_MAX_AGE_MS = 30_000
+const ROOT_DIRECTORY_PAGE_LIMIT = 20
 const MAX_ROOT_PAGES = 10
 
 interface ArkmeChatDirectoryStoreOptions {
@@ -115,7 +116,19 @@ function applyReadWatermark(
   const latestSequence = normalizedSequence(source.latestSequence)
   if (latestSequence > watermark.effectiveReadSequence) return source
   const unreadCount = Math.min(normalizedCount(source.unreadCount), watermark.unreadCount)
-  return unreadCount === source.unreadCount ? source : { ...source, unreadCount }
+  const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
+  return unreadCount === source.unreadCount && hasUnreadMention === source.hasUnreadMention
+    ? source
+    : { ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) }
+}
+
+function mergeUnreadMention(existing: ArkmeSourceItem | undefined, source: ArkmeSourceItem): boolean | undefined {
+  const unreadCount = normalizedCount(source.unreadCount)
+  if (unreadCount <= 0) {
+    return existing?.hasUnreadMention !== undefined || source.hasUnreadMention !== undefined ? false : undefined
+  }
+  if (source.kind === 'group_chat') return source.hasUnreadMention ?? existing?.hasUnreadMention
+  return source.hasUnreadMention
 }
 
 function mergeSourceProjection(
@@ -135,12 +148,19 @@ function mergeSourceProjection(
           ...(latestPreview === undefined ? {} : { latestPreview }),
           activeAtMillis: existing.activeAtMillis,
           unreadCount: existing.unreadCount,
+          ...(existing.hasUnreadMention === undefined ? {} : { hasUnreadMention: existing.hasUnreadMention }),
           ...(existing.latestSequence === undefined ? {} : { latestSequence: existing.latestSequence }),
         }
       })()
     : {
-        ...source,
-        activeAtMillis: Math.max(existing?.activeAtMillis ?? 0, source.activeAtMillis),
+        ...(() => {
+          const hasUnreadMention = mergeUnreadMention(existing, source)
+          return {
+            ...source,
+            activeAtMillis: Math.max(existing?.activeAtMillis ?? 0, source.activeAtMillis),
+            ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
+          }
+        })(),
       }
   return applyReadWatermark(merged, watermarks, indexes, sourceKey)
 }
@@ -221,7 +241,8 @@ export class ArkmeChatDirectoryStore {
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
     this.loadPage = options.loadPage ?? (async (cursor, force) => await callArkme<ArkmeSourceList>('sources.list', {
-      directory: 'root', limit: 100, ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
+      directory: 'root', limit: ROOT_DIRECTORY_PAGE_LIMIT,
+      ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
     }))
     this.maxAgeMs = Math.max(0, Math.trunc(options.maxAgeMs ?? DEFAULT_ROOT_CACHE_MAX_AGE_MS))
     this.now = options.now ?? Date.now
@@ -254,7 +275,9 @@ export class ArkmeChatDirectoryStore {
 
   async refreshRoot(options: { force?: boolean } = {}): Promise<ArkmeSourceItem[]> {
     if (options.force !== true && this.refreshedAtMillis > 0
-      && this.now() - this.refreshedAtMillis < this.maxAgeMs) return [...this.snapshot.sources]
+      && this.now() - this.refreshedAtMillis < this.maxAgeMs) {
+      return [...this.snapshot.sources]
+    }
     if (this.refreshInFlight !== undefined) return await this.refreshInFlight
     this.setRefreshing(true)
     const generation = this.generation
@@ -403,7 +426,8 @@ export class ArkmeChatDirectoryStore {
     const currentSource = sourceIndex >= 0
       ? this.snapshot.sources[sourceIndex]
       : seedSourceIndex >= 0 ? seedSources[seedSourceIndex] : source
-    if (currentSource === undefined || normalizedCount(currentSource.unreadCount) <= 0) return false
+    if (currentSource === undefined
+      || (normalizedCount(currentSource.unreadCount) <= 0 && currentSource.hasUnreadMention !== true)) return false
     const existing = this.optimisticReadWatermarks.get(identity)
     if (existing !== undefined && existing.effectiveReadSequence >= target.effectiveReadSequence && existing.unreadCount === 0) return false
     if (!this.optimisticUnreadBackups.has(identity)) this.optimisticUnreadBackups.set(identity, normalizedCount(currentSource.unreadCount))
@@ -571,7 +595,10 @@ export class ArkmeChatDirectoryStore {
     return this.snapshot.sources.map(source => {
       if (identityForSource(indexes, source.sourceRef, source.sourceKey) !== identity) return source
       if (normalizedSequence(source.latestSequence) > effectiveReadSequence) return source
-      return source.unreadCount === unreadCount ? source : { ...source, unreadCount }
+      const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
+      return source.unreadCount === unreadCount && source.hasUnreadMention === hasUnreadMention
+        ? source
+        : { ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) }
     })
   }
 }

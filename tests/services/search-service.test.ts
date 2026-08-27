@@ -106,6 +106,9 @@ describe('SearchService', () => {
     }
     const fetchImpl = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
+      if (url.endsWith('/api/v1/records/privacy/visibility-snapshot')) {
+        return new Response(JSON.stringify({ code: 0, data: { items: [], has_more: false } }), { status: 200 })
+      }
       if (url.endsWith('/api/v1/search/records/scene/query')) {
         return new Response(JSON.stringify({ code: 0, data: { items: [{
           record_uid: 'record-1', source_kind: 1, source_uid: 'source-1', send_at: 1,
@@ -143,6 +146,6 @@ describe('SearchService', () => {
       durationMillis: 3_000,
       mediaRef: expect.stringMatching(/^arkme-media-v1\./),
     })
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
   })
 })

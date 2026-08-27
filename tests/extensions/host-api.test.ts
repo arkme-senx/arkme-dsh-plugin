@@ -127,7 +127,8 @@ describe('marketplace Host BFF', () => {
       'extensions.client.failure',
       {
         identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
-        clientOwnerKey: `client-v1-${'a'.repeat(64)}`,
+        clientInstanceKey: `instance-v1-${'a'.repeat(64)}`,
+        clientContentDigest: `client-v1-${'b'.repeat(64)}`,
         kind: 'runtime-load-failed', message: 'slot collision',
       },
       undefined,
@@ -135,9 +136,32 @@ describe('marketplace Host BFF', () => {
     )).resolves.toEqual({ handled: true, disabled: true })
     expect(reportClientFailure).toHaveBeenCalledWith({
       identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
-      clientOwnerKey: `client-v1-${'a'.repeat(64)}`,
+      clientInstanceKey: `instance-v1-${'a'.repeat(64)}`,
+      clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+      clientOwnerKey: '',
       kind: 'runtime-load-failed', message: 'slot collision',
     })
+  })
+
+  it('resolves a Bundle Client owner through the Host install store', async () => {
+    const bundleClientState = vi.fn(() => ({
+      extension_id: 'ext-1', version: '1.0.0', mount: true,
+      instance_key: `instance-v1-${'a'.repeat(64)}`, generation: 7,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.bundle.client-state',
+      {
+        packageName: '@example/weather', version: '1.0.0',
+        clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+      },
+      undefined,
+      { bundleClientState } as never,
+    )).resolves.toMatchObject({ extension_id: 'ext-1', mount: true, generation: 7 })
+    expect(bundleClientState).toHaveBeenCalledWith(
+      '@example/weather', '1.0.0', `client-v1-${'b'.repeat(64)}`,
+    )
   })
 
   it('routes user-triggered extension audit through the Host manager', async () => {
@@ -319,6 +343,30 @@ describe('marketplace Host BFF', () => {
 			{ readSharedDetail } as never,
 		)).resolves.toMatchObject({ name: '天气', share_scope: 'link_readonly' })
 		expect(readSharedDetail).toHaveBeenCalledWith('extshare_0123456789abcdef0123456789abcdef')
+	})
+
+	it('routes public share resolution through the standard catalog detail owner', async () => {
+		const service = {
+			extensionAuthors: vi.fn(async () => new Map([[77, {
+				displayName: 'Lucis', arkmeId: 'lucis', avatarRef: 'sealed-avatar-ref',
+				avatarFallback: { kind: 'phone_default' as const, colorIndex: 3, label: 'L' },
+			}]])),
+		}
+		const resolveSharedCatalogDetail = vi.fn(async () => ({
+			extension_id: 'ext-public-1', owner_user_id: 77, name: '天气', description: '', visibility: 'public',
+		}))
+		await expect(dispatchArkmeHostOperation(
+			service as never,
+			'extensions.share.resolve',
+			{ shareRef: 'extshare_0123456789abcdef0123456789abcdef' },
+			undefined,
+			{ resolveSharedCatalogDetail } as never,
+		)).resolves.toMatchObject({
+			extension_id: 'ext-public-1', name: '天气', owner_name: 'Lucis', owner_arkme_id: 'lucis',
+			owner_avatar_ref: 'sealed-avatar-ref',
+		})
+		expect(resolveSharedCatalogDetail).toHaveBeenCalledWith('extshare_0123456789abcdef0123456789abcdef')
+		expect(service.extensionAuthors).toHaveBeenCalledWith([77])
 	})
 
   it('routes my-extension list and publish through the unified Host owner', async () => {

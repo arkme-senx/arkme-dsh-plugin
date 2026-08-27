@@ -1,4 +1,4 @@
-import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
@@ -11,6 +11,8 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeBotList,
+  ArkmeBotMentionInput,
   ArkmeBotProvider,
   ArkmeBotSummary,
   ArkmeCalendarBucketPage,
@@ -25,6 +27,9 @@ import type {
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeConversationMemberList,
   ArkmeConversationMemberRecordMode,
   ArkmeConversationMemberRecordPage,
@@ -40,6 +45,9 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptSummaryList,
   ArkmeOfficialAuthorProfile,
   ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
@@ -133,6 +141,10 @@ export type {
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteSticker,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeContentKind,
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
@@ -159,6 +171,12 @@ export type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptMember,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptStatus,
+  ArkmeMessageReadReceiptSummary,
+  ArkmeMessageReadReceiptSummaryList,
   ArkmeOfficialAuthorProfile,
   ArkmePendingWrite,
   ArkmeRelatedRecordingEligibility,
@@ -182,6 +200,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
@@ -577,6 +596,10 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  async listBots(signal?: AbortSignal): Promise<ArkmeBotList> {
+    return await this.call<ArkmeBotList>('bots.list', undefined, signal)
+  }
+
   /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
   async createBot(
     input: { name: string; provider: ArkmeBotProvider; description?: string; avatar?: string },
@@ -722,6 +745,14 @@ export class ArkmeSdk {
 			throw new TypeError('Arkme extension share reference is invalid')
 		}
 		return await this.call<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef: normalized }, signal)
+	}
+
+	async extensionShareCatalogDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+		const normalized = shareRef.trim()
+		if (!/^extshare_[0-9a-f]{32}$/.test(normalized)) {
+			throw new TypeError('Arkme extension share reference is invalid')
+		}
+		return await this.call<ArkmeExtensionCatalogItem>('extensions.share.resolve', { shareRef: normalized }, signal)
 	}
 
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
@@ -1111,6 +1142,51 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  async messageReadReceiptSummaries(
+    sourceRef: string,
+    items: readonly ArkmeMessageReadReceiptQueryItem[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageReadReceiptSummaryList> {
+    const normalizedSourceRef = sourceRef.trim()
+    if (normalizedSourceRef === '' || items.length < 1 || items.length > ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS) {
+      throw new TypeError(`Arkme message read receipts require one source and 1-${String(ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS)} messages`)
+    }
+    const seen = new Set<string>()
+    const normalizedItems = items.map(item => {
+      const itemUid = item.itemUid.trim()
+      const sequence = Math.trunc(item.sequence)
+      const key = `${itemUid}\u0000${String(sequence)}`
+      if (itemUid === '' || !Number.isSafeInteger(item.sequence) || sequence <= 0 || seen.has(key)) {
+        throw new TypeError('Arkme message read receipt item identity is invalid or duplicated')
+      }
+      seen.add(key)
+      return { itemUid, sequence }
+    })
+    return await this.call<ArkmeMessageReadReceiptSummaryList>(
+      'source.read-receipts.summary-list',
+      { sourceRef: normalizedSourceRef, items: normalizedItems },
+      signal,
+    )
+  }
+
+  async messageReadReceiptDetail(
+    sourceRef: string,
+    itemUid: string,
+    sequence: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageReadReceiptDetail> {
+    const normalizedSourceRef = sourceRef.trim()
+    const normalizedItemUid = itemUid.trim()
+    if (normalizedSourceRef === '' || normalizedItemUid === '' || !Number.isSafeInteger(sequence) || sequence <= 0) {
+      throw new TypeError('Arkme group message read receipt identity is invalid')
+    }
+    return await this.call<ArkmeMessageReadReceiptDetail>(
+      'source.read-receipts.detail',
+      { sourceRef: normalizedSourceRef, itemUid: normalizedItemUid, sequence },
+      signal,
+    )
+  }
+
   async sendText(
     sourceRef: string,
     textContent: string,
@@ -1119,6 +1195,8 @@ export class ArkmeSdk {
       relationUid?: string
       agentAuthored?: boolean
       humanMentions?: readonly ArkmeHumanMentionInput[]
+      botMentions?: readonly ArkmeBotMentionInput[]
+      botRefs?: readonly string[]
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1132,6 +1210,8 @@ export class ArkmeSdk {
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
       ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
+      ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
+      ...(options.botRefs === undefined ? {} : { botRefs: options.botRefs }),
     }, options.signal)
   }
 
@@ -1172,6 +1252,41 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
     }, options.signal)
+  }
+
+  async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> {
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
+  }
+
+  async addFavoriteSticker(
+    item: ArkmeFavoriteStickerAddInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (item.fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.add', { item }, signal)
+  }
+
+  async sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    if (sourceRef.trim() === '' || fileAssetUid.trim() === '') throw new TypeError('Arkme sticker destination and asset must not be empty')
+    return await this.call<ArkmeSourceSendResult>('favorite-stickers.send', {
+      sourceRef,
+      fileAssetUid,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.manage', { fileAssetUid, action }, signal)
   }
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {

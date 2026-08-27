@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import {
+  useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
+  type CSSProperties, type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -24,10 +27,14 @@ import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
-    width: '100%', height: '100%', minWidth: 0, minHeight: 0,
+    position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0,
     display: 'flex', overflow: 'hidden', background: '#fff',
   },
   taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
+  sidebarResizeHandle: {
+    position: 'absolute', zIndex: 3, top: 0, right: 0, bottom: 0, width: 10,
+    cursor: 'col-resize', touchAction: 'none',
+  },
   workspace: {
     width: '100%', height: '100%', minWidth: 0, minHeight: 0,
     overflow: 'hidden', background: '#fff', position: 'relative',
@@ -36,6 +43,16 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', inset: 0, minWidth: 0, minHeight: 0,
   },
   details: { width: 0, height: 0, overflow: 'hidden' },
+}
+
+// The DSH layout width covers the legacy sidebar seat; Arkme adds its 72px navigation rail plus its divider budget.
+const ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH = 76
+const ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH = 72
+const ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH = 480
+const ARKME_PERSISTENT_SIDEBAR_AVATAR_ONLY_WIDTH = 120
+
+function clampPersistentSidebarWidth(width: number): number {
+  return Math.min(ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH, Math.max(ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH, Math.round(width)))
 }
 
 /** Permanent browser-side lifecycles that used to be owned by the optional DSH footer entry. */
@@ -60,7 +77,7 @@ export type ArkmePersistentSidebarProps = PropsRuntime<'sidebar'>
 
 /** Arkme permanently owns the DSH sidebar seat so navigation stays stable across Arkme and Harness conversations. */
 export function ArkmePersistentSidebar({
-  collapsed, useSessions, renderSlot, collapseSidebar, closeDetails,
+  collapsed, width, useSessions, renderSlot, collapseSidebar, closeDetails,
   searchDshMessages = async () => ({ items: [], hasMore: false }), openDshSession = () => undefined,
 }: ArkmePersistentSidebarProps) {
   const sessionState = useSessions(state => state)
@@ -83,7 +100,12 @@ export function ArkmePersistentSidebar({
     source: ArkmeSourceItem
   }>()
   const directoryVisible = !loginMode && ui.calendarOpen !== true
-    && (ui.mode === 'source' || ui.mode === 'arko' || harnessMode)
+    && (ui.mode === 'source' || ui.mode === 'bot' || ui.mode === 'arko' || harnessMode)
+  const [sidebarWidthOverride, setSidebarWidthOverride] = useState<number>()
+  const sidebarResizeRef = useRef<{ pointerId: number; startX: number; startWidth: number }>()
+  const [sidebarResizing, setSidebarResizing] = useState(false)
+  const renderedSidebarWidth = sidebarWidthOverride ?? width + ARKME_PERSISTENT_SIDEBAR_CHROME_WIDTH
+  const avatarOnly = !contactsMode && renderedSidebarWidth <= ARKME_PERSISTENT_SIDEBAR_AVATAR_ONLY_WIDTH
   useEffect(() => {
     if (authenticatedUserId === undefined) {
       setSendToSelfState(undefined)
@@ -99,7 +121,7 @@ export function ArkmePersistentSidebar({
       }
     }).catch(() => undefined)
     return () => controller.abort()
-  }, [authenticatedUserId, ui.chatRevision])
+  }, [authenticatedUserId, ui.recordRevision])
   const sendToSelfSource = sendToSelfState !== undefined && sendToSelfState.userId === authenticatedUserId
     ? sendToSelfState.source
     : undefined
@@ -129,6 +151,24 @@ export function ArkmePersistentSidebar({
   }, [contactsMode, contactsAccountKey, contacts.generation])
   useEffect(() => () => { handoffControllerRef.current?.abort() }, [])
 
+  const beginSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    sidebarResizeRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: renderedSidebarWidth }
+    setSidebarResizing(true)
+  }, [renderedSidebarWidth])
+  const continueSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resize = sidebarResizeRef.current
+    if (resize === undefined || resize.pointerId !== event.pointerId) return
+    setSidebarWidthOverride(clampPersistentSidebarWidth(resize.startWidth + event.clientX - resize.startX))
+  }, [])
+  const stopSidebarResize = useCallback((element?: HTMLDivElement, pointerId?: number) => {
+    if (pointerId !== undefined && element?.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId)
+    sidebarResizeRef.current = undefined
+    setSidebarResizing(false)
+  }, [])
+
   if (loginMode) return <aside
     data-arkme-owned="persistent-sidebar"
     data-arkme-login-mode="true"
@@ -143,15 +183,28 @@ export function ArkmePersistentSidebar({
     data-arkme-sidebar-collapsed={collapsed ? 'true' : 'false'}
     data-arkme-harness-mode={harnessMode ? 'true' : 'false'}
     data-arkme-directory-visible={directoryVisible ? 'true' : 'false'}
+    data-arkme-sidebar-resizing={sidebarResizing ? 'true' : 'false'}
     data-arkme-login-mode="false"
     {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})}
     style={styles.sidebar}
     aria-label="Arkme 功能导航栏"
   >
+    {!collapsed && directoryVisible && <style data-arkme-owned="persistent-sidebar-resize-handle-style">{`
+      :root { --arkme-persistent-sidebar-width: ${String(renderedSidebarWidth)}px; }
+      :root:has([data-arkme-owned="persistent-sidebar"]) [data-side="sidebar"] {
+        left: ${String(renderedSidebarWidth)}px !important;
+        pointer-events: none;
+      }
+      :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-slot="root"] > div,
+      :root:has([data-arkme-owned="persistent-sidebar"][data-arkme-sidebar-resizing="true"]) [data-side="sidebar"] {
+        transition: none !important;
+      }
+    `}</style>}
     <ArkmeProductNavigation
       compact={false}
       hosted
       taskExpanded
+      hidden={avatarOnly}
       currentSessionId={sessionState.current}
     />
     {directoryVisible && <div style={styles.taskDirectory} data-arkme-directory-mode={contactsMode ? 'contacts' : 'conversations'}>
@@ -205,6 +258,7 @@ export function ArkmePersistentSidebar({
         }}
       /> : <ArkmeNavigation
         wide
+        avatarOnly={avatarOnly}
         embeddedProductShell
         showHarnessEntry
         currentSessionId={sessionState.current}
@@ -214,6 +268,21 @@ export function ArkmePersistentSidebar({
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />}
     </div>}
+    {!collapsed && directoryVisible && !contactsMode && <div
+      data-arkme-owned="persistent-sidebar-resize-handle"
+      role="separator"
+      aria-label="调整对话列表宽度"
+      aria-orientation="vertical"
+      aria-valuemin={ARKME_PERSISTENT_SIDEBAR_MIN_WIDTH}
+      aria-valuemax={ARKME_PERSISTENT_SIDEBAR_MAX_WIDTH}
+      aria-valuenow={renderedSidebarWidth}
+      style={styles.sidebarResizeHandle}
+      onPointerDown={beginSidebarResize}
+      onPointerMove={continueSidebarResize}
+      onPointerUp={event => { stopSidebarResize(event.currentTarget, event.pointerId) }}
+      onPointerCancel={event => { stopSidebarResize(event.currentTarget, event.pointerId) }}
+      onLostPointerCapture={() => { stopSidebarResize() }}
+    />}
   </aside>
 }
 
@@ -275,7 +344,7 @@ export function ArkmePersistentWorkspace({
           t={t}
           productChrome={false}
           productNavigation={false}
-          ownsWechatLogin={!startupAuthGateEnabled()}
+          ownsQrLogin={!startupAuthGateEnabled()}
           currentSessionId={sessionId}
           onActivateSurface={() => undefined}
         />

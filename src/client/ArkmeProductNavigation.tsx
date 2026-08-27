@@ -28,6 +28,7 @@ export interface ArkmeProductNavigationProps {
   compact: boolean
   hosted?: boolean
   taskExpanded?: boolean
+  hidden?: boolean
   currentSessionId?: string | undefined
 }
 
@@ -128,7 +129,7 @@ const styles: Record<string, CSSProperties> = {
 
 /** Arkme-owned navigation rendered wholly inside the plugin surface. */
 export function ArkmeProductNavigation({
-  compact, hosted = false, taskExpanded = false, currentSessionId,
+  compact, hosted = false, taskExpanded = false, hidden = false, currentSessionId,
 }: ArkmeProductNavigationProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -205,11 +206,13 @@ export function ArkmeProductNavigation({
   return <nav
       data-arkme-owned="product-navigation"
       aria-label="Arkme 功能导航"
+      aria-hidden={hidden ? true : undefined}
       style={{
         ...styles.rail,
         ...(compact ? styles.compactRail : {}),
         ...(hosted ? styles.hostedRail : {}),
         ...(taskExpanded ? styles.taskExpandedRail : {}),
+        ...(hidden ? { display: 'none' } : {}),
       }}
     >
       {!compact && <div data-arkme-owned="product-brand" style={styles.brand}>

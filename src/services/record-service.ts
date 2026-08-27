@@ -16,6 +16,7 @@ import type {
   ArkmeUploadedAsset,
 } from '../types.js'
 import { MediaService } from './media-service.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
@@ -64,6 +65,7 @@ export class RecordService {
     private readonly runtime: ServiceRuntime,
     private readonly media: MediaService,
     private readonly source: ArkmeRecordSourceReader,
+    private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
   ) {}
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
@@ -208,6 +210,7 @@ export class RecordService {
 
   async list(limit: number, cursor?: ArkmeRecordCursor): Promise<ArkmeSelfRecordList> {
     const session = await this.runtime.requireSession()
+    const lockedRecordUids = await this.privacy.lockedRecordUids(session)
     const normalizedLimit = Math.min(50, Math.max(1, Math.trunc(limit || 30)))
     let requestCursor = cursor
     let hasMore = false
@@ -226,7 +229,8 @@ export class RecordService {
         session,
       )
       const rawPageItems = listValue(data.items)
-      const visiblePageItems = rawPageItems.filter(raw => !isDSHAgentInputRecord(raw))
+      const visiblePageItems = rawPageItems.filter(raw => !isDSHAgentInputRecord(raw)
+        && !arkmePrivacyLockedRecord(raw) && !lockedRecordUids.has(this.recordUid(raw)))
       visibleRawItems.push(...visiblePageItems)
       hasMore = data.has_more === true
       const nextSendAt = numberValue(data.next_cursor_send_at)
@@ -486,14 +490,14 @@ export class RecordService {
   recordTimelineItemFromRaw(
     raw: unknown,
     userId: number,
-    options: { displayItems?: unknown[]; mediaUnavailable?: boolean } = {},
+    options: { displayItems?: unknown[]; mediaUnavailable?: boolean; selfTopic?: ArkmeTimelineItem['selfTopic']; isMe?: boolean } = {},
   ): ArkmeTimelineItem {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       senderName: stringValue(item.nickname).trim() || '我',
-      isMe: numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
+      isMe: options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(item.title ?? core.title),
       textContent: stringValue(item.text_content ?? core.text_content),
@@ -505,6 +509,7 @@ export class RecordService {
       recordDurationMillis: numberValue(item.record_duration_millis ?? core.record_duration_millis),
       editDurationMillis: numberValue(item.edit_duration_millis ?? core.edit_duration_millis),
       contentBlocks: this.media.richContentBlocks(raw, userId, options.displayItems),
+      ...(options.selfTopic === undefined ? {} : { selfTopic: options.selfTopic }),
       ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }
@@ -535,6 +540,10 @@ export class RecordService {
 
   isDSHAgentInput(raw: unknown): boolean {
     return isDSHAgentInputRecord(raw)
+  }
+
+  isPrivacyLocked(raw: unknown): boolean {
+    return arkmePrivacyLockedRecord(raw)
   }
 
   async syncHistory(maxPages = 20, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }> {

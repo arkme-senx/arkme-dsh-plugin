@@ -17,9 +17,10 @@ import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
 import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
-import { consumeExtensionShareDeepLink } from './extension-share-deeplink.js'
+import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
+import { installArkmeAccountSettingsNavIcon } from './account-settings-nav-icon.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
@@ -64,8 +65,12 @@ export function apply(ctx: ClientContext): void {
 		return
 	}
 	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
-		const shareRef = consumeExtensionShareDeepLink(window.location, window.history)
-		if (shareRef !== undefined) arkmeUi.openExtensionShare(shareRef)
+		ctx.effect(() => observeExtensionShareDeepLinks(
+			window.location,
+			window.history,
+			window,
+			intent => { arkmeUi.openExtensionShare(intent.shareRef, intent.action) },
+		), 'dsh-arkme: extension share deep links')
 	}
 
   ctx.effect(() => ctx.locale.register(ARKME_LOGIN_LOCALE_NAMESPACE, {
@@ -194,6 +199,11 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-arkme: install redesign visual system')
 
+  ctx.effect(
+    () => installArkmeAccountSettingsNavIcon(),
+    'dsh-arkme: render account settings navigation icon',
+  )
+
   ctx.effect(() => {
     let disposeConversation: (() => void) | undefined
     let disposeDetails: (() => void) | undefined
@@ -227,7 +237,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'arkme-account',
-    order: 1000,
+    order: -1,
     label: '我的账户',
   }, ArkmeDshSettingsSection))
 
@@ -276,7 +286,13 @@ export {
   ArkmeMarketplace as ArkmeExtensionCenter,
 } from './ArkmeMarketplace.js'
 export { ArkmeSharedExtensionDetail } from './ArkmeSharedExtensionDetail.js'
-export { consumeExtensionShareDeepLink, extensionShareRefFromHash } from './extension-share-deeplink.js'
+export {
+	consumeExtensionShareDeepLink,
+	consumeExtensionShareDeepLinkIntent,
+	extensionShareIntentFromHash,
+	extensionShareRefFromHash,
+	observeExtensionShareDeepLinks,
+} from './extension-share-deeplink.js'
 export {
   ArkmeExtensionReviewComposerDialog,
   ArkmeExtensionReviews,

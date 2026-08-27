@@ -9,11 +9,13 @@ import {
   arkmeMemberProfileNames,
   arkmeMemberRecordTimeline, arkmeMemberRecordTotal, formatArkmeMemberRecordTime,
   clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
+  retainArkmeMemberRecordsScrollTop, shouldLoadOlderArkmeMemberRecords,
 } from '../src/client/ArkmeChatMemberActions.js'
 import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichContent.js'
 import {
   ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
-  arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees,
+  arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees, arkmeComposerMentionTrigger,
+  arkmeGroupMentionCandidates, arkmeMentionCandidateMatches, arkmeMentionCandidatePrimaryText,
 } from '../src/client/ArkmeSidebar.js'
 
 const member: ArkmeConversationMemberItem = {
@@ -30,6 +32,54 @@ describe('chat member action menu placement', () => {
       host,
       3,
     )).toEqual({ left: 40, top: 112, placement: 'below' })
+  })
+
+  it('detects a composer @ trigger only at the active caret token', () => {
+    expect(arkmeComposerMentionTrigger('@', 1)).toEqual({ startIndex: 0, endIndex: 1, query: '' })
+    expect(arkmeComposerMentionTrigger('@小', 2)).toEqual({ startIndex: 0, endIndex: 2, query: '小' })
+    expect(arkmeComposerMentionTrigger('请 @小', 4)).toEqual({ startIndex: 2, endIndex: 4, query: '小' })
+    expect(arkmeComposerMentionTrigger('email@example.com', 17)).toBeUndefined()
+    expect(arkmeComposerMentionTrigger('@小 林', 3)).toBeUndefined()
+    expect(arkmeComposerMentionTrigger('@小林', 0, 2)).toBeUndefined()
+  })
+
+  it('matches mention candidates by display, member, or secondary name', () => {
+    const candidate = { ...member, displayName: '小林', memberName: 'Lin', secondaryName: '设计师' }
+    expect(arkmeMentionCandidateMatches(candidate, '')).toBe(true)
+    expect(arkmeMentionCandidateMatches(candidate, 'lin')).toBe(true)
+    expect(arkmeMentionCandidateMatches(candidate, '设计')).toBe(true)
+    expect(arkmeMentionCandidateMatches(candidate, '周')).toBe(false)
+  })
+
+  it('renders a member mention candidate with the secondary name in parentheses', () => {
+    expect(arkmeMentionCandidatePrimaryText({ kind: 'member', displayName: '菜市场', secondaryName: '阿萨' }))
+      .toBe('菜市场（阿萨）')
+    expect(arkmeMentionCandidatePrimaryText({ kind: 'member', displayName: '菜市场', secondaryName: '菜市场' }))
+      .toBe('菜市场')
+    expect(arkmeMentionCandidatePrimaryText({ kind: 'bot', displayName: 'Purge', secondaryName: 'Bot' }))
+      .toBe('Purge')
+  })
+
+  it('keeps every matching group member after all and installed bot candidates', () => {
+    const members = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        ...member,
+        memberRef: `member-${index}`,
+        displayName: `成员${index}`,
+      })),
+      { ...member, memberRef: 'self', displayName: '我', isSelf: true },
+    ]
+    const candidates = arkmeGroupMentionCandidates('', [
+      { botRef: 'bot-1', name: 'Bot 1', description: '', installed: true, avatarRef: 'arkme-bot-image-v1.avatar-1' },
+      { botRef: 'bot-2', name: 'Bot 2', description: '', installed: true },
+      { botRef: 'bot-3', name: 'Bot 3', description: '', installed: false },
+    ], members)
+
+    expect(candidates).toHaveLength(15)
+    expect(candidates.map(candidate => candidate.displayName)).toEqual([
+      '所有人', 'Bot 1', 'Bot 2', ...Array.from({ length: 12 }, (_, index) => `成员${index}`),
+    ])
+    expect(candidates[1]).toMatchObject({ kind: 'bot', avatarRef: 'arkme-bot-image-v1.avatar-1' })
   })
 
   it('flips above near the lower edge and clamps horizontally', () => {
@@ -178,6 +228,19 @@ describe('chat member action menu placement', () => {
     expect(clampArkmeMemberRecordsWidth(520, 600)).toBe(428)
     expect(clampArkmeMemberRecordsWidth(520, 320)).toBe(320)
     expect(clampArkmeMemberRecordsWidth(Number.NaN, 1_200)).toBe(428)
+  })
+
+  it('loads older records near the top without a manual pagination button', () => {
+    expect(shouldLoadOlderArkmeMemberRecords(120, true, 900, false)).toBe(true)
+    expect(shouldLoadOlderArkmeMemberRecords(121, true, 900, false)).toBe(false)
+    expect(shouldLoadOlderArkmeMemberRecords(0, false, 900, false)).toBe(false)
+    expect(shouldLoadOlderArkmeMemberRecords(0, true, undefined, false)).toBe(false)
+    expect(shouldLoadOlderArkmeMemberRecords(0, true, 900, true)).toBe(false)
+  })
+
+  it('retains the visible record after older records are prepended', () => {
+    expect(retainArkmeMemberRecordsScrollTop(24, 1_000, 1_400)).toBe(424)
+    expect(retainArkmeMemberRecordsScrollTop(0, 1_000, 900)).toBe(0)
   })
 
   it('builds the same chronological 30-minute time segmentation as the desktop client', () => {

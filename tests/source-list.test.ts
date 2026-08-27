@@ -4,6 +4,9 @@ import {
   arkmeSelfDirectorySources, arkmeSendToSelfDirectoryPresentation, arkmeSourceTimeLabel,
   isArkmeChatDirectorySource, isArkmeSelfWorkspaceSource, sortArkmeSources,
 } from '../src/client/source-list.js'
+import {
+  arkmeRootChatPreview, arkmeRootChatPreviewParts, arkmeRootChatUnreadPlacement,
+} from '../src/client/ArkmeVirtualWorkspace.js'
 
 function source(
   sourceRef: string,
@@ -51,6 +54,23 @@ describe('Arkme send-to-self source list', () => {
     expect(isArkmeChatDirectorySource(topic)).toBe(false)
     expect(isArkmeChatDirectorySource(privateChat)).toBe(true)
     expect(isArkmeChatDirectorySource(groupChat)).toBe(true)
+  })
+
+  it('prefixes group chat previews when the backend marks an unread mention', () => {
+    const groupChat: ArkmeSourceItem = {
+      sourceRef: 'group', kind: 'group_chat', displayName: '群聊',
+      activeAtMillis: 1, unreadCount: 1, hasUnreadMention: true, latestPreview: '@所有人 开会',
+    }
+    const privateChat: ArkmeSourceItem = {
+      sourceRef: 'private', kind: 'private_chat', displayName: '私聊',
+      activeAtMillis: 1, unreadCount: 1, hasUnreadMention: true, latestPreview: '私聊消息',
+    }
+
+    expect(arkmeRootChatPreview(groupChat)).toBe('[有人@我] @所有人 开会')
+    expect(arkmeRootChatPreviewParts(groupChat)).toEqual({ mentionPrefix: '[有人@我] ', preview: '@所有人 开会' })
+    expect(arkmeRootChatUnreadPlacement(groupChat)).toBe('avatar')
+    expect(arkmeRootChatPreview(privateChat)).toBe('私聊消息')
+    expect(arkmeRootChatUnreadPlacement(privateChat)).toBe('inline')
   })
 
   it('globally sorts parents and children for card modes without mutating its input', () => {

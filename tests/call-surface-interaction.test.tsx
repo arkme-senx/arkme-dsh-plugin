@@ -1,7 +1,13 @@
+import { readFileSync } from 'node:fs'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeCallSurface } from '../src/client/ArkmeCallSurface.js'
 import { outgoingCallUi } from '../src/client/outgoing-call-ui-controller.js'
+
+const callSurfaceSource = readFileSync(
+  new URL('../src/client/ArkmeCallSurface.tsx', import.meta.url),
+  'utf8',
+)
 
 const mocks = vi.hoisted(() => ({
   callArkme: vi.fn(),
@@ -112,28 +118,7 @@ describe('ArkmeCallSurface interactions', () => {
     vi.unstubAllGlobals()
   })
 
-  it('adapts the call surface to dark mode', async () => {
-    const body = {
-      hasAttribute: vi.fn((name: string) => name === 'data-ds-dark-theme'),
-      getAttribute: vi.fn((name: string) => name === 'data-ds-dark-theme' ? '' : null),
-      dataset: {},
-      className: '',
-    }
-    vi.stubGlobal('document', {
-      documentElement: { dataset: {}, className: '' },
-      body,
-    })
-    vi.stubGlobal('matchMedia', vi.fn(() => ({
-      matches: false,
-      media: '(prefers-color-scheme: dark)',
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })))
-
+  it('uses DSH semantic tokens without maintaining a second theme state', async () => {
     let renderer!: ReactTestRenderer
     await act(async () => {
       renderer = create(<ArkmeCallSurface initialPickerOpen />)
@@ -141,10 +126,9 @@ describe('ArkmeCallSurface interactions', () => {
       await tick()
     })
 
-    const root = renderer.root.findByProps({ 'data-arkme-call-surface-theme': 'dark' })
+    const root = renderer.root.findByProps({ 'data-arkme-call-surface': 'true' })
     expect(root.props.style.background).toBe('var(--dsw-alias-bg-base, #ffffff)')
     expect(root.props.style.color).toBe('var(--dsw-alias-label-primary, #17191c)')
-    expect(root.props.style['--arkme-call-video-icon-filter']).toBe('invert(1) brightness(1.8)')
     const picker = renderer.root.findByProps({ 'aria-label': '选择通话联系人' })
     const search = renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).parent
     expect(picker.props.style.background)
@@ -160,8 +144,16 @@ describe('ArkmeCallSurface interactions', () => {
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.placeholder).toBe('输入即我号或昵称')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.color).toBe('var(--dsw-alias-label-primary, #17191c)')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.fontSize).toBe(12)
-    expect(buttonByLabel(renderer, '和即我作者视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.style.filter)
-      .toBe('var(--arkme-call-video-icon-filter, none)')
+    const videoIcon = buttonByLabel(renderer, '和即我作者视频通话')
+      .findByProps({ 'data-arkme-call-video-icon': 'compact' })
+    expect(videoIcon.type).toBe('svg')
+    expect(videoIcon.props.style.color).toBe('currentColor')
+    expect(callSurfaceSource).toContain('stroke="currentColor"')
+    expect(callSurfaceSource).not.toContain('--arkme-call-video-icon-filter')
+    expect(callSurfaceSource).not.toContain('useCallSurfaceDarkMode')
+    expect(callSurfaceSource).not.toContain('MutationObserver')
+    expect(callSurfaceSource).not.toContain('darkCallStyles')
+    expect(callSurfaceSource).not.toContain('data-arkme-call-surface-theme')
   })
 
   it('refreshes the recent call list when an outgoing call settles', async () => {
@@ -463,12 +455,14 @@ describe('ArkmeCallSurface interactions', () => {
     expect(titleRow.props.style.margin).toBe('0 auto')
     const switchButton = renderer.root.findByProps({ 'data-arkme-call-video-title-action': 'switch-perspective' })
     expect(textContent(switchButton.props.children)).toContain('切换视角')
-    expect(switchButton.props.style.background).toBe('#f4f5f8')
+    expect(switchButton.props.style.background)
+      .toBe('var(--dsw-alias-button-elevated-fill, var(--dsw-alias-bg-layer-2, #ffffff))')
     expect(switchButton.props.style.gap).toBe(6)
     const transcriptHeader = renderer.root.findByProps({ 'data-arkme-call-transcript-header': 'aligned' })
     expect(transcriptHeader.props.style.justifyContent).toBe('flex-start')
     expect(transcriptHeader.props.style.gap).toBe(8)
-    expect(transcriptHeader.props.style.borderBottom).toBe('1px solid #e6e8ee')
+    expect(transcriptHeader.props.style.borderBottom)
+      .toBe('1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.04))')
     const transcriptTitle = renderer.root.findAllByType('h3').find(item => textContent(item.props.children) === '通话转写')
     expect(transcriptTitle?.props.style.fontSize).toBe(14)
     const transcriptCount = renderer.root.findAllByType('span').find(item => textContent(item.props.children) === '2 段对话')
@@ -481,8 +475,12 @@ describe('ArkmeCallSurface interactions', () => {
     expect(renderer.root.findAllByType('video').map(video => video.props.src)).toEqual(['https://media.example/self-view.mp4'])
     expect(renderer.root.findByProps({ 'aria-label': '你的视角视频通话记录画面' }).props.controls).toBeUndefined()
 
+    const playButton = buttonByLabel(renderer, '播放视频记录')
+    expect(playButton.props.style.background).toBe('rgba(255,255,255,.88)')
+    expect(playButton.props.style.color).toBe('#171923')
+
     await act(async () => {
-      buttonByLabel(renderer, '播放视频记录').props.onClick()
+      playButton.props.onClick()
       await tick()
     })
 
@@ -796,8 +794,10 @@ describe('ArkmeCallSurface interactions', () => {
       await tick()
     })
 
-    expect(buttonByLabel(renderer, '直接和lucis视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.src)
-      .toBe('/arkme-self/api/call/arkme-video-linear.svg')
+    const videoIcon = buttonByLabel(renderer, '直接和lucis视频通话')
+      .findByProps({ 'data-arkme-call-video-icon': 'compact' })
+    expect(videoIcon.type).toBe('svg')
+    expect(videoIcon.props.style.color).toBe('currentColor')
 
     await act(async () => {
       buttonByLabel(renderer, '直接和lucis视频通话').props.onClick()

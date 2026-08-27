@@ -547,7 +547,10 @@ export type ArkmeInstalledExtensionView = Pick<
   | 'updateChannel'
   | 'installedAtMillis'
   | 'lastCheckedAtMillis'
-> & { unavailable?: ArkmeExtensionUnavailableView }
+> & {
+  unavailable?: ArkmeExtensionUnavailableView
+  restartRequired?: boolean
+}
 
 export interface ArkmeExtensionEnabledResult {
   extension_id: string
@@ -564,6 +567,7 @@ export interface ArkmeExtensionEnabledState {
   installed: boolean
   enabled: boolean
   active: boolean
+  restart_required?: boolean
   unavailable?: ArkmeExtensionUnavailableView
 }
 

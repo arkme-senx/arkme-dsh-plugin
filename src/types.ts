@@ -25,9 +25,68 @@ export interface ArkmeClientConfig {
   captchaId: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
+  jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
   shareWebsite: string
+}
+
+export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
+export type ArkmeBillingPaymentProvider = 'alipay' | 'wechat'
+export type ArkmeBillingPaymentActionType = 'open_url' | 'display_qr'
+
+export interface ArkmeBillingPaymentMethodOption {
+  id: ArkmeBillingPaymentMethod
+  provider: ArkmeBillingPaymentProvider
+  actionType: ArkmeBillingPaymentActionType
+}
+
+export type ArkmeBillingPaymentAction =
+  | { type: 'open_url'; url: string }
+  | { type: 'display_qr'; qrContent: string }
+export type ArkmeBillingOrderStatus = 'pending' | 'crediting' | 'paid' | 'expired' | 'closed' | 'failed'
+
+export interface ArkmeQuotaSnapshot {
+  availableNanoCny: string
+  totalNanoCny: string
+  reservedNanoCny: string
+  currency: 'CNY'
+}
+
+export interface ArkmeBillingProduct {
+  productId: string
+  title: string
+  description?: string
+  creditNanoCny: string
+  priceMinor: number
+  currency: 'CNY'
+  paymentMethods: ArkmeBillingPaymentMethodOption[]
+  enabled: boolean
+}
+
+export interface ArkmeBillingProductList {
+  items: ArkmeBillingProduct[]
+}
+
+export interface ArkmeBillingOrderCreateInput {
+  productId: string
+  paymentMethod: ArkmeBillingPaymentMethod
+  clientRequestId: string
+}
+
+export interface ArkmeBillingOrderSnapshot {
+  orderId: string
+  paymentProvider: ArkmeBillingPaymentProvider
+  paymentMethod: ArkmeBillingPaymentMethod
+  status: ArkmeBillingOrderStatus
+  amountMinor: number
+  currency: 'CNY'
+  creditNanoCny: string
+  expiresAtMillis: number
+  paymentAction?: ArkmeBillingPaymentAction
+  pollIntervalMillis?: number
+  paidAtMillis?: number
+  creditedAtMillis?: number
 }
 
 export type ArkmeContactIdentifierKind = 'phone' | 'arkme_id'
@@ -338,15 +397,79 @@ export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
 
 export interface ArkmeBotSummary {
   botRef: string
+  /** Stable, account-scoped opaque key for plugin-local directory preferences. */
+  directoryKey?: string
   name: string
   provider: ArkmeBotProvider
   description: string
   status: ArkmeBotStatus
   directChatAvailable: boolean
+  /** Creation time supplied by the Bot service, when available. */
+  createdAtMillis?: number
+  /** Latest private-chat message time, when the conversation directory has been hydrated. */
+  latestMessageAtMillis?: number
+  /** Safe preview of the latest private-chat message. */
+  latestMessagePreview?: string
+  /** Account-bound opaque reference resolved through image.read. */
+  avatarRef?: string
 }
 
 export interface ArkmeBotList {
   items: ArkmeBotSummary[]
+}
+
+/** Browser-safe projection of one message in the legacy Bot direct-chat protocol. */
+export interface ArkmeBotPrivateChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  status: string
+  createdAtMillis: number
+}
+
+export interface ArkmeBotPrivateChatConversation {
+  bot: ArkmeBotSummary
+  messages: ArkmeBotPrivateChatMessage[]
+}
+
+export interface ArkmeBotPrivateChatDirectory {
+  items: ArkmeBotSummary[]
+}
+
+/** Browser-safe projection of the Flutter desktop Bot settings profile. */
+export interface ArkmeBotManageProfile extends ArkmeBotSummary {
+  mentionEntryEnabled: boolean
+  tokenPreview: string
+  canRevealToken: boolean
+  tokenRevealEnabled: boolean
+  gatewayUrl: string
+  webhookUrl: string
+  recordCount: number
+  webhookSecurity: ArkmeBotWebhookSecurity
+  joinedGroups: ArkmeBotJoinedGroup[]
+}
+
+export interface ArkmeBotWebhookSecurity {
+  keywordEnabled: boolean
+  keyword: string
+  tokenEnabled: boolean
+  ipWhitelistEnabled: boolean
+  ipWhitelist: string[]
+}
+
+export interface ArkmeBotJoinedGroup {
+  title: string
+  installedAtMillis: number
+}
+
+export interface ArkmeBotNotificationPreference {
+  /** `true` means the current Bot direct chat will not receive push notifications. */
+  muted: boolean
+}
+
+export interface ArkmeBotPrivateChatSendResult {
+  userMessage: ArkmeBotPrivateChatMessage
+  botMessages: ArkmeBotPrivateChatMessage[]
+  status: string
 }
 
 export interface ArkmeConversationWriteResult {
@@ -384,6 +507,20 @@ export interface ArkmeWorldAvatarFallback {
   label: string
 }
 
+/** Immutable display snapshot emitted after one extension version becomes public. */
+export interface ArkmeWorldExtensionPublication {
+  extensionId: string
+  version: string
+  name: string
+  description: string
+  iconRef?: string
+  previewRefs: string[]
+  visibility: 'public'
+  runtimeDshRange?: string
+  desktopRequired: boolean
+  publishedAtMillis: number
+}
+
 export interface ArkmeWorldFeedItem {
   recordRef: string
   /** Opaque, viewer-bound reference for opening this non-self author's card. */
@@ -402,6 +539,8 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
+  recordType?: 'extension_publication'
+  extensionPublication?: ArkmeWorldExtensionPublication
 }
 
 export interface ArkmeWorldFeedPage {
@@ -862,7 +1001,11 @@ export interface ArkmeProviderCapabilities {
     imageLibrary?: true
     sourceDirectory: true
     sourceTimeline: true
+    /** Forward snapshots include typed transcripts and account-bound attachment references. */
+    forwardContent?: true
     sourceTextSend: true
+    /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
+    messageReadReceipts?: true
     richContentRead: boolean
     richContentSend: boolean
     fileUpload: boolean
@@ -917,6 +1060,7 @@ export interface ArkmeProviderCapabilities {
     maxImageBytes: number
     maxRelatedRecordingPageSize?: number
     maxRelatedRecordingCursorLength?: number
+    maxMessageReadReceiptItems?: number
     maxUploadBytes: number
   }
 }
@@ -1007,8 +1151,16 @@ export interface ArkmeSourceItem {
   sourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
   peerUserId?: number
-  /** Opaque reference to this topic's parent. Present only when both topics are in the same directory response. */
+  /** Opaque reference to this topic's parent when both topic labels are available in the same response. */
   parentSourceRef?: string
+  /** Opaque topic identity for reconciling hierarchy across paginated directory responses. */
+  topicHierarchyKey?: string
+  /** Opaque parent topic identity. A child stays hidden until this key is present in the loaded tree. */
+  parentTopicHierarchyKey?: string
+  /** Some direct child topics are still on later pages of the personal-topic directory. */
+  hasPendingChildren?: boolean
+  /** Server-persisted order within this topic's sibling group. */
+  siblingOrder?: number
   kind: ArkmeSourceKind
   displayName: string
   /** Opaque Provider image reference; consumers resolve it through image.read. */
@@ -1020,10 +1172,20 @@ export interface ArkmeSourceItem {
   latestPreview?: string
   activeAtMillis: number
   unreadCount: number
+  hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
+  /** Server-persisted conversation pin state for private and group chats. */
+  isPinned?: boolean
   latestSequence?: number
   recordCount?: number
+}
+
+/** Result of a server-backed conversation-directory policy mutation. */
+export interface ArkmeSourceDirectoryPolicyResult {
+  sourceRef: string
+  pinned: boolean
+  hidden: boolean
 }
 
 export interface ArkmeSourceList {
@@ -1041,10 +1203,56 @@ export interface ArkmeTopicCreateResult {
   warning?: string
 }
 
+/** Result of moving a personal topic to a different hierarchy parent. */
+export interface ArkmeTopicHierarchyMoveResult {
+  sourceRef: string
+  parentSourceRef?: string
+  siblingOrder: number
+}
+
+/** Result of renaming one personal topic. The opaque reference changes with the title. */
+export interface ArkmeTopicRenameResult {
+  sourceRef: string
+  displayName: string
+}
+
+/** Result of dissolving one personal topic while retaining its child topics. */
+export interface ArkmeTopicDissolveResult {
+  sourceRef: string
+  movedChildSourceRefs: string[]
+  movedRecordCount: number
+  /** Undefined means the records returned to the default category. */
+  recordTargetSourceRef?: string
+}
+
+/** Live status for a long-running topic dissolve operation. */
+export interface ArkmeTopicDissolveProgress {
+  requestId: string
+  stage: 'reading' | 'migrating' | 'promoting' | 'dissolving' | 'completed' | 'failed'
+  completedRecordCount: number
+  totalRecordCount: number
+  error?: string
+}
+
+/** A viewer-bound dissolve task that can be restored after the page reloads. */
+export interface ArkmeTopicDissolveTask extends ArkmeTopicDissolveProgress {
+  sourceRef: string
+  parentSourceRef?: string
+}
+
 export interface ArkmeTimelineCursor {
   sendAtMillis?: number
   itemUid?: string
   beforeSequence?: number
+}
+
+/** A browser-safe topic projection attached to an item in the aggregate self feed. */
+export interface ArkmeTimelineSelfTopic {
+  /** Browser-safe stable key for resolving the current topic from the self topic tree. */
+  topicHierarchyKey: string
+  /** Available immediately when the feed includes the topic title. */
+  sourceRef?: string
+  title?: string
 }
 
 export interface ArkmeTimelineItem {
@@ -1058,6 +1266,8 @@ export interface ArkmeTimelineItem {
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
   isMe: boolean
+  /** Browser-safe projection of whether this incoming message mentions the current viewer. */
+  mentionsViewer?: boolean
   sendAtMillis: number
   title: string
   textContent: string
@@ -1074,6 +1284,8 @@ export interface ArkmeTimelineItem {
   contentBlocks?: ArkmeContentBlock[]
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
+  /** Present only for a categorized record in the aggregate “发给自己” feed. */
+  selfTopic?: ArkmeTimelineSelfTopic
   /** Browser-safe Chat forward snapshot. It is present only for explicit `render_kind=forward_records` payloads. */
   forwardRecords?: ArkmeForwardRecordsPreview
 }
@@ -1083,6 +1295,8 @@ export interface ArkmeMessageReadReceiptQueryItem {
   itemUid: string
   sequence: number
 }
+
+export const ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS = 50 as const
 
 export type ArkmeMessageReadReceiptStatus = 'read' | 'partially_read' | 'unread'
 
@@ -1125,6 +1339,18 @@ export interface ArkmeForwardRecordsPreview {
   createdAtMillis: number
   summaryLines: string[]
   items: ArkmeForwardRecordPreviewItem[]
+  /** The bounded snapshot omitted additional records or nested content. */
+  truncated?: true
+}
+
+export interface ArkmeForwardTranscriptSegment {
+  speakerName: string
+  textContent: string
+  /** Offsets in the forwarded recording, not wall-clock timestamps. */
+  startMillis: number
+  endMillis: number
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: true
 }
 
 export interface ArkmeForwardRecordPreviewItem {
@@ -1135,6 +1361,11 @@ export interface ArkmeForwardRecordPreviewItem {
   title: string
   textContent: string
   contentLabel?: string
+  sourceType?: 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
+  segments?: ArkmeForwardTranscriptSegment[]
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: true
+  truncated?: true
 }
 
 export interface ArkmeTimelineAgentSource {
@@ -1205,6 +1436,8 @@ export interface ArkmeContentBlock {
   size: number
   durationSec?: number
   sortOrder: number
+  /** Backend media render role. 3 means a standalone chat sticker. */
+  renderRole?: 1 | 3
 }
 
 export interface ArkmeUploadedAsset {
@@ -1215,6 +1448,35 @@ export interface ArkmeUploadedAsset {
   fileKind: 1 | 2 | 3 | 4
 }
 
+export interface ArkmeFavoriteSticker {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+  isAnimated: boolean
+  isAvailable: boolean
+  mediaRef?: string
+  unavailableReason?: string
+}
+
+export interface ArkmeFavoriteStickerList {
+  items: ArkmeFavoriteSticker[]
+  itemCount: number
+  updatedAtMillis: number
+}
+
+export interface ArkmeFavoriteStickerAddInput {
+  fileAssetUid: string
+  fileName: string
+  mimeType: string
+  size: number
+  fileKind: 1
+  isAnimated?: boolean
+}
+
+export type ArkmeFavoriteStickerManageAction = 'move-to-front' | 'delete'
+
 export interface ArkmeRichSendInput {
   title?: string
   textContent?: string
@@ -1222,10 +1484,18 @@ export interface ArkmeRichSendInput {
   thinkingDurationMillis?: number
   assets?: ArkmeUploadedAsset[]
   humanMentions?: ArkmeHumanMentionInput[]
+  botMentions?: ArkmeBotMentionInput[]
 }
 
 export interface ArkmeHumanMentionInput {
-  memberRef: string
+  memberRef?: string
+  all?: boolean
+  startIndex: number
+  length: number
+}
+
+export interface ArkmeBotMentionInput {
+  botRef: string
   startIndex: number
   length: number
 }
@@ -1496,6 +1766,7 @@ export interface ArkmeGroupBotCandidate {
   name: string
   description: string
   installed: boolean
+  avatarRef?: string
 }
 
 export interface ArkmeGroupBotCandidateList {
@@ -1619,6 +1890,8 @@ export interface ArkmeRecordingTranscriptItem {
   speakerNumber: number
   speakerColorIndex: number
   speakerLabel: string
+  /** Opaque image reference for a speaker already associated with an Arkme user. */
+  speakerAvatarRef?: string
   isSelf: boolean
   isBackground: boolean
   text: string
@@ -2117,6 +2390,12 @@ export type ArkmeChatClientEvent = {
   sourceKey?: string
   effectiveReadSequence: number
   unreadCount: number
+} | {
+  type: 'read-receipts-invalidated'
+  revision: number
+  /** Account-bound conversation identity; raw Chat session and reader identities stay in Host memory. */
+  sourceKey: string
+  throughSequence: number
 }
 
 export type ArkmePluginOperation =
@@ -2127,15 +2406,32 @@ export type ArkmePluginOperation =
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
+  | 'auth.app.begin'
+  | 'auth.app.poll'
+  | 'auth.app.cancel'
   | 'auth.test.login'
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.logout'
+  | 'billing.quota'
+  | 'billing.products'
+  | 'billing.order.create'
+  | 'billing.order.status'
   | 'contacts.search'
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'
+  | 'bots.list'
   | 'bots.create'
+  | 'bots.manage.profile'
+  | 'bots.manage.update'
+  | 'bots.manage.reveal-token'
+  | 'bots.manage.delete'
+  | 'bots.private-chat.notification.status'
+  | 'bots.private-chat.notification.update'
+  | 'bots.private-chat.directory'
+  | 'bots.private-chat.open'
+  | 'bots.private-chat.send'
   | 'records.summary'
   | 'records.cache'
   | 'records.refresh'
@@ -2179,10 +2475,13 @@ export type ArkmePluginOperation =
   | 'extensions.reviews.create'
   | 'extensions.audit.check'
   | 'sources.list'
+  | 'source.directory.policy.set'
   | 'source.timeline'
   | 'source.members'
   | 'source.member-records'
   | 'source.mark-read'
+  | 'source.read-receipts.summary-list'
+  | 'source.read-receipts.detail'
   | 'source.send-text'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'
@@ -2209,6 +2508,10 @@ export type ArkmePluginOperation =
   | 'chat.private.open'
   | 'chat.member.private.open'
   | 'source.send-rich'
+  | 'favorite-stickers.list'
+  | 'favorite-stickers.add'
+  | 'favorite-stickers.send'
+  | 'favorite-stickers.manage'
   | 'source.long-article.detail'
   | 'source.long-article.update'
   | 'source.long-article.draft.get'
@@ -2232,6 +2535,7 @@ export type ArkmePluginOperation =
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'
+	| 'extensions.share.resolve'
   | 'extensions.installed-list'
   | 'extensions.enabled-state'
   | 'extensions.persistent.client-state'
@@ -2241,6 +2545,11 @@ export type ArkmePluginOperation =
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'
+  | 'topic.hierarchy.move'
+  | 'topic.rename'
+  | 'topic.dissolve'
+  | 'topic.dissolve.status'
+  | 'topic.dissolve.active'
 
 export type ArkmeHostOperation = ArkmePluginOperation
   | 'provider.instance'
@@ -2275,6 +2584,11 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'ai-video.list'
   | 'files.assets'
   | 'topic.create'
+  | 'topic.hierarchy.move'
+  | 'topic.rename'
+  | 'topic.dissolve'
+  | 'topic.dissolve.status'
+  | 'topic.dissolve.active'
   | 'arko.profile'
   | 'arko.session'
   | 'arko.new-session'
@@ -2307,6 +2621,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'extensions.uninstall'
   | 'extensions.restart'
   | 'extensions.client.failure'
+  | 'extensions.bundle.client-state'
   | 'extensions.persistent.invoke'
   | 'extensions.bundle.invoke'
 

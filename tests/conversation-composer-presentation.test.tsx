@@ -55,6 +55,8 @@ describe('Arkme conversation composer presentation', () => {
     }
     expect(arkoSource).toContain('arkmeConversationComposerHeight(textarea.scrollHeight)')
     expect(sidebarSource).toContain('<ArkmeRichComposerInput')
+    expect(sidebarSource).toContain('onSelectionChange={updateMentionTrigger}')
+    expect(sidebarSource).not.toContain('<ArkmeMentionTextarea')
 
     expect(arkoSource).toContain("callArkme<ArkmeArkoAskResult>('arko.ask'")
     expect(arkoSource).toContain("callArkme<ArkmeArkoCancelResult>('arko.cancel'")
@@ -69,6 +71,7 @@ describe('Arkme conversation composer presentation', () => {
     expect(emojiPickerSource).toContain('<ArkmeComposerToolButton')
     expect(emojiPickerSource).toContain("triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' }")
     expect(emojiPickerSource).toContain('<span style={styles.triggerIcon}><ArkmeComposerEmojiIcon /></span>')
+    expect(sidebarSource).not.toContain('onBeforeToggle={() => { textareaRef.current?.focus({ preventScroll: true }) }}')
     expect(toolButtonSource).toContain("width: 34")
     expect(toolButtonSource).toContain("height: 34")
     expect(toolButtonSource).toContain("transition: 'none'")
