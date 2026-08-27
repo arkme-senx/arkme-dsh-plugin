@@ -61,9 +61,9 @@
       "schemaVersion": 1,
       "level": "normal",
       "title": "Arkme 插件 0.1.22 更新",
-      "summary": "新增联系人目录与未标记说话人管理，完善通话、微信扫码登录、富表情、群聊和世界交互，并增强应用内更新、暗色主题与配置兼容性。",
-      "publishedAt": "2026-08-25T10:58:34.000Z",
-      "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
+      "summary": "增强插件更新全链路日志，并修复 Windows Profile junction 更新时误删安装目录的问题。",
+      "publishedAt": "2026-08-26T09:58:18.000Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.22"
     }
   },
   "scripts": {

@@ -18,6 +18,11 @@ import {
   type PluginUpdateManifestV1,
 } from './plugin-update-artifact.js'
 import { PluginUpdateInstallStateStore } from './plugin-update-install-state.js'
+import {
+  writePluginUpdateLifecycleLog,
+  type PluginUpdateLifecycleContext,
+  type PluginUpdateLifecycleDetails,
+} from './plugin-update-lifecycle-log.js'
 import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from './plugin-update-policy.js'
 import { PluginUpdateStateStore, type PersistedPluginUpdateState } from './plugin-update-state.js'
 import { prepareProfilePackageManager } from './profile-package-manager.js'
@@ -92,9 +97,11 @@ export interface PluginUpdateInstallRuntime {
   requestShutdown?: () => void
   supervisedExitCode?: number
   supervisedPlanPath?: string
+  harnessLogPath?: string
   requestProcessExit?: (code: number) => void
   runProfilePluginAdd?: (plan: PluginUpdaterPlan) => Promise<void>
   runProfilePluginRemove?: (plan: PluginUpdaterPlan) => Promise<void>
+  runProfilePluginRollback?: (plan: PluginUpdaterPlan) => Promise<void>
   preparePackageManager?: (dshHome: string, profileName: string) => void
   allowLocalInstall?: boolean
 }
@@ -321,10 +328,21 @@ export class ArkmePluginUpdateManager {
     }
 
     const runtime = this.installRuntime
+    const jobId = randomUUID()
+    const logPath = runtime.harnessLogPath ?? join(this.stateDirectory, 'plugin-update-helper.log')
+    const lifecycle: PluginUpdateLifecycleContext = {
+      jobId,
+      previousVersion: this.installedVersion,
+      targetVersion: status.latestVersion,
+    }
+    this.logInstallStage(logPath, lifecycle, 'package-manager-preflight-started')
     try {
       (runtime.preparePackageManager ?? prepareProfilePackageManager)(runtime.dshHome, runtime.profileName)
+      this.logInstallStage(logPath, lifecycle, 'package-manager-preflight-completed')
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
+      this.logInstallStage(logPath, lifecycle, 'package-manager-preflight-failed', { error: detail })
+      this.logInstallStage(logPath, lifecycle, 'failed', { error: 'profile-package-manager-unavailable' })
       throw new ArkmePluginUpdateError(
         'profile-package-manager-unavailable',
         `无法确认 DSH Profile 的 pnpm：${detail}`,
@@ -332,7 +350,6 @@ export class ArkmePluginUpdateManager {
       )
     }
     const execArgv = runtime.execArgv ?? process.execArgv
-    const jobId = randomUUID()
     const now = this.now()
     const snapshot: ArkmePluginUpdateInstallSnapshot = {
       schemaVersion: 1,
@@ -344,6 +361,7 @@ export class ArkmePluginUpdateManager {
       updatedAtMillis: now,
     }
     await this.installStore.write(snapshot)
+    this.logInstallStage(logPath, lifecycle, 'preparing')
 
     let targetManifest = this.latestManifest?.version === status.latestVersion ? this.latestManifest : undefined
     if (targetManifest === undefined) {
@@ -357,6 +375,8 @@ export class ArkmePluginUpdateManager {
         message: '无法获取插件更新信息。',
         updatedAtMillis: this.now(),
       })
+      this.logInstallStage(logPath, lifecycle, 'manifest-missing')
+      this.logInstallStage(logPath, lifecycle, 'failed', { error: 'plugin-update-manifest-missing' })
       throw new ArkmePluginUpdateError('plugin-update-manifest-missing', '无法获取插件更新信息', true)
     }
     const cacheDirectory = join(this.stateDirectory, 'plugin-cache')
@@ -366,6 +386,8 @@ export class ArkmePluginUpdateManager {
       message: `正在下载 ${status.latestVersion}…`,
       updatedAtMillis: this.now(),
     })
+    const downloadStartedAt = this.now()
+    this.logInstallStage(logPath, lifecycle, 'downloading-started')
     let targetArtifactPath: string
     try {
       targetArtifactPath = await downloadAndCachePluginArtifact(targetManifest, {
@@ -374,12 +396,18 @@ export class ArkmePluginUpdateManager {
         fetchImpl: this.fetchImpl,
         requestTimeoutMs: this.requestTimeoutMs,
       })
+      this.logInstallStage(logPath, lifecycle, 'downloading-completed', {
+        durationMs: Math.max(0, this.now() - downloadStartedAt),
+      })
     } catch (error) {
       await this.installStore.write({
         ...snapshot,
         phase: 'failed',
         message: error instanceof Error ? `插件制品下载或校验失败：${error.message}` : '插件制品下载或校验失败。',
         updatedAtMillis: this.now(),
+      })
+      this.logInstallStage(logPath, lifecycle, 'failed', {
+        error: error instanceof Error ? error.message : String(error),
       })
       throw error instanceof ArkmePluginUpdateError
         ? error
@@ -393,9 +421,9 @@ export class ArkmePluginUpdateManager {
       message: `插件 ${status.latestVersion} 已校验，准备安装…`,
       updatedAtMillis: this.now(),
     })
+    this.logInstallStage(logPath, lifecycle, 'verifying-completed')
     const previousArtifactPath = existingCachedPluginArtifactPath(cacheDirectory, this.installedVersion)
     const planPath = join(this.stateDirectory, `plugin-update-plan-${jobId}.json`)
-    const logPath = join(this.stateDirectory, 'plugin-update-helper.log')
     const plan: PluginUpdaterPlan = {
       schemaVersion: 1,
       jobId,
@@ -432,6 +460,7 @@ export class ArkmePluginUpdateManager {
         message: `正在安装 ${status.latestVersion}…`,
         updatedAtMillis: this.now(),
       })
+      this.logInstallStage(logPath, lifecycle, 'installing')
       try {
         await this.installSupervisedProfilePlugin(plan, runtime)
       } catch (error) {
@@ -441,9 +470,21 @@ export class ArkmePluginUpdateManager {
           message: error instanceof Error ? `新版本安装失败：${error.message}` : '新版本安装失败。',
           updatedAtMillis: this.now(),
         })
+        this.logInstallStage(logPath, lifecycle, 'failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
         throw new ArkmePluginUpdateError('plugin-update-install-failed', '新版本安装失败', true)
       }
-      await this.writeSupervisedRestartPlan(runtime.supervisedPlanPath, plan)
+      this.logInstallStage(logPath, lifecycle, 'restart-plan-writing')
+      try {
+        await this.writeSupervisedRestartPlan(runtime.supervisedPlanPath, plan)
+        this.logInstallStage(logPath, lifecycle, 'restart-plan-written')
+      } catch (error) {
+        this.logInstallStage(logPath, lifecycle, 'restart-plan-write-failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+        throw error
+      }
       const restarting: ArkmePluginUpdateInstallSnapshot = {
         ...snapshot,
         phase: 'restarting',
@@ -451,16 +492,23 @@ export class ArkmePluginUpdateManager {
         updatedAtMillis: this.now(),
       }
       await this.installStore.write(restarting)
+      this.logInstallStage(logPath, lifecycle, 'restarting')
       const exitProcess = runtime.requestProcessExit ?? ((code: number) => process.exit(code))
+      this.logInstallStage(logPath, lifecycle, 'process-exit-scheduled')
       const timer = setTimeout(() => exitProcess(runtime.supervisedExitCode as number), 800)
       timer.unref?.()
       return restarting
     }
     await writeFile(planPath, `${JSON.stringify(plan, undefined, 2)}\n`, { mode: 0o600 })
     await chmod(planPath, 0o600)
+    this.logInstallStage(logPath, lifecycle, 'helper-spawn-started')
     try {
       await (runtime.spawnUpdater ?? this.spawnUpdater.bind(this))(planPath, logPath)
+      this.logInstallStage(logPath, lifecycle, 'helper-spawn-completed')
     } catch (error) {
+      this.logInstallStage(logPath, lifecycle, 'helper-spawn-failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
       await unlink(planPath).catch(() => undefined)
       await this.installStore.write({
         ...snapshot,
@@ -468,12 +516,14 @@ export class ArkmePluginUpdateManager {
         message: '无法启动独立更新进程。',
         updatedAtMillis: this.now(),
       })
+      this.logInstallStage(logPath, lifecycle, 'failed', { error: 'plugin-update-helper-failed' })
       throw new ArkmePluginUpdateError('plugin-update-helper-failed', '无法启动独立更新进程', true)
     }
     const shutdown = runtime.requestShutdown ?? (() => {
       const timer = setTimeout(() => process.kill(process.pid, 'SIGTERM'), 800)
       timer.unref?.()
     })
+    this.logInstallStage(logPath, lifecycle, 'shutdown-requested')
     shutdown()
     return snapshot
   }
@@ -538,22 +588,75 @@ export class ArkmePluginUpdateManager {
   ): Promise<void> {
     const add = runtime.runProfilePluginAdd ?? this.runProfilePluginAdd.bind(this)
     const remove = runtime.runProfilePluginRemove ?? this.runProfilePluginRemove.bind(this)
+    const rollback = runtime.runProfilePluginRollback ?? this.runProfilePluginRollback.bind(this)
+    const lifecycle: PluginUpdateLifecycleContext = {
+      jobId: plan.jobId,
+      previousVersion: plan.previousVersion,
+      targetVersion: plan.targetVersion,
+    }
     try {
       assertTargetArtifactIntegrity(plan)
-      await remove(plan)
-      await add(plan)
+      const removeStartedAt = this.now()
+      this.logInstallStage(plan.logPath, lifecycle, 'profile-remove-started')
+      try {
+        await remove(plan)
+      } catch (error) {
+        this.logInstallStage(plan.logPath, lifecycle, 'profile-remove-failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+        throw error
+      }
+      this.logInstallStage(plan.logPath, lifecycle, 'profile-remove-completed', {
+        durationMs: Math.max(0, this.now() - removeStartedAt),
+      })
+      const addStartedAt = this.now()
+      this.logInstallStage(plan.logPath, lifecycle, 'profile-add-started')
+      try {
+        await add(plan)
+      } catch (error) {
+        this.logInstallStage(plan.logPath, lifecycle, 'profile-add-failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+        throw error
+      }
+      this.logInstallStage(plan.logPath, lifecycle, 'profile-add-completed', {
+        durationMs: Math.max(0, this.now() - addStartedAt),
+      })
       const installedVersion = this.readInstalledProfilePluginVersion(plan)
+      this.logInstallStage(plan.logPath, lifecycle, 'installed-version-checked', { installedVersion })
       if (installedVersion !== plan.targetVersion) {
+        this.logInstallStage(plan.logPath, lifecycle, 'installed-version-mismatch', { installedVersion })
         throw new Error(`DSH Profile 实际安装版本为 ${installedVersion || '未知'}，预期为 ${plan.targetVersion}`)
       }
     } catch (error) {
+      this.logInstallStage(plan.logPath, lifecycle, 'rollback-started')
       try {
-        await this.runProfilePluginRollback(plan)
+        await rollback(plan)
+        this.logInstallStage(plan.logPath, lifecycle, 'rollback-completed')
       } catch (rollbackError) {
         const detail = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+        this.logInstallStage(plan.logPath, lifecycle, 'rollback-failed', { error: detail })
         throw new Error(`插件安装失败，且恢复旧版本失败：${detail}`, { cause: error })
       }
       throw error
+    }
+  }
+
+  private logInstallStage(
+    logPath: string,
+    context: PluginUpdateLifecycleContext,
+    stage: string,
+    details: PluginUpdateLifecycleDetails = {},
+  ): void {
+    if (!writePluginUpdateLifecycleLog(logPath, context, stage, details)) {
+      try {
+        this.logger.warn?.(
+          'dsh-arkme: unable to append plugin update lifecycle log jobId=%s stage=%s path=%s',
+          context.jobId,
+          stage,
+          logPath,
+        )
+      } catch { /* Diagnostic logging must never interrupt an update. */ }
     }
   }
 

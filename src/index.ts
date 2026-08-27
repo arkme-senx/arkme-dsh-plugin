@@ -220,6 +220,9 @@ export function apply(ctx: Context, config: Config): void {
         ? {
             supervisedExitCode: ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
             supervisedPlanPath: process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH,
+            ...(process.env.ARKME_HARNESS_LOG_PATH === undefined
+              ? {}
+              : { harnessLogPath: process.env.ARKME_HARNESS_LOG_PATH }),
           }
         : {}),
     },
