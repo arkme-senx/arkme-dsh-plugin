@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -19,6 +19,10 @@ import { PluginUpdateInstallStateStore } from '../src/plugin-update-install-stat
 import {
   pluginPackageTgz,
 } from './plugin-update-fixtures.js'
+
+const TEST_PNPM_PACKAGE_MANAGER = `pnpm@${execFileSync('pnpm', ['--version'], {
+  encoding: 'utf8',
+}).trim()}`
 
 interface PluginUpdateLogEntry {
   timestamp: string
@@ -50,7 +54,7 @@ async function runtimeFixture(spec: string) {
     storedSpec = `link:${localSource}`
   }
   await writeFile(join(profileDir, 'package.json'), JSON.stringify({
-    packageManager: 'pnpm@11.19.0',
+    packageManager: TEST_PNPM_PACKAGE_MANAGER,
     dependencies: { '@senguoyun/dsh-arkme': storedSpec },
   }))
   const dshBinPath = join(root, 'dsh-bin.js')
@@ -409,7 +413,7 @@ describe('companion plugin updater', () => {
     await mkdir(dirname(previousArtifactPath), { recursive: true })
     await writeFile(previousArtifactPath, pluginPackageTgz('0.1.3'))
     await writeFile(join(fixture.root, 'profiles', 'web', 'package.json'), JSON.stringify({
-      packageManager: 'pnpm@11.19.0',
+      packageManager: TEST_PNPM_PACKAGE_MANAGER,
       dependencies: { '@senguoyun/dsh-arkme': `file:${previousArtifactPath}` },
     }))
     await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
@@ -751,7 +755,7 @@ describe('companion plugin updater', () => {
     const profileDirectory = join(root, 'profiles', 'web')
     await mkdir(profileDirectory, { recursive: true })
     await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({
-      packageManager: 'pnpm@11.19.0',
+      packageManager: TEST_PNPM_PACKAGE_MANAGER,
       dependencies: { '@senguoyun/dsh-arkme': 'file:current.tgz', 'deepseek-pet': '1.0.0' },
       dsh: { profile: { bundles: ['@senguoyun/dsh-arkme'] } },
     }))
