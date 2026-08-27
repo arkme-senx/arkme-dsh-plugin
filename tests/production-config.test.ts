@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS,
   resolveArkmeAppVersion,
+  resolvePluginUpdateEnabled,
 } from '../src/index.js'
 
 describe('production plugin configuration', () => {
@@ -51,5 +52,11 @@ describe('production plugin configuration', () => {
     expect(resolveArkmeAppVersion('', { ARKME_APP_VERSION: '1.2.3' })).toBe('1.2.3')
     expect(resolveArkmeAppVersion('2.0.0', { ARKME_APP_VERSION: '1.2.3' })).toBe('2.0.0')
     expect(resolveArkmeAppVersion('', {})).toBeUndefined()
+  })
+
+  it('disables independent plugin replacement inside a Release Set managed runtime', () => {
+    expect(resolvePluginUpdateEnabled(true, { ARKME_RUNTIME_MANAGED: '1' })).toBe(false)
+    expect(resolvePluginUpdateEnabled(true, {})).toBe(true)
+    expect(resolvePluginUpdateEnabled(false, {})).toBe(false)
   })
 })

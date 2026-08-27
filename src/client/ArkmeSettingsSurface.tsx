@@ -52,6 +52,16 @@ export interface ArkmeSettingsSurfaceProps {
   onOpenModels?: () => void
 }
 
+interface ArkmeDesktopScope {
+  arkmeDesktop?: { runtimeManaged?: boolean }
+}
+
+export function desktopRuntimeManaged(
+  scope: ArkmeDesktopScope = globalThis as unknown as ArkmeDesktopScope,
+): boolean {
+  return scope.arkmeDesktop?.runtimeManaged === true
+}
+
 export interface ArkmeUpdateCenterRow {
   key: 'app' | 'plugin'
   label: string
@@ -77,6 +87,7 @@ export function buildArkmeUpdateCenterRows(input: {
   plugin?: Pick<ArkmePluginUpdateStatus, 'availability' | 'installedVersion' | 'latestVersion' | 'checking' | 'checkFailed'>
   pluginBusy?: boolean
   pluginError?: string
+  runtimeManaged?: boolean
 }): ArkmeUpdateCenterRow[] {
   const appStatus = input.app?.status
   const appUnavailable = input.app === undefined && input.appError?.trim() !== undefined && input.appError.trim() !== ''
@@ -110,7 +121,7 @@ export function buildArkmeUpdateCenterRows(input: {
           : input.plugin?.availability === 'available'
             ? '发现新版本，可以立即更新'
             : undefined
-  return [{
+  const rows: ArkmeUpdateCenterRow[] = [{
     key: 'app',
     label: 'APP',
     current: versionLabel(input.app?.currentVersion),
@@ -128,6 +139,17 @@ export function buildArkmeUpdateCenterRows(input: {
     action: pluginBusy ? 'busy' : pluginAvailable ? 'install' : 'check',
     ...(pluginFeedback === undefined ? {} : { feedback: pluginFeedback }),
   }]
+  if (input.runtimeManaged === true) {
+    const plugin = rows[1]!
+    rows[1] = {
+      ...plugin,
+      latest: plugin.current,
+      button: '当前不可用',
+      action: 'busy',
+      feedback: '由 Arkme 桌面端统一管理',
+    }
+  }
+  return rows
 }
 
 export function ArkmeSettingsSurface({ onOpenModels }: ArkmeSettingsSurfaceProps = {}) {
@@ -196,6 +218,7 @@ export function ArkmeSettingsSurface({ onOpenModels }: ArkmeSettingsSurfaceProps
   const pluginInstallBusy = updateState.install !== undefined
     && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   const updateRows = buildArkmeUpdateCenterRows({
+    runtimeManaged: desktopRuntimeManaged(),
     ...(appUpdateState.status === undefined ? {} : { app: appUpdateState.status }),
     ...(appUpdateState.error === '' ? {} : { appError: appUpdateState.error }),
     ...(updateState.status === undefined ? {} : { plugin: updateState.status }),

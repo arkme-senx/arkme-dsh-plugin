@@ -164,6 +164,13 @@ export function resolveArkmeAppVersion(
   return injected === undefined || injected === '' ? undefined : injected
 }
 
+export function resolvePluginUpdateEnabled(
+  configured: boolean,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return configured && environment.ARKME_RUNTIME_MANAGED !== '1'
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Headless Arkme data provider for trusted Host-side consumer plugins. */
@@ -195,7 +202,7 @@ export function apply(ctx: Context, config: Config): void {
     isRuntimeOnline: async botRef => (await service.listBots()).items.some(bot => bot.botRef === botRef && bot.status === 'online'),
   }))
   const updateManager = new ArkmePluginUpdateManager({
-    enabled: config.updateCheckEnabled,
+    enabled: resolvePluginUpdateEnabled(config.updateCheckEnabled),
     channel: config.updateChannel,
     updateServiceBaseUrl: config.updateServiceBaseUrl,
     ...(config.updateArtifactBaseUrl.trim() === '' ? {} : { updateArtifactBaseUrl: config.updateArtifactBaseUrl }),

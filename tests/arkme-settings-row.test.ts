@@ -61,6 +61,23 @@ describe('ArkmeSettingsRow', () => {
     ])
   })
 
+  it('shows the managed core-plugin version without an independent update action', () => {
+    expect(buildArkmeUpdateCenterRows({
+      runtimeManaged: true,
+      app: { status: 'current', currentVersion: '0.2.0' },
+      plugin: { availability: 'available', installedVersion: '0.1.13', latestVersion: '0.1.14' },
+    })).toEqual([
+      {
+        key: 'app', label: 'APP', current: 'v0.2.0', latest: 'v0.2.0',
+        button: '检查更新', action: 'check', feedback: '已检查 · 当前已是最新版本',
+      },
+      {
+        key: 'plugin', label: '核心插件', current: 'v0.1.13', latest: 'v0.1.13',
+        button: '当前不可用', action: 'busy', feedback: '由 Arkme 桌面端统一管理',
+      },
+    ])
+  })
+
   it('shows an unavailable APP feed as no available version instead of a failed check', () => {
     expect(buildArkmeUpdateCenterRows({
       app: { status: 'current', currentVersion: '1.2.0', noUpdateAvailable: true },
