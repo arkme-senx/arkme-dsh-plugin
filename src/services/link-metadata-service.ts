@@ -291,7 +291,7 @@ export class NodeArkmeLinkDocumentReader implements ArkmeLinkDocumentReader {
 }
 
 export class ArkmeLinkMetadataService {
-  private readonly cache = new Map<string, ArkmeLinkMetadata | null>()
+  private readonly cache = new Map<string, ArkmeLinkMetadata>()
   private readonly inFlight = new Map<string, Promise<ArkmeLinkMetadata | null>>()
   private readonly cacheSize: number
   private readonly lifecycle = new AbortController()
@@ -318,11 +318,11 @@ export class ArkmeLinkMetadataService {
     const initialUrl = safeWebUrl(rawUrl)
     initialUrl.hash = ''
     const key = initialUrl.href
-    if (this.cache.has(key)) {
-      const value = this.cache.get(key) ?? null
+    const cached = this.cache.get(key)
+    if (cached !== undefined) {
       this.cache.delete(key)
-      this.cache.set(key, value)
-      return value
+      this.cache.set(key, cached)
+      return cached
     }
     const pending = this.inFlight.get(key)
     if (pending !== undefined) return await pending
@@ -341,6 +341,7 @@ export class ArkmeLinkMetadataService {
       })
       .then(value => {
         if (this.lifecycle.signal.aborted) throw this.lifecycle.signal.reason
+        if (value === null) return null
         this.cache.set(key, value)
         while (this.cache.size > this.cacheSize) {
           const oldest = this.cache.keys().next().value as string | undefined

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link'
 import { arkmeTheme } from './arkme-theme.js'
 import {
   arkmeLinkMetadataResolver,
@@ -7,7 +8,25 @@ import {
 } from './link-metadata-client.js'
 import { textLinkRuns } from './text-link-parser.js'
 
-const linkStyle: CSSProperties = { color: arkmeTheme.info, textDecoration: 'underline', textUnderlineOffset: 2 }
+const linkPresentationStyle: CSSProperties = {
+  color: arkmeTheme.info,
+  textDecoration: 'underline',
+  textUnderlineOffset: 2,
+  minWidth: 0,
+  maxWidth: '100%',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 2,
+  verticalAlign: 'text-bottom',
+}
+const linkIconStyle: CSSProperties = { width: 16, height: 16, flex: 'none' }
+const rawLinkLabelStyle: CSSProperties = { minWidth: 0 }
+const resolvedLinkLabelStyle: CSSProperties = {
+  ...rawLinkLabelStyle,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
 
 function ArkmeResolvedTextLink({ href, text, metadataResolver }: {
   href: string
@@ -34,10 +53,16 @@ function ArkmeResolvedTextLink({ href, text, metadataResolver }: {
     target="_blank"
     rel="noopener noreferrer"
     title={resolved ? href : undefined}
-    style={linkStyle}
+    style={linkPresentationStyle}
     data-arkme-text-link="true"
     data-arkme-link-title={resolved ? 'resolved' : 'raw'}
-  >{resolved ? title : text}</a>
+  >
+    <LinkIcon aria-hidden style={linkIconStyle} data-arkme-link-icon="true" />
+    <span
+      style={resolved ? resolvedLinkLabelStyle : rawLinkLabelStyle}
+      data-arkme-link-label="true"
+    >{resolved ? title : text}</span>
+  </a>
 }
 
 export function ArkmeLinkText({ text, renderText, metadataResolver = arkmeLinkMetadataResolver }: {

@@ -6,6 +6,11 @@ import {
   type ArkmeLinkMetadataResolver,
 } from '../src/client/link-metadata-client.js'
 
+function expectLinkLabel(renderer: ReturnType<typeof create>, label: string): void {
+  expect(renderer.root.findByProps({ 'data-arkme-link-label': 'true' }).children).toEqual([label])
+  expect(renderer.root.findAll(node => node.type === 'svg' && node.props['data-arkme-link-icon'] === 'true')).toHaveLength(1)
+}
+
 describe('Arkme link metadata presentation', () => {
   it('keeps the raw clickable URL first, then replaces only its label with the resolved title', async () => {
     const pending = Promise.withResolvers<{ url: string; title: string } | null>()
@@ -15,7 +20,7 @@ describe('Arkme link metadata presentation', () => {
     await act(async () => { renderer = create(<ArkmeLinkText text="查看 https://jotmo.ai/path" metadataResolver={resolver} />) })
     let anchor = renderer!.root.findByProps({ 'data-arkme-text-link': 'true' })
     expect(anchor.props.href).toBe('https://jotmo.ai/path')
-    expect(anchor.children).toEqual(['https://jotmo.ai/path'])
+    expectLinkLabel(renderer!, 'https://jotmo.ai/path')
 
     await act(async () => {
       pending.resolve({ url: 'https://jotmo.ai/path', title: '即我 Jotmo' })
@@ -25,7 +30,33 @@ describe('Arkme link metadata presentation', () => {
     expect(anchor.props.href).toBe('https://jotmo.ai/path')
     expect(anchor.props.title).toBe('https://jotmo.ai/path')
     expect(anchor.props['data-arkme-link-title']).toBe('resolved')
-    expect(anchor.children).toEqual(['即我 Jotmo'])
+    expectLinkLabel(renderer!, '即我 Jotmo')
+  })
+
+  it('keeps a resolved title within the available line width without changing its navigation target', async () => {
+    const longTitle = '即我网址名称'.repeat(80)
+    const resolver: ArkmeLinkMetadataResolver = {
+      resolve: vi.fn(async () => ({ url: 'https://jotmo.ai/long', title: longTitle })),
+    }
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(<ArkmeLinkText text="https://jotmo.ai/long" metadataResolver={resolver} />)
+      await Promise.resolve()
+    })
+
+    const anchor = renderer!.root.findByProps({ 'data-arkme-text-link': 'true' })
+    const label = renderer!.root.findByProps({ 'data-arkme-link-label': 'true' })
+    expect(anchor.props.href).toBe('https://jotmo.ai/long')
+    expect(anchor.props.style).toMatchObject({ display: 'inline-flex', minWidth: 0, maxWidth: '100%' })
+    expect(label.children).toEqual([longTitle])
+    expect(label.props.style).toMatchObject({
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    })
+    expect(renderer!.root.findAll(node => node.type === 'svg' && node.props['data-arkme-link-icon'] === 'true')).toHaveLength(1)
   })
 
   it('retains the raw URL when metadata is missing or resolution fails', async () => {
@@ -40,8 +71,8 @@ describe('Arkme link metadata presentation', () => {
       await Promise.resolve()
     })
 
-    expect(missingRenderer!.root.findByType('a').children).toEqual(['https://missing.example.com'])
-    expect(failedRenderer!.root.findByType('a').children).toEqual(['https://failed.example.com'])
+    expectLinkLabel(missingRenderer!, 'https://missing.example.com')
+    expectLinkLabel(failedRenderer!, 'https://failed.example.com')
   })
 
   it('keeps IP links clickable without fetching metadata, matching Jotmo link-title eligibility', async () => {
@@ -55,7 +86,7 @@ describe('Arkme link metadata presentation', () => {
       await Promise.resolve()
     })
 
-    expect(renderer!.root.findByType('a').children).toEqual(['http://8.8.8.8/'])
+    expectLinkLabel(renderer!, 'http://8.8.8.8/')
     expect(resolver.resolve).not.toHaveBeenCalled()
   })
 
@@ -76,6 +107,43 @@ describe('Arkme link metadata presentation', () => {
     await resolver.resolve('https://example.com/c')
     await resolver.resolve('https://example.com/a')
     expect(callHost).toHaveBeenCalledTimes(4)
+  })
+
+  it('keeps in-flight deduplication independent from resolved-result LRU eviction', async () => {
+    const pending = new Map<string, ReturnType<typeof Promise.withResolvers<{ url: string; title: string } | null>>>()
+    const callHost = vi.fn(async (_operation: 'link.metadata', params: Record<string, unknown>) => {
+      const url = String(params.url)
+      const request = Promise.withResolvers<{ url: string; title: string } | null>()
+      pending.set(url, request)
+      return await request.promise
+    })
+    const resolver = new ArkmeHostLinkMetadataResolver(callHost, { cacheSize: 1 })
+
+    const first = resolver.resolve('https://example.com/a')
+    const second = resolver.resolve('https://example.com/b')
+    const duplicate = resolver.resolve('https://example.com/a')
+
+    expect(callHost).toHaveBeenCalledTimes(2)
+    pending.get('https://example.com/a')?.resolve({ url: 'https://example.com/a', title: 'A' })
+    pending.get('https://example.com/b')?.resolve({ url: 'https://example.com/b', title: 'B' })
+    await expect(Promise.all([first, second, duplicate])).resolves.toEqual([
+      { url: 'https://example.com/a', title: 'A' },
+      { url: 'https://example.com/b', title: 'B' },
+      { url: 'https://example.com/a', title: 'A' },
+    ])
+  })
+
+  it('retries a transient raw-link fallback instead of caching it as a resolved result', async () => {
+    const callHost = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ url: 'https://example.com/retry', title: 'Recovered' })
+    const resolver = new ArkmeHostLinkMetadataResolver(callHost)
+
+    await expect(resolver.resolve('https://example.com/retry')).resolves.toBeNull()
+    await expect(resolver.resolve('https://example.com/retry')).resolves.toEqual({
+      url: 'https://example.com/retry', title: 'Recovered',
+    })
+    expect(callHost).toHaveBeenCalledTimes(2)
   })
 
   it('deduplicates fragments because they identify the same metadata document', async () => {

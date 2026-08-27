@@ -195,15 +195,19 @@ describe('ArkmeLinkMetadataService', () => {
     expect(signals[0]).toBe(signals[1])
   })
 
-  it('negative-caches bounded fetch failures instead of retrying on every mount', async () => {
+  it('allows a later request to recover after a transient fetch failure', async () => {
     const reader: ArkmeLinkDocumentReader = {
-      read: vi.fn(async () => { throw new Error('offline') }),
+      read: vi.fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce({ status: 200, body: '<title>Recovered</title>' }),
     }
     const service = new ArkmeLinkMetadataService(reader)
 
     await expect(service.resolve('https://example.com/offline')).resolves.toBeNull()
-    await expect(service.resolve('https://example.com/offline')).resolves.toBeNull()
-    expect(reader.read).toHaveBeenCalledTimes(1)
+    await expect(service.resolve('https://example.com/offline')).resolves.toEqual({
+      url: 'https://example.com/offline', title: 'Recovered',
+    })
+    expect(reader.read).toHaveBeenCalledTimes(2)
   })
 
   it('degrades malformed remote redirect locations without exposing an error to the message UI', async () => {
@@ -274,29 +278,35 @@ describe('ArkmeLinkMetadataService', () => {
   })
 
   it('skips an expired queued request and starts the next request while a slot is available', async () => {
-    const reader: ArkmeLinkDocumentReader = {
-      read: vi.fn(async (url, options) => {
-        if (url.pathname === '/fresh') {
-          return { status: 200, body: '<html><head><title>Fresh title</title></head></html>' }
-        }
-        await new Promise<void>((_resolve, reject) => {
-          options?.signal?.addEventListener('abort', () => { reject(options.signal?.reason) }, { once: true })
-        })
-        return { status: 200, body: '' }
-      }),
-    }
-    const service = new ArkmeLinkMetadataService(reader, { maxConcurrent: 1, maxQueue: 2, timeoutMs: 80 })
-    const active = service.resolve('https://example.com/active')
-    const expiredQueued = service.resolve('https://example.com/expired')
-    await new Promise(resolve => setTimeout(resolve, 40))
-    const freshQueued = service.resolve('https://example.com/fresh')
+    vi.useFakeTimers()
+    try {
+      const reader: ArkmeLinkDocumentReader = {
+        read: vi.fn(async (url, options) => {
+          if (url.pathname === '/fresh') {
+            return { status: 200, body: '<html><head><title>Fresh title</title></head></html>' }
+          }
+          await new Promise<void>((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => { reject(options.signal?.reason) }, { once: true })
+          })
+          return { status: 200, body: '' }
+        }),
+      }
+      const service = new ArkmeLinkMetadataService(reader, { maxConcurrent: 1, maxQueue: 2, timeoutMs: 80 })
+      const active = service.resolve('https://example.com/active')
+      const expiredQueued = service.resolve('https://example.com/expired')
+      await vi.advanceTimersByTimeAsync(40)
+      const freshQueued = service.resolve('https://example.com/fresh')
 
-    await expect(Promise.all([active, expiredQueued, freshQueued])).resolves.toEqual([
-      null,
-      null,
-      { url: 'https://example.com/fresh', title: 'Fresh title' },
-    ])
-    expect(reader.read).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(reader.read).mock.calls.map(([url]) => url.pathname)).toEqual(['/active', '/fresh'])
+      await vi.advanceTimersByTimeAsync(40)
+      await expect(Promise.all([active, expiredQueued, freshQueued])).resolves.toEqual([
+        null,
+        null,
+        { url: 'https://example.com/fresh', title: 'Fresh title' },
+      ])
+      expect(reader.read).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(reader.read).mock.calls.map(([url]) => url.pathname)).toEqual(['/active', '/fresh'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

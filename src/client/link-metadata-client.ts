@@ -34,7 +34,8 @@ const defaultHostCall: ArkmeLinkMetadataHostCall = async (operation, params) => 
 }
 
 export class ArkmeHostLinkMetadataResolver implements ArkmeLinkMetadataResolver {
-  private readonly cache = new Map<string, Promise<ArkmeLinkMetadata | null>>()
+  private readonly cache = new Map<string, ArkmeLinkMetadata>()
+  private readonly inFlight = new Map<string, Promise<ArkmeLinkMetadata | null>>()
   private readonly cacheSize: number
 
   constructor(
@@ -46,20 +47,28 @@ export class ArkmeHostLinkMetadataResolver implements ArkmeLinkMetadataResolver 
 
   async resolve(url: string): Promise<ArkmeLinkMetadata | null> {
     const key = metadataDocumentUrl(url)
-    const existing = this.cache.get(key)
-    if (existing !== undefined) {
+    const cached = this.cache.get(key)
+    if (cached !== undefined) {
       this.cache.delete(key)
-      this.cache.set(key, existing)
-      return await existing
+      this.cache.set(key, cached)
+      return cached
     }
+    const existing = this.inFlight.get(key)
+    if (existing !== undefined) return await existing
 
     const pending = this.callHost('link.metadata', { url: key }).catch(() => null)
-    this.cache.set(key, pending)
-    while (this.cache.size > this.cacheSize) {
-      const oldest = this.cache.keys().next().value as string | undefined
-      if (oldest === undefined) break
-      this.cache.delete(oldest)
-    }
+      .then(metadata => {
+        if (metadata === null) return null
+        this.cache.set(key, metadata)
+        while (this.cache.size > this.cacheSize) {
+          const oldest = this.cache.keys().next().value as string | undefined
+          if (oldest === undefined) break
+          this.cache.delete(oldest)
+        }
+        return metadata
+      })
+      .finally(() => { this.inFlight.delete(key) })
+    this.inFlight.set(key, pending)
     return await pending
   }
 }

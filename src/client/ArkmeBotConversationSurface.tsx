@@ -10,6 +10,7 @@ import type {
 import { callArkme } from './api.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeBotSettingsPanel } from './ArkmeBotSettingsPanel.js'
+import { ArkmeLinkText } from './ArkmeLinkText.js'
 import { arkmeConversationComposerHeight, arkmeConversationComposerLayout } from './conversation-composer-presentation.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -141,7 +142,9 @@ export function ArkmeBotConversationSurface({
         : messages.length === 0 ? <div style={styles.empty}>和 {bot.name} 打个招呼吧</div>
           : <div style={styles.messages}>{messages.map((message, index) => <div
             key={`${message.role}:${message.createdAtMillis}:${index}`} style={{ ...styles.row, ...(message.role === 'user' ? styles.rowUser : {}) }}
-          ><div style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}>{message.content}</div></div>)}</div>}
+          ><div style={{ ...styles.bubble, ...(message.role === 'user' ? styles.bubbleUser : styles.bubbleAssistant) }}>
+            <ArkmeLinkText text={message.content} />
+          </div></div>)}</div>}
     </div>
     <footer className="arkme-conversation-composer" style={styles.composer}><div className="arkme-conversation-composer-inner" style={styles.composerInner}>
       <textarea
