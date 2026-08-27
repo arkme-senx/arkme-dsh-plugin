@@ -55,6 +55,16 @@ describe('Arkme local realtime events', () => {
       }],
     })
     expect(response.chunks.join('')).toContain('"revision":2')
+    listener?.({ type: 'projection-invalidated', revision: 3, projection: 'record' })
+    expect(response.chunks.join('')).toContain('"projection":"record"')
+    listener?.({
+      type: 'read-receipts-invalidated', revision: 4,
+      sourceKey: 'arkme-chat-source-v1.browser-safe', throughSequence: 12,
+    })
+    expect(response.chunks.join('')).toContain('"type":"read-receipts-invalidated"')
+    expect(response.chunks.join('')).toContain('"throughSequence":12')
+    expect(response.chunks.join('')).not.toContain('chat_session_uid')
+    expect(response.chunks.join('')).not.toContain('reader_user_id')
 
     events.close()
     expect(unsubscribe).toHaveBeenCalledOnce()

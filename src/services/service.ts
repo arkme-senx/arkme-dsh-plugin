@@ -54,6 +54,7 @@ export interface ArkmeServiceConfig {
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string
+  dataBaseUrl?: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -69,6 +70,7 @@ export interface ArkmeServiceConfig {
   geetestCaptchaId: string
   relatedRecordingsEnabled?: boolean
   interwovenMomentsEnabled: boolean
+  chatMemberJoinEventsEnabled?: boolean
   shareWebsite?: string
   richMediaRenderEnabled?: boolean
   richMediaSendEnabled?: boolean
@@ -82,6 +84,8 @@ interface ArkmeEnvelope<T> {
   message?: string
   data?: T
 }
+
+type ArkmePostBody = Record<string, unknown> | FormData
 
 export interface ArkmeRemoteRequestOptions {
   lane?: ArkmeRequestLane
@@ -122,6 +126,10 @@ function retryAfterMillis(value: string | null): number | undefined {
 
 export function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+export function knownStringValue<T extends string>(value: unknown, allowed: ReadonlySet<T>): T | undefined {
+  return typeof value === 'string' && allowed.has(value as T) ? value as T : undefined
 }
 
 export function clippedText(value: unknown, limit = 4_000): string {
@@ -267,6 +275,9 @@ export class ServiceRuntime {
     const normalized = baseUrl.replace(/\/+$/, '')
     const services: Array<[string, ArkmeRequestService]> = [
       [this.config.authBaseUrl, 'auth'],
+      ...(this.config.dataBaseUrl === undefined || this.config.dataBaseUrl.trim() === ''
+        ? []
+        : [[this.config.dataBaseUrl, 'data'] as [string, ArkmeRequestService]]),
       [this.config.chatBaseUrl, 'chat'],
       [this.config.recordBaseUrl, 'record'],
       [this.config.audioBaseUrl, 'audio'],
@@ -287,10 +298,14 @@ export class ServiceRuntime {
     return 0
   }
 
+  private teamServiceBaseUrl(): string {
+    return this.config.environment === 'prod' ? 'https://team.jotmo.cc' : 'https://jotmo-team.senguo.me'
+  }
+
   async post<T>(
     baseUrl: string,
     path: string,
-    body: Record<string, unknown>,
+    body: ArkmePostBody,
     bearer: string | undefined,
     successCodes: readonly number[],
     signal?: AbortSignal,
@@ -321,7 +336,7 @@ export class ServiceRuntime {
   async postDirect<T>(
     baseUrl: string,
     path: string,
-    body: Record<string, unknown>,
+    body: ArkmePostBody,
     bearer: string | undefined,
     successCodes: readonly number[],
     signal: AbortSignal = new AbortController().signal,
@@ -335,15 +350,16 @@ export class ServiceRuntime {
     else signal.addEventListener('abort', abort, { once: true })
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs)
     try {
+      const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          ...(multipart ? {} : { 'Content-Type': 'application/json' }),
           'Accept-Language': 'zh-CN',
           Usersource: '3',
           ...(bearer === undefined ? {} : { Authorization: `Bearer ${bearer}` }),
         },
-        body: JSON.stringify(body),
+        body: multipart ? body : JSON.stringify(body),
         signal: controller.signal,
       })
       if (response.status === 401 || (response.status === 403 && !preserveForbiddenError)) {
@@ -575,6 +591,30 @@ export class ServiceRuntime {
     }
   }
 
+  async authenticatedDataPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    const baseUrl = this.config.dataBaseUrl?.trim() ?? ''
+    if (baseUrl === '') {
+      throw new ArkmePluginError('data-service-disabled', '通话记录服务尚未配置', false, 503)
+    }
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'data', 'interactive-read', options)
+    try {
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
   async authenticatedAuthPost<T>(
     path: string,
     body: Record<string, unknown>,
@@ -691,6 +731,26 @@ export class ServiceRuntime {
     }
   }
 
+  async authenticatedAudioMultipartPost<T>(
+    path: string,
+    body: FormData,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'audio', 'write', options)
+    try {
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
   async authenticatedRelationPost<T>(
     path: string,
     body: Record<string, unknown>,
@@ -708,6 +768,27 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedTeamPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+    options: ArkmeRemoteRequestOptions = {},
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const baseUrl = this.teamServiceBaseUrl()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'other', 'interactive-read', options)
+    try {
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
+        throw error
+      }
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(baseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
     }
   }
 

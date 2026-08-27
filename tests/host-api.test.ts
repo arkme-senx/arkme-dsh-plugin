@@ -1,9 +1,14 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchArkmeHostOperation } from '../src/host-api.js'
+import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 function fakeService() {
   return {
     prepareOutgoingCall: vi.fn(async (input: unknown) => input),
+    listCallHistory: vi.fn(async (input: unknown) => input),
+    callDetail: vi.fn(async (callRef: string) => ({ callRef })),
+    retryCallSummary: vi.fn(async (callRef: string) => ({ callRef, status: 'submitted' })),
     claimOutgoingCallIntent: vi.fn(async () => null),
     resolveOutgoingCallIntent: vi.fn(async () => undefined),
     heartbeatOutgoingCall: vi.fn(async () => ({ expiresAtMillis: 1 })),
@@ -24,7 +29,25 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
+    sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
+    messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
+    messageReadReceiptDetail: vi.fn(async (sourceRef: string, itemUid: string, sequence: number, options: unknown) => ({ sourceRef, itemUid, sequence, options })),
+    officialAuthorProfile: vi.fn(async () => ({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })),
+    openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
+    openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
+    openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
+    copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
+    resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
+    extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
+    resolveLinkMetadata: vi.fn(async (url: string, options: unknown) => ({ url, title: '分享链接', options })),
+    forwardSourceMessages: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
+    sendSourceText: vi.fn(async (_sourceRef: string, _text: string, options: unknown) => options),
     sendSourceRich: vi.fn(async () => undefined),
+    favoriteStickers: vi.fn(async () => ({ items: [], itemCount: 0, updatedAtMillis: 0 })),
+    addFavoriteSticker: vi.fn(async (item: unknown) => item),
+    manageFavoriteSticker: vi.fn(async (fileAssetUid: string, action: string) => ({ fileAssetUid, action })),
+    sendFavoriteSticker: vi.fn(async (_sourceRef: string, _fileAssetUid: string, options: unknown) => options),
     longArticleDetail: vi.fn(async (sourceRef: string, itemUid: string) => ({ sourceRef, itemUid })),
     updateLongArticle: vi.fn(async (_sourceRef: string, _itemUid: string, input: unknown) => input),
     getLongArticleDraft: vi.fn(async () => undefined),
@@ -41,10 +64,158 @@ function fakeService() {
     publishWorldFileAssets: vi.fn(async (input: unknown) => input),
     worldVoiceprintSocialContext: vi.fn(async (recordRef: string, options: unknown) => ({ recordRef, options })),
     inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, peerDisplayName: '小林', recordRef })),
+    billingQuota: vi.fn(async () => ({
+      availableNanoCny: '1200', totalNanoCny: '1500', reservedNanoCny: '300', currency: 'CNY',
+    })),
+    billingProducts: vi.fn(async () => ({ items: [] })),
+    createBillingOrder: vi.fn(async (input: unknown) => input),
+    billingOrderStatus: vi.fn(async (orderId: string) => ({ orderId, status: 'pending' })),
+    checkArkmeIdAvailability: vi.fn(async (arkmeId: string) => ({ available: true, reason: '', arkmeId })),
+    setArkmeIdOnce: vi.fn(async (arkmeId: string) => ({ arkmeId, changed: true, canUpdate: false, revision: 2 })),
   }
 }
 
+describe('account settings Host API dispatch', () => {
+  it('dispatches Arkme ID checks and writes without browser-owned account fields', async () => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'user.arkme-id.check', {
+      arkmeId: '  Lucis_01  ', userId: 999,
+    })).resolves.toMatchObject({ arkmeId: '  Lucis_01  ' })
+    await expect(dispatchArkmeHostOperation(service as never, 'user.arkme-id.set', {
+      arkmeId: 'Lucis_01', accessToken: 'secret',
+    })).resolves.toMatchObject({ arkmeId: 'Lucis_01', changed: true })
+
+    expect(service.checkArkmeIdAvailability).toHaveBeenCalledWith('  Lucis_01  ')
+    expect(service.setArkmeIdOnce).toHaveBeenCalledWith('Lucis_01')
+  })
+})
+
+describe('billing Host API dispatch', () => {
+  it('dispatches quota and product reads without browser account fields', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'billing.quota', { userId: 999 })
+    await dispatchArkmeHostOperation(service as never, 'billing.products', { accessToken: 'secret' })
+
+    expect(service.billingQuota).toHaveBeenCalledWith()
+    expect(service.billingProducts).toHaveBeenCalledWith()
+  })
+
+  it('passes only the normalized order creation identity to the service', async () => {
+    const service = fakeService()
+    const clientRequestId = '8e37aebc-e2ba-4db2-b589-da729867410c'
+
+    await dispatchArkmeHostOperation(service as never, 'billing.order.create', {
+      productId: 'product-1', paymentMethod: 'wechat_native', clientRequestId,
+      amountMinor: 1, userId: 999,
+    })
+
+    expect(service.createBillingOrder).toHaveBeenCalledWith({
+      productId: 'product-1', paymentMethod: 'wechat_native', clientRequestId,
+    })
+  })
+
+  it.each([
+    [{ productId: '', paymentMethod: 'wechat_native', clientRequestId: '8e37aebc-e2ba-4db2-b589-da729867410c' }, 'billing-product-id-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'card', clientRequestId: '8e37aebc-e2ba-4db2-b589-da729867410c' }, 'billing-payment-method-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'alipay_pc_web', clientRequestId: '' }, 'billing-client-request-id-invalid'],
+    [{ productId: 'product-1', paymentMethod: 'alipay_pc_web', clientRequestId: 'request-1' }, 'billing-client-request-id-invalid'],
+  ])('rejects invalid order creation parameters', async (params, code) => {
+    const service = fakeService()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.create', params))
+      .rejects.toMatchObject({ code })
+    expect(service.createBillingOrder).not.toHaveBeenCalled()
+  })
+
+  it('requires an order UUID and does not forward unknown status fields', async () => {
+    const service = fakeService()
+    const orderId = '755a40f2-b5a5-420f-a7c5-1e4543cf016c'
+
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId: '' }))
+      .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
+    await expect(dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId: 'order-1' }))
+      .rejects.toMatchObject({ code: 'billing-order-id-invalid' })
+    await dispatchArkmeHostOperation(service as never, 'billing.order.status', { orderId, accessToken: 'secret' })
+    expect(service.billingOrderStatus).toHaveBeenCalledWith(orderId)
+  })
+})
+
+describe('favorite sticker Host API dispatch', () => {
+  it('forwards one bounded favorite sticker addition', async () => {
+    const service = fakeService()
+    const item = {
+      fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1,
+      isAnimated: true,
+    }
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.add', { item, signedUrl: 'must-not-forward' })
+
+    expect(service.addFavoriteSticker).toHaveBeenCalledWith(item)
+  })
+
+  it('forwards only the bounded sticker id and management action', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'move-to-front', accountId: 999, signedUrl: 'must-not-forward',
+    })
+
+    expect(service.manageFavoriteSticker).toHaveBeenCalledWith('asset-12345678', 'move-to-front')
+    await expect(dispatchArkmeHostOperation(service as never, 'favorite-stickers.manage', {
+      fileAssetUid: 'asset-12345678', action: 'replace',
+    })).rejects.toMatchObject({ code: 'favorite-sticker-manage-invalid' })
+  })
+})
+
 describe('World publish Host API dispatch', () => {
+  it('aborts an in-flight voiceprint generation when its Browser request disconnects', async () => {
+    let upstreamSignal: AbortSignal | undefined
+    const generationStarted = Promise.withResolvers<void>()
+    const generationAborted = Promise.withResolvers<void>()
+    const service = {
+      generateWorldVoiceprintPlayback: vi.fn(async (input: { signal?: AbortSignal }) => {
+        upstreamSignal = input.signal
+        generationStarted.resolve()
+        await new Promise<void>(resolve => {
+          if (input.signal?.aborted === true) resolve()
+          else input.signal?.addEventListener('abort', () => { resolve() }, { once: true })
+        })
+        generationAborted.resolve()
+        throw new Error('cancelled')
+      }),
+    }
+    const server = createServer(createArkmeHostApi(service as never, {
+      expectedPort: 0,
+      allowNonLoopback: false,
+    }))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    const controller = new AbortController()
+    try {
+      const request = fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'world.voiceprint.playback.generate',
+          params: { recordRef: 'record-ref', chunkIndex: 0 },
+        }),
+        signal: controller.signal,
+      })
+      await generationStarted.promise
+      controller.abort()
+      await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+      await generationAborted.promise
+      expect(upstreamSignal?.aborted).toBe(true)
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
+  })
+
   it('keeps text publishing separate and drops Browser-owned fields', async () => {
     const service = fakeService()
 
@@ -83,6 +254,30 @@ describe('World publish Host API dispatch', () => {
         size: 128, fileKind: 1,
       }],
     })
+  })
+
+  it('matches the mobile limit of 27 images when publishing World posts', async () => {
+    const service = fakeService()
+    const image = (index: number) => ({
+      fileAssetUid: `asset-${String(index).padStart(8, '0')}`,
+      fileName: `${String(index)}.png`,
+      mimeType: 'image/png',
+      size: 128,
+      fileKind: 1,
+    })
+
+    await dispatchArkmeHostOperation(service as never, 'world.publish-file-assets', {
+      clientMutationId: 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b',
+      textContent: '二十七张图片',
+      fileAssets: Array.from({ length: 27 }, (_value, index) => image(index + 1)),
+    })
+    expect(service.publishWorldFileAssets).toHaveBeenCalledOnce()
+
+    await expect(dispatchArkmeHostOperation(service as never, 'world.publish-file-assets', {
+      clientMutationId: '7e0f21bf-5f04-477c-b221-f8285d4a88b2',
+      textContent: '二十八张图片',
+      fileAssets: Array.from({ length: 28 }, (_value, index) => image(index + 1)),
+    })).rejects.toMatchObject({ code: 'world-publish-assets-invalid', message: '请选择 1 至 27 张图片' })
   })
 
   it('rejects non-image assets before entering the World domain', async () => {
@@ -126,6 +321,158 @@ describe('group member Host API dispatch', () => {
   })
 })
 
+describe('conversation member Host API dispatch', () => {
+  it('forwards only opaque member references and bounded paging fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.members', {
+      sourceRef: 'source-ref', activeOnly: false, userId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.member-records', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', mode: 'mentioned', limit: 19, beforeSequence: 44,
+      memberUserId: 999,
+    })
+    await dispatchArkmeHostOperation(service as never, 'chat.member.private.open', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', peerUserId: 999,
+    })
+    expect(service.listSourceMembers).toHaveBeenCalledWith('source-ref', { activeOnly: false })
+    expect(service.sourceMemberRecords).toHaveBeenCalledWith('source-ref', 'member-ref', 'mentioned', {
+      limit: 19,
+      beforeSequence: 44,
+    })
+    expect(service.openPrivateChatFromMember).toHaveBeenCalledWith('source-ref', 'member-ref')
+  })
+
+  it('opens the official author chat through its Host-owned route', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'chat.official-author.private.open', {
+      peerUserId: 11,
+      displayName: '伪造作者',
+      sourceRef: 'leak',
+    })
+    expect(service.openOfficialAuthorPrivateChat).toHaveBeenCalledWith()
+  })
+
+  it('reads the official author profile through its Host-owned route', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'chat.official-author.profile', {
+      peerUserId: 999,
+      displayName: '伪造作者',
+    })).resolves.toEqual({ userId: 11, displayName: '阿森', avatarRef: 'author-avatar-ref' })
+    expect(service.officialAuthorProfile).toHaveBeenCalledWith()
+  })
+
+  it('rejects an unknown member-record mode instead of silently widening it', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.member-records', {
+      sourceRef: 'source-ref', memberRef: 'member-ref', mode: 'all',
+    })).rejects.toMatchObject({ code: 'chat-member-record-mode-invalid' })
+    expect(service.sourceMemberRecords).not.toHaveBeenCalled()
+  })
+
+  it('keeps structured human mention fields while dropping browser-owned ids', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@小林 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3, userId: 999 }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@小林 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      humanMentions: [{ memberRef: 'member-ref', startIndex: 0, length: 3 }],
+    })
+  })
+
+  it('keeps @所有人 human mention intent without requiring a member ref', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@所有人 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      humanMentions: [{ all: true, memberRef: 'browser-owned', startIndex: 0, length: 4 }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@所有人 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })
+  })
+
+  it('keeps structured Bot mention ranges without exposing browser-owned fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.send-text', {
+      sourceRef: 'source-ref', textContent: '@总结助手 请看', recordUid: 'record-ref', relationUid: 'relation-ref',
+      botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5, botId: 'browser-owned' }],
+    })
+    expect(service.sendSourceText).toHaveBeenCalledWith('source-ref', '@总结助手 请看', {
+      recordUid: 'record-ref',
+      relationUid: 'relation-ref',
+      botMentions: [{ botRef: 'bot-ref', startIndex: 0, length: 5 }],
+    })
+  })
+})
+
+describe('message read receipt Host API dispatch', () => {
+  it('forwards only opaque message identities and the request lifecycle signal', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.read-receipts.summary-list', {
+      sourceRef: 'source-ref',
+      items: [{ itemUid: 'record-1', sequence: 8, readerUserId: 999 }],
+      chatSessionUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.read-receipts.detail', {
+      sourceRef: 'source-ref', itemUid: 'record-1', sequence: 8, readerUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.messageReadReceiptSummaries).toHaveBeenCalledWith(
+      'source-ref', [{ itemUid: 'record-1', sequence: 8 }], { signal },
+    )
+    expect(service.messageReadReceiptDetail).toHaveBeenCalledWith(
+      'source-ref', 'record-1', 8, { signal },
+    )
+  })
+
+  it('rejects a non-array summary input before entering the Host owner', async () => {
+    const service = fakeService()
+    await expect(dispatchArkmeHostOperation(service as never, 'source.read-receipts.summary-list', {
+      sourceRef: 'source-ref', items: { itemUid: 'record-1', sequence: 8 },
+    })).rejects.toMatchObject({ code: 'message-read-receipt-items-invalid' })
+    expect(service.messageReadReceiptSummaries).not.toHaveBeenCalled()
+  })
+})
+
+describe('message action Host API dispatch', () => {
+  it('forwards only opaque message action references and bounded send identifiers', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'source.message-copy-link', {
+      sourceRef: 'source-ref', actionRefs: ['action-1', '', 'action-2'], relationUid: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.message-copy-link.resolve', {
+      sid: 'U2HQgn1RhPJZaFmx', sourceRef: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.message-copy-link.extend', {
+      sid: 'U2HQgn1RhPJZaFmx', itemIndex: 1, textContent: ' 延展 ', recordUid: 'record-1', relationUid: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.link-metadata.resolve', {
+      url: ' https://example.com/a ', cookie: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'source.forward-messages', {
+      sourceRef: 'source-ref', actionRefs: ['action-1'], recordUid: 'record-1', relationUid: 'rel-1',
+      targetSourceRef: 'target-source-ref', commentText: ' 附言 ',
+      textContent: 'must-not-forward',
+    })
+
+    expect(service.copySourceMessageLink).toHaveBeenCalledWith('source-ref', ['action-1', 'action-2'], expect.any(Object))
+    expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
+    expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
+    expect(service.resolveLinkMetadata).toHaveBeenCalledWith(' https://example.com/a ', expect.any(Object))
+    expect(service.forwardSourceMessages).toHaveBeenCalledWith('source-ref', ['action-1'], {
+      recordUid: 'record-1',
+      relationUid: 'rel-1',
+      targetSourceRef: 'target-source-ref',
+      commentText: ' 附言 ',
+    })
+  })
+})
+
 describe('outgoing call Host API dispatch', () => {
   it('dispatches contact search/add without forwarding browser-owned account fields', async () => {
     const service = fakeService()
@@ -135,6 +482,15 @@ describe('outgoing call Host API dispatch', () => {
     })
     expect(service.searchContact).toHaveBeenCalledWith('lin-lin')
     expect(service.addContact).toHaveBeenCalledWith('contact-ref', { remark: '同事', requestUid: 'request-uid' })
+  })
+
+  it('opens a private chat from contact search without forwarding browser-owned account fields', async () => {
+    const service = fakeService()
+    await dispatchArkmeHostOperation(service as never, 'chat.private.open-from-contact', {
+      contactRef: 'contact-ref', peerUserId: 999, displayName: '伪造名称', requestUid: 'must-not-forward',
+    })
+    expect(service.openPrivateChatFromContact).toHaveBeenCalledWith('contact-ref')
+    expect(service.addContact).not.toHaveBeenCalled()
   })
 
   it('dispatches group and Bot quick-add through strict domain adapters', async () => {
@@ -232,6 +588,34 @@ describe('outgoing call Host API dispatch', () => {
       callRequestId: 'request-1', userId: 999,
     })
     expect(service.releaseOutgoingCall).toHaveBeenCalledWith('request-1')
+  })
+
+  it('dispatches call history operations through opaque refs only', async () => {
+    const service = fakeService()
+
+    await dispatchArkmeHostOperation(service as never, 'calls.history.list', {
+      limit: 12,
+      cursor: ' next ',
+      includeRecentContacts: false,
+      roomId: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'calls.history.detail', {
+      callRef: 'call-ref-1',
+      roomId: 'must-not-forward',
+      accessToken: 'must-not-forward',
+    })
+    await dispatchArkmeHostOperation(service as never, 'calls.history.summary.retry', {
+      callRef: 'call-ref-1',
+      roomId: 'must-not-forward',
+    })
+
+    expect(service.listCallHistory).toHaveBeenCalledWith({
+      limit: 12,
+      cursor: 'next',
+      includeRecentContacts: false,
+    })
+    expect(service.callDetail).toHaveBeenCalledWith('call-ref-1')
+    expect(service.retryCallSummary).toHaveBeenCalledWith('call-ref-1')
   })
 
   it('dispatches strict UI-only interwoven operations', async () => {

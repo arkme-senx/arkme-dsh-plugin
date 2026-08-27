@@ -1,4 +1,5 @@
 import type { ArkmePluginUpdateInstallSnapshot, ArkmePluginUpdateStatus } from '../types.js'
+import { PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS } from '../plugin-update-policy.js'
 import { callArkme } from './api.js'
 
 export interface ArkmePluginUpdateStoreSnapshot {
@@ -140,7 +141,15 @@ export class ArkmePluginUpdateStore {
           location.reload()
           return install
         }
-        if (!TERMINAL_INSTALL_PHASES.has(install.phase)) this.scheduleInstallPoll()
+        if (TERMINAL_INSTALL_PHASES.has(install.phase)) {
+          const expiresIn = PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS - (Date.now() - install.updatedAtMillis)
+          this.scheduleInstallPoll(Math.max(1, expiresIn + 1))
+        } else {
+          this.scheduleInstallPoll()
+        }
+      } else if (this.snapshot.install !== undefined) {
+        const { install: _install, ...snapshot } = this.snapshot
+        this.setSnapshot(snapshot)
       }
       return install
     } catch (error) {
@@ -179,12 +188,12 @@ export class ArkmePluginUpdateStore {
     for (const listener of [...this.listeners]) listener()
   }
 
-  private scheduleInstallPoll(): void {
+  private scheduleInstallPoll(delayMs = INSTALL_POLL_INTERVAL_MS): void {
     if (this.installPoll !== undefined) clearTimeout(this.installPoll)
     this.installPoll = setTimeout(() => {
       this.installPoll = undefined
       void this.refreshInstallStatus()
-    }, INSTALL_POLL_INTERVAL_MS)
+    }, delayMs)
   }
 }
 

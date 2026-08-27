@@ -234,9 +234,7 @@ function sourceConfirmation(prepared: ArkmePreparedExtensionPublish): string {
 		: '，发布方式：V2 沙箱 Bundle（当前会话 Dynamic Cordis Package）'
 	const github = input.githubRepositoryUrl === undefined
 		? ''
-		: prepared.publishRoute === 'profile-native-v3'
-			? `，GitHub 来源：${input.githubRepositoryUrl}`
-			: `，GitHub 来源：${input.githubRepositoryUrl}（V2 来源账号资格仍需服务端校验）`
+		: `，GitHub 来源：${input.githubRepositoryUrl}`
 		return `${input.extensionId === undefined ? '' : `，更新已有扩展 ${input.extensionId}`}${contract}${github}`
 }
 

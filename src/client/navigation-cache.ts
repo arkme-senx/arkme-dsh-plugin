@@ -8,7 +8,8 @@ import type {
 
 const POINTER_KEY = 'dsh-arkme:navigation:v1:last-user'
 const CACHE_KEY_PREFIX = 'dsh-arkme:navigation:v1:user:'
-const MAX_CACHED_SOURCES = 200
+const PROVIDER_INSTANCE_KEY = 'dsh-arkme:navigation:v1:provider-instance'
+const MAX_CACHED_SOURCES = 2_000
 
 export interface ArkmeNavigationCache {
   version: 1
@@ -82,6 +83,12 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.parentSourceRef === 'string' && item.parentSourceRef !== ''
       ? { parentSourceRef: item.parentSourceRef }
       : {}),
+    ...(typeof item.topicHierarchyKey === 'string' && item.topicHierarchyKey !== ''
+      ? { topicHierarchyKey: item.topicHierarchyKey }
+      : {}),
+    ...(typeof item.parentTopicHierarchyKey === 'string' && item.parentTopicHierarchyKey !== ''
+      ? { parentTopicHierarchyKey: item.parentTopicHierarchyKey }
+      : {}),
     kind: item.kind,
     displayName: item.displayName,
     ...(typeof item.avatarRef === 'string' && item.avatarRef !== '' ? { avatarRef: item.avatarRef } : {}),
@@ -92,6 +99,7 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.latestPreview === 'string' ? { latestPreview: item.latestPreview } : {}),
     activeAtMillis: item.activeAtMillis,
     unreadCount: Math.max(0, Math.trunc(item.unreadCount)),
+    ...(typeof item.hasUnreadMention === 'boolean' ? { hasUnreadMention: item.hasUnreadMention } : {}),
     ...(typeof item.isMuted === 'boolean' ? { isMuted: item.isMuted } : {}),
     ...(typeof item.latestSequence === 'number' && Number.isSafeInteger(item.latestSequence) && item.latestSequence > 0
       ? { latestSequence: item.latestSequence }
@@ -99,6 +107,7 @@ function sourceItem(value: unknown): ArkmeSourceItem | undefined {
     ...(typeof item.recordCount === 'number' && Number.isFinite(item.recordCount)
       ? { recordCount: Math.max(0, Math.trunc(item.recordCount)) }
       : {}),
+    ...(item.hasPendingChildren === true ? { hasPendingChildren: true } : {}),
   }
 }
 
@@ -164,6 +173,34 @@ export function clearLastNavigationCache(storage?: Storage): void {
   if (target === undefined) return
   try { target.removeItem(POINTER_KEY) }
   catch { /* Ignore unavailable browser storage. */ }
+}
+
+/** Signed source/image references are valid only inside the Provider instance that issued them. */
+export function reconcileNavigationProviderInstance(instanceId: string, storage?: Storage): boolean {
+  const normalized = instanceId.trim()
+  const target = storageOrUndefined(storage)
+  if (normalized === '' || target === undefined) return false
+  try {
+    if (target.getItem(PROVIDER_INSTANCE_KEY) === normalized) return false
+    const staleKeys: string[] = []
+    for (let index = 0; index < target.length; index += 1) {
+      const key = target.key(index)
+      if (key === POINTER_KEY || key?.startsWith(CACHE_KEY_PREFIX) === true) staleKeys.push(key)
+    }
+    for (const key of staleKeys) target.removeItem(key)
+    target.setItem(PROVIDER_INSTANCE_KEY, normalized)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Remove the success marker after current-instance projections failed to load so reconnect can retry. */
+export function forgetNavigationProviderInstance(storage?: Storage): void {
+  const target = storageOrUndefined(storage)
+  if (target === undefined) return
+  try { target.removeItem(PROVIDER_INSTANCE_KEY) }
+  catch { /* Browser storage is an optional acceleration layer. */ }
 }
 
 export function cachedSelectedSource(cache: ArkmeNavigationCache): ArkmeSourceItem | undefined {

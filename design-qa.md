@@ -70,4 +70,87 @@ The search-history area in the production QA image is blurred because it contain
 - The production search history is blurred only in the saved QA artifact because it contains live account data.
 - Focused send-to-self comparison checked typography, spacing, neutral tokens, existing icons, and copy. The only image-asset change is the transparent Arkme brand wordmark/mark used through public DSH slots.
 
+## Update UI refactor QA (2026-08-25)
+
+### Source and implementation
+
+- Visual and interaction source: `http://127.0.0.1:5176/`
+- Real implementation: `http://127.0.0.1:5198/` running `@deepseek-ai/dsh@0.1.0-rc.8` with the packed Arkme plugin
+- Source capture: `/private/tmp/arkme-update-demo-same-viewport-1440.png`
+- Implementation capture: `/private/tmp/arkme-update-real-same-viewport.png`
+- Combined component comparison: `/private/tmp/arkme-update-dialog-final-comparison.png`
+- Progress capture: `/private/tmp/arkme-update-real-final-progress.png`
+- Collapsed progress capture: `/private/tmp/arkme-update-real-final-collapsed.png`
+- Feedback source capture: `/private/tmp/arkme-update-feedback-demo.png`
+- Feedback implementation capture: `/private/tmp/arkme-update-feedback-final-open.png`
+- Feedback focused comparison: `/private/tmp/arkme-update-feedback-comparison.png`
+- No-update implementation capture: `/private/tmp/arkme-update-feedback-no-update.png`
+- Browser state: desktop, light theme. The source and implementation components were compared at their rendered CSS size rather than judging screenshots in isolation.
+
+### States checked
+
+| State | Expected | Observed |
+| --- | --- | --- |
+| Update available | Demo rail entry and anchored release-note popover | Real DSH renders the same 356 × 347.046875 px popover, 20 px radius, shadow, content rhythm, numbered notes, and two-button footer |
+| Updating | Demo top-center progress capsule | Real DSH renders the capsule above the working content without blocking chat or navigation |
+| Progress collapsed | Closing the capsule leaves a percentage above the avatar | Real DSH keeps the 8% recovery entry in the lower rail and the page remains usable |
+| Progress restored | Clicking the percentage restores the capsule | Covered by the controller/component interaction tests; the real 0.1.20 package also showed the recoverable 8% entry while the Host request was active |
+| Restarting | Preserve the baseline updater's automatic restart | A real 0.1.20 tgz downloaded the remote 0.1.21 artifact, stopped PID 63643, installed the new package, and automatically restarted the same 5198 service as PID 63771 |
+| No update | Do not reserve an update-entry slot | A real DSH profile running the current 0.1.21 package exposes only the profile button; the update rail slot is absent and the profile remains 12 px from the viewport bottom |
+
+### Comparison history
+
+1. Removed the temporary standalone QA shell from the implementation path and validated only inside a real DSH host.
+2. Replaced the old logo badge/blocking update dialogs with the Demo rail entry, anchored popover, top-center progress capsule, and collapsed percentage recovery entry.
+3. P1 — the first pass invented fallback release-note rows and a secondary sentence that were not returned by the update API. Removed all fallback copy; production now renders only the real remote summary lines and omits the note region when no release text exists.
+4. P1 — the popover was absolutely positioned inside the rail footer and was clipped by the navigation column despite its z-index. Portalled it to `document.body`, positioned it from the rail button's viewport rectangle, and raised it to the page-level overlay layer. Browser evidence confirms `parentElement === document.body`, `position: fixed`, and `z-index: 100000`.
+5. P1 — DSH button styles overrode the primary action, leaving `立即更新` white and changing hover behavior. Scoped the Demo tokens to the update controls with sufficient specificity. Browser evidence now reads `rgb(28, 31, 40)` for the primary background, white text, a 12 px radius, and the Demo shadow; the red rail button uses the Demo active/hover red and elevation.
+6. P2 — update presence needed an explicit no-reserved-space check. A real DSH profile at the current remote version renders no update slot while keeping the profile control at its normal 12 px bottom inset; a component regression assertion covers the absent rail-slot markup.
+7. P1 — the bundled updater entry silently exited because tsdown moved its guarded `main()` into a shared chunk. Split the executable wrapper from the reusable updater module and added a post-bundle executable-entry check; the real tgz update now reaches `succeeded` and records the target artifact digest, app version, and DSH version.
+8. The post-fix 1492 × 1171 source and implementation captures were inspected together in `/private/tmp/arkme-update-feedback-comparison.png`. The different popover height is intentional because production now displays one real remote note instead of three Demo fixture notes. Typography, spacing rhythm, tokens, icon source, button states, radii, shadows, and copy ownership have no remaining actionable P0/P1/P2 mismatch.
+
+final result: passed
+
+## Unified search QA (2026-08-25)
+
+### Source and implementation
+
+- Client reference: the production-client and interaction-demo captures supplied with the task.
+- Real implementation: packed `@senguoyun/dsh-arkme@0.1.21` plugin running in an isolated DSH Web host.
+- Final captures cover both the empty-query and topic-result states.
+- Browser viewport: 1534 x 1171, light appearance.
+- Result comparison state: query `1`, `主题` tab, first source selected.
+
+### States checked
+
+| State | Expected | Observed |
+| --- | --- | --- |
+| Empty query | Large client-style modal, search history pills, quick-find pills | Modal occupies about 84% of viewport width and height; history is pill-shaped; close action is outside the input |
+| Text query | Existing business categories plus DSH | `快记 / 主题 / 录音·转写 / DSH` are visible; only the active tab has a short underline |
+| Topic results | Source list on the left, selected source details on the right | Two-pane layout renders real topic counts and records with a restrained iOS-blue selected state |
+| Recording results | Recording/transcript-specific list | Real `search.recordings` request returned results in browser acceptance |
+| DSH results | Search public DSH session messages | Uses the Host session search adapter; the isolated validation profile currently has no matching DSH task data |
+| Quick find | Only entries backed by complete UI rendering are shown | `图片`、`AI 视频`、`语音`均调用真实场景搜索；语音结果使用圆形播放按钮、时长、主色转写正文和弱化来源信息，并通过同源 `mediaRef` 代理真实播放；链接、文件、长文、联系人仍未作为已完成入口展示 |
+| Arkme result navigation | Close search and return to the exact message in its conversation | Result carries a browser-safe target source; the directory selects that conversation, pages older records when necessary, centers the exact record, and highlights it briefly without opening an intermediate detail modal |
+
+### Iteration history
+
+1. P1 - the first result layout replaced the client's business categories with generic aggregate tabs. Restored `快记 / 主题 / 录音·转写` and added `DSH` as the fourth category.
+2. P1 - the first DSH result path was not proven against the Host. Wired it through the public `sessions.search` adapter and covered the mapping with a focused test.
+3. P2 - duplicate title/body text and two visually competing clear/close controls made rows and input actions ambiguous. Deduplicated the result summary and separated input clearing from modal closing.
+4. P2 - history and quick-find entries were rows rather than client-style pills. Rebuilt both groups as compact rounded controls.
+5. P2 - inactive tab underlines, excessive separators, and gray pane fills made the surface visually heavy. Kept one short active underline, removed nonessential lines, switched panes to white, and used a low-saturation iOS-blue selection.
+6. P2 - the modal was too small relative to the desktop client. Increased it to `min(1480px, 84vw)` by `min(940px, 84vh)` while retaining 24 px viewport safety margins.
+7. P1 - Arkme result rows originally opened a second record-detail modal. Replaced that detour with client-style direct navigation: close global search, select the owning conversation, load older history until the exact record is present, then scroll and highlight it.
+8. P1 - the quick area initially exposed only image and AI-video renderers. Added the real `audio` scene, audio metadata/playback, empty/error states, and the same direct conversation navigation used by text results.
+
+### Final checks
+
+- Search history, quick-find controls, text input, clear action, modal close, all four result tabs, topic source selection, and the larger responsive modal were inspected in the real DSH Web host.
+- The search input's clear control and the modal close control have separate targets and positions.
+- The Host was exercised with a real account: one text query returned an exact Arkme `recordUid` plus its target conversation, and `search.scene(scene: 'audio')` reported 503 real voice records with playable asset metadata.
+- DSH click behavior remains task-level because the public DSH search contract returns only `sessionId/snippet`; it opens the corresponding task directly but cannot request an intra-task message anchor.
+- Focused validation passed against the latest upstream baseline: TypeScript typecheck, production build, call-asset verification, and 211 selected tests across search, navigation state, service mapping, DSH adapter, Host media routes, and product navigation.
+- The latest upstream full suite passed 1607 tests with 5 skipped; its sole failure is the pre-existing legacy identity guard and is unrelated to result navigation or voice search. The unified-search change does not add another identity residual.
+
 final result: passed

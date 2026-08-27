@@ -143,6 +143,29 @@ export class ContactService {
     return { state: registered ? 'ready' : 'pending', source }
   }
 
+  async resolveRegisteredContactUserId(
+    contactRef: string,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    this.prune()
+    const normalizedContactRef = contactRef.trim()
+    if (!CONTACT_REF_PATTERN.test(normalizedContactRef)) {
+      throw new ArkmePluginError('contact-ref-invalid', '联系人搜索引用无效，请重新搜索', false)
+    }
+    const cached = this.candidates.get(normalizedContactRef)
+    if (cached === undefined || cached.userId !== session.userId || cached.expiresAtMillis <= Date.now()) {
+      throw new ArkmePluginError('contact-ref-expired', '联系人搜索结果已过期，请重新搜索', false, 410)
+    }
+    const candidate = await this.lookup(cached.normalized, session, signal, normalizedContactRef)
+    if (candidate.targetUserId === undefined || !candidate.result.registered || candidate.result.isSelf
+      || candidate.targetUserId !== cached.targetUserId) {
+      this.candidates.delete(normalizedContactRef)
+      throw new ArkmePluginError('contact-candidate-changed', '联系人身份已发生变化，请重新搜索后确认', false, 409)
+    }
+    return candidate.targetUserId
+  }
+
   private async lookup(
     normalized: NormalizedIdentifier,
     session: ArkmeSessionCredentials,

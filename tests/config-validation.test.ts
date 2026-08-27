@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { apply, type Config } from '../src/index.js'
+import { apply, Config as ConfigSchema, resolveArkmeConfig, type Config } from '../src/index.js'
 
 function productionConfig(): Config {
-  return {
+  return ConfigSchema({
     environment: 'prod',
     authBaseUrl: 'https://api.jotmo.cc',
+    subjectBaseUrl: 'https://subject.jotmo.cc',
     recordBaseUrl: 'https://record.jotmo.cc',
+    dataBaseUrl: 'https://data.jotmo.cc',
     chatBaseUrl: 'https://chat.jotmo.cc',
     botBaseUrl: 'https://bot.jotmo.cc',
     imBaseUrl: 'https://im.jotmo.cc',
@@ -14,19 +16,55 @@ function productionConfig(): Config {
     relationBaseUrl: 'https://relation.jotmo.cc',
     intelligentBaseUrl: 'https://intelligent.jotmo.cc',
     audioBaseUrl: 'https://audio.jotmo.cc',
-    routePath: '/arkme-self/api',
-    requestTimeoutMs: 30_000,
-    maxTextLength: 20_000,
-    toolProfile: 'business',
-    geetestCaptchaId: 'ec81315ab8b0f18a7bfa13602d01e307',
-    stateDirectory: '',
-    keychainServicePrefix: 'com.senqisi.dsh-arkme',
-    allowNonLoopback: false,
+    shareWebsite: 'https://jiwo.cc',
     allowProduction: true,
-  }
+  })
 }
 
 describe('plugin environment validation', () => {
+  it('fills a missing production data service origin before validation', () => {
+    const config = { ...productionConfig(), dataBaseUrl: '' }
+
+    expect(resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, config).dataBaseUrl)
+      .toBe('https://data.jotmo.cc')
+  })
+
+  it('keeps a legacy omitted data service origin distinguishable after schema parsing', () => {
+    const { dataBaseUrl: _omitted, ...legacyProfile } = productionConfig()
+    const config = ConfigSchema(legacyProfile)
+
+    expect(resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, config).dataBaseUrl)
+      .toBe('https://data.jotmo.cc')
+  })
+
+  it('fills a missing test data service origin with test infrastructure', () => {
+    const config = { ...productionConfig(), environment: 'test' as const, dataBaseUrl: '' }
+
+    expect(resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, config).dataBaseUrl)
+      .toBe('https://jotmo-data.senguo.me')
+  })
+
+  it('preserves an explicitly configured data service origin', () => {
+    const config = { ...productionConfig(), dataBaseUrl: 'https://custom-data.example.com' }
+
+    expect(resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, config).dataBaseUrl)
+      .toBe('https://custom-data.example.com')
+  })
+
+  it('still rejects an explicitly configured test data service origin in production', () => {
+    const config = { ...productionConfig(), dataBaseUrl: 'https://jotmo-data.senguo.me' }
+
+    expect(() => resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, config))
+      .toThrow(/production environment must explicitly configure every service origin/)
+  })
+
+  it('normalizes a legacy production profile through the plugin apply entrypoint', () => {
+    const config = { ...productionConfig(), dataBaseUrl: '' }
+
+    expect(() => apply({ webServer: { host: '0.0.0.0' } } as never, config))
+      .toThrow(/Web UI must bind 127\.0\.0\.1/)
+  })
+
   it('rejects a production profile that silently keeps a test service origin', () => {
     const config = { ...productionConfig(), intelligentBaseUrl: 'https://jotmo-intelligent.senguo.me' }
 

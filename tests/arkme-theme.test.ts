@@ -6,7 +6,7 @@ describe('Arkme theme contract', () => {
     const themeSensitive = [
       arkmeTheme.base, arkmeTheme.layer1, arkmeTheme.layer2, arkmeTheme.layer3,
       arkmeTheme.sidebar, arkmeTheme.input, arkmeTheme.menu,
-      arkmeTheme.messageOther, arkmeTheme.subtle,
+      arkmeTheme.subtle,
       arkmeTheme.elevated, arkmeTheme.primaryAction, arkmeTheme.onPrimaryAction,
       arkmeTheme.hover, arkmeTheme.active,
       arkmeTheme.text, arkmeTheme.secondary, arkmeTheme.tertiary, arkmeTheme.caption,
@@ -15,6 +15,8 @@ describe('Arkme theme contract', () => {
     ]
 
     expect(themeSensitive.every(value => value.startsWith('var(--dsw-'))).toBe(true)
+    expect(arkmeTheme.messageOther).toContain('--arkme-chat-other-bubble')
+    expect(arkmeTheme.messageOther).toContain('--dsw-specific-bubble')
     expect(arkmeTheme.messageOwn).toContain('--arkme-chat-self-bubble')
     expect(arkmeTheme.messageOwn).toContain('--dsw-alias-state-business-tertiary')
     expect(arkmeTheme.primaryAction).toContain('--dsw-alias-button-primary-fill')

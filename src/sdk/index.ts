@@ -1,4 +1,4 @@
-import { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS, ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
 import { isArkmeBotAvatarRef } from '../bot-avatar-ref.js'
 import type {
   ArkmeArrangementDetail,
@@ -11,16 +11,29 @@ import type {
   ArkmeArrangementReminderToggleResult,
   ArkmeArrangementReminderWriteResult,
   ArkmeAuthSnapshot,
+  ArkmeCaptchaResult,
+  ArkmeBotList,
+  ArkmeBotMentionInput,
   ArkmeBotProvider,
   ArkmeBotSummary,
   ArkmeCalendarBucketPage,
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
+  ArkmeCallDetail,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallSummaryRetryResult,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidateList,
@@ -30,11 +43,21 @@ import type {
   ArkmeGroupBotCandidateList,
   ArkmeImagePayload,
   ArkmeImageSearchResult,
+  ArkmeIdAvailabilitySnapshot,
+  ArkmeIdMutationResult,
+  ArkmeHumanMentionInput,
+  ArkmeLinkMetadata,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageCopyLinkExtendResult,
+  ArkmeMessageCopyLinkResult,
+  ArkmeMessageCopyLinkResolveResult,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptSummaryList,
+  ArkmeOfficialAuthorProfile,
+  ArkmeOpenPrivateChatResult,
   ArkmePendingWrite,
-  ArkmeRecordingDay,
-  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
@@ -53,6 +76,7 @@ import type {
   ArkmeTimelinePage,
   ArkmeUserProfileSnapshot,
   ArkmeUploadedAsset,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldFeedPage,
   ArkmeWorldVoiceprintAvailability,
   ArkmeWorldVoiceprintInviteResult,
@@ -108,13 +132,31 @@ export type {
   ArkmeCalendarDayRecordPage,
   ArkmeCalendarRecordCursor,
   ArkmeCalendarRecordItem,
+  ArkmeCallDetail,
+  ArkmeCallHistoryItem,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallMediaType,
+  ArkmeCallParticipant,
+  ArkmeCallRecentContact,
+  ArkmeCallSummaryRetryResult,
+  ArkmeCallSummaryStatus,
+  ArkmeCallTranscriptSegment,
   ArkmeCachedQueryResult,
   ArkmeCachedSnapshot,
   ArkmeContactAddResult,
   ArkmeContactIdentifierKind,
   ArkmeContactSearchResult,
   ArkmeContentBlock,
+  ArkmeFavoriteSticker,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeContentKind,
+  ArkmeConversationMemberItem,
+  ArkmeConversationMemberList,
+  ArkmeConversationMemberRecordMode,
+  ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
@@ -133,11 +175,30 @@ export type {
   ArkmeImagePayload,
   ArkmeImageSearchItem,
   ArkmeImageSearchResult,
+  ArkmeIdAvailabilityReason,
+  ArkmeIdAvailabilitySnapshot,
+  ArkmeIdMutationResult,
+  ArkmeHumanMentionInput,
+  ArkmeLinkMetadata,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageCopyLinkExtendResult,
+  ArkmeMessageCopyLinkResult,
+  ArkmeMessageCopyLinkAccessMode,
+  ArkmeMessageCopyLinkMediaItem,
+  ArkmeMessageCopyLinkPresentationNode,
+  ArkmeMessageCopyLinkResolveResult,
+  ArkmeMessageCopyLinkSnapshotItem,
+  ArkmeMessageCopyLinkSourceAnchor,
+  ArkmeMessageCopyLinkStructuredContent,
+  ArkmeMessageReadReceiptDetail,
+  ArkmeMessageReadReceiptMember,
+  ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReadReceiptStatus,
+  ArkmeMessageReadReceiptSummary,
+  ArkmeMessageReadReceiptSummaryList,
+  ArkmeOfficialAuthorProfile,
   ArkmePendingWrite,
-  ArkmeRecordingDay,
-  ArkmeRecordingDoubaoBackfillResult,
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingItem,
   ArkmeRelatedRecordingMonthBucket,
@@ -159,6 +220,7 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
@@ -210,6 +272,7 @@ export type {
 	ArkmeExtensionShare,
 	ArkmeSharedExtensionDetail,
 	ArkmeExtensionSource,
+	ArkmeExtensionPublisherRole,
 } from '../extensions/types.js'
 export { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
@@ -249,6 +312,17 @@ export interface ArkmeSubscribeOptions {
   intervalMs?: number
   immediate?: boolean
   onError?: (error: unknown) => void
+}
+
+function safeSdkCallDetail(detail: ArkmeCallDetail): ArkmeCallDetail {
+  if (detail.videoRecord === undefined) return detail
+  return {
+    ...detail,
+    videoRecord: {
+      available: detail.videoRecord.available,
+      source: detail.videoRecord.source,
+    },
+  }
 }
 
 export class ArkmeSdk {
@@ -453,12 +527,70 @@ export class ArkmeSdk {
     return await this.call<ArkmeAuthSnapshot>('auth.status', undefined, signal)
   }
 
+  /** Read recent call history through Browser-safe opaque call references. */
+  async callHistory(options: ArkmeCallHistoryOptions = {}, signal?: AbortSignal): Promise<ArkmeCallHistoryPage> {
+    const limit = options.limit === undefined ? undefined : Math.trunc(options.limit)
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0 || limit > 50)) {
+      throw new TypeError('Arkme call history limit must be 1-50')
+    }
+    const cursor = options.cursor?.trim() ?? ''
+    return await this.call<ArkmeCallHistoryPage>('calls.history.list', {
+      ...(limit === undefined ? {} : { limit }),
+      ...(cursor === '' ? {} : { cursor }),
+      ...(options.includeRecentContacts === undefined ? {} : { includeRecentContacts: options.includeRecentContacts }),
+    }, signal)
+  }
+
+  /** Read one call detail using an unchanged callRef returned by callHistory(). */
+  async callDetail(callRef: string, signal?: AbortSignal): Promise<ArkmeCallDetail> {
+    const normalized = callRef.trim()
+    if (normalized === '') throw new TypeError('Arkme call reference must not be empty')
+    return safeSdkCallDetail(await this.call<ArkmeCallDetail>('calls.history.detail', { callRef: normalized }, signal))
+  }
+
+  /** Retry call summary generation only from an explicit current human action. */
+  async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> {
+    const normalized = callRef.trim()
+    if (normalized === '') throw new TypeError('Arkme call reference must not be empty')
+    return await this.call<ArkmeCallSummaryRetryResult>('calls.history.summary.retry', { callRef: normalized }, signal)
+  }
+
   async profile(options: { refresh?: boolean; signal?: AbortSignal } = {}): Promise<ArkmeUserProfileSnapshot> {
     return await this.call<ArkmeUserProfileSnapshot>(
       options.refresh === true ? 'user.profile.refresh' : 'user.profile',
       undefined,
       options.signal,
     )
+  }
+
+  /** Validate a candidate Arkme ID with the same one-time account rule used by the built-in UI. */
+  async checkArkmeIdAvailability(arkmeId: string, signal?: AbortSignal): Promise<ArkmeIdAvailabilitySnapshot> {
+    const normalized = arkmeId.trim()
+    if (normalized === '') throw new TypeError('Arkme ID must not be empty')
+    return await this.call<ArkmeIdAvailabilitySnapshot>('user.arkme-id.check', { arkmeId: normalized }, signal)
+  }
+
+  /** Set the current account Arkme ID once after explicit user confirmation. */
+  async setArkmeIdOnce(arkmeId: string, signal?: AbortSignal): Promise<ArkmeIdMutationResult> {
+    const normalized = arkmeId.trim()
+    if (normalized === '') throw new TypeError('Arkme ID must not be empty')
+    return await this.call<ArkmeIdMutationResult>('user.arkme-id.set', { arkmeId: normalized }, signal)
+  }
+
+  /** Send a phone verification code for login, first bind, or phone rebind depending on auth state. */
+  async sendPhoneCode(phone: string, captcha: ArkmeCaptchaResult, signal?: AbortSignal): Promise<{ sent: true }> {
+    const normalized = phone.replace(/[\s-]/g, '')
+    if (!/^1[3-9][0-9]{9}$/.test(normalized)) throw new TypeError('Phone number is invalid')
+    return await this.call<{ sent: true }>('auth.phone.send', { phone: normalized, captcha }, signal)
+  }
+
+  /** Verify a phone code and refresh the account auth/profile state. */
+  async verifyPhoneCode(phone: string, code: string, signal?: AbortSignal): Promise<ArkmeAuthSnapshot> {
+    const normalized = phone.replace(/[\s-]/g, '')
+    const normalizedCode = code.trim()
+    if (!/^1[3-9][0-9]{9}$/.test(normalized)) throw new TypeError('Phone number is invalid')
+    if (!/^[0-9]{6}$/.test(normalizedCode)) throw new TypeError('Phone verification code is invalid')
+    return await this.call<ArkmeAuthSnapshot>('auth.phone.verify', { phone: normalized, code: normalizedCode }, signal)
   }
 
   /** Search by an exact phone number or Arkme ID without exposing internal account identifiers. */
@@ -488,6 +620,13 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  /** Open a private chat for a registered candidate returned by searchContact without adding it as a contact. */
+  async openPrivateChatFromContact(contactRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    const ref = contactRef.trim()
+    if (!/^arkme-contact-v1\.[0-9a-f-]{36}$/i.test(ref)) throw new TypeError('Arkme contact reference is invalid')
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.private.open-from-contact', { contactRef: ref }, signal)
+  }
+
   /** Create an initially owner-only group chat with an idempotent client mutation id. */
   async createGroup(
     title: string,
@@ -505,6 +644,10 @@ export class ArkmeSdk {
       title: normalizedTitle,
       clientMutationId,
     }, options.signal)
+  }
+
+  async listBots(signal?: AbortSignal): Promise<ArkmeBotList> {
+    return await this.call<ArkmeBotList>('bots.list', undefined, signal)
   }
 
   /** Create a Bot without exposing the Host-owned one-time credential to the Consumer. */
@@ -536,13 +679,22 @@ export class ArkmeSdk {
     sort?: ArkmeExtensionCatalogSort
     cursor?: string
     limit?: number
+    ownerUserId?: number
+    excludeExtensionId?: string
     signal?: AbortSignal
   } = {}): Promise<ArkmeExtensionCatalogPage> {
+    if (options.ownerUserId !== undefined && (!Number.isSafeInteger(options.ownerUserId) || options.ownerUserId <= 0)) {
+      throw new TypeError('Arkme extension owner user id must be a positive safe integer')
+    }
     return await this.call<ArkmeExtensionCatalogPage>('extensions.catalog.list', {
       ...(options.query === undefined || options.query.trim() === '' ? {} : { query: options.query.trim() }),
       ...(options.sort === undefined ? {} : { sort: options.sort }),
       ...(options.cursor === undefined || options.cursor.trim() === '' ? {} : { cursor: options.cursor.trim() }),
       ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.ownerUserId === undefined ? {} : { ownerUserId: options.ownerUserId }),
+      ...(options.excludeExtensionId === undefined || options.excludeExtensionId.trim() === ''
+        ? {}
+        : { excludeExtensionId: options.excludeExtensionId.trim() }),
     }, options.signal)
   }
 
@@ -645,6 +797,14 @@ export class ArkmeSdk {
 		return await this.call<ArkmeSharedExtensionDetail>('extensions.share.detail', { shareRef: normalized }, signal)
 	}
 
+	async extensionShareCatalogDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+		const normalized = shareRef.trim()
+		if (!/^extshare_[0-9a-f]{32}$/.test(normalized)) {
+			throw new TypeError('Arkme extension share reference is invalid')
+		}
+		return await this.call<ArkmeExtensionCatalogItem>('extensions.share.resolve', { shareRef: normalized }, signal)
+	}
+
   /** Read one current-user Arkme image through the authenticated Provider without exposing a signed OSS URL. */
   async readImage(imageRef: string, signal?: AbortSignal): Promise<ArkmeImagePayload> {
     if (imageRef.trim() === '') throw new TypeError('Arkme image reference must not be empty')
@@ -687,6 +847,29 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.offset === undefined ? {} : { offset: options.offset }),
     }, options.signal)
+  }
+
+  /** Open or reuse a private chat with a non-self World author from an unchanged authorRef. */
+  async openWorldAuthorPrivateChat(authorRef: string, signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    if (authorRef.trim() === '') throw new TypeError('Arkme World author reference must not be empty')
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.world.private.open', { authorRef }, signal)
+  }
+
+  /** Open or reuse the same private chat used by the mobile "联系作者" entry. */
+  async openOfficialAuthorPrivateChat(signal?: AbortSignal): Promise<ArkmeOpenPrivateChatResult> {
+    return await this.call<ArkmeOpenPrivateChatResult>('chat.official-author.private.open', {}, signal)
+  }
+
+  /** Read the browser-safe public profile for the mobile "联系作者" entry without creating a chat. */
+  async officialAuthorProfile(signal?: AbortSignal): Promise<ArkmeOfficialAuthorProfile> {
+    return await this.call<ArkmeOfficialAuthorProfile>('chat.official-author.profile', {}, signal)
+  }
+
+  /** Resolve viewer-local labels for visible World authors without exposing their user IDs. */
+  async worldAuthorLabels(authorRefs: readonly string[], signal?: AbortSignal): Promise<ArkmeWorldAuthorLabel[]> {
+    const normalized = [...new Set(authorRefs.map(value => value.trim()).filter(value => value !== ''))]
+    if (normalized.length === 0) return []
+    return await this.call<ArkmeWorldAuthorLabel[]>('world.author-labels', { authorRefs: normalized.slice(0, 20) }, signal)
   }
 
   async worldVoiceprintPlaybackAvailability(
@@ -932,6 +1115,29 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)
   }
 
+  async listSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberList> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme chat source reference must not be empty')
+    return await this.call<ArkmeConversationMemberList>('source.members', { sourceRef, activeOnly: true }, signal)
+  }
+
+  async sourceMemberRecords(
+    sourceRef: string,
+    memberRef: string,
+    mode: ArkmeConversationMemberRecordMode,
+    options: { limit?: number; beforeSequence?: number; signal?: AbortSignal } = {},
+  ): Promise<ArkmeConversationMemberRecordPage> {
+    if (sourceRef.trim() === '' || memberRef.trim() === '' || !['owner', 'mentioned'].includes(mode)) {
+      throw new TypeError('Arkme source, member reference, and member-record mode must be valid')
+    }
+    return await this.call<ArkmeConversationMemberRecordPage>('source.member-records', {
+      sourceRef,
+      memberRef,
+      mode,
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.beforeSequence === undefined ? {} : { beforeSequence: options.beforeSequence }),
+    }, options.signal)
+  }
+
   async listGroupMemberCandidates(
     sourceRef: string,
     options: { query?: string; limit?: number; groupSourceRefs?: readonly string[]; signal?: AbortSignal } = {},
@@ -986,6 +1192,51 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  async messageReadReceiptSummaries(
+    sourceRef: string,
+    items: readonly ArkmeMessageReadReceiptQueryItem[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageReadReceiptSummaryList> {
+    const normalizedSourceRef = sourceRef.trim()
+    if (normalizedSourceRef === '' || items.length < 1 || items.length > ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS) {
+      throw new TypeError(`Arkme message read receipts require one source and 1-${String(ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS)} messages`)
+    }
+    const seen = new Set<string>()
+    const normalizedItems = items.map(item => {
+      const itemUid = item.itemUid.trim()
+      const sequence = Math.trunc(item.sequence)
+      const key = `${itemUid}\u0000${String(sequence)}`
+      if (itemUid === '' || !Number.isSafeInteger(item.sequence) || sequence <= 0 || seen.has(key)) {
+        throw new TypeError('Arkme message read receipt item identity is invalid or duplicated')
+      }
+      seen.add(key)
+      return { itemUid, sequence }
+    })
+    return await this.call<ArkmeMessageReadReceiptSummaryList>(
+      'source.read-receipts.summary-list',
+      { sourceRef: normalizedSourceRef, items: normalizedItems },
+      signal,
+    )
+  }
+
+  async messageReadReceiptDetail(
+    sourceRef: string,
+    itemUid: string,
+    sequence: number,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageReadReceiptDetail> {
+    const normalizedSourceRef = sourceRef.trim()
+    const normalizedItemUid = itemUid.trim()
+    if (normalizedSourceRef === '' || normalizedItemUid === '' || !Number.isSafeInteger(sequence) || sequence <= 0) {
+      throw new TypeError('Arkme group message read receipt identity is invalid')
+    }
+    return await this.call<ArkmeMessageReadReceiptDetail>(
+      'source.read-receipts.detail',
+      { sourceRef: normalizedSourceRef, itemUid: normalizedItemUid, sequence },
+      signal,
+    )
+  }
+
   async sendText(
     sourceRef: string,
     textContent: string,
@@ -993,6 +1244,9 @@ export class ArkmeSdk {
       recordUid?: string
       relationUid?: string
       agentAuthored?: boolean
+      humanMentions?: readonly ArkmeHumanMentionInput[]
+      botMentions?: readonly ArkmeBotMentionInput[]
+      botRefs?: readonly string[]
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeSourceSendResult> {
@@ -1005,6 +1259,83 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
+      ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
+      ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
+      ...(options.botRefs === undefined ? {} : { botRefs: options.botRefs }),
+    }, options.signal)
+  }
+
+  async copyMessageLink(
+    sourceRef: string,
+    actionRefs: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageCopyLinkResult> {
+    const refs = actionRefs.map(value => value.trim()).filter(value => value !== '')
+    if (sourceRef.trim() === '' || refs.length === 0 || refs.length > 100 || new Set(refs).size !== refs.length) {
+      throw new TypeError('Arkme message link action references must be 1-100 unique values')
+    }
+    return await this.call<ArkmeMessageCopyLinkResult>('source.message-copy-link', { sourceRef, actionRefs: refs }, signal)
+  }
+
+  async resolveMessageCopyLink(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeMessageCopyLinkResolveResult> {
+    const normalizedSid = sid.trim()
+    if (!/^[0-9A-Za-z]{16}$/.test(normalizedSid)) {
+      throw new TypeError('Arkme message copy-link sid must be 16 alphanumeric characters')
+    }
+    return await this.call<ArkmeMessageCopyLinkResolveResult>('source.message-copy-link.resolve', { sid: normalizedSid }, signal)
+  }
+
+  async extendMessageCopyLink(
+    sid: string,
+    textContent: string,
+    options: { itemIndex?: number; recordUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageCopyLinkExtendResult> {
+    const normalizedSid = sid.trim()
+    const text = textContent.trim()
+    const itemIndex = Math.trunc(options.itemIndex ?? 0)
+    if (!/^[0-9A-Za-z]{16}$/.test(normalizedSid)) {
+      throw new TypeError('Arkme message copy-link sid must be 16 alphanumeric characters')
+    }
+    if (text === '') throw new TypeError('Arkme message copy-link extension text must not be empty')
+    if (itemIndex < 0 || itemIndex >= 100) throw new TypeError('Arkme message copy-link item index must be 0-99')
+    return await this.call<ArkmeMessageCopyLinkExtendResult>('source.message-copy-link.extend', {
+      sid: normalizedSid,
+      itemIndex,
+      textContent: text,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async resolveLinkMetadata(
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeLinkMetadata> {
+    const normalizedUrl = url.trim()
+    if (normalizedUrl === '' || normalizedUrl.length > 2_048) {
+      throw new TypeError('Arkme link metadata URL must not be empty')
+    }
+    return await this.call<ArkmeLinkMetadata>('source.link-metadata.resolve', { url: normalizedUrl }, signal)
+  }
+
+  async forwardMessages(
+    sourceRef: string,
+    actionRefs: readonly string[],
+    options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    const refs = actionRefs.map(value => value.trim()).filter(value => value !== '')
+    if (sourceRef.trim() === '' || refs.length === 0 || refs.length > 100 || new Set(refs).size !== refs.length) {
+      throw new TypeError('Arkme forward action references must be 1-100 unique values')
+    }
+    return await this.call<ArkmeSourceSendResult>('source.forward-messages', {
+      sourceRef,
+      ...(options.targetSourceRef === undefined || options.targetSourceRef.trim() === '' ? {} : { targetSourceRef: options.targetSourceRef.trim() }),
+      actionRefs: refs,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+      ...(options.commentText === undefined || options.commentText.trim() === '' ? {} : { commentText: options.commentText.trim() }),
     }, options.signal)
   }
 
@@ -1045,6 +1376,41 @@ export class ArkmeSdk {
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
     }, options.signal)
+  }
+
+  async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> {
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
+  }
+
+  async addFavoriteSticker(
+    item: ArkmeFavoriteStickerAddInput,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (item.fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.add', { item }, signal)
+  }
+
+  async sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options: { recordUid?: string; relationUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceSendResult> {
+    if (sourceRef.trim() === '' || fileAssetUid.trim() === '') throw new TypeError('Arkme sticker destination and asset must not be empty')
+    return await this.call<ArkmeSourceSendResult>('favorite-stickers.send', {
+      sourceRef,
+      fileAssetUid,
+      recordUid: options.recordUid ?? crypto.randomUUID(),
+      relationUid: options.relationUid ?? crypto.randomUUID(),
+    }, options.signal)
+  }
+
+  async manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList> {
+    if (fileAssetUid.trim() === '') throw new TypeError('Arkme favorite sticker asset must not be empty')
+    return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.manage', { fileAssetUid, action }, signal)
   }
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
@@ -1144,23 +1510,6 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
-  /** Read system and Doubao transcript projections for one current-account local day. */
-  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
-    assertLocalRecordingDay(dateStamp)
-    return await this.call<ArkmeRecordingDay>('recordings.day', { dateStamp }, signal)
-  }
-
-  /** Explicitly queue any eligible retained audio from one local day for Doubao transcription. */
-  async startRecordingDoubaoBackfill(
-    dateStamp: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingDoubaoBackfillResult> {
-    assertLocalRecordingDay(dateStamp)
-    return await this.call<ArkmeRecordingDoubaoBackfillResult>(
-      'recordings.doubao.start', { dateStamp }, signal,
-    )
-  }
-
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
     return await this.call<ArkmeCachedQueryResult>('records.search', {
       query,
@@ -1254,15 +1603,6 @@ export class ArkmeSdk {
 
 export function createArkmeSdk(options?: ArkmeSdkOptions): ArkmeSdk {
   return new ArkmeSdk(options)
-}
-
-function assertLocalRecordingDay(value: number): void {
-  const date = new Date(value)
-  if (!Number.isSafeInteger(value) || value <= 0 || date.getTime() !== value
-    || date.getHours() !== 0 || date.getMinutes() !== 0
-    || date.getSeconds() !== 0 || date.getMilliseconds() !== 0) {
-    throw new TypeError('Arkme recording date must be a local-day timestamp')
-  }
 }
 
 const defaultSdk = createArkmeSdk()

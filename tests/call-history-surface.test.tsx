@@ -53,6 +53,10 @@ describe('ArkmeCallHistorySurface', () => {
     expect(markup).not.toContain('陈依涵')
     expect(markup).not.toContain('周鹏')
     expect(markup).toContain('第一版演示')
+    expect(markup).toContain('aria-label="播放通话录音"')
+    expect(markup).toContain(
+      'background:var(--dsw-alias-button-primary-fill, #17191c);color:var(--dsw-alias-label-primary-inverted, #ffffff)',
+    )
     expect(markup).not.toContain('aria-label="回放进度"')
     expect(markup).not.toContain('type="range"')
   })
@@ -84,7 +88,7 @@ describe('ArkmeCallHistorySurface', () => {
   })
 
   it('builds the same profile-share URL contract used by the mobile client', () => {
-    expect(profileShareUrl('Falling 01')).toBe('https://jiwo.cc/Falling%2001?scene=profile_share')
+    expect(profileShareUrl('Falling 01')).toBe('https://jiwo.cc/Falling%2001')
     expect(profileQrDataUrl('Falling')).toMatch(/^data:image\/gif;base64,/)
   })
 
@@ -108,23 +112,6 @@ describe('ArkmeCallHistorySurface', () => {
     expect(markup).toContain('即我号：Falling')
     expect(markup).toContain('alt="我的 Arkme 二维码"')
     expect(markup).toContain('icon-scan-add-contact.svg')
-  })
-
-  it('shows the profile-local owner on the personal test landing', () => {
-    const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
-    Object.defineProperty(globalThis, 'localStorage', {
-      configurable: true,
-      value: { getItem: () => JSON.stringify({ version: 1, owner: '汤慧玲', defaultSurface: 'calls' }) },
-    })
-
-    try {
-      const markup = renderToStaticMarkup(<ArkmeCallHistorySurface />)
-      expect(markup).toContain('汤慧玲 · 个人测试版')
-      expect(markup).not.toContain('#09b83e')
-    } finally {
-      if (previousLocalStorage === undefined) delete (globalThis as { localStorage?: Storage }).localStorage
-      else Object.defineProperty(globalThis, 'localStorage', previousLocalStorage)
-    }
   })
 
   it('keeps a complete video demo alongside the mother voice demo', () => {

@@ -93,17 +93,22 @@ describe('Arkme extension tools', () => {
 			latest_stable_version: '1.0.0', preview_images: [],
 			rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
 		}))
+		const resolveSharedCatalogDetail = vi.fn(async () => ({
+			extension_id: 'ext-public-1', name: '天气', description: '天气扩展', visibility: 'public',
+		}))
     const auditExtension = vi.fn(async () => ({
       extension_id: 'ext-1', trigger: 'tool', verdict: 'pass', risk_level: 'low',
       summary: '未发现明显风险', reasons: [], recommendations: [], source_reviewed: false,
       source_scope: 'public_detail_only', audited_at_millis: 1,
     }))
+    const searchCatalog = vi.fn(async () => ({ items: [], total: 0 }))
     const readImage = vi.fn(async () => ({ mediaType: 'image/png', bytes: raster.byteLength, data: raster }))
     registerArkmeExtensionTools(context as never, {
-      previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail,
+      previewInstall, listInstalled, setEnabled, updateMetadata, rotateShareLink, readSharedDetail, resolveSharedCatalogDetail,
       setIcon, addPreview, deletePreview, reorderPreviews,
       apply: applyExtension,
       auditExtension,
+      searchCatalog,
       myList: vi.fn(async () => ({ items: [{ extension_id: 'ext-1', preview_images: [], preview_revision: 0 }], total: 1 })),
     } as never, { delete: deleteExtension } as never, { readImage }, 'business')
 
@@ -111,7 +116,7 @@ describe('Arkme extension tools', () => {
       'arkme_extension_publish', 'arkme_extension_delete', 'arkme_extension_search', 'arkme_extension_inspect', 'arkme_extension_audit', 'arkme_extension_apply',
       'arkme_extension_list_mine', 'arkme_extension_list_installed', 'arkme_extension_set_enabled', 'arkme_extension_icon_set',
       'arkme_extension_edit',
-		'arkme_extension_share', 'arkme_extension_share_read',
+		'arkme_extension_share', 'arkme_extension_share_read', 'arkme_extension_share_resolve',
       'arkme_extension_preview_add', 'arkme_extension_preview_delete', 'arkme_extension_preview_reorder',
     ])
     const listMine = definitions.find(item => item.name === 'arkme_extension_list_mine')
@@ -125,6 +130,20 @@ describe('Arkme extension tools', () => {
     expect(listInstalled).toHaveBeenCalledOnce()
     const search = definitions.find(item => item.name === 'arkme_extension_search')
     expect(search?.parameters).toHaveProperty('properties.limit.description', 'Result count, 1-100. Defaults to 20.')
+    expect(search?.parameters).toHaveProperty('properties.owner_user_id.type', 'integer')
+    expect(search?.parameters).toHaveProperty('properties.exclude_extension_id.type', 'string')
+    await expect(search?.execute?.({
+      owner_user_id: 77,
+      exclude_extension_id: 'ext-current',
+      sort: 'opens',
+      limit: 70,
+    }, toolExec(confirmationAgent('session-search', '查看作者其他插件'), 'call-search'))).resolves.toContain('"total": 0')
+    expect(searchCatalog).toHaveBeenCalledWith({
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+      sort: 'opens',
+      limit: 70,
+    }, expect.any(AbortSignal))
     const publish = definitions.find(item => item.name === 'arkme_extension_publish')
     expect(publish?.parameters).toHaveProperty('properties.action.enum', ['prepare', 'confirm'])
     expect(publish?.parameters).toHaveProperty('properties.items')
@@ -133,6 +152,10 @@ describe('Arkme extension tools', () => {
 			'properties.items.items.properties.github_repository_url.description',
 			'Optional canonical GitHub repository root used only as publisher-attested source metadata. It never selects an upload route.',
 		)
+    expect(publish?.parameters).not.toHaveProperty('properties.publication_mode')
+    expect(publish?.parameters).not.toHaveProperty('properties.publisher_role')
+    expect(publish?.parameters).not.toHaveProperty('properties.items.items.properties.publication_mode')
+    expect(publish?.parameters).not.toHaveProperty('properties.items.items.properties.publisher_role')
     expect(publish?.parameters).not.toHaveProperty('properties.plugin_id')
     expect(publish?.parameters).not.toHaveProperty('properties.package_id')
     expect(publish?.description).toContain('1 to 10')
@@ -180,10 +203,12 @@ describe('Arkme extension tools', () => {
     )).resolves.toContain('"status": "confirmation_required"')
     expect(setEnabled).not.toHaveBeenCalled()
     addNaturalConfirmation(enabledAgent, '行，先关掉吧')
-    await expect(enabledTool?.execute?.(
+    const enabledResult = await enabledTool?.execute?.(
       { extension_id: 'ext-1', enabled: false },
       toolExec(enabledAgent, 'call-enabled-confirm'),
-    )).resolves.toContain('"enabled": false')
+    )
+    expect(enabledResult).toContain('"enabled": false')
+    expect(enabledResult).toContain('"restart_required": true')
     expect(setEnabled).toHaveBeenCalledWith({
       agent: enabledAgent, extensionId: 'ext-1', enabled: false,
     })
@@ -223,6 +248,15 @@ describe('Arkme extension tools', () => {
 			{ signal: new AbortController().signal },
 		)).resolves.toContain('"share_scope": "link_readonly"')
 		expect(readSharedDetail).toHaveBeenCalledWith(
+			'extshare_0123456789abcdef0123456789abcdef',
+			expect.any(AbortSignal),
+		)
+		const shareResolveTool = definitions.find(item => item.name === 'arkme_extension_share_resolve')
+		await expect(shareResolveTool?.execute?.(
+			{ share_ref: 'extshare_0123456789abcdef0123456789abcdef' },
+			{ signal: new AbortController().signal },
+		)).resolves.toContain('"extension_id": "ext-public-1"')
+		expect(resolveSharedCatalogDetail).toHaveBeenCalledWith(
 			'extshare_0123456789abcdef0123456789abcdef',
 			expect.any(AbortSignal),
 		)

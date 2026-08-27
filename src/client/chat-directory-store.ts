@@ -2,6 +2,7 @@ import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { callArkme } from './api.js'
 
 const DEFAULT_ROOT_CACHE_MAX_AGE_MS = 30_000
+const ROOT_DIRECTORY_PAGE_LIMIT = 20
 const MAX_ROOT_PAGES = 10
 
 interface ArkmeChatDirectoryStoreOptions {
@@ -13,11 +14,19 @@ interface ArkmeChatDirectoryStoreOptions {
 export interface ArkmeChatDirectorySnapshot {
   revision: number
   sources: ArkmeSourceItem[]
+  baselineReady: boolean
+  isRefreshing: boolean
 }
 
 export interface ArkmeChatDirectorySourceUpdate {
   source: ArkmeSourceItem
   sourceKey?: string
+}
+
+export interface ArkmeChatDirectorySentProjection {
+  latestPreview: string
+  activeAtMillis: number
+  latestSequence: number
 }
 
 type ArkmeChatDirectoryMutation =
@@ -107,7 +116,19 @@ function applyReadWatermark(
   const latestSequence = normalizedSequence(source.latestSequence)
   if (latestSequence > watermark.effectiveReadSequence) return source
   const unreadCount = Math.min(normalizedCount(source.unreadCount), watermark.unreadCount)
-  return unreadCount === source.unreadCount ? source : { ...source, unreadCount }
+  const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
+  return unreadCount === source.unreadCount && hasUnreadMention === source.hasUnreadMention
+    ? source
+    : { ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) }
+}
+
+function mergeUnreadMention(existing: ArkmeSourceItem | undefined, source: ArkmeSourceItem): boolean | undefined {
+  const unreadCount = normalizedCount(source.unreadCount)
+  if (unreadCount <= 0) {
+    return existing?.hasUnreadMention !== undefined || source.hasUnreadMention !== undefined ? false : undefined
+  }
+  if (source.kind === 'group_chat') return source.hasUnreadMention ?? existing?.hasUnreadMention
+  return source.hasUnreadMention
 }
 
 function mergeSourceProjection(
@@ -127,12 +148,19 @@ function mergeSourceProjection(
           ...(latestPreview === undefined ? {} : { latestPreview }),
           activeAtMillis: existing.activeAtMillis,
           unreadCount: existing.unreadCount,
+          ...(existing.hasUnreadMention === undefined ? {} : { hasUnreadMention: existing.hasUnreadMention }),
           ...(existing.latestSequence === undefined ? {} : { latestSequence: existing.latestSequence }),
         }
       })()
     : {
-        ...source,
-        activeAtMillis: Math.max(existing?.activeAtMillis ?? 0, source.activeAtMillis),
+        ...(() => {
+          const hasUnreadMention = mergeUnreadMention(existing, source)
+          return {
+            ...source,
+            activeAtMillis: Math.max(existing?.activeAtMillis ?? 0, source.activeAtMillis),
+            ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
+          }
+        })(),
       }
   return applyReadWatermark(merged, watermarks, indexes, sourceKey)
 }
@@ -193,7 +221,7 @@ function applyDirectoryMutations(
 }
 
 export class ArkmeChatDirectoryStore {
-  private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [] }
+  private snapshot: ArkmeChatDirectorySnapshot = { revision: 0, sources: [], baselineReady: false, isRefreshing: false }
   private readonly listeners = new Set<() => void>()
   private readonly loadPage: (cursor?: string, force?: boolean) => Promise<ArkmeSourceList>
   private readonly maxAgeMs: number
@@ -203,15 +231,18 @@ export class ArkmeChatDirectoryStore {
   private accountUserId: number | undefined
   private generation = 0
   private baselineReady = false
+  private isRefreshing = false
   private pendingMutations: ArkmeChatDirectoryMutation[] = []
   private readonly readWatermarks = new Map<string, ArkmeChatReadWatermark>()
   private readonly optimisticReadWatermarks = new Map<string, ArkmeChatReadWatermark>()
   private readonly optimisticUnreadBackups = new Map<string, number>()
+  private readonly optimisticSentProjections = new Map<string, ArkmeChatDirectorySentProjection>()
   private readonly sourceKeysByRef = new Map<string, string>()
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
     this.loadPage = options.loadPage ?? (async (cursor, force) => await callArkme<ArkmeSourceList>('sources.list', {
-      directory: 'root', limit: 100, ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
+      directory: 'root', limit: ROOT_DIRECTORY_PAGE_LIMIT,
+      ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
     }))
     this.maxAgeMs = Math.max(0, Math.trunc(options.maxAgeMs ?? DEFAULT_ROOT_CACHE_MAX_AGE_MS))
     this.now = options.now ?? Date.now
@@ -232,18 +263,23 @@ export class ArkmeChatDirectoryStore {
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
     this.baselineReady = false
+    this.isRefreshing = false
     this.pendingMutations = []
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
+    this.optimisticSentProjections.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing) this.commit([])
   }
 
   async refreshRoot(options: { force?: boolean } = {}): Promise<ArkmeSourceItem[]> {
     if (options.force !== true && this.refreshedAtMillis > 0
-      && this.now() - this.refreshedAtMillis < this.maxAgeMs) return [...this.snapshot.sources]
+      && this.now() - this.refreshedAtMillis < this.maxAgeMs) {
+      return [...this.snapshot.sources]
+    }
     if (this.refreshInFlight !== undefined) return await this.refreshInFlight
+    this.setRefreshing(true)
     const generation = this.generation
     const pending = (async () => {
       const loaded: ArkmeSourceItem[] = []
@@ -268,14 +304,25 @@ export class ArkmeChatDirectoryStore {
     try {
       return await pending
     } finally {
-      if (this.refreshInFlight === pending) this.refreshInFlight = undefined
+      if (this.refreshInFlight === pending) {
+        this.refreshInFlight = undefined
+        this.setRefreshing(false)
+      }
     }
   }
 
   publish(sources: ArkmeSourceItem[]): void {
+    const protectedMutations = sources.flatMap(source => {
+      const protectedSource = this.protectOptimisticSentProjection(source)
+      return protectedSource === source ? [] : [{
+        type: 'upsert' as const,
+        source: protectedSource,
+        ...(protectedSource.sourceKey === undefined ? {} : { sourceKey: protectedSource.sourceKey }),
+      }]
+    })
     const merged = applyDirectoryMutations(
       sources,
-      this.pendingMutations,
+      [...protectedMutations, ...this.pendingMutations],
       this.combinedReadWatermarks(),
       { sourceKeysByRef: this.sourceKeysByRef },
     )
@@ -285,7 +332,12 @@ export class ArkmeChatDirectoryStore {
   }
 
   private commit(sources: ArkmeSourceItem[]): void {
-    this.snapshot = { revision: this.snapshot.revision + 1, sources: [...sources] }
+    this.snapshot = {
+      revision: this.snapshot.revision + 1,
+      sources: [...sources],
+      baselineReady: this.baselineReady,
+      isRefreshing: this.isRefreshing,
+    }
     for (const listener of this.listeners) listener()
   }
 
@@ -293,12 +345,38 @@ export class ArkmeChatDirectoryStore {
     this.upsertMany([{ source, ...(sourceKey === undefined ? {} : { sourceKey }) }])
   }
 
+  recordSent(source: ArkmeSourceItem, projection: ArkmeChatDirectorySentProjection): boolean {
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return false
+    const latestSequence = normalizedSequence(projection.latestSequence)
+    const activeAtMillis = Number.isFinite(projection.activeAtMillis) && projection.activeAtMillis > 0
+      ? Math.trunc(projection.activeAtMillis)
+      : 0
+    if (latestSequence <= 0 || activeAtMillis <= 0) return false
+    this.upsert({
+      ...source,
+      latestPreview: projection.latestPreview.trim() || '非文本内容',
+      activeAtMillis,
+      unreadCount: 0,
+      latestSequence,
+    })
+    rememberSourceKey({ sourceKeysByRef: this.sourceKeysByRef }, source.sourceRef, source.sourceKey)
+    this.optimisticSentProjections.set(
+      identityForSource({ sourceKeysByRef: this.sourceKeysByRef }, source.sourceRef, source.sourceKey),
+      {
+        latestPreview: projection.latestPreview.trim() || '非文本内容',
+        activeAtMillis,
+        latestSequence,
+      },
+    )
+    return true
+  }
+
   upsertMany(updates: Array<ArkmeSourceItem | ArkmeChatDirectorySourceUpdate>): void {
     const mutations = updates.map(update => {
       const normalized = sourceUpdate(update)
       return {
         type: 'upsert' as const,
-        source: normalized.source,
+        source: this.protectOptimisticSentProjection(normalized.source, normalized.sourceKey),
         ...(normalized.sourceKey === undefined ? {} : { sourceKey: normalized.sourceKey }),
       }
     })
@@ -321,14 +399,16 @@ export class ArkmeChatDirectoryStore {
     return sources.find(item => identityForSource(indexes, item.sourceRef) === identity)?.unreadCount ?? 0
   }
 
-  totalUnreadCount(): number {
+  totalUnreadCount(options: { excludeMuted?: boolean } = {}): number {
     const sources = applyDirectoryMutations(
       this.snapshot.sources,
       this.pendingMutations,
       this.combinedReadWatermarks(),
       { sourceKeysByRef: new Map(this.sourceKeysByRef) },
     )
-    return sources.reduce((sum, source) => sum + normalizedCount(source.unreadCount), 0)
+    return sources.reduce((sum, source) => options.excludeMuted === true && source.isMuted === true
+      ? sum
+      : sum + normalizedCount(source.unreadCount), 0)
   }
 
   markReadOptimistic(
@@ -346,7 +426,8 @@ export class ArkmeChatDirectoryStore {
     const currentSource = sourceIndex >= 0
       ? this.snapshot.sources[sourceIndex]
       : seedSourceIndex >= 0 ? seedSources[seedSourceIndex] : source
-    if (currentSource === undefined || normalizedCount(currentSource.unreadCount) <= 0) return false
+    if (currentSource === undefined
+      || (normalizedCount(currentSource.unreadCount) <= 0 && currentSource.hasUnreadMention !== true)) return false
     const existing = this.optimisticReadWatermarks.get(identity)
     if (existing !== undefined && existing.effectiveReadSequence >= target.effectiveReadSequence && existing.unreadCount === 0) return false
     if (!this.optimisticUnreadBackups.has(identity)) this.optimisticUnreadBackups.set(identity, normalizedCount(currentSource.unreadCount))
@@ -436,12 +517,20 @@ export class ArkmeChatDirectoryStore {
     this.refreshInFlight = undefined
     this.refreshedAtMillis = 0
     this.baselineReady = false
+    this.isRefreshing = false
     this.pendingMutations = []
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
+    this.optimisticSentProjections.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing) this.commit([])
+  }
+
+  private setRefreshing(isRefreshing: boolean): void {
+    if (this.isRefreshing === isRefreshing) return
+    this.isRefreshing = isRefreshing
+    this.commit(this.snapshot.sources)
   }
 
   private combinedReadWatermarks(): Map<string, ArkmeChatReadWatermark> {
@@ -449,6 +538,28 @@ export class ArkmeChatDirectoryStore {
     for (const [key, watermark] of this.readWatermarks) mergeReadWatermark(combined, key, watermark)
     for (const [key, watermark] of this.optimisticReadWatermarks) mergeReadWatermark(combined, key, watermark)
     return combined
+  }
+
+  private protectOptimisticSentProjection(source: ArkmeSourceItem, sourceKey?: string): ArkmeSourceItem {
+    const effectiveSourceKey = sourceKey ?? source.sourceKey
+    rememberSourceKey({ sourceKeysByRef: this.sourceKeysByRef }, source.sourceRef, effectiveSourceKey)
+    const identity = identityForSource({ sourceKeysByRef: this.sourceKeysByRef }, source.sourceRef, effectiveSourceKey)
+    const optimistic = this.optimisticSentProjections.get(identity)
+    if (optimistic === undefined) return source
+    const sourceSequence = normalizedSequence(source.latestSequence)
+    const sourcePreview = source.latestPreview?.trim() ?? ''
+    if (sourceSequence > optimistic.latestSequence
+      || (sourceSequence === optimistic.latestSequence && sourcePreview === optimistic.latestPreview)) {
+      this.optimisticSentProjections.delete(identity)
+      return source
+    }
+    return {
+      ...source,
+      latestPreview: optimistic.latestPreview,
+      activeAtMillis: Math.max(source.activeAtMillis, optimistic.activeAtMillis),
+      unreadCount: 0,
+      latestSequence: optimistic.latestSequence,
+    }
   }
 
   private normalizedReadTarget(
@@ -484,7 +595,10 @@ export class ArkmeChatDirectoryStore {
     return this.snapshot.sources.map(source => {
       if (identityForSource(indexes, source.sourceRef, source.sourceKey) !== identity) return source
       if (normalizedSequence(source.latestSequence) > effectiveReadSequence) return source
-      return source.unreadCount === unreadCount ? source : { ...source, unreadCount }
+      const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
+      return source.unreadCount === unreadCount && source.hasUnreadMention === hasUnreadMention
+        ? source
+        : { ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) }
     })
   }
 }

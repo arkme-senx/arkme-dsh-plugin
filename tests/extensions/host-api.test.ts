@@ -119,6 +119,51 @@ describe('marketplace Host BFF', () => {
     expect(persistentClientState).toHaveBeenCalledWith('ext-1', '1.0.0')
   })
 
+  it('routes isolated Client failures to the exact installed extension owner', async () => {
+    const reportClientFailure = vi.fn(async () => ({ handled: true, disabled: true }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.client.failure',
+      {
+        identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
+        clientInstanceKey: `instance-v1-${'a'.repeat(64)}`,
+        clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+        kind: 'runtime-load-failed', message: 'slot collision',
+      },
+      undefined,
+      { reportClientFailure } as never,
+    )).resolves.toEqual({ handled: true, disabled: true })
+    expect(reportClientFailure).toHaveBeenCalledWith({
+      identityKey: 'extensionId', extensionId: 'ext-1', version: '1.0.0',
+      clientInstanceKey: `instance-v1-${'a'.repeat(64)}`,
+      clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+      clientOwnerKey: '',
+      kind: 'runtime-load-failed', message: 'slot collision',
+    })
+  })
+
+  it('resolves a Bundle Client owner through the Host install store', async () => {
+    const bundleClientState = vi.fn(() => ({
+      extension_id: 'ext-1', version: '1.0.0', mount: true,
+      instance_key: `instance-v1-${'a'.repeat(64)}`, generation: 7,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never,
+      'extensions.bundle.client-state',
+      {
+        packageName: '@example/weather', version: '1.0.0',
+        clientContentDigest: `client-v1-${'b'.repeat(64)}`,
+      },
+      undefined,
+      { bundleClientState } as never,
+    )).resolves.toMatchObject({ extension_id: 'ext-1', mount: true, generation: 7 })
+    expect(bundleClientState).toHaveBeenCalledWith(
+      '@example/weather', '1.0.0', `client-v1-${'b'.repeat(64)}`,
+    )
+  })
+
   it('routes user-triggered extension audit through the Host manager', async () => {
     const auditExtension = vi.fn(async () => ({
       extension_id: 'ext-1', trigger: 'market_detail', verdict: 'review', risk_level: 'medium',
@@ -179,11 +224,24 @@ describe('marketplace Host BFF', () => {
     }))
 
     await expect(dispatchArkmeHostOperation(
-      service as never, 'extensions.catalog.list', {}, undefined, { searchCatalog } as never,
+      service as never, 'extensions.catalog.list', {
+        ownerUserId: 77,
+        excludeExtensionId: 'ext-current',
+        sort: 'opens',
+        limit: 70,
+      }, undefined, { searchCatalog } as never,
     )).resolves.toMatchObject({ items: [{
       owner_name: '发布者', owner_arkme_id: 'publisher', owner_avatar_ref: 'sealed-avatar-ref',
       owner_avatar_fallback: { kind: 'phone_default', colorIndex: 3, label: '发' },
     }] })
+    expect(searchCatalog).toHaveBeenCalledWith({
+      query: '',
+      cursor: '',
+      limit: 70,
+      sort: 'opens',
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+    })
     await expect(dispatchArkmeHostOperation(
       service as never, 'extensions.catalog.detail', { extensionId: 'ext-1' }, undefined, { inspect } as never,
     )).resolves.toMatchObject({
@@ -198,6 +256,31 @@ describe('marketplace Host BFF', () => {
     }] })
     expect(service.extensionAuthors).toHaveBeenCalledTimes(3)
     expect(service.extensionAuthors).toHaveBeenCalledWith([77])
+  })
+
+  it('does not resolve Jotmo author identity for imported or legacy GitHub entries', async () => {
+    const service = { extensionAuthors: vi.fn(async () => new Map()) }
+    const source = {
+      type: 'github_repository' as const,
+      url: 'https://github.com/example/imported',
+      label: 'GitHub',
+      verification: 'publisher_attested' as const,
+    }
+    const searchCatalog = vi.fn(async () => ({
+      items: [
+        { extension_id: 'ext-importer', name: '导入扩展', description: '', visibility: 'public' as const, owner_user_id: 77, publisher_role: 'importer' as const, source },
+        { extension_id: 'ext-legacy', name: '历史导入', description: '', visibility: 'public' as const, owner_user_id: 88, source },
+      ],
+      total: 2,
+    }))
+
+    await expect(dispatchArkmeHostOperation(
+      service as never, 'extensions.catalog.list', {}, undefined, { searchCatalog } as never,
+    )).resolves.toMatchObject({ items: [
+      { extension_id: 'ext-importer', publisher_role: 'importer' },
+      { extension_id: 'ext-legacy' },
+    ] })
+    expect(service.extensionAuthors).not.toHaveBeenCalled()
   })
 
   it('routes complete author deletion through the owned-inventory lifecycle owner', async () => {
@@ -260,6 +343,30 @@ describe('marketplace Host BFF', () => {
 			{ readSharedDetail } as never,
 		)).resolves.toMatchObject({ name: '天气', share_scope: 'link_readonly' })
 		expect(readSharedDetail).toHaveBeenCalledWith('extshare_0123456789abcdef0123456789abcdef')
+	})
+
+	it('routes public share resolution through the standard catalog detail owner', async () => {
+		const service = {
+			extensionAuthors: vi.fn(async () => new Map([[77, {
+				displayName: 'Lucis', arkmeId: 'lucis', avatarRef: 'sealed-avatar-ref',
+				avatarFallback: { kind: 'phone_default' as const, colorIndex: 3, label: 'L' },
+			}]])),
+		}
+		const resolveSharedCatalogDetail = vi.fn(async () => ({
+			extension_id: 'ext-public-1', owner_user_id: 77, name: '天气', description: '', visibility: 'public',
+		}))
+		await expect(dispatchArkmeHostOperation(
+			service as never,
+			'extensions.share.resolve',
+			{ shareRef: 'extshare_0123456789abcdef0123456789abcdef' },
+			undefined,
+			{ resolveSharedCatalogDetail } as never,
+		)).resolves.toMatchObject({
+			extension_id: 'ext-public-1', name: '天气', owner_name: 'Lucis', owner_arkme_id: 'lucis',
+			owner_avatar_ref: 'sealed-avatar-ref',
+		})
+		expect(resolveSharedCatalogDetail).toHaveBeenCalledWith('extshare_0123456789abcdef0123456789abcdef')
+		expect(service.extensionAuthors).toHaveBeenCalledWith([77])
 	})
 
   it('routes my-extension list and publish through the unified Host owner', async () => {

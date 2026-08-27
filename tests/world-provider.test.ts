@@ -50,21 +50,64 @@ describe('world Provider projection', () => {
       expect(String(input)).toBe('https://world.test/api/v1/public-record/my-list')
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
       expect(JSON.parse(String(init?.body))).toEqual({ limit: 10, offset: 20 })
-      return json({ code: 200, data: { list: [{
-        record_uid: 'mine-record-1', user_id: 10001, nick_name: '依涵', text_content: '我的公开快记',
-        images: [], videos: [], voices: [], extend_count: 0,
-      }], total: 21 } })
+      return json({ code: 200, data: { list: [
+        {
+          record_uid: 'mine-record-1', user_id: 10001, nick_name: '依涵', text_content: '我的公开快记',
+          images: [], videos: [], voices: [], extend_count: 0,
+        },
+        {
+          record_uid: 'mine-comment-1', parent_record_uid: 'another-user-record', user_id: 10001,
+          nick_name: '依涵', text_content: '我在别人快记下的评论', images: [], videos: [], voices: [], extend_count: 1,
+        },
+        {
+          record_uid: 'mine-reply-1', parent_record_uid: 'another-user-comment', user_id: 10001,
+          nick_name: '依涵', text_content: '我对别人评论的回复', images: [], videos: [], voices: [], extend_count: 0,
+        },
+      ], total: 23 } })
     })
     const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
 
     const page = await service.listMyWorldFeed({ limit: 10, offset: 20 })
 
     expect(page).toMatchObject({
-      total: 21,
+      total: 23,
       hasMore: false,
       items: [{ authorName: '依涵', textContent: '我的公开快记' }],
     })
     expect(JSON.stringify(page)).not.toContain('mine-record-1')
+    expect(JSON.stringify(page)).not.toContain('我在别人快记下的评论')
+    expect(JSON.stringify(page)).not.toContain('我对别人评论的回复')
+  })
+
+  it('continues past comment-only owner pages until it finds a published World post', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const offsets: number[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { limit: number; offset: number }
+      offsets.push(body.offset)
+      if (body.offset === 0) {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'mine-comment-only', parent_record_uid: 'another-user-record', user_id: 10001,
+          nick_name: '依涵', text_content: '只有评论的第一页', images: [], videos: [], voices: [], extend_count: 0,
+        }], total: 2 } })
+      }
+      return json({ code: 200, data: { list: [{
+        record_uid: 'mine-root-page-2', user_id: 10001, nick_name: '依涵', text_content: '第二页的本人快记',
+        images: [], videos: [], voices: [], extend_count: 0,
+      }], total: 2 } })
+    })
+    const service = new ArkmeService(config, sessions, stateStore as never, fetchImpl)
+
+    const page = await service.listMyWorldFeed({ limit: 1 })
+
+    expect(offsets).toEqual([0, 1])
+    expect(page).toMatchObject({
+      total: 2,
+      hasMore: false,
+      items: [{ authorName: '依涵', textContent: '第二页的本人快记' }],
+    })
+    expect(JSON.stringify(page)).not.toContain('只有评论的第一页')
   })
 
   it('lists one user World homepage through the mobile user-list contract and skips comment records', async () => {
@@ -270,6 +313,53 @@ describe('world Provider projection', () => {
     expect(JSON.stringify(page)).not.toContain('public-record-1')
   })
 
+  it('uses the current viewer\'s private remark in World and in the chat opened from that World author', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const state = {
+      ...stateStore,
+      async cachedProfile() { return { status: 'empty', profile: null } },
+    }
+    const service = new ArkmeService(config, sessions, state as never, async (input, init) => {
+      const url = String(input)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      if (url === 'https://world.test/api/public/v1/public-record/world-list') {
+        return json({ code: 200, data: { list: [{
+          record_uid: 'public-record-remark', user_id: 20002, nick_name: '公开昵称A', text_content: '世界正文',
+          images: [], videos: [], voices: [],
+        }], total: 1 } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/list') {
+        expect(body).toEqual({ limit: 50 })
+        return json({ code: 200, data: { items: [{
+          session: { chat_session_uid: 'private-20002', session_kind: 1 },
+          private_counterpart: { user_id: 20002, display_name_snapshot: '公开昵称A' },
+          private_supplement: { remark: '小王' },
+        }], has_more: false } })
+      }
+      if (url === 'https://auth.test/api/v1/auth/get-public-users-by-ids') {
+        return json({ code: 200, data: { items: [{ user_id: 20002, nick_name: '公开昵称A' }] } })
+      }
+      if (url === 'https://chat.test/api/v1/chats/create-private') {
+        expect(body).toMatchObject({ peer_user_id: 20002, title: '小王', peer_display_name_snapshot: '小王' })
+        return json({ code: 200, data: {
+          session: { chat_session_uid: 'private-20002', session_kind: 1, last_active_at: 1 },
+          unread_snapshot: { unread_count: 0, session_last_seq: 0 },
+        } })
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+
+    const page = await service.listWorldFeed()
+    expect(page.items[0]).toMatchObject({ authorName: '公开昵称A', authorRef: expect.any(String) })
+    await expect(service.worldAuthorLabels([page.items[0]!.authorRef!])).resolves.toEqual([
+      { authorRef: page.items[0]!.authorRef, authorName: '小王' },
+    ])
+
+    const opened = await service.openPrivateChatFromWorldAuthor(page.items[0]!.authorRef!)
+    expect(opened.source.displayName).toBe('小王')
+  })
+
   it('lists the signed-in account World feed through the private owner endpoint', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -299,11 +389,12 @@ describe('world Provider projection', () => {
     expect(JSON.stringify(page)).not.toContain('my-public-record-1')
   })
 
-  it('downloads a sealed world image and rejects the ref after an account switch', async () => {
+  it('downloads a published-size world image and rejects the ref after an account switch', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const publicImage = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo.png'
-    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+    const png = new Uint8Array(3 * 1024 * 1024)
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     const fetchImpl = vi.fn<typeof fetch>(async (input) => {
       if (String(input) === 'https://world.test/api/public/v1/public-record/world-list') {
         return json({ code: 200, data: { list: [{
@@ -331,6 +422,29 @@ describe('world Provider projection', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps every image reference so feeds can preview images beyond the ninth tile', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const publicImages = Array.from({ length: 10 }, (_, index) =>
+      `https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/world/photo-${String(index + 1)}.png?signature=secret-${String(index + 1)}`)
+    const service = new ArkmeService(config, sessions, stateStore as never, async (input) => {
+      expect(String(input)).toBe('https://world.test/api/public/v1/public-record/world-list')
+      return json({ code: 200, data: { list: [{
+        record_uid: 'public-record-many-images', user_id: 20002, nick_name: '小林', text_content: '十张图片',
+        images: publicImages, videos: [], voices: [],
+      }], total: 1 } })
+    })
+
+    const page = await service.listWorldFeed()
+
+    expect(page.items[0]).toMatchObject({ imageCount: 10 })
+    expect(page.items[0]?.imageRefs).toHaveLength(10)
+    expect(page.items[0]?.imageRefs).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^arkme-world-image-v1\./),
+    ]))
+    expect(JSON.stringify(page)).not.toContain('signature=secret')
+  })
+
   it('projects world voiceprint availability and playback through account-bound local media refs', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
@@ -354,6 +468,7 @@ describe('world Provider projection', () => {
           source_scene: 4,
           source_id: 'public-record-1',
           source_chunk_index: 0,
+          source_chunk_max_runes: 120,
         })
         return json({ code: 200, data: {
           audio_url: audioUrl,
@@ -363,7 +478,7 @@ describe('world Provider projection', () => {
           source_chunk_index: 0,
           source_chunk_count: 2,
           source_chunk_start_rune: 0,
-          source_chunk_end_rune: 240,
+          source_chunk_end_rune: 120,
         } })
       }
       expect(url).toBe(audioUrl)
@@ -398,7 +513,7 @@ describe('world Provider projection', () => {
       chunkIndex: 0,
       chunkCount: 2,
       chunkStartRune: 0,
-      chunkEndRune: 240,
+      chunkEndRune: 120,
     })
     expect(JSON.stringify(playback)).not.toContain('x-oss-signature')
     expect(JSON.stringify(playback)).not.toContain('public-record-1')
@@ -634,7 +749,10 @@ describe('world Provider projection', () => {
       }
       if (url === 'https://chat.test/api/v1/chats/records/send') {
         expect(body).toMatchObject({ chat_session_uid: 'private-20002', template_kind: 1 })
-        expect(String(body.text_content)).toContain('邀请你开启声纹')
+        expect(String(body.text_content)).toContain('小林，我是看到你在世界发的这条快记才来找你的')
+        expect(String(body.text_content)).toContain('【来自世界的快记】')
+        expect(String(body.text_content)).toContain('“今天好难”')
+        expect(String(body.text_content)).toContain('录入一下声纹')
         expect(String(body.text_content)).toContain('https://jotmo-app.senguo.me/app/voiceprint/invite#t=voiceprint.invite_202608210001')
         return json({ code: 200, data: { record_uid: body.record_uid, audit_status: 0, seq: 8 } })
       }
@@ -776,7 +894,7 @@ describe('world Provider projection', () => {
     const page = await service.listWorldFeed()
 
     expect(page.items).toMatchObject([
-      { authorName: '文件头像', avatarRef: expect.stringMatching(/^arkme-world-image-v1\./) },
+      { authorName: '文件头像', authorRef: expect.stringMatching(/^arkme-world-record-v1\./), avatarRef: expect.stringMatching(/^arkme-world-image-v1\./) },
       { authorName: '手机默认头像', avatarFallback: { kind: 'phone_default', colorIndex: 3, label: '61' } },
       {
         authorName: '公开头像',
@@ -788,6 +906,7 @@ describe('world Provider projection', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(JSON.stringify(page)).not.toContain('file_asset://')
     expect(JSON.stringify(page)).not.toContain('jotmo-userfiles')
+    expect(JSON.stringify(page)).not.toContain('20002')
   })
 
   it('dispatches only bounded world feed and image inputs through the Host API', async () => {
@@ -795,6 +914,8 @@ describe('world Provider projection', () => {
       listWorldFeed: vi.fn(async (options: unknown) => options),
       listMyWorldFeed: vi.fn(async (options: unknown) => options),
       listUserWorldFeed: vi.fn(async (_userId: number, options: unknown) => options),
+      worldAuthorLabels: vi.fn(async (authorRefs: string[]) => ({ authorRefs })),
+      openPrivateChatFromWorldAuthor: vi.fn(async (authorRef: string) => ({ authorRef })),
       worldVoiceprintPlaybackAvailability: vi.fn(async (recordRefs: string[]) => ({ recordRefs })),
       generateWorldVoiceprintPlayback: vi.fn(async (input: unknown) => input),
       inviteWorldVoiceprint: vi.fn(async (recordRef: string) => ({ sent: true, recordRef })),
@@ -810,6 +931,10 @@ describe('world Provider projection', () => {
     await dispatchArkmeHostOperation(service as never, 'world.feed', { limit: 999, offset: -4, userId: 900 })
     await dispatchArkmeHostOperation(service as never, 'world.mine', { limit: 999, offset: -4, userId: 900 })
     await dispatchArkmeHostOperation(service as never, 'world.user', { userId: 900, limit: 999, offset: -4 })
+    await dispatchArkmeHostOperation(service as never, 'world.author-labels', {
+      authorRefs: [' first ', '', 'second', ...Array.from({ length: 30 }, (_, index) => `extra-${String(index)}`)],
+    })
+    await dispatchArkmeHostOperation(service as never, 'chat.world.private.open', { authorRef: ' author-ref ', userId: 900 })
     await dispatchArkmeHostOperation(service as never, 'world.voiceprint.availability', {
       recordRefs: [' first ', '', 'second', ...Array.from({ length: 30 }, (_, index) => `extra-${String(index)}`)],
       userIds: [900],
@@ -831,6 +956,10 @@ describe('world Provider projection', () => {
     expect(service.listWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
     expect(service.listMyWorldFeed).toHaveBeenCalledWith({ limit: 20, offset: 0 })
     expect(service.listUserWorldFeed).toHaveBeenCalledWith(900, { limit: 20, offset: 0 })
+    expect(service.worldAuthorLabels).toHaveBeenCalledWith([
+      'first', 'second', ...Array.from({ length: 18 }, (_, index) => `extra-${String(index)}`),
+    ], undefined)
+    expect(service.openPrivateChatFromWorldAuthor).toHaveBeenCalledWith('author-ref', undefined)
     expect(service.worldVoiceprintPlaybackAvailability).toHaveBeenCalledWith([
       'first', 'second', ...Array.from({ length: 18 }, (_, index) => `extra-${String(index)}`),
     ])

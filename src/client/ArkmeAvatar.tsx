@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type {
   ArkmeGroupAvatarFallback,
   ArkmeGroupAvatarPresentation,
@@ -15,6 +15,7 @@ const AVATAR_DOWNLOAD_CONCURRENCY = 6
 interface AvatarCacheEntry {
   expiresAtMillis: number
   pending: Promise<string>
+  value?: string
 }
 
 const avatarDataUrlCache = new Map<string, AvatarCacheEntry>()
@@ -46,16 +47,34 @@ export function clearArkmeAvatarCache(): void {
   avatarDataUrlCache.clear()
 }
 
-export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
+function getFreshAvatarCacheEntry(imageRef: string): AvatarCacheEntry | undefined {
   const cached = avatarDataUrlCache.get(imageRef)
-  if (cached !== undefined && cached.expiresAtMillis > Date.now()) return cached.pending
-  if (cached !== undefined) avatarDataUrlCache.delete(imageRef)
+  if (cached === undefined) return undefined
+  if (cached.expiresAtMillis > Date.now()) return cached
+  avatarDataUrlCache.delete(imageRef)
+  return undefined
+}
+
+export function getCachedArkmeImageDataUrl(imageRef: string): string | undefined {
+  return getFreshAvatarCacheEntry(imageRef)?.value
+}
+
+export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
+  const cached = getFreshAvatarCacheEntry(imageRef)
+  if (cached !== undefined) {
+    if (cached.value !== undefined) return Promise.resolve(cached.value)
+    return cached.pending
+  }
   const entry: AvatarCacheEntry = {
     expiresAtMillis: Date.now() + AVATAR_CACHE_TTL_MS + Math.floor(Math.random() * AVATAR_CACHE_JITTER_MS),
     pending: Promise.resolve(''),
   }
   entry.pending = scheduleAvatarDownload(async () => await callArkme<ArkmeImagePayload>('image.read', { imageRef }))
-    .then(image => `data:${image.mediaType};base64,${image.dataBase64}`)
+    .then(image => {
+      const value = `data:${image.mediaType};base64,${image.dataBase64}`
+      entry.value = value
+      return value
+    })
     .catch(error => {
       if (avatarDataUrlCache.get(imageRef) === entry) avatarDataUrlCache.delete(imageRef)
       throw error
@@ -66,6 +85,14 @@ export function loadArkmeImageDataUrl(imageRef: string): Promise<string> {
 
 interface ResolvedGroupAvatarSlot extends ArkmeGroupAvatarSlot {
   imageUrl?: string
+}
+
+function applyCachedAvatarSlots(sourceSlots: readonly ArkmeGroupAvatarSlot[]): ResolvedGroupAvatarSlot[] {
+  return sourceSlots.map(slot => {
+    if (slot.avatarRef === undefined) return slot
+    const imageUrl = getCachedArkmeImageDataUrl(slot.avatarRef)
+    return imageUrl === undefined ? slot : { ...slot, imageUrl }
+  })
 }
 
 interface AvatarLayoutSlot {
@@ -97,16 +124,20 @@ function avatarStyles(size: number): Record<string, CSSProperties> {
   }
 }
 
-function DefaultUserAvatar({ size }: { size: number }) {
+export function ArkmeDefaultAvatarFrame({ children }: { children: ReactNode }) {
   return <span style={{
     width: '100%', height: '100%', display: 'grid', placeItems: 'center', borderRadius: '50%',
     background: arkmeTheme.subtle, color: arkmeTheme.caption,
-  }}>
+  }}>{children}</span>
+}
+
+function DefaultUserAvatar({ size }: { size: number }) {
+  return <ArkmeDefaultAvatarFrame>
     <svg width={size * .68} height={size * .68} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <circle cx="12" cy="8" r="4" />
       <path d="M4.5 20c.7-4.1 3.2-6.2 7.5-6.2s6.8 2.1 7.5 6.2H4.5Z" />
     </svg>
-  </span>
+  </ArkmeDefaultAvatarFrame>
 }
 
 function PhoneDefaultAvatar({ fallback, size }: { fallback: Extract<ArkmeGroupAvatarFallback, { kind: 'phone_default' }>; size: number }) {
@@ -130,12 +161,19 @@ export function ArkmeUserAvatar({
   label?: string
 }) {
   const normalizedRef = avatarRef?.trim() ?? ''
-  const [imageUrl, setImageUrl] = useState<string>()
+  const [imageUrl, setImageUrl] = useState<string | undefined>(() => normalizedRef === ''
+    ? undefined
+    : getCachedArkmeImageDataUrl(normalizedRef))
 
   useEffect(() => {
     let active = true
-    setImageUrl(undefined)
-    if (normalizedRef === '') return () => { active = false }
+    if (normalizedRef === '') {
+      setImageUrl(undefined)
+      return () => { active = false }
+    }
+    const cached = getCachedArkmeImageDataUrl(normalizedRef)
+    setImageUrl(cached)
+    if (cached !== undefined) return () => { active = false }
     void loadArkmeImageDataUrl(normalizedRef)
       .then(value => { if (active) setImageUrl(value) })
       .catch(() => undefined)
@@ -247,24 +285,36 @@ export function ArkmeSourceAvatar({
     return (avatarRefs ?? (avatarRef === undefined ? [] : [avatarRef])).slice(0, 5).map(ref => ({ avatarRef: ref }))
   }, [avatarRef, avatarRefs, groupAvatar])
   const slotsKey = JSON.stringify([sourceSlots, groupAvatar?.computedAtMillis ?? 0])
-  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
-  const [slots, setSlots] = useState<ResolvedGroupAvatarSlot[]>(sourceSlots)
+  const [visible, setVisible] = useState(() => typeof globalThis.IntersectionObserver !== 'function')
+  const [slots, setSlots] = useState<ResolvedGroupAvatarSlot[]>(() => applyCachedAvatarSlots(sourceSlots))
 
   useEffect(() => {
     const target = container.current
     if (target === null || visible) return
-    const observer = new IntersectionObserver(entries => {
+    const Observer = globalThis.IntersectionObserver
+    if (typeof Observer !== 'function') {
+      setVisible(true)
+      return
+    }
+    // Some embedded DSH WebViews expose IntersectionObserver but do not deliver the initial entry.
+    // Preserve lazy loading where available while guaranteeing that visible avatars cannot stay placeholders forever.
+    const fallbackTimer = globalThis.setTimeout(() => { setVisible(true) }, 250)
+    const observer = new Observer(entries => {
       if (entries[0]?.isIntersecting !== true) return
       setVisible(true)
+      globalThis.clearTimeout(fallbackTimer)
       observer.disconnect()
     }, { rootMargin: '160px 0px' })
     observer.observe(target)
-    return () => { observer.disconnect() }
+    return () => {
+      globalThis.clearTimeout(fallbackTimer)
+      observer.disconnect()
+    }
   }, [visible])
 
   useEffect(() => {
     let active = true
-    setSlots(sourceSlots)
+    setSlots(applyCachedAvatarSlots(sourceSlots))
     if (!visible || sourceSlots.length === 0) return () => { active = false }
     sourceSlots.forEach((slot, index) => {
       if (slot.avatarRef === undefined) return

@@ -1,0 +1,337 @@
+name: 合并 master 后发布插件
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+concurrency:
+  group: plugin-npm-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_sha: ${{ steps.result.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: 识别已有发版结果
+        id: source
+        env:
+          MERGED_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MERGED_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          SOURCE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$MERGED_HEAD_REF" == release/v* ]]; then
+            echo "release_sha=$MERGED_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch origin master --tags
+          marker="automatic-release-source-pr:${SOURCE_PR_NUMBER}"
+          release_sha=$(git log origin/master --fixed-strings --grep="$marker" -1 --format='%H')
+          if [ -n "$release_sha" ]; then
+            echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.source.outputs.release_sha == ''
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: 安装依赖
+        if: steps.source.outputs.release_sha == ''
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: 决定并写入发布版本
+        if: steps.source.outputs.release_sha == ''
+        id: release
+        env:
+          MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          published_version=$(npm view "${package_name}@latest" version)
+          summary=$(node -e "const title = process.env.MERGED_PR_TITLE.trim(); process.stdout.write((title || '合并 master 后自动发布').slice(0, 120))")
+          output_file=$(mktemp)
+          node scripts/prepare-plugin-release.mjs \
+            --published-version "$published_version" \
+            --summary "$summary" > "$output_file"
+          cat "$output_file" >> "$GITHUB_OUTPUT"
+          version=$(sed -n 's/^next_version=//p' "$output_file")
+          test -n "$version"
+          if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+            echo "目标版本 ${package_name}@${version} 已存在，但不是当前可自动递增的 npm latest。" >&2
+            exit 1
+          fi
+      - name: 验证待发布内容
+        if: steps.source.outputs.release_sha == ''
+        run: |
+          pnpm test
+          pnpm run typecheck
+          pnpm run verify:call-assets
+          pnpm run build
+          npm pack --dry-run --ignore-scripts
+      - name: 创建并合并版本拉取请求
+        if: steps.source.outputs.release_sha == ''
+        id: automatic
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          VERSION: ${{ steps.release.outputs.next_version }}
+        run: |
+          branch="release/v${VERSION}"
+          marker="automatic-release-source-pr:${SOURCE_PR_NUMBER}"
+          open_prs=$(gh pr list --repo "$GH_REPO" --base master --state open --limit 100 \
+            --json url,headRefName,body)
+          pr_url=$(printf '%s' "$open_prs" | jq -r --arg marker "$marker" \
+            '[.[] | select((.body // "") | contains($marker))][0].url // empty')
+          other_release=$(printf '%s' "$open_prs" | jq -r --arg marker "$marker" \
+            '[.[] | select((.headRefName | startswith("release/v")) and (((.body // "") | contains($marker)) | not))][0].url // empty')
+          if [ -n "$other_release" ]; then
+            echo "已有其他待处理的发版 PR：$other_release" >&2
+            exit 1
+          fi
+          if [ -z "$pr_url" ]; then
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              git fetch origin "$branch"
+              remote_version=$(git show FETCH_HEAD:package.json | node -e \
+                "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync(0, 'utf8')).version)")
+              if [ "$remote_version" != "$VERSION" ]; then
+                echo "远端 $branch 的版本为 $remote_version，预期为 $VERSION。" >&2
+                exit 1
+              fi
+            else
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git switch -c "$branch"
+              git add package.json
+              git commit -m "chore(release): prepare v${VERSION}"
+              git push origin "$branch"
+            fi
+            body_file=$(mktemp)
+            printf '%s\n' \
+              '## 自动发版' \
+              '' \
+              "- 版本：v${VERSION}" \
+              "- 来源：合并 #${SOURCE_PR_NUMBER}" \
+              '- 已自动完成版本判断、元数据同步和完整验证。' \
+              '' \
+              "<!-- ${marker} -->" > "$body_file"
+            pr_url=$(gh pr create --repo "$GH_REPO" --base master --head "$branch" \
+              --title "chore(release): prepare v${VERSION}" --body-file "$body_file")
+          fi
+          gh pr merge "$pr_url" --repo "$GH_REPO" --squash --delete-branch \
+            --subject "chore(release): publish v${VERSION}" \
+            --body "$marker"
+          release_sha=$(gh pr view "$pr_url" --repo "$GH_REPO" --json mergeCommit --jq '.mergeCommit.oid')
+          test -n "$release_sha"
+          test "$release_sha" != "null"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+      - name: 确认发布提交
+        id: result
+        env:
+          AUTOMATIC_RELEASE_SHA: ${{ steps.automatic.outputs.release_sha }}
+          EXISTING_RELEASE_SHA: ${{ steps.source.outputs.release_sha }}
+        run: |
+          release_sha="${AUTOMATIC_RELEASE_SHA:-$EXISTING_RELEASE_SHA}"
+          test -n "$release_sha"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      version: ${{ steps.npm.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: 安装支持 Trusted Publishing 的 npm CLI
+        run: npm install --global npm@latest
+      - name: 安装并验证
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm run typecheck
+          pnpm run verify:call-assets
+          pnpm run build
+      - name: 生成固定发布包
+        id: pack
+        run: |
+          pack_directory=$(mktemp -d)
+          npm pack --ignore-scripts --pack-destination "$pack_directory" >/dev/null
+          tarball_count=$(find "$pack_directory" -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')
+          if [ "$tarball_count" -ne 1 ]; then
+            echo "固定打包目录中应当恰好生成一个 .tgz，实际为 $tarball_count 个。" >&2
+            exit 1
+          fi
+          tarball=$(find "$pack_directory" -maxdepth 1 -type f -name '*.tgz' -print -quit)
+          integrity=$(node -e "const fs = require('node:fs'); const crypto = require('node:crypto'); const data = fs.readFileSync(process.argv[1]); process.stdout.write('sha512-' + crypto.createHash('sha512').update(data).digest('base64'))" "$tarball")
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
+      - name: 发布 npm 包
+        id: npm
+        env:
+          RELEASE_TARBALL: ${{ steps.pack.outputs.tarball }}
+          RELEASE_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+            registry_integrity=$(npm view "${package_name}@${version}" dist.integrity)
+            if [ "$registry_integrity" != "$RELEASE_INTEGRITY" ]; then
+              echo "npm 包 ${package_name}@${version} 已存在，但 Registry integrity 与当前发布包不一致。" >&2
+              exit 1
+            fi
+            echo "npm 包 ${package_name}@${version} 已发布且内容一致，跳过重复发布。"
+          else
+            npm publish "$RELEASE_TARBALL" --access public --provenance
+          fi
+          echo "package_name=${package_name}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: 回读 Registry 与 provenance
+        env:
+          PACKAGE_NAME: ${{ steps.npm.outputs.package_name }}
+          RELEASE_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          VERSION: ${{ steps.npm.outputs.version }}
+        run: |
+          package_key=$(node -p "encodeURIComponent(process.argv[1])" "$PACKAGE_NAME")
+          registry_url="https://registry.npmjs.org/${package_key}/${VERSION}"
+          for attempt in $(seq 1 60); do
+            metadata=$(curl --fail --silent --show-error \
+              --header 'Cache-Control: no-cache' \
+              "${registry_url}?cache_bust=$(date +%s)-${attempt}" 2>/dev/null || true)
+            if printf '%s' "$metadata" | \
+              EXPECTED_INTEGRITY="$RELEASE_INTEGRITY" EXPECTED_VERSION="$VERSION" node -e \
+                "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(0, 'utf8')); if (value?.version !== process.env.EXPECTED_VERSION || value?.dist?.integrity !== process.env.EXPECTED_INTEGRITY || typeof value?.dist?.attestations?.url !== 'string' || typeof value?.dist?.attestations?.provenance?.predicateType !== 'string') process.exit(1)" \
+                >/dev/null 2>&1; then
+              exit 0
+            fi
+            if [ $((attempt % 12)) -eq 0 ]; then
+              echo "等待 Registry integrity 与 provenance 生效：${attempt}/60"
+            fi
+            sleep 5
+          done
+          echo "Registry integrity 或 provenance 回读未通过。" >&2
+          exit 1
+      - name: 创建 Git Tag 与 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          VERSION: ${{ steps.npm.outputs.version }}
+        run: |
+          tag="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "$tag^{commit}" >/dev/null 2>&1; then
+            if [ "$(git rev-parse "$tag^{commit}")" != "$RELEASE_SHA" ]; then
+              echo "$tag 已指向其他提交，拒绝覆盖。" >&2
+              exit 1
+            fi
+          else
+            git tag -a "$tag" "$RELEASE_SHA" -m "Release ${tag}"
+            git push origin "$tag"
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$RELEASE_SHA" --title "$tag" --generate-notes
+          fi
+
+  sync-dev:
+    needs: [prepare, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+      - name: 通过合并拉取请求同步 master 到 dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          git fetch origin master dev
+          sync_sha=$(git rev-parse origin/master)
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" "$sync_sha"; then
+            echo "当前 master $sync_sha 不包含已发布提交 $RELEASE_SHA，拒绝同步。" >&2
+            exit 1
+          fi
+          if git merge-base --is-ancestor "$sync_sha" origin/dev; then
+            echo "dev 已包含 master $sync_sha，无需重复同步。"
+            exit 0
+          fi
+
+          branch="sync/master-to-dev/v${VERSION}-${sync_sha:0:12}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            remote_sha=$(git ls-remote --heads origin "$branch" | awk '{print $1}')
+            if [ "$remote_sha" != "$sync_sha" ]; then
+              echo "远端同步分支 $branch 指向 $remote_sha，预期为 $sync_sha，拒绝覆盖。" >&2
+              exit 1
+            fi
+          else
+            git push origin "$sync_sha:refs/heads/$branch"
+          fi
+
+          pr_json=$(gh pr list --repo "$GH_REPO" --base dev --head "$branch" --state all --limit 1 \
+            --json url,state)
+          pr_url=$(printf '%s' "$pr_json" | jq -r '.[0].url // empty')
+          pr_state=$(printf '%s' "$pr_json" | jq -r '.[0].state // empty')
+          if [ -z "$pr_url" ]; then
+            body_file=$(mktemp)
+            printf '%s\n' \
+              '## 自动同步发版历史' \
+              '' \
+              "- npm 版本：v${VERSION}" \
+              "- 已发布提交：${RELEASE_SHA}" \
+              "- 同步 master：${sync_sha}" \
+              '- 使用 merge commit 保留 master 与 dev 两条父链，不重写 dev 历史。' \
+              '' \
+              "<!-- automatic-master-dev-sync:${sync_sha} -->" > "$body_file"
+            pr_url=$(gh pr create --repo "$GH_REPO" --base dev --head "$branch" \
+              --title "chore(sync): 同步 master v${VERSION} 到 dev" --body-file "$body_file")
+            pr_state=OPEN
+          fi
+          if [ "$pr_state" = "CLOSED" ]; then
+            echo "同步 PR $pr_url 已关闭但未合并，拒绝静默重建或覆盖。" >&2
+            exit 1
+          fi
+          if [ "$pr_state" != "MERGED" ]; then
+            gh pr merge "$pr_url" --repo "$GH_REPO" --merge --delete-branch \
+              --subject "chore(sync): 合并 master v${VERSION} 到 dev" \
+              --body "automatic-master-dev-sync:${sync_sha}"
+          fi
+
+          git fetch origin dev
+          if ! git merge-base --is-ancestor "$sync_sha" origin/dev; then
+            echo "同步 PR 完成后，dev 仍未包含 master $sync_sha。" >&2
+            exit 1
+          fi
+          master_tree=$(git rev-parse "$sync_sha^{tree}")
+          dev_tree=$(git rev-parse "origin/dev^{tree}")
+          if [ "$master_tree" = "$dev_tree" ]; then
+            echo "dev 与同步时的 master 代码树完全一致：$master_tree"
+          else
+            echo "dev 已包含 master，但同步期间保留了 dev 上的后续提交；未重写历史。"
+          fi

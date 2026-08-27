@@ -30,6 +30,10 @@ import { arkmeArkoConversationPreviewStore } from './arko-conversation-preview-s
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeArkoComposerDraftKey, arkmeComposerDraftStore } from './composer-draft-store.js'
+import {
+  arkmeConversationComposerHeight, arkmeConversationComposerLayout,
+} from './conversation-composer-presentation.js'
+import { restoreArkmeComposerFocus } from './composer-focus.js'
 
 type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
@@ -180,21 +184,17 @@ const styles: Record<string, CSSProperties> = {
     background: arkmeTheme.elevated, color: colors.text, font: 'inherit', cursor: 'pointer',
   },
   dialogPrimary: { border: 0, background: arkmeTheme.info, color: arkmeTheme.foreground },
-  composer: { flex: 'none', display: 'flex', justifyContent: 'center', padding: '0 24px 15px 16px' },
+  composer: { ...arkmeConversationComposerLayout.composer },
   composerInner: {
-    position: 'relative', width: 'min(780px,100%)', overflow: 'hidden', boxSizing: 'border-box',
-    display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 10,
-    border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))', borderRadius: 18,
+    ...arkmeConversationComposerLayout.composerInner,
+    border: '1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(0,0,0,.1))',
     background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
   },
   textarea: {
-    width: '100%', minHeight: 28, maxHeight: 180, resize: 'none', overflowY: 'auto',
-    boxSizing: 'border-box', border: 0, outline: 0, padding: '4px 12px 0 16px',
+    ...arkmeConversationComposerLayout.textarea,
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
-    fontFamily: 'var(--dsw-font-family, inherit)', fontSize: 16, lineHeight: '24px',
-    whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere',
   },
-  tools: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', minWidth: 0, padding: '2px 8px 6px 16px' },
+  tools: { ...arkmeConversationComposerLayout.tools },
   hint: { color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   send: {
     width: 34, height: 34, flex: 'none', display: 'grid', placeItems: 'center',
@@ -393,7 +393,9 @@ export function ArkmeArkoSurface() {
   const bodyRef = useRef<HTMLDivElement>(null)
   const historySentinelRef = useRef<HTMLDivElement>(null)
   const historyLoadInFlightRef = useRef(false)
+  const composerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const pendingComposerFocusRef = useRef(false)
   const authSnapshot = useSyncExternalStore(
     arkmeAuthStore.subscribe,
     arkmeAuthStore.getSnapshot,
@@ -617,7 +619,7 @@ export function ArkmeArkoSurface() {
     const textarea = textareaRef.current
     if (textarea === null) return
     textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
+    textarea.style.height = `${arkmeConversationComposerHeight(textarea.scrollHeight)}px`
   }, [draft])
 
   const loadEarlier = useCallback(async () => {
@@ -785,6 +787,7 @@ export function ArkmeArkoSurface() {
       }),
     }
     writeArkoPendingTurn(turn)
+    pendingComposerFocusRef.current = true
     setPendingTurn(turn)
     arkmeComposerDraftStore.clear(composerDraftKey)
     setMessages(current => [...current, {
@@ -871,6 +874,21 @@ export function ArkmeArkoSurface() {
   const canChooseModel = (catalog?.options.length ?? 0) > 1
   const continuation = useMemo(() => latestContinuation(messages, session?.sessionId), [messages, session?.sessionId])
   const interactionLocked = sending || pendingTurn !== undefined || activeRun !== undefined
+  useEffect(() => {
+    if (!pendingComposerFocusRef.current || loading || interactionLocked
+      || session === undefined || profileUserId === undefined) return
+    pendingComposerFocusRef.current = false
+    const frame = requestAnimationFrame(() => {
+      const activeElement = document.activeElement
+      restoreArkmeComposerFocus(
+        textareaRef.current,
+        activeElement,
+        document.body,
+        activeElement !== null && composerRef.current?.contains(activeElement) === true,
+      )
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [interactionLocked, loading, profileUserId, session])
   const hint = loading
     ? '正在恢复会话'
     : pendingTurn !== undefined && !sending
@@ -1011,7 +1029,7 @@ export function ArkmeArkoSurface() {
       </section>
     </div>}
 
-    <footer style={styles.composer}><div style={styles.composerInner}>
+    <footer style={styles.composer}><div ref={composerRef} style={styles.composerInner}>
       <textarea
         ref={textareaRef}
         rows={1}

@@ -8,6 +8,7 @@ import {
   type ArkmeBundlePublishSource,
 } from './bundle-artifact.js'
 import { renderArkmeBundleClientBundle } from './persistent-client-bundle.js'
+import { arkmeClientContentDigest } from './client-owner.js'
 
 export interface CordisBundleMaterializeInput {
   packageName: string
@@ -46,7 +47,11 @@ export function materializeCordisBundle(input: CordisBundleMaterializeInput): Ar
     },
     dsh: {
       bundle: { patch: './cordis.patch.yml' },
-      arkme: { executionModel: 'arkme-sandboxed', runtimeContract: ARKME_BUNDLE_CONTRACT_VERSION },
+      arkme: {
+        executionModel: 'arkme-sandboxed',
+        runtimeContract: ARKME_BUNDLE_CONTRACT_VERSION,
+        ...(input.clientCode === undefined ? {} : { clientContentDigest: arkmeClientContentDigest(input.clientCode) }),
+      },
       ...(input.clientCode === undefined ? {} : { client: { inject: [], platform: 'web' } }),
     },
   }

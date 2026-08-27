@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeClientConfig, ArkmeImagePayload } from '../types.js'
 import { callArkme } from './api.js'
@@ -23,6 +23,10 @@ const compactOverlayStyle: CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 2_147_483_000, pointerEvents: 'none',
 }
 
+const retainedOverlayStyle: CSSProperties = {
+  position: 'fixed', left: -10_000, top: -10_000, zIndex: 0, width: 1, height: 1, overflow: 'hidden', pointerEvents: 'none',
+}
+
 const frameStyle: CSSProperties = { width: '100%', height: '100%', display: 'block', border: 0, background: 'transparent' }
 
 async function loadCallAvatar(imageRef: string): Promise<string> {
@@ -35,6 +39,8 @@ export function ArkmeOutgoingCallHost() {
   if (runtimeRef.current === undefined) runtimeRef.current = new OutgoingCallRuntime({ loadAvatar: loadCallAvatar })
   const runtime = runtimeRef.current
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
+  const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
+  const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
     runtime.mount()
@@ -52,23 +58,29 @@ export function ArkmeOutgoingCallHost() {
     }
   }, [runtime])
 
-  if (!snapshot.visible || typeof document === 'undefined') return null
+  if ((!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
   const compact = snapshot.compact && !snapshot.fullscreen
-  const shellStyle: CSSProperties = {
+  const retainedFrame = !snapshot.visible && snapshot.retainFrame
+  const shellStyle: CSSProperties = retainedFrame ? {
+    width: 1, height: 1, overflow: 'hidden', pointerEvents: 'none', background: 'transparent', boxShadow: 'none',
+  } : {
     ...outgoingCallModalLayout(compact, snapshot.fullscreen),
     position: compact ? 'absolute' : 'relative',
     ...(compact ? { right: 24, bottom: 24 } : {}),
     overflow: 'hidden', pointerEvents: 'auto', background: '#101216',
     boxShadow: '0 24px 72px rgba(0,0,0,.32)',
   }
-  const overlay = compact ? compactOverlayStyle : overlayStyle
+  const overlay = retainedFrame ? retainedOverlayStyle : compact ? compactOverlayStyle : overlayStyle
+  const sectionProps = retainedFrame
+    ? { 'aria-hidden': true }
+    : { role: 'dialog', 'aria-modal': !compact, 'aria-label': `与${snapshot.displayName}通话` }
 
   return createPortal(<div
     style={overlay}
-    onMouseDown={(event) => { if (event.target === event.currentTarget) runtime.cancel() }}
+    onMouseDown={retainedFrame ? undefined : (event) => { if (event.target === event.currentTarget) runtime.cancel() }}
   >
-    <section role="dialog" aria-modal={!compact} aria-label={`与${snapshot.displayName}通话`} style={shellStyle}>
-      {snapshot.phase === 'error' ? <div style={{
+    <section {...sectionProps} style={shellStyle}>
+      {!retainedFrame && snapshot.phase === 'error' ? <div style={{
         width: '100%', height: '100%', display: 'grid', placeItems: 'center', padding: 32,
         boxSizing: 'border-box', color: '#fff', textAlign: 'center', fontFamily: 'PingFang SC, SF Pro Text, sans-serif',
       }}>
@@ -78,8 +90,8 @@ export function ArkmeOutgoingCallHost() {
           }}
         >关闭</button></div>
       </div> : <iframe
-        ref={(node) => { runtime.attachFrame(node) }}
-        src={`${snapshot.assetBasePath}/index.html`}
+        ref={attachCallFrame}
+        src={callFrameUrl}
         name={JSON.stringify({ callRequestId: snapshot.callRequestId })}
         title={`与${snapshot.displayName}通话`}
         allow="camera; microphone; autoplay"

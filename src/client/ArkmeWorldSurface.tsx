@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { ArrowRight } from '@phosphor-icons/react/dist/icons/ArrowRight'
+import { ChatCircleDots } from '@phosphor-icons/react/dist/icons/ChatCircleDots'
+import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
+import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeImagePayload,
+  ArkmeConversationMemberItem,
+  ArkmeOpenPrivateChatResult,
   ArkmeUploadedAsset,
   ArkmeWorldPublishResult,
   ArkmeWorldFeedItem,
   ArkmeWorldFeedPage,
+  ArkmeWorldAuthorLabel,
   ArkmeWorldInteractionCreateResult,
   ArkmeWorldInteractionItem,
   ArkmeWorldInteractionPage,
@@ -17,16 +25,39 @@ import type {
   ArkmeWorldVoiceprintPlaybackChunk,
   ArkmeWorldVoiceprintSocialContext,
 } from '../types.js'
+import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../extensions/types.js'
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
-import type { ArkmeWorldTarget } from './ui-controller.js'
+import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
+import { ArkmeWorldEmptyNotice } from './ArkmeWorldEmptyNotice.js'
+import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
+import { arkmeEmojiPlainText } from './arkme-emoji.js'
+import { arkmeTheme } from './arkme-theme.js'
+import { arkmeUi, type ArkmeWorldTarget } from './ui-controller.js'
 import { resolveWorldVoiceprintExpectationCopy } from './world-voiceprint-expectation-copy.js'
+import { downloadWorldVoiceprintAudio, playPreparedWorldVoiceprintAudio, playWorldVoiceprintChunkQueue } from './world-voiceprint-playback.js'
 
 type WorldScope = 'all' | 'mine'
 
+export function worldScopeScrollTransition(
+  positions: Readonly<Record<WorldScope, number>>,
+  currentScope: WorldScope,
+  nextScope: WorldScope,
+  currentScrollTop: number,
+): { positions: Record<WorldScope, number>; restoreTop: number } {
+  const normalizedScrollTop = Number.isFinite(currentScrollTop) ? Math.max(0, currentScrollTop) : 0
+  const nextPositions = { ...positions, [currentScope]: normalizedScrollTop }
+  const savedNextScrollTop = nextPositions[nextScope]
+  return {
+    positions: nextPositions,
+    restoreTop: Number.isFinite(savedNextScrollTop) ? Math.max(0, savedNextScrollTop) : 0,
+  }
+}
+
 const worldSdk = createArkmeSdk()
+const WORLD_FEED_IMAGE_LIMIT = 9
 
 export type ArkmeWorldViewState = {
   status: 'loading' | 'error' | 'empty' | 'success'
@@ -38,106 +69,162 @@ export type ArkmeWorldViewState = {
   nextOffset?: number
 }
 
-const colors = {
-  text: 'var(--dsw-alias-label-primary, #17191c)',
-  secondary: 'var(--dsw-alias-label-secondary, #68707c)',
-  border: 'var(--dsw-alias-border-l2, #e2e5e9)',
-  subtle: 'var(--dsw-alias-bg-subtle, #f5f6f8)',
-  accent: '#6677c8',
-  danger: '#b9423b',
-}
-
 const styles: Record<string, CSSProperties> = {
-  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#fff', color: colors.text },
-  header: { minHeight: 72, padding: '18px 26px 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20, borderBottom: `1px solid ${colors.border}` },
-  heading: { margin: 0, fontSize: 22, lineHeight: '30px', fontWeight: 650, letterSpacing: '-.03em' },
-  subtitle: { margin: '3px 0 0', color: colors.secondary, fontSize: 12 },
+  root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text },
+  header: { width: 'min(980px, 100%)', minHeight: 90, margin: '0 auto', padding: '34px 48px 0', boxSizing: 'border-box', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
+  heading: { margin: 0, fontSize: 26, lineHeight: '34px', fontWeight: 650, letterSpacing: '-.035em' },
+  subtitle: { margin: '2px 0 0', color: arkmeTheme.secondary, fontSize: 11 },
   headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
   targetHeading: { display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 },
   targetTitle: { minWidth: 0, display: 'grid', gap: 1 },
-  backButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: colors.secondary, cursor: 'pointer' },
-  button: { minHeight: 34, padding: '0 13px', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 12 },
-  iconButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 10, background: '#fff', color: colors.secondary, cursor: 'pointer' },
-  primaryButton: { borderColor: '#20232d', background: '#20232d', color: '#fff' },
-  tabs: { height: 44, padding: '0 26px', display: 'flex', alignItems: 'stretch', gap: 22, borderBottom: `1px solid ${colors.border}` },
-  tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 13 },
-  tabActive: { borderBottom: '2px solid #20232d', color: colors.text, fontWeight: 600 },
-  body: { flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', background: '#f7f8fa' },
-  notice: { width: 'min(720px, calc(100% - 48px))', margin: '28px auto 0', padding: '13px 15px', boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 12, background: '#fff', color: colors.secondary, fontSize: 13 },
-  error: { borderColor: 'rgba(185,66,59,.25)', background: 'rgba(185,66,59,.06)', color: colors.danger },
+  backButton: { width: 34, height: 34, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
+  button: { minHeight: 36, padding: '0 13px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  iconButton: { width: 32, height: 32, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 9, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' },
+  primaryButton: { minHeight: 34, padding: '0 12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, borderColor: arkmeTheme.primaryAction, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction },
+  worldToolbar: { width: 'min(980px, 100%)', minHeight: 38, margin: '0 auto 4px', padding: '0 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'stretch' },
+  tabs: { minWidth: 0, height: 38, padding: 0, display: 'flex', alignItems: 'stretch', gap: 23 },
+  tab: { position: 'relative', padding: 0, border: 0, borderBottom: '2px solid transparent', background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 12 },
+  tabActive: { borderBottom: `2px solid ${arkmeTheme.accent}`, color: arkmeTheme.text, fontWeight: 600 },
+  worldLayout: { flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', position: 'relative', background: arkmeTheme.base },
+  body: { flex: 1, minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', overscrollBehavior: 'contain', background: arkmeTheme.base },
+  notice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0', padding: '13px 15px', boxSizing: 'border-box', border: 0, borderRadius: 12, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 12 },
+  emptyNotice: { width: 'min(884px, calc(100% - 96px))', margin: '22px auto 0' },
+  error: { borderColor: arkmeTheme.danger, background: arkmeTheme.dangerSoft, color: arkmeTheme.danger },
   errorRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
-  feed: { width: 'min(720px, calc(100% - 48px))', margin: '18px auto 36px', display: 'grid', gap: 12 },
-  card: { padding: 18, border: `1px solid ${colors.border}`, borderRadius: 16, background: '#fff' },
-  cardHeader: { display: 'grid', gridTemplateColumns: '42px minmax(0,1fr) auto', alignItems: 'center', gap: 11 },
-  avatar: { width: 42, height: 42, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 15, fontWeight: 650 },
+  feed: { width: 'min(884px, calc(100% - 96px))', maxWidth: '100%', minWidth: 0, margin: '10px auto 48px', boxSizing: 'border-box', display: 'grid', gap: 16 },
+  card: { minWidth: 0, maxWidth: '100%', padding: '22px 20px 18px', boxSizing: 'border-box', border: `1px dashed ${arkmeTheme.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
+  cardHeader: { minWidth: 0, maxWidth: '100%', display: 'grid', gridTemplateColumns: '36px minmax(0,1fr) auto', alignItems: 'center', gap: 10 },
+  avatar: { width: 36, height: 36, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: arkmeTheme.accentSoft, color: arkmeTheme.accent, fontSize: 13, fontWeight: 600 },
+  avatarButton: { padding: 0, border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer', lineHeight: 0 },
   avatarImage: { width: '100%', height: '100%', objectFit: 'cover' },
   authorMeta: { minWidth: 0, display: 'grid', alignItems: 'center' },
-  authorRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 },
-  author: { fontSize: 13, fontWeight: 650 },
-  voiceprintButton: { width: 20, height: 20, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 6, background: 'transparent', cursor: 'pointer', lineHeight: 0 },
-  voiceprintPlayable: { color: '#4c6fff' },
-  voiceprintActive: { background: 'rgba(76,111,255,.1)', color: '#3653d8' },
-  voiceprintInvite: { color: '#9aa1ad' },
-  time: { color: '#969ba5', fontSize: 10 },
-  headline: { margin: '14px 0 0', fontSize: 16, lineHeight: 1.5 },
-  text: { margin: '9px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 13, lineHeight: 1.75 },
-  imageGrid: { marginTop: 13, display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 },
-  image: { width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 10, background: '#eef0f3' },
-  imageButton: { minWidth: 0, padding: 0, border: 0, borderRadius: 10, overflow: 'hidden', background: '#eef0f3', cursor: 'zoom-in' },
-  cardFooter: { minHeight: 28, marginTop: 14, paddingTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, borderTop: `1px solid ${colors.border}` },
-  linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: colors.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  commentButton: { padding: 0, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
-  commentButtonActive: { color: colors.accent, fontWeight: 600 },
-  commentPreview: { marginTop: 10, padding: '9px 11px', borderRadius: 10, background: colors.subtle },
-  commentPreviewAction: { width: '100%', marginTop: 6, padding: '4px 0 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10, textAlign: 'left' },
-  loadMore: { display: 'flex', justifyContent: 'center', marginTop: 3 },
+  authorRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 },
+  author: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 },
+  authorButton: { minWidth: 0, padding: 0, border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', textAlign: 'left' },
+  voiceprintButton: { width: 20, height: 20, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer', lineHeight: 0 },
+  voiceprintPlayable: { color: arkmeTheme.tertiary },
+  voiceprintActive: { background: arkmeTheme.hover, color: arkmeTheme.secondary },
+  voiceprintInvite: { width: 18, height: 18, marginLeft: 2, color: arkmeTheme.caption },
+  time: { whiteSpace: 'nowrap', color: arkmeTheme.tertiary, fontSize: 10 },
+  headline: { minWidth: 0, maxWidth: '100%', margin: '12px 0 0', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.5, fontWeight: 600 },
+  textBlock: { minWidth: 0, maxWidth: '100%' },
+  text: { minWidth: 0, maxWidth: '100%', margin: '8px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', color: arkmeTheme.text, fontSize: 13, lineHeight: 1.62 },
+  textCollapsed: { display: '-webkit-box', WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+  textToggle: { marginTop: 3, padding: '3px 0', border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, lineHeight: 1.4 },
+  imageGrid: { width: '100%', maxWidth: 620, minWidth: 0, marginTop: 12, boxSizing: 'border-box', display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 },
+  image: { width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 11, background: arkmeTheme.subtle },
+  imageButton: { position: 'relative', minWidth: 0, padding: 0, border: 0, borderRadius: 11, overflow: 'hidden', background: arkmeTheme.subtle, cursor: 'pointer' },
+  imageOverflow: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(20,22,28,.52)', color: arkmeTheme.foreground, fontSize: 22, lineHeight: 1, fontWeight: 650, letterSpacing: '.01em', pointerEvents: 'none' },
+  cardFooter: { minHeight: 24, marginTop: 9, paddingTop: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
+  extensionActivity: { marginTop: 13, padding: '15px 16px', display: 'grid', gridTemplateColumns: '48px minmax(0,1fr) auto', alignItems: 'start', gap: 14, border: 0, borderRadius: 12, background: arkmeTheme.subtle },
+  extensionActivityIcon: { width: 48, height: 48, display: 'grid', placeItems: 'center', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 10, background: arkmeTheme.elevated },
+  extensionActivityCopy: { minWidth: 0, display: 'grid', gap: 4 },
+  extensionActivityTitle: { margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.text, fontSize: 15, lineHeight: '21px', fontWeight: 650, letterSpacing: '-.01em' },
+  extensionActivityMeta: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5, color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '16px' },
+  extensionActivityMetaSeparator: { color: arkmeTheme.caption },
+  extensionActivityDescription: { maxWidth: '62ch', margin: '1px 0 0', overflow: 'hidden', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, color: arkmeTheme.secondary, fontSize: 12, lineHeight: '19px' },
+  extensionOpenButton: { minHeight: 32, marginTop: -1, padding: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
+  extensionShelf: { padding: '14px 15px', display: 'grid', gap: 11, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 14, background: arkmeTheme.layer1 },
+  extensionShelfHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
+  extensionShelfTitle: { margin: 0, fontSize: 14, lineHeight: '20px', fontWeight: 650 },
+  extensionShelfCount: { color: arkmeTheme.secondary, fontSize: 10 },
+  extensionShelfList: { display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8 },
+  extensionShelfItem: { minWidth: 0, padding: 10, display: 'grid', gridTemplateColumns: '38px minmax(0,1fr)', alignItems: 'center', gap: 10, border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 11, background: arkmeTheme.elevated, color: arkmeTheme.text, cursor: 'pointer', textAlign: 'left', font: 'inherit' },
+  extensionShelfItemCopy: { minWidth: 0, display: 'grid', gap: 2 },
+  extensionShelfItemName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 600 },
+  extensionShelfItemDescription: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: arkmeTheme.secondary, fontSize: 10 },
+  extensionShelfFooter: { display: 'flex', justifyContent: 'flex-end' },
+  extensionShelfViewAll: { minHeight: 30, padding: '0 9px', border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: 600 },
+  linkButton: { padding: '5px 7px', border: 0, borderRadius: 7, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  commentButton: { padding: '3px 0', display: 'inline-flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  commentButtonActive: { color: arkmeTheme.accent, fontWeight: 600 },
+  commentPreview: { position: 'relative', marginTop: 6, padding: '8px 12px', overflow: 'hidden', borderRadius: 10, background: arkmeTheme.subtle },
+  commentPreviewHitTarget: { position: 'absolute', inset: 0, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' },
+  compactCommentRow: { display: 'block', minWidth: 0, overflow: 'hidden', color: arkmeTheme.secondary, fontSize: 11, lineHeight: 1.72, textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  compactCommentReply: { paddingLeft: 14 },
+  compactCommentAuthor: { color: arkmeTheme.accent, fontWeight: 650 },
+  feedLoadMore: { minHeight: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', color: arkmeTheme.secondary },
+  feedLoadMoreStatus: { width: 30, height: 30, display: 'grid', placeItems: 'center' },
+  feedLoadMoreSpinner: { width: 22, height: 22, display: 'block' },
+  feedLoadMoreRetry: { minHeight: 30, padding: '0 12px', border: 0, borderRadius: 8, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
   modalBackdrop: { position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(19,21,27,.38)' },
-  modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: '#fff', boxShadow: '0 18px 60px rgba(20,22,30,.22)' },
-  modalTitle: { margin: 0, fontSize: 19 },
-  modalText: { margin: '7px 0 16px', color: colors.secondary, fontSize: 12, lineHeight: 1.6 },
-  textarea: { width: '100%', minHeight: 130, resize: 'vertical', padding: 12, boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 12, color: colors.text, font: 'inherit', fontSize: 13, lineHeight: 1.6, outline: 0 },
-  fieldLabel: { display: 'grid', gap: 7, marginTop: 12, color: colors.secondary, fontSize: 12 },
-  fileInput: { maxWidth: '100%', color: colors.secondary, fontSize: 12 },
-  modalActions: { marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  modalError: { color: colors.danger, fontSize: 12 },
+  modal: { width: 'min(540px, 100%)', maxHeight: 'min(720px, 88vh)', overflowY: 'auto', padding: 22, boxSizing: 'border-box', borderRadius: 18, background: arkmeTheme.menu, boxShadow: arkmeTheme.shadow },
+  modalError: { color: arkmeTheme.danger, fontSize: 12 },
+  publishModal: { width: 'min(720px, 100%)', maxHeight: 'min(780px, calc(100vh - 48px))', padding: 30, overflowX: 'hidden', borderRadius: 24 },
+  publishHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 },
+  publishTitle: { margin: 0, fontSize: 24, lineHeight: 1.3, fontWeight: 700, letterSpacing: '-.025em' },
+  publishIntro: { maxWidth: 560, margin: '8px 0 0', color: arkmeTheme.secondary, fontSize: 13, lineHeight: 1.7 },
+  publishClose: { flex: '0 0 auto', width: 36, height: 36, marginTop: -3, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 10, background: arkmeTheme.elevated, color: arkmeTheme.secondary, cursor: 'pointer' },
+  publishEditor: { marginTop: 22, overflow: 'hidden', border: `1px solid ${arkmeTheme.border}`, borderRadius: 16, background: arkmeTheme.input },
+  publishTextarea: { width: '100%', minHeight: 190, resize: 'vertical', padding: '18px 18px 10px', boxSizing: 'border-box', border: 0, color: arkmeTheme.text, background: 'transparent', font: 'inherit', fontSize: 14, lineHeight: 1.7, outline: 0 },
+  publishEditorMeta: { minHeight: 36, padding: '0 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, color: arkmeTheme.secondary, fontSize: 11 },
+  publishImageSection: { marginTop: 20 },
+  publishImageHeader: { marginBottom: 10, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 },
+  publishImageTitle: { display: 'grid', gap: 3, color: arkmeTheme.text, fontSize: 13, fontWeight: 650 },
+  publishImageHint: { color: arkmeTheme.secondary, fontSize: 11, fontWeight: 400 },
+  publishImageCount: { color: arkmeTheme.secondary, fontSize: 11 },
+  publishHiddenInput: { display: 'none' },
+  publishUploadEmpty: { width: '100%', minHeight: 104, padding: 18, boxSizing: 'border-box', display: 'grid', placeItems: 'center', gap: 5, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 15, background: arkmeTheme.subtle, color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit' },
+  publishUploadIcon: { width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: '50%', background: arkmeTheme.accentSoft, color: arkmeTheme.accent },
+  publishUploadTitle: { color: arkmeTheme.text, fontSize: 13, fontWeight: 650 },
+  publishUploadHint: { fontSize: 11 },
+  publishImageGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))', gap: 10 },
+  publishImageTile: { position: 'relative', minWidth: 0, aspectRatio: '1', overflow: 'hidden', borderRadius: 13, background: arkmeTheme.subtle },
+  publishImagePreview: { width: '100%', height: '100%', display: 'block', objectFit: 'cover' },
+  publishImagePlaceholder: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: arkmeTheme.secondary, fontSize: 10 },
+  publishImageRemove: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, padding: 0, display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.65)', borderRadius: '50%', background: 'rgba(21,23,29,.72)', color: arkmeTheme.foreground, cursor: 'pointer' },
+  publishAddTile: { minWidth: 0, aspectRatio: '1', padding: 10, display: 'grid', placeItems: 'center', alignContent: 'center', gap: 6, border: `1px dashed ${arkmeTheme.border}`, borderRadius: 13, background: arkmeTheme.subtle, color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  publishFooter: { margin: '24px -30px -30px', padding: '18px 30px 22px', minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18, borderTop: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.layer1 },
+  publishStatus: { minHeight: 18, color: arkmeTheme.secondary, fontSize: 12, lineHeight: 1.5 },
+  publishActions: { flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10 },
+  publishActionButton: { minWidth: 88, minHeight: 44, padding: '0 20px', borderRadius: 12, fontSize: 14 },
   inviteModal: { width: 'min(420px, 100%)', padding: 0, overflow: 'hidden', borderRadius: 20 },
   inviteContent: { padding: '28px 24px 26px', textAlign: 'center' },
-  inviteTitle: { margin: 0, color: colors.text, fontSize: 17, lineHeight: 1.35, fontWeight: 700 },
-  inviteAction: { margin: '14px 0 0', color: colors.secondary, fontSize: 15, lineHeight: 1.45 },
-  inviteRelationship: { margin: '16px 0 0', color: 'color-mix(in srgb, var(--dsw-alias-label-primary, #17191c) 78%, transparent)', fontSize: 14, lineHeight: 1.35, fontWeight: 500 },
-  inviteStatus: { minHeight: 18, margin: '12px 0 0', color: colors.danger, fontSize: 12, lineHeight: 1.5 },
-  inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${colors.border}` },
-  inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
-  inviteConfirmButton: { borderLeft: `1px solid ${colors.border}`, color: colors.accent },
-  interactionPanel: { margin: '12px -18px -18px', padding: '15px 18px 18px', borderTop: `1px solid ${colors.border}`, borderRadius: '0 0 16px 16px', background: '#fafbfc' },
-  interactionPanelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  interactionPanelTitle: { fontSize: 12, fontWeight: 650 },
-  interactionList: { display: 'grid', margin: '8px 0' },
-  interactionThread: { padding: '11px 0', borderBottom: `1px solid ${colors.border}` },
-  interactionRoot: { display: 'grid', gridTemplateColumns: '32px minmax(0,1fr)', alignItems: 'start', gap: 9 },
-  interactionReplyList: { display: 'grid', margin: '7px 0 0 41px', paddingLeft: 10, borderLeft: `2px solid ${colors.border}` },
-  interactionReply: { display: 'grid', gridTemplateColumns: '24px minmax(0,1fr)', alignItems: 'start', gap: 7, padding: '7px 0' },
-  interactionAvatar: { width: 32, height: 32, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: '#e8eaf1', color: '#59616e', fontSize: 11, fontWeight: 650 },
-  interactionReplyAvatar: { width: 24, height: 24, fontSize: 9 },
+  inviteTitle: { margin: 0, color: arkmeTheme.text, fontSize: 17, lineHeight: 1.35, fontWeight: 700 },
+  inviteAction: { margin: '14px 0 0', color: arkmeTheme.secondary, fontSize: 15, lineHeight: 1.45 },
+  inviteRelationship: { margin: '16px 0 0', color: arkmeTheme.secondary, fontSize: 14, lineHeight: 1.35, fontWeight: 500 },
+  inviteStatus: { minHeight: 18, margin: '12px 0 0', color: arkmeTheme.danger, fontSize: 12, lineHeight: 1.5 },
+  inviteActions: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: `1px solid ${arkmeTheme.border}` },
+  inviteActionButton: { minHeight: 52, padding: '15px 12px', border: 0, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit', fontSize: 16 },
+  inviteConfirmButton: { borderLeft: `1px solid ${arkmeTheme.border}`, color: arkmeTheme.accent },
+  interactionPanel: { width: 'calc(100% - 4px)', minWidth: 0, margin: '6px 2px 16px', padding: '0 12px 12px', boxSizing: 'border-box', display: 'grid', borderRadius: 12, background: arkmeTheme.layer2 },
+  interactionPanelSticky: { position: 'sticky', top: 0, zIndex: 3, padding: '4px 0 10px', borderBottom: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.layer2 },
+  interactionPanelHeader: { minHeight: 36, padding: '0 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  interactionPanelTitle: { fontSize: 14, fontWeight: 600 },
+  interactionPanelClose: { minHeight: 32, padding: '0 2px 0 10px', border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  interactionPanelBody: { minWidth: 0, padding: '4px 2px 10px' },
+  interactionEmpty: { minHeight: 96, display: 'grid', placeItems: 'center', color: arkmeTheme.tertiary, fontSize: 12 },
+  interactionList: { display: 'grid', margin: 0 },
+  interactionThread: { padding: '12px 0' },
+  interactionRoot: { display: 'grid', gridTemplateColumns: '28px minmax(0,1fr)', alignItems: 'start', gap: 8 },
+  interactionReplyList: { display: 'grid', margin: '7px 0 0 36px', paddingLeft: 9, borderLeft: `2px solid ${arkmeTheme.border}` },
+  interactionReply: { display: 'grid', gridTemplateColumns: '22px minmax(0,1fr)', alignItems: 'start', gap: 7, padding: '7px 0' },
+  interactionAvatar: { width: 28, height: 28, display: 'grid', placeItems: 'center', overflow: 'hidden', borderRadius: '50%', background: arkmeTheme.accentSoft, color: arkmeTheme.accent, fontSize: 10, fontWeight: 650 },
+  interactionReplyAvatar: { width: 22, height: 22, fontSize: 8 },
   interactionBody: { minWidth: 0 },
-  interactionMeta: { minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: colors.secondary, fontSize: 10 },
+  interactionMeta: { minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: arkmeTheme.secondary, fontSize: 10 },
   interactionAuthorLine: { minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5 },
-  interactionAuthor: { color: colors.text, fontSize: 12, fontWeight: 650 },
+  interactionAuthor: { color: arkmeTheme.text, fontSize: 12, fontWeight: 650 },
   interactionReplyAuthor: { fontSize: 11 },
-  interactionReplyTarget: { color: colors.secondary, fontSize: 11 },
-  interactionText: { margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#4d535d', fontSize: 12, lineHeight: 1.55 },
+  interactionReplyTarget: { color: arkmeTheme.secondary, fontSize: 11 },
+  interactionContentRow: { minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'end', gap: 10 },
+  interactionText: { minWidth: 0, margin: '3px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: arkmeTheme.text, fontSize: 12, lineHeight: 1.55 },
   interactionReplyText: { fontSize: 11, lineHeight: 1.5 },
-  interactionAction: { marginTop: 2, padding: '3px 5px 3px 0', border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10 },
-  interactionComposer: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${colors.border}` },
-  interactionComposerActions: { marginTop: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  interactionHint: { color: '#969ba5', fontSize: 10 },
-  previewModal: { width: 'min(960px, 94vw)', height: 'min(720px, 88vh)', padding: 14, boxSizing: 'border-box', display: 'grid', gridTemplateRows: '38px minmax(0,1fr)', borderRadius: 18, background: '#17191f' },
-  previewHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff', fontSize: 12 },
-  previewStage: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateColumns: '44px minmax(0,1fr) 44px', gridTemplateRows: 'minmax(0,1fr)', alignItems: 'center', gap: 10, overflow: 'hidden' },
-  previewMedia: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'hidden' },
-  previewImage: { display: 'block', width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10 },
-  previewButton: { width: 38, height: 38, border: 0, borderRadius: 10, background: 'rgba(255,255,255,.12)', color: '#fff', cursor: 'pointer' },
-  replyTarget: { marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: colors.accent, fontSize: 12 },
+  interactionAction: { alignSelf: 'end', padding: '2px 0 1px 8px', border: 0, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 10, whiteSpace: 'nowrap' },
+  interactionComposer: { padding: '2px 2px 0', background: 'transparent' },
+  interactionComposerRow: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'end', gap: 9 },
+  interactionInput: { width: '100%', height: 40, minHeight: 40, maxHeight: 96, resize: 'none', overflowY: 'auto', padding: '9px 11px', boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 10, color: arkmeTheme.text, background: arkmeTheme.input, font: 'inherit', fontSize: 12, lineHeight: 1.65, outline: 0 },
+  interactionSend: { minWidth: 54, height: 40, padding: '0 13px', border: 0, borderRadius: 10, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', font: 'inherit', fontSize: 11 },
+  previewBackdrop: { position: 'fixed', inset: 0, zIndex: 1300, display: 'grid', placeItems: 'center', padding: '20px 10px', boxSizing: 'border-box', background: 'rgba(0,0,0,.78)' },
+  previewModal: { position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
+  previewStage: { position: 'absolute', top: 30, right: 0, bottom: 20, left: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', borderRadius: 12 },
+  previewViewport: { position: 'absolute', inset: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', overscrollBehavior: 'contain' },
+  previewMedia: { position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
+  previewImage: { position: 'absolute', inset: 0, display: 'block', width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none' },
+  previewClose: { position: 'absolute', top: 0, right: 8, zIndex: 2, width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', cursor: 'pointer' },
+  previewNav: { position: 'absolute', top: '50%', zIndex: 2, width: 40, height: 40, marginTop: -20, padding: 0, border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', cursor: 'pointer', fontSize: 24, lineHeight: 1 },
+  previewCounter: { position: 'absolute', left: '50%', bottom: 12, zIndex: 2, transform: 'translateX(-50%)', minWidth: 46, padding: '5px 10px', boxSizing: 'border-box', borderRadius: 999, background: 'rgba(20,22,28,.62)', color: '#fff', fontSize: 11, lineHeight: 1.2, textAlign: 'center', pointerEvents: 'none' },
+  replyTarget: { marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: arkmeTheme.accent, fontSize: 12 },
 }
 
 function messageOf(error: unknown, fallback: string): string {
@@ -159,6 +246,81 @@ function worldVoiceprintContent(item: Pick<ArkmeWorldFeedItem, 'headline' | 'tex
   return item.textContent.trim() !== '' ? item.textContent : item.headline
 }
 
+const WORLD_VOICEPRINT_AVAILABILITY_CACHE_TTL_MILLIS = 5 * 60 * 1000
+const MAX_WORLD_VOICEPRINT_AVAILABILITY_CACHE_ENTRIES = 2048
+
+interface WorldVoiceprintAvailabilityCacheEntry {
+  playable: boolean
+  expiresAtMillis: number
+}
+
+const worldVoiceprintAvailabilityCache = new Map<string, WorldVoiceprintAvailabilityCacheEntry>()
+
+function pruneWorldVoiceprintAvailabilityCache(now = Date.now()): void {
+  for (const [recordRef, entry] of worldVoiceprintAvailabilityCache) {
+    if (entry.expiresAtMillis <= now) worldVoiceprintAvailabilityCache.delete(recordRef)
+  }
+  while (worldVoiceprintAvailabilityCache.size > MAX_WORLD_VOICEPRINT_AVAILABILITY_CACHE_ENTRIES) {
+    const oldest = worldVoiceprintAvailabilityCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    worldVoiceprintAvailabilityCache.delete(oldest)
+  }
+}
+
+export function rememberWorldVoiceprintAvailability(availability: ArkmeWorldVoiceprintAvailability): void {
+  const expiresAtMillis = Date.now() + WORLD_VOICEPRINT_AVAILABILITY_CACHE_TTL_MILLIS
+  for (const item of availability.items) {
+    const recordRef = item.recordRef.trim()
+    if (recordRef === '') continue
+    worldVoiceprintAvailabilityCache.delete(recordRef)
+    worldVoiceprintAvailabilityCache.set(recordRef, { playable: item.playable, expiresAtMillis })
+  }
+  pruneWorldVoiceprintAvailabilityCache()
+}
+
+export function cachedWorldVoiceprintResolvedRefs(): Set<string> {
+  pruneWorldVoiceprintAvailabilityCache()
+  return new Set(worldVoiceprintAvailabilityCache.keys())
+}
+
+export function cachedWorldVoiceprintPlayableRefs(): Set<string> {
+  pruneWorldVoiceprintAvailabilityCache()
+  return new Set([...worldVoiceprintAvailabilityCache]
+    .filter(([, entry]) => entry.playable)
+    .map(([recordRef]) => recordRef))
+}
+
+function invalidateWorldVoiceprintAvailability(recordRefs: readonly string[]): void {
+  for (const recordRef of recordRefs) worldVoiceprintAvailabilityCache.delete(recordRef)
+}
+
+export function pendingWorldVoiceprintRecordRefs(
+  items: readonly Pick<ArkmeWorldFeedItem, 'recordRef'>[],
+  resolvedRefs: ReadonlySet<string>,
+): string[] {
+  const pending: string[] = []
+  const seen = new Set<string>()
+  for (const item of items) {
+    const recordRef = item.recordRef.trim()
+    if (recordRef === '' || resolvedRefs.has(recordRef) || seen.has(recordRef)) continue
+    seen.add(recordRef)
+    pending.push(recordRef)
+  }
+  return pending
+}
+
+export function mergeWorldVoiceprintPlayableRefs(
+  current: ReadonlySet<string>,
+  availability: ArkmeWorldVoiceprintAvailability,
+): Set<string> {
+  const next = new Set(current)
+  for (const item of availability.items) {
+    if (item.playable) next.add(item.recordRef)
+    else next.delete(item.recordRef)
+  }
+  return next
+}
+
 export function voiceprintInvitePromptTitle(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>, variantIndex = 0): string {
   return resolveWorldVoiceprintExpectationCopy(worldVoiceprintContent(item), variantIndex).prompt
 }
@@ -178,31 +340,452 @@ async function withTimeout<T>(promise: Promise<T>, millis: number, message: stri
   finally { if (timer !== undefined) clearTimeout(timer) }
 }
 
-function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
-  const [source, setSource] = useState('')
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    const controller = new AbortController()
-    setSource('')
-    setFailed(false)
-    void callArkme<ArkmeImagePayload>('world.image.read', { imageRef }, controller.signal)
-      .then(image => { setSource(`data:${image.mediaType};base64,${image.dataBase64}`) })
-      .catch(() => { if (!controller.signal.aborted) setFailed(true) })
-    return () => { controller.abort() }
-  }, [imageRef])
-  const imageStyle = avatar ? styles.avatarImage : preview ? styles.previewImage : styles.image
-  if (failed) return <span style={imageStyle} aria-label={`${alt}加载失败`} />
-  return <img src={source || undefined} alt={alt} loading={avatar || preview ? 'eager' : 'lazy'} style={imageStyle} />
+const WORLD_IMAGE_CACHE_TTL_MILLIS = 10 * 60 * 1000
+const MAX_WORLD_IMAGE_CACHE_ENTRIES = 96
+const MAX_WORLD_IMAGE_CACHE_BYTES = 32 * 1024 * 1024
+
+interface WorldImageCacheEntry {
+  dataUrl: string | undefined
+  pending: Promise<string> | undefined
+  estimatedBytes: number
+  expiresAtMillis: number
 }
 
-export function WorldImagePreviewMedia({ imageRef, alt }: { imageRef: string; alt: string }) {
-  return <div style={styles.previewMedia}>
-    <WorldImage imageRef={imageRef} alt={alt} preview />
+const worldImageDataUrlCache = new Map<string, WorldImageCacheEntry>()
+let worldImageCacheBytes = 0
+
+function deleteWorldImageCacheEntry(imageRef: string): void {
+  const entry = worldImageDataUrlCache.get(imageRef)
+  if (entry === undefined) return
+  worldImageCacheBytes = Math.max(0, worldImageCacheBytes - entry.estimatedBytes)
+  worldImageDataUrlCache.delete(imageRef)
+}
+
+function pruneWorldImageCache(now = Date.now()): void {
+  for (const [imageRef, entry] of worldImageDataUrlCache) {
+    if (entry.expiresAtMillis <= now) deleteWorldImageCacheEntry(imageRef)
+  }
+  while (worldImageDataUrlCache.size > MAX_WORLD_IMAGE_CACHE_ENTRIES || worldImageCacheBytes > MAX_WORLD_IMAGE_CACHE_BYTES) {
+    const oldestResolved = [...worldImageDataUrlCache].find(([, entry]) => entry.pending === undefined)?.[0]
+    const oldest = oldestResolved ?? worldImageDataUrlCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    deleteWorldImageCacheEntry(oldest)
+  }
+}
+
+function touchWorldImageCacheEntry(imageRef: string, entry: WorldImageCacheEntry): void {
+  worldImageDataUrlCache.delete(imageRef)
+  worldImageDataUrlCache.set(imageRef, entry)
+}
+
+export function cachedWorldImageDataUrl(imageRef: string): string | undefined {
+  const normalized = imageRef.trim()
+  if (normalized === '') return undefined
+  const entry = worldImageDataUrlCache.get(normalized)
+  if (entry === undefined) return undefined
+  if (entry.expiresAtMillis <= Date.now()) {
+    deleteWorldImageCacheEntry(normalized)
+    return undefined
+  }
+  touchWorldImageCacheEntry(normalized, entry)
+  return entry.dataUrl
+}
+
+type WorldImageReader = (imageRef: string) => Promise<ArkmeImagePayload>
+
+const readWorldImage: WorldImageReader = async imageRef => await callArkme<ArkmeImagePayload>('world.image.read', { imageRef })
+
+export function loadWorldImageDataUrl(imageRef: string, reader: WorldImageReader = readWorldImage): Promise<string> {
+  const normalized = imageRef.trim()
+  if (normalized === '') return Promise.reject(new Error('世界图片引用为空'))
+  const cached = worldImageDataUrlCache.get(normalized)
+  if (cached !== undefined && cached.expiresAtMillis > Date.now()) {
+    touchWorldImageCacheEntry(normalized, cached)
+    if (cached.dataUrl !== undefined) return Promise.resolve(cached.dataUrl)
+    if (cached.pending !== undefined) return cached.pending
+  } else if (cached !== undefined) {
+    deleteWorldImageCacheEntry(normalized)
+  }
+
+  const entry: WorldImageCacheEntry = {
+    dataUrl: undefined,
+    pending: undefined,
+    estimatedBytes: 0,
+    expiresAtMillis: Date.now() + WORLD_IMAGE_CACHE_TTL_MILLIS,
+  }
+  const pending = reader(normalized).then(image => {
+    const dataUrl = `data:${image.mediaType};base64,${image.dataBase64}`
+    if (worldImageDataUrlCache.get(normalized) === entry) {
+      entry.dataUrl = dataUrl
+      entry.pending = undefined
+      entry.estimatedBytes = Math.ceil(image.dataBase64.length * 0.75)
+      entry.expiresAtMillis = Date.now() + WORLD_IMAGE_CACHE_TTL_MILLIS
+      worldImageCacheBytes += entry.estimatedBytes
+      touchWorldImageCacheEntry(normalized, entry)
+      pruneWorldImageCache()
+    }
+    return dataUrl
+  }).catch(error => {
+    if (worldImageDataUrlCache.get(normalized) === entry) deleteWorldImageCacheEntry(normalized)
+    throw error
+  })
+  entry.pending = pending
+  worldImageDataUrlCache.set(normalized, entry)
+  pruneWorldImageCache()
+  return pending
+}
+
+const WORLD_IMAGE_OPTIMIZE_THRESHOLD_BYTES = 2 * 1024 * 1024
+const WORLD_IMAGE_OPTIMIZE_TARGET_BYTES = 1_800 * 1024
+const worldImageOptimizeCandidates = [
+  { dimension: 2560, quality: .9 },
+  { dimension: 2048, quality: .84 },
+  { dimension: 1600, quality: .8 },
+  { dimension: 1280, quality: .76 },
+] as const
+
+function worldImageOptimizedFileName(fileName: string): string {
+  const normalized = fileName.trim() || 'world-image'
+  return `${normalized.replace(/\.[^.]+$/u, '') || 'world-image'}.webp`
+}
+
+/** Shrinks large still images before the local-to-OSS upload while preserving unsupported/animated formats. */
+export async function optimizeWorldPublishImage(file: File): Promise<File> {
+  if (file.size <= WORLD_IMAGE_OPTIMIZE_THRESHOLD_BYTES || !['image/jpeg', 'image/png'].includes(file.type.toLowerCase())
+    || typeof createImageBitmap !== 'function' || typeof document === 'undefined' || typeof File !== 'function') return file
+  let bitmap: ImageBitmap
+  try { bitmap = await createImageBitmap(file) } catch { return file }
+  try {
+    let best: Blob | undefined
+    for (const candidate of worldImageOptimizeCandidates) {
+      const scale = Math.min(1, candidate.dimension / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      const context = canvas.getContext('2d')
+      if (context === null) return file
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      const encoded = await new Promise<Blob | null>(resolve => { canvas.toBlob(resolve, 'image/webp', candidate.quality) })
+      if (encoded === null || encoded.size >= file.size) continue
+      if (best === undefined || encoded.size < best.size) best = encoded
+      if (encoded.size <= WORLD_IMAGE_OPTIMIZE_TARGET_BYTES) break
+    }
+    return best === undefined
+      ? file
+      : new File([best], worldImageOptimizedFileName(file.name), { type: best.type || 'image/webp', lastModified: file.lastModified })
+  } catch {
+    return file
+  } finally {
+    bitmap.close()
+  }
+}
+
+function WorldImage({ imageRef, alt, avatar = false, preview = false }: { imageRef: string; alt: string; avatar?: boolean; preview?: boolean }) {
+  const [source, setSource] = useState(() => cachedWorldImageDataUrl(imageRef) ?? '')
+  const [failed, setFailed] = useState(false)
+  const [readyToLoad, setReadyToLoad] = useState(() => avatar || preview || cachedWorldImageDataUrl(imageRef) !== undefined)
+  const placeholderRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    const cached = cachedWorldImageDataUrl(imageRef)
+    setSource(cached ?? '')
+    setFailed(false)
+    if (cached !== undefined || avatar || preview) {
+      setReadyToLoad(true)
+      return
+    }
+    setReadyToLoad(false)
+    const target = placeholderRef.current
+    if (target === null || typeof IntersectionObserver === 'undefined') {
+      setReadyToLoad(true)
+      return
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      setReadyToLoad(true)
+      observer.disconnect()
+    }, { rootMargin: '320px 0px' })
+    observer.observe(target)
+    return () => { observer.disconnect() }
+  }, [avatar, imageRef, preview])
+  useEffect(() => {
+    if (!readyToLoad || source !== '' || failed) return
+    let active = true
+    void loadWorldImageDataUrl(imageRef)
+      .then(dataUrl => { if (active) setSource(dataUrl) })
+      .catch(() => { if (active) setFailed(true) })
+    return () => { active = false }
+  }, [failed, imageRef, readyToLoad, source])
+  const imageStyle = avatar ? styles.avatarImage : preview ? styles.previewImage : styles.image
+  if (failed) return <span style={imageStyle} aria-label={`${alt}加载失败`} />
+  if (source === '') return <span ref={placeholderRef} style={imageStyle} aria-hidden data-world-image-loading="true" {...(preview ? { 'data-world-image-preview-loading': 'true' } : {})} />
+  return <img src={source} alt={preview ? '' : alt} loading={avatar || preview ? 'eager' : 'lazy'} draggable={preview ? false : undefined} style={imageStyle} />
+}
+
+export function WorldImagePreviewMedia({ imageRef, alt, zoomed = false }: { imageRef: string; alt: string; zoomed?: boolean }) {
+  return <div role="img" aria-label={alt} style={{ ...styles.previewMedia, ...(zoomed ? { width: '200%', height: '200%' } : {}) }}>
+    <WorldImage key={imageRef} imageRef={imageRef} alt={alt} preview />
+  </div>
+}
+
+const worldImagePreviewSingleClickDelayMillis = 280
+
+export interface WorldImagePreviewDragOrigin {
+  pointerId: number
+  clientX: number
+  clientY: number
+  scrollLeft: number
+  scrollTop: number
+}
+
+export function worldImagePreviewDragPosition(origin: WorldImagePreviewDragOrigin, clientX: number, clientY: number): { left: number; top: number } {
+  return {
+    left: origin.scrollLeft + origin.clientX - clientX,
+    top: origin.scrollTop + origin.clientY - clientY,
+  }
+}
+
+export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect }: {
+  item: ArkmeWorldFeedItem
+  previewIndex: number
+  onClose(): void
+  onSelect(index: number): void
+}) {
+  const imageRef = item.imageRefs[previewIndex]
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const dragOriginRef = useRef<WorldImagePreviewDragOrigin | undefined>(undefined)
+  const dragMovedRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
+  const [zoomed, setZoomed] = useState(false)
+  const [dragging, setDragging] = useState(false)
+
+  const cancelScheduledClose = () => {
+    if (closeTimerRef.current === undefined) return
+    clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = undefined
+  }
+
+  useEffect(() => {
+    cancelScheduledClose()
+    setZoomed(false)
+    setDragging(false)
+    dragOriginRef.current = undefined
+    dragMovedRef.current = false
+    suppressNextClickRef.current = false
+    const viewport = viewportRef.current
+    if (viewport !== null) {
+      viewport.scrollLeft = 0
+      viewport.scrollTop = 0
+    }
+    return cancelScheduledClose
+  }, [previewIndex])
+
+  if (imageRef === undefined) return null
+  const multiple = item.imageRefs.length > 1
+
+  const handlePreviewClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false
+      cancelScheduledClose()
+      return
+    }
+    if (event.detail > 1) {
+      cancelScheduledClose()
+      return
+    }
+    cancelScheduledClose()
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = undefined
+      onClose()
+    }, worldImagePreviewSingleClickDelayMillis)
+  }
+
+  const handlePreviewDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    cancelScheduledClose()
+    const viewport = viewportRef.current
+    if (viewport === null) return
+    if (zoomed) {
+      setZoomed(false)
+      setDragging(false)
+      dragOriginRef.current = undefined
+      window.requestAnimationFrame(() => {
+        viewport.scrollLeft = 0
+        viewport.scrollTop = 0
+      })
+      return
+    }
+    const bounds = viewport.getBoundingClientRect()
+    const localX = event.clientX - bounds.left
+    const localY = event.clientY - bounds.top
+    const horizontalRatio = localX / Math.max(1, viewport.clientWidth)
+    const verticalRatio = localY / Math.max(1, viewport.clientHeight)
+    setZoomed(true)
+    window.requestAnimationFrame(() => {
+      viewport.scrollLeft = horizontalRatio * viewport.scrollWidth - localX
+      viewport.scrollTop = verticalRatio * viewport.scrollHeight - localY
+    })
+  }
+
+  const beginPreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!zoomed || event.button !== 0 || !event.isPrimary) return
+    const viewport = viewportRef.current
+    if (viewport === null) return
+    cancelScheduledClose()
+    dragOriginRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+    }
+    dragMovedRef.current = false
+    suppressNextClickRef.current = false
+    viewport.setPointerCapture(event.pointerId)
+    setDragging(true)
+  }
+
+  const movePreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    const viewport = viewportRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId || viewport === null) return
+    if (Math.abs(event.clientX - origin.clientX) > 2 || Math.abs(event.clientY - origin.clientY) > 2) dragMovedRef.current = true
+    const position = worldImagePreviewDragPosition(origin, event.clientX, event.clientY)
+    viewport.scrollLeft = position.left
+    viewport.scrollTop = position.top
+    event.preventDefault()
+  }
+
+  const endPreviewDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = dragOriginRef.current
+    if (origin === undefined || origin.pointerId !== event.pointerId) return
+    dragOriginRef.current = undefined
+    suppressNextClickRef.current = dragMovedRef.current
+    dragMovedRef.current = false
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setDragging(false)
+  }
+
+  const selectImage = (index: number) => {
+    cancelScheduledClose()
+    setZoomed(false)
+    setDragging(false)
+    dragOriginRef.current = undefined
+    dragMovedRef.current = false
+    suppressNextClickRef.current = false
+    const viewport = viewportRef.current
+    if (viewport !== null) {
+      viewport.scrollLeft = 0
+      viewport.scrollTop = 0
+    }
+    onSelect(index)
+  }
+
+  return <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.previewBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section style={styles.previewModal}>
+      <button type="button" style={styles.previewClose} aria-label="关闭图片预览" title="关闭" onClick={onClose}>
+        <X size={16} weight="bold" aria-hidden />
+      </button>
+      <div style={styles.previewStage}>
+        <div
+          ref={viewportRef}
+          style={{ ...styles.previewViewport, overflow: zoomed ? 'auto' : 'hidden', cursor: zoomed ? (dragging ? 'grabbing' : 'grab') : 'default', touchAction: zoomed ? 'none' : 'auto' }}
+          data-world-image-preview-zoomed={String(zoomed)}
+          onClick={handlePreviewClick}
+          onDoubleClick={handlePreviewDoubleClick}
+          onPointerDown={beginPreviewDrag}
+          onPointerMove={movePreviewDrag}
+          onPointerUp={endPreviewDrag}
+          onPointerCancel={endPreviewDrag}
+        >
+          <WorldImagePreviewMedia imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} zoomed={zoomed} />
+        </div>
+        {multiple && <>
+          <button type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label="上一张图片" disabled={previewIndex === 0} onClick={() => { selectImage(Math.max(0, previewIndex - 1)) }}>‹</button>
+          <button type="button" style={{ ...styles.previewNav, right: 10, opacity: previewIndex === item.imageRefs.length - 1 ? 0.3 : 1 }} aria-label="下一张图片" disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { selectImage(Math.min(item.imageRefs.length - 1, previewIndex + 1)) }}>›</button>
+          <span style={styles.previewCounter} aria-live="polite" data-world-image-preview-counter>{previewIndex + 1} / {item.imageRefs.length}</span>
+        </>}
+      </div>
+    </section>
   </div>
 }
 
 function interactionRegionId(recordRef: string): string {
   return `world-comments-${encodeURIComponent(recordRef)}`
+}
+
+function worldTextRegionId(recordRef: string): string {
+  return `world-text-${encodeURIComponent(recordRef)}`
+}
+
+export function worldTextCollapsedLines(hasMedia: boolean): number {
+  return hasMedia ? 3 : 5
+}
+
+/**
+ * Give obviously long posts the correct first-frame presentation. The browser
+ * then measures the clamped paragraph so responsive widths are handled exactly.
+ */
+export function worldTextLikelyNeedsCollapse(value: string, maxLines: number): boolean {
+  const normalized = value.trim()
+  if (normalized === '') return false
+  if (normalized.split(/\r\n|\r|\n/).length > maxLines) return true
+  return Array.from(normalized.replace(/\s+/g, ' ')).length > maxLines * 96
+}
+
+export function WorldCollapsibleText({ recordRef, authorName, textContent, hasMedia }: {
+  recordRef: string
+  authorName: string
+  textContent: string
+  hasMedia: boolean
+}) {
+  const content = arkmeEmojiPlainText(textContent)
+  const maxLines = worldTextCollapsedLines(hasMedia)
+  const paragraphRef = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [collapsible, setCollapsible] = useState(() => worldTextLikelyNeedsCollapse(content, maxLines))
+  const textId = worldTextRegionId(recordRef)
+
+  useEffect(() => {
+    setExpanded(false)
+    setCollapsible(worldTextLikelyNeedsCollapse(content, maxLines))
+  }, [content, maxLines])
+
+  useEffect(() => {
+    if (expanded) return
+    const paragraph = paragraphRef.current
+    if (paragraph === null) return
+    const measure = () => {
+      if (paragraph.clientHeight <= 0) return
+      setCollapsible(paragraph.scrollHeight > paragraph.clientHeight + 1)
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(paragraph)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [content, expanded, maxLines])
+
+  return <div style={styles.textBlock}>
+    <p
+      ref={paragraphRef}
+      id={textId}
+      style={{ ...styles.text, ...(!expanded ? styles.textCollapsed : {}), ...(!expanded ? { WebkitLineClamp: maxLines } : {}) }}
+      data-world-text-expanded={expanded ? 'true' : 'false'}
+    >{content}</p>
+    {collapsible && <button
+      type="button"
+      style={styles.textToggle}
+      aria-expanded={expanded}
+      aria-controls={textId}
+      aria-label={expanded ? `收起${authorName}发布的全文` : `展开${authorName}发布的全文`}
+      data-world-text-collapsible="true"
+      onClick={() => { setExpanded(value => !value) }}
+    >{expanded ? '收起' : '展开全文'}</button>}
+  </div>
 }
 
 export interface WorldInteractionReplyPresentation {
@@ -255,7 +838,7 @@ export function worldInteractionThreads(rootRef: string, items: readonly ArkmeWo
 }
 
 function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteractionItem; reply: boolean; compact: boolean }) {
-  const size = compact ? (reply ? 20 : 24) : (reply ? 24 : 32)
+  const size = compact ? (reply ? 20 : 24) : (reply ? 22 : 28)
   return <span style={{
     ...styles.interactionAvatar,
     ...(reply ? styles.interactionReplyAvatar : {}),
@@ -278,25 +861,29 @@ function InteractionRow({ item, replyToName, compact, replyTargetRef, onReply }:
 }) {
   const reply = replyToName !== undefined
   const active = replyTargetRef === item.interactionRef
+  if (compact) {
+    return <span data-world-comment-level={reply ? 'reply' : 'root'} style={{ ...styles.compactCommentRow, ...(reply ? styles.compactCommentReply : {}) }}>
+      <strong style={styles.compactCommentAuthor}>{item.authorName}</strong>
+      {replyToName !== undefined && <><span> 回复 </span><strong style={styles.compactCommentAuthor}>{replyToName}</strong></>}
+      <span>{`：${arkmeEmojiPlainText(item.textContent)}`}</span>
+    </span>
+  }
   return <div data-world-comment-level={reply ? 'reply' : 'root'} style={{
     ...(reply ? styles.interactionReply : styles.interactionRoot),
-    ...(compact ? {
-      gridTemplateColumns: `${String(reply ? 20 : 24)}px minmax(0,1fr)`,
-      gap: reply ? 6 : 7,
-      padding: reply ? '5px 0' : undefined,
-    } : {}),
   }}>
     <InteractionAvatar item={item} reply={reply} compact={compact} />
     <div style={styles.interactionBody}>
       <header style={styles.interactionMeta}>
         <span style={styles.interactionAuthorLine}>
-          <strong style={{ ...styles.interactionAuthor, ...(reply ? styles.interactionReplyAuthor : {}), ...(compact ? { fontSize: reply ? 10 : 11 } : {}) }}>{item.authorName}</strong>
-          {replyToName !== undefined && <span style={{ ...styles.interactionReplyTarget, ...(compact ? { fontSize: 10 } : {}) }}>{`回复 ${replyToName}`}</span>}
+          <strong style={{ ...styles.interactionAuthor, ...(reply ? styles.interactionReplyAuthor : {}) }}>{item.authorName}</strong>
+          {replyToName !== undefined && <span style={styles.interactionReplyTarget}>{`回复 ${replyToName}`}</span>}
         </span>
-        {!compact && <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}
+        <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
       </header>
-      <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}), ...(compact ? { marginTop: 2, fontSize: reply ? 10 : 11 } : {}) }}>{item.textContent}</p>
-      {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
+      <div style={styles.interactionContentRow}>
+        <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}>{arkmeEmojiPlainText(item.textContent)}</p>
+        {onReply !== undefined && <button type="button" style={styles.interactionAction} aria-label={`回复${item.authorName}的评论`} onClick={() => { onReply(item) }}>{active ? '取消回复' : '回复'}</button>}
+      </div>
     </div>
   </div>
 }
@@ -318,17 +905,30 @@ export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, co
     visible.push({ root: thread.root, replies })
     remaining -= 1 + replies.length
   }
-  return <div style={{ ...styles.interactionList, ...(compact ? { margin: 0 } : {}) }} data-world-comment-preview={compact || undefined}>
-    {visible.map(thread => <section key={thread.root.interactionRef} style={{ ...styles.interactionThread, ...(compact ? { padding: '6px 0', borderBottom: 0 } : {}) }}>
+  return <div style={styles.interactionList} data-world-comment-preview={compact || undefined}>
+    {visible.map(thread => <section key={thread.root.interactionRef} style={{ ...styles.interactionThread, ...(compact ? { padding: 0, borderBottom: 0 } : {}) }}>
       <InteractionRow item={thread.root} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />
-      {thread.replies.length > 0 && <div style={{ ...styles.interactionReplyList, ...(compact ? { margin: '3px 0 0 31px', paddingLeft: 8 } : {}) }}>
+      {thread.replies.length > 0 && <div style={{ ...styles.interactionReplyList, ...(compact ? { margin: 0, paddingLeft: 0, borderLeft: 0 } : {}) }}>
         {thread.replies.map(reply => <InteractionRow key={reply.item.interactionRef} item={reply.item} replyToName={reply.replyToName} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />)}
       </div>}
     </section>)}
   </div>
 }
 
-function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(): void }) {
+export function worldInteractionCountLabel(count: number, hasMore = false): string {
+  const normalized = Math.max(0, Math.trunc(count))
+  if (normalized === 0) return '评论'
+  return `评论 ${String(normalized)}${hasMore ? '+' : ''}`
+}
+
+export function WorldInteractionPreviewContent({ item, items, onOpen }: { item: ArkmeWorldFeedItem; items: readonly ArkmeWorldInteractionItem[]; onOpen(): void }) {
+  return <section style={styles.commentPreview} aria-label={`${item.authorName}的精选评论`}>
+    <WorldInteractionThreadList rootRef={item.recordRef} items={items} maxVisibleItems={3} compact />
+    <button type="button" style={styles.commentPreviewHitTarget} aria-label={`打开${item.authorName}的评论面板，共 ${String(item.extendCount)} 条评论`} title="打开全部评论" onClick={onOpen} />
+  </section>
+}
+
+function WorldInteractionPreview({ item, onOpen, onCountResolved }: { item: ArkmeWorldFeedItem; onOpen(): void; onCountResolved(count: number, hasMore: boolean): void }) {
   const [items, setItems] = useState<ArkmeWorldInteractionItem[]>([])
   useEffect(() => {
     if (item.extendCount <= 0) {
@@ -336,75 +936,174 @@ function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; o
       return
     }
     const controller = new AbortController()
-    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 3, offset: 0 }, controller.signal)
-      .then(page => { if (!controller.signal.aborted) setItems(page.items) })
+    void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
+      .then(page => {
+        if (controller.signal.aborted) return
+        setItems(page.items)
+        onCountResolved(page.items.length, page.hasMore)
+      })
       .catch(() => { if (!controller.signal.aborted) setItems([]) })
     return () => { controller.abort() }
-  }, [item.extendCount, item.recordRef])
+  }, [item.extendCount, item.recordRef, onCountResolved])
   if (items.length === 0) return null
-  const visibleCount = Math.min(3, items.length)
-  return <section style={styles.commentPreview} aria-label={`${item.authorName}的精选评论`}>
-    <WorldInteractionThreadList rootRef={item.recordRef} items={items} maxVisibleItems={3} compact />
-    <button type="button" style={styles.commentPreviewAction} aria-label={`查看${item.authorName}的全部评论`} onClick={onOpen}>
-      {item.extendCount > visibleCount ? `查看全部 ${String(item.extendCount)} 条评论` : '查看评论'}
+  return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
+}
+
+function WorldExtensionActivity({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(extensionId: string): void }) {
+  const publication = item.extensionPublication
+  if (publication === undefined) return null
+  return <section className="arkme-world-extension-activity" style={styles.extensionActivity} aria-label={`${publication.name}插件发布动态`} data-world-extension-activity="compact">
+    <span style={styles.extensionActivityIcon} aria-hidden>
+      <ArkmeExtensionAvatar extensionId={publication.extensionId} {...(publication.iconRef === undefined ? {} : { iconRef: publication.iconRef })} size={40} />
+    </span>
+    <div style={styles.extensionActivityCopy}>
+      <h2 style={styles.extensionActivityTitle}>{publication.name}</h2>
+      <div style={styles.extensionActivityMeta} aria-label={`版本 ${publication.version}，已上架${publication.desktopRequired ? '，桌面端插件' : ''}`}>
+        <span>v{publication.version}</span>
+        <span style={styles.extensionActivityMetaSeparator} aria-hidden>·</span>
+        <span>已上架</span>
+        {publication.desktopRequired && <><span style={styles.extensionActivityMetaSeparator} aria-hidden>·</span><span>桌面端</span></>}
+      </div>
+      {publication.description !== '' && <p style={styles.extensionActivityDescription}>{publication.description}</p>}
+    </div>
+    <button type="button" className="arkme-world-extension-open" style={styles.extensionOpenButton} aria-label={`在市集中查看${publication.name}`} data-world-extension-open="detail" onClick={() => { onOpen(publication.extensionId) }}>
+      查看详情<ArrowRight size={13} weight="bold" aria-hidden />
     </button>
   </section>
 }
 
-function WorldCard({ item, playable, voiceprintActive, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint }: {
+export const WORLD_EXTENSION_SHELF_PREVIEW_LIMIT = 6
+
+export function worldExtensionShelfPreview(
+  items: readonly ArkmeExtensionCatalogItem[],
+  limit = WORLD_EXTENSION_SHELF_PREVIEW_LIMIT,
+): ArkmeExtensionCatalogItem[] {
+  return items.slice(0, Math.max(0, Math.trunc(limit)))
+}
+
+function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
+  ownerUserId: number
+  ownerName: string
+  onOpen(extensionId: string): void
+  onOpenAll(ownerUserId: number, ownerName: string): void
+}) {
+  const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeExtensionCatalogItem[]; total: number; message?: string }>({ status: 'loading', items: [], total: 0 })
+  useEffect(() => {
+    const controller = new AbortController()
+    setState({ status: 'loading', items: [], total: 0 })
+    void callArkme<ArkmeExtensionCatalogPage>('extensions.catalog.list', { limit: WORLD_EXTENSION_SHELF_PREVIEW_LIMIT, ownerUserId }, controller.signal)
+      .then(page => {
+        if (controller.signal.aborted) return
+        const items = worldExtensionShelfPreview(page.items.filter(item => item.visibility === 'public' && item.status !== 'deleted'))
+        setState({ status: 'ready', items, total: Math.max(page.total, items.length) })
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setState({ status: 'error', items: [], total: 0, message: messageOf(error, '公开插件暂时无法加载') })
+      })
+    return () => { controller.abort() }
+  }, [ownerUserId])
+  if (state.status === 'loading') return <section style={styles.extensionShelf} data-world-extension-shelf="loading"><span role="status" style={styles.extensionShelfCount}>正在加载公开插件…</span></section>
+  if (state.status === 'error') return <section style={styles.extensionShelf} data-world-extension-shelf="error"><span role="alert" style={styles.extensionShelfCount}>{state.message}</span></section>
+  if (state.items.length === 0) return null
+  return <section style={styles.extensionShelf} aria-label="当前公开插件" data-world-extension-shelf="ready">
+    <header style={styles.extensionShelfHeader}><h2 style={styles.extensionShelfTitle}>当前公开插件</h2><span style={styles.extensionShelfCount}>共 {state.total} 个</span></header>
+    <div style={styles.extensionShelfList}>{state.items.map(extension => <button key={extension.extension_id} type="button" style={styles.extensionShelfItem} onClick={() => { onOpen(extension.extension_id) }}>
+      <ArkmeExtensionAvatar extensionId={extension.extension_id} {...(extension.icon_ref === undefined ? {} : { iconRef: extension.icon_ref })} size={38} />
+      <span style={styles.extensionShelfItemCopy}><span style={styles.extensionShelfItemName}>{extension.name}</span><span style={styles.extensionShelfItemDescription}>{extension.description || `v${extension.latest_stable_version ?? extension.version ?? ''}`}</span></span>
+    </button>)}</div>
+    {state.total > state.items.length && <footer style={styles.extensionShelfFooter}>
+      <button type="button" style={styles.extensionShelfViewAll} onClick={() => { onOpenAll(ownerUserId, ownerName) }}>查看全部 {state.total} 个</button>
+    </footer>}
+  </section>
+}
+
+function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
+  voiceprintLoading: boolean
   interactionsOpen: boolean
   onOpenInteractions(item: ArkmeWorldFeedItem): void
   onInteractionCreated(recordRef: string): void
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint(item: ArkmeWorldFeedItem): void
+  onOpenAuthor?(item: ArkmeWorldFeedItem): void
+  onOpenExtension(extensionId: string): void
 }) {
   const [previewIndex, setPreviewIndex] = useState<number>()
+  const [interactionCount, setInteractionCount] = useState<{ count: number; hasMore: boolean }>()
+  const resolveInteractionCount = useCallback((count: number, hasMore: boolean) => {
+    setInteractionCount({ count, hasMore })
+  }, [])
   const interactionsId = interactionRegionId(item.recordRef)
+  const interactionLabel = interactionCount === undefined
+    ? `${String(Math.max(0, item.extendCount))} 条评论`
+    : `${String(interactionCount.count)}${interactionCount.hasMore ? '+' : ''} 条评论`
+  const visibleImageRefs = item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
+  const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
+  useEffect(() => {
+    if (previewIndex === undefined) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewIndex(undefined) }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => { window.removeEventListener('keydown', closeOnEscape) }
+  }, [previewIndex])
   return <article style={styles.card} data-world-record-ref={item.recordRef}>
     <header style={styles.cardHeader}>
-      <span style={styles.avatar}>{item.avatarRef === undefined
+      {item.authorRef === undefined
+        ? <span style={styles.avatar}>{item.avatarRef === undefined
         ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
         : <WorldImage imageRef={item.avatarRef} alt={`${item.authorName}的头像`} avatar />}</span>
+        : <button type="button" style={styles.avatarButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><span style={styles.avatar}>{item.avatarRef === undefined
+          ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
+          : <WorldImage imageRef={item.avatarRef} alt={`${item.authorName}的头像`} avatar />}</span></button>}
       <span style={styles.authorMeta}>
         <span style={styles.authorRow}>
-          <strong style={styles.author}>{item.authorName}</strong>
-          {playable
-            ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
-              <SpeakerHigh size={15} weight={voiceprintActive ? 'fill' : 'bold'} />
+          {item.authorRef === undefined
+            ? <strong style={styles.author}>{item.authorName}</strong>
+            : <button type="button" style={styles.authorButton} aria-label={`查看${item.authorName}的用户卡片`} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
+          {item.extensionPublication === undefined && (playable
+            ? <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? `正在生成${item.authorName}的声纹，点击停止` : voiceprintActive ? `停止播放${item.authorName}的声纹` : `播放${item.authorName}的声纹`} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
+              {voiceprintLoading
+                ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
+                : <SpeakerHigh size={16} weight="light" />}
             </button>
-            : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} onClick={() => { onInviteVoiceprint(item) }}>
-              <Plus size={13} weight="bold" />
-            </button>}
+            : <button type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title="邀请开启声纹" aria-label={`邀请${item.authorName}开启声纹`} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
+              <Microphone size={17} weight="light" />
+            </button>)}
         </span>
       </span>
       <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
     </header>
-    {item.headline !== '' && <h2 style={styles.headline}>{item.headline}</h2>}
-    {item.textContent.trim() !== '' && <p style={styles.text}>{item.textContent}</p>}
-    {item.imageRefs.length > 0 && <div style={styles.imageGrid}>{item.imageRefs.slice(0, 3).map((imageRef, index) =>
-      <button key={imageRef} type="button" style={styles.imageButton} aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}`} onClick={() => { setPreviewIndex(index) }}>
+    {item.extensionPublication !== undefined
+      ? <WorldExtensionActivity item={item} onOpen={onOpenExtension} />
+      : <>{item.headline !== '' && <h2 style={styles.headline}>{arkmeEmojiPlainText(item.headline)}</h2>}
+    {item.textContent.trim() !== '' && <WorldCollapsibleText
+      recordRef={item.recordRef}
+      authorName={item.authorName}
+      textContent={item.textContent}
+      hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
+    />}</>}
+    {item.extensionPublication === undefined && visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
+      const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
+      return <button
+        key={imageRef}
+        type="button"
+        style={styles.imageButton}
+        aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}${overflowCount > 0 ? `，另有 ${String(overflowCount)} 张图片` : ''}`}
+        onClick={() => { setPreviewIndex(index) }}
+      >
         <WorldImage imageRef={imageRef} alt={`${item.authorName}发布的图片 ${String(index + 1)}`} />
-      </button>)}</div>}
+        {overflowCount > 0 && <span style={styles.imageOverflow} data-world-image-overflow={overflowCount}>+{overflowCount}</span>}
+      </button>
+    })}</div>}
     <footer style={styles.cardFooter}>
       <button type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={() => { onOpenInteractions(item) }}>
-        {item.extendCount > 0 ? `评论：${String(item.extendCount)}` : '评论'}
+        <ChatCircleDots size={16} weight="light" aria-hidden />{interactionLabel}
       </button>
     </footer>
-    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} />}
-    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} />}
-    {previewIndex !== undefined && item.imageRefs[previewIndex] !== undefined && <div role="dialog" aria-modal="true" aria-label="世界图片预览" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setPreviewIndex(undefined) }}>
-      <section style={styles.previewModal}>
-        <header style={styles.previewHeader}><span>{item.authorName} · {previewIndex + 1} / {item.imageRefs.length}</span><button type="button" style={styles.previewButton} onClick={() => { setPreviewIndex(undefined) }}>关闭</button></header>
-        <div style={styles.previewStage}>
-          <button type="button" style={styles.previewButton} disabled={previewIndex === 0} onClick={() => { setPreviewIndex(index => Math.max(0, (index ?? 0) - 1)) }}>‹</button>
-          <WorldImagePreviewMedia imageRef={item.imageRefs[previewIndex]!} alt={`${item.authorName}发布的图片 ${String(previewIndex + 1)}`} />
-          <button type="button" style={styles.previewButton} disabled={previewIndex === item.imageRefs.length - 1} onClick={() => { setPreviewIndex(index => Math.min(item.imageRefs.length - 1, (index ?? 0) + 1)) }}>›</button>
-        </div>
-      </section>
-    </div>}
+    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={() => { onOpenInteractions(item) }} onCountResolved={resolveInteractionCount} />}
+    {interactionsOpen && <InteractionPanel item={item} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} onCountResolved={resolveInteractionCount} />}
+    {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
 }
 
@@ -436,12 +1135,66 @@ export function VoiceprintInviteDialog({ item, variantIndex, socialContext, send
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs, voiceprintRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onLoadMore }: {
+function WorldLoadMoreSpinner() {
+  return <svg viewBox="0 0 24 24" fill="none" style={styles.feedLoadMoreSpinner} aria-hidden data-world-load-more-spinner="true">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity=".2" />
+    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur=".8s" repeatCount="indefinite" />
+    </path>
+  </svg>
+}
+
+export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLoadMore }: {
+  scrollRootRef: { readonly current: HTMLElement | null }
+  loading: boolean
+  error: boolean
+  onLoadMore(): void
+}) {
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const loadingRef = useRef(loading)
+  const requestedForVisitRef = useRef(false)
+  const onLoadMoreRef = useRef(onLoadMore)
+  loadingRef.current = loading
+  onLoadMoreRef.current = onLoadMore
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (sentinel === null || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.some(entry => entry.isIntersecting)
+      if (!visible) {
+        requestedForVisitRef.current = false
+        return
+      }
+      if (loadingRef.current || requestedForVisitRef.current) return
+      requestedForVisitRef.current = true
+      onLoadMoreRef.current()
+    }, { root: scrollRootRef.current, rootMargin: '0px 0px 180px 0px', threshold: 0.01 })
+    observer.observe(sentinel)
+    return () => { observer.disconnect() }
+  }, [scrollRootRef])
+
+  const retry = () => {
+    if (loadingRef.current) return
+    requestedForVisitRef.current = true
+    onLoadMoreRef.current()
+  }
+
+  return <div ref={sentinelRef} style={styles.feedLoadMore} data-world-load-more-sentinel="true" aria-hidden={!loading && !error}>
+    {loading && <span role="status" aria-label="正在加载更多世界动态" style={styles.feedLoadMoreStatus}><WorldLoadMoreSpinner /></span>}
+    {!loading && error && <button type="button" style={styles.feedLoadMoreRetry} onClick={retry}>重试</button>}
+  </div>
+}
+
+export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore }: {
   state: ArkmeWorldViewState
   scope: WorldScope
   target?: ArkmeWorldTarget
+  catalogOwnerUserId?: number
+  catalogOwnerName?: string
   voiceprintPlayableRefs: ReadonlySet<string>
   voiceprintRecordRef: string | undefined
+  voiceprintLoadingRecordRef?: string
   interactionRecordRef?: string
   actionMessage?: string
   onRefresh(): void
@@ -452,8 +1205,31 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
   onInteractionCreated?(recordRef: string): void
   onToggleVoiceprint(recordRef: string): void
   onInviteVoiceprint?(item: ArkmeWorldFeedItem): void
+  onOpenAuthor?(item: ArkmeWorldFeedItem): void
+  onOpenExtension(extensionId: string): void
+  onOpenAllExtensions?(ownerUserId: number, ownerName: string): void
   onLoadMore?(): void
 }) {
+  const interactionItem = interactionRecordRef === undefined
+    ? undefined
+    : state.items.find(item => item.recordRef === interactionRecordRef)
+  const scrollRootRef = useRef<HTMLDivElement | null>(null)
+  const scrollPositionsRef = useRef<Record<WorldScope, number>>({ all: 0, mine: 0 })
+  const bindScrollRoot = useCallback((element: HTMLDivElement | null) => {
+    scrollRootRef.current = element
+    if (element !== null) element.scrollTop = scrollPositionsRef.current[scope]
+  }, [scope])
+  const selectScope = (nextScope: WorldScope) => {
+    if (nextScope === scope) return
+    const transition = worldScopeScrollTransition(
+      scrollPositionsRef.current,
+      scope,
+      nextScope,
+      scrollRootRef.current?.scrollTop ?? 0,
+    )
+    scrollPositionsRef.current = transition.positions
+    onSelectScope(nextScope)
+  }
   return <>
     <header style={styles.header}>
       {target === undefined
@@ -470,50 +1246,107 @@ export function ArkmeWorldContent({ state, scope, target, voiceprintPlayableRefs
         </div>}
       <div style={styles.headerActions}>
         <button type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? '刷新中' : '刷新'} aria-label={state.refreshing ? '刷新中' : '刷新'} onClick={onRefresh}>
-          <ArrowsClockwise size={16} weight="bold" />
+          <ArrowClockwise size={18} weight="light" />
         </button>
-        {target === undefined && <button type="button" style={{ ...styles.button, ...styles.primaryButton }} onClick={onOpenComposer}>发世界</button>}
+        {target === undefined && <button type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label="发世界" onClick={onOpenComposer}><Plus size={14} weight="regular" aria-hidden />发布</button>}
       </div>
     </header>
-    {target === undefined && <nav style={styles.tabs} aria-label="世界范围">
-      <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { onSelectScope('all') }}>世界</button>
-      <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { onSelectScope('mine') }}>我的世界</button>
-    </nav>}
-    <div style={styles.body}>
-      {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error) }}>{actionMessage}</div>}
-      {state.status === 'loading' && <div role="status" style={styles.notice}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
-      {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
-      {state.status === 'empty' && <div style={styles.notice}>{target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}</div>}
-      {state.status === 'success' && <div style={styles.feed}>
-        {state.message !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error, width: '100%', margin: 0 }}>{state.message}</div>}
-        {state.items.map(item => <WorldCard
-          key={item.recordRef}
-          item={item}
-          playable={voiceprintPlayableRefs.has(item.recordRef)}
-          voiceprintActive={voiceprintRecordRef === item.recordRef}
-          interactionsOpen={interactionRecordRef === item.recordRef}
-          onOpenInteractions={onOpenInteractions}
-          onInteractionCreated={onInteractionCreated ?? (() => {})}
-          onToggleVoiceprint={onToggleVoiceprint}
-          onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
-        />)}
-        {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={onLoadMore}>{state.loadingMore ? '加载中…' : '加载更多'}</button></div>}
-      </div>}
+    {target === undefined && <div style={styles.worldToolbar}>
+      <nav style={styles.tabs} aria-label="世界范围">
+        <button type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { selectScope('all') }}>世界</button>
+        <button type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { selectScope('mine') }}>我的世界</button>
+      </nav>
+    </div>}
+    <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
+      <div key={scope} ref={bindScrollRoot} style={styles.body} data-world-feed-pane="true" data-world-scroll-container="true" data-world-scope={scope}>
+        <div style={styles.feed} data-world-content-stack="true">
+        {catalogOwnerUserId !== undefined && <WorldExtensionShelf
+          ownerUserId={catalogOwnerUserId}
+          ownerName={catalogOwnerName ?? target?.displayName ?? '我'}
+          onOpen={onOpenExtension}
+          onOpenAll={onOpenAllExtensions ?? (() => {})}
+        />}
+        {actionMessage !== undefined && <div role="status" style={{ ...styles.notice, ...(actionMessage.startsWith('已') ? {} : styles.error), width: '100%', margin: 0 }}>{actionMessage}</div>}
+        {state.status === 'loading' && <div role="status" style={{ ...styles.notice, width: '100%', margin: 0 }}>{target === undefined ? '正在加载世界…' : `正在加载 ${target.displayName} 的世界…`}</div>}
+        {state.status === 'error' && <div role="alert" style={{ ...styles.notice, ...styles.error, ...styles.errorRow, width: '100%', margin: 0 }}><span>{state.message}</span><button type="button" style={styles.button} onClick={onRefresh}>重试</button></div>}
+        {state.status === 'empty' && <ArkmeWorldEmptyNotice style={{ ...styles.emptyNotice, width: '100%', margin: 0 }}>
+          {target === undefined ? '这里还没有世界动态。你可以先发一条，或者稍后再刷新。' : 'TA 的世界暂无公开内容。'}
+        </ArkmeWorldEmptyNotice>}
+        {state.status === 'success' && <>
+          {state.message !== undefined && <div role="status" style={{ ...styles.notice, ...styles.error, width: '100%', margin: 0 }}>{state.message}</div>}
+          {state.items.map(item => <WorldCard
+            key={item.recordRef}
+            item={item}
+            playable={voiceprintPlayableRefs.has(item.recordRef)}
+            voiceprintActive={voiceprintRecordRef === item.recordRef}
+            voiceprintLoading={voiceprintLoadingRecordRef === item.recordRef}
+            interactionsOpen={interactionRecordRef === item.recordRef}
+            onOpenInteractions={onOpenInteractions}
+            onInteractionCreated={onInteractionCreated ?? (() => {})}
+            onToggleVoiceprint={onToggleVoiceprint}
+            onInviteVoiceprint={onInviteVoiceprint ?? (() => {})}
+            {...(onOpenAuthor === undefined ? {} : { onOpenAuthor })}
+            onOpenExtension={onOpenExtension}
+          />)}
+          {state.hasMore && onLoadMore !== undefined && <WorldInfiniteScrollTrigger
+            key={`${scope}:${String(state.nextOffset ?? 'more')}:${String(state.items.length)}`}
+            scrollRootRef={scrollRootRef}
+            loading={state.loadingMore === true}
+            error={state.message !== undefined}
+            onLoadMore={onLoadMore}
+          />}
+        </>}
+        </div>
+      </div>
     </div>
   </>
 }
 
-function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(result: ArkmeWorldPublishResult): void }) {
+export function appendWorldPublishFiles(current: readonly File[], selected: readonly File[]): File[] {
+  return [...current, ...selected].slice(0, ARKME_WORLD_PUBLISH_MAX_IMAGES)
+}
+
+export function removeWorldPublishFile(current: readonly File[], index: number): File[] {
+  return current.filter((_file, currentIndex) => currentIndex !== index)
+}
+
+function WorldPublishImagePreview({ file, index }: { file: File; index: number }) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
+    const next = URL.createObjectURL(file)
+    setUrl(next)
+    return () => { URL.revokeObjectURL(next) }
+  }, [file])
+  return url === ''
+    ? <span style={styles.publishImagePlaceholder}>待预览</span>
+    : <img src={url} alt={`待发布图片 ${String(index + 1)}`} style={styles.publishImagePreview} />
+}
+
+export function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(result: ArkmeWorldPublishResult): void }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const sendingRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const mutationIdRef = useRef(uuid())
   const uploadedAssetsRef = useRef<{ mutationId: string; assets: ArkmeUploadedAsset[] }>()
   const resetMutationId = () => {
     mutationIdRef.current = uuid()
     uploadedAssetsRef.current = undefined
+  }
+  const chooseFiles = (selectedFiles: FileList | null) => {
+    const selected = Array.from(selectedFiles ?? [])
+    if (selected.length === 0) return
+    setFiles(current => appendWorldPublishFiles(current, selected))
+    resetMutationId()
+    setMessage('')
+  }
+  const removeFile = (index: number) => {
+    setFiles(current => removeWorldPublishFile(current, index))
+    resetMutationId()
+    setMessage('')
   }
   const submit = async () => {
     if (sendingRef.current) return
@@ -531,7 +1364,11 @@ function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(
       if (files.length > 0) {
         if (cachedUploads?.mutationId === mutationIdRef.current) assets = cachedUploads.assets
         else {
-          assets = await withTimeout(Promise.all(files.map(async file => await worldSdk.upload(file, {
+          setMessage('正在优化图片…')
+          const uploadFiles: File[] = []
+          for (const file of files) uploadFiles.push(await optimizeWorldPublishImage(file))
+          setMessage('正在上传图片…')
+          assets = await withTimeout(Promise.all(uploadFiles.map(async file => await worldSdk.upload(file, {
             fileName: file.name || 'world-image', signal: controller.signal,
           }))), 60_000, '图片上传等待太久，请检查网络后重试', () => { controller.abort() })
           uploadedAssetsRef.current = { mutationId: mutationIdRef.current, assets }
@@ -565,20 +1402,47 @@ function PublishDialog({ onClose, onPublished }: { onClose(): void; onPublished(
     finally { controller.abort(); sendingRef.current = false; setSending(false) }
   }
   return <div role="dialog" aria-modal="true" aria-label="发世界" style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
-    <section style={styles.modal}>
-      <h2 style={styles.modalTitle}>发世界</h2>
-      <p style={styles.modalText}>发布后会作为公开动态展示。发布失败时原因会保留在这里，草稿不会被清空。</p>
-      <textarea style={styles.textarea} value={text} disabled={sending} maxLength={2000} autoFocus placeholder="分享此刻的想法…" onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
-      <label style={styles.fieldLabel}>图片（最多 9 张）<input style={styles.fileInput} type="file" accept="image/*" multiple disabled={sending} onChange={event => { setFiles(Array.from(event.currentTarget.files ?? []).slice(0, ARKME_WORLD_PUBLISH_MAX_IMAGES)); resetMutationId(); setMessage('') }} /></label>
-      <div style={styles.modalActions}>
-        <span role="status" style={message.includes('正在') ? styles.subtitle : styles.modalError}>{message}</span>
-        <span style={styles.headerActions}><button type="button" style={styles.button} disabled={sending} onClick={onClose}>取消</button><button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : '发布'}</button></span>
+    <section style={{ ...styles.modal, ...styles.publishModal }} data-world-publish-dialog="spacious">
+      <header style={styles.publishHeader}>
+        <div>
+          <h2 style={styles.publishTitle}>发世界</h2>
+          <p style={styles.publishIntro}>记录此刻，也分享给世界。发布失败时会显示原因，草稿不会被清空，可以继续编辑后重试。</p>
+        </div>
+        <button type="button" style={styles.publishClose} disabled={sending} aria-label="关闭发布窗口" onClick={onClose}><X size={18} weight="regular" aria-hidden /></button>
+      </header>
+      <div style={styles.publishEditor} data-world-publish-editor="true">
+        <textarea style={styles.publishTextarea} value={text} disabled={sending} maxLength={2000} autoFocus aria-label="世界内容" placeholder="分享此刻的想法…" onChange={event => { setText(event.currentTarget.value); resetMutationId(); setMessage('') }} />
+        <div style={styles.publishEditorMeta}><span>发布后会作为公开动态展示</span><span>{text.length} / 2000</span></div>
+      </div>
+      <section style={styles.publishImageSection} data-world-publish-images="true">
+        <div style={styles.publishImageHeader}>
+          <span style={styles.publishImageTitle}>图片<span style={styles.publishImageHint}>最多 {ARKME_WORLD_PUBLISH_MAX_IMAGES} 张，单张不超过 20MB</span></span>
+          <span style={styles.publishImageCount}>{files.length} / {ARKME_WORLD_PUBLISH_MAX_IMAGES}</span>
+        </div>
+        <input ref={fileInputRef} style={styles.publishHiddenInput} type="file" accept="image/*" multiple disabled={sending || files.length >= ARKME_WORLD_PUBLISH_MAX_IMAGES} aria-label="选择世界图片" onChange={event => { chooseFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+        {files.length === 0
+          ? <button type="button" style={styles.publishUploadEmpty} disabled={sending} onClick={() => { fileInputRef.current?.click() }}>
+              <span style={styles.publishUploadIcon}><Plus size={18} weight="regular" aria-hidden /></span>
+              <span style={styles.publishUploadTitle}>添加图片</span>
+              <span style={styles.publishUploadHint}>可一次选择多张图片</span>
+            </button>
+          : <div style={styles.publishImageGrid}>
+              {files.map((file, index) => <div key={`${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`} style={styles.publishImageTile}>
+                <WorldPublishImagePreview file={file} index={index} />
+                <button type="button" style={styles.publishImageRemove} disabled={sending} aria-label={`移除图片 ${String(index + 1)}`} onClick={() => { removeFile(index) }}><X size={12} weight="bold" aria-hidden /></button>
+              </div>)}
+              {files.length < ARKME_WORLD_PUBLISH_MAX_IMAGES && <button type="button" style={styles.publishAddTile} disabled={sending} aria-label="继续添加图片" onClick={() => { fileInputRef.current?.click() }}><Plus size={19} weight="regular" aria-hidden /><span>继续添加</span></button>}
+            </div>}
+      </section>
+      <div style={styles.publishFooter}>
+        <span role="status" style={{ ...styles.publishStatus, ...(message !== '' && !message.includes('正在') ? styles.modalError : {}) }}>{message}</span>
+        <span style={styles.publishActions}><button type="button" style={{ ...styles.button, ...styles.publishActionButton }} disabled={sending} onClick={onClose}>取消</button><button type="button" style={{ ...styles.button, ...styles.primaryButton, ...styles.publishActionButton }} disabled={sending} onClick={() => { void submit() }}>{sending ? '发布中…' : '发布'}</button></span>
       </div>
     </section>
   </div>
 }
 
-function InteractionPanel({ item, onClose, onInteractionCreated }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void }) {
+function InteractionPanel({ item, onClose, onInteractionCreated, onCountResolved }: { item: ArkmeWorldFeedItem; onClose(): void; onInteractionCreated(recordRef: string): void; onCountResolved(count: number, hasMore: boolean): void }) {
   const [state, setState] = useState<{ status: 'loading' | 'error' | 'ready'; items: ArkmeWorldInteractionItem[]; message?: string; hasMore: boolean; nextOffset?: number; loadingMore?: boolean }>({ status: 'loading', items: [], hasMore: false })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -586,20 +1450,60 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
   const [replyTarget, setReplyTarget] = useState<ArkmeWorldInteractionItem>()
   const loadController = useRef<AbortController>()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const sendDisabled = sending || draft.trim() === ''
+  const applyViewerAuthorLabels = useCallback((labels: readonly ArkmeWorldAuthorLabel[]) => {
+    const labelsByRef = new Map(labels.map(label => [label.authorRef, label.authorName]))
+    if (labelsByRef.size === 0) return
+    setState(current => ({
+      ...current,
+      items: current.items.map(interaction => {
+        const authorName = interaction.authorRef === undefined ? undefined : labelsByRef.get(interaction.authorRef)
+        return authorName === undefined || authorName === interaction.authorName ? interaction : { ...interaction, authorName }
+      }),
+    }))
+    setReplyTarget(current => {
+      if (current?.authorRef === undefined) return current
+      const authorName = labelsByRef.get(current.authorRef)
+      return authorName === undefined || authorName === current.authorName ? current : { ...current, authorName }
+    })
+  }, [])
+  const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldInteractionItem[], signal?: AbortSignal) => {
+    const authorRefs = [...new Set(items.map(interaction => interaction.authorRef).filter((value): value is string => value !== undefined))]
+    if (authorRefs.length === 0) return
+    void (async () => {
+      for (let offset = 0; offset < authorRefs.length; offset += 20) {
+        const labels = await callArkme<ArkmeWorldAuthorLabel[]>(
+          'world.author-labels', { authorRefs: authorRefs.slice(offset, offset + 20) }, signal,
+        )
+        if (signal?.aborted === true) return
+        applyViewerAuthorLabels(labels)
+      }
+    })().catch(() => {})
+  }, [applyViewerAuthorLabels])
   const load = useCallback(() => {
     loadController.current?.abort()
     const controller = new AbortController()
     loadController.current = controller
     setState({ status: 'loading', items: [], hasMore: false })
     void callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: 0 }, controller.signal)
-      .then(page => { if (!controller.signal.aborted) setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }) })
+      .then(page => {
+        if (controller.signal.aborted) return
+        setState({ status: 'ready', items: page.items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) })
+        onCountResolved(page.items.length, page.hasMore)
+        hydrateViewerAuthorLabels(page.items, controller.signal)
+      })
       .catch(error => { if (!controller.signal.aborted) setState({ status: 'error', items: [], hasMore: false, message: messageOf(error, '评论暂时无法加载') }) })
-  }, [item.recordRef])
+  }, [hydrateViewerAuthorLabels, item.recordRef, onCountResolved])
   useEffect(() => {
     load()
     textareaRef.current?.focus()
     return () => { loadController.current?.abort() }
   }, [load])
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => { window.removeEventListener('keydown', closeOnEscape) }
+  }, [onClose])
   const loadMore = async () => {
     if (state.loadingMore || state.nextOffset === undefined) return
     setState(current => {
@@ -609,6 +1513,8 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
     try {
       const page = await callArkme<ArkmeWorldInteractionPage>('world.interactions.list', { recordRef: item.recordRef, limit: 50, offset: state.nextOffset })
       setState(current => ({ ...current, status: 'ready', items: [...current.items, ...page.items], hasMore: page.hasMore, loadingMore: false, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }))
+      onCountResolved(state.items.length + page.items.length, page.hasMore)
+      hydrateViewerAuthorLabels(page.items)
     } catch (error) { setState(current => ({ ...current, loadingMore: false, message: messageOf(error, '更多互动加载失败，请重试') })) }
   }
   const send = async () => {
@@ -623,33 +1529,45 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
         return { ...rest, status: 'ready', items: [...current.items, result.interaction] }
       })
       setDraft('')
+      if (textareaRef.current !== null) textareaRef.current.style.height = '40px'
       setReplyTarget(undefined)
+      onCountResolved(state.items.length + 1, state.hasMore)
       onInteractionCreated(item.recordRef)
     } catch (error) { setState(current => ({ ...current, message: messageOf(error, '评论发送失败，请重试') })) }
     finally { sendingRef.current = false; setSending(false) }
   }
-  return <section id={interactionRegionId(item.recordRef)} aria-label={`${item.authorName}的评论区`} style={styles.interactionPanel}>
-    <header style={styles.interactionPanelHeader}>
-      <strong style={styles.interactionPanelTitle}>{item.extendCount > 0 ? `评论 ${String(item.extendCount)}` : '评论'}</strong>
-      <button type="button" style={styles.linkButton} onClick={onClose}>收起</button>
-    </header>
-    {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
-    {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
-    <WorldInteractionThreadList
-      rootRef={item.recordRef}
-      items={state.items}
-      {...(replyTarget === undefined ? {} : { replyTargetRef: replyTarget.interactionRef })}
-      onReply={interaction => {
-        setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction)
-        textareaRef.current?.focus()
-      }}
-    />
-    {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
-    {state.status === 'ready' && state.items.length === 0 && <p style={styles.subtitle}>还没有评论，来写第一条吧。</p>}
-    <div style={styles.interactionComposer}>
-      {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
-      <textarea ref={textareaRef} style={{ ...styles.textarea, minHeight: 72 }} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => { setDraft(event.currentTarget.value) }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} />
-      <div style={styles.interactionComposerActions}><span style={styles.interactionHint}>Ctrl / ⌘ + Enter 发送</span><button type="button" style={{ ...styles.button, ...styles.primaryButton }} disabled={sending || draft.trim() === ''} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button></div>
+  return <section id={interactionRegionId(item.recordRef)} aria-label={`${item.authorName}的评论区`} style={styles.interactionPanel} data-world-comment-panel="inline">
+    <div style={styles.interactionPanelSticky} data-world-comment-toolbar="sticky">
+      <header style={styles.interactionPanelHeader}>
+        <strong style={styles.interactionPanelTitle}>{worldInteractionCountLabel(state.items.length, state.hasMore)}</strong>
+        <button type="button" style={styles.interactionPanelClose} aria-label="收起评论" onClick={onClose}>收起</button>
+      </header>
+      <div style={styles.interactionComposer}>
+        {replyTarget !== undefined && <div style={styles.replyTarget}><span>回复 {replyTarget.authorName}</span><button type="button" style={styles.linkButton} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>取消回复</button></div>}
+        <div style={styles.interactionComposerRow}>
+          <textarea ref={textareaRef} rows={1} style={styles.interactionInput} value={draft} disabled={sending} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : `回复 ${replyTarget.authorName}…`} onChange={event => {
+            setDraft(event.currentTarget.value)
+            event.currentTarget.style.height = '40px'
+            event.currentTarget.style.height = `${String(Math.min(96, event.currentTarget.scrollHeight))}px`
+          }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} />
+          <button type="button" style={{ ...styles.interactionSend, ...(sendDisabled ? { opacity: 0.38, cursor: 'default' } : {}) }} title="Ctrl / ⌘ + Enter 发送" disabled={sendDisabled} onClick={() => { void send() }}>{sending ? '发送中…' : '发送'}</button>
+        </div>
+      </div>
+    </div>
+    <div style={styles.interactionPanelBody}>
+      {state.status === 'loading' && <p role="status" style={styles.subtitle}>评论加载中…</p>}
+      {state.message !== undefined && <div role="alert" style={{ ...styles.notice, ...styles.error, width: '100%', margin: '12px 0 0' }}>{state.message}{state.status === 'error' && <button type="button" style={{ ...styles.button, marginLeft: 12 }} onClick={load}>重试</button>}</div>}
+      <WorldInteractionThreadList
+        rootRef={item.recordRef}
+        items={state.items}
+        {...(replyTarget === undefined ? {} : { replyTargetRef: replyTarget.interactionRef })}
+        onReply={interaction => {
+          setReplyTarget(current => current?.interactionRef === interaction.interactionRef ? undefined : interaction)
+          textareaRef.current?.focus()
+        }}
+      />
+      {state.hasMore && <div style={styles.loadMore}><button type="button" style={styles.button} disabled={state.loadingMore} onClick={() => { void loadMore() }}>{state.loadingMore ? '加载中…' : '加载更多评论'}</button></div>}
+      {state.status === 'ready' && state.items.length === 0 && <div style={styles.interactionEmpty}>还没有评论</div>}
     </div>
   </section>
 }
@@ -657,26 +1575,94 @@ function InteractionPanel({ item, onClose, onInteractionCreated }: { item: Arkme
 const loadingState = (): ArkmeWorldViewState => ({ status: 'loading', items: [] })
 
 /** First-party World page owned by the same product surface as recordings. */
-export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWorldTarget; onBackToWorld?(): void } = {}) {
+function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeConversationMemberItem {
+  return {
+    memberRef: item.authorRef ?? '', displayName: item.authorName,
+    ...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef }),
+    ...(item.avatarFallback === undefined ? {} : { avatarFallback: item.avatarFallback }),
+    role: 'member', status: 'active', isSelf: false, isOwner: false,
+    joinedAtMillis: 0, recordCount: 0, mentionCount: 0,
+  }
+}
+
+export function ArkmeWorldSurface({ target, currentUserId, onBackToWorld, onSourceActivated }: { target?: ArkmeWorldTarget; currentUserId?: number; onBackToWorld?(): void; onSourceActivated?(source: ArkmeOpenPrivateChatResult['source']): void } = {}) {
   const [scope, setScope] = useState<WorldScope>('all')
   const [views, setViews] = useState<Record<WorldScope, ArkmeWorldViewState>>({ all: loadingState(), mine: loadingState() })
   const [loaded, setLoaded] = useState<Record<WorldScope, boolean>>({ all: false, mine: false })
   const [composerOpen, setComposerOpen] = useState(false)
   const [interactionRecordRef, setInteractionRecordRef] = useState<string>()
+  const [authorCardItem, setAuthorCardItem] = useState<ArkmeWorldFeedItem>()
+  const [authorCardBusy, setAuthorCardBusy] = useState(false)
   const [inviteItem, setInviteItem] = useState<ArkmeWorldFeedItem>()
   const [inviteSending, setInviteSending] = useState(false)
   const [inviteMessage, setInviteMessage] = useState<string>()
   const [inviteSocialContext, setInviteSocialContext] = useState<ArkmeWorldVoiceprintSocialContext>()
   const invitePresentationIndexesRef = useRef(new Map<string, number>())
   const inviteLoadTokenRef = useRef(0)
-  const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => new Set())
+  const [playableRefs, setPlayableRefs] = useState<Set<string>>(() => cachedWorldVoiceprintPlayableRefs())
+  const resolvedVoiceprintRefsRef = useRef(cachedWorldVoiceprintResolvedRefs())
+  const [voiceprintAvailabilityRevision, setVoiceprintAvailabilityRevision] = useState(0)
   const [voiceprintRecordRef, setVoiceprintRecordRef] = useState<string>()
+  const [voiceprintLoadingRecordRef, setVoiceprintLoadingRecordRef] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
   const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
   const loadController = useRef<AbortController>()
   const audioRef = useRef<HTMLAudioElement>()
+  const voiceprintControllerRef = useRef<AbortController>()
+  const voiceprintAudioRefsRef = useRef(new Set<HTMLAudioElement>())
+  const voiceprintAudioUrlsRef = useRef(new Map<HTMLAudioElement, string>())
   const voiceprintTokenRef = useRef(0)
   const state = target === undefined ? views[scope] : targetView
+
+  const applyViewerAuthorLabels = useCallback((labels: readonly ArkmeWorldAuthorLabel[]) => {
+    const labelsByRef = new Map(labels.map(label => [label.authorRef, label.authorName]))
+    if (labelsByRef.size === 0) return
+    const update = (view: ArkmeWorldViewState): ArkmeWorldViewState => ({
+      ...view,
+      items: view.items.map(item => {
+        const authorName = item.authorRef === undefined ? undefined : labelsByRef.get(item.authorRef)
+        return authorName === undefined || authorName === item.authorName ? item : { ...item, authorName }
+      }),
+    })
+    setViews(current => ({ all: update(current.all), mine: update(current.mine) }))
+    setTargetView(update)
+    setAuthorCardItem(current => {
+      if (current?.authorRef === undefined) return current
+      const authorName = labelsByRef.get(current.authorRef)
+      return authorName === undefined || authorName === current.authorName ? current : { ...current, authorName }
+    })
+  }, [])
+
+  const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldFeedItem[], signal: AbortSignal) => {
+    const authorRefs = [...new Set(items.map(item => item.authorRef).filter((value): value is string => value !== undefined))]
+    if (authorRefs.length === 0) return
+    void (async () => {
+      for (let offset = 0; offset < authorRefs.length; offset += 20) {
+        const labels = await callArkme<ArkmeWorldAuthorLabel[]>(
+          'world.author-labels', { authorRefs: authorRefs.slice(offset, offset + 20) }, signal,
+        )
+        if (signal.aborted) return
+        applyViewerAuthorLabels(labels)
+      }
+    })().catch(() => {})
+  }, [applyViewerAuthorLabels])
+
+  const stopVoiceprintMedia = () => {
+    voiceprintControllerRef.current?.abort()
+    voiceprintControllerRef.current = undefined
+    for (const audio of voiceprintAudioRefsRef.current) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.removeAttribute('src')
+      try { audio.load() } catch { /* The browser may already have released this media element. */ }
+      const objectUrl = voiceprintAudioUrlsRef.current.get(audio)
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+    }
+    voiceprintAudioRefsRef.current.clear()
+    voiceprintAudioUrlsRef.current.clear()
+    audioRef.current = undefined
+  }
 
   const load = useCallback((target: WorldScope, offset = 0, preserveItems = false) => {
     loadController.current?.abort()
@@ -698,6 +1684,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
         const items = offset === 0 ? page.items : [...current[target].items, ...page.items]
         return { ...current, [target]: { status: items.length === 0 ? 'empty' : 'success', items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) } }
       })
+      hydrateViewerAuthorLabels(page.items, controller.signal)
     }).catch(error => {
       if (controller.signal.aborted) return
       setLoaded(current => ({ ...current, [target]: true }))
@@ -712,7 +1699,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
         }
       })
     })
-  }, [])
+  }, [hydrateViewerAuthorLabels])
 
   const loadUser = useCallback((profile: ArkmeWorldTarget, offset = 0, preserveItems = false) => {
     loadController.current?.abort()
@@ -733,6 +1720,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
           const items = offset === 0 ? page.items : [...current.items, ...page.items]
           return { status: items.length === 0 ? 'empty' : 'success', items, hasMore: page.hasMore, ...(page.nextOffset === undefined ? {} : { nextOffset: page.nextOffset }) }
         })
+        hydrateViewerAuthorLabels(page.items, controller.signal)
       })
       .catch(error => {
         if (controller.signal.aborted) return
@@ -743,7 +1731,7 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
             : { status: 'error', items: [], message }
         })
       })
-  }, [])
+  }, [hydrateViewerAuthorLabels])
 
   useEffect(() => { if (target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target])
   useEffect(() => {
@@ -752,18 +1740,48 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     setActionMessage(undefined)
     loadUser(target)
   }, [loadUser, target?.userId])
-  useEffect(() => () => { loadController.current?.abort(); voiceprintTokenRef.current += 1; inviteLoadTokenRef.current += 1; audioRef.current?.pause() }, [])
+  useEffect(() => () => {
+    loadController.current?.abort()
+    voiceprintTokenRef.current += 1
+    inviteLoadTokenRef.current += 1
+    voiceprintControllerRef.current?.abort()
+    for (const audio of voiceprintAudioRefsRef.current) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.removeAttribute('src')
+      const objectUrl = voiceprintAudioUrlsRef.current.get(audio)
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+    }
+    voiceprintAudioRefsRef.current.clear()
+    voiceprintAudioUrlsRef.current.clear()
+  }, [])
   useEffect(() => {
-    if (state.status !== 'success' || state.items.length === 0) { setPlayableRefs(new Set()); return }
+    if (state.status !== 'success' || state.items.length === 0) return
+    const pendingRefs = pendingWorldVoiceprintRecordRefs(state.items, resolvedVoiceprintRefsRef.current)
+    if (pendingRefs.length === 0) return
     const controller = new AbortController()
-    void callArkme<ArkmeWorldVoiceprintAvailability>('world.voiceprint.availability', { recordRefs: state.items.map(item => item.recordRef).slice(0, 20) }, controller.signal)
-      .then(result => { setPlayableRefs(new Set(result.items.filter(item => item.playable).map(item => item.recordRef))) })
-      .catch(() => { if (!controller.signal.aborted) setPlayableRefs(new Set()) })
+    void (async () => {
+      for (let offset = 0; offset < pendingRefs.length; offset += 20) {
+        const result = await callArkme<ArkmeWorldVoiceprintAvailability>(
+          'world.voiceprint.availability',
+          { recordRefs: pendingRefs.slice(offset, offset + 20) },
+          controller.signal,
+        )
+        if (controller.signal.aborted) return
+        rememberWorldVoiceprintAvailability(result)
+        for (const item of result.items) resolvedVoiceprintRefsRef.current.add(item.recordRef)
+        setPlayableRefs(current => mergeWorldVoiceprintPlayableRefs(current, result))
+      }
+    })().catch(() => {})
     return () => { controller.abort() }
-  }, [state.items, state.status])
+  }, [state.items, state.status, voiceprintAvailabilityRevision])
 
   const refresh = () => {
     setActionMessage(undefined)
+    invalidateWorldVoiceprintAvailability(state.items.map(item => item.recordRef))
+    for (const item of state.items) resolvedVoiceprintRefsRef.current.delete(item.recordRef)
+    setVoiceprintAvailabilityRevision(current => current + 1)
     if (target === undefined) load(scope, 0, true)
     else loadUser(target, 0, true)
   }
@@ -779,35 +1797,96 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
     setViews(current => ({ all: update(current.all), mine: update(current.mine) }))
     setTargetView(update)
   }
+  const openPrivateChatForAuthor = async (item: ArkmeWorldFeedItem) => {
+    if (item.authorRef === undefined || authorCardBusy) return
+    setAuthorCardBusy(true)
+    try {
+      const result = await callArkme<ArkmeOpenPrivateChatResult>('chat.world.private.open', { authorRef: item.authorRef })
+      setAuthorCardItem(undefined)
+      onSourceActivated?.(result.source)
+    } catch (error) {
+      setActionMessage(messageOf(error, '暂时无法打开私聊，请稍后重试'))
+    } finally { setAuthorCardBusy(false) }
+  }
   const toggleVoiceprint = async (recordRef: string) => {
-    if (voiceprintRecordRef === recordRef) { voiceprintTokenRef.current += 1; audioRef.current?.pause(); audioRef.current = undefined; setVoiceprintRecordRef(undefined); return }
+    if (voiceprintRecordRef === recordRef) {
+      voiceprintTokenRef.current += 1
+      stopVoiceprintMedia()
+      setVoiceprintRecordRef(undefined)
+      setVoiceprintLoadingRecordRef(undefined)
+      return
+    }
     const token = voiceprintTokenRef.current + 1
     voiceprintTokenRef.current = token
-    audioRef.current?.pause()
+    stopVoiceprintMedia()
+    const controller = new AbortController()
+    voiceprintControllerRef.current = controller
     setActionMessage(undefined)
     setVoiceprintRecordRef(recordRef)
-    const playChunk = async (chunkIndex: number): Promise<void> => {
-      const chunk = await callArkme<ArkmeWorldVoiceprintPlaybackChunk>('world.voiceprint.playback.generate', { recordRef, chunkIndex })
-      if (voiceprintTokenRef.current !== token) return
-      if (typeof Audio === 'undefined') throw new Error('当前环境无法播放声音')
-      const audio = new Audio(`/arkme-self/api/media?ref=${encodeURIComponent(chunk.mediaRef)}`)
-      audioRef.current = audio
-      audio.onended = () => {
-        if (voiceprintTokenRef.current !== token) return
-        if (chunk.chunkIndex + 1 < chunk.chunkCount) void playChunk(chunk.chunkIndex + 1).catch(fail)
-        else { setVoiceprintRecordRef(undefined); audioRef.current = undefined }
+    setVoiceprintLoadingRecordRef(recordRef)
+    const isActive = () => voiceprintTokenRef.current === token && !controller.signal.aborted
+    try {
+      const result = await playWorldVoiceprintChunkQueue({
+        loadChunk: async chunkIndex => {
+          const chunk = await callArkme<ArkmeWorldVoiceprintPlaybackChunk>(
+            'world.voiceprint.playback.generate',
+            { recordRef, chunkIndex },
+            controller.signal,
+          )
+          if (!isActive()) throw new Error('声纹播放已停止')
+          if (typeof Audio === 'undefined' || typeof URL.createObjectURL !== 'function') throw new Error('当前环境无法播放声音')
+          const blob = await downloadWorldVoiceprintAudio(
+            `/arkme-self/api/media?ref=${encodeURIComponent(chunk.mediaRef)}`,
+            controller.signal,
+          )
+          if (!isActive()) throw new Error('声纹播放已停止')
+          const objectUrl = URL.createObjectURL(blob)
+          const audio = new Audio(objectUrl)
+          audio.preload = 'auto'
+          voiceprintAudioRefsRef.current.add(audio)
+          voiceprintAudioUrlsRef.current.set(audio, objectUrl)
+          audio.load()
+          return { ...chunk, audio }
+        },
+        playChunk: async prepared => {
+          if (!isActive()) return
+          const { audio } = prepared
+          audioRef.current = audio
+          try {
+            await playPreparedWorldVoiceprintAudio(
+              audio,
+              controller.signal,
+              () => { setVoiceprintLoadingRecordRef(undefined) },
+            )
+            if (prepared.chunkIndex + 1 < prepared.chunkCount && isActive()) {
+              setVoiceprintLoadingRecordRef(recordRef)
+            }
+          } finally {
+            voiceprintAudioRefsRef.current.delete(audio)
+            const objectUrl = voiceprintAudioUrlsRef.current.get(audio)
+            voiceprintAudioUrlsRef.current.delete(audio)
+            audio.removeAttribute('src')
+            try { audio.load() } catch { /* The browser may already have released this media element. */ }
+            if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+            if (audioRef.current === audio) audioRef.current = undefined
+          }
+        },
+        isActive,
+      })
+      if (result === 'completed' && isActive()) {
+        setVoiceprintRecordRef(undefined)
+        setVoiceprintLoadingRecordRef(undefined)
       }
-      audio.onerror = () => { fail(new Error('声纹音频播放失败，请重试')) }
-      await audio.play()
-    }
-    const fail = (error: unknown) => {
-      if (voiceprintTokenRef.current !== token) return
+    } catch (error) {
+      if (!isActive()) return
       voiceprintTokenRef.current += 1
+      stopVoiceprintMedia()
       setActionMessage(messageOf(error, '声纹生成失败，请重试'))
       setVoiceprintRecordRef(undefined)
-      audioRef.current = undefined
+      setVoiceprintLoadingRecordRef(undefined)
+    } finally {
+      if (voiceprintTokenRef.current === token) voiceprintControllerRef.current = undefined
     }
-    await playChunk(0).catch(fail)
   }
   const openVoiceprintInvite = async (item: ArkmeWorldFeedItem) => {
     const token = inviteLoadTokenRef.current + 1
@@ -848,7 +1927,11 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
   }
 
   return <main style={styles.root} data-arkme-owned="world-surface" aria-label="世界">
-    <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })} voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
+    <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
+      {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
+      {...(target?.displayName !== undefined ? { catalogOwnerName: target.displayName } : scope === 'mine' ? { catalogOwnerName: '我' } : {})}
+      voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}
+      {...(voiceprintLoadingRecordRef === undefined ? {} : { voiceprintLoadingRecordRef })}
       {...(interactionRecordRef === undefined ? {} : { interactionRecordRef })}
       {...(actionMessage === undefined ? {} : { actionMessage })}
       onRefresh={refresh} {...(onBackToWorld === undefined ? {} : { onBackToWorld })} onSelectScope={selectScope} onOpenComposer={() => { setComposerOpen(true) }}
@@ -857,12 +1940,19 @@ export function ArkmeWorldSurface({ target, onBackToWorld }: { target?: ArkmeWor
         if (state.nextOffset === undefined) return
         if (target === undefined) load(scope, state.nextOffset)
         else loadUser(target, state.nextOffset)
-      }} />
+      }} onOpenAuthor={item => { if (item.authorRef !== undefined) setAuthorCardItem(item) }}
+      onOpenExtension={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
+      onOpenAllExtensions={(ownerUserId, ownerName) => { arkmeUi.showAuthorExtensions(ownerUserId, ownerName) }} />
     {composerOpen && <PublishDialog onClose={() => { setComposerOpen(false) }} onPublished={result => {
       setLoaded(current => ({ ...current, all: false, mine: false }))
       setActionMessage(result.visibility === 'pending_review' ? '已提交审核，可稍后在“我的世界”查看' : '已发布到世界')
       setScope('mine')
     }} />}
     {inviteItem !== undefined && <VoiceprintInviteDialog item={inviteItem} variantIndex={invitePresentationIndexesRef.current.get(inviteItem.recordRef) ?? 0} {...(inviteSocialContext === undefined ? {} : { socialContext: inviteSocialContext })} sending={inviteSending} {...(inviteMessage === undefined ? {} : { message: inviteMessage })} onClose={closeVoiceprintInvite} onConfirm={item => { void inviteVoiceprint(item) }} />}
+    {authorCardItem !== undefined && <ArkmeMemberProfileCard
+      member={worldAuthorCardMember(authorCardItem)} busy={authorCardBusy}
+      onClose={() => { if (!authorCardBusy) setAuthorCardItem(undefined) }}
+      onSend={() => { void openPrivateChatForAuthor(authorCardItem) }}
+    />}
   </main>
 }

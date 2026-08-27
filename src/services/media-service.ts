@@ -23,8 +23,25 @@ export interface ArkmeWorldImageReader {
   openWorldImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
 }
 
+export interface ArkmeBotImageReader {
+  openBotImageRef(imageRef: string, viewerUserId: number): Promise<ArkmeWorldImageEntry>
+}
+
 export interface ArkmeRecordIdentity {
   recordUid(raw: unknown): string
+}
+
+export interface ArkmeUnmarkedSpeakerMediaTuple {
+  viewerUserId: number
+  candidateId: string
+  segmentId: string
+  sessionId: string
+  childId: string
+  audioFileName: string
+}
+
+export interface ArkmeUnmarkedSpeakerSegmentResolver {
+  resolveSegmentForMedia(segmentRef: string, candidateRef: string): Promise<ArkmeUnmarkedSpeakerMediaTuple>
 }
 
 export interface ArkmeMediaDescriptor {
@@ -136,6 +153,31 @@ function worldVoiceprintFileName(mimeType: string): string {
   return extension === undefined ? '世界声纹' : `世界声纹.${extension}`
 }
 
+function unmarkedSpeakerAudioType(audioFileName: string): { mimeType: string; fileName: string } {
+  const extension = /\.([A-Za-z0-9]{1,10})$/.exec(audioFileName)?.[1]?.toLowerCase() ?? ''
+  const mimeType = ({
+    wav: 'audio/wav',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    mp4: 'audio/mp4',
+    aac: 'audio/aac',
+    ogg: 'audio/ogg',
+    opus: 'audio/ogg',
+    webm: 'audio/webm',
+    flac: 'audio/flac',
+    pcm: 'audio/L16',
+  } as Record<string, string>)[extension] ?? 'audio/wav'
+  return { mimeType, fileName: extension === '' ? '说话片段' : `说话片段.${extension}` }
+}
+
+function audioObjectPathPart(value: string): string | undefined {
+  const normalized = value.trim()
+  return normalized !== '' && normalized.length <= 512 && normalized !== '.' && normalized !== '..'
+    && !/[\\/\u0000-\u001f\u007f]/.test(normalized)
+    ? normalized
+    : undefined
+}
+
 function trustedSignedImageUrl(environment: 'test' | 'prod', raw: string): URL {
   let parsed: URL
   try { parsed = new URL(raw.trim()) }
@@ -225,6 +267,7 @@ export class MediaService {
     private readonly profile: ProfileService,
     private readonly worldImages: ArkmeWorldImageReader,
     private readonly recordIdentity: ArkmeRecordIdentity,
+    private readonly botImages?: ArkmeBotImageReader,
   ) {}
 
   dispose(): void {
@@ -390,6 +433,76 @@ export class MediaService {
     })
   }
 
+  async issueUnmarkedSpeakerMediaRef(
+    resolver: ArkmeUnmarkedSpeakerSegmentResolver,
+    candidateRef: string,
+    segmentRef: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const tuple = await resolver.resolveSegmentForMedia(segmentRef, candidateRef)
+    const session = await this.runtime.requireSession()
+    if (!Number.isSafeInteger(tuple.viewerUserId) || tuple.viewerUserId <= 0 || tuple.viewerUserId !== session.userId) {
+      throw new ArkmePluginError('unmarked-audio-account-mismatch', '说话片段与当前账号不匹配', false, 403)
+    }
+    const sessionId = audioObjectPathPart(tuple.sessionId)
+    const childId = audioObjectPathPart(tuple.childId)
+    const audioFileName = audioObjectPathPart(tuple.audioFileName)
+    if (sessionId === undefined || childId === undefined || audioFileName === undefined) {
+      throw new ArkmePluginError('unmarked-audio-path-invalid', '说话片段音频路径无效', false, 502)
+    }
+    const objectPath = `${md5Text(String(session.userId))}/${String(session.userId)}/audio_output/${sessionId}/${childId}/${audioFileName}`
+    const credentials = await this.audioOssCredentials(session, signal)
+    const bucket = this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test'
+    let signedUrlText: string
+    try {
+      const client = new OSS({
+        region: 'oss-cn-hangzhou',
+        bucket,
+        secure: true,
+        accessKeyId: credentials.accessKeyId,
+        accessKeySecret: credentials.accessKeySecret,
+        stsToken: credentials.stsToken,
+        refreshSTSTokenInterval: 10 * 60 * 1000,
+        refreshSTSToken: async () => {
+          const refreshed = await this.audioOssCredentials(await this.runtime.requireSession(), signal)
+          return {
+            accessKeyId: refreshed.accessKeyId,
+            accessKeySecret: refreshed.accessKeySecret,
+            stsToken: refreshed.stsToken,
+          }
+        },
+      })
+      signedUrlText = client.signatureUrl(objectPath, { method: 'GET', expires: 120 })
+    } catch (error) {
+      throw new ArkmePluginError('unmarked-audio-sign-failed', '说话片段音频授权失败', true, 502, { cause: error })
+    }
+    let signedUrl: URL
+    try {
+      signedUrl = new URL(signedUrlText)
+    } catch (error) {
+      throw new ArkmePluginError('unmarked-audio-sign-contract-invalid', '说话片段音频授权响应无效', true, 502, { cause: error })
+    }
+    let signedPath: string
+    try {
+      signedPath = decodeURIComponent(signedUrl.pathname).replace(/^\/+/, '')
+    } catch (error) {
+      throw new ArkmePluginError('unmarked-audio-sign-contract-invalid', '说话片段音频授权路径无效', true, 502, { cause: error })
+    }
+    const hasSignature = (signedUrl.searchParams.get('Signature') ?? signedUrl.searchParams.get('x-oss-signature') ?? '').trim() !== ''
+    if (signedUrl.protocol !== 'https:' || signedUrl.username !== '' || signedUrl.password !== ''
+      || signedUrl.port !== '' || signedUrl.hash !== '' || !hasSignature
+      || !allowedSignedAudioHost(this.runtime.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
+      throw new ArkmePluginError('unmarked-audio-sign-target-rejected', '说话片段音频授权目标不受信任', false, 502)
+    }
+    const display = unmarkedSpeakerAudioType(audioFileName)
+    return this.issueMediaRef(session.userId, {
+      remoteUrl: signedUrl.toString(),
+      mimeType: display.mimeType,
+      fileName: display.fileName,
+      size: 0,
+    }, undefined, 110_000)
+  }
+
   async readImage(
     imageRef: string,
     options: { maxBytes?: number; signal?: AbortSignal } = {},
@@ -464,6 +577,16 @@ export class MediaService {
     byteLimit: number,
     signal?: AbortSignal,
   ): Promise<ArkmeImageBytes> {
+    if (imageRef.trim().startsWith('arkme-bot-image-v1.')) {
+      if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
+      const reference = await this.botImages.openBotImageRef(imageRef, session.userId)
+      return await this.downloadSignedImage(
+        trustedSignedImageUrl(this.runtime.config.environment, reference.sourceUrl),
+        byteLimit,
+        signal,
+        this.runtime.requestScope(session.userId),
+      )
+    }
     if (imageRef.trim().startsWith('arkme-media-v1.')) {
       const { response, descriptor } = await this.fetchMedia(imageRef.trim(), undefined, signal)
       if (!descriptor.mimeType.trim().toLowerCase().startsWith('image/')) {
@@ -575,15 +698,134 @@ export class MediaService {
     const payload = jsonObjectValue(record.payload)
     const core = objectValue(root.record_core)
     return jsonObjectValue(
-      root.content_payload ?? payload.content_payload ?? record.content_payload ?? core.content_payload,
+      root.content_payload ?? root.contentPayload
+        ?? payload.content_payload ?? payload.contentPayload
+        ?? record.content_payload ?? record.contentPayload
+        ?? core.content_payload ?? core.contentPayload,
     )
   }
 
+  /**
+   * Older quick-record projections carry their voice outside media_refs.  The
+   * Flutter clients accept these payload forms, so normalize them before the
+   * shared display-item hydration and rich-content renderer see the record.
+   */
+  private recordVoiceMediaRef(raw: unknown): Record<string, unknown> | undefined {
+    const root = objectValue(raw)
+    const record = objectValue(root.record)
+    const payload = jsonObjectValue(record.payload)
+    const core = objectValue(root.record_core)
+    const contentPayload = this.recordContentPayload(raw)
+    const candidates = [
+      contentPayload.voice, contentPayload.voice_media, contentPayload.voiceMedia,
+      payload.voice, payload.voice_media, payload.voiceMedia,
+      record.voice, record.voice_media, record.voiceMedia,
+      core.voice, core.voice_media, core.voiceMedia,
+      root.voice, root.voice_media, root.voiceMedia,
+    ]
+    for (const candidate of candidates) {
+      const voice = jsonObjectValue(candidate)
+      const fileAssetUid = [
+        voice.source_file_asset_uid, voice.sourceFileAssetUid,
+        voice.file_asset_uid, voice.fileAssetUid,
+        voice.file_id, voice.fileId, voice.uid,
+      ].map(value => stringValue(value).trim()).find(value => value !== '')
+      if (fileAssetUid === undefined) continue
+      const durationSeconds = numberValue(voice.duration_sec ?? voice.durationSec ?? voice.duration)
+      const durationMillis = numberValue(voice.duration_millis ?? voice.durationMillis ?? voice.duration_ms)
+      return {
+        ...voice,
+        file_asset_uid: fileAssetUid,
+        file_kind: 2,
+        ...(stringValue(voice.mime_type ?? voice.mimeType).trim() === '' ? {} : {
+          mime_type: stringValue(voice.mime_type ?? voice.mimeType).trim(),
+        }),
+        ...(durationSeconds > 0 ? { duration_sec: durationSeconds }
+          : durationMillis > 0 ? { duration_sec: Math.ceil(durationMillis / 1000) }
+            : {}),
+      }
+    }
+    return undefined
+  }
+
   private recordMediaRefs(raw: unknown): Record<string, unknown>[] {
-    return listValue(this.recordContentPayload(raw).media_refs).map(objectValue).filter(item => {
-      return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
-        && stringValue(item.file_asset_uid).trim() !== ''
-    })
+    const contentPayload = this.recordContentPayload(raw)
+    const voiceRef = this.recordVoiceMediaRef(raw)
+    const refs = [
+      ...listValue(contentPayload.media_refs ?? contentPayload.mediaRefs).map(objectValue),
+      ...(voiceRef === undefined ? [] : [voiceRef]),
+    ].filter(item => Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
+      && stringValue(item.file_asset_uid).trim() !== '')
+    return [...new Map(refs.map(item => [stringValue(item.file_asset_uid).trim(), item])).values()]
+  }
+
+  private async queryRecordMediaDisplayItems(
+    recordUids: string[],
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<Map<string, unknown[]>> {
+    const expectedRecordUids = [...new Set(recordUids.map(value => value.trim()).filter(value => value !== ''))]
+    const displayItemsByRecordUid = new Map<string, unknown[]>()
+    if (expectedRecordUids.length === 0) return displayItemsByRecordUid
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/media/batch-list',
+      { record_uids: expectedRecordUids },
+      session,
+      signal,
+      {
+        lane: 'interactive-read',
+        scope: 'record-media-page',
+        key: expectedRecordUids.join(','),
+        cacheMs: 1_000,
+      },
+    )
+    // The deployed Record owner names the per-record projection array `items`.
+    // Accept the older `results` draft as a read-only compatibility fallback.
+    for (const rawResult of listValue(data.items ?? data.results)) {
+      const result = objectValue(rawResult)
+      const recordUid = stringValue(result.record_uid).trim()
+      if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
+      displayItemsByRecordUid.set(recordUid, listValue(result.items))
+    }
+    return displayItemsByRecordUid
+  }
+
+  async issueSearchAudioMediaRefs(
+    requests: Array<{ recordUid: string; fileAssetUid: string }>,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const normalized = [...new Map(requests.map(request => {
+      const recordUid = request.recordUid.trim()
+      const fileAssetUid = request.fileAssetUid.trim()
+      return [`${recordUid}\0${fileAssetUid}`, { recordUid, fileAssetUid }] as const
+    }).filter(([, request]) => request.recordUid !== '' && request.fileAssetUid !== '')).values()].slice(0, 50)
+    const mediaRefs = new Map<string, string>()
+    if (normalized.length === 0 || this.runtime.config.richMediaRenderEnabled === false) return mediaRefs
+    const session = await this.runtime.requireSession()
+    const displayItemsByRecordUid = await this.queryRecordMediaDisplayItems(
+      normalized.map(request => request.recordUid),
+      session,
+      signal,
+    )
+    for (const request of normalized) {
+      const rawItem = (displayItemsByRecordUid.get(request.recordUid) ?? []).find(raw => {
+        return stringValue(objectValue(raw).file_asset_uid).trim() === request.fileAssetUid
+      })
+      const item = objectValue(rawItem)
+      const remoteUrl = safeHttpsUrl(item.download_url ?? item.preview_url)
+      if (remoteUrl === undefined) continue
+      const parsedUrl = new URL(remoteUrl)
+      const mimeType = stringValue(item.mime_type).trim() || 'audio/mpeg'
+      if (!allowedSignedAudioHost(this.runtime.config.environment, parsedUrl.hostname) || !mimeType.startsWith('audio/')) continue
+      const key = `${request.recordUid}\0${request.fileAssetUid}`
+      mediaRefs.set(key, this.issueMediaRef(session.userId, {
+        remoteUrl,
+        mimeType,
+        fileName: stringValue(item.file_name).trim() || '语音',
+        size: Math.max(0, numberValue(item.size)),
+      }, `search-audio\0${key}`))
+    }
+    return mediaRefs
   }
 
   async hydrateRecordMediaPage(
@@ -604,25 +846,8 @@ export class MediaService {
       return { displayItemsByRecordUid, unavailableRecordUids }
     }
     try {
-      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-        '/api/v1/records/media/batch-list',
-        { record_uids: expectedRecordUids },
-        session,
-        signal,
-        {
-          lane: 'interactive-read',
-          scope: 'record-media-page',
-          key: expectedRecordUids.join(','),
-          cacheMs: 1_000,
-        },
-      )
-      // The deployed Record owner names the per-record projection array `items`.
-      // Accept the older `results` draft as a read-only compatibility fallback.
-      for (const rawResult of listValue(data.items ?? data.results)) {
-        const result = objectValue(rawResult)
-        const recordUid = stringValue(result.record_uid).trim()
-        if (recordUid === '' || !expectedRecordUids.includes(recordUid)) continue
-        const items = listValue(result.items)
+      const queriedItems = await this.queryRecordMediaDisplayItems(expectedRecordUids, session, signal)
+      for (const [recordUid, items] of queriedItems) {
         displayItemsByRecordUid.set(recordUid, items)
         const hasDeliverableItem = items.some(rawItem => {
           const item = objectValue(rawItem)
@@ -640,6 +865,34 @@ export class MediaService {
     return { displayItemsByRecordUid, unavailableRecordUids }
   }
 
+  /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
+  forwardContentBlocks(files: unknown[], viewerUserId: number): ArkmeContentBlock[] {
+    if (this.runtime.config.richMediaRenderEnabled === false) return []
+    const displayItems = files.slice(0, 32).map(objectValue).flatMap((file, index) => {
+      if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
+      const trustedUrl = (raw: unknown): string | undefined => {
+        const value = safeHttpsUrl(raw)
+        if (value === undefined) return undefined
+        const url = new URL(value)
+        return url.port === '' && url.hash === '' && (allowedSignedImageHost(this.runtime.config.environment, url.hostname)
+          || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)) ? value : undefined
+      }
+      const downloadUrl = trustedUrl(file.download_url ?? file.downloadUrl)
+      const previewUrl = trustedUrl(file.preview_url ?? file.previewUrl)
+      return [{
+        // Do not copy file/source IDs into the public projection or stable media cache.
+        file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
+        file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
+        mime_type: stringValue(file.mime_type ?? file.mimeType),
+        size: numberValue(file.size), sort_order: numberValue(file.order ?? file.sort_order ?? index),
+        duration_sec: numberValue(file.duration_sec ?? file.durationSec),
+        ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
+        ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
+      }]
+    })
+    return this.richContentBlocks({}, viewerUserId, displayItems)
+  }
+
   issueImageMediaRef(
     viewerUserId: number,
     descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
@@ -648,10 +901,26 @@ export class MediaService {
     return this.issueMediaRef(viewerUserId, descriptor, stableIdentity)
   }
 
+  favoriteStickerMediaRef(raw: unknown, viewerUserId: number): string | undefined {
+    const item = objectValue(raw)
+    const remoteUrl = stringValue(item.preview_url ?? item.download_url).trim()
+    if (remoteUrl === '') return undefined
+    const fileAssetUid = stringValue(item.file_asset_uid).trim()
+    const fileName = stringValue(item.file_name).trim() || '收藏表情'
+    const mimeType = stringValue(item.mime_type).trim() || 'image/*'
+    return this.issueMediaRef(viewerUserId, {
+      remoteUrl,
+      mimeType,
+      fileName,
+      size: Math.max(0, Math.trunc(numberValue(item.file_size ?? item.size))),
+    }, fileAssetUid === '' ? undefined : `favorite-sticker:${fileAssetUid}`)
+  }
+
   private issueMediaRef(
     viewerUserId: number,
     descriptor: Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'>,
     stableIdentity?: string,
+    lifetimeMillis?: number,
   ): string {
     const now = Date.now()
     for (const [key, value] of this.mediaRefs) {
@@ -673,8 +942,8 @@ export class MediaService {
     const cachedRef = stableKey === undefined ? undefined : this.stableMediaRefs.get(stableKey)
     const ref = cachedRef ?? `arkme-media-v1.${randomUUID()}`
     this.mediaRefs.delete(ref)
-    const lifetimeMillis = stableKey === undefined ? 30 * 60_000 : 24 * 60 * 60_000
-    this.mediaRefs.set(ref, { ...descriptor, viewerUserId, expiresAtMillis: now + lifetimeMillis, ...(stableKey === undefined ? {} : { stableKey }) })
+    const resolvedLifetimeMillis = lifetimeMillis ?? (stableKey === undefined ? 30 * 60_000 : 24 * 60 * 60_000)
+    this.mediaRefs.set(ref, { ...descriptor, viewerUserId, expiresAtMillis: now + resolvedLifetimeMillis, ...(stableKey === undefined ? {} : { stableKey }) })
     if (stableKey !== undefined) this.stableMediaRefs.set(stableKey, ref)
     return ref
   }
@@ -698,7 +967,7 @@ export class MediaService {
       const uid = stringValue(item.file_asset_uid).trim()
       if (uid !== '') displayByAsset.set(uid, item)
     }
-    const mediaRefs = listValue(contentPayload.media_refs).map(objectValue)
+    const mediaRefs = this.recordMediaRefs(raw)
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
       : displayItems
@@ -725,6 +994,9 @@ export class MediaService {
         size: Math.max(0, Math.trunc(numberValue(item.size))),
         ...(numberValue(item.duration_sec) > 0 ? { durationSec: numberValue(item.duration_sec) } : {}),
         sortOrder: Math.trunc(numberValue(item.sort_order ?? index)),
+        ...([1, 3].includes(Math.trunc(numberValue(item.render_role)))
+          ? { renderRole: Math.trunc(numberValue(item.render_role)) as 1 | 3 }
+          : {}),
       }]
     }).sort((left, right) => left.sortOrder - right.sortOrder)
   }
@@ -748,6 +1020,27 @@ export class MediaService {
       || normalized.expiration === '' || !Number.isFinite(Date.parse(normalized.expiration))
       || Date.parse(normalized.expiration) <= Date.now()) {
       throw new ArkmePluginError('image-sts-contract-invalid', 'Arkme 图片授权凭据无效或已过期', true, 502)
+    }
+    return normalized
+  }
+
+  private async audioOssCredentials(
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeOssCredentials> {
+    const credentials = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-sts-token', {}, session, signal, { lane: 'interactive-read', bypassCache: true },
+    )
+    const normalized = {
+      accessKeyId: stringValue(credentials.access_key_id).trim(),
+      accessKeySecret: stringValue(credentials.access_key_secret).trim(),
+      stsToken: stringValue(credentials.security_token).trim(),
+      expiration: stringValue(credentials.expiration).trim(),
+    }
+    if (normalized.accessKeyId === '' || normalized.accessKeySecret === '' || normalized.stsToken === ''
+      || normalized.expiration === '' || !Number.isFinite(Date.parse(normalized.expiration))
+      || Date.parse(normalized.expiration) <= Date.now()) {
+      throw new ArkmePluginError('unmarked-audio-sts-contract-invalid', '说话片段音频授权凭据无效或已过期', true, 502)
     }
     return normalized
   }

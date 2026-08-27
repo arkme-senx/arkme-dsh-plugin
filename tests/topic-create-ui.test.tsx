@@ -4,16 +4,19 @@ import { readFile } from 'node:fs/promises'
 import {
   ARKME_TOPIC_CREATE_ACTION_COLOR, ArkmeTopicCreateDialog,
 } from '../src/client/ArkmeTopicCreateDialog.js'
+import { ArkmeTopicDissolveDialog } from '../src/client/ArkmeTopicManagementDialog.js'
 import {
   ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT, ARKME_TOPIC_DIRECTORY_SEARCH_BG,
   ArkmeTopicDirectoryPopover, filterArkmeTopicSources,
-  reconcileArkmeTopicSelection,
+  mergeArkmeTopicSourcePages, reconcileArkmeTopicSelection,
 } from '../src/client/ArkmeTopicDirectoryPopover.js'
 import {
   arkmeAggregateSourceForUser, arkmeSourceComposerPlaceholder, arkmeSourceDestinationLabel,
 } from '../src/client/ArkmeSidebar.js'
+import { arkmeConversationComposerLayout } from '../src/client/conversation-composer-presentation.js'
 import {
   appendArkmeSourceBreadcrumbTrail, ArkmeSourceBreadcrumb, arkmeSourceBreadcrumb,
+  arkmeSelfTopicOptions, arkmeSelfTopicSelectionLabel, arkmeSelfTopicSelectionPath, arkmeSelfTopicTreeRows,
   truncateArkmeSourceBreadcrumbTrail,
 } from '../src/client/ArkmeSourceBreadcrumb.js'
 import type { ArkmeSourceItem } from '../src/types.js'
@@ -23,12 +26,13 @@ import {
   canCreateChildTopicAtParentLevel, expandTopicFromRowClick, isTopicRowFullyVisible,
   mergeCreatedTopicSource, toggleTopicCollapsedState,
 } from '../src/client/ArkmeVirtualWorkspace.js'
-import { buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
+import { arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree } from '../src/client/source-tree.js'
 import type { ArkmeSourceTreeRow } from '../src/client/source-tree.js'
 
-function renderDialog(mode: 'topic' | 'child'): string {
+function renderDialog(mode: 'topic' | 'child', parentTopicPath?: readonly string[]): string {
   return renderToStaticMarkup(<ArkmeTopicCreateDialog
-    mode={mode} submitting={false} onCancel={() => {}} onConfirm={() => {}}
+    mode={mode} {...(parentTopicPath === undefined ? {} : { parentTopicPath })}
+    submitting={false} onCancel={() => {}} onConfirm={() => {}}
   />)
 }
 
@@ -46,7 +50,8 @@ describe('topic create UI', () => {
   it('keeps the add action at the far left of the composer tool row', async () => {
     const source = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain("justifyContent: 'space-between'")
+    expect(arkmeConversationComposerLayout.tools.justifyContent).toBe('space-between')
+    expect(source).toContain('...arkmeConversationComposerLayout.tools')
     expect(source.indexOf('aria-label="添加内容"')).toBeLessThan(source.indexOf('aria-label="发送消息"'))
   })
 
@@ -113,12 +118,13 @@ describe('topic create UI', () => {
   })
 
   it('keeps the create dialog focused on the topic name without magnet settings', () => {
-    const child = renderDialog('child')
+    const child = renderDialog('child', ['想写/可写的文章', 'AI-coding 团队变革文章'])
     const root = renderDialog('topic')
 
     expect(child).toContain('role="dialog"')
     expect(child).toContain('aria-modal="true"')
     expect(child).toContain('创建子主题')
+    expect(child).toContain('将在「想写/可写的文章 / AI-coding 团队变革文章」下创建')
     expect(root).toContain('创建主题')
     expect(root).toContain('主题名称')
     expect(root).toContain('请输入主题名称')
@@ -134,6 +140,22 @@ describe('topic create UI', () => {
     expect(`${child}${root}`).not.toContain('--dsw-specific-dialog-fill')
     expect(`${child}${root}`).not.toContain('--dsw-alias-brand-disabled')
     expect(ARKME_TOPIC_CREATE_ACTION_COLOR).toBe('#17191C')
+  })
+
+  it('states the correct record destination before dissolving a topic', () => {
+    const nested = renderToStaticMarkup(<ArkmeTopicDissolveDialog
+      topic={topicRow.source} parent={{ ...topicRow.source, sourceRef: 'parent', displayName: '工作' }} recordCount={23}
+      childCount={2} submitting={false} onCancel={() => {}} onConfirm={() => {}}
+    />)
+    const root = renderToStaticMarkup(<ArkmeTopicDissolveDialog
+      topic={topicRow.source} parent={undefined} recordCount={0}
+      childCount={0} submitting={false} onCancel={() => {}} onConfirm={() => {}}
+    />)
+
+    expect(nested).toContain('23 条快记将归入“工作”')
+    expect(nested).toContain('2 个子主题会提升为“工作”的子主题')
+    expect(root).toContain('0 条快记将回到未分类')
+    expect(root).toContain('此操作不会删除快记')
   })
 
   it('shows the child-topic shortcut only for a hovered topic row', () => {
@@ -154,15 +176,28 @@ describe('topic create UI', () => {
     const created = renderToStaticMarkup(<ArkmeTopicTreeRow
       {...baseProps} createdHighlightActive createdHighlightVisible hovered={false}
     />)
+    const nestedBranch = renderToStaticMarkup(<ArkmeTopicTreeRow
+      {...baseProps} row={{ ...topicRow, depth: 1 }} hovered={false}
+    />)
+    const nestedLeaf = renderToStaticMarkup(<ArkmeTopicTreeRow
+      {...baseProps} row={{ ...topicRow, depth: 1, hasChildren: false, expanded: false }} hovered={false}
+    />)
 
     expect(resting).toContain('>36</span>')
     expect(resting).not.toContain('创建子主题')
+    expect(resting).toContain('viewBox="0 0 16 16"')
+    expect(resting).toContain('transform:rotate(90deg)')
+    expect(resting).toContain('stroke-linejoin="round"')
+    expect(resting).not.toContain('›')
     expect(hovered).toContain('aria-label="在工作下创建子主题"')
     expect(hovered).not.toContain('>36</span>')
     expect(hovered).toContain('<svg')
     expect(hovered).toContain('width:calc(100% - 8px)')
     expect(hovered).toContain('margin:2px 4px')
     expect(hovered).toContain('width:44px')
+    expect(hovered).toContain('top:0')
+    expect(hovered).toContain('bottom:0')
+    expect(hovered).toContain('align-items:center')
     expect(hovered).toContain('padding-right:6px')
     expect(hovered).toContain('var(--dsw-alias-label-caption, #a3a8ae)')
     expect(leaf).toContain('background:var(--dsw-alias-label-caption, #a3a8ae)')
@@ -175,6 +210,10 @@ describe('topic create UI', () => {
     expect(created).toContain('box-shadow:none')
     expect(created).toContain('transition:background-color 140ms ease')
     expect(created).not.toContain('inset 2px 0 #9eadff')
+    expect(nestedBranch).toContain('left:14px')
+    expect(nestedBranch).toContain('margin-left:20px')
+    expect(nestedLeaf).toContain('left:14px')
+    expect(nestedLeaf).toContain('margin-left:20px')
   })
 
   it('keeps the root create action in a non-scrolling footer', () => {
@@ -187,15 +226,17 @@ describe('topic create UI', () => {
     expect(footer).not.toContain('box-shadow')
   })
 
-  it('renders the directory trigger next to the floating surface close action', () => {
+  it('renders the original directory trigger as the leading header action', () => {
     const markup = renderToStaticMarkup(<ArkmeTopicDirectoryPopover
       userId={10001} selectedSource={undefined} onSelect={() => {}}
       onSelectionInvalidated={() => {}} onSelfSourcesResolution={() => {}} retryRevision={0}
     />)
 
-    expect(markup).toContain('aria-label="打开分类目录"')
-    expect(markup).toContain('title="分类目录"')
-    expect(markup).toContain('margin-left:auto')
+    expect(markup).toContain('aria-label="打开主题"')
+    expect(markup).toContain('title="主题"')
+    expect(markup).toContain('data-arkme-topic-directory-trigger="leading"')
+    expect(markup).toContain('margin-right:7px')
+    expect(markup).not.toContain('margin-left:auto')
     expect(markup).not.toContain('position:absolute')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).toContain('100vh')
     expect(ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT).not.toContain('100%')
@@ -263,29 +304,43 @@ describe('topic create UI', () => {
     trail = appendArkmeSourceBreadcrumbTrail(trail, childTopic, sources)
     trail = appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)
     expect(arkmeSourceBreadcrumb(trail, sources).map(segment => segment.label))
-      .toEqual(['发给自己', '产品研发', '发布流程', 'DSH 插件', '产品研发'])
+      .toEqual(['发给自己', '发布流程', 'DSH 插件', '产品研发'])
     expect(appendArkmeSourceBreadcrumbTrail(trail, rootTopic, sources)).toBe(trail)
     expect(truncateArkmeSourceBreadcrumbTrail(trail, 1).map(source => source.displayName))
-      .toEqual(['产品研发', '发布流程'])
+      .toEqual(['发布流程', 'DSH 插件'])
     expect(appendArkmeSourceBreadcrumbTrail(trail, aggregate, sources)).toEqual([])
 
     const markup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
-      trail={[rootTopic, leafTopic]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
+      selectedSource={leafTopic} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
     />)
-    expect(markup).toContain('aria-label="当前主题路径"')
+    expect(markup).toContain('aria-label="发给自己主题"')
+    expect(markup).toContain('data-arkme-self-topic-root="true"')
+    expect(markup).toContain('data-arkme-self-topic-selector="true"')
     expect(markup).toContain('发给自己')
-    expect(markup).toContain('产品研发')
-    expect(markup).not.toContain('DSH 插件')
-    expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('--dsw-alias-label-secondary')
     expect(markup).toContain('发布流程')
 
-    const aggregateMarkup = renderToStaticMarkup(<ArkmeSourceBreadcrumb
-      trail={[]} sources={sources} onSelect={() => {}} onSelectAggregate={() => {}}
-    />)
-    expect(aggregateMarkup).toContain('aria-current="page"')
-    expect(aggregateMarkup).toContain('--dsw-alias-label-primary')
-    expect(aggregateMarkup).not.toContain('--dsw-alias-label-caption')
+    expect(arkmeSelfTopicSelectionLabel(undefined)).toBe('全部')
+    expect(arkmeSelfTopicSelectionLabel(aggregate)).toBe('全部')
+    expect(arkmeSelfTopicSelectionLabel(leafTopic)).toBe('发布流程')
+    expect(arkmeSelfTopicSelectionPath(leafTopic, sources)).toEqual(['产品研发', 'DSH 插件', '发布流程'])
+    expect(arkmeTopicPathNames(leafTopic, sources)).toEqual(['产品研发', 'DSH 插件', '发布流程'])
+    expect(arkmeSelfTopicSelectionLabel(leafTopic, sources)).toBe('产品研发 / DSH 插件 / 发布流程')
+    expect(arkmeSelfTopicOptions(sources)).toEqual([
+      { source: defaultCategory, depth: 0 },
+      { source: rootTopic, depth: 0 },
+      { source: childTopic, depth: 1 },
+      { source: leafTopic, depth: 2 },
+    ])
+    expect(arkmeSelfTopicTreeRows(sources, new Set()).map(row => [
+      row.source.displayName, row.depth, row.hasChildren, row.expanded,
+    ])).toEqual([
+      ['默认分类', 0, false, false],
+      ['产品研发', 0, true, true],
+      ['DSH 插件', 1, true, true],
+      ['发布流程', 2, false, false],
+    ])
+    expect(arkmeSelfTopicTreeRows(sources, new Set([rootTopic.sourceRef])).map(row => row.source.displayName))
+      .toEqual(['默认分类', '产品研发'])
   })
 
   it('rebinds rotated source references without duplicating the visited destination', () => {
@@ -304,6 +359,25 @@ describe('topic create UI', () => {
     expect(segments[1]?.source).toBe(current)
   })
 
+  it('merges later topic pages while retaining and refreshing earlier sources', () => {
+    const initial = { ...topicRow.source, sourceRef: 'topic-1', displayName: '一级主题', hasPendingChildren: true }
+    const refreshed = { ...initial, hasPendingChildren: undefined, recordCount: 9 }
+    const later = { ...topicRow.source, sourceRef: 'topic-2', displayName: '二级主题', parentSourceRef: 'topic-1' }
+
+    expect(mergeArkmeTopicSourcePages([initial], [refreshed, later])).toEqual([refreshed, later])
+  })
+
+  it('removes an older occurrence when a visited topic becomes current again', () => {
+    const first = { ...topicRow.source, sourceRef: 'first', displayName: '2' }
+    const second = { ...topicRow.source, sourceRef: 'second', displayName: '1' }
+    const third = { ...topicRow.source, sourceRef: 'third', displayName: '会很健康' }
+    const sources = [first, second, third]
+
+    const trail = appendArkmeSourceBreadcrumbTrail([first, second, third], first, sources)
+
+    expect(trail.map(source => source.displayName)).toEqual(['1', '会很健康', '2'])
+  })
+
   it('never reuses a resolved aggregate source across accounts', () => {
     const aggregate: ArkmeSourceItem = {
       ...topicRow.source, sourceRef: 'aggregate-a', kind: 'send_to_self', displayName: '发给自己',
@@ -315,7 +389,7 @@ describe('topic create UI', () => {
       userId: 10001,
       resolution: {
         status: 'ready' as const, aggregateSource: aggregate, defaultCategorySource: defaultCategory,
-        sources: [aggregate, defaultCategory],
+        sources: [aggregate, defaultCategory], loading: false,
       },
     }
 

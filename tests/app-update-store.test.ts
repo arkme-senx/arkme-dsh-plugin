@@ -22,14 +22,15 @@ describe('ArkmeAppUpdateStore', () => {
     })
     const store = new ArkmeAppUpdateStore()
     const stop = store.start()
-
-    await vi.waitFor(() => expect(store.getSnapshot().status?.status).toBe('checking'))
-    await vi.advanceTimersByTimeAsync(1_000)
-
-    await vi.waitFor(() => expect(store.getSnapshot().status?.status).toBe('available'))
-    expect(store.getSnapshot().status).toMatchObject({ status: 'available', latestVersion: '1.3.0' })
-    expect(status).toHaveBeenCalledTimes(2)
-    stop()
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(store.getSnapshot().status?.status).toBe('checking')
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(store.getSnapshot().status).toMatchObject({ status: 'available', latestVersion: '1.3.0' })
+      expect(status).toHaveBeenCalledTimes(2)
+    } finally {
+      stop()
+    }
   })
 
   it('checks for an app update once when the client starts', async () => {

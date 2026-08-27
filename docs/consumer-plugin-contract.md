@@ -2,7 +2,7 @@
 
 `@senguoyun/dsh-arkme` owns authentication, OS credential-store access, SQLite caching, account isolation, remote synchronization, and retry semantics. A generated Consumer plugin owns only presentation and user interaction.
 
-The bundled UI uses only official DSH slots: `sidebar.footer.action` owns the launcher, inline Arkme directory, and a non-modal translucent React portal that floats the Arkme message surface over the center column; `settings.general.item` owns account controls. The plugin never registers or replaces `conversation`, so the native DSH Conversation remains mounted and remains perceptible through and around the frosted card. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
+The bundled UI uses only official DSH slots. `sidebar`, `conversation`, and `details` compose the resident Arkme product shell; `settings.section` owns the single `arkme-account` section inside native DSH Settings; `shell.overlay` owns lifecycle dialogs. DSH owns Settings chrome, ordering, and scrolling, while `ArkmeSettingsSurface` owns only Arkme account content and actions. Consumers must not depend on private `sidebar.workspaces.virtual` or `main.surface` extensions.
 
 ## Browser SDK
 
@@ -77,7 +77,7 @@ if ((await arkme.capabilities()).features.extensionPreviews === true && userConf
 
 The SDK communicates only with the same-origin Provider route. Consumers must not read OS credential-store entries, SQLite files, state files, or tokens directly.
 
-`capabilities().features.myExtensions` advertises the current-account extension inventory. `myExtensions()` merges only Host-approved live Cordis, Profile-resolved and cloud-owned facts; consumers must use its states and `publish` result without rescanning Profile files or inferring ownership from names. Every publishable item carries one Host-derived route: `dynamic-cordis-v2` means `artifactContractVersion=2` and `artifactKind=dsh-bundle-tgz` for a live current-session Dynamic Cordis Package; `profile-native-v3` means `artifactContractVersion=3` and `artifactKind=dsh-native-package-tgz` for an installed or Profile-local DSH Bundle. Callers must display that route and pass `ownedRef` unchanged rather than choosing a mode themselves. A GitHub repository URL is provenance metadata, not a third upload route or a cloud clone/build request. A third-party registry/Git dependency appears only when its actually resolved package declares `dsh.bundle.patch`; it is a V3 publication candidate rather than an assertion that the current account authored the upstream code. Public publication still requires accurate GitHub provenance and redistribution rights. `ownedRef` is short-lived and account-bound. `publishMyExtension()` requires a current explicit human request and can publish only the exact Cordis Package, resolved Bundle directory or local Bundle tgz behind that ref; consumers must refresh the list after expiry or account switch. Profile paths, Agent IDs, source archives, artifact upload requests and signing material never enter this contract.
+`capabilities().features.myExtensions` advertises the current-account extension inventory. `myExtensions()` merges only Host-approved live Cordis, Profile-resolved and cloud-owned facts; consumers must use its states and `publish` result without rescanning Profile files or inferring ownership from names. Every publishable item carries one Host-derived route: `dynamic-cordis-v2` means `artifactContractVersion=2` and `artifactKind=dsh-bundle-tgz` for a live current-session Dynamic Cordis Package; `profile-native-v3` means `artifactContractVersion=3` and `artifactKind=dsh-native-package-tgz` for an installed or Profile-local DSH Bundle. Callers pass `ownedRef` unchanged and never choose a mode themselves. A GitHub repository URL is optional provenance metadata, not a third upload route, publication credential or cloud clone/build request. A third-party registry/Git dependency appears only when its actually resolved package declares `dsh.bundle.patch`; it is a V3 publication candidate rather than an assertion that the current account authored the upstream code. `publisher_role` is server-owned: explicit values win, while historical rows without a role resolve to importer only when they have GitHub provenance. Consumers never submit this role. `ownedRef` is short-lived and account-bound. `publishMyExtension()` requires a current explicit human request and can publish only the exact Cordis Package, resolved Bundle directory or local Bundle tgz behind that ref; consumers must refresh the list after expiry or account switch. Profile paths, Agent IDs, source archives, artifact upload requests and signing material never enter this contract.
 
 Plugin update discovery and acknowledgement are lifecycle concerns owned by the bundled Arkme UI. They are intentionally absent from the public Browser SDK, Host `arkmeData` service and model tool catalog. Consumers must not invoke raw `plugin.update.*` operations or attempt to mutate a DSH profile.
 
@@ -91,7 +91,43 @@ Plugin update discovery and acknowledgement are lifecycle concerns owned by the 
 
 `capabilities().features.outgoingCall` reports whether the Provider's bundled private-chat outgoing-call flow is installed. Contract v1 does not expose a Browser SDK method for starting or preparing calls: short-lived UserSig, room bootstrap data, raw user IDs, and WebRTC account values stay inside the built-in Host/runtime path. Consumers must not invoke raw `calls.outgoing.*` operations or recreate a credential-bearing call API.
 
-`profile()` exposes only UI-safe fields: display name, nickname, avatar reference, Arkme ID, optional one-time Arkme ID change availability, account type, creation time, binding flags, and masked phone/email. Raw phone, raw email, real name, and credentials are intentionally excluded from contract v1. The model-facing `arkme_id_set` tool owns the one-time write workflow; the Browser SDK does not expose a profile mutation method.
+`capabilities().features.callHistory === true` advertises Browser-safe call-history access. `callHistory()` returns recent call records with opaque account-scoped `callRef` values, display metadata, result labels, summary status and summary previews. `callDetail(callRef)` accepts only an unchanged `callRef` from the Provider and returns safe metadata, participants, summary and transcript text. `retryCallSummary(callRef)` is a write-like operation and must only run from a current explicit human request to retry or regenerate that call summary. Consumers must never expect or reconstruct raw room IDs, WebRTC credentials, recording URLs, video URLs, signed media URLs or upstream tokens from this contract.
+
+`profile()` exposes only UI-safe fields: display name, nickname, avatar reference, Arkme ID, optional one-time Arkme ID change availability, account type, creation time, binding flags, optional third-party display names such as bound WeChat nickname, and masked phone/email. Raw phone, raw email, real name, OAuth code, and credentials are intentionally excluded from contract v1.
+
+`capabilities().features.accountSettings === true` advertises the current-account settings migration from the Flutter client. Built-in UI shows the Arkme ID, generates the personal QR code from the same World share URL rule used by Flutter (`<shareWebsite>/<arkmeId>`), and can run the phone bind/rebind SMS flow through `auth.phone.send` and `auth.phone.verify`. `checkArkmeIdAvailability()` and `setArkmeIdOnce()` expose the same one-time Arkme ID owner used by the model-facing `arkme_id_set` tool; callers must obtain explicit human confirmation before `setArkmeIdOnce()`. `sendPhoneCode()` requires a Geetest captcha result from a current human browser action, and `verifyPhoneCode()` refreshes auth/profile state after success. WeChat binding remains a Flutter-native AppBridge OAuth flow: Flutter opens WeChat, receives an OAuth code, then calls `/api/v1/auth/wechat-bind`. The plugin contract currently exposes only WeChat binding status and safe nickname; Consumer SDKs and model Tools must not fabricate a WeChat bind/rebind flow without a Host-provided OAuth bridge.
+
+Account settings capability matrix:
+
+| Capability | UI | SDK | Tool | Host owner |
+| --- | --- | --- | --- | --- |
+| Show Arkme ID and bindings | `ArkmeSettingsSurface` account info rows | `profile()` | `arkme_user_profile` | `ProfileService.refreshProfileForSession()` |
+| Personal QR and copy profile link | Built-in QR dialog | `profile()` + Consumer-generated URL from `shareWebsite` | N/A, display-only | Client config + safe profile projection |
+| Check/set Arkme ID once | Built-in ID dialog | `checkArkmeIdAvailability()`, `setArkmeIdOnce()` | `arkme_id_set` with human confirmation | `ProfileService.checkArkmeIdAvailability()` / `setArkmeIdOnce()` |
+| Phone bind/rebind | Built-in SMS dialog | `sendPhoneCode()`, `verifyPhoneCode()` | Blocked: human captcha and SMS code must not be model-driven | `AuthService.sendPhoneCode()` / `verifyPhoneCode()` |
+| WeChat bind/rebind | Status only, explicit unavailable feedback | Blocked until a Host OAuth bridge exists | Blocked until a Host OAuth bridge exists | Flutter AppBridge only today |
+
+UI structure:
+
+```text
+设置页
+  账户概览
+    头像 + 名称 + Arkme ID + Arkme ID 旁二维码图标入口
+  账户
+  账号信息
+    Arkme ID：当前 ID / 暂未获取到账号 ID -> 设置账号 ID 弹窗
+    手机号：脱敏号码 / 未绑定 -> 绑定或更换手机号弹窗
+    微信：绑定昵称 / 已绑定 / 未绑定 -> DSH OAuth 能力缺失反馈
+```
+
+Interaction flow:
+
+```text
+点击 Arkme ID -> 本地格式校验 -> Host 可用性校验 -> 人类确认 -> Host 写入 -> 刷新 profile -> 关闭弹窗
+点击 Arkme ID 旁二维码图标 -> 用 shareWebsite + arkmeId 生成二维码 -> 打开二维码弹窗 -> 复制链接 -> 状态反馈
+点击手机号 -> 极验验证 -> 发送短信 -> 输入验证码 -> Host 验证绑定 -> 刷新 auth/profile -> 关闭弹窗
+点击微信 -> 显示 Flutter AppBridge OAuth 缺失说明，不发起伪请求
+```
 
 `readImage(avatarRef)` resolves an opaque image reference returned by `profile()` or `listSources()`. Private chats expose one optional `avatarRef`. Groups expose the preferred additive `groupAvatar` presentation plus legacy `avatarRefs`: `groupAvatar.slots` preserves the server-selected order for up to five members, including safe phone-default or generic fallbacks when a real image is absent, while legacy `avatarRefs` contains only resolvable real images. `memberCount`, `strategy`, and `computedAtMillis` describe the snapshot without exposing member or session identities. The Provider refreshes an authorized public profile image before downloading it and returns bounded PNG/JPEG/WebP/GIF base64 bytes; signed URLs, STS credentials and bearer tokens never enter the browser contract. Consumers must use `imageDataUrl()` (or decode the payload themselves) instead of concatenating OSS URLs or fetching an avatar reference directly.
 
@@ -104,6 +140,10 @@ Plugin update discovery and acknowledgement are lifecycle concerns owned by the 
 Chat items returned by `readSource()` may include an opaque sender `avatarRef`. Consumers resolve it with `readImage()` and must not infer or construct avatar URLs from sender identity.
 
 Timeline items may include `contentBlocks` for image, video, audio, and file content. Long articles use the owner contract's `templateKind: 8`; `displayKind: 1` remains accepted only as a compatibility signal for previously sent plugin records. Each block's `mediaRef` is account-bound and short-lived. Render it with `sdk.mediaUrl(mediaRef)`; never decode or persist it. `upload()` sends a browser file only to the same-origin plugin route and returns an Arkme asset descriptor for `sendRich()`.
+
+`capabilities().features.forwardContent === true` advertises expanded `readSource()` forward snapshots. `forwardRecords.items` may contain `sourceType`, `segments` (speaker, full text, relative start/end milliseconds), `contentBlocks` and `mediaUnavailable`. Segment audio also uses `contentBlocks`, never raw URLs. The same snapshot is returned to the built-in UI and `arkme_source_read`. Missing optional fields on older Providers mean text-only rendering, not an error. Unknown source types remain `unknown`; filenames must not determine recording type. No original chat name or source access is implied. A transcript with no attachment is not playable. `truncated` marks bounded output (100 flattened records, nesting depth four; up to 500 segments per record / 2000 total; 32 attachments per record). Display it as partial, never silently claim a complete archive.
+
+Consumers retain no additional resources for a one-shot `readSource()`. If they call `subscribe()`, invoke its returned unsubscribe function on disposal. Refresh the received timeline when a media reference expires; do not query the private original recording or cache/decode its reference. Unsupported `contractVersion` is rejected by `capabilities()`; an absent optional `forwardContent` feature falls back to the existing text snapshot.
 
 Long-article detail and update calls always include the opaque `sourceRef` and stable record UID. The Provider reloads the Record owner detail, verifies source membership and author ownership, and forwards the current `version` to the existing CAS update endpoint. A failed or stale update must retain the editor content and must never be retried by creating a second record. Draft helpers persist only title, body and duration in Provider state and isolate them by account, source and edited record.
 

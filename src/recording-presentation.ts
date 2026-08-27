@@ -1,5 +1,4 @@
 import type {
-  ArkmeAiVideoTranscriptSource,
   ArkmeRecordingTimelineEvent,
   ArkmeRecordingTranscriptItem,
   ArkmeRecordingVersion,
@@ -39,6 +38,12 @@ function optionalNumberValue(value: unknown): number | undefined {
   return undefined
 }
 
+function positiveNumberValue(value: unknown): number | undefined {
+  const parsed = optionalNumberValue(value)
+  if (parsed === undefined || !Number.isSafeInteger(parsed) || parsed <= 0) return undefined
+  return parsed
+}
+
 function uniqueStrings(values: unknown[]): string[] {
   return [...new Set(values.map(value => stringValue(value).trim()).filter(value => value !== ''))]
 }
@@ -53,7 +58,7 @@ function displayTimestamp(value: unknown): number {
 export function projectRecordingTranscripts(
   response: unknown,
   speakerResponse: unknown,
-  source: ArkmeAiVideoTranscriptSource = 'system',
+  profilesByUserId: ReadonlyMap<number, { displayName: string; avatarRef?: string }> = new Map(),
 ): ArkmeRecordingTranscriptItem[] {
   const data = objectValue(response)
   const sessions = new Map<string, Record<string, unknown>>()
@@ -99,7 +104,9 @@ export function projectRecordingTranscripts(
     : listValue(objectValue(speakerResponse).speaker_ls ?? objectValue(speakerResponse).speakers)
   for (const rawSpeaker of speakerRows) {
     const speaker = objectValue(rawSpeaker)
-    const id = stringValue(speaker.id ?? speaker.spk_id).trim()
+    // get-speaker-ls uses speaker_id in the desktop client's current contract;
+    // older responses used id or spk_id.
+    const id = stringValue(speaker.id ?? speaker.speaker_id ?? speaker.spk_id).trim()
     if (id !== '') speakers.set(id, speaker)
   }
 
@@ -115,39 +122,7 @@ export function projectRecordingTranscripts(
     const childStart = childOffset >= 100_000_000_000
       ? childOffset
       : numberValue(session.start_at) + childOffset
-    const rows = listValue(source === 'doubao' ? child.doubao_asr : child.asr)
-    const doubaoStatus = numberValue(child.doubao_asr_status)
-    if (source === 'doubao' && (doubaoStatus === 1 || doubaoStatus === 2
-      || doubaoStatus === 4 || doubaoStatus === 5)) {
-      const transcriptStatus = doubaoStatus === 1 || doubaoStatus === 2
-        ? 'processing'
-        : doubaoStatus === 4 ? 'silent' : 'failed'
-      const text = transcriptStatus === 'processing'
-        ? '豆包转写中...'
-        : transcriptStatus === 'silent' ? '豆包未识别到人声' : '豆包转写失败'
-      const label = transcriptStatus === 'processing'
-        ? '豆包转写中'
-        : transcriptStatus === 'silent' ? '豆包静音' : '豆包失败'
-      projected.push({
-        itemId: `${childId || sessionId}:doubao:status`,
-        sessionId,
-        childId,
-        asrItemIndex: 0,
-        transcriptSource: 'doubao',
-        startAtMillis: childStart,
-        endAtMillis: childStart + Math.max(0, numberValue(child.duration)),
-        speakerNumber: -1,
-        speakerColorIndex: -1,
-        speakerLabel: label,
-        isSelf: false,
-        isBackground: false,
-        text,
-        transcriptStatus,
-        sourceIndex,
-      })
-      sourceIndex += 1
-      continue
-    }
+    const rows = listValue(child.asr)
     for (let index = 0; index < rows.length; index += 1) {
       const row = objectValue(rows[index])
       const isBackground = numberValue(row.b ?? row.background) === 1 || row.background === true
@@ -159,8 +134,11 @@ export function projectRecordingTranscripts(
         row.effective_spk_id ?? sessionSpeaker.spk_id ?? sessionSpeaker.speaker_id,
       ).trim()
       const formalSpeaker = speakers.get(formalSpeakerId) ?? {}
-      const isSelf = numberValue(formalSpeaker.ref_usr_id ?? formalSpeaker.ref_user_id) > 0
-        && numberValue(formalSpeaker.ref_usr_id ?? formalSpeaker.ref_user_id) === numberValue(session.belong_usr)
+      const speakerUserId = positiveNumberValue(
+        formalSpeaker.ref_usr_id ?? formalSpeaker.ref_user_id ?? formalSpeaker.user_id,
+      )
+      const profile = speakerUserId === undefined ? undefined : profilesByUserId.get(speakerUserId)
+      const isSelf = speakerUserId !== undefined && speakerUserId === numberValue(session.belong_usr)
       const persistentSpeakerNumber = optionalNumberValue(
         sessionSpeaker.speaker_display_number ?? sessionSpeaker.speakerDisplayNumber,
       )
@@ -169,28 +147,29 @@ export function projectRecordingTranscripts(
         : rawSpeakerNumber
       const speakerColorIndex = sessionSpeakerColorIndexes.get(`${sessionId}:${rawSpeakerNumber}`)
         ?? Math.max(0, rawSpeakerNumber)
-      const speakerLabel = source === 'doubao'
-        ? rawSpeakerNumber >= 0 ? `豆包说话人 ${rawSpeakerNumber + 1}` : '豆包说话人'
-        : speakerNumber >= 0 ? `说话人 ${speakerNumber}` : '未知说话人'
+      const listedSpeakerName = stringValue(
+        formalSpeaker.nick_name ?? formalSpeaker.nickname ?? formalSpeaker.display_name ?? formalSpeaker.name,
+      ).trim()
+      // A manually named speaker must not be overwritten by the person's public nickname.
+      const speakerLabel = listedSpeakerName || profile?.displayName.trim()
+        || (speakerNumber >= 0 ? `说话人 ${speakerNumber}` : '未知说话人')
       const startOffset = numberValue(row.s ?? row.start_at)
       const endOffset = Math.max(startOffset, numberValue(row.e ?? row.end_at))
       projected.push({
-        itemId: source === 'system'
-          ? `${childId || sessionId}:${index}`
-          : `${childId || sessionId}:doubao:${index}`,
+        itemId: `${childId || sessionId}:${index}`,
         sessionId,
         childId,
         asrItemIndex: index,
-        transcriptSource: source,
+        transcriptSource: 'system',
         startAtMillis: childStart + startOffset,
         endAtMillis: childStart + endOffset,
         speakerNumber,
         speakerColorIndex,
         speakerLabel,
+        ...(profile?.avatarRef === undefined ? {} : { speakerAvatarRef: profile.avatarRef }),
         isSelf,
         isBackground,
         text,
-        ...(source === 'doubao' ? { transcriptStatus: 'ready' as const } : {}),
         sourceIndex,
       })
       sourceIndex += 1

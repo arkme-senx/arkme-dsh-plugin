@@ -18,6 +18,11 @@ export function isArkmeSelfWorkspaceSource(source: ArkmeSourceItem | undefined):
     || source.kind === 'default_category' || source.kind === 'topic'
 }
 
+/** Only real chats own rows in the left conversation directory. */
+export function isArkmeChatDirectorySource(source: ArkmeSourceItem): boolean {
+  return source.kind === 'private_chat' || source.kind === 'group_chat'
+}
+
 /** The aggregate is a timeline target, not a category row inside the directory popover. */
 export function arkmeSelfDirectorySources(sources: readonly ArkmeSourceItem[]): ArkmeSourceItem[] {
   return sources.filter(source => source.kind !== 'send_to_self')
@@ -28,8 +33,10 @@ export function sortArkmeSources(
   sources: readonly ArkmeSourceItem[],
   sort: ArkmeSourceSort,
 ): ArkmeSourceItem[] {
-  if (sort === 'default') return [...sources]
   return sources.map((source, index) => ({ source, index })).sort((left, right) => {
+    if (left.source.kind === 'default_category') return right.source.kind === 'default_category' ? 0 : -1
+    if (right.source.kind === 'default_category') return 1
+    if (sort === 'default') return left.index - right.index
     let compared = 0
     if (sort === 'latest') {
       compared = finiteValue(right.source.activeAtMillis) - finiteValue(left.source.activeAtMillis)
@@ -69,4 +76,14 @@ export function arkmeSourceTimeLabel(value: number, nowMillis = Date.now()): str
     return new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(date)
   }
   return `${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+export function arkmeSendToSelfDirectoryPresentation(
+  source: ArkmeSourceItem | undefined,
+  nowMillis = Date.now(),
+): { preview: string; time: string } {
+  return {
+    preview: source?.latestPreview?.trim() || '全部个人消息',
+    time: arkmeSourceTimeLabel(source?.activeAtMillis ?? 0, nowMillis),
+  }
 }

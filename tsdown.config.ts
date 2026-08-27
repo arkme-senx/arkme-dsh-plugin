@@ -6,6 +6,7 @@ const CLIENT_EXTERNALS = [
   'react-dom',
   'react-dom/client',
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-slots',
 ]
 
@@ -14,7 +15,7 @@ export default defineConfig([
     name: '@senguoyun/dsh-arkme',
     entry: {
       index: 'src/index.ts',
-      'plugin-updater-helper': 'src/plugin-updater-helper.ts',
+      'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',
       'extension-profile-restart-helper': 'src/extensions/profile-restart-helper.ts',
@@ -37,7 +38,7 @@ export default defineConfig([
     fixedExtension: false,
     dts: false,
     clean: false,
-    loader: { '.svg': 'base64' },
+    loader: { '.svg': 'base64', '.png': 'base64' },
     sourcemap: true,
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,

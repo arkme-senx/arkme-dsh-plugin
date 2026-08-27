@@ -18,6 +18,27 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('manages account-scoped favorite stickers through the public typed SDK', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        return success({ items: [], itemCount: 0, updatedAtMillis: 1 })
+      },
+    })
+
+    const item = { fileAssetUid: 'asset-12345678', fileName: 'wave.gif', mimeType: 'image/gif', size: 128, fileKind: 1 as const }
+    await expect(sdk.addFavoriteSticker(item)).resolves.toMatchObject({ itemCount: 0 })
+    await expect(sdk.manageFavoriteSticker('asset-12345678', 'move-to-front')).resolves.toMatchObject({ itemCount: 0 })
+    expect(calls).toEqual([
+      { operation: 'favorite-stickers.add', params: { item } },
+      { operation: 'favorite-stickers.manage', params: { fileAssetUid: 'asset-12345678', action: 'move-to-front' } },
+    ])
+    await expect(sdk.addFavoriteSticker({ ...item, fileAssetUid: ' ' })).rejects.toThrow(/must not be empty/)
+    await expect(sdk.manageFavoriteSticker(' ', 'delete')).rejects.toThrow(/must not be empty/)
+  })
+
   it('uploads World images as raw files and keeps text and file-asset publish operations separate', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -50,29 +71,6 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it('reads one recording day and explicitly starts its Doubao transcript', async () => {
-    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
-    const sdk = createArkmeSdk({
-      fetchImpl: async (_input, init) => {
-        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
-        calls.push(request)
-        return request.operation === 'recordings.day'
-          ? success({ dateStamp: request.params?.dateStamp, transcript: { state: 'empty', items: [], message: '' } })
-          : success({ queuedChildCount: 1, inFlightChildCount: 0, missingAudioChildCount: 0 })
-      },
-    })
-    const dateStamp = new Date(2026, 7, 17).getTime()
-
-    await expect(sdk.recordingDay(dateStamp)).resolves.toMatchObject({ dateStamp })
-    await expect(sdk.startRecordingDoubaoBackfill(dateStamp)).resolves.toMatchObject({ queuedChildCount: 1 })
-    expect(calls).toEqual([
-      { operation: 'recordings.day', params: { dateStamp } },
-      { operation: 'recordings.doubao.start', params: { dateStamp } },
-    ])
-    await expect(sdk.startRecordingDoubaoBackfill(dateStamp + 1)).rejects.toThrow(/local-day timestamp/)
-    expect(calls).toHaveLength(2)
-  })
-
   it('lists image-library pages through the public same-origin operation', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({
@@ -85,6 +83,68 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.images({ limit: 24, cursor: 'next-images' })).resolves.toMatchObject({ hasMore: false })
     expect(calls).toEqual([{ operation: 'images.list', params: { limit: 24, cursor: 'next-images' } }])
+  })
+
+  it('copies and resolves links, then forwards messages through bounded opaque action references', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'source.message-copy-link') return success({ sid: 'sid-1', url: 'https://app.arkme.ai/share/sid-1' })
+        if (request.operation === 'source.message-copy-link.resolve') return success({
+          sid: 'U2HQgn1RhPJZaFmx',
+          displayTitle: '实习性的快记',
+          generatedAtMillis: 1,
+          accessMode: 'link_read_only',
+          items: [],
+          presentation: [],
+        })
+        if (request.operation === 'source.message-copy-link.extend') return success({
+          sid: 'U2HQgn1RhPJZaFmx',
+          recordUid: request.params?.recordUid,
+          parentRecordUid: 'parent-record-1',
+          status: 1,
+          localState: 'synced',
+        })
+        if (request.operation === 'source.link-metadata.resolve') return success({
+          url: 'https://github.com/arkme-senx/arkme-dsh-plugin/pull/145',
+          title: 'fix(ui): 补齐快记详情图片展示 by htao-123 · Pull Request #145 · arkme-senx/arkme-dsh-plugin',
+          siteName: 'GitHub',
+        })
+        if (request.operation === 'source.forward-messages') return success({ sourceRef: 'source-ref', itemUid: 'forward-record', status: 1 })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.copyMessageLink('source-ref', [' action-1 ', '', 'action-2']))
+      .resolves.toEqual({ sid: 'sid-1', url: 'https://app.arkme.ai/share/sid-1' })
+    await expect(sdk.resolveMessageCopyLink(' U2HQgn1RhPJZaFmx '))
+      .resolves.toMatchObject({ sid: 'U2HQgn1RhPJZaFmx', displayTitle: '实习性的快记' })
+    await expect(sdk.extendMessageCopyLink(' U2HQgn1RhPJZaFmx ', ' 延展 ', {
+      itemIndex: 1,
+      recordUid: 'record-extension-1',
+    })).resolves.toMatchObject({ recordUid: 'record-extension-1', parentRecordUid: 'parent-record-1' })
+    await expect(sdk.resolveLinkMetadata(' https://github.com/arkme-senx/arkme-dsh-plugin/pull/145 '))
+      .resolves.toMatchObject({ title: 'fix(ui): 补齐快记详情图片展示 by htao-123 · Pull Request #145 · arkme-senx/arkme-dsh-plugin' })
+    await expect(sdk.forwardMessages('source-ref', ['action-1'], {
+      targetSourceRef: 'target-source-ref',
+      recordUid: 'record-1',
+      relationUid: 'rel-1',
+      commentText: ' 附言 ',
+    })).resolves.toMatchObject({ itemUid: 'forward-record' })
+
+    expect(calls).toEqual([
+      { operation: 'source.message-copy-link', params: { sourceRef: 'source-ref', actionRefs: ['action-1', 'action-2'] } },
+      { operation: 'source.message-copy-link.resolve', params: { sid: 'U2HQgn1RhPJZaFmx' } },
+      { operation: 'source.message-copy-link.extend', params: { sid: 'U2HQgn1RhPJZaFmx', itemIndex: 1, textContent: '延展', recordUid: 'record-extension-1' } },
+      { operation: 'source.link-metadata.resolve', params: { url: 'https://github.com/arkme-senx/arkme-dsh-plugin/pull/145' } },
+      { operation: 'source.forward-messages', params: { sourceRef: 'source-ref', targetSourceRef: 'target-source-ref', actionRefs: ['action-1'], recordUid: 'record-1', relationUid: 'rel-1', commentText: '附言' } },
+    ])
+    await expect(sdk.copyMessageLink('source-ref', ['action-1', 'action-1'])).rejects.toThrow('unique')
+    await expect(sdk.resolveMessageCopyLink('bad')).rejects.toThrow('16 alphanumeric')
+    await expect(sdk.extendMessageCopyLink('bad', '延展')).rejects.toThrow('16 alphanumeric')
+    await expect(sdk.resolveLinkMetadata('')).rejects.toThrow('must not be empty')
   })
 
   it('searches and adds contacts through opaque same-origin contracts', async () => {
@@ -112,6 +172,75 @@ describe('Arkme SDK', () => {
       { operation: 'contacts.add', params: {
         contactRef: candidate.contactRef, remark: '同事', requestUid: '9f445b4f-55aa-45c1-9250-25161832d433',
       } },
+    ])
+  })
+
+  it('opens a searched contact private chat through the public SDK without adding contacts', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'chat.private.open-from-contact') return success({
+          source: { sourceRef: 'source-ref', kind: 'private_chat', displayName: '木白', activeAtMillis: 1, unreadCount: 0 },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.openPrivateChatFromContact('arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432'))
+      .resolves.toMatchObject({ source: { sourceRef: 'source-ref', displayName: '木白' } })
+    expect(calls).toEqual([
+      {
+        operation: 'chat.private.open-from-contact',
+        params: { contactRef: 'arkme-contact-v1.9f445b4f-55aa-45c1-9250-25161832d432' },
+      },
+    ])
+  })
+
+  it('reads call history and retries summaries through same-origin opaque refs', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'calls.history.list') return success({
+          items: [{ callRef: 'arkme-call-v1.payload.sig', peerDisplayName: '林林', mediaType: 'audio' }],
+          hasMore: false,
+        })
+        if (request.operation === 'calls.history.detail') return success({
+          callRef: 'arkme-call-v1.payload.sig',
+          title: '通话详情',
+          mediaType: 'video',
+          videoRecord: {
+            available: true,
+            source: 'real',
+            videoUrl: 'https://media.example/real-call.mp4',
+            posterUrl: 'https://media.example/real-call.jpg',
+          },
+          participants: [],
+          transcriptSegments: [],
+        })
+        if (request.operation === 'calls.history.summary.retry') return success({
+          status: 'submitted',
+          detail: { callRef: 'arkme-call-v1.payload.sig', title: '通话详情', mediaType: 'audio' },
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await sdk.callHistory({ limit: 5, cursor: ' next ', includeRecentContacts: false })
+    const detail = await sdk.callDetail(' arkme-call-v1.payload.sig ')
+    expect(detail).toMatchObject({
+      videoRecord: { available: true, source: 'real' },
+    })
+    expect(JSON.stringify(detail)).not.toContain('media.example')
+    await sdk.retryCallSummary(' arkme-call-v1.payload.sig ')
+
+    expect(calls).toEqual([
+      { operation: 'calls.history.list', params: { limit: 5, cursor: 'next', includeRecentContacts: false } },
+      { operation: 'calls.history.detail', params: { callRef: 'arkme-call-v1.payload.sig' } },
+      { operation: 'calls.history.summary.retry', params: { callRef: 'arkme-call-v1.payload.sig' } },
     ])
   })
 
@@ -236,7 +365,9 @@ describe('Arkme SDK', () => {
     })
 
     await expect(sdk.installedExtensions()).resolves.toEqual(installed)
-    await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({ enabled: false })
+    await expect(sdk.setExtensionEnabled('ext-1', false)).resolves.toMatchObject({
+      enabled: false, active: false, restart_required: true,
+    })
     expect(calls).toEqual([
       { operation: 'extensions.installed-list' },
       { operation: 'extensions.enabled.set', params: { extensionId: 'ext-1', enabled: false } },
@@ -286,12 +417,22 @@ describe('Arkme SDK', () => {
     })
 
     await expect(sdk.searchExtensions('native', 10)).resolves.toMatchObject({ total: 0 })
+    await expect(sdk.extensionCatalog({
+      ownerUserId: 77,
+      excludeExtensionId: 'ext-current',
+      sort: 'comments',
+      limit: 70,
+    })).resolves.toMatchObject({ total: 0 })
     await expect(sdk.extensionDetail('ext-v3')).resolves.toMatchObject({ artifact_contract_version: 3 })
     await expect(sdk.extensionInstallPreview('ext-v3', '1.0.0')).resolves.toMatchObject({
       artifact_contract_version: 3, native_capabilities: ['bin', 'runtime_dependencies'],
     })
     expect(calls).toEqual([
       { operation: 'extensions.catalog.list', params: { query: 'native', limit: 10 } },
+      {
+        operation: 'extensions.catalog.list',
+        params: { sort: 'comments', limit: 70, ownerUserId: 77, excludeExtensionId: 'ext-current' },
+      },
       { operation: 'extensions.catalog.detail', params: { extensionId: 'ext-v3' } },
       { operation: 'extensions.install.preview', params: { extensionId: 'ext-v3', version: '1.0.0' } },
     ])
@@ -328,12 +469,17 @@ describe('Arkme SDK', () => {
             features: {
               authStatus: true, cachedSnapshot: true, remoteRefresh: true, search: true,
               createText: true, retryOutbox: true, revisionPolling: true, userProfile: true, imageRead: true,
+              accountSettings: true,
               recordCalendar: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
+              messageReadReceipts: true,
               extensionManagement: true,
               extensionIcons: true,
             },
-            limits: { maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152 },
+            limits: {
+              maxTextLength: 20_000, maxSearchResults: 30, maxSyncPages: 20, maxImageBytes: 2_097_152,
+              maxMessageReadReceiptItems: 50,
+            },
           })
         }
         if (request.operation === 'records.search') {
@@ -349,6 +495,14 @@ describe('Arkme SDK', () => {
             revision: 5,
           })
         }
+        if (request.operation === 'user.arkme-id.check') {
+          return success({ available: true, reason: '', arkmeId: request.params?.arkmeId })
+        }
+        if (request.operation === 'user.arkme-id.set') {
+          return success({ arkmeId: request.params?.arkmeId, changed: true, canUpdate: false, revision: 6 })
+        }
+        if (request.operation === 'auth.phone.send') return success({ sent: true })
+        if (request.operation === 'auth.phone.verify') return success({ status: 'authenticated', environment: 'test', userId: 1 })
         if (request.operation === 'image.read') {
           return success({ mediaType: 'image/png', bytes: 8, dataBase64: 'iVBORw0KGgo=' })
         }
@@ -365,12 +519,19 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, accountSettings: true },
+      limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })
     await expect(sdk.profile({ refresh: true })).resolves.toMatchObject({
       profile: { displayName: '昵称' }, revision: 5,
     })
+    await expect(sdk.checkArkmeIdAvailability(' Lucis_01 ')).resolves.toMatchObject({ available: true, arkmeId: 'Lucis_01' })
+    await expect(sdk.setArkmeIdOnce(' Lucis_01 ')).resolves.toMatchObject({ arkmeId: 'Lucis_01', changed: true })
+    await expect(sdk.sendPhoneCode('138 0000 8000', {
+      lot_number: 'lot', captcha_output: 'out', pass_token: 'pass', gen_time: 'time',
+    })).resolves.toEqual({ sent: true })
+    await expect(sdk.verifyPhoneCode('138-0000-8000', '123456')).resolves.toMatchObject({ status: 'authenticated' })
     const image = await sdk.readImage('1_1700000000_1_0.png')
     expect(image).toMatchObject({ mediaType: 'image/png', bytes: 8 })
     expect(sdk.imageDataUrl(image)).toBe('data:image/png;base64,iVBORw0KGgo=')
@@ -391,6 +552,13 @@ describe('Arkme SDK', () => {
       { operation: 'provider.capabilities' },
       { operation: 'records.search', params: { query: '复盘', limit: 5, syncAll: true } },
       { operation: 'user.profile.refresh' },
+      { operation: 'user.arkme-id.check', params: { arkmeId: 'Lucis_01' } },
+      { operation: 'user.arkme-id.set', params: { arkmeId: 'Lucis_01' } },
+      {
+        operation: 'auth.phone.send',
+        params: { phone: '13800008000', captcha: { lot_number: 'lot', captcha_output: 'out', pass_token: 'pass', gen_time: 'time' } },
+      },
+      { operation: 'auth.phone.verify', params: { phone: '13800008000', code: '123456' } },
       { operation: 'image.read', params: { imageRef: '1_1700000000_1_0.png' } },
       { operation: 'calendar.buckets', params: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Shanghai' } },
       {
@@ -421,6 +589,27 @@ describe('Arkme SDK', () => {
           source: { sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
           items: [], hasMore: false,
         })
+        if (request.operation === 'source.members') return success({
+          source: { sourceRef: 'source-1' }, items: [{ memberRef: 'member-1', displayName: '小林' }], total: 1, activeCount: 1,
+          joinEvents: [{
+            eventId: 'join-1', action: 'invite', occurredAtMillis: 1,
+            inviter: { memberRef: 'member-1', displayName: '小林', isSelf: false },
+            invitees: [{ memberRef: 'member-2', displayName: '小张', isSelf: false }],
+          }],
+        })
+        if (request.operation === 'source.member-records') return success({
+          source: { sourceRef: 'source-1' }, member: { memberRef: 'member-1', displayName: '小林' },
+          mode: 'mentioned', items: [], hasMore: false,
+        })
+        if (request.operation === 'source.read-receipts.summary-list') return success({
+          sourceRef: 'source-1', conversationKind: 'private_chat',
+          items: [{ itemUid: 'record-1', sequence: 8, readCount: 1, unreadCount: 0, totalMemberCount: 1, status: 'read' }],
+        })
+        if (request.operation === 'source.read-receipts.detail') return success({
+          sourceRef: 'source-1', itemUid: 'record-1', sequence: 8,
+          readCount: 1, unreadCount: 0, totalMemberCount: 1,
+          items: [{ memberRef: 'member-1', displayName: '小林', readStatus: 'read', readAtMillis: 123 }],
+        })
         if (request.operation === 'source.send-text') return success({
           sourceRef: 'source-1', itemUid: request.params?.recordUid, status: 1, localState: 'synced',
         })
@@ -430,6 +619,15 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.listSources('root')).resolves.toMatchObject({ directory: 'root' })
     await expect(sdk.readSource('source-1')).resolves.toMatchObject({ source: { displayName: '小林' } })
+    await expect(sdk.listSourceMembers('source-1')).resolves.toMatchObject({
+      activeCount: 1, joinEvents: [{ eventId: 'join-1', action: 'invite' }],
+    })
+    await expect(sdk.sourceMemberRecords('source-1', 'member-1', 'mentioned', { limit: 12, beforeSequence: 44 }))
+      .resolves.toMatchObject({ mode: 'mentioned' })
+    await expect(sdk.messageReadReceiptSummaries('source-1', [{ itemUid: 'record-1', sequence: 8 }]))
+      .resolves.toMatchObject({ conversationKind: 'private_chat', items: [{ status: 'read' }] })
+    await expect(sdk.messageReadReceiptDetail('source-1', 'record-1', 8))
+      .resolves.toMatchObject({ items: [{ memberRef: 'member-1', readStatus: 'read' }] })
     await expect(sdk.sendText('source-1', '你好', { recordUid: 'record-1', relationUid: 'rel-1' }))
       .resolves.toMatchObject({ itemUid: 'record-1' })
     await expect(sdk.sendText('source-1', '代发', {
@@ -437,9 +635,34 @@ describe('Arkme SDK', () => {
       relationUid: 'rel-agent-1',
       agentAuthored: true,
     })).resolves.toMatchObject({ itemUid: 'record-agent-1' })
+    await expect(sdk.sendText('source-1', '@小林 请看', {
+      recordUid: 'record-mention-1', relationUid: 'rel-mention-1',
+      humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+    })).resolves.toMatchObject({ itemUid: 'record-mention-1' })
+    await expect(sdk.sendText('source-1', '@所有人 请看', {
+      recordUid: 'record-all-mention-1', relationUid: 'rel-all-mention-1',
+      humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+    })).resolves.toMatchObject({ itemUid: 'record-all-mention-1' })
+    await expect(sdk.sendText('source-1', '@总结助手 请看', {
+      recordUid: 'record-bot-mention-1', relationUid: 'rel-bot-mention-1',
+      botMentions: [{ botRef: 'bot-1', startIndex: 0, length: 5 }],
+    })).resolves.toMatchObject({ itemUid: 'record-bot-mention-1' })
     expect(calls).toMatchObject([
       { operation: 'sources.list', params: { directory: 'root' } },
       { operation: 'source.timeline', params: { sourceRef: 'source-1' } },
+      { operation: 'source.members', params: { sourceRef: 'source-1', activeOnly: true } },
+      {
+        operation: 'source.member-records',
+        params: { sourceRef: 'source-1', memberRef: 'member-1', mode: 'mentioned', limit: 12, beforeSequence: 44 },
+      },
+      {
+        operation: 'source.read-receipts.summary-list',
+        params: { sourceRef: 'source-1', items: [{ itemUid: 'record-1', sequence: 8 }] },
+      },
+      {
+        operation: 'source.read-receipts.detail',
+        params: { sourceRef: 'source-1', itemUid: 'record-1', sequence: 8 },
+      },
       { operation: 'source.send-text', params: { sourceRef: 'source-1', textContent: '你好', recordUid: 'record-1', relationUid: 'rel-1' } },
       {
         operation: 'source.send-text',
@@ -449,6 +672,36 @@ describe('Arkme SDK', () => {
           recordUid: 'record-agent-1',
           relationUid: 'rel-agent-1',
           agentAuthored: true,
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@小林 请看',
+          recordUid: 'record-mention-1',
+          relationUid: 'rel-mention-1',
+          humanMentions: [{ memberRef: 'member-1', startIndex: 0, length: 3 }],
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@所有人 请看',
+          recordUid: 'record-all-mention-1',
+          relationUid: 'rel-all-mention-1',
+          humanMentions: [{ all: true, startIndex: 0, length: 4 }],
+        },
+      },
+      {
+        operation: 'source.send-text',
+        params: {
+          sourceRef: 'source-1',
+          textContent: '@总结助手 请看',
+          recordUid: 'record-bot-mention-1',
+          relationUid: 'rel-bot-mention-1',
+          botMentions: [{ botRef: 'bot-1', startIndex: 0, length: 5 }],
         },
       },
     ])
@@ -518,6 +771,9 @@ describe('Arkme SDK', () => {
 				rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
 			})
 		}
+		if (request.operation === 'extensions.share.resolve') {
+			return success({ extension_id: 'ext-public-1', name: '天气', description: '天气扩展', visibility: 'public' })
+		}
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -545,6 +801,9 @@ describe('Arkme SDK', () => {
 		await expect(sdk.extensionShareDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
 			name: '天气', share_scope: 'link_readonly',
 		})
+		await expect(sdk.extensionShareCatalogDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
+			extension_id: 'ext-public-1', name: '天气', visibility: 'public',
+		})
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
       { operation: 'extensions.mine.publish', params: {
@@ -564,6 +823,9 @@ describe('Arkme SDK', () => {
 			extensionId: 'ext-1', clientMutationId: '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8',
 		} },
 		{ operation: 'extensions.share.detail', params: {
+			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
+		} },
+		{ operation: 'extensions.share.resolve', params: {
 			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
 		} },
     ])

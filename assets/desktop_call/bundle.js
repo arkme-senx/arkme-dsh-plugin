@@ -45764,6 +45764,14 @@ function summarizeDiagPayload(payload = {}) {
 function diagLog(label, payload = {}) {
   try {
     console.log(`[DesktopCallDiag] ${label} ${safeJsonStringify(payload)}`);
+    try {
+      postToWebHostBridge({
+        type: "diag",
+        label,
+        detail: payload
+      });
+    } catch (_) {
+    }
   } catch (error) {
     console.log(
       `[DesktopCallDiag] ${label} ${safeJsonStringify({
@@ -46334,6 +46342,30 @@ function safeJsonStringify(value) {
     return "{}";
   }
 }
+function resolveWebHostCallRequestId() {
+  try {
+    const parsed = JSON.parse(String(window.name || "{}"));
+    return safeString(parsed?.callRequestId);
+  } catch (_) {
+    return "";
+  }
+}
+function postToWebHostBridge(message) {
+  if (!window.parent || window.parent === window) {
+    return false;
+  }
+  const callRequestId = resolveWebHostCallRequestId();
+  if (!callRequestId) {
+    return false;
+  }
+  const payload = typeof message === "string" ? message : safeJsonStringify(message);
+  window.parent.postMessage({
+    channel: "jotmo-desktop-call",
+    callRequestId,
+    message: payload
+  }, window.location.origin);
+  return true;
+}
 function escapeHtml(value) {
   return safeString(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
@@ -46443,9 +46475,11 @@ function postToFlutter(type, extra = {}) {
     message: safeString(extra.message)
   });
   const bridge = resolveFlutterBridge();
+  const postedToWebHost = postToWebHostBridge(payload);
   diagLog("post_to_flutter", {
     type,
     hasBridge: Boolean(bridge),
+    postedToWebHost,
     roomId: statePayload.roomId,
     callId: statePayload.callId,
     mediaType: statePayload.mediaType,
@@ -46455,11 +46489,51 @@ function postToFlutter(type, extra = {}) {
     connectionRole: state.connectionRole
   });
   if (!bridge) {
+    if (postedToWebHost) {
+      return true;
+    }
     console.warn("[DesktopCall] flutter bridge unavailable", payload);
     return false;
   }
   bridge.postMessage(payload);
   return true;
+}
+function postLocalTerminalToWebHost(type, message) {
+  const peer = getFlutterPeer();
+  const payload = safeJsonStringify({
+    type,
+    roomId: state.activeRoomId,
+    callId: state.activeCallId,
+    mediaType: state.activeMediaType,
+    statusText: safeString(message),
+    phase: CALL_PHASE.ending,
+    hasActiveCall: false,
+    audioEnabled: state.audioEnabled,
+    videoEnabled: state.videoEnabled,
+    speakerEnabled: state.speakerEnabled,
+    elapsedLabel: state.elapsedLabel,
+    caller: {
+      name: state.caller.name,
+      avatar: state.caller.avatar
+    },
+    peer: {
+      name: peer.name,
+      avatar: peer.avatar
+    },
+    userData: state.lastUserData,
+    reason: "local_hangup_hint",
+    message: safeString(message)
+  });
+  const posted = postToWebHostBridge(payload);
+  diagLog("local_terminal_web_host_hint", {
+    type,
+    posted,
+    roomId: state.activeRoomId,
+    callId: state.activeCallId,
+    mediaType: state.activeMediaType,
+    phase: state.phase
+  });
+  return posted;
 }
 function setStatusText(text) {
   state.lastStatusText = safeString(text);
@@ -49191,8 +49265,22 @@ function markTerminalEmitted(payload = {}) {
   state.terminalBridgeKey = resolveCallSessionKey(payload);
 }
 async function finalizeTerminalState(type, payload = {}, statusText) {
+  diagLog("finalize_terminal_state_start", {
+    type,
+    payload: summarizeDiagPayload(payload),
+    statusText,
+    pendingLocalTerminalAction: state.pendingLocalTerminalAction,
+    terminalBridgeKey: state.terminalBridgeKey,
+    sessionKey: resolveCallSessionKey(payload)
+  });
   updateCallIdentity(payload);
   if (isTerminalAlreadyEmitted(payload)) {
+    diagLog("finalize_terminal_state_duplicate_skip", {
+      type,
+      payload: summarizeDiagPayload(payload),
+      terminalBridgeKey: state.terminalBridgeKey,
+      sessionKey: resolveCallSessionKey(payload)
+    });
     return;
   }
   markTerminalEmitted(payload);
@@ -49220,6 +49308,12 @@ async function finalizeTerminalState(type, payload = {}, statusText) {
   await cleanupActiveMedia();
   resetRuntimeState({ preserveBootstrap: true });
   render();
+  diagLog("finalize_terminal_state_done", {
+    type,
+    resolvedStatusText,
+    phase: state.phase,
+    terminalBridgeKey: state.terminalBridgeKey
+  });
 }
 async function attachRemoteView(userId) {
   const normalizedUserId = safeString(userId);
@@ -49696,13 +49790,18 @@ async function hangupCall() {
   if (!state.engine) {
     return;
   }
+  const engine = state.engine;
   state.pendingLocalTerminalAction = "hangup";
-  try {
-    await state.engine.hangup();
-  } catch (error) {
+  diagLog("hangup_call_start", captureRuntimeSnapshot({
+    pendingLocalTerminalAction: state.pendingLocalTerminalAction
+  }));
+  postLocalTerminalToWebHost("end", "\u901A\u8BDD\u5DF2\u7ED3\u675F");
+  void engine.hangup().catch(() => {
     state.pendingLocalTerminalAction = "";
-    throw error;
-  }
+    diagLog("hangup_call_engine_failed", captureRuntimeSnapshot());
+  });
+  await finalizeTerminalState("end", {}, "\u901A\u8BDD\u5DF2\u7ED3\u675F");
+  diagLog("hangup_call_done", captureRuntimeSnapshot());
 }
 async function requestToggleFullscreen() {
   state.activeDevicePopover = "";

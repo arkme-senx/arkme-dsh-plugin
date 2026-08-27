@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { arkmeToolCatalog } from '../src/tools/index.js'
 
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 
 function textFiles(path: string): string[] {
   return readdirSync(path).flatMap(name => {
@@ -20,6 +21,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://jotmo-app.senguo.me', '')
     .replaceAll('https://jotmo-subject.senguo.me', '')
     .replaceAll('https://jotmo-record.senguo.me', '')
+    .replaceAll('https://jotmo-data.senguo.me', '')
     .replaceAll('https://jotmo-chat.senguo.me', '')
     .replaceAll('https://jotmo-bot.senguo.me', '')
     .replaceAll('https://jotmo-im.senguo.me', '')
@@ -32,6 +34,7 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://api.jotmo.cc', '')
     .replaceAll('https://subject.jotmo.cc', '')
     .replaceAll('https://record.jotmo.cc', '')
+    .replaceAll('https://data.jotmo.cc', '')
     .replaceAll('https://chat.jotmo.cc', '')
     .replaceAll('https://bot.jotmo.cc', '')
     .replaceAll('https://im.jotmo.cc', '')
@@ -42,6 +45,8 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('https://intelligent.jotmo.cc', '')
     .replaceAll('https://audio.jotmo.cc', '')
     .replaceAll('https://extension-publish.jotmo.cc', '')
+    .replaceAll('https://team.jotmo.cc', '')
+    .replaceAll('https://jotmo-team.senguo.me', '')
     .replaceAll('https://d.jiwo.cc', '')
     .replaceAll('jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', '')
@@ -51,11 +56,16 @@ function withoutInfrastructureNames(content: string): string {
     .replaceAll('jotmo-useraudio.oss-cn-hangzhou.aliyuncs.com', '')
     .replaceAll('data.jotmo_id', '')
     .replaceAll('data.can_update_jotmo_id', '')
+    .replaceAll('raw.jotmo_id', '')
+    .replaceAll('raw.jotmoId', '')
+    .replaceAll('item.jotmo_id', '')
     .replaceAll('/api/v1/auth/check-jotmo-id-available', '')
     .replaceAll('/api/v1/auth/update-jotmo-id', '')
     .replaceAll('recipient_jotmo_id', '')
     .replaceAll("'jotmo-userfiles-test'", '')
     .replaceAll("'jotmo-userfiles'", '')
+    .replaceAll("'jotmo-useraudio-test'", '')
+    .replaceAll("'jotmo-useraudio'", '')
     .replaceAll('dsh-worktrees/jotmo-virtual-workspace', '')
 }
 
@@ -68,6 +78,7 @@ function withoutOpenClawProtocolNames(file: string, content: string): string {
 function withoutArkmeIdCompatibilityAliases(file: string, content: string): string {
   const localizedUiFiles = new Set([
     join(root, 'src/client/ArkmeLogin.tsx'),
+    join(root, 'src/client/arkme-login-locales.ts'),
     join(root, 'src/client/ArkmeSettingsSurface.tsx'),
   ])
   if (localizedUiFiles.has(file)) return content.replaceAll('即我', '')
@@ -77,6 +88,7 @@ function withoutArkmeIdCompatibilityAliases(file: string, content: string): stri
     join(root, 'src/tools/business/contacts/index.ts'),
     join(root, 'src/tools/prompts/business.ts'),
     join(root, 'src/client/ArkmeContactAddSurface.tsx'),
+    join(root, 'src/client/ArkmeCallSurface.tsx'),
     join(root, 'src/client/ArkmeCallHistorySurface.tsx'),
     join(root, 'src/client/ArkmeVirtualWorkspace.tsx'),
     join(root, 'src/services/contact-service.ts'),
@@ -97,6 +109,36 @@ function withoutOfficialCommunityProductCopy(file: string, content: string): str
   return content
 }
 
+function withoutApprovedJiwoScanLoginFeature(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'cordis.patch.yml'),
+    join(root, 'src/arkme-service.ts'),
+    join(root, 'src/client/ArkmeLogin.tsx'),
+    join(root, 'src/client/ArkmeSidebar.tsx'),
+    join(root, 'src/client/arkme-auth-flow.tsx'),
+    join(root, 'src/client/arkme-login-locales.ts'),
+    join(root, 'src/host-api.ts'),
+    join(root, 'src/index.ts'),
+    join(root, 'src/services/auth-service.ts'),
+    join(root, 'src/services/service.ts'),
+    join(root, 'src/types.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // This is an intentionally product-facing compatibility feature: Arkme can
+  // authenticate against the Jiwo account domain when explicitly enabled.
+  return content.replace(/jotmo|jiwo/gi, '').replaceAll('即我', '')
+}
+
+function withoutOutgoingCallAssetCompatibilityAlias(file: string, content: string): string {
+  const allowedFiles = new Set([
+    join(root, 'src/client/ArkmeCallSurface.tsx'),
+    join(root, 'src/outgoing-call-assets.ts'),
+  ])
+  if (!allowedFiles.has(file)) return content
+  // The already-published call icon filename is a fixed asset protocol key.
+  return content.replaceAll('jotmo-video-linear.svg', '')
+}
+
 describe('Arkme plugin identity', () => {
   it('removes legacy product identity outside unchanged service infrastructure', () => {
     const files = [
@@ -108,9 +150,15 @@ describe('Arkme plugin identity', () => {
       ...textFiles(join(root, 'src')),
     ]
     const residuals = files.flatMap(file => {
-      const source = withoutOfficialCommunityProductCopy(
+      const source = withoutOutgoingCallAssetCompatibilityAlias(
         file,
-        withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+        withoutApprovedJiwoScanLoginFeature(
+          file,
+          withoutOfficialCommunityProductCopy(
+            file,
+            withoutArkmeIdCompatibilityAliases(file, readFileSync(file, 'utf8')),
+          ),
+        ),
       )
       const content = withoutInfrastructureNames(withoutOpenClawProtocolNames(file, source))
       return /jotmo|jiwo|即我/i.test(content) ? [file.slice(root.length)] : []

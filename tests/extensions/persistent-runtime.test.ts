@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,7 +11,10 @@ import {
 } from '../../src/extensions/persistent-runtime.js'
 
 const directories: string[] = []
-afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
+afterEach(() => {
+  vi.unstubAllEnvs()
+  for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true })
+})
 
 function signedInstallation(input: {
   extensionId: string
@@ -68,6 +71,45 @@ function applyingRuntimeContext() {
 }
 
 describe('persistent extension Host runtime', () => {
+  it('prefers the verified artifact inside the current DSH_HOME after the Profile is copied', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'arkme-persistent-runtime-relocated-'))
+    directories.push(root)
+    const home = join(root, 'Current Home With Spaces')
+    const extensionId = 'ext_runtime_relocated'
+    const version = '1.0.0'
+    const artifact = packArkmeExtension({
+      name: 'Relocated runtime', description: '', version, arkmeProviderContract: 1,
+      hostCode: 'return { name: "persistent-relocated", apply() {} }',
+    })
+    const artifactPath = join(home, 'arkme-self', 'extensions', extensionId, version, 'extension.arkext')
+    const installationPath = join(
+      home, 'profiles', 'web', 'arkme-extensions', 'relocated', version, 'installation.json',
+    )
+    mkdirSync(join(home, 'arkme-self', 'extensions', extensionId, version), { recursive: true })
+    mkdirSync(join(home, 'profiles', 'web', 'arkme-extensions', 'relocated', version), { recursive: true })
+    writeFileSync(artifactPath, artifact.bytes)
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    const envelope = {
+      format_version: 1 as const, extension_id: extensionId, version,
+      artifact_sha256: artifact.artifactSha256, manifest_sha256: artifact.manifestSha256,
+      published_at: 1_787_000_000_000, signing_key_id: 'key-1',
+    }
+    writeFileSync(installationPath, JSON.stringify({
+      ...envelope,
+      artifact_path: join(root, 'Previous Home', 'arkme-self', 'extensions', extensionId, version, 'extension.arkext'),
+      trusted_public_key: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+      signature: sign(null, canonicalExtensionSignatureMessage(envelope), privateKey).toString('base64'),
+    }))
+    vi.stubEnv('DSH_HOME', home)
+    const runtime = runtimeContext()
+
+    await applyPersistentArkmeHostExtension(runtime.context, pathToFileURL(installationPath))
+
+    expect(runtime.plugin).toHaveBeenCalledOnce()
+    expect(persistentArkmeExtensionActive(extensionId)).toBe(true)
+    for (const cleanup of runtime.cleanups) cleanup()
+  })
+
   it('re-verifies the signed artifact before mounting its guarded Cordis plugin', async () => {
     const installation = signedInstallation({
       extensionId: 'ext_host_verified',

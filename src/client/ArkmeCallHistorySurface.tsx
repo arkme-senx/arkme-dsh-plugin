@@ -4,7 +4,6 @@ import type { ArkmeUserProfile, ArkmeUserProfileSnapshot } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { callArkme } from './api.js'
 import { createDemoWavUrl } from './demo-audio.js'
-import { arkmePersonalTestEditionLabel, readArkmePersonalTestEdition } from './personal-test-edition.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
@@ -181,7 +180,7 @@ const styles: Record<string, CSSProperties> = {
   videoDetailMetaCenter: { justifySelf: 'center' }, videoDetailMetaEnd: { justifySelf: 'end' },
   player: { marginTop: 20, padding: '17px 18px', border: `1px solid ${c.border}`, borderRadius: 16, background: c.layer },
   playerTop: { display: 'flex', alignItems: 'center', gap: 12 },
-  mainPlay: { width: 42, height: 42, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 999, background: c.text, color: arkmeTheme.foreground, cursor: 'pointer', fontSize: 14 },
+  mainPlay: { width: 42, height: 42, flex: 'none', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 999, background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', fontSize: 14 },
   playerCopy: { minWidth: 0, flex: 1 }, playerTitle: { margin: 0, fontSize: 14, lineHeight: '21px', fontWeight: 650 },
   playerSubtitle: { margin: '2px 0 0', color: c.secondary, fontSize: 11, lineHeight: '17px' },
   timer: { flex: 'none', color: c.secondary, fontVariantNumeric: 'tabular-nums', fontSize: 11 },
@@ -366,7 +365,7 @@ export function formatCallTranscriptClock(startedLabel: string, offsetSeconds: n
 }
 
 export function profileShareUrl(arkmeId: string): string {
-  return `https://jiwo.cc/${encodeURIComponent(arkmeId)}?scene=profile_share`
+  return `https://jiwo.cc/${encodeURIComponent(arkmeId)}`
 }
 
 export function callInviteUrl(arkmeId: string, mediaType: ArkmeCallMediaType): string {
@@ -451,7 +450,7 @@ function ParticipantCard({ item, participant, onClose }: { item: ArkmeCallHistor
       <div style={styles.participantCardHandle} aria-hidden />
       {self ? <img src={selfAvatarUrl} alt="" style={styles.participantCardAvatar} aria-hidden="true" /> : <DemoPersonAvatar item={item} style={styles.participantCardAvatar} />}
       <h3 style={styles.participantCardName}>{self ? '我' : item.peerName}</h3><p style={styles.participantCardRole}>{profileOpen ? '个人主页' : '通话参与人'}</p>
-      {profileOpen && <div style={styles.profilePanel}><strong>{self ? '我的 Arkme 主页' : `${item.peerName}的 Arkme 主页`}</strong><p style={styles.profileFact}>{self ? '这里展示你的公开资料、世界动态和联系入口。' : `${item.peerRelationship} · 来自本次${item.mediaType === 'video' ? '视频' : '语音'}通话的参与人。`}</p><p style={styles.profileFact}>当前为个人测试版，正式接入账号资料后会打开完整主页。</p></div>}
+      {profileOpen && <div style={styles.profilePanel}><strong>{self ? '我的 Arkme 主页' : `${item.peerName}的 Arkme 主页`}</strong><p style={styles.profileFact}>{self ? '这里展示你的公开资料、世界动态和联系入口。' : `${item.peerRelationship} · 来自本次${item.mediaType === 'video' ? '视频' : '语音'}通话的参与人。`}</p><p style={styles.profileFact}>当前为通话演示版，正式接入账号资料后会打开完整主页。</p></div>}
       <button type="button" style={{ ...styles.participantProfileButton, marginTop: profileOpen ? 14 : 0 }} onClick={() => { setProfileOpen(value => !value) }}>{profileOpen ? '返回参与人卡片' : '查看个人主页'}</button>
     </section>
   </div>
@@ -462,7 +461,6 @@ export function ArkmeCallHistorySurface({ assetBasePath = '/arkme-self/api/call'
   const rootRef = useRef<HTMLDivElement>(null)
   const detailScrollRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
-  const [personalTestEdition] = useState(readArkmePersonalTestEdition)
   const [compact, setCompact] = useState(false)
   const [selectedId, setSelectedId] = useState('demo-mother')
   const [playing, setPlaying] = useState(false)
@@ -551,7 +549,7 @@ export function ArkmeCallHistorySurface({ assetBasePath = '/arkme-self/api/call'
 
   return <CallAssetBasePathContext.Provider value={assetBasePath}><div ref={rootRef} style={styles.root} data-arkme-call-history="prototype"><div style={{ ...styles.layout, gridTemplateColumns: compact ? '288px minmax(0,1fr)' : '326px minmax(0,1fr)' }}>
     <aside style={styles.listPane} aria-label="通话记录列表"><header style={styles.listHeader}>
-      <div style={styles.listTitleLine}><h2 style={styles.listTitle}>通话</h2><span style={styles.demoChip}>{personalTestEdition === undefined ? '第一版演示' : arkmePersonalTestEditionLabel(personalTestEdition)}</span></div><p style={styles.listSubtitle}>找联系人，发起语音或视频通话；通话结束后可回放、看摘要和逐句转写。</p>
+      <div style={styles.listTitleLine}><h2 style={styles.listTitle}>通话</h2><span style={styles.demoChip}>第一版演示</span></div><p style={styles.listSubtitle}>找联系人，发起语音或视频通话；通话结束后可回放、看摘要和逐句转写。</p>
       <section style={styles.contactSection} aria-label="联系人快捷入口"><div style={styles.contactHeading}><h3 style={styles.contactTitle}>联系人</h3><span style={styles.contactHint}>选择联系人即可通话</span></div><div style={styles.contactRow}>
         <button type="button" style={styles.contactButton} aria-label="打开联系人与通话入口" onClick={() => { setContactDialogOpen(true) }}><span style={{ ...styles.contactAvatar, ...styles.contactAdd }}>＋</span><span style={styles.contactName}>添加</span></button>
         {contacts.slice(0, 3).map(contact => <button key={contact.sourceRef} type="button" style={styles.contactButton} aria-label={`选择联系人${contact.displayName}发起通话`} onClick={() => { setCallFeedback(''); setCallTarget(contact) }}><RealContactAvatar contact={contact} /><span style={styles.contactName}>{contact.displayName}</span></button>)}

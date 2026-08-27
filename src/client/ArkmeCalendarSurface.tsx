@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -13,6 +13,11 @@ import type {
 import { ArkmeClientError, callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
+import {
+  ARKME_DSH_AGENT_INPUT_LABEL,
+  ArkmeDshAgentInputMarker,
+  isDshAgentInputCreationSource,
+} from './ArkmeDshAgentInputMarker.js'
 import { arkmeUi } from './ui-controller.js'
 
 const colors = {
@@ -89,9 +94,9 @@ const styles: Record<string, CSSProperties> = {
   blank: { height: 45 },
   dayButton: {
     height: 45, minWidth: 0, display: 'grid', alignContent: 'center', justifyItems: 'center', gap: 3,
-    padding: 0, border: '1px solid transparent', borderRadius: 11,
+    padding: 0, borderWidth: 1, borderStyle: 'solid', borderColor: 'transparent', borderRadius: 11,
     background: 'transparent', color: '#50545d', cursor: 'pointer', font: 'inherit',
-    boxSizing: 'border-box', transition: 'background 120ms ease, color 120ms ease',
+    boxSizing: 'border-box', transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
   },
   dayDisabled: { color: colors.caption, opacity: .4, cursor: 'default' },
   daySelected: {
@@ -99,8 +104,11 @@ const styles: Record<string, CSSProperties> = {
   },
   dayNumber: { fontSize: 12, lineHeight: '16px', fontWeight: 500 },
   dayCount: { height: 9, color: '#8b91a1', fontSize: 9, lineHeight: '9px', fontWeight: 400 },
-  dayCountPopulated: { minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878' },
-  selectedDayCount: { color: colors.selectedText, opacity: .8 },
+  dayCountPopulated: {
+    minWidth: 15, padding: '0 4px', borderRadius: 8, background: '#f0f1f5', color: '#626878',
+    transition: 'background 120ms ease, color 120ms ease',
+  },
+  selectedDayCount: { background: 'transparent', color: colors.selectedText, opacity: 1 },
   status: { marginTop: 10, minHeight: 18, color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   error: { color: colors.danger },
   recordsPanel: {
@@ -130,7 +138,13 @@ const styles: Record<string, CSSProperties> = {
     WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere', color: '#292c34',
     fontSize: 12, lineHeight: '19.44px',
   },
-  recordSource: { display: 'block', marginTop: 8, color: '#858b99', fontSize: 9, lineHeight: '14px', textAlign: 'right' },
+  recordSource: {
+    display: 'flex', maxWidth: '100%', marginTop: 8, alignItems: 'center',
+    justifyContent: 'flex-end', gap: 4, color: '#858b99',
+    fontSize: 9, lineHeight: '14px', textAlign: 'right',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  recordSourceIcon: { width: 10, height: 10, flex: 'none', opacity: .72 },
   emptyDay: { marginTop: 92, display: 'grid', justifyItems: 'center', textAlign: 'center', color: '#6d727b' },
   emptyIcon: { marginBottom: 14, color: '#747b8a' },
   loadMore: {
@@ -197,15 +211,17 @@ function sameMonth(left: Date, right: Date): boolean {
   return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth()
 }
 
-function sourceLabel(item: ArkmeCalendarRecordItem): string {
-  if (item.topicTitle) return item.topicTitle
-  if (item.sourceKind === 'self') return '发给自己'
-  if (item.sourceKind === 'chat') return '聊天记录'
-  if (item.sourceKind === 'topic') return '话题记录'
-  return 'Arkme 记录'
+export function arkmeCalendarRecordSourceLabel(item: ArkmeCalendarRecordItem): string {
+  if (isDshAgentInputCreationSource(item)) return ARKME_DSH_AGENT_INPUT_LABEL
+  return ''
+}
+
+export function arkmeCalendarRecordIsDSHAgentInput(item: ArkmeCalendarRecordItem): boolean {
+  return isDshAgentInputCreationSource(item)
 }
 
 function RecordRow({ item, avatarRef }: { item: ArkmeCalendarRecordItem; avatarRef?: string }) {
+  const sourceLabel = arkmeCalendarRecordSourceLabel(item)
   return <article style={styles.recordRow}>
     <div style={styles.recordStack}>
       <div style={styles.recordHeader}>
@@ -214,7 +230,10 @@ function RecordRow({ item, avatarRef }: { item: ArkmeCalendarRecordItem; avatarR
       </div>
       <div style={styles.recordBubble}>
         <p style={styles.recordText}>{item.textContent || item.preview || '无文字内容'}</p>
-        <span style={styles.recordSource}>{sourceLabel(item)}</span>
+        {sourceLabel === '' ? null : <ArkmeDshAgentInputMarker
+          style={styles.recordSource}
+          iconStyle={styles.recordSourceIcon}
+        />}
       </div>
     </div>
     <ArkmeUserAvatar {...(avatarRef === undefined || avatarRef === '' ? {} : { avatarRef })} size={30} label="当前用户头像" />
@@ -234,6 +253,7 @@ export function ArkmeCalendarCell({
   return <button
     type="button"
     aria-label={`${dateKey(date)} ${count > 0 ? `${String(count)} 条记录` : '暂无记录'}`}
+    data-selected={selected ? 'true' : 'false'}
     disabled={disabled}
     style={{
       ...styles.dayButton,
@@ -243,13 +263,14 @@ export function ArkmeCalendarCell({
     onClick={onClick}
   >
     <span style={styles.dayNumber}>{date.getDate()}</span>
-    <span style={{ ...styles.dayCount, ...(count > 0 && !selected ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? count : ''}</span>
+    <span style={{ ...styles.dayCount, ...(count > 0 ? styles.dayCountPopulated : {}), ...(selected ? styles.selectedDayCount : {}) }}>{count > 0 ? count : ''}</span>
   </button>
 }
 
 export function ArkmeCalendarSurface({
   onClose, anchor = 'directory',
 }: { onClose?: () => void; anchor?: 'directory' | 'product-rail' } = {}) {
+  const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
@@ -289,7 +310,7 @@ export function ArkmeCalendarSurface({
       .catch(caught => { if (active && !controller.signal.aborted) setCalendarError(errorMessage(caught)) })
       .finally(() => { if (active) setCalendarLoading(false) })
     return () => { active = false; controller.abort() }
-  }, [timezone, visibleMonth])
+  }, [timezone, visibleMonth, ui.chatRevision])
 
   useEffect(() => {
     let active = true
@@ -304,7 +325,7 @@ export function ArkmeCalendarSurface({
       .catch(caught => { if (active && !controller.signal.aborted) setRecordsError(errorMessage(caught)) })
       .finally(() => { if (active) setRecordsLoading(false) })
     return () => { active = false; controller.abort() }
-  }, [selectedDate, timezone])
+  }, [selectedDate, timezone, ui.chatRevision])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(day => [day.bucketDate, day])), [calendar])
   const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)

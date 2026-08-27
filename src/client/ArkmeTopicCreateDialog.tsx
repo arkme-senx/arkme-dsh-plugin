@@ -3,6 +3,8 @@ import { arkmeTheme } from './arkme-theme.js'
 
 export interface ArkmeTopicCreateDialogProps {
   mode: 'topic' | 'child'
+  /** Full parent hierarchy, used only when creating a child topic. */
+  parentTopicPath?: readonly string[]
   submitting: boolean
   error?: string
   onCancel: () => void
@@ -36,6 +38,7 @@ const styles: Record<string, CSSProperties> = {
   },
   header: { display: 'flex', alignItems: 'center', gap: 12 },
   title: { flex: 1, margin: 0, fontSize: 18, lineHeight: '25px', fontWeight: 600 },
+  parentPath: { margin: '6px 0 0', color: colors.caption, fontSize: 12, lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   close: {
     width: 28, height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: colors.text,
@@ -63,7 +66,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 export function ArkmeTopicCreateDialog({
-  mode, submitting, error = '', onCancel, onConfirm,
+  mode, parentTopicPath = [], submitting, error = '', onCancel, onConfirm,
 }: ArkmeTopicCreateDialogProps) {
   const [title, setTitle] = useState('')
   const normalizedTitle = title.trim()
@@ -90,6 +93,9 @@ export function ArkmeTopicCreateDialog({
         <h2 id="arkme-topic-create-title" style={styles.title}>{dialogTitle}</h2>
         <button type="button" style={styles.close} aria-label="关闭" disabled={submitting} onClick={onCancel}>×</button>
       </div>
+      {mode === 'child' && parentTopicPath.length > 0 && <p style={styles.parentPath} title={parentTopicPath.join(' / ')}>
+        将在「{parentTopicPath.join(' / ')}」下创建
+      </p>}
       <label style={styles.field}>
         <span style={styles.label}>主题名称</span>
         <input

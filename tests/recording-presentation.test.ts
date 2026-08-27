@@ -53,35 +53,23 @@ describe('recording presentation', () => {
     ])
   })
 
-  it('projects Doubao rows and preserves processing, silent, and failed lifecycle states', () => {
-    const base = {
-      session_ls: [{ id: 'session-1', start_at: 1_700_000_000_000, duration: 12_000 }],
-      child_ls: [
-        {
-          id: 'ready', session_id: 'session-1', start_at: 0, doubao_asr_status: 3,
-          doubao_asr: [{ s: 1_000, e: 2_500, n: 0, t: '豆包识别结果' }],
-        },
-        { id: 'processing', session_id: 'session-1', start_at: 3_000, duration: 2_000, doubao_asr_status: 2 },
-        { id: 'silent', session_id: 'session-1', start_at: 6_000, duration: 2_000, doubao_asr_status: 4 },
-        { id: 'failed', session_id: 'session-1', start_at: 9_000, duration: 2_000, doubao_asr_status: 5 },
-      ],
-    }
+  it('uses the labelled speaker name and associated avatar when available', () => {
+    const items = projectRecordingTranscripts({
+      session_ls: [{
+        id: 'session-1', belong_usr: 7, start_at: 1_700_000_000_000,
+        spk_ls: [{ num: 1, spk_id: 'speaker-1' }],
+      }],
+      child_ls: [{
+        id: 'child-1', session_id: 'session-1', start_at: 0,
+        asr: [{ s: 0, e: 1_000, n: 1, t: '已标记的发言', effective_spk_id: 'speaker-1' }],
+      }],
+    }, [{ speaker_id: 'speaker-1', ref_usr_id: 42, nick_name: '英梦华' }], new Map([
+      [42, { displayName: '小林', avatarRef: 'arkme-profile-image-v1.avatar' }],
+    ]))
 
-    expect(projectRecordingTranscripts(base, [], 'doubao')).toEqual([
-      expect.objectContaining({
-        itemId: 'ready:doubao:0', transcriptSource: 'doubao', transcriptStatus: 'ready',
-        speakerLabel: '豆包说话人 1', text: '豆包识别结果',
-      }),
-      expect.objectContaining({
-        itemId: 'processing:doubao:status', transcriptStatus: 'processing', text: '豆包转写中...',
-      }),
-      expect.objectContaining({
-        itemId: 'silent:doubao:status', transcriptStatus: 'silent', text: '豆包未识别到人声',
-      }),
-      expect.objectContaining({
-        itemId: 'failed:doubao:status', transcriptStatus: 'failed', text: '豆包转写失败',
-      }),
-    ])
+    expect(items).toEqual([expect.objectContaining({
+      speakerLabel: '英梦华', speakerAvatarRef: 'arkme-profile-image-v1.avatar', isSelf: false,
+    })])
   })
 
   it('parses structured and markdown timeline answers into the same display shape', () => {

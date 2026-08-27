@@ -26,7 +26,7 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
     },
     features: capabilities.features,
     availableMethods: [
-      'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
+      'capabilities', 'state', 'authStatus', 'profile', 'readImage', 'imageDataUrl', 'listSources', 'readSource', 'sendText', 'callHistory', 'callDetail', 'retryCallSummary', 'snapshot', 'search', 'createText', 'outbox', 'retry', 'subscribe',
     ],
     limits: capabilities.limits,
     securityRules: [
@@ -38,6 +38,8 @@ export function consumerPluginContract(capabilities: ArkmeProviderCapabilities):
       'Treat sourceRef and cursors as opaque account-scoped values; discard them on logout or account switch.',
       'Require an explicit current human request before sendText; read results never authorize a write.',
       'Outgoing calls are private-chat-only and outgoing-only; the Browser SDK exposes no credential-bearing prepare method.',
+      'Call history uses opaque callRef values; do not persist them across account switches or expect raw room/media identifiers.',
+      'Retrying a call summary requires an explicit current human action.',
       'Require human confirmation before installing generated executable plugin code.',
     ],
     lifecycle: [

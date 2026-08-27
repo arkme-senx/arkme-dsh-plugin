@@ -33,6 +33,43 @@ describe('desktop call host bridge', () => {
     })).toMatchObject({ type: 'calling', roomId: 'room-1' })
   })
 
+  it('accepts sanitized diagnostic messages from the active iframe', () => {
+    const { event, expectedSource } = bridgeEvent({
+      type: 'diag',
+      label: 'engine_event_received',
+      detail: { eventName: 'onCallEnd', roomId: 'room-1' },
+    })
+
+    expect(parseDesktopCallBridgeEvent(event, {
+      expectedSource: expectedSource as Window,
+      expectedOrigin: 'http://127.0.0.1:3210',
+      callRequestId: 'request-1',
+    })).toMatchObject({
+      type: 'diag',
+      label: 'engine_event_received',
+      detail: JSON.stringify({ eventName: 'onCallEnd', roomId: 'room-1' }),
+    })
+  })
+
+  it('accepts the iframe active-call flag on state messages', () => {
+    const { event, expectedSource } = bridgeEvent({
+      type: 'state',
+      phase: 'idle',
+      statusText: '已初始化，等待来电或发起呼叫',
+      hasActiveCall: false,
+    })
+
+    expect(parseDesktopCallBridgeEvent(event, {
+      expectedSource: expectedSource as Window,
+      expectedOrigin: 'http://127.0.0.1:3210',
+      callRequestId: 'request-1',
+    })).toMatchObject({
+      type: 'state',
+      phase: 'idle',
+      hasActiveCall: false,
+    })
+  })
+
   it('rejects incoming-call, cross-origin, mismatched request, and malformed messages', () => {
     const valid = bridgeEvent({ type: 'incoming' })
     expect(parseDesktopCallBridgeEvent(valid.event, {

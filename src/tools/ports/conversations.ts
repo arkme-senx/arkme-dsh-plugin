@@ -1,7 +1,12 @@
 import type {
+  ArkmeConversationMemberList, ArkmeConversationMemberRecordMode, ArkmeConversationMemberRecordPage,
   ArkmeDirectTextSendResult, ArkmeGroupAiPolishMutationResult, ArkmeGroupAiPolishRuleCandidate,
-  ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceSendResult,
+  ArkmeMessageCopyLinkExtendResult,
+  ArkmeGroupAiPolishSnapshot, ArkmeMessageReportResult, ArkmeSourceDirectory, ArkmeSourceList, ArkmeSourceReadResult, ArkmeSourceSendResult,
+  ArkmeMessageReadReceiptDetail, ArkmeMessageReadReceiptQueryItem, ArkmeMessageReadReceiptSummaryList,
   ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeTimelineCursor, ArkmeTimelinePage,
+  ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerManageAction,
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
@@ -13,6 +18,29 @@ export interface ArkmeConversationToolPort {
     sourceRef: string,
     options?: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal },
   ): Promise<ArkmeTimelinePage>
+  messageReadReceiptSummaries(
+    sourceRef: string,
+    items: readonly ArkmeMessageReadReceiptQueryItem[],
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeMessageReadReceiptSummaryList>
+  messageReadReceiptDetail(
+    sourceRef: string,
+    itemUid: string,
+    sequence: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeMessageReadReceiptDetail>
+  markSourceRead(
+    sourceRef: string,
+    readSequence: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeSourceReadResult>
+  listSourceMembers(sourceRef: string, options?: { activeOnly?: boolean; signal?: AbortSignal }): Promise<ArkmeConversationMemberList>
+  sourceMemberRecords(
+    sourceRef: string,
+    memberRef: string,
+    mode: ArkmeConversationMemberRecordMode,
+    options?: { limit?: number; beforeSequence?: number; signal?: AbortSignal },
+  ): Promise<ArkmeConversationMemberRecordPage>
   relatedRecordings(
     sourceRef: string,
     options?: ArkmeRelatedRecordingPageOptions,
@@ -36,6 +64,25 @@ export interface ArkmeConversationToolPort {
       agentAuthored?: boolean
     },
   ): Promise<ArkmeSourceSendResult>
+  extendMessageCopyLink(
+    sid: string,
+    itemIndex: number,
+    textContent: string,
+    recordUid: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeMessageCopyLinkExtendResult>
+  favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList>
+  addFavoriteSticker(item: ArkmeFavoriteStickerAddInput, signal?: AbortSignal): Promise<ArkmeFavoriteStickerList>
+  sendFavoriteSticker(
+    sourceRef: string,
+    fileAssetUid: string,
+    options?: { recordUid?: string; relationUid?: string; signal?: AbortSignal },
+  ): Promise<ArkmeSourceSendResult>
+  manageFavoriteSticker(
+    fileAssetUid: string,
+    action: ArkmeFavoriteStickerManageAction,
+    signal?: AbortSignal,
+  ): Promise<ArkmeFavoriteStickerList>
   sendDirectText(
     recipientArkmeId: string,
     textContent: string,

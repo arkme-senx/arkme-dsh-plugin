@@ -1,6 +1,18 @@
 import Cocoa
 import WebKit
 
+private let nativeTitlebarHeight: CGFloat = 50
+
+private final class WindowDragView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
 final class ArkmeDSHAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
@@ -27,11 +39,22 @@ final class ArkmeDSHAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDe
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
-        let webView = WKWebView(frame: frame, configuration: configuration)
+        let contentView = NSView(frame: frame)
+        contentView.autoresizingMask = [.width, .height]
+        let webView = WKWebView(frame: contentView.bounds, configuration: configuration)
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         webView.autoresizingMask = [.width, .height]
-        window.contentView = webView
+        contentView.addSubview(webView)
+        let dragView = WindowDragView(frame: NSRect(
+            x: 0,
+            y: contentView.bounds.height - nativeTitlebarHeight,
+            width: contentView.bounds.width,
+            height: nativeTitlebarHeight
+        ))
+        dragView.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(dragView, positioned: .above, relativeTo: webView)
+        window.contentView = contentView
 
         self.window = window
         self.webView = webView

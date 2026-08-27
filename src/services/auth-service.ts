@@ -3,18 +3,33 @@ import type { ArkmeAuthSnapshot, ArkmeCaptchaResult, ArkmeUserProfileSnapshot } 
 import { ProfileService } from './profile-service.js'
 import { ArkmePluginError, ServiceRuntime, stringValue } from './service.js'
 
-interface LoginAttempt {
+interface WechatLoginAttempt {
+  kind: 'wechat'
   attemptId: string
   sceneStr: string
+  pollToken: string
   qrContent: string
   expiresAtMillis: number
 }
 
-interface QrResponse { url?: unknown; scene_str?: unknown; expire_seconds?: unknown }
+interface JiwoLoginAttempt {
+  kind: 'jiwo'
+  attemptId: string
+  ticket: string
+  pollSecret: string
+  qrContent: string
+  expiresAtMillis: number
+}
+
+type LoginAttempt = WechatLoginAttempt | JiwoLoginAttempt
+
+interface QrResponse { url?: unknown; scene_str?: unknown; poll_token?: unknown; expire_seconds?: unknown }
 interface ScanResponse { access_token?: unknown; refresh_token?: unknown; user_id?: unknown }
 interface TestLoginResponse { access_token?: unknown; refresh_token?: unknown }
 interface BindPhoneResponse { result?: unknown }
 interface PhoneLoginResponse extends ScanResponse { ok?: unknown }
+interface JiwoStartResponse { ticket?: unknown; poll_secret?: unknown; expires_at?: unknown }
+interface JiwoPollResponse extends ScanResponse { status?: unknown }
 
 export interface ArkmeAuthLifecycle {
   reconnectChatRealtime(): void
@@ -29,8 +44,27 @@ function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+export function jiwoScanLoginAvailable(config: ServiceRuntime['config']): boolean {
+  try {
+    const authUrl = new URL(config.authBaseUrl)
+    const shareUrl = new URL(config.shareWebsite ?? '')
+    if ([authUrl, shareUrl].some(url => url.protocol !== 'https:'
+      || url.port !== ''
+      || url.username !== ''
+      || url.password !== '')) return false
+    const authHost = authUrl.hostname.toLowerCase()
+    const shareHost = shareUrl.hostname.toLowerCase()
+    return config.environment === 'prod'
+      ? authHost === 'api.jotmo.cc' && shareHost === 'jiwo.cc'
+      : authHost === 'jotmo.senguo.me' && shareHost === 'jotmo-app.senguo.me'
+  } catch {
+    return false
+  }
+}
+
 export class AuthService {
   private readonly attempts = new Map<string, LoginAttempt>()
+  private jiwoAttemptGeneration = 0
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -39,7 +73,11 @@ export class AuthService {
   ) {}
 
   dispose(): void {
-    this.attempts.clear()
+    this.jiwoAttemptGeneration += 1
+    void this.cancelAllJiwoLoginAttempts()
+    for (const [attemptId, attempt] of this.attempts) {
+      if (attempt.kind === 'wechat') this.attempts.delete(attemptId)
+    }
   }
 
   async logout(): Promise<ArkmeAuthSnapshot> {
@@ -54,6 +92,8 @@ export class AuthService {
     await this.runtime.sessionStore.delete()
     await this.runtime.clearPendingBindingSession()
     this.profile.invalidate()
+    this.jiwoAttemptGeneration += 1
+    await this.cancelAllJiwoLoginAttempts()
     this.attempts.clear()
     this.lifecycle.clearAccountState(userIds)
     this.lifecycle.reconnectChatRealtime()
@@ -89,14 +129,17 @@ export class AuthService {
   }
 
   async beginWechatLogin(): Promise<ArkmeAuthSnapshot> {
+    this.jiwoAttemptGeneration += 1
+    await this.cancelAllJiwoLoginAttempts()
     const data = await this.runtime.post<QrResponse>(
       this.runtime.config.authBaseUrl,
-      '/api/public/v1/auth/wechat-login-qrcode',
+      '/api/public/v1/auth/wechat-oauth-login-qrcode',
       {},
       undefined,
       [200],
     )
     const sceneStr = stringValue(data.scene_str).trim()
+    const pollToken = stringValue(data.poll_token).trim()
     const qrContent = stringValue(data.url).trim()
     const expireSeconds = Math.max(30, numberValue(data.expire_seconds) || 300)
     if (qrContent === '' && sceneStr !== '') {
@@ -107,13 +150,15 @@ export class AuthService {
         503,
       )
     }
-    if (sceneStr === '' || qrContent === '') {
+    if (sceneStr === '' || pollToken === '' || qrContent === '') {
       throw new ArkmePluginError('login-contract-invalid', 'Arkme 登录二维码响应不完整', true, 502)
     }
     const attemptId = crypto.randomUUID()
     const attempt: LoginAttempt = {
+      kind: 'wechat',
       attemptId,
       sceneStr,
+      pollToken,
       qrContent,
       expiresAtMillis: Date.now() + expireSeconds * 1000,
     }
@@ -130,7 +175,7 @@ export class AuthService {
 
   async pollWechatLogin(attemptId: string): Promise<ArkmeAuthSnapshot> {
     const attempt = this.attempts.get(attemptId)
-    if (attempt === undefined) {
+    if (attempt === undefined || attempt.kind !== 'wechat') {
       throw new ArkmePluginError('login-attempt-not-found', '登录二维码已失效，请重新获取', false, 404)
     }
     if (Date.now() >= attempt.expiresAtMillis) {
@@ -139,9 +184,10 @@ export class AuthService {
     }
     const data = await this.runtime.post<ScanResponse>(
       this.runtime.config.authBaseUrl,
-      '/api/public/v1/auth/wechat-scan-login',
+      '/api/public/v1/auth/wechat-oauth-login-poll',
       {
         scene_str: attempt.sceneStr,
+        poll_token: attempt.pollToken,
         unique_code: await this.runtime.stateStore.uniqueCode(),
         ref: 0,
         keep_cancel: true,
@@ -167,6 +213,165 @@ export class AuthService {
     const session = { accessToken, refreshToken, userId }
     this.attempts.delete(attemptId)
     return await this.acceptLoginSession(session)
+  }
+
+  async beginJiwoLogin(): Promise<ArkmeAuthSnapshot> {
+    if (!jiwoScanLoginAvailable(this.runtime.config)) {
+      throw new ArkmePluginError(
+        'jiwo-scan-login-disabled',
+        '即我扫码登录当前未启用',
+        false,
+        403,
+      )
+    }
+    const attemptGeneration = ++this.jiwoAttemptGeneration
+    await this.cancelAllJiwoLoginAttempts()
+    const data = await this.runtime.post<JiwoStartResponse>(
+      this.runtime.config.authBaseUrl,
+      '/api/public/v1/auth/app-scan-login/start',
+      {
+        unique_code: await this.runtime.stateStore.uniqueCode(),
+        ref: 0,
+        keep_cancel: true,
+      },
+      undefined,
+      [200],
+    )
+    const ticket = stringValue(data.ticket).trim()
+    const pollSecret = stringValue(data.poll_secret).trim()
+    const expiresAtMillis = numberValue(data.expires_at)
+    if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)
+      || !/^[A-Za-z0-9_-]{43}$/.test(pollSecret)
+      || expiresAtMillis <= Date.now()) {
+      throw new ArkmePluginError(
+        'jiwo-login-contract-invalid',
+        '即我登录二维码响应不完整',
+        true,
+        502,
+      )
+    }
+    if (attemptGeneration !== this.jiwoAttemptGeneration) {
+      await this.cancelJiwoCredentials(ticket, pollSecret)
+      throw new ArkmePluginError(
+        'login-attempt-canceled',
+        '登录方式已切换',
+        false,
+        409,
+      )
+    }
+    const shareWebsite = this.runtime.config.shareWebsite ?? ''
+    const qrUrl = new URL('/login/desktop', shareWebsite)
+    qrUrl.searchParams.set('ticket', ticket)
+    const attemptId = crypto.randomUUID()
+    const attempt: JiwoLoginAttempt = {
+      kind: 'jiwo',
+      attemptId,
+      ticket,
+      pollSecret,
+      qrContent: qrUrl.toString(),
+      expiresAtMillis,
+    }
+    this.attempts.clear()
+    this.attempts.set(attemptId, attempt)
+    return this.jiwoPendingSnapshot(attempt)
+  }
+
+  async pollJiwoLogin(attemptId: string): Promise<ArkmeAuthSnapshot> {
+    const attempt = this.attempts.get(attemptId)
+    if (attempt === undefined || attempt.kind !== 'jiwo') {
+      throw new ArkmePluginError(
+        'login-attempt-not-found',
+        '登录二维码已失效，请重新获取',
+        false,
+        404,
+      )
+    }
+    if (Date.now() >= attempt.expiresAtMillis) {
+      await this.cancelJiwoLogin(attemptId)
+      return { status: 'expired', environment: this.runtime.config.environment }
+    }
+    const data = await this.runtime.post<JiwoPollResponse>(
+      this.runtime.config.authBaseUrl,
+      '/api/public/v1/auth/app-scan-login/poll',
+      { ticket: attempt.ticket, poll_secret: attempt.pollSecret },
+      undefined,
+      [200],
+    )
+    if (this.attempts.get(attemptId) !== attempt) {
+      return { status: 'expired', environment: this.runtime.config.environment }
+    }
+    const status = stringValue(data.status).trim()
+    if (status === 'pending') return this.jiwoPendingSnapshot(attempt)
+    if (status === 'expired') {
+      this.attempts.delete(attemptId)
+      return { status: 'expired', environment: this.runtime.config.environment }
+    }
+    if (status !== 'authenticated') {
+      throw new ArkmePluginError(
+        'jiwo-login-contract-invalid',
+        '即我扫码登录状态无效',
+        true,
+        502,
+      )
+    }
+    const userId = numberValue(data.user_id)
+    const accessToken = stringValue(data.access_token)
+    const refreshToken = stringValue(data.refresh_token)
+    if (userId <= 0 || accessToken === '' || refreshToken === '') {
+      throw new ArkmePluginError(
+        'login-contract-invalid',
+        'Arkme 登录成功响应缺少凭据',
+        false,
+        502,
+      )
+    }
+    this.attempts.delete(attemptId)
+    return await this.acceptLoginSession({ accessToken, refreshToken, userId })
+  }
+
+  async cancelJiwoLogin(attemptId: string): Promise<{ canceled: true }> {
+    if (attemptId.trim() === '') {
+      return { canceled: true }
+    }
+    const attempt = this.attempts.get(attemptId)
+    if (attempt === undefined || attempt.kind !== 'jiwo') return { canceled: true }
+    this.jiwoAttemptGeneration += 1
+    this.attempts.delete(attemptId)
+    await this.cancelJiwoCredentials(attempt.ticket, attempt.pollSecret)
+    return { canceled: true }
+  }
+
+  private async cancelJiwoCredentials(ticket: string, pollSecret: string): Promise<void> {
+    try {
+      await this.runtime.post<Record<string, unknown>>(
+        this.runtime.config.authBaseUrl,
+        '/api/public/v1/auth/app-scan-login/cancel',
+        { ticket, poll_secret: pollSecret },
+        undefined,
+        [200],
+      )
+    } catch {
+      // The local attempt is already invalidated; server TTL remains the fallback.
+    }
+  }
+
+  private jiwoPendingSnapshot(attempt: JiwoLoginAttempt): ArkmeAuthSnapshot {
+    return {
+      status: 'pending',
+      environment: this.runtime.config.environment,
+      attemptId: attempt.attemptId,
+      qrContent: attempt.qrContent,
+      expiresAtMillis: attempt.expiresAtMillis,
+    }
+  }
+
+  private async cancelAllJiwoLoginAttempts(): Promise<void> {
+    const attempts = [...this.attempts.values()]
+      .filter((attempt): attempt is JiwoLoginAttempt => attempt.kind === 'jiwo')
+    for (const attempt of attempts) this.attempts.delete(attempt.attemptId)
+    await Promise.all(attempts.map(async attempt => {
+      await this.cancelJiwoCredentials(attempt.ticket, attempt.pollSecret)
+    }))
   }
 
   async testLogin(userId: number): Promise<ArkmeAuthSnapshot> {

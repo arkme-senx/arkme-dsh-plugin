@@ -14,10 +14,12 @@ const ASSETS = {
   'call-linear-strong.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'image_search.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'image_search_grey.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'gallery-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'icon_close_round_bold.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'close.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'arrow_left.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'video_play_white.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
+  'arkme-video-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'user-add-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'profile-circle-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
   'call-add-linear.svg': { contentType: 'image/svg+xml; charset=utf-8', cacheControl: 'public, max-age=31536000, immutable' },
@@ -25,6 +27,8 @@ const ASSETS = {
   'avatar-lin-xiaoman.jpeg': { contentType: 'image/jpeg', cacheControl: 'public, max-age=31536000, immutable' },
   'avatar-mother.jpg': { contentType: 'image/jpeg', cacheControl: 'public, max-age=31536000, immutable' },
   'avatar-self.png': { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
+  'call-demo-peer.png': { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
+  'call-demo-self.png': { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
   'manifest.json': { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' },
 } as const
 

@@ -18,7 +18,7 @@ import {
   type ArkmeNavigationCache,
 } from './navigation-cache.js'
 import {
-  buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
+  arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree,
 } from './source-tree.js'
 import { arkmeSelfDirectorySources, sortArkmeSources, type ArkmeSourceSort } from './source-list.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -26,11 +26,15 @@ import { arkmeTheme } from './arkme-theme.js'
 export interface ArkmeTopicDirectoryPopoverProps {
   userId: number
   selectedSource: ArkmeSourceItem | undefined
+  trigger?: 'button' | 'none'
   onSelect(source: ArkmeSourceItem): void
   onSelectionInvalidated(): void
   onSelfSourcesResolution(userId: number, resolution: ArkmeSelfSourcesResolution): void
+  onCreateTopicReady?(open: ArkmeTopicCreateOpener | undefined): void
   retryRevision: number
 }
+
+export type ArkmeTopicCreateOpener = (parent?: ArkmeSourceItem | null, parentLevel?: number) => void
 
 export type ArkmeSelfSourcesResolution =
   | { status: 'loading' }
@@ -39,6 +43,8 @@ export type ArkmeSelfSourcesResolution =
     aggregateSource: ArkmeSourceItem
     defaultCategorySource: ArkmeSourceItem
     sources: ArkmeSourceItem[]
+    loading: boolean
+    error?: string
   }
   | { status: 'error'; message: string }
 
@@ -56,6 +62,16 @@ export function reconcileArkmeTopicSelection(
   return source === undefined ? { status: 'invalid' } : { status: 'selected', source }
 }
 
+/** Merge successive pages without discarding hierarchy metadata refreshed on a later page. */
+export function mergeArkmeTopicSourcePages(
+  current: readonly ArkmeSourceItem[], incoming: readonly ArkmeSourceItem[],
+): ArkmeSourceItem[] {
+  const incomingByRef = new Map(incoming.map(source => [source.sourceRef, source]))
+  const retained = current.map(source => incomingByRef.get(source.sourceRef) ?? source)
+  const known = new Set(retained.map(source => source.sourceRef))
+  return [...retained, ...incoming.filter(source => !known.has(source.sourceRef))]
+}
+
 const colors = {
   text: arkmeTheme.text,
   secondary: arkmeTheme.secondary,
@@ -70,7 +86,7 @@ export const ARKME_TOPIC_DIRECTORY_SEARCH_BG = arkmeTheme.input
 
 const styles: Record<string, CSSProperties> = {
   trigger: {
-    zIndex: 3, width: 28, height: 28, flex: 'none', marginLeft: 'auto',
+    zIndex: 3, width: 28, height: 28, flex: 'none', marginRight: 7,
     display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 8,
     background: 'transparent', color: colors.secondary, cursor: 'pointer',
   },
@@ -79,7 +95,7 @@ const styles: Record<string, CSSProperties> = {
     background: '#f1f2f6',
   },
   popover: {
-    position: 'absolute', zIndex: 12, top: 48, right: 48,
+    position: 'absolute', zIndex: 12, top: 48, left: 20,
     width: 'min(340px, calc(100% - 32px))', maxHeight: ARKME_TOPIC_DIRECTORY_POPOVER_MAX_HEIGHT,
     display: 'grid', gridTemplateRows: 'auto auto minmax(0, 1fr)', overflow: 'hidden',
     boxSizing: 'border-box', border: `1px solid ${colors.border}`, borderRadius: 16,
@@ -121,6 +137,9 @@ export function filterArkmeTopicSources(
   const query = queryInput.trim().toLocaleLowerCase()
   if (query === '') return [...sources]
   const byRef = new Map(sources.map(source => [source.sourceRef, source]))
+  const byTopicHierarchyKey = new Map(
+    sources.flatMap(source => source.topicHierarchyKey === undefined ? [] : [[source.topicHierarchyKey, source] as const]),
+  )
   const included = new Set<string>()
   for (const source of sources) {
     if (!source.displayName.toLocaleLowerCase().includes(query)) continue
@@ -129,7 +148,9 @@ export function filterArkmeTopicSources(
     while (current !== undefined && !visited.has(current.sourceRef)) {
       visited.add(current.sourceRef)
       included.add(current.sourceRef)
-      current = current.parentSourceRef === undefined ? undefined : byRef.get(current.parentSourceRef)
+      current = current.parentTopicHierarchyKey === undefined
+        ? current.parentSourceRef === undefined ? undefined : byRef.get(current.parentSourceRef)
+        : byTopicHierarchyKey.get(current.parentTopicHierarchyKey)
     }
   }
   return sources.filter(source => included.has(source.sourceRef))
@@ -162,7 +183,7 @@ function cacheWithTopics(
 }
 
 export function ArkmeTopicDirectoryPopover({
-  userId, selectedSource, onSelect, onSelectionInvalidated, onSelfSourcesResolution, retryRevision,
+  userId, selectedSource, trigger = 'button', onSelect, onSelectionInvalidated, onSelfSourcesResolution, onCreateTopicReady, retryRevision,
 }: ArkmeTopicDirectoryPopoverProps) {
   const initialCache = useMemo(() => readNavigationCache(userId), [userId])
   const requestRef = useRef<AbortController>()
@@ -201,20 +222,33 @@ export function ArkmeTopicDirectoryPopover({
       onSelfSourcesResolution(userId, { status: 'loading' })
     }
     try {
-      const loaded: ArkmeSourceItem[] = []
+      let loaded: ArkmeSourceItem[] = []
       let cursor: string | undefined
-      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+      let hasNextPage = false
+      const visitedCursors = new Set<string>()
+      for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
         const page = await callArkme<ArkmeSourceList>('sources.list', {
           directory: 'send_to_self', limit: 100,
           ...(cursor === undefined ? {} : { cursor }),
         }, controller.signal)
-        const known = new Set(loaded.map(source => source.sourceRef))
-        loaded.push(...page.items.filter(source => !known.has(source.sourceRef)))
-        if (!page.hasMore || page.nextCursor === undefined) break
-        cursor = page.nextCursor
+        if (controller.signal.aborted) return
+        loaded = mergeArkmeTopicSourcePages(loaded, page.items)
+        sourcesRef.current = loaded
+        setSources(loaded)
+        persist(loaded)
+        const nextCursor = page.nextCursor
+        hasNextPage = page.hasMore && nextCursor !== undefined
+        if (!hasNextPage || nextCursor === undefined) break
+        cursor = nextCursor
+        if (visitedCursors.has(cursor)) {
+          throw new Error('主题分页未推进，请重试')
+        }
+        visitedCursors.add(cursor)
+        if (pageIndex === 99) {
+          throw new Error('主题加载未完成，请重试')
+        }
       }
       if (controller.signal.aborted) return
-      setSources(loaded)
       const currentSelected = selectedSourceRef.current
       const reconciliation = reconcileArkmeTopicSelection(currentSelected, loaded)
       if (reconciliation.status === 'selected') {
@@ -231,7 +265,7 @@ export function ArkmeTopicDirectoryPopover({
       const aggregateSource = loaded.find(source => source.kind === 'send_to_self')
       const defaultCategorySource = loaded.find(source => source.kind === 'default_category')
       if (aggregateSource === undefined || defaultCategorySource === undefined) {
-        const message = '未找到发给自己或默认分类，请重试'
+        const message = '未找到发给自己或未分类，请重试'
         setError(message)
         onSelfSourcesResolution(userId, { status: 'error', message })
       }
@@ -259,8 +293,11 @@ export function ArkmeTopicDirectoryPopover({
     const aggregateSource = sources.find(source => source.kind === 'send_to_self')
     const defaultCategorySource = sources.find(source => source.kind === 'default_category')
     if (aggregateSource === undefined || defaultCategorySource === undefined) return
-    onSelfSourcesResolution(userId, { status: 'ready', aggregateSource, defaultCategorySource, sources })
-  }, [onSelfSourcesResolution, sources, userId])
+    onSelfSourcesResolution(userId, {
+      status: 'ready', aggregateSource, defaultCategorySource, sources, loading: busy,
+      ...(error === '' ? {} : { error }),
+    })
+  }, [busy, error, onSelfSourcesResolution, sources, userId])
 
   useEffect(() => {
     if (!open && topicCreateParent === undefined) return
@@ -319,11 +356,16 @@ export function ArkmeTopicDirectoryPopover({
     setCollapsedSourceRefs(current => expandTopicFromRowClick(row, current))
     selectSource(row.source)
   }
-  const openCreate = (parent: ArkmeSourceItem | null, parentLevel?: number) => {
+  const openCreate = useCallback((parent: ArkmeSourceItem | null, parentLevel?: number) => {
     setTopicCreateParent(parent)
     setTopicCreateParentLevel(parentLevel)
     setTopicCreateError('')
-  }
+  }, [])
+  useEffect(() => {
+    if (onCreateTopicReady === undefined) return
+    onCreateTopicReady((parent = null, parentLevel) => { openCreate(parent, parentLevel) })
+    return () => { onCreateTopicReady(undefined) }
+  }, [onCreateTopicReady, openCreate])
   const cancelCreate = () => {
     if (createRequestRef.current) return
     setTopicCreateParent(undefined)
@@ -362,19 +404,20 @@ export function ArkmeTopicDirectoryPopover({
   }
 
   return <>
-    <button
-      ref={triggerRef} type="button" aria-label="打开分类目录" title="分类目录" aria-haspopup="dialog" aria-expanded={open}
+    {trigger === 'button' && <button
+      ref={triggerRef} type="button" aria-label="打开主题" title="主题" aria-haspopup="dialog" aria-expanded={open}
+      data-arkme-topic-directory-trigger="leading"
       style={{ ...styles.trigger, ...(open ? styles.triggerActive : {}) }}
       onClick={() => { setOpen(value => !value) }}
-    ><ListBullets size={17} aria-hidden /></button>
-    {open && <div ref={popoverRef} role="dialog" aria-label="目录" style={styles.popover}>
+    ><ListBullets size={17} aria-hidden /></button>}
+    {open && <div ref={popoverRef} role="dialog" aria-label="主题" style={styles.popover}>
       <div style={styles.head}>
-        <h3 style={styles.heading}>目录</h3>
+        <h3 style={styles.heading}>主题</h3>
         <ArkmeSourceSortControl value={sourceSort} onChange={value => {
           setSourceSort(value)
           setHoveredSourceRef(undefined)
         }} />
-        <button type="button" aria-label="关闭目录" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
+        <button type="button" aria-label="关闭主题" style={styles.close} onClick={() => { setOpen(false) }}>×</button>
       </div>
       <label style={styles.search}>
         <svg aria-hidden viewBox="0 0 16 16" width="14" height="14" fill="none">
@@ -386,7 +429,7 @@ export function ArkmeTopicDirectoryPopover({
           onChange={event => { setQuery(event.currentTarget.value) }}
         />
       </label>
-      <div role={cardMode ? 'list' : 'tree'} aria-label="主题目录" style={styles.tree}>
+      <div role={cardMode ? 'list' : 'tree'} aria-label="主题列表" style={styles.tree}>
         {!cardMode && rows.map(row => {
           const source = row.source
           return <ArkmeTopicTreeRow
@@ -407,7 +450,7 @@ export function ArkmeTopicDirectoryPopover({
           onHoverChange={hovered => { setHoveredSourceRef(hovered ? source.sourceRef : undefined) }}
           onSelect={() => { selectSource(source) }}
         />)}
-        {busy && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div role="status" style={styles.status}>正在加载目录…</div>}
+        {busy && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div role="status" style={styles.status}>正在加载主题…</div>}
         {!busy && error === '' && (cardMode ? cardSources.length === 0 : rows.length === 0) && <div style={styles.status}>{query.trim() === '' ? '暂无主题' : '没有匹配的主题'}</div>}
         {error !== '' && <div role="alert" style={{ ...styles.status, ...styles.error }}>
           <div>{error}</div>
@@ -420,6 +463,7 @@ export function ArkmeTopicDirectoryPopover({
     {topicCreateParent !== undefined && <ArkmeTopicCreateDialog
       key={topicCreateParent?.sourceRef ?? 'root'}
       mode={topicCreateParent === null ? 'topic' : 'child'}
+      {...(topicCreateParent === null ? {} : { parentTopicPath: arkmeTopicPathNames(topicCreateParent, sources) })}
       submitting={topicCreateSubmitting} error={topicCreateError}
       onCancel={cancelCreate} onConfirm={title => { void submitCreate(title) }}
     />}

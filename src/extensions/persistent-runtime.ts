@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync, realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createContext, runInContext } from 'node:vm'
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
@@ -37,7 +37,33 @@ function readInstallation(url: URL): ArkmePersistentInstallation {
     || value.trusted_public_key.trim() === '') {
     throw new Error('Arkme persistent extension installation metadata is invalid')
   }
-  return value
+  return { ...value, artifact_path: resolveRuntimeArtifactPath(value, url) }
+}
+
+function resolveRuntimeArtifactPath(installation: ArkmePersistentInstallation, installationUrl: URL): string {
+  const dshHome = process.env.DSH_HOME?.trim()
+  const filename = basename(installation.artifact_path)
+  if (dshHome !== undefined && dshHome !== '' && filename !== '' && filename !== '.' && filename !== '..') {
+    try {
+      const root = realpathSync(join(dshHome, 'arkme-self', 'extensions'))
+      const candidate = realpathSync(join(
+        root,
+        installation.extension_id,
+        installation.version,
+        filename,
+      ))
+      const fromRoot = relative(root, candidate)
+      if (fromRoot !== '' && fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot)
+        && sha256Hex(readFileSync(candidate)) === installation.artifact_sha256) {
+        return candidate
+      }
+    } catch {
+      // Custom artifact directories and pre-migration Profiles keep using the signed installation path below.
+    }
+  }
+  return isAbsolute(installation.artifact_path)
+    ? installation.artifact_path
+    : resolve(dirname(fileURLToPath(installationUrl)), installation.artifact_path)
 }
 
 function jsonValue(value: unknown): unknown {

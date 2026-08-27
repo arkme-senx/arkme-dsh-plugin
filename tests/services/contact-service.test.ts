@@ -76,6 +76,18 @@ describe('ContactService', () => {
     )
   })
 
+  it('revalidates a registered contact reference through the narrow voiceprint target resolver', async () => {
+    const { service, runtime } = fixture({
+      exists: true, is_registered: true, can_add: true, is_self: false, invite_by_sms: false,
+      user_id: 88, nick_name: '林林', jotmo_id: 'lin-lin',
+    })
+    const result = await service.search('lin-lin')
+
+    await expect(service.resolveRegisteredContactUserId(result.contactRef, session)).resolves.toBe(88)
+    expect(runtime.authenticatedAuthPost).toHaveBeenCalledTimes(2)
+    expect(runtime.authenticatedChatPost).not.toHaveBeenCalled()
+  })
+
   it('never routes an unregistered Arkme ID through the pending-phone endpoint', async () => {
     const { service, runtime } = fixture({
       exists: false, is_registered: false, can_add: true, is_self: false, invite_by_sms: false,

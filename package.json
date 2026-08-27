@@ -1,8 +1,12 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.13",
+  "version": "0.1.30",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arkme-senx/arkme-dsh-plugin.git"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -35,6 +39,7 @@
   "files": [
     "lib",
     "assets/desktop_call",
+    "assets/windows",
     "cordis.patch.yml",
     "README.md",
     "docs/*.md"
@@ -45,8 +50,10 @@
     },
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-theme",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-sidebar"
@@ -58,26 +65,30 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.13 更新",
-      "summary": "迁移世界与应用更新流程，新增联系人、群聊、机器人快捷添加和 DSH V3 市场发布，并完善通话录音与市场体验。",
-      "publishedAt": "2026-08-21T12:43:11.000Z",
-      "releaseNotesUrl": "https://www.npmjs.com/package/@senguoyun/dsh-arkme"
+      "title": "Arkme 插件 0.1.30 更新",
+      "summary": "解决web模式下退出登录后不可用的问题+优化对话列表的卡片效果",
+      "publishedAt": "2026-08-27T06:38:33.059Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.30"
     }
   },
   "scripts": {
-    "build": "pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "build": "pnpm run verify:windows-credential-helper && pnpm run clean:build && pnpm run build:types && pnpm run bundle",
+    "build:windows-credential-helper": "node scripts/build-windows-credential-helper.mjs",
     "clean:build": "node scripts/clean-lib.mjs",
     "build:types": "tsc --project tsconfig.json --emitDeclarationOnly",
-    "bundle": "node scripts/clean-bundle.mjs && tsdown",
+    "bundle": "node scripts/clean-bundle.mjs && tsdown && node scripts/verify-executable-entrypoints.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
+    "verify:windows-credential-helper": "node scripts/verify-windows-credential-helper.mjs",
     "prepare": "pnpm run build"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
     "ali-oss": "6.23.0",
     "jsqr": "1.4.0",
+    "mediabunny": "1.55.2",
+    "pinyin-pro": "3.29.3",
     "qrcode-generator": "2.0.4",
     "semver": "7.8.5",
     "sharp": "0.35.3",
@@ -86,14 +97,18 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-attachment": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-theme": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.5",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-llm-deepseek": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.5",
     "@deepseek-ai/schemastery": "^3.18.1",
@@ -103,6 +118,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-attachment": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.1.0-rc.7",
     "@deepseek-ai/dsh-client-locale": "0.1.0-rc.7",
     "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.7",
     "@deepseek-ai/dsh-client-schema-form": "0.1.0-rc.7",
@@ -113,9 +129,12 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.7",
     "@deepseek-ai/dsh-client-ui-theme": "0.1.0-rc.7",
     "@deepseek-ai/dsh-code-runtime": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
     "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.7",
     "@deepseek-ai/dsh-invariants": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-launch-environment": "0.1.0-rc.7",
     "@deepseek-ai/dsh-scope": "0.1.0-rc.7",
     "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.7",
     "@deepseek-ai/dsh-timeout": "0.1.0-rc.7",
@@ -127,9 +146,11 @@
     "@types/node": "22.20.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.1",
+    "@types/react-test-renderer": "18.3.1",
     "@types/semver": "7.8.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "react-test-renderer": "18.3.1",
     "tsdown": "0.22.2",
     "typescript": "6.0.3",
     "vitest": "4.1.8"

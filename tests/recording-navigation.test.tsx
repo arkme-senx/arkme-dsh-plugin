@@ -80,6 +80,7 @@ describe('recording navigation entry', () => {
     expect(markup).toContain('>通话<')
     expect(markup).toContain('通话记录、录音与 AI 摘要')
   })
+
 })
 
 describe('Arko navigation entry', () => {
@@ -88,10 +89,15 @@ describe('Arko navigation entry', () => {
     expect(ArkmeArkoRow).toBeDefined()
     if (ArkmeArkoRow === undefined) return
 
+    const latestAtMillis = Date.now()
+    const expectedTime = new Intl.DateTimeFormat('zh-CN', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(latestAtMillis))
     const markup = renderToStaticMarkup(<ArkmeArkoRow
       selected
       displayName="小可"
       latestPreview="刚刚完成了资料整理"
+      latestAtMillis={latestAtMillis}
       onClick={vi.fn()}
     />)
     expect(markup).toContain('role="treeitem"')
@@ -99,14 +105,36 @@ describe('Arko navigation entry', () => {
     expect(markup).toContain('小可')
     expect(markup).toContain('viewBox="2 1.4 12 12"')
     expect(markup).toContain('fill="#EFA7A2"')
+    const avatarSurfaceStyle = markup.match(/<span[^>]*style="([^"]+)"[^>]*><svg/)?.[1]
+    expect(avatarSurfaceStyle).toContain('width:38px')
+    expect(avatarSurfaceStyle).toContain('height:38px')
     expect(markup).toContain('data-arkme-topic-tag="AI"')
     expect(markup).toContain('>AI</span>')
     expect(markup).not.toContain('>Agent</span>')
     expect(markup).toContain('刚刚完成了资料整理')
+    expect(markup).toContain('<time')
+    expect(markup).toContain('dateTime=')
+    expect(markup).toContain(`>${expectedTime}</time>`)
   })
 
   it('keeps the product description only when no conversation exists yet', () => {
     const markup = renderToStaticMarkup(<navigation.ArkmeArkoRow selected={false} onClick={vi.fn()} />)
     expect(markup).toContain('对话并处理 Arkme 业务')
+    expect(markup).not.toContain('<time')
+  })
+})
+
+describe('DeepSeek Harness navigation entry', () => {
+  it('uses the ordinary conversation-row contract and exposes selected state', () => {
+    const DeepSeekHarnessRow = navigation.DeepSeekHarnessRow
+    expect(DeepSeekHarnessRow).toBeDefined()
+    if (DeepSeekHarnessRow === undefined) return
+
+    const markup = renderToStaticMarkup(<DeepSeekHarnessRow selected onClick={vi.fn()} />)
+    expect(markup).toContain('role="treeitem"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('DeepSeek Harness')
+    expect(markup).toContain('原生 DeepSeek 开发环境')
+    expect(markup).toContain('src="/favicon.svg"')
   })
 })

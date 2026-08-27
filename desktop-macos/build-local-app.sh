@@ -10,7 +10,7 @@ trap 'rm -rf "$MODULE_CACHE"' EXIT
 
 mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources" "$MODULE_CACHE"
 cp "$SCRIPT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
-cp "$REPOSITORY_DIR/assets/branding/arkme-mark.png" "$CONTENTS_DIR/Resources/ArkmeIcon.png"
+cp "$REPOSITORY_DIR/assets/branding/arkme-macos-app-icon.png" "$CONTENTS_DIR/Resources/ArkmeIcon.png"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
 SWIFT_MODULECACHE_PATH="$MODULE_CACHE" \

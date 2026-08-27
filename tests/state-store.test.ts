@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ArkmeStateStore } from '../src/state-store.js'
+import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
   it('persists a stable device id and account-isolated pending writes', async () => {
@@ -23,8 +24,7 @@ describe('ArkmeStateStore', () => {
     expect(await reloaded.listPending(10002)).toEqual([])
 
     const path = join(root, 'state.json')
-    const mode = (await stat(path)).mode & 0o777
-    expect(mode).toBe(0o600)
+    expectPrivatePath(path, 0o600)
     const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
     expect(persisted).not.toHaveProperty('accessToken')
     expect(persisted).not.toHaveProperty('refreshToken')

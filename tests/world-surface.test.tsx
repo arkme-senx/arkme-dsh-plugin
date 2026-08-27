@@ -1,16 +1,38 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  appendWorldPublishFiles,
   ArkmeWorldContent,
   ArkmeWorldSurface,
+  cachedWorldImageDataUrl,
+  cachedWorldVoiceprintPlayableRefs,
+  cachedWorldVoiceprintResolvedRefs,
+  loadWorldImageDataUrl,
+  mergeWorldVoiceprintPlayableRefs,
+  optimizeWorldPublishImage,
+  pendingWorldVoiceprintRecordRefs,
+  PublishDialog,
+  rememberWorldVoiceprintAvailability,
+  removeWorldPublishFile,
   VoiceprintInviteDialog,
+  WorldInfiniteScrollTrigger,
+  WorldImagePreviewDialog,
   WorldImagePreviewMedia,
+  WorldInteractionPreviewContent,
   WorldInteractionThreadList,
+  WORLD_EXTENSION_SHELF_PREVIEW_LIMIT,
   voiceprintInvitePromptTitle,
+  worldImagePreviewDragPosition,
+  worldInteractionCountLabel,
   worldInteractionThreads,
+  worldExtensionShelfPreview,
+  worldScopeScrollTransition,
   type ArkmeWorldViewState,
 } from '../src/client/ArkmeWorldSurface.js'
+import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import type { ArkmeWorldFeedItem, ArkmeWorldInteractionItem } from '../src/types.js'
+import type { ArkmeExtensionCatalogItem } from '../src/extensions/types.js'
 
 const noop = () => {}
 const actions = {
@@ -19,6 +41,13 @@ const actions = {
   onOpenComposer: noop,
   onOpenInteractions: noop,
   onToggleVoiceprint: noop,
+}
+
+function styleForDataAttribute(markup: string, attribute: string, value: string): string {
+  const tag = markup.match(/<[^>]+>/g)?.find(candidate => candidate.includes(`${attribute}="${value}"`))
+  const match = tag === undefined ? undefined : /style="([^"]+)"/.exec(tag)
+  expect(match?.[1]).toBeDefined()
+  return match?.[1] ?? ''
 }
 
 const item: ArkmeWorldFeedItem = {
@@ -35,6 +64,25 @@ const item: ArkmeWorldFeedItem = {
   videoCount: 0,
   voiceCount: 0,
   extendCount: 2,
+}
+
+const extensionPublicationItem: ArkmeWorldFeedItem = {
+  ...item,
+  recordRef: 'world_extension_1',
+  headline: '',
+  textContent: '',
+  extendCount: 0,
+  recordType: 'extension_publication',
+  extensionPublication: {
+    extensionId: 'arkme-tic-tac-toe',
+    version: '1.0.4',
+    name: '井字棋（联机版）',
+    description: '通过 Arkme 私聊进行公平、轻松的井字棋联机对战。',
+    previewRefs: [],
+    visibility: 'public',
+    desktopRequired: true,
+    publishedAtMillis: item.publishedAtMillis,
+  },
 }
 
 const interactions: ArkmeWorldInteractionItem[] = [
@@ -72,6 +120,16 @@ function render(state: ArkmeWorldViewState, playableRefs: ReadonlySet<string> = 
 }
 
 describe('Arkme native World surface', () => {
+  it('caps the World extension shelf preview at six items without mutating the catalog result', () => {
+    const items = Array.from({ length: 9 }, (_, index) => ({ extension_id: `extension-${index}` })) as ArkmeExtensionCatalogItem[]
+
+    expect(WORLD_EXTENSION_SHELF_PREVIEW_LIMIT).toBe(6)
+    expect(worldExtensionShelfPreview(items).map(item => item.extension_id)).toEqual([
+      'extension-0', 'extension-1', 'extension-2', 'extension-3', 'extension-4', 'extension-5',
+    ])
+    expect(items).toHaveLength(9)
+  })
+
   it('owns a full-page surface and keeps all original controls visible while loading', () => {
     const markup = renderToStaticMarkup(<ArkmeWorldSurface />)
 
@@ -80,9 +138,110 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('height:100%')
     expect(markup).toContain('>世界<')
     expect(markup).toContain('>我的世界<')
-    expect(markup).toContain('>发世界<')
+    expect(markup).toContain('aria-label="发世界"')
+    expect(markup).toContain('>发布</button>')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup).not.toContain('>关闭<')
+  })
+
+  it('keeps the World header and feed on one semantic base canvas', () => {
+    const markup = renderToStaticMarkup(<ArkmeWorldSurface />)
+
+    expect(styleForDataAttribute(markup, 'data-arkme-owned', 'world-surface'))
+      .toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+    expect(styleForDataAttribute(markup, 'data-world-layout', 'feed'))
+      .toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+    expect(styleForDataAttribute(markup, 'data-world-feed-pane', 'true'))
+      .toContain('background:var(--dsw-alias-bg-base, #ffffff)')
+  })
+
+  it('uses semantic theme tokens for feed cards and compact comments', () => {
+    const feedMarkup = render({ status: 'success', items: [item] })
+    const cardStyle = styleForDataAttribute(feedMarkup, 'data-world-record-ref', item.recordRef)
+    expect(cardStyle).toContain('border:1px dashed var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))')
+    expect(cardStyle).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
+
+    const previewMarkup = renderToStaticMarkup(<WorldInteractionPreviewContent item={item} items={interactions} onOpen={noop} />)
+    expect(previewMarkup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(styleForDataAttribute(previewMarkup, 'data-world-comment-level', 'root'))
+      .toContain('color:var(--dsw-alias-label-secondary, #68707c)')
+  })
+
+  it('renders extension publications as compact feed-native attachments', () => {
+    const markup = render({ status: 'success', items: [extensionPublicationItem] }, new Set())
+    const activityStyle = styleForDataAttribute(markup, 'data-world-extension-activity', 'compact')
+
+    expect(activityStyle).toContain('grid-template-columns:48px minmax(0,1fr) auto')
+    expect(activityStyle).toContain('border:0')
+    expect(activityStyle).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(markup).toContain('>井字棋（联机版）<')
+    expect(markup).toContain('>v1.0.4<')
+    expect(markup).toContain('>已上架<')
+    expect(markup).toContain('>桌面端<')
+    expect(markup).toContain('>查看详情<')
+    expect(markup).toContain('aria-label="在市集中查看井字棋（联机版）"')
+    expect(markup).not.toContain('在市集中查看</button>')
+    expect(styleForDataAttribute(markup, 'data-world-extension-open', 'detail'))
+      .toContain('background:transparent')
+  })
+
+  it('keeps the expanded comment panel and composer on one semantic surface', () => {
+    const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
+
+    expect(styleForDataAttribute(markup, 'data-world-comment-panel', 'inline'))
+      .toContain('background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
+    expect(styleForDataAttribute(markup, 'data-world-comment-toolbar', 'sticky'))
+      .toContain('background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
+    expect(markup).toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
+    expect(markup).toContain('color:var(--dsw-alias-label-primary, #17191c)')
+  })
+
+  it('keeps World and My World scroll positions independent when switching tabs', () => {
+    const leavingWorld = worldScopeScrollTransition({ all: 0, mine: 0 }, 'all', 'mine', 1680)
+    expect(leavingWorld).toEqual({ positions: { all: 1680, mine: 0 }, restoreTop: 0 })
+
+    const returningToWorld = worldScopeScrollTransition(leavingWorld.positions, 'mine', 'all', 240)
+    expect(returningToWorld).toEqual({ positions: { all: 1680, mine: 240 }, restoreTop: 1680 })
+  })
+
+  it('renders a spacious World publisher with a custom image picker and complete action area', () => {
+    const markup = renderToStaticMarkup(<PublishDialog onClose={noop} onPublished={noop} />)
+
+    expect(markup).toContain('data-world-publish-dialog="spacious"')
+    expect(markup).toContain('width:min(720px, 100%)')
+    expect(markup).toContain('data-world-publish-editor="true"')
+    expect(markup).toContain('min-height:190px')
+    expect(markup).toContain('aria-label="世界内容"')
+    expect(markup).toContain('data-world-publish-images="true"')
+    expect(markup).toContain('>添加图片<')
+    expect(markup).toContain('最多 27 张，单张不超过 20MB')
+    expect(markup).toContain('0 / 27')
+    expect(markup).toContain('0 / 2000')
+    expect(markup).toContain('aria-label="关闭发布窗口"')
+    expect(markup).not.toContain('选择文件')
+    expect(styleForDataAttribute(markup, 'data-world-publish-dialog', 'spacious'))
+      .toContain('background:var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #ffffff))')
+    expect(styleForDataAttribute(markup, 'data-world-publish-editor', 'true'))
+      .toContain('background:var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-2, #ffffff))')
+    expect(markup).toContain('background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1, #f5f6f8))')
+    expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
+  })
+
+  it('appends publish images up to the product limit and removes one selection without touching the others', () => {
+    const image = (name: string) => ({ name, size: 1, type: 'image/png', lastModified: 1 } as File)
+    const current = [image('1.png'), image('2.png')]
+    const appended = appendWorldPublishFiles(current, Array.from({ length: 30 }, (_value, index) => image(`${String(index + 3)}.png`)))
+
+    expect(appended).toHaveLength(27)
+    expect(appended.at(-1)?.name).toBe('27.png')
+    expect(removeWorldPublishFile(appended, 3)).toHaveLength(26)
+    expect(removeWorldPublishFile(appended, 3).map(file => file.name)).not.toContain('4.png')
+  })
+
+  it('keeps an already small publish image byte-for-byte instead of doing unnecessary work', async () => {
+    const file = { name: 'small.png', size: 1024, type: 'image/png', lastModified: 1 } as File
+
+    await expect(optimizeWorldPublishImage(file)).resolves.toBe(file)
   })
 
   it('covers loading, error, empty, and success states without hiding actions', () => {
@@ -91,7 +250,7 @@ describe('Arkme native World surface', () => {
     const error = render({ status: 'error', items: [], message: 'Provider 暂不支持' })
     expect(error).toContain('Provider 暂不支持')
     expect(error).toContain('>重试<')
-    expect(error).toContain('>发世界<')
+    expect(error).toContain('aria-label="发世界"')
 
     expect(render({ status: 'empty', items: [] })).toContain('这里还没有世界动态')
 
@@ -99,17 +258,221 @@ describe('Arkme native World surface', () => {
     expect(success).toContain('陈一涵')
     expect(success).toContain('一段世界标题')
     expect(success).toContain('世界正文')
-    expect(success).toContain('评论：2')
+    expect(success).toContain('2 条评论')
     expect(success).toContain('aria-label="播放陈一涵的声纹"')
     expect(success).not.toContain('用发布者的声音朗读')
     expect(success).not.toContain('查看 2 条互动')
 
     const unavailable = render({ status: 'success', items: [item] }, new Set())
     expect(unavailable).toContain('aria-label="邀请陈一涵开启声纹"')
+    expect(unavailable).toContain('data-world-voiceprint-invite-icon="microphone"')
+
+    const withoutComments = render({ status: 'success', items: [{ ...item, extendCount: 0 }] })
+    expect(withoutComments).toContain('0 条评论')
 
     const refreshFailure = render({ status: 'success', items: [item], message: '刷新失败，保留旧内容' })
     expect(refreshFailure).toContain('刷新失败，保留旧内容')
     expect(refreshFailure).toContain('世界正文')
+  })
+
+  it('makes non-self World authors open the same profile-card flow used by group members', () => {
+    const authorMarkup = render({ status: 'success', items: [{ ...item, authorRef: 'opaque-world-author-ref' }] })
+    expect(authorMarkup).toContain('aria-label="查看陈一涵的用户卡片"')
+
+    const ownMarkup = render({ status: 'success', items: [item] })
+    expect(ownMarkup).not.toContain('aria-label="查看陈一涵的用户卡片"')
+
+    const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
+    expect(source).toContain("import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'")
+    expect(source).toContain("'chat.world.private.open'")
+    expect(source).toContain('onSourceActivated?.(result.source)')
+  })
+
+  it('publishes a World-opened private chat to the shared directory before selecting it', () => {
+    const sidebar = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+    const workspace = readFileSync(new URL('../src/client/ArkmeVirtualWorkspace.tsx', import.meta.url), 'utf8')
+
+    const activateSource = sidebar.slice(sidebar.indexOf('const activateSource = useCallback'), sidebar.indexOf('const conversationMemberByRef'))
+    expect(activateSource).toContain('if (isArkmeChatDirectorySource(nextSource))')
+    expect(activateSource.indexOf('arkmeChatDirectory.upsert(nextSource)')).toBeGreaterThanOrEqual(0)
+    expect(activateSource.indexOf('arkmeChatDirectory.upsert(nextSource)')).toBeLessThan(activateSource.indexOf('arkmeUi.selectSource(nextSource)'))
+    expect(workspace).toContain('rootRowElementsRef')
+    expect(workspace).toContain("element.scrollIntoView?.({ block: 'nearest'")
+  })
+
+  it('uses the World phone-default avatar in the reused profile card', () => {
+    const markup = renderToStaticMarkup(<ArkmeMemberProfileCard
+      member={{
+        memberRef: 'opaque-world-author-ref', displayName: '小王', role: 'member', status: 'active',
+        isSelf: false, isOwner: false, joinedAtMillis: 0, recordCount: 0, mentionCount: 0,
+        avatarFallback: { kind: 'phone_default', colorIndex: 3, label: '61' },
+      }}
+      busy={false} onClose={noop} onSend={noop}
+    />)
+    expect(markup).toContain('aria-label="小王 的头像"')
+    expect(markup).toContain('>61</span>')
+  })
+
+  it('renders mobile-compatible emoji tokens in world posts and comments', () => {
+    const feed = render({
+      status: 'success',
+      items: [{
+        ...item,
+        headline: '喜欢[jm_emoji:heart_eyes]',
+        textContent: '支持[im_emoji:thumb_up]，未知[jm_emoji:not_exists]',
+      }],
+    })
+    expect(feed).toContain('喜欢😍')
+    expect(feed).toContain('支持👍，未知[jm_emoji:not_exists]')
+    expect(feed).not.toContain('[jm_emoji:heart_eyes]')
+
+    const comments = renderToStaticMarkup(<WorldInteractionThreadList
+      rootRef={item.recordRef}
+      items={[{ ...interactions[0]!, textContent: '笑哭[jm_emoji:joy_face]' }]}
+      compact
+    />)
+    expect(comments).toContain('笑哭😂')
+    expect(comments).not.toContain('[jm_emoji:joy_face]')
+  })
+
+  it('collapses long World articles to the mobile feed line limits and exposes an accessible toggle', () => {
+    const longText = Array.from({ length: 6 }, (_, index) => `第 ${String(index + 1)} 段很长的世界正文`).join('\n')
+    const textOnly = render({
+      status: 'success',
+      items: [{ ...item, textContent: longText }],
+    })
+
+    expect(textOnly).toContain('data-world-text-collapsible="true"')
+    expect(textOnly).toContain('-webkit-line-clamp:5')
+    expect(textOnly).toContain('aria-expanded="false"')
+    expect(textOnly).toContain('>展开全文<')
+
+    const withImage = render({
+      status: 'success',
+      items: [{ ...item, textContent: longText, imageRefs: ['image-ref'], imageCount: 1 }],
+    })
+    expect(withImage).toContain('-webkit-line-clamp:3')
+
+    const shortText = render({ status: 'success', items: [item] })
+    expect(shortText).not.toContain('data-world-text-collapsible="true"')
+    expect(shortText).not.toContain('>展开全文<')
+  })
+
+  it('keeps existing voiceprint playback state when loading more World items', () => {
+    const firstPageAvailability = {
+      items: [{ recordRef: 'world_1', playable: true }],
+    }
+    const firstPagePlayableRefs = mergeWorldVoiceprintPlayableRefs(new Set(), firstPageAvailability)
+    const resolvedRefs = new Set(firstPageAvailability.items.map(entry => entry.recordRef))
+    const secondPageItem = { ...item, recordRef: 'world_2', authorName: '新页面作者' }
+
+    expect(pendingWorldVoiceprintRecordRefs([item, secondPageItem], resolvedRefs)).toEqual(['world_2'])
+
+    const afterLoadMore = mergeWorldVoiceprintPlayableRefs(firstPagePlayableRefs, {
+      items: [{ recordRef: 'world_2', playable: false }],
+    })
+    expect([...afterLoadMore]).toEqual(['world_1'])
+
+    const afterRefresh = mergeWorldVoiceprintPlayableRefs(afterLoadMore, {
+      items: [{ recordRef: 'world_1', playable: false }],
+    })
+    expect([...afterRefresh]).toEqual([])
+  })
+
+  it('reuses confirmed voiceprint availability when the World surface is opened again', () => {
+    const recordRef = 'world_cached_voiceprint'
+    rememberWorldVoiceprintAvailability({ items: [{ recordRef, playable: true }] })
+
+    expect(cachedWorldVoiceprintResolvedRefs()).toContain(recordRef)
+    expect(cachedWorldVoiceprintPlayableRefs()).toContain(recordRef)
+    expect(pendingWorldVoiceprintRecordRefs([{ recordRef }], cachedWorldVoiceprintResolvedRefs())).toEqual([])
+  })
+
+  it('deduplicates World image reads and renders a cached image without a loading placeholder', async () => {
+    const imageRef = 'world_cached_image'
+    const reader = vi.fn(async () => ({ mediaType: 'image/png' as const, bytes: 5, dataBase64: 'aGVsbG8=' }))
+
+    await expect(loadWorldImageDataUrl(imageRef, reader)).resolves.toBe('data:image/png;base64,aGVsbG8=')
+    await expect(loadWorldImageDataUrl(imageRef, reader)).resolves.toBe('data:image/png;base64,aGVsbG8=')
+
+    expect(reader).toHaveBeenCalledOnce()
+    expect(cachedWorldImageDataUrl(imageRef)).toBe('data:image/png;base64,aGVsbG8=')
+    const markup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef={imageRef} alt="缓存图片" />)
+    expect(markup).toContain('src="data:image/png;base64,aGVsbG8="')
+    expect(markup).not.toContain('data-world-image-preview-loading')
+  })
+
+  it('keeps the compact feed language without introducing light-only colors or demo-only actions', () => {
+    const markup = render({ status: 'success', items: [item] })
+
+    expect(markup).toContain('width:min(980px, 100%);min-height:90px;margin:0 auto;padding:34px 48px 0')
+    expect(markup).toContain('font-size:26px;line-height:34px;font-weight:650')
+    expect(markup).toContain('width:min(980px, 100%);min-height:38px;margin:0 auto 4px;padding:0 48px')
+    expect(markup.indexOf('aria-label="发世界"')).toBeLessThan(markup.indexOf('aria-label="世界范围"'))
+    expect(markup).toContain('width:min(884px, calc(100% - 96px))')
+    expect(markup).toContain('padding:22px 20px 18px')
+    expect(markup).toContain('border:1px dashed var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))')
+    expect(markup).toContain('overflow-x:hidden')
+    expect(markup).toContain('overflow-wrap:anywhere')
+    expect(markup).toContain('border-radius:14px')
+    expect(markup).toContain('background:var(--dsw-alias-bg-layer-1, #f8f9fa)')
+    expect(markup).not.toContain('>共鸣<')
+    expect(markup).not.toContain('aria-label="分享"')
+    expect(markup).not.toContain('正在发生')
+    expect(markup).not.toContain('发布前由你确认')
+
+    const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
+    const themedStyles = source.slice(source.indexOf('const styles:'), source.indexOf('previewBackdrop:'))
+    expect(themedStyles).not.toMatch(/#fff\b|#fafafb\b|#f5f5f6\b|#d7dbe3\b|#cfd3db\b|--dsw-alias-bg-subtle/)
+  })
+
+  it('loads the next World page from an intersection sentinel and shows an animated loading icon', () => {
+    const idle = renderToStaticMarkup(<WorldInfiniteScrollTrigger
+      scrollRootRef={{ current: null }}
+      loading={false}
+      error={false}
+      onLoadMore={noop}
+    />)
+    expect(idle).toContain('data-world-load-more-sentinel="true"')
+    expect(idle).not.toContain('<button')
+    expect(idle).not.toContain('加载更多')
+
+    const loading = renderToStaticMarkup(<WorldInfiniteScrollTrigger
+      scrollRootRef={{ current: null }}
+      loading
+      error={false}
+      onLoadMore={noop}
+    />)
+    expect(loading).toContain('aria-label="正在加载更多世界动态"')
+    expect(loading).toContain('data-world-load-more-spinner="true"')
+    expect(loading).toContain('<animateTransform')
+
+    const failed = renderToStaticMarkup(<WorldInfiniteScrollTrigger
+      scrollRootRef={{ current: null }}
+      loading={false}
+      error
+      onLoadMore={noop}
+    />)
+    expect(failed).toContain('>重试</button>')
+
+    const source = readFileSync(new URL('../src/client/ArkmeWorldSurface.tsx', import.meta.url), 'utf8')
+    expect(source).toContain('new IntersectionObserver(entries =>')
+    expect(source).toContain("rootMargin: '0px 0px 180px 0px'")
+  })
+
+  it('shows an explicit cancellable loading state while the first voiceprint chunk is generated', () => {
+    const markup = renderToStaticMarkup(<ArkmeWorldContent
+      state={{ status: 'success', items: [item] }}
+      scope="all"
+      voiceprintPlayableRefs={new Set(['world_1'])}
+      voiceprintRecordRef="world_1"
+      voiceprintLoadingRecordRef="world_1"
+      {...actions}
+    />)
+
+    expect(markup).toContain('aria-busy="true"')
+    expect(markup).toContain('aria-label="正在生成陈一涵的声纹，点击停止"')
+    expect(markup).toContain('arkme-icon-spin')
   })
 
   it('renders a target user World homepage with mobile-equivalent back navigation and four states', () => {
@@ -128,26 +491,56 @@ describe('Arkme native World surface', () => {
     expect(loading).toContain('泡泡的世界')
     expect(loading).toContain('aria-label="返回世界"')
     expect(loading).toContain('正在加载 泡泡 的世界')
-    expect(loading).not.toContain('>发世界<')
+    expect(loading).not.toContain('aria-label="发世界"')
     expect(loading).not.toContain('>我的世界<')
 
     expect(renderTarget({ status: 'error', items: [], message: '主页加载失败' })).toContain('主页加载失败')
-    expect(renderTarget({ status: 'empty', items: [] })).toContain('TA 的世界暂无公开内容')
+    const empty = renderTarget({ status: 'empty', items: [] })
+    expect(empty).toContain('TA 的世界暂无公开内容。')
+    expect(empty).toContain('data-arkme-world-empty-state="true"')
     expect(renderTarget({ status: 'success', items: [item] })).toContain('世界正文')
   })
 
-  it('expands comments inline beneath the selected world card instead of opening a modal', () => {
+  it('keeps the extension shelf and World timeline in one dashed 16px content stack', () => {
+    const markup = renderToStaticMarkup(<ArkmeWorldContent
+      state={{ status: 'success', items: [item] }}
+      scope="mine"
+      catalogOwnerUserId={7}
+      catalogOwnerName="泡泡"
+      voiceprintPlayableRefs={new Set()}
+      voiceprintRecordRef={undefined}
+      {...actions}
+    />)
+
+    expect(markup.match(/data-world-content-stack="true"/g)).toHaveLength(1)
+    expect(markup).toContain('data-world-extension-shelf="loading"')
+    expect(markup).toContain('border:1px dashed')
+    expect(styleForDataAttribute(markup, 'data-world-content-stack', 'true')).toContain('gap:16px')
+  })
+
+  it('keeps complete comments inline under the selected World item', () => {
     const markup = render({ status: 'success', items: [item] }, new Set(['world_1']), 'world_1')
 
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-controls="world-comments-world_1"')
+    expect(markup).toContain('data-world-layout="comments-open"')
+    expect(markup).toContain('data-world-feed-pane="true"')
+    expect(markup).toContain('data-world-comment-panel="inline"')
     expect(markup).toContain('aria-label="陈一涵的评论区"')
+    expect(markup).toContain('aria-label="收起评论"')
+    expect(markup).toContain('data-world-comment-toolbar="sticky"')
+    expect(markup).toContain('position:sticky;top:0')
+    expect(markup).toContain('width:calc(100% - 4px)')
+    expect(markup).toContain('border-radius:12px;background:var(--dsw-alias-bg-layer-2, #f3f4f6)')
     expect(markup).toContain('评论加载中')
     expect(markup).toContain('写一条评论')
     expect(markup).toContain('>收起<')
     expect(markup).not.toContain('互动详情')
     expect(markup).not.toContain('aria-modal="true"')
     expect(markup.match(/世界正文/g)).toHaveLength(1)
+    expect(markup.indexOf('世界正文')).toBeLessThan(markup.indexOf('data-world-comment-panel="inline"'))
+    expect(markup.indexOf('写一条评论')).toBeLessThan(markup.indexOf('评论加载中'))
+    expect(markup).not.toContain('data-world-comment-panel="side"')
   })
 
   it('groups every reply under its top-level comment while preserving the direct reply target', () => {
@@ -160,9 +553,20 @@ describe('Arkme native World surface', () => {
       { ref: 'reply_2', replyToName: '小满' },
     ])
     expect(threads[1]?.root.interactionRef).toBe('comment_2')
+    expect(worldInteractionCountLabel(interactions.length)).toBe('评论 4')
+    expect(worldInteractionCountLabel(interactions.length, true)).toBe('评论 4+')
   })
 
-  it('renders smaller indented replies with explicit targets and limits feed previews to three rows', () => {
+  it('places every full comment reply action at the right edge of the final content line', () => {
+    const markup = renderToStaticMarkup(<WorldInteractionThreadList rootRef={item.recordRef} items={interactions} onReply={noop} />)
+
+    expect(markup).toContain('grid-template-columns:minmax(0,1fr) auto;align-items:end')
+    expect(markup).toContain('align-self:end')
+    expect(markup).toContain('aria-label="回复阿七的评论"')
+    expect(markup).toContain('aria-label="回复小满的评论"')
+  })
+
+  it('renders compact avatar-free feed replies with explicit targets and limits previews to three rows', () => {
     const markup = renderToStaticMarkup(<WorldInteractionThreadList
       rootRef={item.recordRef}
       items={interactions}
@@ -175,10 +579,12 @@ describe('Arkme native World surface', () => {
     expect(markup).toContain('data-world-comment-level="root"')
     expect(markup).toContain('data-world-comment-level="reply"')
     expect(markup).toContain('font-size:11px')
-    expect(markup).toContain('回复 阿七')
-    expect(markup).toContain('回复 小满')
-    expect(markup).toContain('aria-label="回复小满的评论"')
-    expect(markup).toContain('>取消回复<')
+    expect(markup).toContain('小满</strong><span> 回复 </span><strong')
+    expect(markup).toContain('阿七</strong><span>：回复第一条</span>')
+    expect(markup).toContain('小周</strong><span> 回复 </span><strong')
+    expect(markup).toContain('小满</strong><span>：继续回复</span>')
+    expect(markup).not.toContain('aria-label="回复小满的评论"')
+    expect(markup).not.toContain('>取消回复<')
     expect(markup).not.toContain('第二条评论')
     expect(markup.indexOf('第一条评论')).toBeLessThan(markup.indexOf('回复第一条'))
     expect(markup.indexOf('回复第一条')).toBeLessThan(markup.indexOf('继续回复'))
@@ -186,11 +592,89 @@ describe('Arkme native World surface', () => {
 
   it('contains a 3:4 portrait image inside the preview stage without cropping it', () => {
     const markup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef="portrait-3x4" alt="3:4 竖图" />)
+    const zoomedMarkup = renderToStaticMarkup(<WorldImagePreviewMedia imageRef="portrait-3x4" alt="3:4 竖图" zoomed />)
 
-    expect(markup).toContain('width:100%;height:100%;min-width:0;min-height:0')
-    expect(markup).toContain('overflow:hidden')
-    expect(markup).toContain('width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain')
+    expect(markup).toContain('role="img"')
+    expect(markup).toContain('position:relative;width:100%;height:100%;min-width:0;min-height:0')
+    expect(markup).toContain('position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain')
+    expect(markup).toContain('data-world-image-preview-loading="true"')
+    expect(markup).not.toContain('alt="3:4 竖图"')
+    expect(zoomedMarkup).toContain('width:200%;height:200%')
     expect(markup).not.toContain('object-fit:cover')
+  })
+
+  it('matches the desktop image viewer chrome without author metadata or a text close button', () => {
+    const markup = renderToStaticMarkup(<WorldImagePreviewDialog
+      item={{ ...item, imageRefs: ['portrait-3x4', 'landscape'], imageCount: 2 }}
+      previewIndex={0}
+      onClose={noop}
+      onSelect={noop}
+    />)
+
+    expect(markup).toContain('aria-label="关闭图片预览"')
+    expect(markup).toContain('title="关闭"')
+    expect(markup).toContain('<svg')
+    expect(markup).toContain('aria-label="上一张图片"')
+    expect(markup).toContain('aria-label="下一张图片"')
+    expect(markup).toContain('data-world-image-preview-zoomed="false"')
+    expect(markup).toContain('cursor:default')
+    expect(markup).not.toContain('cursor:zoom-in')
+    expect(markup).not.toContain('陈一涵 ·')
+    expect(markup).toContain('data-world-image-preview-counter="true"')
+    expect(markup).toContain('1 / 2')
+    expect(markup).not.toContain('>关闭</button>')
+
+    const secondImageMarkup = renderToStaticMarkup(<WorldImagePreviewDialog
+      item={{ ...item, imageRefs: ['portrait-3x4', 'landscape'], imageCount: 2 }}
+      previewIndex={1}
+      onClose={noop}
+      onSelect={noop}
+    />)
+    expect(secondImageMarkup).toContain('2 / 2')
+  })
+
+  it('pans a zoomed image with desktop-style pointer dragging and never exposes a magnifier cursor', () => {
+    expect(worldImagePreviewDragPosition({
+      pointerId: 4,
+      clientX: 300,
+      clientY: 240,
+      scrollLeft: 120,
+      scrollTop: 180,
+    }, 250, 160)).toEqual({ left: 170, top: 260 })
+
+    const feed = render({ status: 'success', items: [{ ...item, imageRefs: ['portrait-3x4'], imageCount: 1 }] })
+    expect(feed).toContain('cursor:pointer')
+    expect(feed).not.toContain('cursor:zoom-in')
+  })
+
+  it('shows every feed image when a post contains no more than nine images', () => {
+    const imageRefs = Array.from({ length: 8 }, (_, index) => `world_image_${String(index + 1)}`)
+    const markup = render({ status: 'success', items: [{ ...item, imageRefs, imageCount: imageRefs.length }] })
+
+    expect(markup).toContain('grid-template-columns:repeat(3,minmax(0,1fr))')
+    expect(markup.match(/<button[^>]+aria-label="预览陈一涵发布的图片/g)).toHaveLength(8)
+    expect(markup).not.toContain('data-world-image-overflow')
+  })
+
+  it('uses the ninth tile to show how many additional images are available', () => {
+    const imageRefs = Array.from({ length: 12 }, (_, index) => `world_image_${String(index + 1)}`)
+    const markup = render({ status: 'success', items: [{ ...item, imageRefs, imageCount: imageRefs.length }] })
+
+    expect(markup.match(/<button[^>]+aria-label="预览陈一涵发布的图片/g)).toHaveLength(9)
+    expect(markup).toContain('aria-label="预览陈一涵发布的图片 9，另有 3 张图片"')
+    expect(markup).toContain('data-world-image-overflow="3"')
+    expect(markup).toContain('>+3</span>')
+  })
+
+  it('uses one click target for the compact preview without repeating a view-comments label', () => {
+    const markup = renderToStaticMarkup(<WorldInteractionPreviewContent item={{ ...item, extendCount: 8 }} items={interactions} onOpen={noop} />)
+
+    expect(markup).toContain('aria-label="打开陈一涵的评论面板，共 8 条评论"')
+    expect(markup).toContain('第一条评论')
+    expect(markup).toContain('回复第一条')
+    expect(markup).not.toContain('第二条评论')
+    expect(markup).not.toContain('查看评论')
+    expect(markup).not.toContain('查看全部')
   })
 
   it('derives the voiceprint invite confirmation from the world content', () => {

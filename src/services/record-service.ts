@@ -16,6 +16,7 @@ import type {
   ArkmeUploadedAsset,
 } from '../types.js'
 import { MediaService } from './media-service.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
@@ -31,6 +32,28 @@ function listValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+const DSH_AGENT_INPUT_CREATION_SOURCE = 3
+const MAX_DEFAULT_CATEGORY_FILTER_BACKFILL_PAGES = 5
+
+function integerLikeValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return Math.trunc(parsed)
+  }
+  return 0
+}
+
+function recordCreationSource(raw: unknown): number {
+  const item = objectValue(raw)
+  const core = objectValue(item.record_core)
+  return integerLikeValue(item.creation_source ?? item.creationSource ?? core.creation_source ?? core.creationSource)
+}
+
+function isDSHAgentInputRecord(raw: unknown): boolean {
+  return recordCreationSource(raw) === DSH_AGENT_INPUT_CREATION_SOURCE
+}
+
 function safeFailureMessage(error: unknown): string {
   if (error instanceof ArkmePluginError) return error.message
   if (error instanceof Error && error.message.trim() !== '') return error.message
@@ -42,6 +65,7 @@ export class RecordService {
     private readonly runtime: ServiceRuntime,
     private readonly media: MediaService,
     private readonly source: ArkmeRecordSourceReader,
+    private readonly privacy = new ArkmePrivacyVisibilityService(runtime),
   ) {}
 
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
@@ -186,19 +210,40 @@ export class RecordService {
 
   async list(limit: number, cursor?: ArkmeRecordCursor): Promise<ArkmeSelfRecordList> {
     const session = await this.runtime.requireSession()
+    const lockedRecordUids = await this.privacy.lockedRecordUids(session)
     const normalizedLimit = Math.min(50, Math.max(1, Math.trunc(limit || 30)))
-    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
-      '/api/v1/records/uncategorized/query',
-      {
-        limit: normalizedLimit,
-        ...(cursor === undefined ? {} : {
-          cursor_send_at: cursor.sendAtMillis,
-          cursor_record_uid: cursor.recordUid,
-        }),
-      },
-      session,
-    )
-    const rawItems = listValue(data.items)
+    let requestCursor = cursor
+    let hasMore = false
+    let backendNextCursor: ArkmeRecordCursor | undefined
+    const visibleRawItems: unknown[] = []
+    for (let pageIndex = 0; pageIndex < MAX_DEFAULT_CATEGORY_FILTER_BACKFILL_PAGES; pageIndex += 1) {
+      const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/records/uncategorized/query',
+        {
+          limit: normalizedLimit,
+          ...(requestCursor === undefined ? {} : {
+            cursor_send_at: requestCursor.sendAtMillis,
+            cursor_record_uid: requestCursor.recordUid,
+          }),
+        },
+        session,
+      )
+      const rawPageItems = listValue(data.items)
+      const visiblePageItems = rawPageItems.filter(raw => !isDSHAgentInputRecord(raw)
+        && !arkmePrivacyLockedRecord(raw) && !lockedRecordUids.has(this.recordUid(raw)))
+      visibleRawItems.push(...visiblePageItems)
+      hasMore = data.has_more === true
+      const nextSendAt = numberValue(data.next_cursor_send_at)
+      const nextUid = stringValue(data.next_cursor_record_uid)
+      backendNextCursor = nextSendAt > 0 && nextUid !== ''
+        ? { sendAtMillis: nextSendAt, recordUid: nextUid }
+        : undefined
+      const filteredCount = rawPageItems.length - visiblePageItems.length
+      if (visibleRawItems.length >= normalizedLimit || !hasMore || backendNextCursor === undefined || filteredCount === 0) break
+      requestCursor = backendNextCursor
+    }
+    const visibleOverflow = visibleRawItems.length > normalizedLimit
+    const rawItems = visibleRawItems.slice(0, normalizedLimit)
     const media = await this.media.hydrateRecordMediaPage(rawItems, session)
     const items = rawItems.map(raw => {
       const recordUid = this.recordUid(raw)
@@ -210,14 +255,22 @@ export class RecordService {
     }).filter(
       (item): item is ArkmeSelfRecordItem => item !== undefined,
     )
-    const nextSendAt = numberValue(data.next_cursor_send_at)
-    const nextUid = stringValue(data.next_cursor_record_uid)
+    const lastVisibleRaw = rawItems.at(-1)
+    const lastVisibleCursor = lastVisibleRaw === undefined ? undefined : {
+      sendAtMillis: numberValue(objectValue(lastVisibleRaw).send_at ?? objectValue(objectValue(lastVisibleRaw).record_core).send_at),
+      recordUid: this.recordUid(lastVisibleRaw),
+    }
+    const filledRequestedPage = rawItems.length >= normalizedLimit
+    const nextCursor = lastVisibleCursor !== undefined
+      && lastVisibleCursor.sendAtMillis > 0
+      && lastVisibleCursor.recordUid !== ''
+      && (visibleOverflow || (filledRequestedPage && hasMore))
+      ? lastVisibleCursor
+      : backendNextCursor
     const page: ArkmeSelfRecordList = {
       items,
-      hasMore: data.has_more === true,
-      ...(nextSendAt > 0 && nextUid !== ''
-        ? { nextCursor: { sendAtMillis: nextSendAt, recordUid: nextUid } }
-        : {}),
+      hasMore: hasMore || visibleOverflow,
+      ...(nextCursor === undefined ? {} : { nextCursor }),
     }
     await this.runtime.stateStore.cachePage(session.userId, page, cursor)
     return page
@@ -270,6 +323,51 @@ export class RecordService {
         localState: 'failed',
         error: pending.lastError ?? safeFailureMessage(error),
       }
+    }
+  }
+
+  async createDSHAgentInputText(
+    recordUid: string,
+    textContent: string,
+    sendAtMillis: number,
+  ): Promise<ArkmeCreateTextResult> {
+    const session = await this.runtime.requireSession()
+    const normalizedUid = recordUid.trim()
+    const normalizedText = textContent.trim()
+    const normalizedSendAt = Math.max(0, Math.trunc(sendAtMillis))
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedUid)) {
+      throw new ArkmePluginError('record-uid-invalid', '写入标识无效，请重试', false)
+    }
+    if (normalizedText === '') {
+      throw new ArkmePluginError('record-text-empty', '请输入要发给自己的内容', false)
+    }
+    if (normalizedText.length > this.runtime.config.maxTextLength) {
+      throw new ArkmePluginError(
+        'record-text-too-long',
+        `内容不能超过 ${this.runtime.config.maxTextLength} 个字符`,
+        false,
+      )
+    }
+    const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
+      '/api/v1/records/dsh-agent-input/create',
+      {
+        record_uid: normalizedUid,
+        template_kind: 1,
+        title: '',
+        text_content: normalizedText,
+        send_at: normalizedSendAt > 0 ? normalizedSendAt : Date.now(),
+      },
+      session,
+      undefined,
+      {
+        scope: this.runtime.requestScope(session.userId),
+        key: `dsh-agent-input:${normalizedUid}`,
+      },
+    )
+    this.runtime.invalidateScope(this.runtime.requestScope(session.userId))
+    return {
+      recordUid: stringValue(data.record_uid) || normalizedUid,
+      status: numberValue(data.status),
     }
   }
 
@@ -392,14 +490,14 @@ export class RecordService {
   recordTimelineItemFromRaw(
     raw: unknown,
     userId: number,
-    options: { displayItems?: unknown[]; mediaUnavailable?: boolean } = {},
+    options: { displayItems?: unknown[]; mediaUnavailable?: boolean; selfTopic?: ArkmeTimelineItem['selfTopic']; isMe?: boolean } = {},
   ): ArkmeTimelineItem {
     const item = objectValue(raw)
     const core = objectValue(item.record_core)
     return {
       itemUid: stringValue(item.record_uid ?? core.record_uid).trim(),
       senderName: stringValue(item.nickname).trim() || '我',
-      isMe: numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
+      isMe: options.isMe ?? numberValue(item.creator_user_id ?? item.owner_user_id ?? core.creator_user_id ?? core.owner_user_id) === userId,
       sendAtMillis: numberValue(item.send_at ?? core.send_at),
       title: stringValue(item.title ?? core.title),
       textContent: stringValue(item.text_content ?? core.text_content),
@@ -411,6 +509,7 @@ export class RecordService {
       recordDurationMillis: numberValue(item.record_duration_millis ?? core.record_duration_millis),
       editDurationMillis: numberValue(item.edit_duration_millis ?? core.edit_duration_millis),
       contentBlocks: this.media.richContentBlocks(raw, userId, options.displayItems),
+      ...(options.selfTopic === undefined ? {} : { selfTopic: options.selfTopic }),
       ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
   }
@@ -432,10 +531,19 @@ export class RecordService {
       templateKind: numberValue(core.template_kind),
       status: numberValue(core.status),
       version: numberValue(core.version),
+      creationSource: recordCreationSource(raw),
       displayKind: numberValue(item.display_kind ?? core.display_kind),
       ...(userId === undefined ? {} : { contentBlocks: this.media.richContentBlocks(raw, userId, options.displayItems) }),
       ...(options.mediaUnavailable === true ? { mediaUnavailable: true } : {}),
     }
+  }
+
+  isDSHAgentInput(raw: unknown): boolean {
+    return isDSHAgentInputRecord(raw)
+  }
+
+  isPrivacyLocked(raw: unknown): boolean {
+    return arkmePrivacyLockedRecord(raw)
   }
 
   async syncHistory(maxPages = 20, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }> {

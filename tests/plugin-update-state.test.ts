@@ -1,8 +1,9 @@
-import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { PluginUpdateStateStore } from '../src/plugin-update-state.js'
+import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('PluginUpdateStateStore', () => {
   it('persists update facts atomically with private permissions', async () => {
@@ -23,8 +24,8 @@ describe('PluginUpdateStateStore', () => {
       lastKnownNotice: { level: 'important', title: '新版本' },
     })
     const path = join(root, 'plugin-update-state.json')
-    expect((await stat(path)).mode & 0o777).toBe(0o600)
-    expect((await stat(root)).mode & 0o777).toBe(0o700)
+    expectPrivatePath(path, 0o600)
+    expectPrivatePath(root, 0o700)
     expect(await readFile(path, 'utf8')).not.toContain('accessToken')
   })
 

@@ -16,7 +16,7 @@ export const listSourcesToolModule = defineArkmeCoreToolModule({
   create(ports) {
     return defineTool({
       name: 'arkme_sources_list',
-      description: 'List the signed-in user\'s Arkme sources. directory=root returns private/group chats; directory=send_to_self returns the all-personal-messages aggregate, the uncategorized default category, and topics. Returned source_ref values are account-bound and must be used unchanged for reads or sends.',
+      description: 'List the signed-in user\'s Arkme sources. directory=root returns private/group chats, including unreadCount for messages the signed-in user has not read; directory=send_to_self returns the all-personal-messages aggregate, the uncategorized default category, and topics. Returned source_ref values are account-bound and must be used unchanged for reads or sends.',
       parameters: {
         directory: { type: 'string', enum: ['root', 'send_to_self'], required: true, description: 'root for chat conversations; send_to_self for the personal aggregate, default category, and topics.' },
         limit: { type: 'integer', description: 'Maximum source rows, 1-50. Defaults to 30.' },

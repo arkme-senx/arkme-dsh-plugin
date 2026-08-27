@@ -8,14 +8,20 @@ import { ExtensionPublishClient } from '../../src/extensions/publish-client.js'
 import { normalizeGitHubRepositoryURL } from '../../src/extensions/source.js'
 
 const directories: string[] = []
-afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
+const stores: ArkmeExtensionInstallStore[] = []
+afterEach(() => {
+	for (const store of stores.splice(0)) store.close()
+	for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true })
+})
 
 function managerWith(post: ConstructorParameters<typeof ExtensionPublishClient>[0]): ArkmeExtensionManager {
 	const root = mkdtempSync(join(tmpdir(), 'arkme-extension-share-'))
 	directories.push(root)
+	const store = new ArkmeExtensionInstallStore(join(root, 'store'))
+	stores.push(store)
 	return new ArkmeExtensionManager(
 		new ExtensionPublishClient(post),
-		new ArkmeExtensionInstallStore(join(root, 'store')),
+		store,
 		{} as never,
 		{ artifactDirectory: join(root, 'artifacts'), trustedSigningKeys: '{}' },
 	)
@@ -68,6 +74,26 @@ describe('extension share Host owner', () => {
 			{ share_ref: 'extshare_0123456789abcdef0123456789abcdef' },
 			undefined,
 		)
+	})
+
+	it('resolves a public share into the existing catalog detail flow', async () => {
+		const post = vi.fn(async (path: string) => {
+			if (path === '/api/v1/extensions/share/resolve') return { extension_id: 'ext-public-1' }
+			if (path === '/api/public/v1/extensions/detail') return {
+				extension_id: 'ext-public-1', name: 'Weather', description: 'Public weather', visibility: 'public',
+			}
+			if (path === '/api/v1/extensions/open') return { extension_id: 'ext-public-1', open_count: 1, idempotent_replay: false }
+			throw new Error(`unexpected path ${path}`)
+		})
+		const manager = managerWith(post)
+		await expect(manager.resolveSharedCatalogDetail('extshare_0123456789abcdef0123456789abcdef'))
+			.resolves.toMatchObject({ extension_id: 'ext-public-1', name: 'Weather', visibility: 'public' })
+		expect(post).toHaveBeenCalledWith('/api/v1/extensions/share/resolve', {
+			share_ref: 'extshare_0123456789abcdef0123456789abcdef',
+		}, undefined)
+		expect(post).toHaveBeenCalledWith('/api/public/v1/extensions/detail', {
+			extension_id: 'ext-public-1',
+		}, undefined)
 	})
 
 	it('rejects malformed refs and non-read-only share responses', async () => {

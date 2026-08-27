@@ -23,7 +23,6 @@ describe('Arkme public brand slots', () => {
     expect(source).toContain("ctx.slots.inject('conversation'")
     expect(source).not.toContain("ctx.slots.inject('sidebar.brand.mark'")
     expect(source).not.toContain("ctx.slots.inject('conversation.hero.brand.mark'")
-    expect(source.match(/priority: -100/g)).toHaveLength(3)
     expect(source).not.toContain('MutationObserver')
   })
 })

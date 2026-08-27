@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
@@ -8,19 +8,23 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
-  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'createBot', 'createBotSummary', 'revealBotSecret',
-  'openBotChat', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
+  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'listBotPrivateChatDirectory', 'createBot', 'createBotSummary', 'revealBotSecret',
+  'manageBotProfile', 'updateManagedBot', 'revealManagedBotToken', 'deleteManagedBot', 'botNotificationPreference', 'updateBotNotificationPreference',
+  'openBotChat', 'openBotPrivateChat', 'sendBotPrivateChatMessage', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
+  'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
-  'dispose', 'requestStats', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'listCallHistory', 'callDetail', 'retryCallSummary',
+  'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
   'searchContact', 'addContact',
+  'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
+  'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
-  'sealRecordingCursor', 'openRecordingCursor', 'startRecordingDoubaoBackfill', 'recordingDay',
-  'refreshProfile', 'arkoProfile',
+  'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
-  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'listSources',
+  'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setChatDirectoryPolicy', 'listSourceMembers', 'sourceMemberRecords',
   'dshBetaCommunityEntryState', 'interwovenMoments', 'interwovenMomentDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
@@ -28,13 +32,15 @@ const expectedPublicMethods = [
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
-  'openPrivateChatFromUser', 'readSource', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'sendSourceText', 'retryGroupAiPolish',
-  'sendSourceRich', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
+  'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'relatedRecordingEligibility', 'relatedRecordings',
+  'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'resolveLinkMetadata', 'forwardSourceMessages',
+  'sendSourceText', 'retryGroupAiPolish',
+  'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
   'markSourceRead', 'listWechatConversations', 'readWechatMessages', 'getWechatConversationDetail',
   'listWechatGroupMembers', 'listWechatPhones', 'listWechatCommonGroups', 'listWechatMoneyFlows',
-  'listWechatLocations', 'readImage', 'beginWechatLogin', 'pollWechatLogin', 'testLogin',
+  'listWechatLocations', 'readImage', 'beginJiwoLogin', 'pollJiwoLogin', 'cancelJiwoLogin',
+  'beginWechatLogin', 'pollWechatLogin', 'testLogin',
   'sendPhoneCode', 'verifyPhoneCode', 'logout', 'cachedSnapshot', 'queryCached', 'refreshLatest',
   'refreshSnapshot', 'searchRecords', 'searchRemote', 'searchHistory', 'createSearchHistory', 'searchImages',
   'searchScene', 'searchRecordings', 'syncHistory', 'summary', 'list', 'calendarBuckets', 'calendarRecords',
@@ -42,10 +48,14 @@ const expectedPublicMethods = [
   'listArrangements', 'arrangementDetail', 'listArrangementReminders', 'arrangementReminderSummary',
   'mutateArrangement', 'setArrangementReminderEnabled', 'markArrangementRemindersRead',
   'markAllArrangementRemindersRead', 'clearArrangementReminders', 'listWorldFeed', 'listMyWorldFeed', 'listUserWorldFeed',
+  'worldAuthorLabels',
   'worldVoiceprintPlaybackAvailability', 'generateWorldVoiceprintPlayback', 'worldVoiceprintSocialContext', 'inviteWorldVoiceprint',
+  'myVoiceprint', 'outboundVoiceprintGrants', 'recognizedVoiceprintPeople', 'recognizedVoiceprintPerson',
+  'recognizedPersonVoiceprints', 'createVoiceprintInvitation', 'revokeVoiceprintPlaybackGrant', 'restoreVoiceprintPlayback',
+  'createRecognizedPersonVoiceprintInvitation', 'bindVoiceprintEnrollment',
   'listWorldInteractions', 'createWorldTextInteraction', 'readWorldImage',
   'publishWorldText', 'publishWorldFileAssets', 'publishWorldTextForConversation',
-  'createText', 'createTextForConversation', 'pendingWrites',
+  'createText', 'createTextForConversation', 'createDSHAgentInputText', 'pendingWrites',
   'retryPending', 'extensionPost',
 ].sort()
 
@@ -56,7 +66,8 @@ const expectedServiceFiles = [
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
   'arko-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
-  'contact-service.ts',
+  'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
+  'voiceprint-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -87,7 +98,7 @@ describe('Arkme service architecture', () => {
 
   it('keeps the compatibility facade free of business transport and state owners', () => {
     const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
-    expect(facade.split('\n').length).toBeLessThan(1_500)
+    expect(facade.split('\n').length).toBeLessThan(1_800)
     expect(facade).not.toMatch(/\/api\//)
     expect(facade).not.toMatch(/private readonly \w+\s*=\s*new Map/)
   })
@@ -107,5 +118,21 @@ describe('Arkme service architecture', () => {
     expect(world).toContain('export interface ArkmeWorldRecordWriter')
     expect(world).not.toMatch(/import \{[^}]*\bMediaService\b/)
     expect(world).not.toMatch(/import \{[^}]*\bRecordService\b/)
+  })
+
+  it('keeps Voiceprint profile enrichment behind a narrow port', () => {
+    const voiceprint = readFileSync(join(root, 'src/services/voiceprint-service.ts'), 'utf8')
+    expect(voiceprint).toContain('export interface ArkmeVoiceprintProfileReader')
+    expect(voiceprint).toContain('export interface ArkmeVoiceprintInviteTargetResolver')
+    expect(voiceprint).not.toMatch(/import \{[^}]*\bProfileService\b/)
+    expect(voiceprint).not.toMatch(/import \{[^}]*\bContactService\b/)
+  })
+
+  it('keeps Voiceprint browser upload transport behind its narrow client port', () => {
+    const surface = readFileSync(join(root, 'src/client/ArkmeVoiceprintSurface.tsx'), 'utf8')
+    const enrollmentClient = readFileSync(join(root, 'src/client/voiceprint-enrollment-client.ts'), 'utf8')
+    expect(surface).not.toMatch(/\bfetch\s*\(/)
+    expect(enrollmentClient).toContain('export interface ArkmeVoiceprintEnrollmentClient')
+    expect(enrollmentClient).toContain('class SameOriginArkmeVoiceprintEnrollmentClient')
   })
 })

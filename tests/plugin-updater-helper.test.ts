@@ -1,12 +1,15 @@
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { execFileSync, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ArkmePluginUpdateManager } from '../src/plugin-update.js'
 import {
+  assertTargetArtifactIntegrity,
   buildTargetInstallArgs,
+  buildTargetRemoveArgs,
   finalizeManagedPluginUpdate,
   parsePluginUpdaterPlan,
   rollbackManagedPluginUpdate,
@@ -16,6 +19,29 @@ import { PluginUpdateInstallStateStore } from '../src/plugin-update-install-stat
 import {
   pluginPackageTgz,
 } from './plugin-update-fixtures.js'
+
+const TEST_PNPM_PACKAGE_MANAGER = `pnpm@${execFileSync('pnpm', ['--version'], {
+  encoding: 'utf8',
+}).trim()}`
+
+interface PluginUpdateLogEntry {
+  timestamp: string
+  jobId: string
+  stage: string
+  previousVersion: string
+  targetVersion: string
+  pid: number
+  durationMs?: number
+  error?: string
+}
+
+async function readPluginUpdateLog(logPath: string): Promise<PluginUpdateLogEntry[]> {
+  return (await readFile(logPath, 'utf8'))
+    .trim()
+    .split(/\r?\n/)
+    .filter(line => line.startsWith('[plugin-update] '))
+    .map(line => JSON.parse(line.slice('[plugin-update] '.length)) as PluginUpdateLogEntry)
+}
 
 async function runtimeFixture(spec: string) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-updater-'))
@@ -28,7 +54,7 @@ async function runtimeFixture(spec: string) {
     storedSpec = `link:${localSource}`
   }
   await writeFile(join(profileDir, 'package.json'), JSON.stringify({
-    packageManager: 'pnpm@11.19.0',
+    packageManager: TEST_PNPM_PACKAGE_MANAGER,
     dependencies: { '@senguoyun/dsh-arkme': storedSpec },
   }))
   const dshBinPath = join(root, 'dsh-bin.js')
@@ -36,6 +62,15 @@ async function runtimeFixture(spec: string) {
   await writeFile(dshBinPath, '#!/usr/bin/env node\n')
   await writeFile(helperPath, '#!/usr/bin/env node\n')
   return { root, dshBinPath, helperPath, spec: storedSpec }
+}
+
+async function writeInstalledProfilePluginVersion(root: string, version: string) {
+  const pluginDirectory = join(root, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme')
+  await mkdir(pluginDirectory, { recursive: true })
+  await writeFile(join(pluginDirectory, 'package.json'), JSON.stringify({
+    name: '@senguoyun/dsh-arkme',
+    version,
+  }))
 }
 
 function privateUpdateFixture(version: string) {
@@ -76,6 +111,10 @@ describe('companion plugin updater', () => {
         previousSpec: fixture.spec,
         targetVersion: '0.1.4',
         targetArtifactPath: join(fixture.root, 'state', 'plugin-cache', '0.1.4', 'dsh-arkme-0.1.4.tgz'),
+        targetArtifactSha512: createHash('sha512').update(update.artifactBytes).digest('hex'),
+        appVersion: '1.2.0',
+        dshVersion: '0.1.0-rc.8',
+        disabledProfilePackages: ['deepseek-pet'],
         execArgv: ['--import', 'tsx/esm'],
         restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
       })
@@ -107,6 +146,7 @@ describe('companion plugin updater', () => {
         preparePackageManager: () => undefined,
         spawnUpdater,
         requestShutdown,
+        disabledProfilePackages: () => ['deepseek-pet'],
       },
     })
 
@@ -116,6 +156,12 @@ describe('companion plugin updater', () => {
     })
     expect(spawnUpdater).toHaveBeenCalledOnce()
     expect(requestShutdown).toHaveBeenCalledOnce()
+    const lifecycle = await readPluginUpdateLog(join(fixture.root, 'state', 'plugin-update-helper.log'))
+    expect(lifecycle.map(entry => entry.stage).slice(-3)).toEqual([
+      'helper-spawn-started',
+      'helper-spawn-completed',
+      'shutdown-requested',
+    ])
   })
 
   it('hands plugin updates to the desktop managed restart protocol when supervised', async () => {
@@ -123,12 +169,33 @@ describe('companion plugin updater', () => {
     const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
     const update = privateUpdateFixture('0.1.4')
     const supervisedPlanPath = join(fixture.root, 'state', 'desktop-managed-profile-restart.json')
+    const harnessLogPath = join(fixture.root, 'logs', 'harness.log')
     const runProfilePluginAdd = vi.fn(async (plan: { targetArtifactPath: string }) => {
       expect(plan.targetArtifactPath).toBe(join(fixture.root, 'state', 'plugin-cache', '0.1.4', 'dsh-arkme-0.1.4.tgz'))
+      await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
     })
+    const runProfilePluginRemove = vi.fn(async () => undefined)
     const spawnUpdater = vi.fn(async () => undefined)
     const requestProcessExit = vi.fn()
     const requestShutdown = vi.fn()
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      execArgv: ['--import', 'tsx/esm'],
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+      preparePackageManager: () => undefined,
+      spawnUpdater,
+      requestShutdown,
+      supervisedExitCode: 75,
+      supervisedPlanPath,
+      harnessLogPath,
+      requestProcessExit,
+      runProfilePluginAdd,
+    }
+    Object.assign(installRuntime, { runProfilePluginRemove })
     const manager = new ArkmePluginUpdateManager({
       enabled: true,
       channel: 'stable',
@@ -140,26 +207,12 @@ describe('companion plugin updater', () => {
       stateDirectory: join(fixture.root, 'state'),
       installedVersion: '0.1.3',
       fetchImpl: update.fetchImpl,
-      installRuntime: {
-        dshHome: fixture.root,
-        profileName: 'web',
-        healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
-        execArgv: ['--import', 'tsx/esm'],
-        dshBinPath: fixture.dshBinPath,
-        helperPath: fixture.helperPath,
-        restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
-        preparePackageManager: () => undefined,
-        spawnUpdater,
-        requestShutdown,
-        supervisedExitCode: 75,
-        supervisedPlanPath,
-        requestProcessExit,
-        runProfilePluginAdd,
-      },
+      installRuntime,
     })
 
     await manager.check({ manual: true })
-    await expect(manager.install()).resolves.toMatchObject({
+    const install = await manager.install()
+    expect(install).toMatchObject({
       phase: 'restarting',
       previousVersion: '0.1.3',
       targetVersion: '0.1.4',
@@ -171,8 +224,259 @@ describe('companion plugin updater', () => {
       targetArtifactPath: join(fixture.root, 'state', 'plugin-cache', '0.1.4', 'dsh-arkme-0.1.4.tgz'),
     })
     expect(runProfilePluginAdd).toHaveBeenCalledOnce()
+    expect(runProfilePluginRemove).toHaveBeenCalledOnce()
     expect(spawnUpdater).not.toHaveBeenCalled()
     expect(requestShutdown).not.toHaveBeenCalled()
+    const lifecycle = await readPluginUpdateLog(harnessLogPath)
+    expect(lifecycle.map(entry => entry.stage)).toEqual([
+      'package-manager-preflight-started',
+      'package-manager-preflight-completed',
+      'preparing',
+      'downloading-started',
+      'downloading-completed',
+      'verifying-completed',
+      'installing',
+      'profile-remove-started',
+      'profile-remove-completed',
+      'profile-add-started',
+      'profile-add-completed',
+      'installed-version-checked',
+      'restart-plan-writing',
+      'restart-plan-written',
+      'restarting',
+      'process-exit-scheduled',
+    ])
+    expect(lifecycle.every(entry => entry.jobId === install.jobId)).toBe(true)
+    expect(lifecycle.every(entry => entry.previousVersion === '0.1.3')).toBe(true)
+    expect(lifecycle.every(entry => entry.targetVersion === '0.1.4')).toBe(true)
+    expect(lifecycle.every(entry => Number.isInteger(entry.pid) && entry.pid > 0)).toBe(true)
+    expect(lifecycle.every(entry => Number.isNaN(Date.parse(entry.timestamp)) === false)).toBe(true)
+    await vi.advanceTimersByTimeAsync(800)
+    expect(requestProcessExit).toHaveBeenCalledWith(75)
+  })
+
+  it('logs a supervised install failure and its rollback before returning failed', async () => {
+    const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
+    await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
+    const update = privateUpdateFixture('0.1.4')
+    const harnessLogPath = join(fixture.root, 'logs', 'harness.log')
+    const runProfilePluginRemove = vi.fn(async () => undefined)
+    const runProfilePluginAdd = vi.fn(async () => {
+      throw new Error('profile add failed client_secret=must-not-leak')
+    })
+    const runProfilePluginRollback = vi.fn(async () => {
+      await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
+    })
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      preparePackageManager: () => undefined,
+      supervisedExitCode: 75,
+      supervisedPlanPath: join(fixture.root, 'state', 'desktop-managed-profile-restart.json'),
+      harnessLogPath,
+      runProfilePluginRemove,
+      runProfilePluginAdd,
+      runProfilePluginRollback,
+    }
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://releases.jotmo.test',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: update.fetchImpl,
+      installRuntime,
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).rejects.toMatchObject({ code: 'plugin-update-install-failed' })
+    expect(runProfilePluginRollback).toHaveBeenCalledOnce()
+    const lifecycle = await readPluginUpdateLog(harnessLogPath)
+    expect(lifecycle.map(entry => entry.stage).slice(-5)).toEqual([
+      'profile-add-started',
+      'profile-add-failed',
+      'rollback-started',
+      'rollback-completed',
+      'failed',
+    ])
+    expect(await readFile(harnessLogPath, 'utf8')).not.toContain('must-not-leak')
+  })
+
+  it('keeps a supervised update running when lifecycle logging and fallback warning both fail', async () => {
+    vi.useFakeTimers()
+    const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
+    const update = privateUpdateFixture('0.1.4')
+    const runProfilePluginAdd = vi.fn(async () => {
+      await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
+    })
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://releases.jotmo.test',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: update.fetchImpl,
+      logger: { warn: () => { throw new Error('warning sink failed') } },
+      installRuntime: {
+        dshHome: fixture.root,
+        profileName: 'web',
+        healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+        dshBinPath: fixture.dshBinPath,
+        helperPath: fixture.helperPath,
+        preparePackageManager: () => undefined,
+        supervisedExitCode: 75,
+        supervisedPlanPath: join(fixture.root, 'state', 'desktop-managed-profile-restart.json'),
+        harnessLogPath: fixture.root,
+        requestProcessExit: vi.fn(),
+        runProfilePluginRemove: async () => undefined,
+        runProfilePluginAdd,
+      },
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).resolves.toMatchObject({ phase: 'restarting' })
+  })
+
+  it('replaces an embedded link before installing a supervised tgz update', async () => {
+    vi.useFakeTimers()
+    const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
+    await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
+    const update = privateUpdateFixture('0.1.4')
+    const supervisedPlanPath = join(fixture.root, 'state', 'desktop-managed-profile-restart.json')
+    const calls: string[] = []
+    const runProfilePluginRemove = vi.fn(async () => {
+      calls.push('remove')
+      await rm(join(fixture.root, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme'), {
+        recursive: true,
+        force: true,
+      })
+    })
+    const runProfilePluginAdd = vi.fn(async () => {
+      calls.push('add')
+      await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
+    })
+    const requestProcessExit = vi.fn()
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      execArgv: ['--import', 'tsx/esm'],
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+      preparePackageManager: () => undefined,
+      supervisedExitCode: 75,
+      supervisedPlanPath,
+      requestProcessExit,
+      runProfilePluginAdd,
+    }
+    Object.assign(installRuntime, { runProfilePluginRemove })
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://releases.jotmo.test',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: update.fetchImpl,
+      installRuntime,
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).resolves.toMatchObject({ phase: 'restarting', targetVersion: '0.1.4' })
+
+    expect(calls).toEqual(['remove', 'add'])
+    expect(runProfilePluginRemove).toHaveBeenCalledOnce()
+    expect(runProfilePluginAdd).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(800)
+    expect(requestProcessExit).toHaveBeenCalledWith(75)
+  })
+
+  it('removes a stale linked installation when the profile declares a cached file artifact', async () => {
+    vi.useFakeTimers()
+    const fixture = await runtimeFixture('link:/Applications/Arkme.app/Contents/Resources/node_modules/@senguoyun/dsh-arkme')
+    const previousArtifactPath = join(fixture.root, 'previous', 'dsh-arkme-0.1.3.tgz')
+    await mkdir(dirname(previousArtifactPath), { recursive: true })
+    await writeFile(previousArtifactPath, pluginPackageTgz('0.1.3'))
+    await writeFile(join(fixture.root, 'profiles', 'web', 'package.json'), JSON.stringify({
+      packageManager: TEST_PNPM_PACKAGE_MANAGER,
+      dependencies: { '@senguoyun/dsh-arkme': `file:${previousArtifactPath}` },
+    }))
+    await writeInstalledProfilePluginVersion(fixture.root, '0.1.3')
+
+    const update = privateUpdateFixture('0.1.4')
+    const supervisedPlanPath = join(fixture.root, 'state', 'desktop-managed-profile-restart.json')
+    const calls: string[] = []
+    let removed = false
+    const runProfilePluginRemove = vi.fn(async () => {
+      calls.push('remove')
+      removed = true
+      await rm(join(fixture.root, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme'), {
+        recursive: true,
+        force: true,
+      })
+    })
+    const runProfilePluginAdd = vi.fn(async () => {
+      calls.push('add')
+      if (removed) await writeInstalledProfilePluginVersion(fixture.root, '0.1.4')
+    })
+    const requestProcessExit = vi.fn()
+    const installRuntime = {
+      dshHome: fixture.root,
+      profileName: 'web',
+      healthUrl: 'http://127.0.0.1:3080/arkme-self/api',
+      execArgv: ['--import', 'tsx/esm'],
+      dshBinPath: fixture.dshBinPath,
+      helperPath: fixture.helperPath,
+      restartArgv: ['--import', 'tsx/esm', fixture.dshBinPath, 'web', '--port', '3080'],
+      preparePackageManager: () => undefined,
+      supervisedExitCode: 75,
+      supervisedPlanPath,
+      requestProcessExit,
+      runProfilePluginAdd,
+    }
+    Object.assign(installRuntime, { runProfilePluginRemove })
+    const manager = new ArkmePluginUpdateManager({
+      enabled: true,
+      channel: 'stable',
+      updateServiceBaseUrl: 'https://api.jotmo.cc',
+      updateArtifactBaseUrl: 'https://releases.jotmo.test',
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      intervalMs: 60_000,
+      stateDirectory: join(fixture.root, 'state'),
+      installedVersion: '0.1.3',
+      fetchImpl: update.fetchImpl,
+      installRuntime,
+    })
+
+    await manager.check({ manual: true })
+    await expect(manager.install()).resolves.toMatchObject({ phase: 'restarting', targetVersion: '0.1.4' })
+
+    expect(calls).toEqual(['remove', 'add'])
+    expect(JSON.parse(await readFile(join(
+      fixture.root,
+      'profiles',
+      'web',
+      'node_modules',
+      '@senguoyun',
+      'dsh-arkme',
+      'package.json',
+    ), 'utf8'))).toMatchObject({ version: '0.1.4' })
     await vi.advanceTimersByTimeAsync(800)
     expect(requestProcessExit).toHaveBeenCalledWith(75)
   })
@@ -279,6 +583,7 @@ describe('companion plugin updater', () => {
       previousSpec: 'link:/Applications/Arkme.app/plugin',
       targetVersion: '0.1.4',
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('tgz').digest('hex'),
       stateDirectory: join(root, 'state'),
       healthUrl: 'http://127.0.0.1:3080/api',
       logPath: join(root, 'update.log'),
@@ -288,6 +593,17 @@ describe('companion plugin updater', () => {
       '--import', 'tsx/esm', '/tmp/dsh.js',
       'plugin', '--profile', 'web', 'add', `file:${targetArtifactPath}`,
     ])
+    expect(buildTargetRemoveArgs(plan)).toEqual([
+      '--import', 'tsx/esm', '/tmp/dsh.js',
+      'plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme',
+    ])
+    expect(() => parsePluginUpdaterPlan({
+      ...plan,
+      disabledProfilePackages: ['../outside-profile'],
+    })).toThrow('updater plan is incomplete')
+    expect(() => assertTargetArtifactIntegrity(plan)).not.toThrow()
+    await writeFile(targetArtifactPath, 'tampered tgz')
+    expect(() => assertTargetArtifactIntegrity(plan)).toThrow(/digest/i)
   })
 
   it('does not stop DSH when the Profile package manager preflight fails', async () => {
@@ -438,7 +754,11 @@ describe('companion plugin updater', () => {
     await mkdir(stateDirectory, { recursive: true })
     const profileDirectory = join(root, 'profiles', 'web')
     await mkdir(profileDirectory, { recursive: true })
-    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.19.0' }))
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({
+      packageManager: TEST_PNPM_PACKAGE_MANAGER,
+      dependencies: { '@senguoyun/dsh-arkme': 'file:current.tgz', 'deepseek-pet': '1.0.0' },
+      dsh: { profile: { bundles: ['@senguoyun/dsh-arkme'] } },
+    }))
     await writeFile(versionPath, '0.1.3')
     await writeFile(fakeDsh, `
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -456,6 +776,12 @@ if (args[0] === 'plugin') {
   const packageDir = join(process.env.DSH_HOME, 'profiles', 'web', 'node_modules', '@senguoyun', 'dsh-arkme')
   mkdirSync(packageDir, { recursive: true })
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@senguoyun/dsh-arkme', version }))
+  const profilePath = join(process.env.DSH_HOME, 'profiles', 'web', 'package.json')
+  const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+  profile.dsh.profile.bundles = version === process.env.FAKE_INVALID_POLICY_VERSION
+    ? null
+    : Object.keys(profile.dependencies)
+  writeFileSync(profilePath, JSON.stringify(profile))
   process.exit(0)
 }
 if (args[0] === 'web') {
@@ -504,8 +830,12 @@ if (args[0] === 'web') {
       previousVersion: '0.1.3',
       previousSpec: 'link:/Applications/Arkme.app/plugin',
       previousArtifactPath,
+      disabledProfilePackages: ['deepseek-pet'],
       targetVersion: '0.1.4',
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
       stateDirectory,
       healthUrl: `http://127.0.0.1:${String(port)}/arkme-self/api`,
       logPath: join(root, 'helper.log'),
@@ -516,6 +846,7 @@ if (args[0] === 'web') {
       version: process.env.FAKE_VERSION_PATH,
       pid: process.env.FAKE_PID_PATH,
       fail: process.env.FAKE_FAIL_VERSION,
+      invalidPolicy: process.env.FAKE_INVALID_POLICY_VERSION,
     }
     process.env.FAKE_TRACE_PATH = tracePath
     process.env.FAKE_VERSION_PATH = versionPath
@@ -523,17 +854,30 @@ if (args[0] === 'web') {
     let serverPid: number | undefined
     try {
       await runPluginUpdater(planPath)
+      serverPid = Number(await readFile(pidPath, 'utf8'))
       const install = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(install).toMatchObject({ phase: 'succeeded', targetVersion: '0.1.4' })
-      const trace = await readFile(tracePath, 'utf8')
-      expect(trace).toContain(`file:${targetArtifactPath}`)
-      expect(trace).not.toContain('@senguoyun/dsh-arkme@0.1.4')
-      serverPid = Number(await readFile(pidPath, 'utf8'))
+      const trace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
+        .map(line => JSON.parse(line) as string[])
+      const profileCommands = trace.filter(args => args[0] === 'plugin')
+      expect(profileCommands[0]).toEqual([
+        'plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme',
+      ])
+      expect(profileCommands[1]).toEqual([
+        'plugin', '--profile', 'web', 'add', `file:${targetArtifactPath}`,
+      ])
+      expect(trace.some(args => args.includes(`file:${targetArtifactPath}`))).toBe(true)
+      expect(trace.flat()).not.toContain('@senguoyun/dsh-arkme@0.1.4')
+      const converged = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dsh: { profile: { bundles: string[] } }
+      }
+      expect(converged.dsh.profile.bundles).not.toContain('deepseek-pet')
 
       process.kill(serverPid, 'SIGTERM')
       serverPid = undefined
       await new Promise(resolve => setTimeout(resolve, 300))
       process.env.FAKE_FAIL_VERSION = '0.1.4'
+      process.env.FAKE_INVALID_POLICY_VERSION = '0.1.3'
       const rollbackParent = spawn(process.execPath, ['-e', ''])
       const rollbackParentPid = rollbackParent.pid
       if (rollbackParentPid === undefined) throw new Error('missing rollback parent pid')
@@ -548,11 +892,23 @@ if (args[0] === 'web') {
         parentPid: rollbackParentPid,
       }))
       await runPluginUpdater(rollbackPlanPath)
+      serverPid = Number(await readFile(pidPath, 'utf8'))
       const rolledBack = await new PluginUpdateInstallStateStore(stateDirectory).read()
       expect(rolledBack).toMatchObject({ phase: 'rolled-back', previousVersion: '0.1.3' })
+      expect(rolledBack?.message).toContain('部分已关闭扩展的 Profile 状态未能收敛')
       expect(await readFile(versionPath, 'utf8')).toBe('0.1.3')
-      expect(await readFile(tracePath, 'utf8')).toContain(`file:${previousArtifactPath}`)
-      serverPid = Number(await readFile(pidPath, 'utf8'))
+      const rollbackTrace = (await readFile(tracePath, 'utf8')).trim().split(/\r?\n/)
+        .map(line => JSON.parse(line) as string[])
+      const rollbackProfileCommands = rollbackTrace.filter(args => args[0] === 'plugin')
+      expect(rollbackProfileCommands.slice(-2)).toEqual([
+        ['plugin', '--profile', 'web', 'remove', '@senguoyun/dsh-arkme'],
+        ['plugin', '--profile', 'web', 'add', `file:${previousArtifactPath}`],
+      ])
+      expect(rollbackTrace.some(args => args.includes(`file:${previousArtifactPath}`))).toBe(true)
+      const rolledBackProfile = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dsh: { profile: { bundles: string[] | null } }
+      }
+      expect(rolledBackProfile.dsh.profile.bundles).toBeNull()
     } finally {
       if (serverPid !== undefined && Number.isSafeInteger(serverPid)) {
         try { process.kill(serverPid, 'SIGTERM') } catch { /* already stopped */ }
@@ -565,14 +921,173 @@ if (args[0] === 'web') {
       else process.env.FAKE_PID_PATH = previousEnv.pid
       if (previousEnv.fail === undefined) delete process.env.FAKE_FAIL_VERSION
       else process.env.FAKE_FAIL_VERSION = previousEnv.fail
+      if (previousEnv.invalidPolicy === undefined) delete process.env.FAKE_INVALID_POLICY_VERSION
+      else process.env.FAKE_INVALID_POLICY_VERSION = previousEnv.invalidPolicy
     }
   }, 15_000)
+
+  it('migrates a legacy managed plan into a durable receipt on first fixed-version update', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-legacy-plan-'))
+    const stateDirectory = join(root, 'state')
+    const targetArtifactPath = join(root, 'cache', '0.1.4', 'dsh-arkme-0.1.4.tgz')
+    const dshBinPath = join(root, 'dsh', 'lib', 'bin.js')
+    await mkdir(dirname(targetArtifactPath), { recursive: true })
+    await mkdir(dirname(dshBinPath), { recursive: true })
+    await writeFile(targetArtifactPath, 'target tgz')
+    await writeFile(dshBinPath, '')
+    await writeFile(join(root, 'dsh', 'package.json'), JSON.stringify({ version: '0.1.0-rc.8' }))
+    const planPath = join(root, 'managed-plan.json')
+    await writeFile(planPath, JSON.stringify({
+      schemaVersion: 1,
+      jobId: 'legacy-managed-plan',
+      parentPid: process.pid,
+      execPath: process.execPath,
+      execArgv: [],
+      dshBinPath,
+      restartArgv: [dshBinPath, 'web'],
+      dshHome: root,
+      profileName: 'web',
+      previousVersion: '0.1.3',
+      previousSpec: 'file:/previous.tgz',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      stateDirectory,
+      healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
+      logPath: join(root, 'helper.log'),
+    }))
+    const previousAppVersion = process.env.ARKME_APP_VERSION
+    process.env.ARKME_APP_VERSION = '1.2.0'
+    try {
+      await finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', {
+        waitForHealthy: async () => true,
+      })
+    } finally {
+      if (previousAppVersion === undefined) delete process.env.ARKME_APP_VERSION
+      else process.env.ARKME_APP_VERSION = previousAppVersion
+    }
+
+    await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(
+      join(dirname(targetArtifactPath), 'plugin-update-install-receipt.json'),
+      'utf8',
+    )).resolves.toContain(createHash('sha512').update('target tgz').digest('hex'))
+    await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
+      phase: 'succeeded',
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+    })
+  })
+
+  it('does not publish succeeded or delete the plan when receipt persistence fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-managed-receipt-failure-'))
+    const stateDirectory = join(root, 'state')
+    const targetArtifactPath = join(root, 'cache', '0.1.4', 'dsh-arkme-0.1.4.tgz')
+    const harnessLogPath = join(root, 'harness.log')
+    await mkdir(dirname(targetArtifactPath), { recursive: true })
+    await writeFile(targetArtifactPath, 'target tgz')
+    const planPath = join(root, 'managed-plan.json')
+    await writeFile(planPath, JSON.stringify({
+      schemaVersion: 1,
+      jobId: 'managed-receipt-failure',
+      parentPid: process.pid,
+      execPath: process.execPath,
+      execArgv: [],
+      dshBinPath: join(root, 'dsh-bin.js'),
+      restartArgv: [join(root, 'dsh-bin.js'), 'web'],
+      dshHome: root,
+      profileName: 'web',
+      previousVersion: '0.1.3',
+      previousSpec: 'file:/previous.tgz',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      stateDirectory,
+      healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
+      logPath: harnessLogPath,
+    }))
+    const store = new PluginUpdateInstallStateStore(stateDirectory)
+    await store.write({
+      schemaVersion: 1,
+      jobId: 'managed-receipt-failure',
+      phase: 'restarting',
+      previousVersion: '0.1.3',
+      targetVersion: '0.1.4',
+      message: 'restarting',
+      updatedAtMillis: Date.now(),
+    })
+
+    await expect(finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', {
+      waitForHealthy: async () => true,
+      writeInstallReceipt: async () => { throw new Error('disk full') },
+    })).rejects.toThrow('disk full')
+    await expect(store.read()).resolves.toMatchObject({ phase: 'restarting' })
+    await expect(readFile(planPath, 'utf8')).resolves.toContain('managed-receipt-failure')
+    const lifecycle = await readPluginUpdateLog(harnessLogPath)
+    expect(lifecycle.map(entry => entry.stage)).toEqual([
+      'artifact-verification-started',
+      'artifact-verification-completed',
+      'replacement-health-check-started',
+      'replacement-health-check-passed',
+      'artifact-reverification-started',
+      'artifact-reverification-completed',
+      'receipt-writing',
+      'receipt-write-failed',
+    ])
+    expect(lifecycle.at(-1)).toMatchObject({
+      jobId: 'managed-receipt-failure',
+      error: 'disk full',
+    })
+  })
+
+  it('keeps managed finalization running when lifecycle logging and stderr fallback both fail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-managed-log-failure-'))
+    const targetArtifactPath = join(root, 'cache', '0.1.4', 'dsh-arkme-0.1.4.tgz')
+    await mkdir(dirname(targetArtifactPath), { recursive: true })
+    await writeFile(targetArtifactPath, 'target tgz')
+    const planPath = join(root, 'managed-plan.json')
+    await writeFile(planPath, JSON.stringify({
+      schemaVersion: 1,
+      jobId: 'managed-log-failure',
+      parentPid: process.pid,
+      execPath: process.execPath,
+      execArgv: [],
+      dshBinPath: join(root, 'dsh-bin.js'),
+      restartArgv: [join(root, 'dsh-bin.js'), 'web'],
+      dshHome: root,
+      profileName: 'web',
+      previousVersion: '0.1.3',
+      previousSpec: 'file:/previous.tgz',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+      stateDirectory: join(root, 'state'),
+      healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
+      logPath: root,
+    }))
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => {
+      throw new Error('stderr failed')
+    })
+    try {
+      await expect(finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', {
+        waitForHealthy: async () => true,
+        writeInstallReceipt: async () => undefined,
+      })).resolves.toBeUndefined()
+    } finally {
+      stderr.mockRestore()
+    }
+  })
 
   it('finalizes and rolls back plugin updates under the desktop managed restart helper', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-managed-helper-'))
     const stateDirectory = join(root, 'state')
     const targetArtifactPath = join(root, 'cache', '0.1.4', 'dsh-arkme-0.1.4.tgz')
     const previousArtifactPath = join(root, 'cache', '0.1.3', 'dsh-arkme-0.1.3.tgz')
+    const harnessLogPath = join(root, 'harness.log')
     await mkdir(resolve(targetArtifactPath, '..'), { recursive: true })
     await mkdir(resolve(previousArtifactPath, '..'), { recursive: true })
     await writeFile(targetArtifactPath, 'target tgz')
@@ -593,9 +1108,12 @@ if (args[0] === 'web') {
       previousArtifactPath,
       targetVersion: '0.1.4',
       targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
       stateDirectory,
       healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
-      logPath: join(root, 'helper.log'),
+      logPath: harnessLogPath,
     }))
     const waitForHealthy = vi.fn(async (plan: { healthUrl: string }, version: string) => {
       expect(plan.healthUrl).toBe('http://127.0.0.1:4123/arkme-self/api')
@@ -605,10 +1123,38 @@ if (args[0] === 'web') {
 
     await finalizeManagedPluginUpdate(planPath, 'http://127.0.0.1:4123/', { waitForHealthy })
     await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    const receipt = JSON.parse(await readFile(
+      join(dirname(targetArtifactPath), 'plugin-update-install-receipt.json'),
+      'utf8',
+    )) as unknown
+    expect(receipt).toMatchObject({
+      schemaVersion: 1,
+      packageName: '@senguoyun/dsh-arkme',
+      targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
+    })
     await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
       phase: 'succeeded',
       targetVersion: '0.1.4',
+      targetArtifactPath,
+      targetArtifactSha512: createHash('sha512').update('target tgz').digest('hex'),
+      appVersion: '1.2.0',
+      dshVersion: '0.1.0-rc.8',
     })
+    expect((await readPluginUpdateLog(harnessLogPath)).map(entry => entry.stage)).toEqual([
+      'artifact-verification-started',
+      'artifact-verification-completed',
+      'replacement-health-check-started',
+      'replacement-health-check-passed',
+      'artifact-reverification-started',
+      'artifact-reverification-completed',
+      'receipt-writing',
+      'receipt-written',
+      'succeeded',
+    ])
 
     await writeFile(planPath, JSON.stringify({
       schemaVersion: 1,
@@ -627,15 +1173,23 @@ if (args[0] === 'web') {
       targetArtifactPath,
       stateDirectory,
       healthUrl: 'http://127.0.0.1:3000/arkme-self/api',
-      logPath: join(root, 'helper.log'),
+      logPath: harnessLogPath,
     }))
-    const runRollbackInstall = vi.fn(() => true)
+    const runRollbackInstall = vi.fn(() => ({ packageRestored: true, profilePolicyRestored: false }))
     await rollbackManagedPluginUpdate(planPath, { runRollbackInstall })
     expect(runRollbackInstall).toHaveBeenCalledOnce()
     await expect(readFile(planPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(new PluginUpdateInstallStateStore(stateDirectory).read()).resolves.toMatchObject({
       phase: 'rolled-back',
       previousVersion: '0.1.3',
+      message: expect.stringContaining('部分已关闭扩展的 Profile 状态未能收敛'),
     })
+    const rollbackLifecycle = (await readPluginUpdateLog(harnessLogPath))
+      .filter(entry => entry.jobId === 'managed-rollback')
+    expect(rollbackLifecycle.map(entry => entry.stage)).toEqual([
+      'rollback-started',
+      'rollback-completed',
+      'rolled-back',
+    ])
   })
 })

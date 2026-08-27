@@ -1,11 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packArkmeExtension } from '../../src/extensions/artifact.js'
-import { renderPersistentClientBundle } from '../../src/extensions/persistent-client-bundle.js'
+import {
+  renderArkmeBundleClientBundle, renderPersistentClientBundle,
+} from '../../src/extensions/persistent-client-bundle.js'
 import {
   materializePersistentExtensionBundle, quarantinePersistentExtension,
   readPersistentExtensionActivation, writePersistentExtensionActivation,
@@ -15,6 +17,7 @@ import {
   profilePluginCommandErrorDetail,
 } from '../../src/extensions/profile-installer.js'
 import type { ArkmeInstalledExtension } from '../../src/extensions/types.js'
+import { expectPrivatePath } from '../helpers/private-path.js'
 
 const directories: string[] = []
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -69,7 +72,14 @@ describe('persistent extension profile bundle', () => {
       const request = JSON.parse(init.body ?? '{}') as { operation: string; params: Record<string, unknown> }
       requests.push(request)
       if (request.operation === 'extensions.persistent.client-state') {
-        return { ok: true, status: 200, json: async () => ({ ok: true, value: { mount: true } }) }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            value: { mount: true, extension_id: 'ext_stale', instance_key: 'instance-stale', generation: 1 },
+          }),
+        }
       }
       return {
         ok: false,
@@ -111,6 +121,214 @@ describe('persistent extension profile bundle', () => {
     expect(dispose).toHaveBeenCalledOnce()
   })
 
+  it('isolates a Client slot collision and reports only that extension as unavailable', async () => {
+    const requests: Array<{ operation: string; params: Record<string, unknown> }> = []
+    const fetchImpl = vi.fn(async (_input: string, init: { body?: string }) => {
+      const request = JSON.parse(init.body ?? '{}') as { operation: string; params: Record<string, unknown> }
+      requests.push(request)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          value: request.operation === 'extensions.persistent.client-state'
+            ? { mount: true, extension_id: 'ext_colliding', instance_key: 'instance-colliding', generation: 1 }
+            : { handled: true },
+        }),
+      }
+    })
+    const rendered = renderPersistentClientBundle('@example/colliding-client', {
+      extensionId: 'ext_colliding', version: '1.0.0', name: 'Colliding Client',
+      code: 'return { apply() {} }', apiPath: '/arkme-self/api',
+    })
+    let loaded: { factory: (requireModule: (id: string) => unknown) => unknown } | undefined
+    runInNewContext(rendered, {
+      window: { __ModuleLoader__: { load: (entry: typeof loaded) => { loaded = entry } } },
+      document: { createElement: vi.fn(), head: { append: vi.fn() } },
+      fetch: fetchImpl,
+      console,
+    })
+    const dispose = vi.fn(async () => undefined)
+    const outerContext = {
+      effect: vi.fn(),
+      plugin: vi.fn(() => Object.assign(
+        Promise.reject(new Error('list slot "shell.overlay" already has an entry with id "snake-floating"')),
+        { dispose },
+      )),
+    }
+
+    await expect((loaded!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> }).apply(outerContext))
+      .resolves.toBeUndefined()
+    await vi.waitFor(() => expect(requests.some(request => request.operation === 'extensions.client.failure')).toBe(true))
+
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(requests.find(request => request.operation === 'extensions.client.failure')?.params).toMatchObject({
+      identityKey: 'extensionId',
+      extensionId: 'ext_colliding',
+      version: '1.0.0',
+      kind: 'runtime-load-failed',
+      message: 'list slot "shell.overlay" already has an entry with id "snake-floating"',
+      clientInstanceKey: 'instance-colliding',
+      clientContentDigest: expect.stringMatching(/^client-v1-[a-f0-9]{64}$/),
+    })
+  })
+
+  it('lets a newer Client instance replace an older lease and prevents the stale instance from reclaiming it', async () => {
+    const entries = new Map<string, { factory: (requireModule: (id: string) => unknown) => unknown }>()
+    const context = {
+      window: { __ModuleLoader__: { load: (entry: { id: string; factory: (requireModule: (id: string) => unknown) => unknown }) => entries.set(entry.id, entry) } },
+      document: { createElement: vi.fn(), head: { append: vi.fn() } },
+      fetch: vi.fn(async (_input: string, init: { body?: string }) => {
+        const request = JSON.parse(init.body ?? '{}') as { operation: string }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            value: request.operation === 'extensions.bundle.client-state'
+              ? { mount: true, extension_id: 'ext_managed', instance_key: 'instance-old', generation: 1 }
+              : request.operation === 'extensions.persistent.client-state'
+                ? { mount: true, extension_id: 'ext_managed', instance_key: 'instance-current', generation: 2 }
+                : {},
+          }),
+        }
+      }),
+      console,
+    }
+    runInNewContext(renderArkmeBundleClientBundle('dsh-snake-draggable', {
+      version: '1.1.2', name: 'Local snake', code: 'return { apply() { return "old" } }', apiPath: '/arkme-self/api',
+    }), context)
+    runInNewContext(renderPersistentClientBundle('@arkme-local/ext-managed', {
+      extensionId: 'ext_managed', version: '2.0.0', name: 'Managed snake',
+      code: 'return { apply() { return "current" } }', apiPath: '/arkme-self/api',
+    }), context)
+    const localDispose = vi.fn(async () => undefined)
+    const managedDispose = vi.fn(async () => undefined)
+    const childContext = { fiber: { inject: {} }, get: vi.fn(() => undefined) }
+    const cordisContext = (dispose: ReturnType<typeof vi.fn>) => ({
+      effect: vi.fn(),
+      plugin: vi.fn((plugin: { apply(ctx: unknown): unknown }) => Object.assign(
+        Promise.resolve(plugin.apply(childContext)),
+        { dispose },
+      )),
+    })
+
+    await (entries.get('dsh-snake-draggable')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply(cordisContext(localDispose))
+    await (entries.get('@arkme-local/ext-managed')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply(cordisContext(managedDispose))
+    const lateOldPlugin = vi.fn()
+    await (entries.get('dsh-snake-draggable')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: lateOldPlugin })
+
+    expect(localDispose).toHaveBeenCalledOnce()
+    expect(managedDispose).not.toHaveBeenCalled()
+    expect(lateOldPlugin).not.toHaveBeenCalled()
+  })
+
+  it('skips a second mount of the same extension instance without disabling it', async () => {
+    const entries = new Map<string, { factory: (requireModule: (id: string) => unknown) => unknown }>()
+    const requests: Array<{ operation: string }> = []
+    const context = {
+      window: { __ModuleLoader__: { load: (entry: { id: string; factory: (requireModule: (id: string) => unknown) => unknown }) => entries.set(entry.id, entry) } },
+      document: { createElement: vi.fn(), head: { append: vi.fn() } },
+      fetch: vi.fn(async (_input: string, init: { body?: string }) => {
+        const request = JSON.parse(init.body ?? '{}') as { operation: string }
+        requests.push({ operation: request.operation })
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            value: {
+              mount: true,
+              extension_id: 'ext_same',
+              instance_key: 'instance-same',
+              generation: 7,
+            },
+          }),
+        }
+      }),
+      console,
+    }
+    for (const packageName of ['@example/same-a', '@example/same-b']) {
+      runInNewContext(renderArkmeBundleClientBundle(packageName, {
+        version: '1.0.0', name: packageName, code: 'return { apply() {} }', apiPath: '/arkme-self/api',
+      }), context)
+    }
+    const childContext = { fiber: { inject: {} }, get: vi.fn(() => undefined) }
+    const firstPlugin = vi.fn((plugin: { apply(ctx: unknown): unknown }) => Object.assign(
+      Promise.resolve(plugin.apply(childContext)),
+      { dispose: vi.fn() },
+    ))
+    const secondPlugin = vi.fn()
+
+    await (entries.get('@example/same-a')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: firstPlugin })
+    await (entries.get('@example/same-b')!.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: secondPlugin })
+
+    expect(firstPlugin).toHaveBeenCalledOnce()
+    expect(secondPlugin).not.toHaveBeenCalled()
+    expect(requests).toEqual([
+      { operation: 'extensions.bundle.client-state' },
+      { operation: 'extensions.bundle.client-state' },
+    ])
+  })
+
+  it('mounts a marketplace Client in the top-level shell but not in the embedded Harness document', async () => {
+    const requests: string[] = []
+    const rendered = renderPersistentClientBundle('@arkme-local/ext-overlay', {
+      extensionId: 'ext_overlay', version: '1.0.0', name: 'Overlay',
+      code: 'return { apply() {} }', apiPath: '/arkme-self/api',
+    })
+    const load = (search: string) => {
+      let loaded: { factory: (requireModule: (id: string) => unknown) => unknown } | undefined
+      const plugin = vi.fn((clientPlugin: { apply(ctx: unknown): unknown }) => Object.assign(
+        Promise.resolve(clientPlugin.apply({ fiber: { inject: {} }, get: vi.fn(() => undefined) })),
+        { dispose: vi.fn() },
+      ))
+      runInNewContext(rendered, {
+        window: { __ModuleLoader__: { load: (entry: typeof loaded) => { loaded = entry } } },
+        document: {
+          location: { search },
+          createElement: vi.fn(),
+          head: { append: vi.fn() },
+        },
+        fetch: vi.fn(async (_input: string, init: { body?: string }) => {
+          const request = JSON.parse(init.body ?? '{}') as { operation: string }
+          requests.push(request.operation)
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              value: {
+                mount: true,
+                extension_id: 'ext_overlay',
+                instance_key: 'instance-overlay',
+                generation: 7,
+              },
+            }),
+          }
+        }),
+        console,
+      })
+      return { loaded: loaded!, plugin }
+    }
+    const topLevel = load('')
+    const embeddedHarness = load('?arkme-harness-embed=1')
+
+    await (topLevel.loaded.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: topLevel.plugin })
+    await (embeddedHarness.loaded.factory(() => ({})) as { apply(ctx: unknown): Promise<void> })
+      .apply({ effect: vi.fn(), plugin: embeddedHarness.plugin })
+
+    expect(topLevel.plugin).toHaveBeenCalledOnce()
+    expect(embeddedHarness.plugin).not.toHaveBeenCalled()
+    expect(requests).toEqual(['extensions.persistent.client-state'])
+  })
+
   it('materializes one immutable DSH bundle with Host and Client wrappers', () => {
     const { root, artifact, artifactPath } = fixture()
     const result = materializePersistentExtensionBundle({
@@ -126,16 +344,26 @@ describe('persistent extension profile bundle', () => {
       },
     })
     const manifest = JSON.parse(readFileSync(join(result.bundleDirectory, 'package.json'), 'utf8')) as {
-      name: string; exports: Record<string, string>; dsh: { bundle: { patch: string }; client?: { inject: string[] } }
+      name: string
+      exports: Record<string, string>
+      dsh: {
+        bundle: { patch: string }
+        arkme?: { clientContentDigest?: string }
+        client?: { inject: string[] }
+      }
     }
     expect(manifest.name).toMatch(/^@arkme-local\/ext-[a-f0-9]{16}$/)
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
+    expect(manifest.dsh.arkme).toMatchObject({
+      clientContentDigest: expect.stringMatching(/^client-v1-[a-f0-9]{64}$/),
+    })
     expect(manifest.dsh.client?.inject).toEqual([])
     expect(manifest.exports['./package.json']).toBe('./package.json')
     expect(readFileSync(join(result.bundleDirectory, 'cordis.patch.yml'), 'utf8')).toContain(manifest.name)
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'index.js'), 'utf8')).toContain('applyPersistentArkmeHostExtension')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.invoke')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('extensions.persistent.client-state')
+    expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('"wrapperVersion":4')
     expect(readFileSync(join(result.bundleDirectory, 'lib', 'client.js'), 'utf8')).toContain('version: spec.version')
     expect(JSON.parse(readFileSync(join(result.bundleDirectory, 'activation.json'), 'utf8'))).toEqual({
       schema_version: 1, extension_id: 'ext_test', enabled: true,
@@ -248,24 +476,36 @@ describe('persistent extension profile bundle', () => {
       dshHome: root, profileName: 'web', execPath: process.execPath, dshBinPath: '/dsh/bin', run,
     })
     const tarball = join(root, 'bundle with spaces.tgz')
+    const portableBundle = join(root, 'profiles', 'web', 'arkme-extensions', 'bundle with spaces', '1.0.0')
     writeFileSync(tarball, 'fixture')
+    mkdirSync(portableBundle, { recursive: true })
     await installer.install(root)
+    await installer.install(portableBundle)
     await installer.installTarball(tarball)
     await installer.remove('@arkme-local/ext-0123456789abcdef')
     await installer.remove('@example/install-bundle')
+    await installer.removeMany(['dsh-snake-draggable', '@example/duplicate'])
     expect(run).toHaveBeenNthCalledWith(1, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', `link:${root}`,
     ])
     expect(run).toHaveBeenNthCalledWith(2, [
-      'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', tarball,
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
+      'add', 'link:arkme-extensions/bundle with spaces/1.0.0',
     ])
     expect(run).toHaveBeenNthCalledWith(3, [
-      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
-      'remove', '@arkme-local/ext-0123456789abcdef',
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0', 'add', tarball,
     ])
     expect(run).toHaveBeenNthCalledWith(4, [
       'plugin', '--profile', 'web', '--config.minimum-release-age=0',
+      'remove', '@arkme-local/ext-0123456789abcdef',
+    ])
+    expect(run).toHaveBeenNthCalledWith(5, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
       'remove', '@example/install-bundle',
+    ])
+    expect(run).toHaveBeenNthCalledWith(6, [
+      'plugin', '--profile', 'web', '--config.minimum-release-age=0',
+      'remove', 'dsh-snake-draggable', '@example/duplicate',
     ])
   })
 
@@ -330,7 +570,7 @@ describe('persistent extension profile bundle', () => {
       expect(standaloneRestart).not.toHaveBeenCalled()
       expect(standaloneShutdown).not.toHaveBeenCalled()
       expect(requestProcessExit).toHaveBeenCalledWith(75)
-      expect(statSync(supervisedPlanPath).mode & 0o777).toBe(0o600)
+      expectPrivatePath(supervisedPlanPath, 0o600)
       expect(JSON.parse(readFileSync(supervisedPlanPath, 'utf8'))).toMatchObject({
         extensionId: 'ext-test',
         packageName: '@arkme-local/ext-0123456789abcdef',

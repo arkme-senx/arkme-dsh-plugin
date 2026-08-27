@@ -4,16 +4,25 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-llm'
 import Schema from '@deepseek-ai/schemastery'
 
 export { createOpenClawCliAdapter } from './openclaw/index.js'
 import { createOpenClawCliAdapter, createOpenClawCommandRunner, createOpenClawFileSecretStore, createOpenClawProvisioner } from './openclaw/index.js'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
+import { ARKME_HARNESS_EMBED_PATH } from './harness-embed-contract.js'
+import {
+  createHarnessEmbedRouteHandler,
+  type DshWebBootGraph,
+} from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
+import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
+import { registerManagedAiProvider } from './managed-ai/adapter.js'
 import {
   ArkmePluginUpdateManager,
   validatePluginUpdateArtifactOrigin,
@@ -50,6 +59,7 @@ export interface Config {
   authBaseUrl: string
   subjectBaseUrl: string
   recordBaseUrl: string
+  dataBaseUrl: string
   chatBaseUrl: string
   botBaseUrl: string
   imBaseUrl: string
@@ -70,6 +80,7 @@ export interface Config {
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   interwovenMomentsEnabled: boolean
+  chatMemberJoinEventsEnabled: boolean
   richMediaRenderEnabled: boolean
   richMediaSendEnabled: boolean
   maxUploadBytes: number
@@ -94,6 +105,7 @@ export const Config: Schema<Config> = Schema.object({
   authBaseUrl: Schema.string().default('https://jotmo.senguo.me'),
   subjectBaseUrl: Schema.string().default('https://jotmo-subject.senguo.me'),
   recordBaseUrl: Schema.string().default('https://jotmo-record.senguo.me'),
+  dataBaseUrl: Schema.string().default(''),
   chatBaseUrl: Schema.string().default('https://jotmo-chat.senguo.me'),
   botBaseUrl: Schema.string().default('https://jotmo-bot.senguo.me'),
   imBaseUrl: Schema.string().default('https://jotmo-im.senguo.me'),
@@ -114,6 +126,7 @@ export const Config: Schema<Config> = Schema.object({
   relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
+  chatMemberJoinEventsEnabled: Schema.boolean().default(true),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
   allowNonLoopback: Schema.boolean().default(false),
@@ -133,7 +146,11 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 export const name = 'dsh-arkme'
-export const inject = ['webServer', 'tools', 'systemPrompt', 'pluginInventory']
+export const inject = ['webServer', 'tools', 'systemPrompt', 'pluginInventory', 'clientModules']
+
+interface DshClientModulesLike {
+  graph(): DshWebBootGraph
+}
 
 export function readDshRuntimeVersion(dshBinPath: string): string | undefined {
   if (dshBinPath.trim() === '') return undefined
@@ -179,7 +196,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  validateConfig(ctx, config)
+  config = resolveArkmeConfig(ctx, config)
   const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
   const dshBinPath = process.argv[1] ?? ''
   const dshRuntimeVersion = readDshRuntimeVersion(dshBinPath)
@@ -201,6 +218,9 @@ export function apply(ctx: Context, config: Config): void {
     workspaceRoot: join(openClawStateDirectory, 'workspaces'),
     isRuntimeOnline: async botRef => (await service.listBots()).items.some(bot => bot.botRef === botRef && bot.status === 'online'),
   }))
+  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
+  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
+  const clientModules = (ctx as Context & { clientModules: DshClientModulesLike }).clientModules
   const updateManager = new ArkmePluginUpdateManager({
     enabled: resolvePluginUpdateEnabled(config.updateCheckEnabled),
     channel: config.updateChannel,
@@ -216,11 +236,16 @@ export function apply(ctx: Context, config: Config): void {
       profileName: 'web',
       healthUrl: `http://127.0.0.1:${String(ctx.webServer.port)}${config.routePath}`,
       allowLocalInstall: config.updateAllowLocalInstall,
+      disabledProfilePackages: () => extensionStore.list().flatMap(item =>
+        !item.enabled && item.profilePackageName !== undefined ? [item.profilePackageName] : []),
       ...(process.env.ARKME_DESKTOP_MANAGED_RESTART === '1'
         && process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH !== undefined
         ? {
             supervisedExitCode: ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
             supervisedPlanPath: process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH,
+            ...(process.env.ARKME_HARNESS_LOG_PATH === undefined
+              ? {}
+              : { harnessLogPath: process.env.ARKME_HARNESS_LOG_PATH }),
           }
         : {}),
     },
@@ -231,7 +256,6 @@ export function apply(ctx: Context, config: Config): void {
     enabled: config.extensionShareDiscoveryEnabled !== false,
     logger: ctx.logger,
   })
-  const extensionDirectory = config.extensionArtifactDirectory.trim() || join(dshHome, 'arkme-self', 'extensions')
   const extensionProfileDirectory = join(dshHome, 'profiles', 'web')
   const extensionProfileInstaller = new ArkmeExtensionProfileInstaller({
     dshHome,
@@ -252,7 +276,6 @@ export function apply(ctx: Context, config: Config): void {
         }
       : {}),
   })
-  const extensionStore = new ArkmeExtensionInstallStore(extensionDirectory)
   const ownedExtensionStore = new ArkmeOwnedExtensionStore(extensionDirectory)
   const ownedExtensionRefs = new ArkmeOwnedExtensionRefs()
   const ownedExtensionHostInstanceId = randomUUID()
@@ -265,6 +288,13 @@ export function apply(ctx: Context, config: Config): void {
   let extensionInstallTasks: ArkmeExtensionInstallTasks | undefined
   let ownedExtensionInventory: ArkmeOwnedExtensionInventory | undefined
   ctx.provide('arkmeData', service)
+  ctx.inject(['llm'], modelCtx => {
+    registerManagedAiProvider(modelCtx, {
+      intelligentBaseUrl: config.intelligentBaseUrl,
+      credentialOwner: service,
+    })
+  })
+  registerDSHAgentInputRecordSync(ctx, service)
   registerArkmeTools(ctx, service, config.toolProfile)
   ctx.inject(['dynamicCordisRunner', 'agents'], dynamicCtx => {
     const runner = (dynamicCtx as Context & { dynamicCordisRunner: DynamicCordisRunnerLike }).dynamicCordisRunner
@@ -284,7 +314,9 @@ export function apply(ctx: Context, config: Config): void {
       },
     )
     extensionManager = manager
-    void manager.reconcileInstallationMetrics()
+    void manager.reconcileInstallationMetrics().catch(error => {
+      ctx.logger.warn('Arkme extension startup reconciliation failed: %s', error instanceof Error ? error.message : String(error))
+    })
     const inventory = new ArkmeOwnedExtensionInventory({
       hostInstanceId: ownedExtensionHostInstanceId,
       profileDirectory: extensionProfileDirectory,
@@ -347,6 +379,10 @@ export function apply(ctx: Context, config: Config): void {
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
+  const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
+    expectedPort: ctx.webServer.port,
+    allowNonLoopback: config.allowNonLoopback,
+  })
   const extensionIconOptions = {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -359,6 +395,22 @@ export function apply(ctx: Context, config: Config): void {
   const realtimeEvents = new ArkmeRealtimeEvents(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
+  })
+  const harnessEmbedHandler = createHarnessEmbedRouteHandler({
+    getGraph: () => clientModules.graph(),
+    installedPackageNames: () => extensionStore.list().flatMap(item =>
+      item.profilePackageName === undefined ? [] : [item.profilePackageName]),
+    readRootHtml: async () => {
+      const response = await fetch(`http://127.0.0.1:${String(ctx.webServer.port)}/`, {
+        headers: { Accept: 'text/html' },
+        signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 5_000)),
+      })
+      if (!response.ok) throw new Error(`DSH root document returned HTTP ${String(response.status)}`)
+      return await response.text()
+    },
+    onError: error => {
+      ctx.logger.warn('dsh-arkme: core-only Harness document failed: %s', error instanceof Error ? error.message : String(error))
+    },
   })
   ctx.effect(() => () => {
     service.dispose()
@@ -378,6 +430,11 @@ export function apply(ctx: Context, config: Config): void {
     handler,
   }), 'dsh-arkme: local BFF route')
   ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: ARKME_HARNESS_EMBED_PATH,
+    handler: harnessEmbedHandler,
+  }), 'dsh-arkme: core-only DeepSeek Harness iframe route')
+  ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: `${config.routePath}/call`,
     handler: callAssetHandler,
@@ -392,6 +449,11 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/media`,
     handler: mediaHandler,
   }), 'dsh-arkme: rich content media route')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/voiceprint/enroll`,
+    handler: voiceprintEnrollmentHandler,
+  }), 'dsh-arkme: voiceprint enrollment route')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: `${config.routePath}/extension-icon/upload`,
@@ -426,6 +488,19 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info('dsh-arkme: mounted %s for %s environment', config.routePath, config.environment)
 }
 
+export function resolveArkmeConfig(ctx: Context, config: Config): Config {
+  const resolved = config.dataBaseUrl.trim() === ''
+    ? {
+        ...config,
+        dataBaseUrl: config.environment === 'prod'
+          ? 'https://data.jotmo.cc'
+          : 'https://jotmo-data.senguo.me',
+      }
+    : config
+  validateConfig(ctx, resolved)
+  return resolved
+}
+
 function validateConfig(ctx: Context, config: Config): void {
   if (config.environment === 'prod' && !config.allowProduction) {
     throw new Error('dsh-arkme: production environment requires allowProduction: true')
@@ -433,7 +508,9 @@ function validateConfig(ctx: Context, config: Config): void {
   if (config.environment === 'prod') {
     const testDefaults = [
       config.authBaseUrl,
+      config.subjectBaseUrl,
       config.recordBaseUrl,
+      config.dataBaseUrl,
       config.chatBaseUrl,
       config.botBaseUrl,
       config.imBaseUrl,
@@ -465,6 +542,7 @@ function validateConfig(ctx: Context, config: Config): void {
     ['authBaseUrl', config.authBaseUrl],
     ['subjectBaseUrl', config.subjectBaseUrl],
     ['recordBaseUrl', config.recordBaseUrl],
+    ['dataBaseUrl', config.dataBaseUrl],
     ['chatBaseUrl', config.chatBaseUrl],
     ['botBaseUrl', config.botBaseUrl],
     ['imBaseUrl', config.imBaseUrl],
@@ -521,6 +599,10 @@ export type {
   ArkmeRelatedRecordingSpeaker,
   ArkmeContentBlock,
   ArkmeContentKind,
+  ArkmeFavoriteSticker,
+  ArkmeFavoriteStickerList,
+  ArkmeFavoriteStickerAddInput,
+  ArkmeFavoriteStickerManageAction,
   ArkmeRichSendInput,
   ArkmeImageMediaType,
   ArkmeImagePayload,
@@ -542,12 +624,23 @@ export type {
   ArkmeTimelineItem,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
+  ArkmeForwardTranscriptSegment,
   ArkmeTimelinePage,
   ArkmeUploadedAsset,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
   ArkmeSelfSummary,
+  ArkmeCallDetail,
+  ArkmeCallHistoryItem,
+  ArkmeCallHistoryOptions,
+  ArkmeCallHistoryPage,
+  ArkmeCallMediaType,
+  ArkmeCallParticipant,
+  ArkmeCallRecentContact,
+  ArkmeCallSummaryRetryResult,
+  ArkmeCallSummaryStatus,
+  ArkmeCallTranscriptSegment,
   ArkmeProviderCapabilities,
   ArkmeProviderState,
   ArkmePluginUpdateAvailability,

@@ -1,0 +1,64 @@
+name: 准备插件发版
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 发版级别
+        required: true
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      summary:
+        description: 本次更新说明（最多 120 个字符）
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 安装依赖
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: 写入发版元数据
+        id: release
+        env:
+          RELEASE_BUMP: ${{ inputs.bump }}
+          RELEASE_SUMMARY: ${{ inputs.summary }}
+        run: node scripts/prepare-plugin-release.mjs --bump "$RELEASE_BUMP" --summary "$RELEASE_SUMMARY" >> "$GITHUB_OUTPUT"
+      - name: 验证发版内容
+        run: |
+          pnpm test
+          pnpm run typecheck
+          pnpm run build
+      - name: 创建发版拉取请求
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.next_version }}
+        run: |
+          branch="release/v${VERSION}"
+          if git ls-remote --exit-code --heads origin "$branch"; then
+            echo "已存在 $branch，请继续处理已有发版拉取请求。" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add package.json
+          git commit -m "chore(release): prepare v${VERSION}"
+          git push origin "$branch"
+          gh pr create --base master --head "$branch" --title "chore(release): prepare v${VERSION}" --body "## 发版准备\n\n- 版本：v${VERSION}\n- 已自动完成版本元数据更新与完整验证。\n- 合并后会自动发布 npm、创建 Git Tag 和 GitHub Release。"

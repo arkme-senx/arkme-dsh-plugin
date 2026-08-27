@@ -36,6 +36,11 @@ interface ProviderStateLike {
   userId?: number
 }
 
+interface ExistingPublishIdentity {
+  extensionId?: string
+  packageName?: string
+}
+
 interface PublishInput {
   agent: unknown
   pluginId: string
@@ -267,9 +272,10 @@ export class ArkmeOwnedExtensionInventory {
   async preparePublish(input: ArkmeMyExtensionPublishInput, signal?: AbortSignal): Promise<ArkmePreparedExtensionPublish> {
     const userId = await this.currentUserId()
     const target = this.options.refs.resolve(userId, input.ownedRef)
-    const extensionId = await this.preparePublishExtensionId(
+    const identity = await this.preparePublishIdentity(
       target.kind === 'cordis' ? 'cordis' : 'profile', target.sourceKey, userId, input.extensionId, signal,
     )
+    const extensionId = identity.extensionId
     const preparedInput = { ...input }
     if (extensionId === undefined) delete preparedInput.extensionId
     else preparedInput.extensionId = extensionId
@@ -309,6 +315,7 @@ export class ArkmeOwnedExtensionInventory {
     if (source.bundle.packageName !== target.packageName) {
       throw new ArkmePluginError('extension-profile-stale', '本地 Bundle package identity 已变化，请刷新列表', false, 409)
     }
+    this.assertUpdatePackageIdentity(source.bundle.packageName, identity.packageName)
     if (source.bundle.version !== input.version) {
       throw new ArkmePluginError('extension-version-mismatch', '发布版本必须与 Bundle package.json.version 一致', false, 409)
     }
@@ -360,11 +367,14 @@ export class ArkmeOwnedExtensionInventory {
       throw new ArkmePluginError('extension-cordis-stale', 'Cordis 扩展已失效，请刷新列表', false, 409)
     }
     const extensionId = this.publishExtensionId('cordis', target.sourceKey, userId, input.extensionId)
+    const packageName = extensionId === undefined
+      ? `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`
+      : await this.ownedCloudPackageName(extensionId, input.signal)
     const result = await this.options.publish({
       agent,
       pluginId: target.pluginId,
       packageId: target.packageId,
-      packageName: `@arkme-generated/${createHash('sha256').update(`${String(userId)}\0${target.sourceKey}`).digest('hex').slice(0, 24)}`,
+      packageName,
       ...(extensionId === undefined ? {} : { extensionId }),
       name: input.name,
       description: input.description,
@@ -405,6 +415,10 @@ export class ArkmeOwnedExtensionInventory {
       throw new ArkmePluginError('extension-bundle-publish-unavailable', '当前 Arkme 版本不支持发布本地 Bundle', false, 503)
     }
     const extensionId = this.publishExtensionId('profile', target.sourceKey, userId, input.extensionId)
+    const packageName = extensionId === undefined
+      ? undefined
+      : await this.ownedCloudPackageName(extensionId, input.signal)
+    this.assertUpdatePackageIdentity(source.bundle.packageName, packageName)
     const result = await this.options.publishBundle({
       source,
       ...(extensionId === undefined ? {} : { extensionId }),
@@ -462,27 +476,49 @@ export class ArkmeOwnedExtensionInventory {
     return requested ?? linked
   }
 
-  private async preparePublishExtensionId(
+  private async preparePublishIdentity(
     kind: 'cordis' | 'profile',
     sourceKey: string,
     userId: number,
     requestedExtensionId: string | undefined,
     signal: AbortSignal | undefined,
-  ): Promise<string | undefined> {
-    const linked = this.options.store.cloudLink(kind, sourceKey, userId)
+  ): Promise<ExistingPublishIdentity> {
     const extensionId = this.publishExtensionId(kind, sourceKey, userId, requestedExtensionId)
-    if (extensionId !== undefined && linked === undefined) {
-      const owned = await this.cloudItems(signal)
-      if (!owned.some(item => item.extension_id === extensionId)) {
-        throw new ArkmePluginError(
-          'extension-target-not-owned',
-          '目标云端扩展不属于当前 Arkme 账号，请刷新扩展列表后重试',
-          false,
-          403,
-        )
-      }
+    if (extensionId === undefined) return {}
+    return { extensionId, packageName: await this.ownedCloudPackageName(extensionId, signal) }
+  }
+
+  private async ownedCloudPackageName(extensionId: string, signal?: AbortSignal): Promise<string> {
+    const owned = await this.cloudItems(signal)
+    const item = owned.find(candidate => candidate.extension_id === extensionId)
+    if (item === undefined) {
+      throw new ArkmePluginError(
+        'extension-target-not-owned',
+        '目标云端扩展不属于当前 Arkme 账号，请刷新扩展列表后重试',
+        false,
+        403,
+      )
     }
-    return extensionId
+    const packageName = item.package_name?.trim()
+    if (packageName === undefined || packageName === '') {
+      throw new ArkmePluginError(
+        'extension-package-identity-unavailable',
+        '目标云端扩展缺少 package identity，不能安全发布新版本',
+        false,
+        409,
+      )
+    }
+    return packageName
+  }
+
+  private assertUpdatePackageIdentity(actualPackageName: string, expectedPackageName?: string): void {
+    if (expectedPackageName === undefined || actualPackageName === expectedPackageName) return
+    throw new ArkmePluginError(
+      'extension-package-identity-mismatch',
+      `Bundle package.json.name 必须与已有扩展保持一致：${expectedPackageName}`,
+      false,
+      409,
+    )
   }
 
   private linkPublishedTarget(

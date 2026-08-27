@@ -4,7 +4,7 @@
   "callEnginePackage": "@trtc/call-engine-lite-js",
   "callEngineRange": "^3.5.9",
   "upstreamBundleSha256": "6ff59d3eb9ce4d7556ba4054bac0df22ae279a7bccc56ccbf5712b6f475c95ce",
-  "bundleSha256": "dadd84a0f617a80bd969ed144db356edc6a82a58b4490483d45006813ee03278",
+  "bundleSha256": "839e0376d8916472d99fe4b0cbcc39b165c3dc96ac00b31b15fb3910bcdf6917",
   "iconSha256": "583d7dbd34069c5b50ca294a071637bbd3beed913cecdb91a202c001004eed45",
   "outgoingOnly": true
 }

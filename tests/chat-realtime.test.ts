@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  ARKME_CHAT_SSE_PATH, ArkmeChatRealtimeRuntime, decodeArkmeChatReceiveDataLine,
+  ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE, ARKME_CHAT_SSE_PATH,
+  ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ArkmeChatRealtimeRuntime,
+  decodeArkmeChatReadCursorAdvancedDataLine, decodeArkmeChatReceiveDataLine,
+  decodeArkmeProjectionInvalidatedDataLine,
 } from '../src/chat-realtime.js'
 
 const chatHint = {
@@ -13,6 +16,24 @@ const chatHint = {
   event_at: 123456,
 }
 
+const recordProjectionHint = {
+  t: ARKME_PROJECTION_INVALIDATED_BIZ_TYPE,
+  event_uid: 'projection-event-1',
+  projection: 'record',
+  event_at: 123457,
+}
+
+const readCursorHint = {
+  t: ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE,
+  event_uid: 'read-event-1',
+  chat_session_uid: 'chat-1',
+  reader_user_id: 20002,
+  read_seq: 9,
+  read_at: 123457,
+  event_at: 123458,
+  source_client_id: 0,
+}
+
 describe('Arkme Chat realtime', () => {
   it('decodes only complete Chat receive hints and ignores heartbeats', () => {
     expect(decodeArkmeChatReceiveDataLine('data:')).toBeUndefined()
@@ -23,6 +44,34 @@ describe('Arkme Chat realtime', () => {
     })
     expect(decodeArkmeChatReceiveDataLine(`data: ${JSON.stringify({ ...chatHint, t: '17', latest_seq: '9' })}`))
       .toMatchObject({ latestSequence: 9 })
+  })
+
+  it('decodes only metadata-only projection invalidations', () => {
+    expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify(recordProjectionHint)}`)).toEqual({
+      eventUid: 'projection-event-1', projection: 'record', eventAtMillis: 123457,
+    })
+    expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify({
+      ...recordProjectionHint, record_uid: 'must-not-cross-the-realtime-boundary',
+    })}`)).toBeUndefined()
+    expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify({
+      ...recordProjectionHint, projection: 'Record With Spaces',
+    })}`)).toBeUndefined()
+  })
+
+  it('decodes metadata-only read cursor advances and rejects embedded receipt truth', () => {
+    expect(decodeArkmeChatReadCursorAdvancedDataLine(`data: ${JSON.stringify(readCursorHint)}`)).toEqual({
+      eventUid: 'read-event-1', chatSessionUid: 'chat-1', readerUserId: 20002,
+      readSequence: 9, readAtMillis: 123457, eventAtMillis: 123458,
+    })
+    expect(decodeArkmeChatReadCursorAdvancedDataLine(`data: ${JSON.stringify({
+      ...readCursorHint, unread_count: 1,
+    })}`)).toBeUndefined()
+    expect(decodeArkmeChatReadCursorAdvancedDataLine(`data: ${JSON.stringify({
+      ...readCursorHint, receiver_user_ids: [20001],
+    })}`)).toBeUndefined()
+    expect(decodeArkmeChatReadCursorAdvancedDataLine(`data: ${JSON.stringify({
+      ...readCursorHint, source_client_id: -1,
+    })}`)).toBeUndefined()
   })
 
   it('connects with Host credentials and advances one revision per unique hint', async () => {
@@ -40,9 +89,11 @@ describe('Arkme Chat realtime', () => {
     const stop = runtime.start()
     const observed: number[] = []
     const causes: string[] = []
+    const cursorSequences: number[] = []
     const unsubscribe = runtime.subscribe(notice => {
       observed.push(notice.state.revision)
       causes.push(notice.cause)
+      if (notice.readCursorAdvanced !== undefined) cursorSequences.push(notice.readCursorAdvanced.readSequence)
     })
     await vi.waitFor(() => {
       expect(runtime.state()).toMatchObject({ connected: true, revision: 1, connectionGeneration: 1 })
@@ -54,8 +105,13 @@ describe('Arkme Chat realtime', () => {
     stream.enqueue(encoder.encode(`data: ${JSON.stringify(chatHint)}\n\n`))
     await new Promise(resolve => setTimeout(resolve, 10))
     expect(runtime.state().revision).toBe(2)
-    expect(observed).toEqual([1, 2])
-    expect(causes).toEqual(['reconcile', 'hint'])
+    stream.enqueue(encoder.encode(`data: ${JSON.stringify(readCursorHint)}\n\n`))
+    await vi.waitFor(() => { expect(runtime.state()).toMatchObject({ revision: 3, lastEventAtMillis: 123458 }) })
+    stream.enqueue(encoder.encode(`data: ${JSON.stringify(recordProjectionHint)}\n\n`))
+    await vi.waitFor(() => { expect(runtime.state()).toMatchObject({ revision: 4, lastEventAtMillis: 123457 }) })
+    expect(observed).toEqual([1, 2, 3, 4])
+    expect(causes).toEqual(['reconcile', 'chat-hint', 'chat-hint', 'projection-invalidation'])
+    expect(cursorSequences).toEqual([9])
 
     const [input, init] = fetchImpl.mock.calls[0]!
     expect(String(input)).toBe(`https://im.example.test${ARKME_CHAT_SSE_PATH}`)

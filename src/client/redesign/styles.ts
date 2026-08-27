@@ -5,17 +5,14 @@ const REDESIGN_STYLE_ID = '@senguoyun/dsh-arkme/redesign'
 /** Install the Arkme visual system independently of whichever DSH seat is active. */
 export function installArkmeRedesignStyles(): () => void {
   const existing = document.querySelector<HTMLStyleElement>(`style[data-plugin-css="${REDESIGN_STYLE_ID}"]`)
-  if (existing !== null) return () => undefined
+  if (existing !== null) {
+    existing.textContent = redesignCss
+    return () => undefined
+  }
   const style = document.createElement('style')
   style.dataset.plugin = '@senguoyun/dsh-arkme'
   style.dataset.pluginCss = REDESIGN_STYLE_ID
   style.textContent = redesignCss
   document.head.append(style)
   return () => { style.remove() }
-}
-
-/** Scope DSH composer widening to the interval in which its native task seat is visible. */
-export function presentArkmeTaskSession(active: boolean): void {
-  if (typeof document === 'undefined') return
-  document.body.toggleAttribute('data-arkme-task-session', active)
 }

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateInstallSnapshot } from './types.js'
+import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 const PHASES = new Set<ArkmePluginUpdateInstallPhase>([
   'idle', 'preparing', 'downloading', 'verifying', 'installing', 'restarting', 'succeeded', 'failed', 'rolled-back',
@@ -20,6 +21,10 @@ export function parsePluginUpdateInstallSnapshot(value: unknown): ArkmePluginUpd
   const jobId = boundedString(source.jobId, 128)
   const previousVersion = boundedString(source.previousVersion, 128)
   const targetVersion = boundedString(source.targetVersion, 128)
+  const targetArtifactPath = boundedString(source.targetArtifactPath, 4096)
+  const targetArtifactSha512 = boundedString(source.targetArtifactSha512, 128)
+  const appVersion = boundedString(source.appVersion, 128)
+  const dshVersion = boundedString(source.dshVersion, 128)
   const message = boundedString(source.message, 500)
   const updatedAtMillis = source.updatedAtMillis
   if (source.schemaVersion !== 1 || !PHASES.has(phase) || jobId === ''
@@ -31,6 +36,10 @@ export function parsePluginUpdateInstallSnapshot(value: unknown): ArkmePluginUpd
     phase,
     previousVersion,
     targetVersion,
+    ...(targetArtifactPath === '' ? {} : { targetArtifactPath }),
+    ...(!/^[a-f0-9]{128}$/.test(targetArtifactSha512) ? {} : { targetArtifactSha512 }),
+    ...(appVersion === '' ? {} : { appVersion }),
+    ...(dshVersion === '' ? {} : { dshVersion }),
     message,
     updatedAtMillis,
   }
@@ -55,11 +64,17 @@ export class PluginUpdateInstallStateStore {
   async write(snapshot: ArkmePluginUpdateInstallSnapshot): Promise<void> {
     const directory = dirname(this.path)
     await mkdir(directory, { recursive: true, mode: 0o700 })
-    await chmod(directory, 0o700)
+    await securePrivateDirectory(directory)
     const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`
     await writeFile(temporary, `${JSON.stringify(snapshot, undefined, 2)}\n`, { mode: 0o600 })
-    await chmod(temporary, 0o600)
+    await securePrivateFile(temporary)
     await rename(temporary, this.path)
-    await chmod(this.path, 0o600)
+    await securePrivateFile(this.path)
+  }
+
+  async clear(): Promise<void> {
+    await unlink(this.path).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    })
   }
 }

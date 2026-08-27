@@ -2,6 +2,31 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeUiController } from '../src/client/ui-controller.js'
 
 describe('ArkmeUiController', () => {
+  it('clears Contacts mode on every non-Contacts route and authenticated account reset', () => {
+    const controller = new ArkmeUiController()
+
+    controller.showContacts()
+    controller.showContactAdd()
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+
+    controller.showContacts()
+    controller.openExtensionShare('extension:share')
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+
+    controller.showContacts()
+    controller.authChanged(true)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+    expect(controller.getSnapshot().productMode).toBeUndefined()
+  })
+
+  it('opens voiceprint management as its own utility surface', () => {
+    const controller = new ArkmeUiController()
+    controller.authChanged(true)
+
+    controller.showVoiceprint()
+
+    expect(controller.getSnapshot().mode).toBe('voiceprint')
+  })
   it('isolates the recording view from message source selection and login changes', () => {
     const controller = new ArkmeUiController()
     const source = {
@@ -17,6 +42,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'recordings',
     })
 
@@ -25,6 +51,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'source',
       selectedSource: source,
       calendarOpen: true,
@@ -36,6 +63,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'world',
     })
 
@@ -44,6 +72,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toEqual({
       authRevision: 0,
       chatRevision: 0,
+      recordRevision: 0,
       mode: 'arko',
     })
     controller.authChanged(true)
@@ -57,7 +86,7 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
   })
 
-  it('switches between login and an account-bound source selection', () => {
+  it('opens DeepSeek Harness when a newly started client authenticates', () => {
     const controller = new ArkmeUiController()
     const listener = vi.fn()
     const unsubscribe = controller.subscribe(listener)
@@ -72,17 +101,32 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
     controller.focusSendToSelf()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, mode: 'source' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'source' })
     controller.showLogin()
-    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, mode: 'login' })
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'login' })
     controller.authChanged(true)
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'source' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().selectedSource).toBeUndefined()
     expect(controller.getSnapshot().authRevision).toBe(1)
     controller.chatChanged()
     expect(controller.getSnapshot().chatRevision).toBe(1)
-    expect(listener).toHaveBeenCalledTimes(5)
+    expect(controller.getSnapshot().recordRevision).toBe(0)
+    controller.recordChanged()
+    expect(controller.getSnapshot().chatRevision).toBe(1)
+    expect(controller.getSnapshot().recordRevision).toBe(1)
+    expect(listener).toHaveBeenCalledTimes(6)
     unsubscribe()
+  })
+
+  it('opens and closes the Web login dialog without replacing the Harness conversation', () => {
+    const controller = new ArkmeUiController()
+    controller.showHarness()
+
+    controller.openWebLoginDialog()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness', webLoginDialogOpen: true })
+
+    controller.closeWebLoginDialog()
+    expect(controller.getSnapshot()).toEqual({ authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'harness' })
   })
 
   it('opens search without retaining a conversation source', () => {
@@ -94,8 +138,24 @@ describe('ArkmeUiController', () => {
     controller.showSearch()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'search',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'search',
     })
+  })
+
+  it('opens calls without retaining a conversation source', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-1', kind: 'private_chat' as const, displayName: '联系人', activeAtMillis: 1, unreadCount: 0,
+    }
+    controller.selectSource(source)
+
+    controller.showCalls()
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
+    })
+    controller.showConversations()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
   })
 
   it('opens contact add above the current conversation and restores that conversation when closed', () => {
@@ -106,7 +166,7 @@ describe('ArkmeUiController', () => {
     controller.selectSource(source)
     controller.showContactAdd()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'contact-add',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'contact-add',
       selectedSource: source,
     })
     controller.showConversations()
@@ -119,8 +179,49 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'extensions',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
     })
+  })
+
+  it('opens and consumes an exact conversation message target', () => {
+    const controller = new ArkmeUiController()
+    const source = {
+      sourceRef: 'source-search', kind: 'group_chat', displayName: '发布会项目群', activeAtMillis: 1, unreadCount: 0,
+    } as const
+
+    controller.showConversationTarget(source, 'record-search-1', 123)
+    const target = controller.getSnapshot().conversationTarget
+    expect(controller.getSnapshot()).toMatchObject({
+      mode: 'source', selectedSource: source,
+      conversationTarget: { itemUid: 'record-search-1', sendAtMillis: 123 },
+    })
+
+    controller.consumeConversationTarget(target?.revision ?? 0)
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'source', selectedSource: source })
+    expect(controller.getSnapshot().conversationTarget).toBeUndefined()
+  })
+
+  it('opens the marketplace with an exact author filter and clears it for normal marketplace navigation', () => {
+    const controller = new ArkmeUiController()
+
+    controller.showAuthorExtensions(7, '  Lucis   测试  ')
+
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0,
+      chatRevision: 0,
+      recordRevision: 0,
+      mode: 'extensions',
+      extensionAuthorFilter: { ownerUserId: 7, ownerName: 'Lucis 测试' },
+    })
+
+    controller.showExtensions()
+    expect(controller.getSnapshot()).toEqual({
+      authRevision: 0,
+      chatRevision: 0,
+      recordRevision: 0,
+      mode: 'extensions',
+    })
+    expect(() => { controller.showAuthorExtensions(0, '无效') }).toThrow('插件作者用户 ID')
   })
 
   it('opens one user World homepage and clears the target when returning to the public World', () => {
@@ -151,7 +252,7 @@ describe('ArkmeUiController', () => {
 
     controller.showWorld()
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'world',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'world',
     })
     expect(() => { controller.showUserWorld({ userId: 0, displayName: '无效' }) }).toThrow('世界用户 ID')
   })
@@ -165,7 +266,7 @@ describe('ArkmeUiController', () => {
     controller.showCalls()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'calls',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'calls',
     })
   })
 
@@ -191,20 +292,7 @@ describe('ArkmeUiController', () => {
     controller.showExtensions()
 
     expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'extensions',
-    })
-  })
-
-  it('opens the requested account settings section without retaining a conversation source', () => {
-    const controller = new ArkmeUiController()
-    controller.selectSource({
-      sourceRef: 'source-1', kind: 'topic', displayName: '主题', activeAtMillis: 1, unreadCount: 0,
-    })
-
-    controller.showSettings('about')
-
-    expect(controller.getSnapshot()).toEqual({
-      authRevision: 0, chatRevision: 0, mode: 'settings', settingsSection: 'about',
+      authRevision: 0, chatRevision: 0, recordRevision: 0, mode: 'extensions',
     })
   })
 
@@ -223,26 +311,23 @@ describe('ArkmeUiController', () => {
     })
   })
 
-  it('switches between the Arkme task start and native DSH task conversation modes', () => {
+  it('keeps the native DeepSeek Harness as the current-runtime conversation', () => {
     const controller = new ArkmeUiController()
-    controller.showNewTask()
-    expect(controller.getSnapshot().mode).toBe('task-start')
-    controller.showTaskSession()
-    expect(controller.getSnapshot().mode).toBe('task-session')
+    controller.showHarness()
+    expect(controller.getSnapshot().mode).toBe('harness')
+    controller.showRecordings()
     controller.showConversations()
-    expect(controller.getSnapshot().mode).toBe('source')
-    controller.showSettings()
-    expect(controller.getSnapshot().mode).toBe('settings')
+    expect(controller.getSnapshot().mode).toBe('harness')
   })
 
   it('opens and closes the calendar without replacing the page underneath it', () => {
     const controller = new ArkmeUiController()
 
-    controller.showTaskSession()
+    controller.showHarness()
     controller.showCalendar()
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session', calendarOpen: true })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness', calendarOpen: true })
     controller.hideCalendar()
-    expect(controller.getSnapshot()).toMatchObject({ mode: 'task-session' })
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'harness' })
     expect(controller.getSnapshot().calendarOpen).toBeUndefined()
 
     controller.showSearch()

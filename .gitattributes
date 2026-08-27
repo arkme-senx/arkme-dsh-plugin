@@ -1,0 +1,6 @@
+assets/desktop_call/** text eol=lf
+assets/desktop_call/*.png binary
+assets/desktop_call/*.jpg binary
+assets/desktop_call/*.jpeg binary
+assets/icons/*.svg text eol=lf
+assets/windows/*.exe binary

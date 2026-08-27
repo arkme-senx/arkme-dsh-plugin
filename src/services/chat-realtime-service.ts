@@ -14,7 +14,7 @@ import { SourceService } from './source-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeChatProjectionReader {
-  chatTimelineItems(data: Record<string, unknown>, session: ArkmeSessionCredentials): Promise<ArkmeTimelineItem[]>
+  chatTimelineItems(data: Record<string, unknown>, session: ArkmeSessionCredentials, chatSessionUid: string): Promise<ArkmeTimelineItem[]>
 }
 
 const MAX_PROJECTION_RETRIES = 5
@@ -141,9 +141,19 @@ export class ChatRealtimeService {
         refresh: 'none',
       })
       void this.reconcileChatNotificationBaseline(generation)
+      void this.invalidateRecordProjection()
       return
     }
-    if (notice.cause === 'hint' && notice.hint !== undefined) {
+    if (notice.cause === 'projection-invalidation'
+      && notice.projectionInvalidation?.projection === 'record') {
+      void this.invalidateRecordProjection()
+      return
+    }
+    if (notice.cause === 'chat-hint' && notice.readCursorAdvanced !== undefined) {
+      void this.handleReadCursorAdvanced(notice.readCursorAdvanced)
+      return
+    }
+    if (notice.cause === 'chat-hint' && notice.hint !== undefined) {
       this.scheduleChatSessionProjection(
         notice.hint.chatSessionUid,
         notice.hint.latestSequence,
@@ -152,9 +162,44 @@ export class ChatRealtimeService {
     }
   }
 
+  private async handleReadCursorAdvanced(hint: NonNullable<ArkmeChatRealtimeNotice['readCursorAdvanced']>): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      if (hint.readerUserId === session.userId) {
+        this.scheduleChatSessionProjection(hint.chatSessionUid, hint.readSequence)
+        return
+      }
+      this.emitChatClientEvent({
+        type: 'read-receipts-invalidated',
+        revision: this.nextChatClientRevision(),
+        sourceKey: await this.source.chatDirectorySourceKey(session.userId, hint.chatSessionUid),
+        throughSequence: hint.readSequence,
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Chat read receipt invalidation failed:', safeFailureMessage(error))
+    }
+  }
+
+  private async invalidateRecordProjection(): Promise<void> {
+    try {
+      const session = await this.runtime.sessionStore.read()
+      if (session === undefined) return
+      this.source.invalidateSourceListCache(session.userId, 'send_to_self')
+      this.emitChatClientEvent({
+        type: 'projection-invalidated',
+        revision: this.nextChatClientRevision(),
+        projection: 'record',
+      })
+    } catch (error) {
+      console.warn('dsh-arkme: Record projection invalidation failed:', safeFailureMessage(error))
+    }
+  }
+
   private async reconcileChatNotificationBaseline(connectionGeneration: number): Promise<void> {
     try {
       const session = await this.runtime.requireSession()
+      this.notificationBaselineSequences.clear()
       const sequences = new Map<string, number>()
       let cursor: string | undefined
       for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
@@ -333,7 +378,7 @@ export class ChatRealtimeService {
             key: `projection:tail:${uid}:${String(afterSequence)}:${String(notificationAttempt)}`,
           },
         )
-        return [uid, await this.projectionReader.chatTimelineItems(data, session)] as const
+        return [uid, await this.projectionReader.chatTimelineItems(data, session, uid)] as const
       }))
       results.forEach((result, index) => {
         const uid = chunk[index]?.[0]

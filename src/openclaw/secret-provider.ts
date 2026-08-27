@@ -1,7 +1,8 @@
-import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { OpenClawSecretStore } from './types.js'
+import { securePrivateDirectory, securePrivateFile } from '../private-filesystem.js'
 
 export function createOpenClawFileSecretStore(options: { rootDir: string }): OpenClawSecretStore {
   const restartMarker = (resourceHash: string) => join(options.rootDir, `${resourceHash}.restart-required`)
@@ -10,6 +11,7 @@ export function createOpenClawFileSecretStore(options: { rootDir: string }): Ope
   return {
     async ensureOwnership({ resourceHash, localResourceExists }) {
       await mkdir(options.rootDir, { recursive: true, mode: 0o700 })
+      await securePrivateDirectory(options.rootDir)
       const markerPath = join(options.rootDir, `${resourceHash}.owner.json`)
       try {
         const marker = JSON.parse(await readFile(markerPath, 'utf8')) as unknown
@@ -22,10 +24,12 @@ export function createOpenClawFileSecretStore(options: { rootDir: string }): Ope
         const marker = JSON.stringify({ schema_version: 1, owner: 'arkme-dsh-plugin', resource_hash: resourceHash })
         const file = await open(markerPath, 'wx', 0o600)
         try { await file.writeFile(marker, 'utf8'); await file.sync() } finally { await file.close() }
+        await securePrivateFile(markerPath)
       }
     },
     async persist({ resourceHash, secret, tokenPreview }) {
       await mkdir(options.rootDir, { recursive: true, mode: 0o700 })
+      await securePrivateDirectory(options.rootDir)
       const finalPath = secretPath(resourceHash)
       const temporaryPath = join(options.rootDir, `.${resourceHash}.${randomUUID()}.tmp`)
       try {
@@ -37,13 +41,13 @@ export function createOpenClawFileSecretStore(options: { rootDir: string }): Ope
           await file.close()
         }
         await rename(temporaryPath, finalPath)
-        await chmod(finalPath, 0o600)
+        await securePrivateFile(finalPath)
         const previewTemporaryPath = join(options.rootDir, `.${resourceHash}.${randomUUID()}.preview.tmp`)
         try {
           const previewFile = await open(previewTemporaryPath, 'wx', 0o600)
           try { await previewFile.writeFile(tokenPreview.trim(), 'utf8'); await previewFile.sync() } finally { await previewFile.close() }
           await rename(previewTemporaryPath, previewPath(resourceHash))
-          await chmod(previewPath(resourceHash), 0o600)
+          await securePrivateFile(previewPath(resourceHash))
         } catch (error) {
           await unlink(previewTemporaryPath).catch(() => undefined)
           throw error
@@ -72,6 +76,7 @@ export function createOpenClawFileSecretStore(options: { rootDir: string }): Ope
     async markRestartRequired(resourceHash) {
       const file = await open(restartMarker(resourceHash), 'w', 0o600)
       try { await file.writeFile('1', 'utf8'); await file.sync() } finally { await file.close() }
+      await securePrivateFile(restartMarker(resourceHash))
     },
     async clearRestartRequired(resourceHash) {
       await unlink(restartMarker(resourceHash)).catch(error => {

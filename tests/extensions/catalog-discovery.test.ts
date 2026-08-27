@@ -15,7 +15,10 @@ describe('extension marketplace discovery client', () => {
     })
     const client = new ExtensionPublishClient(post)
 
-    await client.list({ query: '翻译', sort: 'rating', cursor: 'next', limit: 20 })
+    await client.list({
+      query: '翻译', sort: 'rating', cursor: 'next', limit: 20,
+      owner_user_id: 77, exclude_extension_id: 'ext-current',
+    })
     await client.classificationTree(50)
     await client.classificationItems({
       category_id: 'cat_tools', query: '翻译', sort: 'opens', cursor: '20', limit: 20,
@@ -23,6 +26,7 @@ describe('extension marketplace discovery client', () => {
 
     expect(post).toHaveBeenNthCalledWith(1, '/api/public/v1/extensions/list', {
       query: '翻译', sort: 'rating', cursor: 'next', limit: 20,
+      owner_user_id: 77, exclude_extension_id: 'ext-current',
     }, undefined)
     expect(post).toHaveBeenNthCalledWith(2, '/api/public/v1/extensions/classification/tree', { limit: 50 }, undefined)
     expect(post).toHaveBeenNthCalledWith(3, '/api/public/v1/extensions/classification/items', {

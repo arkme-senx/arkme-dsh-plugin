@@ -6,6 +6,9 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
+  ArkmeBillingPaymentMethod, ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind,
+  ArkmeBotMentionInput, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
+  ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -16,6 +19,7 @@ import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort } from './extensions/types.js'
+import { effectiveExtensionPublisherRole } from './extensions/publisher-role.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
 import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 
@@ -73,9 +77,86 @@ function stringParam(params: Record<string, unknown>, key: string): string {
   return typeof params[key] === 'string' ? params[key] : ''
 }
 
+function billingIdentifierParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  message: string,
+): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > 256) throw new ArkmePluginError(code, message, false, 400)
+  return value
+}
+
+function billingUuidParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  message: string,
+): string {
+  const value = stringParam(params, key).trim().toLowerCase()
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+    throw new ArkmePluginError(code, message, false, 400)
+  }
+  return value
+}
+
+function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillingPaymentMethod {
+  const value = stringParam(params, 'paymentMethod')
+  if (value !== 'alipay_pc_web' && value !== 'wechat_native') {
+    throw new ArkmePluginError('billing-payment-method-invalid', '支付方式无效', false, 400)
+  }
+  return value
+}
+
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+const ARKME_DIRECTORY_SECTIONS = new Set<ArkmeDirectorySectionKind>([
+  'groups', 'bots', 'unmarked-speakers', 'teams', 'contacts',
+])
+
+function directorySectionParam(params: Record<string, unknown>): ArkmeDirectorySectionKind {
+  const section = stringParam(params, 'section')
+  if (!ARKME_DIRECTORY_SECTIONS.has(section as ArkmeDirectorySectionKind)) {
+    throw new ArkmePluginError('directory-section-invalid', '联系人目录分组无效', false, 400)
+  }
+  return section as ArkmeDirectorySectionKind
+}
+
+function directoryLimitParam(params: Record<string, unknown>, fallback = 30): number {
+  return Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', fallback))))
+}
+
+function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
+  candidateRef: string
+  candidateVersion: string
+  speakerRef?: string
+  newSpeakerName?: string
+} {
+  const candidateRef = stringParam(params, 'candidateRef').trim()
+  const candidateVersion = stringParam(params, 'candidateVersion').trim()
+  const speakerRef = stringParam(params, 'speakerRef').trim()
+  const newSpeakerName = stringParam(params, 'newSpeakerName').trim()
+  if ((speakerRef === '') === (newSpeakerName === '') || newSpeakerName.length > 100) {
+    throw new ArkmePluginError(
+      'unmarked-mark-target-invalid', '请选择一个现有说话人或填写 1 至 100 个字符的新名称', false, 400,
+    )
+  }
+  return {
+    candidateRef,
+    candidateVersion,
+    ...(speakerRef === '' ? {} : { speakerRef }),
+    ...(newSpeakerName === '' ? {} : { newSpeakerName }),
+  }
+}
+
+function conversationMemberRecordModeParam(params: Record<string, unknown>): ArkmeConversationMemberRecordMode {
+  const mode = stringParam(params, 'mode')
+  if (mode === 'owner' || mode === 'mentioned') return mode
+  throw new ArkmePluginError('chat-member-record-mode-invalid', '成员快记模式无效', false, 400)
 }
 
 function extensionCatalogSortParam(params: Record<string, unknown>): ArkmeExtensionCatalogSort | undefined {
@@ -104,6 +185,36 @@ function botAvatarParam(params: Record<string, unknown>): string {
     throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
   }
   return avatar
+}
+
+function botManageUpdateInputParam(params: Record<string, unknown>): {
+  name: string
+  description: string
+  avatar?: string
+  mentionEntryEnabled?: boolean
+  webhookSecurity?: { keywordEnabled: boolean; keyword: string; tokenEnabled: boolean; ipWhitelistEnabled: boolean; ipWhitelist: string[] }
+} {
+  const rawSecurity = params.webhookSecurity
+  const security = rawSecurity !== null && typeof rawSecurity === 'object' && !Array.isArray(rawSecurity)
+    ? rawSecurity as Record<string, unknown>
+    : undefined
+  const avatar = botAvatarParam(params)
+  const mentionEntryEnabled = typeof params.mentionEntryEnabled === 'boolean' ? params.mentionEntryEnabled : undefined
+  return {
+    name: stringParam(params, 'name'),
+    description: stringParam(params, 'description'),
+    ...(avatar === '' ? {} : { avatar }),
+    ...(mentionEntryEnabled === undefined ? {} : { mentionEntryEnabled }),
+    ...(security === undefined ? {} : { webhookSecurity: {
+      keywordEnabled: security.keywordEnabled === true,
+      keyword: stringParam(security, 'keyword'),
+      tokenEnabled: security.tokenEnabled === true,
+      ipWhitelistEnabled: security.ipWhitelistEnabled === true,
+      ipWhitelist: Array.isArray(security.ipWhitelist)
+        ? security.ipWhitelist.filter(item => typeof item === 'string').map(item => item.trim()).filter(item => item !== '').slice(0, 100)
+        : [],
+    } }),
+  }
 }
 
 function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
@@ -139,6 +250,10 @@ function stringListParam(params: Record<string, unknown>, key: string): string[]
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+function messageActionRefsParam(params: Record<string, unknown>): string[] {
+  return stringListParam(params, 'actionRefs').map(value => value.trim()).filter(value => value !== '')
+}
+
 function optionalPositiveIntegerParam(params: Record<string, unknown>, key: string): number | undefined {
   const value = params[key]
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
@@ -149,11 +264,13 @@ async function enrichExtensionAuthors(
   items: readonly ArkmeExtensionCatalogItem[],
 ): Promise<ArkmeExtensionCatalogItem[]> {
   const ownerUserIds = [...new Set(items
+    .filter(item => effectiveExtensionPublisherRole(item) === 'author')
     .map(item => item.owner_user_id)
     .filter((userId): userId is number => Number.isSafeInteger(userId) && (userId ?? 0) > 0))]
   if (ownerUserIds.length === 0) return [...items]
   const authors = await service.extensionAuthors(ownerUserIds).catch(() => new Map())
   return items.map(item => {
+    if (effectiveExtensionPublisherRole(item) !== 'author') return item
     if (item.owner_user_id === undefined) return item
     const author = authors.get(item.owner_user_id)
     if (author === undefined) return item
@@ -228,6 +345,12 @@ function outgoingFailureCodeParam(params: Record<string, unknown>): ArkmeOutgoin
   return code
 }
 
+function outgoingDiagTextParam(params: Record<string, unknown>, key: string, maxLength: number): string {
+  return stringParam(params, key)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .slice(0, maxLength)
+}
+
 function cursorParam(params: Record<string, unknown>): ArkmeRecordCursor | undefined {
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
@@ -248,14 +371,74 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
+function humanMentionsParam(params: Record<string, unknown>): ArkmeHumanMentionInput[] {
+  const values = params.humanMentions
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('human-mention-invalid', '真人 mention 参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    const all = item.all === true
+    return {
+      ...(all ? { all } : { memberRef: stringParam(item, 'memberRef') }),
+      startIndex: numberParam(item, 'startIndex', -1),
+      length: numberParam(item, 'length', 0),
+    }
+  })
+}
+
+function messageReadReceiptItemsParam(params: Record<string, unknown>): ArkmeMessageReadReceiptQueryItem[] {
+  const values = params.items
+  if (!Array.isArray(values)) {
+    throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效', false, 400)
+  }
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('message-read-receipt-items-invalid', '消息已读状态参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return { itemUid: stringParam(item, 'itemUid'), sequence: numberParam(item, 'sequence', 0) }
+  })
+}
+
+function botMentionsParam(params: Record<string, unknown>): ArkmeBotMentionInput[] {
+  const values = params.botMentions
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 参数无效', false, 400)
+  return values.map(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArkmePluginError('bot-mention-invalid', 'Bot mention 参数无效', false, 400)
+    }
+    const item = value as Record<string, unknown>
+    return {
+      botRef: stringParam(item, 'botRef'),
+      startIndex: numberParam(item, 'startIndex', -1),
+      length: numberParam(item, 'length', 0),
+    }
+  })
+}
+
+function botRefsParam(params: Record<string, unknown>): string[] {
+  const values = params.botRefs
+  if (values === undefined) return []
+  if (!Array.isArray(values)) throw new ArkmePluginError('bot-mention-ref-invalid', 'Bot mention 引用参数无效', false, 400)
+  return values.map(value => String(value).trim())
+}
+
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
+  const humanMentions = humanMentionsParam(params)
+  const botMentions = botMentionsParam(params)
   return {
     title: stringParam(params, 'title'),
     textContent: stringParam(params, 'textContent'),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
+    ...(humanMentions.length === 0 ? {} : { humanMentions }),
+    ...(botMentions.length === 0 ? {} : { botMentions }),
     assets: rawAssets.flatMap(raw => {
       if (raw === null || typeof raw !== 'object') return []
       const asset = raw as Record<string, unknown>
@@ -272,10 +455,31 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   }
 }
 
+function favoriteStickerItemParam(params: Record<string, unknown>): ArkmeFavoriteStickerAddInput {
+  if (params.item === null || typeof params.item !== 'object' || Array.isArray(params.item)) {
+    throw new ArkmePluginError('favorite-sticker-invalid', '收藏表情参数无效', false, 400)
+  }
+  const item = params.item as Record<string, unknown>
+  return {
+    fileAssetUid: stringParam(item, 'fileAssetUid'),
+    fileName: stringParam(item, 'fileName'),
+    mimeType: stringParam(item, 'mimeType'),
+    size: Math.max(0, Math.trunc(numberParam(item, 'size', 0))),
+    fileKind: 1,
+    ...(item.isAnimated === true ? { isAnimated: true } : {}),
+  }
+}
+
+function favoriteStickerManageActionParam(params: Record<string, unknown>): ArkmeFavoriteStickerManageAction {
+  const action = stringParam(params, 'action')
+  if (action === 'move-to-front' || action === 'delete') return action
+  throw new ArkmePluginError('favorite-sticker-manage-invalid', '收藏表情管理操作无效', false, 400)
+}
+
 function worldPublishFileAssetsParam(params: Record<string, unknown>): ArkmeWorldPublishFileAsset[] {
   const rawAssets = Array.isArray(params.fileAssets) ? params.fileAssets : []
   if (rawAssets.length === 0 || rawAssets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES) {
-    throw new ArkmePluginError('world-publish-assets-invalid', '请选择 1 至 9 张图片', false, 400)
+    throw new ArkmePluginError('world-publish-assets-invalid', `请选择 1 至 ${String(ARKME_WORLD_PUBLISH_MAX_IMAGES)} 张图片`, false, 400)
   }
   return rawAssets.map(raw => {
     if (raw === null || typeof raw !== 'object') {
@@ -321,6 +525,11 @@ export interface ArkmeHostApiOptions {
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const controller = new AbortController()
+    const abortDisconnectedRequest = () => {
+      if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
+    }
+    res.once('close', abortDisconnectedRequest)
     try {
       if (req.method !== 'POST') {
         throw new ArkmePluginError('method-not-allowed', '只允许 POST 请求', false, 405)
@@ -343,7 +552,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
-      if (['extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'recordings.doubao.start']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -355,9 +564,11 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.extensionManager?.(),
         options.extensionInstallTasks?.(),
         options.ownedExtensionInventory?.(),
+        controller.signal,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
+      if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
         ? error
         : error instanceof ArkmePluginUpdateError
@@ -369,6 +580,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         ok: false,
         error: { code: known.code, message: known.message, retryable: known.retryable },
       })
+    } finally {
+      res.off('close', abortDisconnectedRequest)
     }
   }
 }
@@ -384,6 +597,7 @@ export async function dispatchArkmeHostOperation(
   extensionManager?: ArkmeExtensionManager,
   extensionInstallTasks?: ArkmeExtensionInstallTasks,
   ownedExtensionInventory?: ArkmeOwnedExtensionInventory,
+  requestSignal?: AbortSignal,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -405,6 +619,9 @@ export async function dispatchArkmeHostOperation(
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
     case 'auth.poll': return await service.pollWechatLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.begin': return await service.beginJiwoLogin()
+    case 'auth.app.poll': return await service.pollJiwoLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.cancel': return await service.cancelJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
@@ -415,11 +632,101 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'billing.quota': return await service.billingQuota()
+    case 'billing.products': return await service.billingProducts()
+    case 'billing.order.create': return await service.createBillingOrder({
+      productId: billingIdentifierParam(params, 'productId', 'billing-product-id-invalid', '购买套餐无效'),
+      paymentMethod: billingPaymentMethodParam(params),
+      clientRequestId: billingUuidParam(
+        params, 'clientRequestId', 'billing-client-request-id-invalid', '支付请求标识无效',
+      ),
+    })
+    case 'billing.order.status': return await service.billingOrderStatus(billingUuidParam(
+      params, 'orderId', 'billing-order-id-invalid', '支付订单标识无效',
+    ))
+    case 'voiceprint.status': return await service.myVoiceprint()
+    case 'voiceprint.grants': return await service.outboundVoiceprintGrants({
+      cursor: stringParam(params, 'cursor').trim(),
+      limit: Math.min(100, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+    })
+    case 'voiceprint.people': return await service.recognizedVoiceprintPeople({
+      cursor: stringParam(params, 'cursor').trim(),
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+    })
+    case 'voiceprint.person': return await service.recognizedVoiceprintPerson(
+      stringParam(params, 'personRef').trim(),
+    )
+    case 'voiceprint.person.voiceprints': return await service.recognizedPersonVoiceprints(
+      stringParam(params, 'personRef').trim(),
+    )
+    case 'voiceprint.person.invite': return await service.createRecognizedPersonVoiceprintInvitation(
+      stringParam(params, 'personRef').trim(), stringParam(params, 'targetContactRef').trim() || undefined,
+    )
+    case 'voiceprint.invite': return await service.createVoiceprintInvitation()
+    case 'voiceprint.revoke': return await service.revokeVoiceprintPlaybackGrant(
+      stringParam(params, 'grantRef').trim(),
+    )
+    case 'voiceprint.restore': return await service.restoreVoiceprintPlayback()
     case 'contacts.search': return await service.searchContact(stringParam(params, 'identifier'))
     case 'contacts.add': return await service.addContact(stringParam(params, 'contactRef'), {
       ...(stringParam(params, 'remark').trim() === '' ? {} : { remark: stringParam(params, 'remark') }),
       ...(stringParam(params, 'requestUid').trim() === '' ? {} : { requestUid: stringParam(params, 'requestUid') }),
     })
+    case 'directory.list': {
+      const countOnly = booleanParam(params, 'countOnly')
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.listDirectory(directorySectionParam(params), {
+        limit: countOnly ? 0 : directoryLimitParam(params),
+        ...(countOnly ? { countOnly: true } : {}),
+        ...(!countOnly && cursor !== '' ? { cursor } : {}),
+      })
+    }
+    case 'directory.contact.profile': return await service.directoryContactProfile(
+      stringParam(params, 'contactRef').trim(),
+    )
+    case 'directory.contact.world': return await service.directoryContactWorld(
+      stringParam(params, 'contactRef').trim(),
+      {
+        limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+        offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      },
+    )
+    case 'directory.contact.open-chat': return await service.openDirectoryContactChat(
+      stringParam(params, 'contactRef').trim(),
+    )
+    case 'directory.group.open-chat': return await service.openDirectoryGroupChat(
+      stringParam(params, 'sourceRef').trim(),
+      requestSignal,
+    )
+    case 'directory.bot.open-chat': return await service.openBotChat(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.open': return await service.openBotPrivateChat(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.directory': return await service.listBotPrivateChatDirectory(
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.send': return await service.sendBotPrivateChatMessage(
+      stringParam(params, 'botRef').trim(), stringParam(params, 'content'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'unmarked-speakers.options': return await service.unmarkedSpeakerOptions(
+      stringParam(params, 'candidateRef').trim(),
+    )
+    case 'unmarked-speakers.retry-inference': return await service.retryUnmarkedSpeakerInference(
+      stringParam(params, 'candidateRef').trim(),
+    )
+    case 'unmarked-speakers.segments': {
+      const cursor = stringParam(params, 'cursor').trim()
+      return await service.unmarkedSpeakerSegments(
+        stringParam(params, 'candidateRef').trim(),
+        { limit: directoryLimitParam(params), ...(cursor === '' ? {} : { cursor }) },
+      )
+    }
+    case 'unmarked-speakers.mark': return await service.markUnmarkedSpeaker(
+      unmarkedSpeakerMarkInputParam(params),
+    )
     case 'group.create': return await service.createGroup(
       stringParam(params, 'title'),
       stringParam(params, 'clientMutationId'),
@@ -435,14 +742,30 @@ export async function dispatchArkmeHostOperation(
         ...(avatar === '' ? {} : { avatar }),
       })
     }
+    case 'bots.list': return await service.listBots(requestSignal === undefined ? {} : { signal: requestSignal })
+    case 'bots.manage.profile': return await service.manageBotProfile(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.update': return await service.updateManagedBot(
+      stringParam(params, 'botRef').trim(), botManageUpdateInputParam(params), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.reveal-token': return await service.revealManagedBotToken(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.delete': return await service.deleteManagedBot(
+      stringParam(params, 'botRef').trim(), stringParam(params, 'confirmationName'), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.notification.status': return await service.botNotificationPreference(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.notification.update': return await service.updateBotNotificationPreference(
+      stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
     )
     case 'recordings.day': return await service.recordingDay(numberParam(params, 'dateStamp', 0))
-    case 'recordings.doubao.start': return await service.startRecordingDoubaoBackfill(
-      numberParam(params, 'dateStamp', 0),
-    )
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),
       endDate: stringParam(params, 'endDate'),
@@ -545,6 +868,8 @@ export async function dispatchArkmeHostOperation(
     case 'records.retry': return await service.retryPending(stringParam(params, 'recordUid'))
     case 'user.profile': return await service.cachedProfile()
     case 'user.profile.refresh': return await service.refreshProfile()
+    case 'user.arkme-id.check': return await service.checkArkmeIdAvailability(stringParam(params, 'arkmeId'))
+    case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
       const image = await service.readImage(stringParam(params, 'imageRef'))
       return {
@@ -602,12 +927,21 @@ export async function dispatchArkmeHostOperation(
         offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
       })
     }
+    case 'world.author-labels': return await service.worldAuthorLabels(
+      [...new Set(stringListParam(params, 'authorRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
+      requestSignal,
+    )
+    case 'chat.world.private.open': return await service.openPrivateChatFromWorldAuthor(
+      stringParam(params, 'authorRef').trim(),
+      requestSignal,
+    )
     case 'world.voiceprint.availability': return await service.worldVoiceprintPlaybackAvailability(
       [...new Set(stringListParam(params, 'recordRefs').map(value => value.trim()).filter(value => value !== ''))].slice(0, 20),
     )
     case 'world.voiceprint.playback.generate': return await service.generateWorldVoiceprintPlayback({
       recordRef: stringParam(params, 'recordRef').trim(),
       chunkIndex: Math.min(333, Math.max(0, Math.trunc(numberParam(params, 'chunkIndex', 0)))),
+      ...(requestSignal === undefined ? {} : { signal: requestSignal }),
     })
     case 'world.voiceprint.social-context': return await service.worldVoiceprintSocialContext(
       stringParam(params, 'recordRef').trim(),
@@ -651,12 +985,39 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'title'),
       stringParam(params, 'parentSourceRef') || undefined,
     )
+    case 'topic.rename': return await service.renameTopic(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'title'),
+    )
+    case 'topic.dissolve': return await service.dissolveTopic(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'parentSourceRef') || undefined,
+      stringListParam(params, 'childSourceRefs'),
+      stringParam(params, 'requestId') || undefined,
+      numberParam(params, 'expectedRecordCount', 0),
+    )
+    case 'topic.dissolve.status': return await service.topicDissolveStatus(stringParam(params, 'requestId')) ?? null
+    case 'topic.dissolve.active': return await service.activeTopicDissolve() ?? null
+    case 'topic.hierarchy.move': return await service.moveTopicHierarchy(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'currentParentSourceRef') || undefined,
+      stringParam(params, 'nextParentSourceRef') || undefined,
+      stringParam(params, 'insertBeforeSourceRef') || undefined,
+    )
     case 'sources.list': return await service.listSources(
       stringParam(params, 'directory') as ArkmeSourceDirectory,
       {
         limit: numberParam(params, 'limit', 30),
         ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
         refresh: booleanParam(params, 'refresh'),
+      },
+    )
+    case 'source.directory.policy.set': return await service.setChatDirectoryPolicy(
+      stringParam(params, 'sourceRef'),
+      {
+        ...(typeof params.pinned === 'boolean' ? { pinned: params.pinned } : {}),
+        ...(typeof params.hidden === 'boolean' ? { hidden: params.hidden } : {}),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'source.timeline': {
@@ -666,6 +1027,19 @@ export async function dispatchArkmeHostOperation(
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }) },
       )
     }
+    case 'source.members': return await service.listSourceMembers(
+      stringParam(params, 'sourceRef'),
+      { activeOnly: params.activeOnly !== false },
+    )
+    case 'source.member-records': return await service.sourceMemberRecords(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'memberRef'),
+      conversationMemberRecordModeParam(params),
+      {
+        limit: numberParam(params, 'limit', 30),
+        beforeSequence: numberParam(params, 'beforeSequence', 0),
+      },
+    )
     case 'source.interwoven-moments': return await service.interwovenMoments(
       requiredInterwovenParam(params, 'sourceRef'),
     )
@@ -677,15 +1051,65 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'sourceRef'),
       numberParam(params, 'readSequence', 0),
     )
-    case 'source.send-text': return await service.sendSourceText(
+    case 'source.read-receipts.summary-list': return await service.messageReadReceiptSummaries(
       stringParam(params, 'sourceRef'),
+      messageReadReceiptItemsParam(params),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.read-receipts.detail': return await service.messageReadReceiptDetail(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'itemUid'),
+      numberParam(params, 'sequence', 0),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-copy-link': return await service.copySourceMessageLink(
+      stringParam(params, 'sourceRef'),
+      messageActionRefsParam(params),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-copy-link.resolve': return await service.resolveMessageCopyLink(
+      stringParam(params, 'sid'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-copy-link.extend': return await service.extendMessageCopyLink(
+      stringParam(params, 'sid'),
+      numberParam(params, 'itemIndex', 0),
       stringParam(params, 'textContent'),
+      stringParam(params, 'recordUid'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.link-metadata.resolve': return await service.resolveLinkMetadata(
+      stringParam(params, 'url'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.forward-messages': return await service.forwardSourceMessages(
+      stringParam(params, 'sourceRef'),
+      messageActionRefsParam(params),
       {
+        ...(stringParam(params, 'targetSourceRef') === '' ? {} : { targetSourceRef: stringParam(params, 'targetSourceRef') }),
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
-        ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
+        ...(stringParam(params, 'commentText') === '' ? {} : { commentText: stringParam(params, 'commentText') }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'source.send-text': {
+      const botRefs = botRefsParam(params)
+      const humanMentions = humanMentionsParam(params)
+      const botMentions = botMentionsParam(params)
+      return await service.sendSourceText(
+        stringParam(params, 'sourceRef'),
+        stringParam(params, 'textContent'),
+        {
+          ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+          ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+          ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
+          ...(botRefs.length === 0 ? {} : { botRefs }),
+          ...(humanMentions.length === 0 ? {} : { humanMentions }),
+          ...(botMentions.length === 0 ? {} : { botMentions }),
+        },
+      )
+    }
     case 'related-recordings.eligibility': return await service.relatedRecordingEligibility(
       stringParam(params, 'sourceRef'),
     )
@@ -767,6 +1191,15 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'peerUserId', 0),
       { displayName: stringParam(params, 'displayName') },
     )
+    case 'chat.private.open-from-contact': return await service.openPrivateChatFromContact(
+      stringParam(params, 'contactRef'),
+    )
+    case 'chat.official-author.profile': return await service.officialAuthorProfile()
+    case 'chat.official-author.private.open': return await service.openOfficialAuthorPrivateChat()
+    case 'chat.member.private.open': return await service.openPrivateChatFromMember(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'memberRef'),
+    )
     case 'source.send-rich': return await service.sendSourceRich(
       stringParam(params, 'sourceRef'),
       richSendParam(params),
@@ -774,6 +1207,19 @@ export async function dispatchArkmeHostOperation(
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
       },
+    )
+    case 'favorite-stickers.list': return await service.favoriteStickers()
+    case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
+    case 'favorite-stickers.send': return await service.sendFavoriteSticker(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'fileAssetUid'),
+      {
+        ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
+        ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+      },
+    )
+    case 'favorite-stickers.manage': return await service.manageFavoriteSticker(
+      stringParam(params, 'fileAssetUid'), favoriteStickerManageActionParam(params),
     )
     case 'source.long-article.detail': return await service.longArticleDetail(
       stringParam(params, 'sourceRef'),
@@ -841,13 +1287,39 @@ export async function dispatchArkmeHostOperation(
     case 'calls.outgoing.release': return await service.releaseOutgoingCall(
       requiredCallParam(params, 'callRequestId', 'call-request-invalid'),
     )
+    case 'calls.outgoing.diag': {
+      console.info('dsh-arkme: call_diag browser', {
+        label: outgoingDiagTextParam(params, 'label', 200),
+        detail: outgoingDiagTextParam(params, 'detail', 4_000),
+      })
+      return { ok: true }
+    }
+    case 'calls.history.list': return await service.listCallHistory({
+      limit: numberParam(params, 'limit', 20),
+      ...(stringParam(params, 'cursor').trim() === '' ? {} : { cursor: stringParam(params, 'cursor').trim() }),
+      includeRecentContacts: params.includeRecentContacts !== false,
+    })
+    case 'calls.history.detail': return await service.callDetail(
+      requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
+    )
+    case 'calls.history.summary.retry': return await service.retryCallSummary(
+      requiredCallParam(params, 'callRef', 'call-ref-invalid', 4096),
+    )
     case 'extensions.catalog.list': {
       const sort = extensionCatalogSortParam(params)
+      const ownerUserId = numberParam(params, 'ownerUserId', 0)
+      if (ownerUserId !== 0 && (!Number.isSafeInteger(ownerUserId) || ownerUserId < 0)) {
+        throw new ArkmePluginError('extension-catalog-owner-invalid', '市集作者筛选参数无效', false, 400)
+      }
       return await enrichExtensionPageAuthors(service, await requireExtensionManager(extensionManager).searchCatalog({
         query: stringParam(params, 'query'),
         cursor: stringParam(params, 'cursor'),
         limit: numberParam(params, 'limit', 20),
         ...(sort === undefined ? {} : { sort }),
+        ...(ownerUserId === 0 ? {} : { ownerUserId }),
+        ...(stringParam(params, 'excludeExtensionId').trim() === '' ? {} : {
+          excludeExtensionId: stringParam(params, 'excludeExtensionId').trim(),
+        }),
       }))
     }
     case 'extensions.classification.tree': return await requireExtensionManager(extensionManager).classificationTree(
@@ -903,6 +1375,10 @@ export async function dispatchArkmeHostOperation(
 	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
 		stringParam(params, 'shareRef'),
 	)
+	case 'extensions.share.resolve': {
+		const item = await requireExtensionManager(extensionManager).resolveSharedCatalogDetail(stringParam(params, 'shareRef'))
+		return (await enrichExtensionAuthors(service, [item]))[0]
+	}
     case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
       extensionId: stringParam(params, 'extensionId'),
     })
@@ -967,9 +1443,24 @@ export async function dispatchArkmeHostOperation(
     case 'extensions.restart': return await requireExtensionInstallTasks(extensionInstallTasks).restart(
       stringParam(params, 'extensionId'),
     )
+    case 'extensions.client.failure': return await requireExtensionManager(extensionManager).reportClientFailure({
+      identityKey: stringParam(params, 'identityKey'),
+      extensionId: stringParam(params, 'extensionId'),
+      version: stringParam(params, 'version'),
+      clientInstanceKey: stringParam(params, 'clientInstanceKey'),
+      clientContentDigest: stringParam(params, 'clientContentDigest'),
+      clientOwnerKey: stringParam(params, 'clientOwnerKey'),
+      kind: stringParam(params, 'kind'),
+      message: stringParam(params, 'message'),
+    })
     case 'extensions.persistent.client-state': return requireExtensionManager(extensionManager).persistentClientState(
       stringParam(params, 'extensionId'),
       stringParam(params, 'version'),
+    )
+    case 'extensions.bundle.client-state': return requireExtensionManager(extensionManager).bundleClientState(
+      stringParam(params, 'packageName'),
+      stringParam(params, 'version'),
+      stringParam(params, 'clientContentDigest'),
     )
     case 'extensions.persistent.invoke': {
       const extensionId = stringParam(params, 'extensionId')

@@ -51,9 +51,9 @@ function stringValue(value: unknown, maxLength: number): string | undefined {
   return trimmed
 }
 
-function assertNoControls(value: string, label: string): void {
+function assertNoControls(value: string, label: string, allowedControls = ''): void {
   for (const character of value) {
-    if (character < ' ' || character === '\x7f') {
+    if ((character < ' ' && !allowedControls.includes(character)) || character === '\x7f') {
       throw new PluginUpdateArtifactError('plugin-update-manifest-control', `${label} 包含非法控制字符`)
     }
   }
@@ -120,7 +120,7 @@ export function parsePluginUpdateManifest(
   }
   assertNoControls(version, 'version')
   const releaseNotes = stringValue(source.releaseNotes, 300)
-  if (releaseNotes !== undefined) assertNoControls(releaseNotes, 'releaseNotes')
+  if (releaseNotes !== undefined) assertNoControls(releaseNotes, 'releaseNotes', '\t\n\r')
   return {
     schemaVersion: 1,
     packageName: ARKME_PLUGIN_PACKAGE_NAME,

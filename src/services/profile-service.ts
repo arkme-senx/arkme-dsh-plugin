@@ -15,6 +15,8 @@ import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './se
 export interface ArkmePublicProfile {
   userId: number
   displayName: string
+  nickname: string
+  accountName?: string
   avatarUrl?: string
   avatarFallback?: ArkmeGroupAvatarFallback
   arkmeId?: string
@@ -354,6 +356,7 @@ export class ProfileService {
       const avatarRef = stringValue(data.head_img).trim()
       const phone = maskedPhone(stringValue(data.phone))
       const email = maskedEmail(stringValue(data.email))
+      const wechatName = stringValue(data.wechat_nick_name).trim()
       const canUpdateArkmeId = optionalBooleanValue(data.can_update_jotmo_id)
       const profile: ArkmeUserProfile = {
         userId,
@@ -370,6 +373,7 @@ export class ProfileService {
           wechat: booleanValue(data.has_bind_wechat),
           google: booleanValue(data.has_bind_google),
         },
+        ...(wechatName === '' ? {} : { bindingNames: { wechat: wechatName } }),
         contact: {
           ...(phone === undefined ? {} : { phoneMasked: phone }),
           ...(email === undefined ? {} : { emailMasked: email }),
@@ -426,6 +430,11 @@ export class ProfileService {
         const userId = numberValue(item.user_id)
         if (!batch.includes(userId)) continue
         const displayName = stringValue(item.nick_name ?? item.display_name ?? item.name_slug).trim()
+        const nickname = stringValue(item.nick_name ?? item.nickname).trim()
+        const accountName = stringValue(item.jotmo_id).trim()
+          || stringValue(item.display_name).trim()
+          || stringValue(item.name_slug).trim()
+          || stringValue(item.arkme_id).trim()
         const arkmeId = stringValue(item.name_slug ?? item.arkme_id).trim()
         const avatarUrl = stringValue(item.head_img).trim()
         let trustedAvatarUrl: string | undefined
@@ -446,7 +455,9 @@ export class ProfileService {
         })
         profiles.set(userId, {
           userId,
-          displayName: displayName || `用户 ${String(userId)}`,
+          displayName,
+          nickname,
+          ...(accountName === '' ? {} : { accountName }),
           ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
           ...(avatarFallback === undefined ? {} : { avatarFallback }),
           ...(arkmeId === '' ? {} : { arkmeId }),
