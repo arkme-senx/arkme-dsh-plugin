@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+
+const { callArkmeMock } = vi.hoisted(() => ({ callArkmeMock: vi.fn() }))
+
+vi.mock('../src/client/api.js', () => ({ callArkme: callArkmeMock }))
+
 import {
   ArkmeChatDirectoryStore, ArkmeChatTimelineDeltaStore, ArkmeInterwovenInvalidationStore,
 } from '../src/client/chat-directory-store.js'
@@ -113,6 +118,30 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(loadPage).toHaveBeenCalledTimes(2)
     await store.refreshRoot({ force: true })
     expect(loadPage).toHaveBeenCalledTimes(4)
+  })
+
+  it('loads the root directory in 20-item pages while continuing through the server cursor', async () => {
+    callArkmeMock.mockReset()
+      .mockResolvedValueOnce({
+        directory: 'root',
+        items: [{ sourceRef: 'source-1', kind: 'private_chat', displayName: '第一', activeAtMillis: 2, unreadCount: 0 }],
+        hasMore: true,
+        nextCursor: 'next-page',
+      })
+      .mockResolvedValueOnce({
+        directory: 'root',
+        items: [{ sourceRef: 'source-2', kind: 'group_chat', displayName: '第二', activeAtMillis: 1, unreadCount: 0 }],
+        hasMore: false,
+      })
+    const store = new ArkmeChatDirectoryStore()
+
+    await expect(store.refreshRoot({ force: true })).resolves.toHaveLength(2)
+    expect(callArkmeMock).toHaveBeenNthCalledWith(1, 'sources.list', {
+      directory: 'root', limit: 20, refresh: true,
+    })
+    expect(callArkmeMock).toHaveBeenNthCalledWith(2, 'sources.list', {
+      directory: 'root', limit: 20, cursor: 'next-page', refresh: true,
+    })
   })
 
   it('publishes refresh state while a directory request is in flight', async () => {

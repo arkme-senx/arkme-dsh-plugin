@@ -2,6 +2,7 @@ import type { ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { callArkme } from './api.js'
 
 const DEFAULT_ROOT_CACHE_MAX_AGE_MS = 30_000
+const ROOT_DIRECTORY_PAGE_LIMIT = 20
 const MAX_ROOT_PAGES = 10
 
 interface ArkmeChatDirectoryStoreOptions {
@@ -240,7 +241,8 @@ export class ArkmeChatDirectoryStore {
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
     this.loadPage = options.loadPage ?? (async (cursor, force) => await callArkme<ArkmeSourceList>('sources.list', {
-      directory: 'root', limit: 100, ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
+      directory: 'root', limit: ROOT_DIRECTORY_PAGE_LIMIT,
+      ...(cursor === undefined ? {} : { cursor }), ...(force === true ? { refresh: true } : {}),
     }))
     this.maxAgeMs = Math.max(0, Math.trunc(options.maxAgeMs ?? DEFAULT_ROOT_CACHE_MAX_AGE_MS))
     this.now = options.now ?? Date.now
