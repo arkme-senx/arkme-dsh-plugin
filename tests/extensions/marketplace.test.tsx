@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentType } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as marketplaceModule from '../../src/client/ArkmeMarketplace.js'
 import {
   ARKME_EXTENSION_BRAND_GREEN, ARKME_EXTENSION_DETAIL_MODAL_MAX_HEIGHT, ARKME_EXTENSION_DETAIL_MODAL_MAX_WIDTH,
@@ -11,7 +11,7 @@ import {
   actionableExtensionUpdates, ArkmeExtensionAuthorIdentity, ArkmeExtensionAuthorPopover, ArkmeExtensionAuthorTrigger,
   ArkmeExtensionDetailHeader, ArkmeExtensionDetailMetrics, ArkmeExtensionLifecycleRow, ArkmeExtensionToggle, ExtensionCard,
   extensionAuthorLabel, extensionCardMetadata, extensionCatalogAction, extensionCommunityAuthor, extensionDirectInstallTarget,
-  extensionAuthorWorldTarget, extensionGithubProfileUrl,
+  executeExtensionShareAuthorAction, extensionAuthorWorldTarget, extensionGithubProfileUrl,
   classificationStatusHint, extensionDetailHasPreviews, extensionDetailMetricLabels, extensionEnableUnavailable,
   extensionEnabledLabel,
   extensionInstallFailureMessage, extensionInstallOwnerId, extensionInstallPercent, extensionTabLoadMode, extensionUpdateCardStatus,
@@ -367,6 +367,28 @@ describe('Arkme marketplace UI', () => {
     expect(html).toContain('TA 的全部插件')
     expect(html).not.toContain('Arkme 作者')
     expect(html).not.toContain('@lucis')
+  })
+
+  it('routes shared author actions to Arkme private chat or the Arkme user world', async () => {
+    const item = {
+      extension_id: 'arkme/weather', name: '天气助手', description: '', visibility: 'public' as const,
+      owner_user_id: 7, owner_name: 'Lucis 测试', publisher_role: 'author' as const,
+    }
+    const openPrivateChat = vi.fn(async () => {})
+    const openWorld = vi.fn()
+
+    await executeExtensionShareAuthorAction(item, 'author-chat', { openPrivateChat, openWorld })
+    expect(openPrivateChat).toHaveBeenCalledWith({ userId: 7, displayName: 'Lucis 测试' })
+    expect(openWorld).not.toHaveBeenCalled()
+
+    await executeExtensionShareAuthorAction(item, 'author-world', { openPrivateChat, openWorld })
+    expect(openWorld).toHaveBeenCalledWith({ userId: 7, displayName: 'Lucis 测试' })
+
+    await expect(executeExtensionShareAuthorAction({
+      extension_id: 'github/tool', name: 'GitHub 工具', description: '', visibility: 'public',
+      publisher_role: 'importer',
+      source: { type: 'github_repository', url: 'https://github.com/example/tool', label: 'GitHub', verification: 'publisher_attested' },
+    }, 'author-world', { openPrivateChat, openWorld })).rejects.toThrow('没有可操作的 Arkme 站内作者')
   })
 
   it('keeps the profile entry for the current user but hides the private-message action', () => {

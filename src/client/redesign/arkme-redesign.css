@@ -345,7 +345,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 /* Keep one stable Arkme navigation column while only the right-hand conversation changes. */
 @media (min-width: 1100px) {
   [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="true"]) {
-    grid-template-columns: 356px minmax(0, 1fr) 0 !important;
+    grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important;
   }
   [data-slot="root"] > div[data-details-collapsed="true"]:has([data-arkme-owned="persistent-sidebar"][data-arkme-directory-visible="false"]) {
     grid-template-columns: 72px minmax(0, 1fr) 0 !important;
@@ -354,6 +354,16 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
     grid-template-columns: 0 minmax(0, 1fr) 0 !important;
   }
 }
+
+[data-arkme-avatar-only="true"] > :not([role="tree"]) { display: none !important; }
+[data-arkme-avatar-only="true"] [role="tree"] { padding: 8px 6px 18px !important; }
+[data-arkme-avatar-only="true"] [role="tree"] > button {
+  justify-content: center !important;
+  gap: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+[data-arkme-avatar-only="true"] [role="tree"] > button > :not(:first-child) { display: none !important; }
 
 .arkme-redesign-feature-page {
   width: 100%;
@@ -472,7 +482,7 @@ button.arkme-update-rail.is-error { background: #fff0ee !important; color: #b548
 .arkme-redesign-settings-profile p { margin: 0; overflow: hidden; color: #858992; font-size: 13px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-redesign-settings-group { margin: 0; overflow: hidden; border: 0; border-bottom: 1px solid #e1e2e5; border-radius: 0; background: transparent; }
 .arkme-redesign-settings-group:last-child { border-bottom: 0; }
-.arkme-redesign-settings-group h2 { margin: 0; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
+.arkme-redesign-settings-group > h2 { margin: 0; padding: 15px 1px 10px; border-bottom: 1px solid #ededee; color: #8a8e96; font-size: 12px; line-height: 17px; font-weight: 500; }
 .arkme-redesign-settings-group > div { padding: 0; }
 .arkme-redesign-setting-row {
   width: 100%;
@@ -499,6 +509,240 @@ button.arkme-redesign-setting-row:hover, a.arkme-redesign-setting-row:hover { co
 .arkme-redesign-setting-row > strong.is-danger { color: #b54841; }
 .arkme-redesign-setting-summary { max-width: 360px; overflow: hidden; color: #858992; font-size: 12px; line-height: 18px; text-align: right; white-space: nowrap; text-overflow: ellipsis; }
 .arkme-redesign-setting-row > svg { color: #8d929b; }
+.arkme-redesign-version-row { grid-template-columns: minmax(0, 1fr) minmax(150px, auto) auto 18px; }
+.arkme-redesign-version-row.is-without-action { grid-template-columns: minmax(0, 1fr) auto 18px; }
+.arkme-redesign-version-copy { min-width: 0; display: grid; gap: 2px; }
+.arkme-redesign-version-copy > strong { overflow: hidden; font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-redesign-version-copy > small { overflow: hidden; color: #858992; font-size: 11px; line-height: 16px; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-redesign-version-value { justify-self: end; color: #858992; font-size: 12px; line-height: 18px; white-space: nowrap; }
+.arkme-redesign-version-action-slot { display: inline-flex; justify-content: flex-end; }
+.arkme-redesign-trailing-slot { width: 18px; height: 1px; }
+button.arkme-redesign-update-button {
+  min-width: 72px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  background: #fff;
+  color: #343944;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+button.arkme-redesign-update-button:hover { background: #f7f7f8; border-color: #cfd3da; }
+button.arkme-redesign-update-button:disabled { opacity: .55; cursor: default; }
+.arkme-redesign-settings-group:has(.arkme-redesign-balance-row) { overflow: visible; }
+.arkme-redesign-balance-row {
+  grid-template-columns: max-content max-content minmax(0, 1fr) 18px;
+  column-gap: 20px;
+}
+.arkme-redesign-balance-row.is-without-reserved { grid-template-columns: max-content minmax(0, 1fr) 18px; }
+.arkme-redesign-balance-main {
+  min-width: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.arkme-redesign-balance-main > strong { font-size: 14px; line-height: 20px; font-weight: 500; }
+.arkme-redesign-balance-main > small { color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-redesign-reserved-balance { min-width: 0; display: grid; gap: 2px; }
+.arkme-redesign-recharge-trigger { justify-self: end; }
+.arkme-redesign-reserved-title { width: fit-content; position: relative; display: inline-flex; align-items: center; gap: 5px; }
+.arkme-redesign-reserved-title > strong { font-size: 14px; line-height: 20px; font-weight: 500; }
+.arkme-redesign-reserved-balance > small { color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-redesign-reserved-help {
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #a6aab2;
+  border-radius: 50%;
+  color: #858992;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  cursor: help;
+}
+.arkme-redesign-reserved-help:focus-visible { outline: 2px solid #7b8cad; outline-offset: 2px; }
+.arkme-redesign-reserved-title > [role="tooltip"] {
+  width: 240px;
+  box-sizing: border-box;
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: calc(100% - 7.5px);
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #2e323b;
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(24, 27, 34, .18);
+  font-size: 11px;
+  line-height: 17px;
+  font-weight: 400;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 2px);
+  transition: opacity .12s ease, transform .12s ease, visibility .12s ease;
+}
+.arkme-redesign-reserved-help:hover ~ [role="tooltip"],
+.arkme-redesign-reserved-help:focus ~ [role="tooltip"] { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+.arkme-billing-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(24, 27, 34, .24);
+  backdrop-filter: blur(3px);
+}
+.arkme-billing-recharge-dialog,
+.arkme-billing-payment-dialog {
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 56px));
+  overflow-y: auto;
+  border: 1px solid #dedfe3;
+  border-radius: 20px;
+  background: #fff;
+  color: #20232c;
+  box-shadow: 0 24px 72px rgba(25, 28, 35, .18);
+}
+.arkme-billing-payment-dialog { width: min(420px, 100%); }
+.arkme-billing-dialog-header {
+  min-height: 78px;
+  padding: 20px 22px 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #ececef;
+}
+.arkme-billing-dialog-header h2 { margin: 0; font-size: 18px; line-height: 25px; font-weight: 600; }
+.arkme-billing-dialog-header p { margin: 4px 0 0; overflow-wrap: anywhere; color: #8a8e96; font-size: 12px; line-height: 18px; }
+.arkme-billing-dialog-header > button {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #777c85;
+  font: inherit;
+  font-size: 22px;
+  cursor: pointer;
+}
+.arkme-billing-dialog-header > button:hover { background: #f3f3f5; color: #20232c; }
+.arkme-billing-dialog-body { padding: 18px 22px 22px; }
+.arkme-billing-dialog-balance {
+  min-height: 48px;
+  padding: 0 2px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  border-bottom: 1px solid #ececef;
+}
+.arkme-billing-dialog-balance > span { grid-column: 1; color: #8a8e96; font-size: 11px; line-height: 16px; }
+.arkme-billing-dialog-balance > strong { grid-column: 1; font-size: 22px; line-height: 28px; font-weight: 600; }
+.arkme-billing-dialog-balance > button,
+.arkme-billing-error > button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  background: #fff;
+  color: #626772;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.arkme-billing-products-section,
+.arkme-billing-payment-section { padding-top: 17px; }
+.arkme-billing-products-section h3,
+.arkme-billing-payment-section h3 { margin: 0 0 11px; font-size: 12px; line-height: 18px; font-weight: 500; color: #747984; }
+.arkme-billing-product-grid { width: 100%; }
+.arkme-billing-product-grid > button {
+  min-width: 0;
+  min-height: 62px;
+  padding: 9px 11px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid #dfe1e5;
+  border-radius: 11px;
+  background: #fff;
+  color: #20232c;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.arkme-billing-product-grid > button:hover { background: #f8f8f9; border-color: #cfd2d8; }
+.arkme-billing-product-grid > button.is-selected { border-color: #75839e; box-shadow: 0 0 0 1px #75839e; }
+.arkme-billing-product-grid > button > span { overflow: hidden; font-size: 12px; line-height: 17px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.arkme-billing-product-grid > button > strong { font-size: 14px; line-height: 19px; font-weight: 600; }
+.arkme-billing-payment-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.arkme-billing-payment-actions > button {
+  min-width: 154px;
+  height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #dfe1e5;
+  border-radius: 10px;
+  background: #fff;
+  color: #333842;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.arkme-billing-payment-actions > button:hover { background: #f7f7f8; border-color: #cfd3da; }
+.arkme-billing-payment-actions > button:disabled,
+.arkme-billing-product-grid > button:disabled { opacity: .48; cursor: default; }
+.arkme-billing-platform-icon { width: 18px; height: 18px; flex: none; }
+.arkme-billing-platform-icon.is-alipay { color: #1677ff; }
+.arkme-billing-platform-icon.is-wechat { color: #07c160; }
+.arkme-billing-state { margin: 12px 0 2px; color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-billing-error { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #b54841; font-size: 12px; line-height: 18px; }
+.arkme-billing-error.is-purchase { justify-content: flex-start; }
+.arkme-billing-payment-content { padding: 28px 24px 18px; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.arkme-billing-payment-content > .arkme-billing-platform-icon { width: 38px; height: 38px; margin-bottom: 4px; }
+.arkme-billing-payment-content > img { width: 210px; height: 210px; border-radius: 10px; }
+.arkme-billing-payment-content > strong { font-size: 14px; line-height: 21px; font-weight: 600; }
+.arkme-billing-payment-content > p { margin: 0; color: #858992; font-size: 12px; line-height: 18px; }
+.arkme-billing-dialog-actions { padding: 0 22px 20px; display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
+.arkme-billing-dialog-actions > button,
+.arkme-billing-primary-action {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  background: #fff;
+  color: #3c424d;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.arkme-billing-dialog-actions > .arkme-billing-primary-action,
+.arkme-billing-payment-content > .arkme-billing-primary-action { border-color: #20232d; background: #20232d; color: #fff; }
 .arkme-redesign-settings-error { margin: -8px 0 28px; padding: 10px 13px; border-radius: 10px; background: #fff3f0; color: #b54841; font-size: 12px; line-height: 18px; }
 .arkme-redesign-model-settings { width: 100%; height: 100%; overflow-y: auto; color: #20232c; background: #fff; }
 .arkme-redesign-model-settings > header { width: min(760px, calc(100% - 96px)); margin: 0 auto; padding: 42px 0 22px; }
@@ -1266,6 +1510,7 @@ body[data-ds-dark-theme] .arkme-contact-world-load-more { color: var(--dsw-alias
 }
 @media (prefers-reduced-motion: reduce) {
   .arkme-contact-directory-caret { transition: none; }
+  .arkme-icon-spin { animation: none; }
 }
 
 /* Chat-specific colors follow DSH's single light/dark owner. */

@@ -22,6 +22,7 @@ describe('Arkme persistent DSH shell', () => {
     expect(markup).toContain('data-arkme-sidebar-collapsed="true"')
     expect(markup).toContain('data-arkme-owned="product-navigation"')
     expect(markup).toContain('data-arkme-directory-visible="true"')
+    expect(markup).not.toContain('persistent-sidebar-resize-handle-style')
     expect(markup).toContain('DeepSeek Harness')
     expect(markup).not.toContain('与 Arkme 沟通任务')
     expect(markup).not.toContain('aria-label="新任务"')
@@ -42,6 +43,13 @@ describe('Arkme persistent DSH shell', () => {
 
     expect(markup).toContain('data-arkme-test-directory-entry="true"')
     expect(markup).toContain('测试插件')
+    expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle-style"')
+    expect(markup).toContain('--arkme-persistent-sidebar-width: 148px')
+    expect(markup).toContain('left: 148px !important')
+    expect(markup).toContain('data-arkme-owned="persistent-sidebar-resize-handle"')
+    expect(markup).toContain('aria-valuemin="72"')
+    expect(markup).toContain('data-arkme-sidebar-resizing="false"')
+    expect(markup).toContain('transition: none !important')
   })
 
   it('only renders the conversation directory on conversation routes', () => {

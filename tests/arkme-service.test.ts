@@ -153,6 +153,12 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
+function jwtWithExpiry(exp: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ exp })).toString('base64url')
+  return `${header}.${payload}.signature`
+}
+
 function userInfo(userId: number, phone = '13800138000'): Record<string, unknown> {
   return {
     user_id: userId,
@@ -213,6 +219,40 @@ describe('ArkmeService', () => {
     service.dispose()
     expect(contactDispose).toHaveBeenCalledTimes(2)
     expect(unmarkedDispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('resolves the current Arkme access token for managed model calls without copying it elsewhere', async () => {
+    const sessions = new MemorySessionStore()
+    const accessToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 120)
+    sessions.session = { userId: 10001, accessToken, refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      throw new Error('a fresh managed access credential must not call the network')
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    const credential = await service.resolveManagedAccessCredential()
+
+    expect(credential.reveal()).toBe(accessToken)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a managed access credential before it enters the final minute', async () => {
+    const sessions = new MemorySessionStore()
+    const expiringToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 30)
+    const renewedToken = jwtWithExpiry(Math.floor(Date.now() / 1000) + 3600)
+    sessions.session = { userId: 10001, accessToken: expiringToken, refreshToken: 'refresh' }
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://auth.test/api/public/v1/auth/new-short')
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer refresh')
+      return json({ code: 200, data: { access_token: renewedToken } })
+    })
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetchImpl)
+
+    const credential = await service.resolveManagedAccessCredential()
+
+    expect(credential.reveal()).toBe(renewedToken)
+    expect(sessions.session?.accessToken).toBe(renewedToken)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('resolves extension authors with safe real and default avatar projections', async () => {
@@ -610,14 +650,14 @@ describe('ArkmeService', () => {
       const authorization = new Headers(init?.headers).get('Authorization') ?? ''
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, authorization, body })
-      if (url === 'https://audio.test/api/v1/audio/one-day-trans-v2' && !rejected) {
+      if (url === 'https://audio.test/api/v1/audio/one-day-trans' && !rejected) {
         rejected = true
         return json({}, 401)
       }
       if (url === 'https://auth.test/api/public/v1/auth/new-short') {
         return json({ code: 200, data: { access_token: 'renewed' } })
       }
-      if (url.endsWith('/api/v1/audio/one-day-trans-v2')) {
+      if (url.endsWith('/api/v1/audio/one-day-trans')) {
         return json({ code: 200, data: {
           session_ls: [{ id: 'session-1', start_at: dayStamp + 1_000, duration: 6_000, belong_usr: 10001,
             spk_ls: [{ num: 1, spk_id: 'speaker-1' }] }],
@@ -626,7 +666,13 @@ describe('ArkmeService', () => {
         } })
       }
       if (url.endsWith('/api/v1/audio/get-speaker-ls')) {
-        return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 10001 }] } })
+        return json({ code: 200, data: { spk_ls: [{ id: 'speaker-1', ref_usr_id: 20002, nick_name: '英梦华' }] } })
+      }
+      if (url.endsWith('/api/v1/auth/get-public-users-by-ids')) {
+        return json({ code: 200, data: { items: [{
+          user_id: 20002, nick_name: 'Jotmoer',
+          head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=sig',
+        }] } })
       }
       if (url.endsWith('/api/v1/summary/list-timeline-by-range') && body.kind === 1) {
         return json({ code: 200, data: { audio_summary_ls: [
@@ -643,12 +689,14 @@ describe('ArkmeService', () => {
     expect(day).toMatchObject({
       dateStamp: dayStamp,
       totalDurationMillis: 6_000,
-      transcript: { state: 'ready', items: [{ speakerLabel: '说话人 1', startAtMillis: dayStamp + 1_600 }] },
+      transcript: { state: 'ready', items: [{
+        speakerLabel: '英梦华', speakerAvatarRef: expect.stringMatching(/^arkme-profile-image-v1\./), startAtMillis: dayStamp + 1_600,
+      }] },
       timeline: { state: 'ready', items: [{ id: 'timeline-1', selectable: true }] },
       summary: { state: 'error', items: [] },
     })
     expect(sessions.session?.accessToken).toBe('renewed')
-    expect(requests.filter(item => item.url.endsWith('/one-day-trans-v2')).map(item => item.authorization))
+    expect(requests.filter(item => item.url.endsWith('/one-day-trans')).map(item => item.authorization))
       .toEqual(['Bearer expired', 'Bearer renewed'])
     expect(requests.filter(item => item.url.endsWith('/list-timeline-by-range')).map(item => item.body.kind).sort())
       .toEqual([1, 2])
@@ -854,6 +902,7 @@ describe('ArkmeService', () => {
       captchaId: 'captcha-test-id-1234567890',
       environment: 'test',
       testLoginEnabled: true,
+      jiwoScanLoginEnabled: false,
       callAssetBasePath: '/arkme-self/api/call',
       voiceprintEnrollmentPath: '/arkme-self/api/voiceprint/enroll',
       shareWebsite: 'https://app.arkme.ai',
@@ -1642,13 +1691,33 @@ describe('ArkmeService', () => {
           },
         }, {
           record_uid: 'aggregate-topic', source_kind: 2, source_uid: 'topic-1', send_at: 109,
+          topic_core: { topic_uid: 'topic-1', title: '工作', privacy_state: 1 },
           record_core: {
             record_uid: 'aggregate-topic', owner_user_id: 10001, creator_user_id: 10001,
             title: '', text_content: '主题聚合内容', template_kind: 1, status: 1, version: 1, send_at: 109,
           },
+        }, {
+          // The home-feed projection uses the legacy voice payload rather than
+          // a media_refs entry.  It must still hydrate into the shared player.
+          record_uid: 'aggregate-voice', source_kind: 1, send_at: 108,
+          record_core: {
+            record_uid: 'aggregate-voice', owner_user_id: 10001, creator_user_id: 10001,
+            title: '', text_content: '语音转写内容', template_kind: 3, status: 1, version: 1, send_at: 108,
+            record_duration_millis: 31_000,
+            content_payload: {
+              voice: { source_file_asset_uid: 'voice-asset-1', file_name: '语音.m4a', mime_type: 'audio/mp4', duration_millis: 31_000 },
+            },
+          },
         }],
         has_more: true, next_cursor_send_at: 108, next_cursor_record_uid: 'aggregate-next',
       } })
+      if (url.endsWith('/api/v1/records/media/batch-list')) return json({ code: 0, data: { items: [{
+        record_uid: 'aggregate-voice',
+        items: [{
+          file_asset_uid: 'voice-asset-1', file_kind: 2, file_name: '语音.m4a', mime_type: 'audio/mp4',
+          size: 31, duration_sec: 31, download_url: 'https://media.test/aggregate-voice.m4a',
+        }],
+      }] } })
       if (url.endsWith('/api/v1/topics/display/detail')) return json({ code: 0, data: {
         records: [{ record_uid: 'record-1', creator_user_id: 10001, nickname: '我', text_content: '主题内容', send_at: 80, status: 1 }],
         has_more: true, next_cursor_send_at: 79, next_cursor_record_uid: 'record-next',
@@ -1680,7 +1749,11 @@ describe('ArkmeService', () => {
       source: { kind: 'send_to_self', displayName: '发给自己' },
       items: [
         { itemUid: 'aggregate-default', textContent: '未分类内容', isMe: true },
-        { itemUid: 'aggregate-topic', textContent: '主题聚合内容', isMe: true },
+        { itemUid: 'aggregate-topic', textContent: '主题聚合内容', isMe: true, selfTopic: { title: '工作' } },
+        {
+          itemUid: 'aggregate-voice', textContent: '语音转写内容', isMe: true, templateKind: 3,
+          contentBlocks: [{ kind: 'audio', fileAssetUid: 'voice-asset-1', durationSec: 31 }],
+        },
       ],
       hasMore: true,
       nextCursor: { sendAtMillis: 108, itemUid: 'aggregate-next' },

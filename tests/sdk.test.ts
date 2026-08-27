@@ -687,6 +687,9 @@ describe('Arkme SDK', () => {
 				rating_summary: { average: 4.5, count: 2, histogram: [0, 0, 0, 1, 1] },
 			})
 		}
+		if (request.operation === 'extensions.share.resolve') {
+			return success({ extension_id: 'ext-public-1', name: '天气', description: '天气扩展', visibility: 'public' })
+		}
         throw new Error(`unexpected ${request.operation}`)
       },
     })
@@ -714,6 +717,9 @@ describe('Arkme SDK', () => {
 		await expect(sdk.extensionShareDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
 			name: '天气', share_scope: 'link_readonly',
 		})
+		await expect(sdk.extensionShareCatalogDetail('extshare_0123456789abcdef0123456789abcdef')).resolves.toMatchObject({
+			extension_id: 'ext-public-1', name: '天气', visibility: 'public',
+		})
     expect(calls).toEqual([
       { operation: 'extensions.mine.list', params: { currentSessionId: 'session-1' } },
       { operation: 'extensions.mine.publish', params: {
@@ -733,6 +739,9 @@ describe('Arkme SDK', () => {
 			extensionId: 'ext-1', clientMutationId: '07d24dc1-51ab-4e7d-9a6d-f7f50b652bf8',
 		} },
 		{ operation: 'extensions.share.detail', params: {
+			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
+		} },
+		{ operation: 'extensions.share.resolve', params: {
 			shareRef: 'extshare_0123456789abcdef0123456789abcdef',
 		} },
     ])

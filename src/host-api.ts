@@ -6,11 +6,9 @@ import { ArkmePluginUpdateError, ArkmePluginUpdateManager } from './plugin-updat
 import { ArkmeOutgoingCallError, type ArkmeOutgoingCallFailureCode } from './outgoing-call-contract.js'
 import type {
   ArkmeAiVideoJobStatus, ArkmeArrangementListStatus, ArkmeArrangementMutationIntent, ArkmeBotProvider,
-  ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind, ArkmeHumanMentionInput,
-  ArkmeFavoriteStickerAddInput,
-  ArkmeFavoriteStickerManageAction,
-  ArkmeMessageReadReceiptQueryItem,
-  ArkmeBotMentionInput,
+  ArkmeBillingPaymentMethod, ArkmeConversationMemberRecordMode, ArkmeDirectorySectionKind,
+  ArkmeBotMentionInput, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
+  ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -77,6 +75,38 @@ function writeJson(res: ServerResponse, status: number, body: ArkmePluginRespons
 
 function stringParam(params: Record<string, unknown>, key: string): string {
   return typeof params[key] === 'string' ? params[key] : ''
+}
+
+function billingIdentifierParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  message: string,
+): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > 256) throw new ArkmePluginError(code, message, false, 400)
+  return value
+}
+
+function billingUuidParam(
+  params: Record<string, unknown>,
+  key: string,
+  code: string,
+  message: string,
+): string {
+  const value = stringParam(params, key).trim().toLowerCase()
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+    throw new ArkmePluginError(code, message, false, 400)
+  }
+  return value
+}
+
+function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillingPaymentMethod {
+  const value = stringParam(params, 'paymentMethod')
+  if (value !== 'alipay_pc_web' && value !== 'wechat_native') {
+    throw new ArkmePluginError('billing-payment-method-invalid', '支付方式无效', false, 400)
+  }
+  return value
 }
 
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
@@ -155,6 +185,36 @@ function botAvatarParam(params: Record<string, unknown>): string {
     throw new ArkmePluginError('bot-avatar-invalid', 'Bot 头像引用无效', false, 400)
   }
   return avatar
+}
+
+function botManageUpdateInputParam(params: Record<string, unknown>): {
+  name: string
+  description: string
+  avatar?: string
+  mentionEntryEnabled?: boolean
+  webhookSecurity?: { keywordEnabled: boolean; keyword: string; tokenEnabled: boolean; ipWhitelistEnabled: boolean; ipWhitelist: string[] }
+} {
+  const rawSecurity = params.webhookSecurity
+  const security = rawSecurity !== null && typeof rawSecurity === 'object' && !Array.isArray(rawSecurity)
+    ? rawSecurity as Record<string, unknown>
+    : undefined
+  const avatar = botAvatarParam(params)
+  const mentionEntryEnabled = typeof params.mentionEntryEnabled === 'boolean' ? params.mentionEntryEnabled : undefined
+  return {
+    name: stringParam(params, 'name'),
+    description: stringParam(params, 'description'),
+    ...(avatar === '' ? {} : { avatar }),
+    ...(mentionEntryEnabled === undefined ? {} : { mentionEntryEnabled }),
+    ...(security === undefined ? {} : { webhookSecurity: {
+      keywordEnabled: security.keywordEnabled === true,
+      keyword: stringParam(security, 'keyword'),
+      tokenEnabled: security.tokenEnabled === true,
+      ipWhitelistEnabled: security.ipWhitelistEnabled === true,
+      ipWhitelist: Array.isArray(security.ipWhitelist)
+        ? security.ipWhitelist.filter(item => typeof item === 'string').map(item => item.trim()).filter(item => item !== '').slice(0, 100)
+        : [],
+    } }),
+  }
 }
 
 function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
@@ -555,6 +615,9 @@ export async function dispatchArkmeHostOperation(
     case 'auth.config': return service.clientConfig()
     case 'auth.begin': return await service.beginWechatLogin()
     case 'auth.poll': return await service.pollWechatLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.begin': return await service.beginJiwoLogin()
+    case 'auth.app.poll': return await service.pollJiwoLogin(stringParam(params, 'attemptId'))
+    case 'auth.app.cancel': return await service.cancelJiwoLogin(stringParam(params, 'attemptId'))
     case 'auth.test.login': return await service.testLogin(numberParam(params, 'userId', 0))
     case 'auth.phone.send': return await service.sendPhoneCode(
       stringParam(params, 'phone'),
@@ -565,6 +628,18 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'code'),
     )
     case 'auth.logout': return await service.logout()
+    case 'billing.quota': return await service.billingQuota()
+    case 'billing.products': return await service.billingProducts()
+    case 'billing.order.create': return await service.createBillingOrder({
+      productId: billingIdentifierParam(params, 'productId', 'billing-product-id-invalid', '购买套餐无效'),
+      paymentMethod: billingPaymentMethodParam(params),
+      clientRequestId: billingUuidParam(
+        params, 'clientRequestId', 'billing-client-request-id-invalid', '支付请求标识无效',
+      ),
+    })
+    case 'billing.order.status': return await service.billingOrderStatus(billingUuidParam(
+      params, 'orderId', 'billing-order-id-invalid', '支付订单标识无效',
+    ))
     case 'voiceprint.status': return await service.myVoiceprint()
     case 'voiceprint.grants': return await service.outboundVoiceprintGrants({
       cursor: stringParam(params, 'cursor').trim(),
@@ -622,6 +697,16 @@ export async function dispatchArkmeHostOperation(
     case 'directory.bot.open-chat': return await service.openBotChat(
       stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'bots.private-chat.open': return await service.openBotPrivateChat(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.directory': return await service.listBotPrivateChatDirectory(
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.send': return await service.sendBotPrivateChatMessage(
+      stringParam(params, 'botRef').trim(), stringParam(params, 'content'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'unmarked-speakers.options': return await service.unmarkedSpeakerOptions(
       stringParam(params, 'candidateRef').trim(),
     )
@@ -654,6 +739,24 @@ export async function dispatchArkmeHostOperation(
       })
     }
     case 'bots.list': return await service.listBots(requestSignal === undefined ? {} : { signal: requestSignal })
+    case 'bots.manage.profile': return await service.manageBotProfile(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.update': return await service.updateManagedBot(
+      stringParam(params, 'botRef').trim(), botManageUpdateInputParam(params), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.reveal-token': return await service.revealManagedBotToken(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.manage.delete': return await service.deleteManagedBot(
+      stringParam(params, 'botRef').trim(), stringParam(params, 'confirmationName'), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.notification.status': return await service.botNotificationPreference(
+      stringParam(params, 'botRef').trim(), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'bots.private-chat.notification.update': return await service.updateBotNotificationPreference(
+      stringParam(params, 'botRef').trim(), booleanParam(params, 'muted'), requestSignal === undefined ? {} : { signal: requestSignal },
+    )
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', 0),
       numberParam(params, 'toStamp', 0),
@@ -901,6 +1004,14 @@ export async function dispatchArkmeHostOperation(
         limit: numberParam(params, 'limit', 30),
         ...(stringParam(params, 'cursor') === '' ? {} : { cursor: stringParam(params, 'cursor') }),
         refresh: booleanParam(params, 'refresh'),
+      },
+    )
+    case 'source.directory.policy.set': return await service.setChatDirectoryPolicy(
+      stringParam(params, 'sourceRef'),
+      {
+        ...(typeof params.pinned === 'boolean' ? { pinned: params.pinned } : {}),
+        ...(typeof params.hidden === 'boolean' ? { hidden: params.hidden } : {}),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
     case 'source.timeline': {
@@ -1227,6 +1338,10 @@ export async function dispatchArkmeHostOperation(
 	case 'extensions.share.detail': return await requireExtensionManager(extensionManager).readSharedDetail(
 		stringParam(params, 'shareRef'),
 	)
+	case 'extensions.share.resolve': {
+		const item = await requireExtensionManager(extensionManager).resolveSharedCatalogDetail(stringParam(params, 'shareRef'))
+		return (await enrichExtensionAuthors(service, [item]))[0]
+	}
     case 'extensions.delete': return await requireOwnedExtensionInventory(ownedExtensionInventory).delete({
       extensionId: stringParam(params, 'extensionId'),
     })

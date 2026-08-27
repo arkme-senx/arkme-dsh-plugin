@@ -76,6 +76,26 @@ describe('extension share Host owner', () => {
 		)
 	})
 
+	it('resolves a public share into the existing catalog detail flow', async () => {
+		const post = vi.fn(async (path: string) => {
+			if (path === '/api/v1/extensions/share/resolve') return { extension_id: 'ext-public-1' }
+			if (path === '/api/public/v1/extensions/detail') return {
+				extension_id: 'ext-public-1', name: 'Weather', description: 'Public weather', visibility: 'public',
+			}
+			if (path === '/api/v1/extensions/open') return { extension_id: 'ext-public-1', open_count: 1, idempotent_replay: false }
+			throw new Error(`unexpected path ${path}`)
+		})
+		const manager = managerWith(post)
+		await expect(manager.resolveSharedCatalogDetail('extshare_0123456789abcdef0123456789abcdef'))
+			.resolves.toMatchObject({ extension_id: 'ext-public-1', name: 'Weather', visibility: 'public' })
+		expect(post).toHaveBeenCalledWith('/api/v1/extensions/share/resolve', {
+			share_ref: 'extshare_0123456789abcdef0123456789abcdef',
+		}, undefined)
+		expect(post).toHaveBeenCalledWith('/api/public/v1/extensions/detail', {
+			extension_id: 'ext-public-1',
+		}, undefined)
+	})
+
 	it('rejects malformed refs and non-read-only share responses', async () => {
 		const post = vi.fn(async () => ({ extension: {
 			name: 'Weather', description: '', visibility: 'private', share_scope: 'install',

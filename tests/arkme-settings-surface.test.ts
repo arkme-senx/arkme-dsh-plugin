@@ -23,7 +23,8 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).not.toContain('<SettingsRow title="模型与 API Key"')
     expect(source).toContain('ArkmeAppUpdateSnapshot')
     expect(source).toContain('arkmeAppUpdateStore')
-    expect(source).toContain("title={appUpdateRow.label}")
+    expect(source).toContain('title="ArkME 客户端"')
+    expect(source).toContain('title="ArkME 插件"')
     expect(navigationSource).not.toContain('<strong>我的账户</strong>')
     expect(navigationSource).toContain('arkmeUi.openDshSettings()')
   })
@@ -55,6 +56,13 @@ describe('ArkmeSettingsSurface', () => {
     expect(redesignCss).not.toMatch(/\.arkme-redesign-settings-surface \{[^}]*overflow-[xy]: auto;/)
   })
 
+  it('keeps the reserved balance 20px from the current balance and anchors its tooltip above the help icon', () => {
+    expect(redesignCss).toMatch(/\.arkme-redesign-balance-row \{[^}]*grid-template-columns: max-content max-content minmax\(0, 1fr\) 18px;[^}]*column-gap: 20px;/)
+    expect(redesignCss).toMatch(/\.arkme-redesign-balance-row\.is-without-reserved \{[^}]*grid-template-columns: max-content minmax\(0, 1fr\) 18px;/)
+    expect(redesignCss).toMatch(/\.arkme-redesign-reserved-title > \[role="tooltip"\] \{[^}]*bottom: calc\(100% \+ 8px\);[^}]*left: calc\(100% - 7\.5px\);/)
+    expect(redesignCss).not.toMatch(/\.arkme-redesign-reserved-help:hover\s*\{/)
+  })
+
   it('uses the Demo settings groups and adapts the DSH task conversation layout', () => {
     expect(redesignCss).toContain('.arkme-redesign-settings-group')
     expect(redesignCss).toContain('.arkme-redesign-settings-profile')
@@ -65,7 +73,8 @@ describe('ArkmeSettingsSurface', () => {
     expect(redesignCss).toContain('max-width: none !important')
     expect(redesignCss).toContain('[data-arkme-directory-visible="true"]')
     expect(redesignCss).toContain('[data-arkme-directory-visible="false"]')
-    expect(redesignCss).toContain('grid-template-columns: 356px minmax(0, 1fr) 0 !important')
+    expect(redesignCss).toContain('grid-template-columns: var(--arkme-persistent-sidebar-width, 356px) minmax(0, 1fr) 0 !important')
+    expect(redesignCss).toContain('[data-arkme-avatar-only="true"]')
     expect(redesignCss).toContain('grid-template-columns: 72px minmax(0, 1fr) 0 !important')
     expect(redesignCss).toContain('overflow-y: auto')
     expect(redesignCss).toContain('.arkme-redesign-profile-menu button')
@@ -82,5 +91,10 @@ describe('ArkmeSettingsSurface', () => {
     expect(adapterSource).toContain('[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]')
     expect(adapterSource).toContain('[data-arkme-owned="persistent-sidebar"]')
     expect(adapterSource).not.toContain("document.querySelector<HTMLButtonElement>('button[aria-haspopup=\"dialog\"]')")
+  })
+
+  it('scopes the settings-group heading rule away from nested dialog headings', () => {
+    expect(redesignCss).toContain('.arkme-redesign-settings-group > h2')
+    expect(redesignCss).not.toMatch(/\.arkme-redesign-settings-group h2\s*\{/)
   })
 })

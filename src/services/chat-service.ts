@@ -370,6 +370,19 @@ function timelineAgentSource(
   return { kind: 'agent', displayName, label: agentSourceLabel(displayName) }
 }
 
+function selfTopicIdentityFromHomeFeed(raw: unknown): { topicUid: string; title: string } | undefined {
+  const item = objectValue(raw)
+  const recordCore = objectValue(item.record_core)
+  const topicCore = objectValue(item.topic_core ?? item.topicCore ?? recordCore.topic_core ?? recordCore.topicCore)
+  const sourceKind = stringValue(item.source_kind ?? item.sourceKind ?? recordCore.source_kind ?? recordCore.sourceKind).trim().toLowerCase()
+  const sourceIsTopic = sourceKind === '2' || sourceKind === 'topic'
+  const explicitTopicUid = stringValue(topicCore.topic_uid ?? topicCore.topicUid).trim()
+  if ((!sourceIsTopic && explicitTopicUid === '') || arkmePrivacyLockedTopic({ topic_core: topicCore })) return undefined
+  const topicUid = explicitTopicUid || stringValue(item.source_uid ?? item.sourceUid).trim()
+  const title = stringValue(topicCore.title ?? item.topic_title ?? item.topicTitle).trim()
+  return topicUid === '' ? undefined : { topicUid, title }
+}
+
 function encodeOpaqueJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
 }
@@ -670,14 +683,23 @@ export class ChatService {
         const rawRecords = listValue(data.items).filter(raw => !arkmePrivacyLockedRecord(raw)
           && !lockedRecordUids.has(this.record.recordUid(raw)))
         const media = await this.media.hydrateRecordMediaPage(rawRecords, session, options.signal)
-        const items = rawRecords.map(raw => {
+        const items = (await Promise.all(rawRecords.map(async raw => {
           const recordUid = this.record.recordUid(raw)
           const displayItems = media.displayItemsByRecordUid.get(recordUid)
+          const topic = selfTopicIdentityFromHomeFeed(raw)
           return this.record.recordTimelineItemFromRaw(raw, session.userId, {
             ...(displayItems === undefined ? {} : { displayItems }),
+            isMe: true,
+            ...(topic === undefined ? {} : { selfTopic: {
+              topicHierarchyKey: await this.source.topicHierarchyKey(session.userId, topic.topicUid),
+              ...(topic.title === '' ? {} : {
+                title: topic.title,
+                sourceRef: await this.source.sealSourceRef(session.userId, 'topic', topic.topicUid, topic.title),
+              }),
+            } }),
             mediaUnavailable: media.unavailableRecordUids.has(recordUid),
           })
-        }).filter(item => item.itemUid !== '')
+        }))).filter(item => item.itemUid !== '')
         const nextSendAt = numberValue(data.next_cursor_send_at)
         const nextUid = stringValue(data.next_cursor_record_uid).trim()
         return {

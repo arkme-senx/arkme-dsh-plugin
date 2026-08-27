@@ -10,7 +10,7 @@ const english: ArkmeLoginTranslate = ((key: ArkmeLoginLocaleKey) => arkmeLoginEn
 
 function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
   return renderToStaticMarkup(<ArkmeLogin
-    mode="wechat"
+    mode="jiwo"
     agreed
     busy={false}
     submitBusy={false}
@@ -19,6 +19,7 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     smsCode=""
     smsCountdown={0}
     testLoginEnabled={false}
+    jiwoScanLoginEnabled
     testUserId=""
     qrDataUrl=""
     onModeChange={() => undefined}
@@ -30,6 +31,7 @@ function renderLogin(patch: Partial<ArkmeLoginProps> = {}): string {
     onVerifyCode={() => undefined}
     onTestLogin={() => undefined}
     onWechatLogin={() => undefined}
+    onJiwoLogin={() => undefined}
     onCancelBinding={() => undefined}
     {...patch}
   />)
@@ -42,7 +44,7 @@ function darkLoginCss(patch: Partial<ArkmeLoginProps> = {}): string {
 }
 
 describe('ArkmeLogin', () => {
-  it('matches the desktop web login default with WeChat first and agreement checked', () => {
+  it('defaults to Jiwo scan with WeChat and phone retained', () => {
     const html = renderLogin()
     const visibleText = html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, '')
 
@@ -56,9 +58,10 @@ describe('ArkmeLogin', () => {
     expect(html).not.toContain('Digital ark, true me')
     expect(html).toContain('dsh-arkme-login-story')
     expect(html).toContain('dsh-arkme-login-wordmark')
-    expect(html).not.toContain('<p>即我</p>')
-    expect(html).toContain('请使用微信扫码登录')
+    expect(html).toContain('请使用即我 App 扫码登录')
     expect(html).toContain('二维码加载中')
+    expect(html.indexOf('即我扫码')).toBeLessThan(html.indexOf('微信扫码'))
+    expect(html).not.toContain('<p>即我</p>')
     expect(html).not.toContain('dsh-arkme-login-qr-hint')
     expect(html.indexOf('微信扫码')).toBeLessThan(html.indexOf('手机号登录'))
     expect(html).toContain('aria-selected="true"')
@@ -69,7 +72,26 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('#8295e8')
     expect(html).not.toContain('state-success')
     expect(html).not.toContain('#2f80ed')
-    expect(visibleText).not.toMatch(/[A-Za-z]/)
+    expect(visibleText.replace('App', '')).not.toMatch(/[A-Za-z]/)
+  })
+
+  it('hides Jiwo scan when the Host feature flag is disabled', () => {
+    const html = renderLogin({
+      mode: 'jiwo',
+      jiwoScanLoginEnabled: false,
+    })
+
+    expect(html).not.toContain('即我扫码')
+    expect(html).toContain('请使用微信扫码登录')
+  })
+
+  it('renders all four methods in test environment with Jiwo first', () => {
+    const html = renderLogin({ testLoginEnabled: true })
+
+    expect(html.indexOf('即我扫码')).toBeLessThan(html.indexOf('微信扫码'))
+    expect(html.indexOf('微信扫码')).toBeLessThan(html.indexOf('手机号登录'))
+    expect(html.indexOf('手机号登录')).toBeLessThan(html.indexOf('测试账号'))
+    expect(html).toContain('repeat(4, minmax(0, 1fr))')
   })
 
   it('renders the web phone form labels and formatting', () => {
@@ -108,6 +130,7 @@ describe('ArkmeLogin', () => {
       smsCode=""
       smsCountdown={0}
       testLoginEnabled={false}
+      jiwoScanLoginEnabled
       testUserId=""
       qrDataUrl="data:image/gif;base64,fresh-qr"
       onModeChange={() => undefined}
@@ -119,6 +142,7 @@ describe('ArkmeLogin', () => {
       onVerifyCode={() => undefined}
       onTestLogin={() => undefined}
       onWechatLogin={onWechatLogin}
+      onJiwoLogin={() => undefined}
       onCancelBinding={() => undefined}
     />)
 
@@ -129,6 +153,7 @@ describe('ArkmeLogin', () => {
 
   it('disables QR refresh while a new WeChat QR code is loading', () => {
     const html = renderLogin({
+      mode: 'wechat',
       busy: true,
       qrDataUrl: 'data:image/gif;base64,current-qr',
     })
@@ -137,6 +162,13 @@ describe('ArkmeLogin', () => {
     expect(html).toContain('aria-busy="true"')
     expect(html).toContain('disabled=""')
     expect(html).toContain('正在刷新')
+  })
+
+  it('keeps the QR refresh control for Jiwo scan login', () => {
+    const html = renderLogin({ qrDataUrl: 'data:image/gif;base64,current-jiwo-qr' })
+
+    expect(html).toContain('aria-label="刷新即我 App 登录二维码"')
+    expect(html).toContain('alt="即我 App 扫码登录即我"')
   })
 
   it('renders the bound-phone gate as a focused phone verification flow', () => {

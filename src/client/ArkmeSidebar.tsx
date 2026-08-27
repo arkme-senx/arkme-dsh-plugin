@@ -41,6 +41,7 @@ import { ArkmeEmojiPicker } from './ArkmeEmojiPicker.js'
 import type { ArkmeEmoji } from './arkme-emoji.js'
 import { ArkmeSearchSurface } from './ArkmeSearchSurface.js'
 import { ArkmeContactAddSurface } from './ArkmeContactAddSurface.js'
+import { ArkmeBotConversationSurface } from './ArkmeBotConversationSurface.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
@@ -105,7 +106,7 @@ export interface ArkmeSurfaceProps {
   directoryLead?: ReactNode
   onCreateTask?: () => void
   onActivateSurface?: () => void
-  ownsWechatLogin?: boolean
+  ownsQrLogin?: boolean
 }
 
 export type ArkmeAuthView = 'login' | 'content'
@@ -243,6 +244,14 @@ const styles: Record<string, CSSProperties> = {
   },
   agentSourceIcon: { flex: 'none', width: 12, height: 12, display: 'grid', placeItems: 'center', overflow: 'hidden' },
   agentSourceText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  selfTopicBadge: {
+    maxWidth: 'min(600px, 100%)', minWidth: 0, height: 24, display: 'inline-flex', alignItems: 'center', gap: 3,
+    padding: '0 6px', border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, color: arkmeTheme.secondary,
+    font: 'inherit', fontSize: 11, lineHeight: '14px', cursor: 'pointer',
+  },
+  selfTopicBadgeIcon: { width: 13, height: 13, flex: 'none' },
+  selfTopicBadgeText: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  selfTopicBadgeChevron: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 15, lineHeight: 1 },
   bubble: { maxWidth: 'min(600px, 100%)', minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box', cursor: 'pointer', border: '1px solid rgba(29,32,40,.035)' },
   bubbleMe: { background: arkmeTheme.messageOwn, borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
   bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
@@ -344,6 +353,46 @@ export function ArkmeTimelineAgentSourceBadge({ item }: { item: ArkmeTimelineIte
   </span>
 }
 
+export function arkmeTimelineSelfTopicSource(
+  item: ArkmeTimelineItem,
+  sources: readonly ArkmeSourceItem[],
+): ArkmeSourceItem | undefined {
+  const topic = item.selfTopic
+  if (topic === undefined) return undefined
+  const resolved = sources.find(source => source.kind === 'topic' && source.topicHierarchyKey === topic.topicHierarchyKey)
+  if (resolved !== undefined) return resolved
+  if (topic.sourceRef === undefined || topic.title === undefined) return undefined
+  return {
+    sourceRef: topic.sourceRef,
+    kind: 'topic',
+    displayName: topic.title,
+    activeAtMillis: 0,
+    unreadCount: 0,
+  }
+}
+
+export function ArkmeTimelineSelfTopicBadge({
+  topic,
+  onSelect,
+}: {
+  topic: ArkmeSourceItem
+  onSelect: (source: ArkmeSourceItem) => void
+}) {
+  return <button
+    type="button"
+    data-arkme-self-topic-badge={topic.displayName}
+    aria-label={`查看主题「${topic.displayName}」`}
+    style={styles.selfTopicBadge}
+    onClick={event => {
+      event.stopPropagation()
+      onSelect(topic)
+    }}
+  ><svg aria-hidden viewBox="0 0 16 16" style={styles.selfTopicBadgeIcon}>
+      <path d="M3.25 2.75h9.5v10.5h-9.5zM5.25 5.25h5.5M5.25 7.9h3.8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg><span style={styles.selfTopicBadgeText}>{topic.displayName}</span><span aria-hidden style={styles.selfTopicBadgeChevron}>›</span>
+  </button>
+}
+
 export function arkmeShouldBeginWechat(
   auth: ArkmeAuthSnapshot | undefined,
   authView: ArkmeAuthView,
@@ -351,9 +400,9 @@ export function arkmeShouldBeginWechat(
   agreed: boolean,
   qr: string,
   qrRequestStarted: boolean,
-  ownsWechatLogin = true,
+  ownsQrLogin = true,
 ): boolean {
-  return ownsWechatLogin
+  return ownsQrLogin
     && authView === 'login'
     && auth !== undefined
     && ['logged-out', 'expired'].includes(auth.status)
@@ -718,7 +767,7 @@ export function ArkmeSurface({
   directoryLead,
   onCreateTask,
   onActivateSurface,
-  ownsWechatLogin = true,
+  ownsQrLogin = true,
 }: ArkmeSurfaceProps = {}) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authStoreSnapshot = useSyncExternalStore(
@@ -743,7 +792,8 @@ export function ArkmeSurface({
   )
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
-  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'contact-add'
+  const botConversationVisible = ui.mode === 'bot' && ui.selectedBot !== undefined
+  const conversationBackdropVisible = ui.mode === 'source' || ui.mode === 'contact-add' || botConversationVisible
   const selectedSource = conversationBackdropVisible ? ui.selectedSource : undefined
   const [selfSourcesResolution, setSelfSourcesResolution] = useState<ArkmeAccountSelfSourcesResolution>()
   const [selfSourcesRetryRevision, setSelfSourcesRetryRevision] = useState(0)
@@ -762,7 +812,7 @@ export function ArkmeSurface({
     : activeSelfSourcesResolution?.status === 'ready'
       ? activeSelfSourcesResolution.error
       : undefined
-  const source = conversationBackdropVisible ? selectedSource ?? aggregateSource : undefined
+  const source = ui.mode === 'source' || ui.mode === 'contact-add' ? selectedSource ?? aggregateSource : undefined
   const sourceProjectionRevision = source?.kind === 'private_chat' || source?.kind === 'group_chat'
     ? ui.chatRevision
     : ui.recordRevision
@@ -864,12 +914,13 @@ export function ArkmeSurface({
   const conversationTargetPagingRef = useRef({ revision: 0, pages: 0 })
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [agreed, setAgreed] = useState(true)
-  const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'wechat')
+  const [loginMode, setLoginMode] = useState<ArkmeLoginMode>(initialAuth?.status === 'binding-required' ? 'phone' : 'jiwo')
   const [phone, setPhone] = useState('')
   const [smsCode, setSmsCode] = useState('')
   const [smsCountdown, setSmsCountdown] = useState(0)
   const [captchaId, setCaptchaId] = useState('')
   const [testLoginEnabled, setTestLoginEnabled] = useState(false)
+  const [jiwoScanLoginEnabled, setJiwoScanLoginEnabled] = useState(false)
   const [testUserId, setTestUserId] = useState('')
   const [qr, setQr] = useState('')
   const [conversationMembers, setConversationMembers] = useState<ArkmeConversationMemberItem[]>([])
@@ -1001,6 +1052,9 @@ export function ArkmeSurface({
   }, [addMenuOpen])
 
   const qrRequestStartedRef = useRef(false)
+  const qrFlowRevisionRef = useRef(0)
+  const currentJiwoAttemptRef = useRef<string>()
+  const pendingLoginModeSelectionRef = useRef<ArkmeLoginMode>()
   const conversationCacheRef = useRef(new ArkmeConversationMemoryCache())
   const cacheAccountUserIdRef = useRef<number>()
   const timelineGenerationRef = useRef(0)
@@ -1129,7 +1183,15 @@ export function ArkmeSurface({
     if (authStoreSnapshot.config === undefined) return
     setCaptchaId(authStoreSnapshot.config.captchaId)
     setTestLoginEnabled(authStoreSnapshot.config.testLoginEnabled)
-  }, [authStoreSnapshot.config])
+    setJiwoScanLoginEnabled(authStoreSnapshot.config.jiwoScanLoginEnabled)
+    if (!phoneBindingRequired && (auth?.status === 'logged-out' || auth?.status === 'expired')) {
+      const selectedMode = pendingLoginModeSelectionRef.current
+      pendingLoginModeSelectionRef.current = undefined
+      setLoginMode(selectedMode ?? (authStoreSnapshot.config.jiwoScanLoginEnabled
+        ? 'jiwo'
+        : authStoreSnapshot.config.testLoginEnabled ? 'test' : 'wechat'))
+    }
+  }, [auth?.status, authStoreSnapshot.config, phoneBindingRequired])
   useEffect(() => {
     if (authStoreSnapshot.error !== '' && authView === 'login') {
       setError(arkmeStoredLoginErrorMessage(authStoreSnapshot.error, t))
@@ -1145,8 +1207,13 @@ export function ArkmeSurface({
       if (config !== undefined) {
         setCaptchaId(config.captchaId)
         setTestLoginEnabled(config.testLoginEnabled)
+        setJiwoScanLoginEnabled(config.jiwoScanLoginEnabled)
       }
-      if (!['authenticated', 'binding-required'].includes(snapshot.status) && config?.testLoginEnabled === true) setLoginMode('test')
+      if (!['authenticated', 'binding-required'].includes(snapshot.status)) {
+        setLoginMode(config?.jiwoScanLoginEnabled === true
+          ? 'jiwo'
+          : config?.testLoginEnabled === true ? 'test' : 'wechat')
+      }
     } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) }
     finally { setBusy(false) }
   }, [acceptAuthSnapshot, t])
@@ -1613,26 +1680,63 @@ export function ArkmeSurface({
   }, [smsCountdown])
 
   useEffect(() => {
-    if (!ownsWechatLogin || loginMode !== 'wechat' || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
+    const ownsCurrentQrLogin = ownsQrLogin && ['jiwo', 'wechat'].includes(loginMode)
+    if (!ownsCurrentQrLogin || !agreed || auth?.status !== 'pending' || auth.attemptId === undefined) return
     let stopped = false; let timer: ReturnType<typeof setTimeout>
+    const operation = loginMode === 'jiwo' ? 'auth.app.poll' : 'auth.poll'
     const poll = async () => {
       try {
-        const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.poll', { attemptId: auth.attemptId })
+        const snapshot = await callArkme<ArkmeAuthSnapshot>(operation, { attemptId: auth.attemptId })
         if (stopped) return
         acceptAuthSnapshot(snapshot)
-        if (snapshot.status === 'authenticated') { setQr(''); return }
+        if (snapshot.status === 'authenticated' || snapshot.status === 'expired') {
+          if (loginMode === 'jiwo') currentJiwoAttemptRef.current = undefined
+          setQr('')
+          return
+        }
       } catch (caught) { if (!stopped) setError(arkmeLoginErrorMessage(caught, t)) }
       if (!stopped) timer = setTimeout(() => { void poll() }, 1200)
     }
-    timer = setTimeout(() => { void poll() }, 800)
+    timer = setTimeout(() => { void poll() }, 1200)
     return () => { stopped = true; clearTimeout(timer) }
-  }, [agreed, auth?.attemptId, auth?.status, loginMode, ownsWechatLogin, t])
+  }, [agreed, auth?.attemptId, auth?.status, loginMode, ownsQrLogin, t])
 
   const beginWechat = async () => {
+    const flowRevision = ++qrFlowRevisionRef.current
     if (!agreed) { setError(t('error.agreement.required')); return }
     setBusy(true); setError('')
-    try { const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.begin'); acceptAuthSnapshot(snapshot); setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent)) }
-    catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
+    try {
+      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.begin')
+      if (flowRevision !== qrFlowRevisionRef.current) return
+      acceptAuthSnapshot(snapshot)
+      setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent))
+    } catch (caught) {
+      if (flowRevision === qrFlowRevisionRef.current) setError(arkmeLoginErrorMessage(caught, t))
+    } finally {
+      if (flowRevision === qrFlowRevisionRef.current) setBusy(false)
+    }
+  }
+
+  const beginJiwo = async () => {
+    const flowRevision = ++qrFlowRevisionRef.current
+    if (!agreed) { setError(t('error.agreement.required')); return }
+    setBusy(true); setError('')
+    try {
+      const snapshot = await callArkme<ArkmeAuthSnapshot>('auth.app.begin')
+      if (flowRevision !== qrFlowRevisionRef.current) {
+        if (snapshot.attemptId !== undefined) {
+          void callArkme('auth.app.cancel', { attemptId: snapshot.attemptId }).catch(() => undefined)
+        }
+        return
+      }
+      currentJiwoAttemptRef.current = snapshot.attemptId
+      acceptAuthSnapshot(snapshot)
+      setQr(snapshot.qrContent === undefined ? '' : qrDataUrl(snapshot.qrContent))
+    } catch (caught) {
+      if (flowRevision === qrFlowRevisionRef.current) setError(arkmeLoginErrorMessage(caught, t))
+    } finally {
+      if (flowRevision === qrFlowRevisionRef.current) setBusy(false)
+    }
   }
 
   const sendCode = async () => {
@@ -1675,7 +1779,7 @@ export function ArkmeSurface({
       setQr('')
       setSubmitBusy(false)
       qrRequestStartedRef.current = false
-      setLoginMode(testLoginEnabled ? 'test' : 'wechat')
+      setLoginMode(jiwoScanLoginEnabled ? 'jiwo' : testLoginEnabled ? 'test' : 'wechat')
       arkmeUi.authChanged(false)
     } catch (caught) { setError(arkmeLoginErrorMessage(caught, t)) } finally { setBusy(false) }
   }
@@ -1688,23 +1792,39 @@ export function ArkmeSurface({
   }, [auth?.status])
 
   useEffect(() => {
-    if (!arkmeShouldBeginWechat(
-      auth,
-      authView,
-      loginMode,
-      agreed,
-      qr,
-      qrRequestStartedRef.current,
-      ownsWechatLogin,
-    )) return
+    const shouldBegin = loginMode === 'jiwo'
+      ? ownsQrLogin && jiwoScanLoginEnabled && authView === 'login' && auth !== undefined
+        && ['logged-out', 'expired'].includes(auth.status) && agreed && qr === '' && !qrRequestStartedRef.current
+      : arkmeShouldBeginWechat(auth, authView, loginMode, agreed, qr, qrRequestStartedRef.current, ownsQrLogin)
+    if (!shouldBegin) return
     qrRequestStartedRef.current = true
-    void beginWechat()
-  }, [agreed, auth, authView, loginMode, ownsWechatLogin, qr])
+    void (loginMode === 'jiwo' ? beginJiwo() : beginWechat())
+  }, [agreed, auth, authView, jiwoScanLoginEnabled, loginMode, ownsQrLogin, qr])
+
+  useEffect(() => () => {
+    qrFlowRevisionRef.current += 1
+    const attemptId = currentJiwoAttemptRef.current
+    currentJiwoAttemptRef.current = undefined
+    if (attemptId !== undefined) {
+      void callArkme('auth.app.cancel', { attemptId }).catch(() => undefined)
+    }
+  }, [])
 
   const changeLoginMode = (mode: ArkmeLoginMode) => {
+    qrFlowRevisionRef.current += 1
+    const attemptId = currentJiwoAttemptRef.current
+    currentJiwoAttemptRef.current = undefined
+    if (attemptId !== undefined) {
+      void callArkme('auth.app.cancel', { attemptId }).catch(() => undefined)
+    }
+    if (auth?.status === 'pending') {
+      pendingLoginModeSelectionRef.current = mode
+      arkmeAuthStore.setAuth({ status: 'logged-out', environment: auth.environment })
+    }
     setLoginMode(mode)
+    setQr('')
     setError('')
-    if (mode !== 'wechat') qrRequestStartedRef.current = false
+    qrRequestStartedRef.current = false
   }
 
   const uploadFile = async (file: File, targetDraftKey: string): Promise<ArkmeUploadedAsset> => await new Promise((resolve, reject) => {
@@ -2269,7 +2389,7 @@ export function ArkmeSurface({
         />
       </aside>}
       <section className="arkme-conversation-panel" ref={panelRef} style={styles.panel} role="region" aria-label={surfaceTitle}>
-        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && <header className="arkme-conversation-header" style={styles.header}>
+        {authView !== 'login' && !arkoContentVisible && !utilityContentVisible && !botConversationVisible && <header className="arkme-conversation-header" style={styles.header}>
           {authenticated && conversationBackdropVisible && source?.kind === 'group_chat' && <span style={styles.headerAvatar}>
             <ArkmeSourceAvatar
               size={34}
@@ -2408,6 +2528,7 @@ export function ArkmeSurface({
           smsCode={smsCode}
           smsCountdown={smsCountdown}
           testLoginEnabled={testLoginEnabled}
+          jiwoScanLoginEnabled={jiwoScanLoginEnabled}
           testUserId={testUserId}
           qrDataUrl={qr}
           onModeChange={changeLoginMode}
@@ -2419,6 +2540,7 @@ export function ArkmeSurface({
           onVerifyCode={() => { void verifyCode() }}
           onTestLogin={() => { void testLogin() }}
           onWechatLogin={() => { void beginWechat() }}
+          onJiwoLogin={() => { void beginJiwo() }}
           onCancelBinding={() => { void cancelBinding() }}
         /></div> : ui.mode === 'calls' ? <ArkmeCallSurface />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface />
@@ -2435,13 +2557,18 @@ export function ArkmeSurface({
             {...(auth?.status !== 'authenticated' ? {} : { currentUserId: auth.userId })}
             {...(selfProfile?.avatarRef.trim() ? { currentUserAvatarRef: selfProfile.avatarRef.trim() } : {})}
             {...(ui.extensionShareRef === undefined ? {} : { shareRef: ui.extensionShareRef })}
+            {...(ui.extensionShareAction === undefined ? {} : { shareAction: ui.extensionShareAction })}
             {...(ui.extensionDetailId === undefined ? {} : { initialExtensionId: ui.extensionDetailId })}
             {...(ui.extensionAuthorFilter === undefined ? {} : { initialAuthorFilter: ui.extensionAuthorFilter })}
+            onShareResolved={extensionId => { arkmeUi.showExtensionDetail(extensionId) }}
             onShareExit={() => { arkmeUi.dismissExtensionShare() }}
             onPrivateChatOpened={activateSource}
           />
           : ui.mode === 'voiceprint' ? <ArkmeVoiceprintSurface />
           : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
+          : botConversationVisible && ui.selectedBot !== undefined ? <ArkmeBotConversationSurface
+            bot={ui.selectedBot} onConversationActivity={bot => { arkmeUi.openBotConversation(bot) }} onDeleted={() => { arkmeUi.showHarness() }}
+          />
           : source === undefined ? <div className="arkme-conversation-body" style={styles.body}>
             {activeSelfSourcesResolution?.status === 'error'
               ? <div role="alert" style={styles.loading}>
@@ -2493,6 +2620,9 @@ export function ArkmeSurface({
                   </Fragment>
                 }
                 const item = row.item
+                const selfTopicSource = source?.kind === 'send_to_self'
+                  ? arkmeTimelineSelfTopicSource(item, selfSources)
+                  : undefined
                 const avatarRef = arkmeTimelineAvatarRef(item, selfProfile)
                 const messageMember = item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
@@ -2574,6 +2704,7 @@ export function ArkmeSurface({
                             <ArkmeTimelineAgentSourceBadge item={item} />
                           </div>
                         </ArkmeMessageReadReceiptLine>
+                        {selfTopicSource !== undefined && <ArkmeTimelineSelfTopicBadge topic={selfTopicSource} onSelect={activateSelfSource} />}
                       </div>
                     </div>
                   </li>

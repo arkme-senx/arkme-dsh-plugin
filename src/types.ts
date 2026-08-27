@@ -25,9 +25,68 @@ export interface ArkmeClientConfig {
   captchaId: string
   environment: ArkmeEnvironment
   testLoginEnabled: boolean
+  jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
   shareWebsite: string
+}
+
+export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
+export type ArkmeBillingPaymentProvider = 'alipay' | 'wechat'
+export type ArkmeBillingPaymentActionType = 'open_url' | 'display_qr'
+
+export interface ArkmeBillingPaymentMethodOption {
+  id: ArkmeBillingPaymentMethod
+  provider: ArkmeBillingPaymentProvider
+  actionType: ArkmeBillingPaymentActionType
+}
+
+export type ArkmeBillingPaymentAction =
+  | { type: 'open_url'; url: string }
+  | { type: 'display_qr'; qrContent: string }
+export type ArkmeBillingOrderStatus = 'pending' | 'crediting' | 'paid' | 'expired' | 'closed' | 'failed'
+
+export interface ArkmeQuotaSnapshot {
+  availableNanoCny: string
+  totalNanoCny: string
+  reservedNanoCny: string
+  currency: 'CNY'
+}
+
+export interface ArkmeBillingProduct {
+  productId: string
+  title: string
+  description?: string
+  creditNanoCny: string
+  priceMinor: number
+  currency: 'CNY'
+  paymentMethods: ArkmeBillingPaymentMethodOption[]
+  enabled: boolean
+}
+
+export interface ArkmeBillingProductList {
+  items: ArkmeBillingProduct[]
+}
+
+export interface ArkmeBillingOrderCreateInput {
+  productId: string
+  paymentMethod: ArkmeBillingPaymentMethod
+  clientRequestId: string
+}
+
+export interface ArkmeBillingOrderSnapshot {
+  orderId: string
+  paymentProvider: ArkmeBillingPaymentProvider
+  paymentMethod: ArkmeBillingPaymentMethod
+  status: ArkmeBillingOrderStatus
+  amountMinor: number
+  currency: 'CNY'
+  creditNanoCny: string
+  expiresAtMillis: number
+  paymentAction?: ArkmeBillingPaymentAction
+  pollIntervalMillis?: number
+  paidAtMillis?: number
+  creditedAtMillis?: number
 }
 
 export type ArkmeContactIdentifierKind = 'phone' | 'arkme_id'
@@ -338,17 +397,79 @@ export type ArkmeBotStatus = 'online' | 'offline' | 'unknown'
 
 export interface ArkmeBotSummary {
   botRef: string
+  /** Stable, account-scoped opaque key for plugin-local directory preferences. */
+  directoryKey?: string
   name: string
   provider: ArkmeBotProvider
   description: string
   status: ArkmeBotStatus
   directChatAvailable: boolean
+  /** Creation time supplied by the Bot service, when available. */
+  createdAtMillis?: number
+  /** Latest private-chat message time, when the conversation directory has been hydrated. */
+  latestMessageAtMillis?: number
+  /** Safe preview of the latest private-chat message. */
+  latestMessagePreview?: string
   /** Account-bound opaque reference resolved through image.read. */
   avatarRef?: string
 }
 
 export interface ArkmeBotList {
   items: ArkmeBotSummary[]
+}
+
+/** Browser-safe projection of one message in the legacy Bot direct-chat protocol. */
+export interface ArkmeBotPrivateChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  status: string
+  createdAtMillis: number
+}
+
+export interface ArkmeBotPrivateChatConversation {
+  bot: ArkmeBotSummary
+  messages: ArkmeBotPrivateChatMessage[]
+}
+
+export interface ArkmeBotPrivateChatDirectory {
+  items: ArkmeBotSummary[]
+}
+
+/** Browser-safe projection of the Flutter desktop Bot settings profile. */
+export interface ArkmeBotManageProfile extends ArkmeBotSummary {
+  mentionEntryEnabled: boolean
+  tokenPreview: string
+  canRevealToken: boolean
+  tokenRevealEnabled: boolean
+  gatewayUrl: string
+  webhookUrl: string
+  recordCount: number
+  webhookSecurity: ArkmeBotWebhookSecurity
+  joinedGroups: ArkmeBotJoinedGroup[]
+}
+
+export interface ArkmeBotWebhookSecurity {
+  keywordEnabled: boolean
+  keyword: string
+  tokenEnabled: boolean
+  ipWhitelistEnabled: boolean
+  ipWhitelist: string[]
+}
+
+export interface ArkmeBotJoinedGroup {
+  title: string
+  installedAtMillis: number
+}
+
+export interface ArkmeBotNotificationPreference {
+  /** `true` means the current Bot direct chat will not receive push notifications. */
+  muted: boolean
+}
+
+export interface ArkmeBotPrivateChatSendResult {
+  userMessage: ArkmeBotPrivateChatMessage
+  botMessages: ArkmeBotPrivateChatMessage[]
+  status: string
 }
 
 export interface ArkmeConversationWriteResult {
@@ -1054,8 +1175,17 @@ export interface ArkmeSourceItem {
   hasUnreadMention?: boolean
   /** Effective chat notification state. True when mute is on or push notifications are disabled. */
   isMuted?: boolean
+  /** Server-persisted conversation pin state for private and group chats. */
+  isPinned?: boolean
   latestSequence?: number
   recordCount?: number
+}
+
+/** Result of a server-backed conversation-directory policy mutation. */
+export interface ArkmeSourceDirectoryPolicyResult {
+  sourceRef: string
+  pinned: boolean
+  hidden: boolean
 }
 
 export interface ArkmeSourceList {
@@ -1116,6 +1246,15 @@ export interface ArkmeTimelineCursor {
   beforeSequence?: number
 }
 
+/** A browser-safe topic projection attached to an item in the aggregate self feed. */
+export interface ArkmeTimelineSelfTopic {
+  /** Browser-safe stable key for resolving the current topic from the self topic tree. */
+  topicHierarchyKey: string
+  /** Available immediately when the feed includes the topic title. */
+  sourceRef?: string
+  title?: string
+}
+
 export interface ArkmeTimelineItem {
   itemUid: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
@@ -1145,6 +1284,8 @@ export interface ArkmeTimelineItem {
   contentBlocks?: ArkmeContentBlock[]
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
+  /** Present only for a categorized record in the aggregate “发给自己” feed. */
+  selfTopic?: ArkmeTimelineSelfTopic
   /** Browser-safe Chat forward snapshot. It is present only for explicit `render_kind=forward_records` payloads. */
   forwardRecords?: ArkmeForwardRecordsPreview
 }
@@ -1749,6 +1890,8 @@ export interface ArkmeRecordingTranscriptItem {
   speakerNumber: number
   speakerColorIndex: number
   speakerLabel: string
+  /** Opaque image reference for a speaker already associated with an Arkme user. */
+  speakerAvatarRef?: string
   isSelf: boolean
   isBackground: boolean
   text: string
@@ -2263,16 +2406,32 @@ export type ArkmePluginOperation =
   | 'auth.config'
   | 'auth.begin'
   | 'auth.poll'
+  | 'auth.app.begin'
+  | 'auth.app.poll'
+  | 'auth.app.cancel'
   | 'auth.test.login'
   | 'auth.phone.send'
   | 'auth.phone.verify'
   | 'auth.logout'
+  | 'billing.quota'
+  | 'billing.products'
+  | 'billing.order.create'
+  | 'billing.order.status'
   | 'contacts.search'
   | 'contacts.add'
   | 'chat.private.open-from-contact'
   | 'group.create'
   | 'bots.list'
   | 'bots.create'
+  | 'bots.manage.profile'
+  | 'bots.manage.update'
+  | 'bots.manage.reveal-token'
+  | 'bots.manage.delete'
+  | 'bots.private-chat.notification.status'
+  | 'bots.private-chat.notification.update'
+  | 'bots.private-chat.directory'
+  | 'bots.private-chat.open'
+  | 'bots.private-chat.send'
   | 'records.summary'
   | 'records.cache'
   | 'records.refresh'
@@ -2316,6 +2475,7 @@ export type ArkmePluginOperation =
   | 'extensions.reviews.create'
   | 'extensions.audit.check'
   | 'sources.list'
+  | 'source.directory.policy.set'
   | 'source.timeline'
   | 'source.members'
   | 'source.member-records'
@@ -2375,6 +2535,7 @@ export type ArkmePluginOperation =
   | 'extensions.metadata.update'
 	| 'extensions.share.rotate'
 	| 'extensions.share.detail'
+	| 'extensions.share.resolve'
   | 'extensions.installed-list'
   | 'extensions.enabled-state'
   | 'extensions.persistent.client-state'

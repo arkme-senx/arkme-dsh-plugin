@@ -4,6 +4,8 @@ import type { ArkmeAuthSnapshot } from '../src/types.js'
 
 const testState = vi.hoisted(() => ({
   calls: [] as string[],
+  jiwoScanLoginEnabled: false,
+  testLoginEnabled: false,
   pending: {
     status: 'pending',
     environment: 'prod',
@@ -16,7 +18,13 @@ const testState = vi.hoisted(() => ({
 vi.mock('../src/client/api.js', () => ({
   callArkme: vi.fn(async (method: string) => {
     testState.calls.push(method)
-    if (method === 'auth.poll') return testState.pending
+    if (method === 'auth.status') return { status: 'logged-out', environment: 'prod' }
+    if (method === 'auth.config') return {
+      captchaId: '', testLoginEnabled: testState.testLoginEnabled, jiwoScanLoginEnabled: testState.jiwoScanLoginEnabled,
+    }
+    if (method === 'auth.begin' || method === 'auth.app.begin') return testState.pending
+    if (method === 'auth.app.cancel') return { status: 'logged-out', environment: 'prod' }
+    if (method === 'auth.poll' || method === 'auth.app.poll') return testState.pending
     throw new Error(`unexpected method ${method}`)
   }),
 }))
@@ -48,6 +56,8 @@ describe('Arkme WeChat login ownership', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     testState.calls = []
+    testState.jiwoScanLoginEnabled = false
+    testState.testLoginEnabled = false
     arkmeAuthStore.setAuth(testState.pending)
   })
 
@@ -57,13 +67,44 @@ describe('Arkme WeChat login ownership', () => {
     vi.useRealTimers()
   })
 
-  it('does not poll the startup gate attempt from a hidden non-owner surface', async () => {
+  it.each([
+    ['Jiwo', true, 'auth.app.poll'],
+    ['WeChat', false, 'auth.poll'],
+  ] as const)('does not poll the startup gate %s attempt from a hidden non-owner surface', async (
+    _mode,
+    jiwoScanLoginEnabled,
+    pollOperation,
+  ) => {
+    testState.jiwoScanLoginEnabled = jiwoScanLoginEnabled
     await act(async () => {
-      renderer = create(<ArkmeSurface ownsWechatLogin={false} />)
-      await vi.advanceTimersByTimeAsync(1_000)
+      renderer = create(<ArkmeSurface ownsQrLogin={false} />)
+      await vi.advanceTimersByTimeAsync(1_300)
     })
 
-    expect(testState.calls.filter(method => method === 'auth.poll')).toHaveLength(0)
+    expect(testState.calls.filter(method => method === pollOperation)).toHaveLength(0)
+  })
+
+  it.each([
+    ['startup gate', () => <LoginAfterLogout t={defaultArkmeLoginTranslate} />],
+    ['sidebar', () => <ArkmeSurface ownsQrLogin />],
+  ] as const)('keeps the user-selected login tab while canceling a pending Jiwo attempt in the %s', async (
+    _surface,
+    renderSurface,
+  ) => {
+    testState.jiwoScanLoginEnabled = true
+    testState.testLoginEnabled = true
+
+    await act(async () => {
+      renderer = create(renderSurface())
+    })
+    expect(renderer!.root.findByType(ArkmeLogin).props.mode).toBe('jiwo')
+    const phoneTab = renderer!.root.findAllByType('button')
+      .find(button => button.props.role === 'tab' && button.children.includes('手机号登录'))
+    expect(phoneTab).toBeDefined()
+
+    await act(async () => { phoneTab!.props.onClick() })
+
+    expect(renderer!.root.findByType(ArkmeLogin).props.mode).toBe('phone')
   })
 
   it.each([

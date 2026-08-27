@@ -5,6 +5,7 @@ import type {
   ArkmeSelfRecordItem,
   ArkmeSelfSummary,
   ArkmeSourceDirectory,
+  ArkmeSourceDirectoryPolicyResult,
   ArkmeSourceItem,
   ArkmeSourceKind,
   ArkmeSourceList,
@@ -28,6 +29,8 @@ export interface ArkmeSourceRefPayload {
   ownerRef: string
   displayName: string
   botGroupTarget?: ArkmeGroupBotBindingTarget
+  sidebarSubjectUid?: string
+  sidebarHiddenAnchorTimestamp?: number
 }
 
 export interface ArkmeGroupBotBindingTarget {
@@ -40,6 +43,11 @@ export interface ArkmeGroupAvatarSnapshotProjection {
   strategy: string
   computedAtMillis: number
   memberIds: number[]
+}
+
+interface ArkmeChatSidebarTarget {
+  subjectUid: string
+  hiddenAnchorTimestamp: number
 }
 
 interface CacheEntry<T> { value: T; expiresAtMillis: number }
@@ -121,6 +129,27 @@ export function arkmeGroupBotBindingBody(
   if (target?.rmSubjectId !== undefined && target.rmSubjectId > 0) return { rm_subject_id: target.rmSubjectId }
   if (target?.subjectUid !== undefined && target.subjectUid.trim() !== '') return { subject_uid: target.subjectUid.trim() }
   return { subject_uid: source.ownerRef }
+}
+
+function arkmeChatSidebarTargetFromBundle(
+  bundle: Record<string, unknown>,
+  fallbackSubjectUid = '',
+): ArkmeChatSidebarTarget | undefined {
+  const chatSession = objectValue(bundle.session)
+  const subjectUid = stringValue(
+    bundle.subject_uid ?? bundle.subjectUid
+    ?? bundle.topic_uid ?? bundle.topicUid
+    ?? chatSession.subject_uid ?? chatSession.subjectUid
+    ?? chatSession.topic_uid ?? chatSession.topicUid
+    ?? fallbackSubjectUid,
+  ).trim()
+  if (subjectUid === '') return undefined
+  return {
+    subjectUid,
+    hiddenAnchorTimestamp: Math.max(0, numberValue(
+      bundle.sort_active_at ?? bundle.last_active_at ?? chatSession.last_active_at,
+    )),
+  }
 }
 
 function backendBooleanValue(value: unknown): boolean | undefined {
@@ -916,6 +945,108 @@ export class SourceService {
     }
   }
 
+  async setChatDirectoryPolicy(
+    sourceRef: string,
+    options: { pinned?: boolean; hidden?: boolean; signal?: AbortSignal } = {},
+  ): Promise<ArkmeSourceDirectoryPolicyResult> {
+    const session = await this.runtime.requireSession()
+    const source = await this.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('chat-directory-policy-invalid', '仅支持更新私聊或群聊的会话列表状态', false)
+    }
+    const sidebarTarget = await this.resolveChatSidebarTarget(source, session, options.signal)
+    const current = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/policy/get', { chat_session_uid: source.ownerRef }, session, options.signal,
+    )
+    const pinned = options.pinned ?? numberValue(current.pin_state) === 2
+    const hidden = options.hidden ?? numberValue(current.show_in_home_state) === 2
+    const updatedAt = Date.now()
+    const writes: Array<Promise<unknown>> = [
+      this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/policy/update',
+        {
+          chat_session_uid: source.ownerRef,
+          show_in_home_state: hidden ? 2 : 1,
+          privacy_state: numberValue(current.privacy_state) || 1,
+          mute_state: numberValue(current.mute_state) || 1,
+          pin_state: pinned ? 2 : 1,
+          notify_state: numberValue(current.notify_state) || 1,
+          status: numberValue(current.status) || 1,
+          update_at: updatedAt,
+        },
+        session,
+        options.signal,
+      ),
+    ]
+    if (options.hidden !== undefined) {
+      writes.push(this.runtime.authenticatedSubjectPost<Record<string, unknown>>(
+        '/api/v1/subject/batch-set-sidebar-hidden-status',
+        {
+          items: [{
+            subject_uid: sidebarTarget.subjectUid,
+            hidden,
+            hidden_anchor_timestamp: hidden
+              ? Math.max(1, sidebarTarget.hiddenAnchorTimestamp || updatedAt)
+              : 0,
+          }],
+        },
+        session,
+        options.signal,
+      ))
+    }
+    if (options.pinned !== undefined) {
+      writes.push(this.runtime.authenticatedPost<Record<string, unknown>>(
+        '/api/v1/topics/pin/set',
+        {
+          topic_uid: sidebarTarget.subjectUid,
+          pin_state: pinned ? 1 : 2,
+          ...(pinned ? { pinned_at: updatedAt } : {}),
+        },
+        session,
+        options.signal,
+      ))
+    }
+    await Promise.all(writes)
+    const cacheKey = `${String(session.userId)}:${source.ownerRef}`
+    const cached = this.chatSourceCache.get(cacheKey)
+    if (cached !== undefined) this.chatSourceCache.set(cacheKey, { ...cached, isPinned: pinned })
+    this.sourceListCache.clear()
+    return { sourceRef, pinned, hidden }
+  }
+
+  private async resolveChatSidebarTarget(
+    source: ArkmeSourceRefPayload,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeChatSidebarTarget> {
+    if (source.sidebarSubjectUid !== undefined && source.sidebarSubjectUid.trim() !== '') {
+      return {
+        subjectUid: source.sidebarSubjectUid.trim(),
+        hiddenAnchorTimestamp: Math.max(0, source.sidebarHiddenAnchorTimestamp ?? 0),
+      }
+    }
+    const detail = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/detail',
+      { chat_session_uid: source.ownerRef },
+      session,
+      signal,
+      { lane: 'interactive-read', key: `chat-sidebar-target:${source.ownerRef}`, failureCooldownMs: 2_000 },
+    )
+    const target = arkmeChatSidebarTargetFromBundle(
+      detail,
+      source.kind === 'group_chat' ? source.ownerRef : '',
+    )
+    if (target === undefined) {
+      throw new ArkmePluginError(
+        'chat-sidebar-target-unavailable',
+        '未能定位该会话的跨端侧边栏数据，请刷新后重试',
+        true,
+        502,
+      )
+    }
+    return target
+  }
+
   async listGroupSources(
     options: { limit?: number; cursor?: string; signal?: AbortSignal; refresh?: boolean } = {},
   ): Promise<ArkmeSourceList> {
@@ -1181,7 +1312,9 @@ export class SourceService {
       const latestRecord = objectValue(latestPreview.record)
       const latestPayload = objectValue(latestRecord.payload)
       const unread = objectValue(bundle.unread_snapshot)
-      const isMuted = chatMessageDnd(bundle.current_policy) ?? false
+      const currentPolicy = objectValue(bundle.current_policy)
+      const isMuted = chatMessageDnd(currentPolicy) ?? false
+      const isPinned = numberValue(currentPolicy.pin_state) === 2
       const uid = stringValue(chatSession.chat_session_uid).trim()
       const sessionKind = numberValue(chatSession.session_kind)
       const kind: ArkmeSourceKind | undefined = sessionKind === 2
@@ -1209,13 +1342,17 @@ export class SourceService {
             ? undefined
             : backendMentionState === true || latestPreviewMentionsViewer
       const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
+      const sidebarTarget = arkmeChatSidebarTargetFromBundle(bundle, kind === 'group_chat' ? uid : '')
       const item: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(
           session.userId,
           kind,
           uid,
           displayName,
-          botGroupTarget === undefined ? {} : { botGroupTarget },
+          {
+            ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
+            ...(sidebarTarget === undefined ? {} : { sidebarTarget }),
+          },
         ),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
@@ -1225,6 +1362,7 @@ export class SourceService {
         unreadCount,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
         isMuted,
+        isPinned,
         ...((numberValue(unread.session_last_seq ?? chatSession.last_seq)) > 0
           ? { latestSequence: numberValue(unread.session_last_seq ?? chatSession.last_seq) }
           : {}),
@@ -1410,7 +1548,7 @@ export class SourceService {
     return `arkme-chat-source-v1.${digest}`
   }
 
-  private async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
+  async topicHierarchyKey(userId: number, topicUid: string): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`topic-hierarchy-key-v1:${String(userId)}:${topicUid.trim()}`)
       .digest('base64url')
@@ -1422,9 +1560,15 @@ export class SourceService {
     kind: ArkmeSourceKind,
     ownerRef: string,
     displayName: string,
-    options: { botGroupTarget?: ArkmeGroupBotBindingTarget } = {},
+    options: {
+      botGroupTarget?: ArkmeGroupBotBindingTarget
+      sidebarTarget?: ArkmeChatSidebarTarget
+    } = {},
   ): Promise<string> {
     const botGroupTarget = kind === 'group_chat' ? sanitizeGroupBotBindingTarget(options.botGroupTarget) : undefined
+    const sidebarTarget = kind === 'private_chat' || kind === 'group_chat'
+      ? options.sidebarTarget
+      : undefined
     const payload = encodeOpaqueJson({
       version: 1,
       userId,
@@ -1432,6 +1576,10 @@ export class SourceService {
       ownerRef,
       displayName,
       ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
+      ...(sidebarTarget === undefined ? {} : {
+        sidebarSubjectUid: sidebarTarget.subjectUid,
+        sidebarHiddenAnchorTimestamp: sidebarTarget.hiddenAnchorTimestamp,
+      }),
     } satisfies ArkmeSourceRefPayload)
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `arkme-source-v1.${payload}.${signature}`
@@ -1465,6 +1613,11 @@ export class SourceService {
         const botGroupTarget = sanitizeGroupBotBindingTarget(parsed.botGroupTarget)
         return botGroupTarget === undefined ? {} : { botGroupTarget }
       })() : {}),
+      ...((kind === 'private_chat' || kind === 'group_chat') ? (() => {
+        const sidebarSubjectUid = stringValue(parsed.sidebarSubjectUid).trim()
+        const sidebarHiddenAnchorTimestamp = Math.max(0, numberValue(parsed.sidebarHiddenAnchorTimestamp))
+        return sidebarSubjectUid === '' ? {} : { sidebarSubjectUid, sidebarHiddenAnchorTimestamp }
+      })() : {}),
     }
     if (parsed.version !== 1 || result.userId !== expectedUserId || !isSourceKind(kind)
       || result.ownerRef === '' || result.displayName === '') {
@@ -1483,7 +1636,15 @@ export class SourceService {
         source.kind,
         source.ownerRef,
         source.displayName,
-        source.botGroupTarget === undefined ? {} : { botGroupTarget: source.botGroupTarget },
+        {
+          ...(source.botGroupTarget === undefined ? {} : { botGroupTarget: source.botGroupTarget }),
+          ...(source.sidebarSubjectUid === undefined ? {} : {
+            sidebarTarget: {
+              subjectUid: source.sidebarSubjectUid,
+              hiddenAnchorTimestamp: source.sidebarHiddenAnchorTimestamp ?? 0,
+            },
+          }),
+        },
       ),
       ...(sourceKey === undefined ? {} : { sourceKey }),
       kind: source.kind,
@@ -1503,7 +1664,9 @@ export class SourceService {
     const counterpart = objectValue(bundle.private_counterpart)
     const supplement = objectValue(bundle.private_supplement)
     const unread = objectValue(bundle.unread_snapshot)
-    const isMuted = chatMessageDnd(bundle.current_policy) ?? cached?.isMuted ?? false
+    const currentPolicy = objectValue(bundle.current_policy)
+    const isMuted = chatMessageDnd(currentPolicy) ?? cached?.isMuted ?? false
+    const isPinned = numberValue(currentPolicy.pin_state) === 2
     const uid = stringValue(chatSession.chat_session_uid).trim()
     const sessionKind = numberValue(chatSession.session_kind)
     const kind: ArkmeSourceKind | undefined = sessionKind === 2
@@ -1538,13 +1701,17 @@ export class SourceService {
           ? cached?.hasUnreadMention
           : backendMentionState === true || latestMentionsViewer
     const botGroupTarget = kind === 'group_chat' ? arkmeGroupBotBindingTargetFromBundle(bundle) : undefined
+    const sidebarTarget = arkmeChatSidebarTargetFromBundle(bundle, kind === 'group_chat' ? uid : '')
     return {
       sourceRef: await this.sealSourceRef(
         session.userId,
         kind,
         uid,
         displayName,
-        botGroupTarget === undefined ? {} : { botGroupTarget },
+        {
+          ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
+          ...(sidebarTarget === undefined ? {} : { sidebarTarget }),
+        },
       ),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
@@ -1560,6 +1727,7 @@ export class SourceService {
       unreadCount,
       ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
       isMuted,
+      isPinned,
       ...(latestSequence > 0 ? { latestSequence } : {}),
     }
   }

@@ -808,6 +808,11 @@ export class ArkmeExtensionManager {
 		return assertSharedExtensionDetail(response.extension)
 	}
 
+	async resolveSharedCatalogDetail(shareRef: string, signal?: AbortSignal): Promise<ArkmeExtensionCatalogItem> {
+		const target = await this.client.resolveSharedCatalogTarget(requiredShareRef(shareRef), signal)
+		return await this.inspect(requiredId(target.extension_id, 'extension_id'), signal)
+	}
+
   async delete(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionDeleteResult> {
     return await this.client.deleteExtension(requiredId(extensionId, 'extension_id'), signal)
   }
