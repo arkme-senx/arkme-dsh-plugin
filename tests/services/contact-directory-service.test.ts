@@ -336,7 +336,9 @@ describe('ContactDirectoryService', () => {
     expect(page.items.map(item => item.displayName)).toEqual(['老张', '林林', '周周', '私聊陈', '吴吴'])
     expect(JSON.stringify(page)).not.toContain('direct-')
     expect(JSON.stringify(page)).not.toContain('base-')
-    expect(JSON.stringify(page)).not.toContain('999')
+    expect(page.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'contact', displayName: '机器人' }),
+    ]))
     expect(runtime.authenticatedChatPost).toHaveBeenCalledWith(
       '/api/v1/chats/list',
       { limit: 50, session_kind: 1 },
