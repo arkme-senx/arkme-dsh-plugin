@@ -446,16 +446,38 @@ function cleanAvatarRef(value: string | undefined): string | undefined {
 }
 
 function CallVideoIcon({ size = 16, style }: { size?: number; style?: CSSProperties }) {
-  return <img
-    src={`${CALL_ASSET_ROOT}/arkme-video-linear.svg`}
-    alt=""
+  return <svg
+    viewBox="0 0 24 24"
     width={size}
     height={size}
     aria-hidden="true"
-    draggable={false}
-    style={{ width: size, height: size, display: 'block', objectFit: 'contain', filter: 'var(--arkme-call-video-icon-filter, none)', ...style }}
+    focusable="false"
+    fill="none"
+    style={{ width: size, height: size, display: 'block', color: 'currentColor', ...style }}
     data-arkme-call-video-icon="compact"
-  />
+  >
+    <path
+      d="M12.53 20.42H6.21C3.05 20.42 2 18.32 2 16.21V7.79C2 4.63 3.05 3.58 6.21 3.58H12.53C15.69 3.58 16.74 4.63 16.74 7.79V16.21C16.74 19.37 15.68 20.42 12.53 20.42Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M19.52 17.1L16.74 15.15V8.84L19.52 6.89C20.88 5.94 22 6.52 22 8.19V15.81C22 17.48 20.88 18.06 19.52 17.1Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M11.5 11C12.33 11 13 10.33 13 9.5C13 8.67 12.33 8 11.5 8C10.67 8 10 8.67 10 9.5C10 10.33 10.67 11 11.5 11Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
 }
 
 function detailSubtitle(item: ArkmeCallHistoryItem): string {

@@ -606,7 +606,6 @@ body[data-ds-dark-theme] [data-arkme-workspace] {
   --arkme-focus: var(--dsw-alias-state-business-primary);
   color: var(--dsw-alias-label-primary);
 }
-body[data-ds-dark-theme] [data-arkme-call-surface] { --arkme-call-video-icon-filter: invert(1) brightness(1.8); }
 
 /* The permanent DSH seats use inline layout styles, so their light colors
    need explicit theme-scoped overrides without changing the seat geometry. */

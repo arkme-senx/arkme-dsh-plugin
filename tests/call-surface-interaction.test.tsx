@@ -144,8 +144,12 @@ describe('ArkmeCallSurface interactions', () => {
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.placeholder).toBe('输入即我号或昵称')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.color).toBe('var(--dsw-alias-label-primary, #17191c)')
     expect(renderer.root.findByProps({ 'aria-label': '搜索私聊联系人' }).props.style.fontSize).toBe(12)
-    expect(buttonByLabel(renderer, '和即我作者视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.style.filter)
-      .toBe('var(--arkme-call-video-icon-filter, none)')
+    const videoIcon = buttonByLabel(renderer, '和即我作者视频通话')
+      .findByProps({ 'data-arkme-call-video-icon': 'compact' })
+    expect(videoIcon.type).toBe('svg')
+    expect(videoIcon.props.style.color).toBe('currentColor')
+    expect(callSurfaceSource).toContain('stroke="currentColor"')
+    expect(callSurfaceSource).not.toContain('--arkme-call-video-icon-filter')
     expect(callSurfaceSource).not.toContain('useCallSurfaceDarkMode')
     expect(callSurfaceSource).not.toContain('MutationObserver')
     expect(callSurfaceSource).not.toContain('darkCallStyles')
@@ -790,8 +794,10 @@ describe('ArkmeCallSurface interactions', () => {
       await tick()
     })
 
-    expect(buttonByLabel(renderer, '直接和lucis视频通话').findByProps({ 'data-arkme-call-video-icon': 'compact' }).props.src)
-      .toBe('/arkme-self/api/call/arkme-video-linear.svg')
+    const videoIcon = buttonByLabel(renderer, '直接和lucis视频通话')
+      .findByProps({ 'data-arkme-call-video-icon': 'compact' })
+    expect(videoIcon.type).toBe('svg')
+    expect(videoIcon.props.style.color).toBe('currentColor')
 
     await act(async () => {
       buttonByLabel(renderer, '直接和lucis视频通话').props.onClick()
