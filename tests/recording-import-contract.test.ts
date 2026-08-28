@@ -5,6 +5,7 @@ import {
   advanceRecordingImportJob,
   openRecordingImportRef,
   recordingImportFileKind,
+  recordingImportCanonicalMimeType,
   sealRecordingImportRef,
   toPublicRecordingImportJob,
   type RecordingImportJob,
@@ -15,7 +16,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     jobId: 'job-1',
     userId: 42,
     revision: 1,
-    phase: 'validating',
+    phase: 'prepared',
     fileName: 'meeting.m4a',
     mimeType: 'audio/mp4',
     fileSize: 1024,
@@ -36,7 +37,10 @@ describe('recording import contract', () => {
     ['voice.wav', 'audio/wav', 'wav'],
     ['VOICE.WAV', 'audio/x-wav', 'wav'],
     ['meeting.mp3', 'audio/mpeg', 'mp3'],
+    ['meeting.mp3', 'audio/mp3', 'mp3'],
     ['memo.m4a', 'audio/mp4', 'm4a'],
+    ['memo.m4a', '', 'm4a'],
+    ['memo.m4a', 'application/octet-stream', 'm4a'],
   ] as const)('accepts the desktop recording formats: %s', (fileName, mimeType, expected) => {
     expect(recordingImportFileKind({
       fileName,
@@ -55,6 +59,12 @@ describe('recording import contract', () => {
     })).toThrowError(/格式与文件内容不一致/)
   })
 
+  it('normalizes Browser MIME hints before remote upload', () => {
+    expect(recordingImportCanonicalMimeType('wav')).toBe('audio/wav')
+    expect(recordingImportCanonicalMimeType('mp3')).toBe('audio/mpeg')
+    expect(recordingImportCanonicalMimeType('m4a')).toBe('audio/mp4')
+  })
+
   it('rejects files beyond the desktop size and duration boundary', () => {
     expect(() => recordingImportFileKind({
       fileName: 'meeting.wav', mimeType: 'audio/wav',
@@ -67,14 +77,14 @@ describe('recording import contract', () => {
   })
 
   it('advances only from the current revision and legal phase', () => {
-    const prepared = advanceRecordingImportJob(job(), {
+    const uploading = advanceRecordingImportJob(job(), {
       expectedRevision: 1,
-      phase: 'prepared',
+      phase: 'uploading',
       nowMillis: 1_725_000_000_200,
     })
-    expect(prepared).toMatchObject({ phase: 'prepared', revision: 2, updatedAtMillis: 1_725_000_000_200 })
-    expect(() => advanceRecordingImportJob(prepared, {
-      expectedRevision: 1, phase: 'uploading', nowMillis: 1_725_000_000_300,
+    expect(uploading).toMatchObject({ phase: 'uploading', revision: 2, updatedAtMillis: 1_725_000_000_200 })
+    expect(() => advanceRecordingImportJob(uploading, {
+      expectedRevision: 1, phase: 'finalizing', nowMillis: 1_725_000_000_300,
     })).toThrowError(/任务状态已变化/)
     expect(() => advanceRecordingImportJob(job({ phase: 'accepted' }), {
       expectedRevision: 1, phase: 'uploading', nowMillis: 1_725_000_000_300,

@@ -9,21 +9,33 @@ const styles: Record<string, CSSProperties> = {
   button: { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', fontSize: 10 },
 }
 
-const activePhases = new Set<RecordingImportSnapshot['phase']>(['receiving', 'validating', 'prepared', 'uploading', 'finalizing', 'processing'])
+const activePhases = new Set<RecordingImportSnapshot['phase']>(['prepared', 'uploading', 'finalizing'])
 const phaseLabel: Record<RecordingImportSnapshot['phase'], string> = {
-  receiving: '正在接收', validating: '正在校验', prepared: '准备上传', uploading: '上传中',
-  finalizing: '正在确认', processing: '处理中', accepted: '已导入', failed: '导入失败', cancelled: '已取消',
+  prepared: '准备上传', uploading: '上传中', finalizing: '正在确认',
+  accepted: '已导入', failed: '导入失败', cancelled: '已取消',
+}
+
+export function hasNewlyAcceptedRecordingImport(
+  previous: readonly RecordingImportSnapshot[],
+  next: readonly RecordingImportSnapshot[],
+): boolean {
+  const previousPhases = new Map(previous.map(item => [item.importRef, item.phase]))
+  return next.some(item => item.phase === 'accepted'
+    && previousPhases.has(item.importRef)
+    && previousPhases.get(item.importRef) !== 'accepted')
 }
 
 export function ArkmeRecordingImportJobs({ refreshKey, onAccepted }: { refreshKey: number; onAccepted(): void }) {
   const [jobs, setJobs] = useState<RecordingImportSnapshot[]>([])
   const jobsRef = useRef<RecordingImportSnapshot[]>([])
   const [error, setError] = useState('')
+  const [pendingRefs, setPendingRefs] = useState<Set<string>>(new Set())
+  const pendingRefsRef = useRef(new Set<string>())
   const load = async () => {
     try {
       const next = await callArkme<RecordingImportSnapshot[]>('recordings.import.list')
       const previous = jobsRef.current
-      const newlyAccepted = next.some(item => item.phase === 'accepted') && !previous.some(item => item.phase === 'accepted')
+      const newlyAccepted = hasNewlyAcceptedRecordingImport(previous, next)
       jobsRef.current = next
       setJobs(next); setError('')
       if (newlyAccepted) onAccepted()
@@ -59,6 +71,22 @@ export function ArkmeRecordingImportJobs({ refreshKey, onAccepted }: { refreshKe
     }
   }, [refreshKey])
 
+  const mutate = async (intent: 'recordings.import.retry' | 'recordings.import.cancel', job: RecordingImportSnapshot) => {
+    if (pendingRefsRef.current.has(job.importRef)) return
+    pendingRefsRef.current.add(job.importRef)
+    setPendingRefs(new Set(pendingRefsRef.current))
+    setError('')
+    try {
+      await callArkme(intent, { importRef: job.importRef, expectedRevision: job.revision })
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '导入任务操作失败')
+    } finally {
+      pendingRefsRef.current.delete(job.importRef)
+      setPendingRefs(new Set(pendingRefsRef.current))
+    }
+  }
+
   if (jobs.length === 0 && error === '') return null
   return <section style={styles.list} aria-label="最近导入">
     <strong style={{ fontSize: 11 }}>最近导入</strong>
@@ -68,9 +96,9 @@ export function ArkmeRecordingImportJobs({ refreshKey, onAccepted }: { refreshKe
       {job.phase === 'uploading' && <progress max={1} value={job.progress} aria-label={`${job.fileName}上传进度`} />}
       {job.phase === 'failed' && <div style={styles.line}>
         <span style={{ color: arkmeTheme.danger }}>{job.errorMessage}</span>
-        {job.retryable && <button type="button" style={styles.button} onClick={() => { void callArkme('recordings.import.retry', { importRef: job.importRef, expectedRevision: job.revision }).then(load) }}>重试</button>}
+        {job.retryable && <button type="button" style={styles.button} disabled={pendingRefs.has(job.importRef)} onClick={() => { void mutate('recordings.import.retry', job) }}>重试</button>}
       </div>}
-      {activePhases.has(job.phase) && job.phase !== 'processing' && <button type="button" style={styles.button} onClick={() => { void callArkme('recordings.import.cancel', { importRef: job.importRef, expectedRevision: job.revision }).then(load) }}>取消</button>}
+      {(activePhases.has(job.phase) || job.phase === 'failed') && <button type="button" style={styles.button} disabled={pendingRefs.has(job.importRef)} onClick={() => { void mutate('recordings.import.cancel', job) }}>{pendingRefs.has(job.importRef) ? '处理中…' : '取消任务'}</button>}
     </div>)}
   </section>
 }

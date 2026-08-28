@@ -6,7 +6,7 @@ export { ArkmeClientError } from '../sdk/index.js'
 export interface RecordingImportSnapshot {
   importRef: string
   revision: number
-  phase: 'receiving' | 'validating' | 'prepared' | 'uploading' | 'finalizing' | 'processing' | 'accepted' | 'failed' | 'cancelled'
+  phase: 'prepared' | 'uploading' | 'finalizing' | 'accepted' | 'failed' | 'cancelled'
   fileName: string
   fileSize: number
   durationMillis: number

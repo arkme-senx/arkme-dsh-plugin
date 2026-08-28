@@ -49,8 +49,10 @@ export interface StateStore {
   putLongArticleDraft(userId: number, draft: ArkmeLongArticleDraft): Promise<void>
   removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void>
   listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]>
+  listAllRecordingImportJobs(): Promise<RecordingImportJob[]>
   getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined>
   putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void>
+  putRecordingImportJobIfAbsent(userId: number, job: RecordingImportJob): Promise<RecordingImportJob>
   replaceRecordingImportJob(userId: number, job: RecordingImportJob, expectedRevision: number): Promise<boolean>
 }
 

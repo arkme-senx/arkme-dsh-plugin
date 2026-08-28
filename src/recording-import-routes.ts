@@ -21,6 +21,7 @@ export async function scavengeRecordingImportTemporaryFiles(
   directory: string,
   nowMillis = Date.now(),
   ttlMillis = RECORDING_IMPORT_TEMPORARY_FILE_TTL_MILLIS,
+  protectedPaths: ReadonlySet<string> = new Set(),
 ): Promise<number> {
   let entries
   try { entries = await readdir(directory, { withFileTypes: true }) } catch { return 0 }
@@ -28,6 +29,7 @@ export async function scavengeRecordingImportTemporaryFiles(
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.upload')) continue
     const path = join(directory, entry.name)
+    if (protectedPaths.has(path)) continue
     try {
       const metadata = await stat(path)
       if (nowMillis - metadata.mtimeMs < ttlMillis) continue

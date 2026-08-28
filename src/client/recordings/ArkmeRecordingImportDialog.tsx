@@ -41,14 +41,24 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
 
+  const resetSelection = () => {
+    selectionRevisionRef.current += 1
+    setFile(undefined); setSelection(undefined); setValidating(false); setError('')
+  }
+
+  const close = () => {
+    if (pending) return
+    resetSelection()
+    dialogRef.current?.close()
+  }
+
   const submit = async () => {
     if (file === undefined || selection?.ok !== true || pending || validating) return
     setPending(true); setError('')
     try {
       onAccepted(await uploadArkmeRecording(importPath, file, new Date(startAt).getTime()))
       dialogRef.current?.close()
-      setFile(undefined)
-      setSelection(undefined)
+      resetSelection()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '录音导入失败')
     } finally { setPending(false) }
@@ -65,7 +75,10 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
 
   return <>
     <button type="button" style={styles.button} onClick={() => { dialogRef.current?.showModal() }}>导入录音</button>
-    <dialog ref={dialogRef} style={styles.dialog} aria-label="导入录音">
+    <dialog ref={dialogRef} style={styles.dialog} aria-label="导入录音" onCancel={event => {
+      event.preventDefault()
+      close()
+    }}>
       <div style={styles.grid}>
         <strong>导入录音</strong>
         <input aria-label="选择录音文件" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { void selectFile(event.target.files?.[0]) }} />
@@ -80,7 +93,7 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
         <label>录音开始时间<input aria-label="录音开始时间" type="datetime-local" value={startAt} onChange={event => { setStartAt(event.target.value) }} /></label>
         {error !== '' && <div role="alert" style={{ color: arkmeTheme.danger }}>{error}</div>}
         <div style={styles.footer}>
-          <button type="button" style={styles.secondary} disabled={pending} onClick={() => { dialogRef.current?.close() }}>取消</button>
+          <button type="button" style={styles.secondary} disabled={pending} onClick={close}>取消</button>
           <button type="button" style={styles.button} disabled={file === undefined || selection?.ok !== true || pending || validating || !Number.isFinite(new Date(startAt).getTime())} onClick={() => { void submit() }}>{pending ? '正在接收…' : '开始导入'}</button>
         </div>
       </div>

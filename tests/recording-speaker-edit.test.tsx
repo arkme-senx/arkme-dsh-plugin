@@ -11,7 +11,7 @@ describe('recording speaker editor', () => {
     }} onUpdated={() => {}} onClose={() => {}} />)
     expect(markup).toContain('编辑“说话人 1”')
     expect(markup).toContain('新说话人名称')
-    expect(markup).toContain('批量修改当天 3 处')
+    expect(markup).toContain('批量修改当前录音 3 处')
     expect(markup).not.toContain('解绑')
   })
 })

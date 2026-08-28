@@ -217,4 +217,20 @@ describe('recording import route', () => {
     await expect(scavengeRecordingImportTemporaryFiles(root, 100_000, 10_000)).resolves.toBe(1)
     expect((await readdir(root)).sort()).toEqual(['fresh.upload', 'keep.txt'])
   })
+
+  it('never scavenges a stale file that is still referenced by a resumable job', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-route-'))
+    const protectedUpload = join(root, 'protected.upload')
+    const orphan = join(root, 'orphan.upload')
+    await Promise.all([writeFile(protectedUpload, 'active'), writeFile(orphan, 'orphan')])
+    await Promise.all([
+      utimes(protectedUpload, new Date(1_000), new Date(1_000)),
+      utimes(orphan, new Date(1_000), new Date(1_000)),
+    ])
+
+    await expect(scavengeRecordingImportTemporaryFiles(
+      root, 100_000, 10_000, new Set([protectedUpload]),
+    )).resolves.toBe(1)
+    expect(await readdir(root)).toEqual(['protected.upload'])
+  })
 })

@@ -5,6 +5,7 @@ import {
   RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS,
   recordingTimelineDayBounds,
   recordingTimelineFollowStart,
+  recordingTimelineInitialView,
   recordingSegmentLayout,
   recordingTimelineItemAt,
   recordingTimelinePanStart,
@@ -38,6 +39,13 @@ describe('recording timeline math', () => {
       86_400, 43_200, 21_600, 10_800, 7_200, 3_600, 1_800, 900,
       600, 300, 180, 60, 30, 15, 10, 5,
     ])
+  })
+
+  it('opens real recordings in the desktop 30-minute context and keeps empty days at 24 hours', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    expect(recordingTimelineInitialView([{ startAtMillis: dayStart + 8 * 3_600_000 }] as never, dayStart, dayStart + 86_400_000))
+      .toEqual({ zoomIndex: 6, windowStart: dayStart + 8 * 3_600_000 - 300_000 })
+    expect(recordingTimelineInitialView([], dayStart, dayStart + 86_400_000)).toEqual({ zoomIndex: 0, windowStart: dayStart })
   })
 
   it('clips the workbench to the local day even when a transcript crosses midnight', () => {
@@ -132,7 +140,9 @@ describe('recording timeline math', () => {
     />)
     expect(markup).toContain('role="slider"')
     expect(markup).toContain('暂停录音')
-    expect(markup).toContain('24小时')
+    expect(markup).toContain('30分钟')
     expect(markup).toContain('说话人 1，播放该片段')
+    expect(markup).toContain('24 小时缩略导航')
+    expect(markup).toContain('可视范围说话人')
   })
 })
