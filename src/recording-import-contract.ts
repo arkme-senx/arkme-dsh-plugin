@@ -25,7 +25,7 @@ export interface RecordingImportJob {
   sha256: string
   startAtMillis: number
   belongUserId: number
-  temporaryPath: string
+  sourceHandle: string
   uploadedBytes: number
   createdAtMillis: number
   updatedAtMillis: number
@@ -37,6 +37,14 @@ export interface RecordingImportJob {
   retryable?: boolean | undefined
   failedFromPhase?: Exclude<RecordingImportPhase, 'failed' | 'cancelled' | 'accepted'> | undefined
   uploadCheckpoint?: Record<string, unknown> | undefined
+}
+
+export interface RecordingImportSource {
+  inspect(
+    sourceHandle: string,
+    metadata: { fileName: string; mimeType: string; fileSize: number },
+  ): Promise<{ kind: RecordingImportFileKind; durationMillis: number }>
+  discard(sourceHandle: string): Promise<void>
 }
 
 export function sameRecordingImportIdentity(

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
-import { RecordingService } from '../../src/services/recording-service.js'
+import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
+import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { ArkmeStateStore } from '../../src/state-store.js'
 import type { RecordingImportGateway } from '../../src/recording-import-coordinator.js'
@@ -40,7 +41,7 @@ describe('RecordingService', () => {
       async write() {}, async delete() {},
     }
     const store = new ArkmeStateStore(root)
-    const service = new RecordingService(new ServiceRuntime(config, sessions, store), undefined, gatewayNoop())
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies())
 
     await expect(service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
@@ -55,7 +56,7 @@ describe('RecordingService', () => {
       async write() {}, async delete() {},
     }
     const stateStore = { async uniqueCode() { return 'device-secret' } } as StateStore
-    const service = new RecordingService(new ServiceRuntime(config, sessions, stateStore))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, stateStore), dependencies())
     const payload = {
       version: 1 as const, dateStamp: 1_787_155_200_000, content: 'transcript' as const,
       itemOffset: 3, textOffset: 120, fingerprint: 'fingerprint-1',
@@ -80,12 +81,12 @@ describe('RecordingService', () => {
     const gateway: RecordingImportGateway = {
       ensureSession: vi.fn(async () => 'session-1'),
       createChild: vi.fn(async () => 'child-1'),
-      uploadObject: vi.fn(async (job, _path, progress) => { await uploadGate; await progress(job.fileSize) }),
+      upload: vi.fn(async (job, progress) => { await uploadGate; await progress(job.fileSize) }),
       finishChild: vi.fn(async () => undefined),
       finishSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     }
-    const service = new RecordingService(new ServiceRuntime(config, sessions, stateStore), undefined, gateway)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, stateStore), dependencies(gateway))
 
     const accepted = await service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
@@ -126,13 +127,13 @@ describe('RecordingService', () => {
     const gateway: RecordingImportGateway = {
       ensureSession: vi.fn(async () => 'session-1'),
       createChild: vi.fn(async () => 'child-1'),
-      uploadObject: vi.fn(async () => await new Promise<void>(() => undefined)),
+      upload: vi.fn(async () => await new Promise<void>(() => undefined)),
       finishChild: vi.fn(async () => undefined),
       finishSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     }
     const service = new RecordingService(
-      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), undefined, gateway,
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gateway),
     )
     const metadata = {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
@@ -167,7 +168,7 @@ describe('RecordingService', () => {
     const gateway: RecordingImportGateway = {
       ensureSession: vi.fn(async () => 'session-1'),
       createChild: vi.fn(async () => 'child-1'),
-      uploadObject: vi.fn(async (_job, _objectPath, _progress, signal) => {
+      upload: vi.fn(async (_job, _progress, signal) => {
         uploadStarted?.()
         await new Promise<void>((_resolve, reject) => {
           signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
@@ -178,7 +179,7 @@ describe('RecordingService', () => {
       deleteSession: vi.fn(async () => undefined),
     }
     const service = new RecordingService(
-      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), undefined, gateway,
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root)), dependencies(gateway),
     )
     const accepted = await service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
@@ -228,9 +229,7 @@ describe('RecordingService', () => {
     const gateway = gatewayNoop()
     const service = new RecordingService(
       new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
-      undefined,
-      gateway,
-      media,
+      dependencies(gateway, { media }),
     )
 
     const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
@@ -316,8 +315,7 @@ describe('RecordingService', () => {
     }) as typeof fetch
     const service = new RecordingService(
       new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
-      undefined,
-      gatewayNoop(),
+      dependencies(),
     )
     const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
 
@@ -334,11 +332,14 @@ describe('RecordingService', () => {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
     }
-    const service = new RecordingService(new ServiceRuntime(
-      { ...config, recordingWorkbenchV2Enabled: false },
-      sessions,
-      { async uniqueCode() { return 'device-secret' } } as StateStore,
-    ))
+    const service = new RecordingService(
+      new ServiceRuntime(
+        { ...config, recordingWorkbenchV2Enabled: false },
+        sessions,
+        { async uniqueCode() { return 'device-secret' } } as StateStore,
+      ),
+      dependencies(),
+    )
 
     await expect(service.recordingPlayback('opaque-item')).rejects.toMatchObject({
       code: 'recording-workbench-disabled', retryable: false,
@@ -349,7 +350,18 @@ describe('RecordingService', () => {
 function gatewayNoop(): RecordingImportGateway {
   return {
     async ensureSession() { return 'session' },
-    async createChild() { return 'child' }, async uploadObject() {},
+    async createChild() { return 'child' }, async upload() {},
     async finishChild() {}, async finishSession() {}, async deleteSession() {},
+  }
+}
+
+function dependencies(
+  recordingImportGateway: RecordingImportGateway = gatewayNoop(),
+  overrides: Partial<RecordingServiceDependencies> = {},
+): RecordingServiceDependencies {
+  return {
+    recordingImportGateway,
+    recordingImportSource: new LocalRecordingImportSource(),
+    ...overrides,
   }
 }

@@ -546,8 +546,8 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
     const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
-      .filter(job => !['accepted', 'cancelled'].includes(job.phase) && job.temporaryPath !== '')
-      .map(job => job.temporaryPath))
+      .filter(job => !['accepted', 'cancelled'].includes(job.phase) && job.sourceHandle !== '')
+      .map(job => job.sourceHandle))
     await scavengeRecordingImportTemporaryFiles(
       join(stateDirectory, 'recording-imports'),
       Date.now(),

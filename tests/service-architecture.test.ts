@@ -121,6 +121,27 @@ describe('Arkme service architecture', () => {
     }
   })
 
+  it('keeps recording import business orchestration independent from filesystem and OSS layout details', () => {
+    const contract = readFileSync(join(root, 'src/recording-import-contract.ts'), 'utf8')
+    const recordingService = readFileSync(join(root, 'src/services/recording-service.ts'), 'utf8')
+    const coordinator = readFileSync(join(root, 'src/recording-import-coordinator.ts'), 'utf8')
+
+    expect(contract).toContain('sourceHandle')
+    expect(contract).not.toContain('sourceRef')
+    expect(recordingService).not.toContain('AudioRecordingImportGateway')
+    expect(recordingService).not.toContain('probeRecordingImportFile')
+    expect(recordingService).not.toMatch(/from ['"]node:fs/)
+    expect(coordinator).not.toMatch(/from ['"]node:fs/)
+    expect(coordinator).not.toContain('pc_upload/')
+    expect(coordinator).not.toContain('arkme_')
+
+    const gateway = readFileSync(join(root, 'src/services/recording-import-gateway.ts'), 'utf8')
+    const source = readFileSync(join(root, 'src/recording-import-probe.ts'), 'utf8')
+    expect(gateway).toContain('pc_upload/')
+    expect(gateway).toContain('arkme_')
+    expect(source).toMatch(/from ['"]node:fs/)
+  })
+
   it('keeps direct-conversation and group Bot projections behind separate mappers', () => {
     const botService = readFileSync(join(root, 'src/services/bot-service.ts'), 'utf8')
     const arkmeService = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')

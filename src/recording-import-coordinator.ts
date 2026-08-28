@@ -1,9 +1,9 @@
-import { unlink } from 'node:fs/promises'
 import {
   RecordingImportContractError,
   advanceRecordingImportJob,
   type RecordingImportJob,
   type RecordingImportPhase,
+  type RecordingImportSource,
 } from './recording-import-contract.js'
 
 export interface RecordingImportStore {
@@ -13,10 +13,9 @@ export interface RecordingImportStore {
 
 export interface RecordingImportGateway {
   ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string>
-  createChild(job: RecordingImportJob, remoteFileName: string, signal?: AbortSignal): Promise<string>
-  uploadObject(
+  createChild(job: RecordingImportJob, signal?: AbortSignal): Promise<string>
+  upload(
     job: RecordingImportJob,
-    objectPath: string,
     onProgress: (uploadedBytes: number, checkpoint?: Record<string, unknown>) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void>
@@ -42,15 +41,11 @@ function errorDetail(error: unknown): { code: string; message: string; retryable
   }
 }
 
-function remoteFileName(job: RecordingImportJob): string {
-  const extension = job.fileName.trim().toLowerCase().match(/\.[^.]+$/)?.[0] ?? ''
-  return `arkme_${job.jobId}_0${extension}`
-}
-
 export class RecordingImportCoordinator {
   constructor(
     private readonly store: RecordingImportStore,
     private readonly gateway: RecordingImportGateway,
+    private readonly source: RecordingImportSource,
     private readonly activeUserId: () => Promise<number>,
     private readonly nowMillis: () => number = Date.now,
   ) {}
@@ -62,13 +57,13 @@ export class RecordingImportCoordinator {
       if (job.phase === 'prepared') job = await this.prepareOwnerUpload(job, signal)
       if (job.phase === 'uploading') job = await this.upload(job, signal)
       if (job.phase === 'finalizing') {
-        const temporaryPath = job.temporaryPath
+        const sourceHandle = job.sourceHandle
         job = await this.finalize(job, signal)
         job = await this.transition(job, 'accepted', {
-          temporaryPath: '', sha256: '', sessionId: undefined, childId: undefined,
+          sourceHandle: '', sha256: '', sessionId: undefined, childId: undefined,
           childFinished: undefined, uploadCheckpoint: undefined,
         })
-        await unlink(temporaryPath).catch(() => undefined)
+        await this.source.discard(sourceHandle).catch(() => undefined)
       }
       return job
     } catch (error) {
@@ -116,12 +111,12 @@ export class RecordingImportCoordinator {
     }
     await this.assertActiveAccount(job.userId)
     await this.gateway.deleteSession(job)
-    const temporaryPath = job.temporaryPath
+    const sourceHandle = job.sourceHandle
     const cancelled = await this.transition(job, 'cancelled', {
-      temporaryPath: '', sha256: '', sessionId: undefined, childId: undefined,
+      sourceHandle: '', sha256: '', sessionId: undefined, childId: undefined,
       childFinished: undefined, uploadCheckpoint: undefined,
     })
-    await unlink(temporaryPath).catch(() => undefined)
+    await this.source.discard(sourceHandle).catch(() => undefined)
     return cancelled
   }
 
@@ -135,7 +130,7 @@ export class RecordingImportCoordinator {
     }
     if (job.childId === undefined) {
       await this.assertActiveAccount(job.userId)
-      const childId = (await this.gateway.createChild(job, remoteFileName(job), signal)).trim()
+      const childId = (await this.gateway.createChild(job, signal)).trim()
       if (childId === '') throw new RecordingImportContractError('recording-import-child-invalid', 'Audio 子任务创建响应无效', true)
       job = await this.checkpoint(job, { childId })
     }
@@ -148,8 +143,7 @@ export class RecordingImportCoordinator {
     if (job.sessionId === undefined || job.childId === undefined) {
       throw new RecordingImportContractError('recording-import-checkpoint-missing', '录音导入缺少 owner 检查点', true)
     }
-    const objectPath = `pc_upload/${String(job.userId)}/${job.sessionId}/${remoteFileName(job)}`
-    await this.gateway.uploadObject(job, objectPath, async (uploadedBytes, uploadCheckpoint) => {
+    await this.gateway.upload(job, async (uploadedBytes, uploadCheckpoint) => {
       this.throwIfAborted(signal)
       await this.assertActiveAccount(job.userId)
       if (uploadedBytes >= job.fileSize) return

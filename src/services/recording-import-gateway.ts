@@ -39,6 +39,11 @@ function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+function remoteFileName(job: RecordingImportJob): string {
+  const extension = job.fileName.trim().toLowerCase().match(/\.[^.]+$/)?.[0] ?? ''
+  return `arkme_${job.jobId}_0${extension}`
+}
+
 export class AudioRecordingImportGateway implements RecordingImportGateway {
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -77,7 +82,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
     return stringValue(data.session_id).trim()
   }
 
-  async createChild(job: RecordingImportJob, remoteFileName: string, signal?: AbortSignal): Promise<string> {
+  async createChild(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
     if (job.sessionId === undefined) throw new ArkmePluginError('recording-import-session-missing', '录音导入缺少 Audio 会话', true)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/new-child',
@@ -85,7 +90,7 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
         session_id: job.sessionId,
         start_at: 0,
         duration: job.durationMillis,
-        file_name: remoteFileName,
+        file_name: remoteFileName(job),
         source_size: job.fileSize,
       },
       await this.requireJobSession(job),
@@ -95,12 +100,12 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
     return stringValue(data.child_id).trim()
   }
 
-  async uploadObject(
+  async upload(
     job: RecordingImportJob,
-    objectPath: string,
     onProgress: (uploadedBytes: number, checkpoint?: Record<string, unknown>) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
+    if (job.sessionId === undefined) throw new ArkmePluginError('recording-import-session-missing', '录音导入缺少 Audio 会话', true)
     await this.requireJobSession(job)
     const credentials = await this.audioOssCredentials(job, signal)
     const client = this.createOssClient({
@@ -133,7 +138,8 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
     }
     signal?.addEventListener('abort', abort, { once: true })
     try {
-      const upload = client.multipartUpload(objectPath, job.temporaryPath, {
+      const objectPath = `pc_upload/${String(job.userId)}/${job.sessionId}/${remoteFileName(job)}`
+      const upload = client.multipartUpload(objectPath, job.sourceHandle, {
         parallel: 1,
         partSize: 5 * 1024 * 1024,
         checkpoint: job.uploadCheckpoint,

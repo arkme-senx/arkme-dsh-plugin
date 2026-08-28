@@ -1,9 +1,10 @@
-import { stat } from 'node:fs/promises'
+import { stat, unlink } from 'node:fs/promises'
 import { FilePathSource, Input, MP3, MP4, WAVE } from 'mediabunny'
 import {
   RecordingImportContractError,
   recordingImportFileKind,
   type RecordingImportFileKind,
+  type RecordingImportSource,
 } from './recording-import-contract.js'
 
 export interface RecordingImportProbe {
@@ -54,5 +55,18 @@ export async function probeRecordingImportFile(
     throw new RecordingImportContractError('recording-import-probe-failed', '录音文件校验失败')
   } finally {
     input.dispose()
+  }
+}
+
+export class LocalRecordingImportSource implements RecordingImportSource {
+  async inspect(
+    sourceHandle: string,
+    metadata: { fileName: string; mimeType: string; fileSize: number },
+  ): Promise<RecordingImportProbe> {
+    return await probeRecordingImportFile(sourceHandle, metadata)
+  }
+
+  async discard(sourceHandle: string): Promise<void> {
+    await unlink(sourceHandle).catch(() => undefined)
   }
 }
