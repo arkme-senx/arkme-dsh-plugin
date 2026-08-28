@@ -241,6 +241,29 @@ function versionLabel(version: ArkmeRecordingVersion): string {
   return `${time}${version.modelDisplayName === '' ? '' : ` · ${version.modelDisplayName}`}`
 }
 
+export type RecordingWorkbenchLayoutMode = 'wide' | 'compact' | 'stacked'
+
+export function recordingWorkbenchLayoutMode(viewportWidth: number): RecordingWorkbenchLayoutMode {
+  if (viewportWidth < 720) return 'stacked'
+  if (viewportWidth < 1_000) return 'compact'
+  return 'wide'
+}
+
+function currentRecordingLayoutMode(): RecordingWorkbenchLayoutMode {
+  return typeof window === 'undefined' ? 'wide' : recordingWorkbenchLayoutMode(window.innerWidth)
+}
+
+function subscribeRecordingLayout(onChange: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined
+  if (typeof window.matchMedia !== 'function') {
+    window.addEventListener('resize', onChange)
+    return () => { window.removeEventListener('resize', onChange) }
+  }
+  const queries = [window.matchMedia('(max-width: 719px)'), window.matchMedia('(min-width: 720px) and (max-width: 999px)')]
+  for (const query of queries) query.addEventListener('change', onChange)
+  return () => { for (const query of queries) query.removeEventListener('change', onChange) }
+}
+
 function SectionState({ section, loading }: { section: ArkmeRecordingSection<unknown> | undefined; loading: boolean }) {
   if (loading) return <div style={styles.status}>正在读取…</div>
   if (section === undefined) return <div style={styles.status}>暂无数据</div>
@@ -310,6 +333,7 @@ export function ArkmeRecordingSurface() {
   const [importRefreshKey, setImportRefreshKey] = useState(0)
   const [editingSpeaker, setEditingSpeaker] = useState<ArkmeRecordingWorkbenchItem>()
   const playback = useRecordingPlayback(recordingMediaPath)
+  const layoutMode = useSyncExternalStore(subscribeRecordingLayout, currentRecordingLayoutMode, () => 'wide')
 
   useEffect(() => playback.stop, [playback.stop, selectedDate])
 
@@ -438,13 +462,24 @@ export function ArkmeRecordingSurface() {
 
   const dayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(selectedDate)
 
-  return <div style={styles.root}>
-    <aside style={styles.browser} aria-label="录音列表">
+  return <div
+    style={{
+      ...styles.root,
+      ...(layoutMode === 'compact' ? { gridTemplateColumns: 'minmax(300px,340px) minmax(0,1fr)' } : {}),
+      ...(layoutMode === 'stacked' ? { gridTemplateColumns: 'minmax(0,1fr)', gridTemplateRows: 'minmax(300px,46%) minmax(0,1fr)' } : {}),
+    }}
+    data-arkme-recording-layout={layoutMode}
+  >
+    <aside style={{
+      ...styles.browser,
+      ...(layoutMode === 'compact' ? { padding: '20px 12px 14px' } : {}),
+      ...(layoutMode === 'stacked' ? { overflowY: 'auto', padding: '16px 12px', borderRight: 0, borderBottom: `1px solid ${colors.border}` } : {}),
+    }} aria-label="录音列表">
       <header style={styles.browserHeading}>
         <div style={styles.browserHeadingRow}><h2 style={styles.browserTitle}>全天候录音</h2>{workbenchEnabled && <ArkmeRecordingImportDialog importPath={recordingImportPath} onAccepted={() => { setImportRefreshKey(value => value + 1) }} />}</div>
         <p style={styles.browserSubtitle}>查看每天的录音、转写、总结与时间轴。</p>
       </header>
-      <section style={styles.calendar} aria-label="选择录音日期">
+      <section style={{ ...styles.calendar, ...(layoutMode === 'wide' ? {} : { width: '100%' }) }} aria-label="选择录音日期">
         <header style={styles.monthHeader}>
           <div style={styles.navCluster}>
             <button type="button" style={styles.iconButton} aria-label="上个月" onClick={() => { setVisibleMonth(value => shiftMonth(value, -1)) }}><CaretRight size={16} style={styles.caretLeft} aria-hidden /></button>
@@ -497,7 +532,7 @@ export function ArkmeRecordingSurface() {
       }} />}
     </aside>
 
-    <section style={styles.content} aria-label="录音详情">
+    <section style={{ ...styles.content, ...(layoutMode === 'wide' ? {} : { padding: layoutMode === 'compact' ? '18px 14px' : 12 }) }} aria-label="录音详情">
       <div style={styles.dayTimeline}>
         <div style={styles.timelineTitle}>
           <div style={styles.timelineTitleLeft}><ClockCounterClockwise size={17} aria-hidden /><span style={styles.timelineTitleCopy}><strong style={styles.timelineStrong}>当天时间轴</strong><small style={styles.timelineSmall}>{dateTitle(selectedDate)}</small></span></div>
