@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -65,10 +65,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.30 更新",
-      "summary": "解决web模式下退出登录后不可用的问题+优化对话列表的卡片效果",
-      "publishedAt": "2026-08-27T06:38:33.059Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.30"
+      "title": "Arkme 插件 0.1.31 更新",
+      "summary": "Codex/ts0828 02 登录用户头像",
+      "publishedAt": "2026-08-28T09:02:02.580Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.31"
     }
   },
   "scripts": {
