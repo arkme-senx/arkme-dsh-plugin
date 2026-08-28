@@ -18,7 +18,6 @@ export const ARKME_MANAGED_PROVIDER = 'arkme-managed'
 export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 
 const ARKME_MANAGED_PROVIDER_NAME = 'Arkme · 余额计费'
-const ARKME_MANAGED_CATALOG_TTL_MS = 60_000
 const ARKME_MANAGED_CATALOG_TIMEOUT_MS = 10_000
 const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
 const ARKME_LOGIN_MESSAGE = '请先登录或重新登录 Arkme 后再使用托管模型'
@@ -318,7 +317,6 @@ class ManagedModelCatalog {
   private connectionSnapshot: DeepSeekConnectionOptions
   private modelIds = new Set<string>(ARKME_MANAGED_FALLBACK_MODELS.map(model => model.id))
   private hasRemoteSnapshot = false
-  private refreshedAt = 0
   private refreshPromise: Promise<void> | undefined
 
   constructor(
@@ -333,10 +331,6 @@ class ManagedModelCatalog {
 
   connection(): DeepSeekConnectionOptions {
     return this.connectionSnapshot
-  }
-
-  private isFresh(): boolean {
-    return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_TTL_MS
   }
 
   private async fetchCatalog(signal?: AbortSignal): Promise<void> {
@@ -383,7 +377,6 @@ class ManagedModelCatalog {
       this.connectionSnapshot = managedConnection(this.baseUrl, models)
       this.modelIds = new Set(models.map(model => model.id))
       this.hasRemoteSnapshot = true
-      this.refreshedAt = Date.now()
     } catch (error) {
       if (signal?.aborted === true) {
         throw localizeManagedAiError(new LlmError('Arkme 模型目录请求已取消', 'ABORTED', { cause: error }))
@@ -410,7 +403,6 @@ class ManagedModelCatalog {
   }
 
   async refreshForListing(): Promise<void> {
-    if (this.isFresh()) return
     try {
       await this.refresh()
     } catch {
@@ -419,14 +411,8 @@ class ManagedModelCatalog {
   }
 
   async ensureModel(model: string, signal?: AbortSignal): Promise<void> {
-    const known = this.modelIds.has(model)
-    if ((known && !this.hasRemoteSnapshot) || this.isFresh()) return
-    try {
-      await this.refresh(signal)
-    } catch (error) {
-      if (signal?.aborted === true) throw error
-      if (!known) throw error
-    }
+    if (this.modelIds.has(model) || this.hasRemoteSnapshot) return
+    await this.refresh(signal)
   }
 
   assertModel(model: string): void {

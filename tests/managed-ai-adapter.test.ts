@@ -180,30 +180,64 @@ describe('Arkme managed model adapter', () => {
   })
 
   it('keeps the last-good catalog when a later refresh is malformed', async () => {
-    let now = 10_000
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
     const catalogFetch = vi.fn()
       .mockResolvedValueOnce(managedCatalogResponse())
       .mockResolvedValueOnce(managedCatalogResponse([{ provider: 'arkme-managed' }]))
-    try {
-      const adapter = createManagedAiLlmAdapter({
-        intelligentBaseUrl: 'https://intelligent.test',
-        credentialOwner: {
-          resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
-        },
-        resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
-        fetchImpl: catalogFetch,
-      })
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: catalogFetch,
+    })
 
-      const first = await adapter.listModels(ARKME_MANAGED_PROVIDER)
-      now += 60_001
-      const afterMalformedRefresh = await adapter.listModels(ARKME_MANAGED_PROVIDER)
+    const first = await adapter.listModels(ARKME_MANAGED_PROVIDER)
+    const afterMalformedRefresh = await adapter.listModels(ARKME_MANAGED_PROVIDER)
 
-      expect(afterMalformedRefresh).toEqual(first)
-      expect(catalogFetch).toHaveBeenCalledTimes(2)
-    } finally {
-      nowSpy.mockRestore()
-    }
+    expect(afterMalformedRefresh).toEqual(first)
+    expect(catalogFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes on each model listing without refreshing known model use', async () => {
+    const catalogFetch = vi.fn(async () => managedCatalogResponse())
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: catalogFetch,
+    })
+
+    await adapter.listModels(ARKME_MANAGED_PROVIDER)
+    await adapter.resolveModel(ARKME_MANAGED_PROVIDER, 'qwen3.8-max')
+    expect(catalogFetch).toHaveBeenCalledTimes(1)
+
+    await adapter.listModels(ARKME_MANAGED_PROVIDER)
+    expect(catalogFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('coalesces concurrent model listings into one catalog request', async () => {
+    let releaseCatalog!: (response: Response) => void
+    const pendingCatalog = new Promise<Response>((resolve) => { releaseCatalog = resolve })
+    const catalogFetch = vi.fn(() => pendingCatalog)
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: catalogFetch,
+    })
+
+    const first = adapter.listModels(ARKME_MANAGED_PROVIDER)
+    const second = adapter.listModels(ARKME_MANAGED_PROVIDER)
+    await vi.waitFor(() => { expect(catalogFetch).toHaveBeenCalledTimes(1) })
+    releaseCatalog(managedCatalogResponse())
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+    expect(catalogFetch).toHaveBeenCalledTimes(1)
   })
 
   it('removes the legacy fallback when the backend publishes an empty active catalog', async () => {
