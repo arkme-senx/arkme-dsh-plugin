@@ -105,8 +105,6 @@ function WechatIcon() {
   </svg>
 }
 
-const SHOW_WECHAT_PAYMENT_ENTRY = false
-
 interface ArkmeRechargeDialogViewProps {
   quotaState: ArkmeQuotaViewState
   productsState: ArkmeProductsViewState
@@ -188,14 +186,14 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
               <AlipayIcon />
               {props.creatingMethod === 'alipay_pc_web' ? '正在创建订单…' : '支付宝网页支付'}
             </button>
-            {SHOW_WECHAT_PAYMENT_ENTRY && <button
+            <button
               type="button"
               disabled={creating || method('wechat_native') === undefined}
               onClick={() => props.onPurchase('wechat_native')}
             >
               <WechatIcon />
               {props.creatingMethod === 'wechat_native' ? '正在创建订单…' : '微信扫码支付'}
-            </button>}
+            </button>
           </div>
         </div>}
         {props.purchaseError !== '' && <div className="arkme-billing-error is-purchase" role="alert">{props.purchaseError}</div>}

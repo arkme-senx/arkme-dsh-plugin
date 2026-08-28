@@ -64,7 +64,7 @@ describe('Arkme billing settings migration', () => {
     expect(markup).toMatch(/当前余额[\s\S]*class="arkme-redesign-update-button arkme-redesign-recharge-trigger"[\s\S]*>充值<\/button>/)
   })
 
-  it('renders a compact wrapping recharge dialog with only the temporarily enabled payment entry', () => {
+  it('renders both available payment entries in the recharge dialog', () => {
     const markup = renderToStaticMarkup(<ArkmeRechargeDialogView
       quotaState={{ kind: 'ready', quota: {
         availableNanoCny: '12801736510', totalNanoCny: '12801736510', reservedNanoCny: '0', currency: 'CNY',
@@ -88,7 +88,28 @@ describe('Arkme billing settings migration', () => {
     expect(markup).toMatch(/AI 余额 ¥10[\s\S]*AI 余额 ¥50[\s\S]*AI 余额 ¥100[\s\S]*AI 余额支付测试/)
     expect(markup).toMatch(/<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*支付宝网页支付/)
     expect(markup).toMatch(/<svg[^>]*class="arkme-billing-platform-icon is-alipay"[^>]*viewBox="0 0 1024 1024"[^>]*>[\s\S]*<path[^>]*fill="#009FE8"/)
-    expect(markup).not.toContain('微信扫码支付')
+    expect(markup).toMatch(/<button type="button"><svg[^>]*class="arkme-billing-platform-icon is-alipay"[^>]*>[\s\S]*?<\/svg>支付宝网页支付<\/button>/)
+    expect(markup).toMatch(/<button type="button"><svg[^>]*class="arkme-billing-platform-icon is-wechat"[^>]*>[\s\S]*?<\/svg>微信扫码支付<\/button>/)
     expect(markup).toContain('aria-label="关闭充值弹窗"')
+  })
+
+  it('disables payment entries not advertised by the selected product', () => {
+    const markup = renderToStaticMarkup(<ArkmeRechargeDialogView
+      quotaState={{ kind: 'ready', quota: {
+        availableNanoCny: '12801736510', totalNanoCny: '12801736510', reservedNanoCny: '0', currency: 'CNY',
+      } }}
+      productsState={{ kind: 'ready', products }}
+      selectedProductId="50"
+      creatingMethod={undefined}
+      purchaseError=""
+      onClose={noop}
+      onRefreshQuota={noop}
+      onRetryProducts={noop}
+      onSelectProduct={noop}
+      onPurchase={noop}
+    />)
+
+    expect(markup).toMatch(/<button type="button" disabled=""><svg[^>]*class="arkme-billing-platform-icon is-alipay"[^>]*>[\s\S]*?<\/svg>支付宝网页支付<\/button>/)
+    expect(markup).toMatch(/<button type="button" disabled=""><svg[^>]*class="arkme-billing-platform-icon is-wechat"[^>]*>[\s\S]*?<\/svg>微信扫码支付<\/button>/)
   })
 })
