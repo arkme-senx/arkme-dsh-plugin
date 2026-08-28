@@ -794,91 +794,39 @@ export class ArkmeService {
   async listExtensionReviews(extensionIdValue: string, options: { limit?: number; offset?: number; signal?: AbortSignal } = {}): Promise<ArkmeExtensionReviewPage> { return await this.extensionReview.listExtensionReviews(extensionIdValue, options) }
   async createExtensionReview(input: ArkmeExtensionReviewCreateInput, signal?: AbortSignal): Promise<ArkmeExtensionReviewCreateResult> { return await this.extensionReview.createExtensionReview(input, signal) }
 
-  /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
-  async recordingCalendar(
-    fromStamp: number,
-    toStamp: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingCalendarMonth> {
-    return await this.recording.recordingCalendar(fromStamp, toStamp, signal)
-  }
+  async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
+  async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
+  async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
+  async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> { return await this.recording.sealRecordingCursor(payload) }
+  async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> { return await this.recording.openRecordingCursor(cursor) }
+  async recordingDay(dateStamp: number): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp) }
 
-  /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
-  async recordingTranscript(
-    dateStamp: number,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingTranscriptSection> {
-    return await this.recording.recordingTranscript(dateStamp, signal)
-  }
-
-  /** Read-only Audio capability shared by the built-in UI and Arkme recording tools. */
-  async recordingProjection(
-    dateStamp: number,
-    kind: ArkmeRecordingProjectionKind,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
-    return await this.recording.recordingProjection(dateStamp, kind, signal)
-  }
-
-  async sealRecordingCursor(payload: ArkmeRecordingCursorPayload): Promise<string> {
-    return await this.recording.sealRecordingCursor(payload)
-  }
-
-  async openRecordingCursor(cursor: string): Promise<ArkmeRecordingCursorPayload> {
-    return await this.recording.openRecordingCursor(cursor)
-  }
-
-  /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
-  async recordingDay(dateStamp: number): Promise<ArkmeRecordingDay> {
-    return await this.recording.recordingDay(dateStamp)
-  }
-
-  async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> {
-    return await this.recording.recordingPlayback(itemRef, signal)
-  }
-
-  async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> {
-    return await this.recording.recordingSpeakerOptions(itemRef, signal)
-  }
+  async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
+  async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> { return await this.recording.recordingSpeakerOptions(itemRef, signal) }
 
   async assignRecordingSpeaker(
     input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' },
     signal?: AbortSignal,
-  ): Promise<ArkmeRecordingSpeakerMutationResult> {
-    return await this.recording.assignRecordingSpeaker(input, signal)
-  }
+  ): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
 
   /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
   async acceptRecordingImport(
     temporaryPath: string,
     metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
-  ): Promise<PublicRecordingImportJob> {
-    return await this.recording.acceptRecordingImport(temporaryPath, metadata)
-  }
+  ): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(temporaryPath, metadata) }
 
   /** @internal Built-in loopback UI only. */
-  async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> {
-    return await this.recording.recordingImportStatus(importRef)
-  }
+  async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }
 
   /** @internal Built-in loopback UI only. */
-  async recordingImportList(): Promise<PublicRecordingImportJob[]> {
-    return await this.recording.recordingImportList()
-  }
+  async recordingImportList(): Promise<PublicRecordingImportJob[]> { return await this.recording.recordingImportList() }
 
   /** @internal Built-in loopback UI only. */
-  async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
-    return await this.recording.retryRecordingImport(importRef, expectedRevision)
-  }
+  async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.retryRecordingImport(importRef, expectedRevision) }
 
   /** @internal Built-in loopback UI only. */
-  async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
-    return await this.recording.cancelRecordingImport(importRef, expectedRevision)
-  }
-
-  async resumeRecordingImports(): Promise<void> {
-    await this.recording.resumeRecordingImports()
-  }
+  async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> { return await this.recording.cancelRecordingImport(importRef, expectedRevision) }
+  async resumeRecordingImports(): Promise<void> { await this.recording.resumeRecordingImports() }
 
   async refreshProfile(): Promise<ArkmeUserProfileSnapshot> {
     return await this.profile.refreshProfile()
