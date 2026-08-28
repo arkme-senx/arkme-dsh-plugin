@@ -63,6 +63,7 @@ import { MediaService, type ArkmeMediaDescriptor } from './media-service.js'
 import { ProfileService } from './profile-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { arkmeRecordCaptureContextPayload, RecordService } from './record-service.js'
+import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
 import {
@@ -3167,6 +3168,31 @@ export class ChatService {
         })
       }
       return items
+    }
+
+  async relatedQuickNoteLocator(
+      sourceRef: string,
+      messageActionRef: string,
+    ): Promise<ArkmeRelatedQuickNoteSourceLocator> {
+      const session = await this.runtime.requireSession()
+      const normalizedSourceRef = sourceRef.trim()
+      const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+      const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
+      const ownerUserId = reference.recordOwnerUserId > 0
+        ? reference.recordOwnerUserId
+        : reference.senderUserId
+      if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) {
+        throw new ArkmePluginError('related-quick-note-source-invalid', '当前快记缺少作者定位，请刷新后重试', false, 409)
+      }
+      return {
+        viewerUserId: session.userId,
+        sourceRef: normalizedSourceRef,
+        sourceOwnerRef: source.ownerRef,
+        contextType: reference.sourceKind === 'chat_relation' ? 'chat' : 'record',
+        recordUid: reference.recordUid,
+        recordOwnerUserId: ownerUserId,
+        chatSessionUid: reference.sourceKind === 'chat_relation' ? reference.chatSessionUid : '',
+      }
     }
   
   async chatForwardRecordsPreview(

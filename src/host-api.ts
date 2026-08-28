@@ -27,7 +27,9 @@ import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
 
-const MAX_REQUEST_BYTES = 128 * 1024
+const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
+const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
+const MAX_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
@@ -56,6 +58,10 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   const source = value as Record<string, unknown>
   if (typeof source.operation !== 'string') {
     throw new ArkmePluginError('operation-required', '缺少操作类型', false)
+  }
+  if (bytes > MAX_STANDARD_REQUEST_BYTES
+    && source.operation !== 'source.related-quick-notes.from-message') {
+    throw new ArkmePluginError('request-too-large', '请求内容过大', false, 413)
   }
   return {
     operation: source.operation as ArkmePluginRequest['operation'],
@@ -374,6 +380,18 @@ function requiredInterwovenParam(params: Record<string, unknown>, key: string): 
   const value = stringParam(params, key).trim()
   if (value === '' || value.length > 4096) {
     throw new ArkmePluginError('interwoven-param-invalid', '交织瞬间请求参数无效', false, 400)
+  }
+  return value
+}
+
+function requiredRelatedQuickNoteParam(
+  params: Record<string, unknown>,
+  key: string,
+  maxLength = 4096,
+): string {
+  const value = stringParam(params, key).trim()
+  if (value === '' || value.length > maxLength) {
+    throw new ArkmePluginError('related-quick-note-param-invalid', '相关快记请求参数无效', false, 400)
   }
   return value
 }
@@ -1145,6 +1163,21 @@ export async function dispatchArkmeHostOperation(
     case 'source.interwoven-detail': return await service.interwovenMomentDetail(
       requiredInterwovenParam(params, 'sourceRef'),
       requiredInterwovenParam(params, 'momentRef'),
+    )
+    case 'source.related-quick-notes.from-message': return await service.relatedQuickNotesFromMessage(
+      requiredRelatedQuickNoteParam(params, 'sourceRef'),
+      requiredRelatedQuickNoteParam(params, 'messageActionRef', MAX_MESSAGE_ACTION_REF_CHARS),
+      requestSignal,
+    )
+    case 'source.related-quick-notes.from-moment': return await service.relatedQuickNotesFromMoment(
+      requiredRelatedQuickNoteParam(params, 'sourceRef'),
+      requiredRelatedQuickNoteParam(params, 'momentRef'),
+      requestSignal,
+    )
+    case 'source.related-quick-note.detail': return await service.relatedQuickNoteDetail(
+      requiredRelatedQuickNoteParam(params, 'sourceRef'),
+      requiredRelatedQuickNoteParam(params, 'relatedRef'),
+      requestSignal,
     )
     case 'source.mark-read': return await service.markSourceRead(
       stringParam(params, 'sourceRef'),

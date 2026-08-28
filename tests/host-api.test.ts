@@ -34,6 +34,9 @@ function fakeService() {
     arkoCancel: vi.fn(async () => ({ status: 'cancel_requested' })),
     interwovenMoments: vi.fn(async (sourceRef: string) => ({ sourceRef })),
     interwovenMomentDetail: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    relatedQuickNotesFromMessage: vi.fn(async (sourceRef: string, messageActionRef: string) => ({ sourceRef, messageActionRef })),
+    relatedQuickNotesFromMoment: vi.fn(async (sourceRef: string, momentRef: string) => ({ sourceRef, momentRef })),
+    relatedQuickNoteDetail: vi.fn(async (sourceRef: string, relatedRef: string) => ({ sourceRef, relatedRef })),
     listSourceMembers: vi.fn(async (sourceRef: string, options: unknown) => ({ sourceRef, options })),
     sourceMemberRecords: vi.fn(async (sourceRef: string, memberRef: string, mode: string, options: unknown) => ({ sourceRef, memberRef, mode, options })),
     messageReadReceiptSummaries: vi.fn(async (sourceRef: string, items: unknown, options: unknown) => ({ sourceRef, items, options })),
@@ -594,6 +597,80 @@ describe('message action Host API dispatch', () => {
       targetSourceRef: 'target-source-ref',
       commentText: ' 附言 ',
     })
+  })
+})
+
+describe('related quick note Host API dispatch', () => {
+  it('forwards only viewer-safe opaque references and the request signal', async () => {
+    const service = fakeService()
+    const signal = new AbortController().signal
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-notes.from-message', {
+      sourceRef: ' source-ref ', messageActionRef: ' action-ref ',
+      recordUid: 'must-not-forward', recordOwnerUserId: 999, chatSessionUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-notes.from-moment', {
+      sourceRef: ' source-ref ', momentRef: ' moment-ref ', recordUid: 'must-not-forward',
+    }, undefined, undefined, undefined, undefined, signal)
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-note.detail', {
+      sourceRef: ' source-ref ', relatedRef: ' related-ref ', ownerUserId: 999,
+    }, undefined, undefined, undefined, undefined, signal)
+
+    expect(service.relatedQuickNotesFromMessage).toHaveBeenCalledWith('source-ref', 'action-ref', signal)
+    expect(service.relatedQuickNotesFromMoment).toHaveBeenCalledWith('source-ref', 'moment-ref', signal)
+    expect(service.relatedQuickNoteDetail).toHaveBeenCalledWith('source-ref', 'related-ref', signal)
+  })
+
+  it('accepts a long opaque message action reference within the signed envelope limit', async () => {
+    const service = fakeService()
+    const messageActionRef = `arkme-message-action-v1.${'a'.repeat(5_000)}.signature`
+
+    await dispatchArkmeHostOperation(service as never, 'source.related-quick-notes.from-message', {
+      sourceRef: 'source-ref', messageActionRef,
+    })
+
+    expect(service.relatedQuickNotesFromMessage).toHaveBeenCalledWith(
+      'source-ref', messageActionRef, undefined,
+    )
+  })
+
+  it('accepts a maximum-configured CJK action envelope without widening unrelated Host API requests', async () => {
+    const service = fakeService()
+    const encoded = Buffer.from(JSON.stringify({ textContent: '快'.repeat(100_000) })).toString('base64url')
+    const messageActionRef = `arkme-message-action-v1.${encoded}.signature`
+    const server = createServer(createArkmeHostApi(service as never, {
+      expectedPort: 0,
+      allowNonLoopback: false,
+    }))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('test server address missing')
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'source.related-quick-notes.from-message',
+          params: { sourceRef: 'source-ref', messageActionRef },
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(service.relatedQuickNotesFromMessage).toHaveBeenCalledWith(
+        'source-ref', messageActionRef, expect.any(AbortSignal),
+      )
+
+      const unrelated = await fetch(`http://127.0.0.1:${String(address.port)}/arkme-self/api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operation: 'billing.quota', params: { padding: 'a'.repeat(130 * 1024) } }),
+      })
+      expect(unrelated.status).toBe(413)
+      expect(service.billingQuota).not.toHaveBeenCalled()
+    } finally {
+      server.close()
+      await once(server, 'close')
+    }
   })
 })
 

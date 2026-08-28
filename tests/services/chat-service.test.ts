@@ -525,6 +525,50 @@ describe('ChatService', () => {
       .rejects.toMatchObject({ code: 'bot-chat-timeline-contract-invalid' })
   })
 
+  it('projects a realtime message action ref and resolves its related-note locator', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = {
+      requireSession: vi.fn(async () => session),
+      stateStore: { async uniqueCode() { return 'device-secret' } },
+      config: { maxTextLength: 20_000 },
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({
+        version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-1', displayName: '同事',
+      })),
+    }
+    const profile = { sealProfileImageRef: vi.fn(async () => 'opaque-avatar') }
+    const media = {
+      recordContentPayload: vi.fn(() => ({})),
+      richContentBlocks: vi.fn(() => []),
+    }
+    const arko = { currentUserAgentSourceFallback: vi.fn(() => undefined) }
+    const aiPolish = { timelineAiPolish: vi.fn(() => undefined) }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, media as never, {} as never,
+      {} as never, arko as never, aiPolish as never, {} as never,
+    )
+    const items = await chat.chatTimelineItems({ items: [{
+      relation: {
+        record_uid: 'record-b', rel_uid: 'relation-b', sender_user_id: 13,
+        record_owner_user_id: 13, display_name_snapshot: 'B 用户', attach_at: 1_710_000_000_000, seq: 8,
+      },
+      record: { status: 1, payload: { title: '', text_content: '问题不大', template_kind: 1, display_kind: 0 } },
+    }] }, session, 'chat-1')
+
+    expect(items[0]?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    await expect(chat.relatedQuickNoteLocator('source-ref', items[0]?.messageActionRef ?? ''))
+      .resolves.toEqual({
+        viewerUserId: 42,
+        sourceRef: 'source-ref',
+        sourceOwnerRef: 'chat-1',
+        contextType: 'chat',
+        recordUid: 'record-b',
+        recordOwnerUserId: 13,
+        chatSessionUid: 'chat-1',
+      })
+  })
+
   it('resolves normal message copy links using the Flutter source anchor field names', async () => {
     const runtime = {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),

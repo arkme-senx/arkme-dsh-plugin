@@ -11,6 +11,7 @@ import type {
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage, ArkmeMessageSnapshotDetail, ArkmeRecordLocationCapture,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
+  ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteItem, ArkmeRelatedQuickNoteList,
   ArkmeMessageCopyLinkExtendResult, ArkmeMessageCopyLinkExtensionItem, ArkmeMessageCopyLinkResolveResult, ArkmeMessageCopyLinkResult, ArkmeMessageCopyLinkSnapshotItem,
   ArkmeUploadedAsset, ArkmeSourceList, ArkmeUserProfile, ArkmeUserProfileSnapshot,
   ArkmeConversationMemberItem, ArkmeConversationMemberList, ArkmeConversationMemberRecordMode,
@@ -103,6 +104,12 @@ import {
   mergeConversationRows, resolveInterwovenGroupTarget,
   type ArkmeConversationRow, type ArkmeInterwovenDetailViewState,
 } from './interwoven-moments.js'
+import {
+  relatedDrawerBackTarget,
+  type ArkmeRelatedDrawerView,
+  type ArkmeRelatedQuickNoteDetailState,
+  type ArkmeRelatedQuickNotesLoadState,
+} from './ArkmeRelatedQuickNotes.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeWechatRequestStartedAfterAuthStatus } from './arkme-auth-flow.js'
 import {
@@ -770,6 +777,10 @@ export function arkmeShouldBeginWechat(
 function errorMessage(error: unknown): string {
   if (error instanceof ArkmeClientError) return error.body.message
   return error instanceof Error ? error.message : String(error)
+}
+
+function relatedQuickNoteReferenceExpired(error: unknown): boolean {
+  return error instanceof ArkmeClientError && error.body.code === 'related-quick-note-ref-expired'
 }
 
 function qrDataUrl(content: string): string {
@@ -1815,6 +1826,9 @@ export function ArkmeSurface({
   const [interwovenRefreshRevision, setInterwovenRefreshRevision] = useState(0)
   const [selectedMoment, setSelectedMoment] = useState<ArkmeInterwovenMention>()
   const [detailState, setDetailState] = useState<ArkmeInterwovenDetailViewState>()
+  const [momentRelatedView, setMomentRelatedView] = useState<ArkmeRelatedDrawerView>('source-detail')
+  const [momentRelatedState, setMomentRelatedState] = useState<ArkmeRelatedQuickNotesLoadState>({ kind: 'idle' })
+  const [momentRelatedDetailState, setMomentRelatedDetailState] = useState<ArkmeRelatedQuickNoteDetailState>({ kind: 'idle' })
   const [timelineLoadingSourceRef, setTimelineLoadingSourceRef] = useState('')
   const [timelineSkeletonSourceRef, setTimelineSkeletonSourceRef] = useState('')
   const [timelineRevealSourceRef, setTimelineRevealSourceRef] = useState('')
@@ -2057,6 +2071,9 @@ export function ArkmeSurface({
   const interwovenGenerationRef = useRef(0)
   const detailRequestRef = useRef<AbortController>()
   const detailRequestMomentRef = useRef('')
+  const momentRelatedRequestRef = useRef<AbortController>()
+  const momentRelatedDetailRequestRef = useRef<AbortController>()
+  const momentRelatedGenerationRef = useRef(0)
   const lastReadAckRef = useRef('')
   const bindingNotifiedUserIdRef = useRef<number | undefined>()
   const ignoreStaleBindingAuthRef = useRef(false)
@@ -2316,8 +2333,16 @@ export function ArkmeSurface({
       detailRequestRef.current?.abort()
       detailRequestRef.current = undefined
       detailRequestMomentRef.current = ''
+      momentRelatedGenerationRef.current += 1
+      momentRelatedRequestRef.current?.abort()
+      momentRelatedRequestRef.current = undefined
+      momentRelatedDetailRequestRef.current?.abort()
+      momentRelatedDetailRequestRef.current = undefined
       setSelectedMoment(undefined)
       setDetailState(undefined)
+      setMomentRelatedView('source-detail')
+      setMomentRelatedState({ kind: 'idle' })
+      setMomentRelatedDetailState({ kind: 'idle' })
     }
     if (kind !== 'related') closeRelatedPanel()
   }
@@ -2610,11 +2635,19 @@ export function ArkmeSurface({
     interwovenGenerationRef.current += 1
     detailRequestRef.current?.abort()
     detailRequestMomentRef.current = ''
+    momentRelatedGenerationRef.current += 1
+    momentRelatedRequestRef.current?.abort()
+    momentRelatedRequestRef.current = undefined
+    momentRelatedDetailRequestRef.current?.abort()
+    momentRelatedDetailRequestRef.current = undefined
     setInterwovenMoments(sourceRef === undefined
       ? []
       : conversationCacheRef.current.getInterwovenMoments(sourceRef) ?? [])
     setSelectedMoment(undefined)
     setDetailState(undefined)
+    setMomentRelatedView('source-detail')
+    setMomentRelatedState({ kind: 'idle' })
+    setMomentRelatedDetailState({ kind: 'idle' })
   }, [authenticated, auth?.userId, source?.sourceRef])
   useEffect(() => {
     if (!authenticated || source === undefined) return
@@ -3377,15 +3410,75 @@ export function ArkmeSurface({
     arkmeUi.focusSendToSelf()
   }, [])
 
+  const loadMomentRelated = async (moment: ArkmeInterwovenMention) => {
+    if (source === undefined || source.kind !== 'private_chat') return
+    momentRelatedRequestRef.current?.abort()
+    const controller = new AbortController()
+    const generation = ++momentRelatedGenerationRef.current
+    momentRelatedRequestRef.current = controller
+    setMomentRelatedState({ kind: 'loading' })
+    try {
+      const list = await callArkme<ArkmeRelatedQuickNoteList>('source.related-quick-notes.from-moment', {
+        sourceRef: source.sourceRef,
+        momentRef: moment.momentRef,
+      }, controller.signal)
+      if (controller.signal.aborted || momentRelatedRequestRef.current !== controller
+        || generation !== momentRelatedGenerationRef.current) return
+      setMomentRelatedState(list.items.length === 0 ? { kind: 'empty' } : { kind: 'success', list })
+    } catch (caught) {
+      if (controller.signal.aborted || momentRelatedRequestRef.current !== controller
+        || generation !== momentRelatedGenerationRef.current) return
+      setMomentRelatedState({ kind: 'error', message: errorMessage(caught) })
+    } finally {
+      if (momentRelatedRequestRef.current === controller) momentRelatedRequestRef.current = undefined
+    }
+  }
+
+  const loadMomentRelatedDetail = async (relatedItem: ArkmeRelatedQuickNoteItem) => {
+    if (source === undefined || source.kind !== 'private_chat') return
+    momentRelatedDetailRequestRef.current?.abort()
+    const controller = new AbortController()
+    momentRelatedDetailRequestRef.current = controller
+    setMomentRelatedView('related-detail')
+    setMomentRelatedDetailState({ kind: 'loading' })
+    try {
+      const detail = await callArkme<ArkmeRelatedQuickNoteDetail>('source.related-quick-note.detail', {
+        sourceRef: source.sourceRef,
+        relatedRef: relatedItem.relatedRef,
+      }, controller.signal)
+      if (controller.signal.aborted || momentRelatedDetailRequestRef.current !== controller) return
+      setMomentRelatedDetailState({ kind: 'success', item: relatedItem, detail })
+    } catch (caught) {
+      if (controller.signal.aborted || momentRelatedDetailRequestRef.current !== controller) return
+      if (relatedQuickNoteReferenceExpired(caught)) {
+        setMomentRelatedDetailState({ kind: 'idle' })
+        setMomentRelatedView('related-list')
+        if (selectedMoment !== undefined) await loadMomentRelated(selectedMoment)
+        return
+      }
+      setMomentRelatedDetailState({ kind: 'error', item: relatedItem, message: errorMessage(caught) })
+    } finally {
+      if (momentRelatedDetailRequestRef.current === controller) momentRelatedDetailRequestRef.current = undefined
+    }
+  }
+
   const loadMomentDetail = async (moment: ArkmeInterwovenMention, force = false) => {
     if (source === undefined || source.kind !== 'private_chat') return
     if (!force && detailRequestMomentRef.current === moment.momentId) return
     detailRequestRef.current?.abort()
+    momentRelatedGenerationRef.current += 1
+    momentRelatedRequestRef.current?.abort()
+    momentRelatedRequestRef.current = undefined
+    momentRelatedDetailRequestRef.current?.abort()
+    momentRelatedDetailRequestRef.current = undefined
     const controller = new AbortController()
     detailRequestRef.current = controller
     detailRequestMomentRef.current = moment.momentId
     setSelectedMoment(moment)
     setDetailState({ kind: 'loading' })
+    setMomentRelatedView('source-detail')
+    setMomentRelatedState({ kind: 'idle' })
+    setMomentRelatedDetailState({ kind: 'idle' })
     try {
       const detail = await callArkme<ArkmeInterwovenDetail>('source.interwoven-detail', {
         sourceRef: source.sourceRef,
@@ -3393,6 +3486,7 @@ export function ArkmeSurface({
       }, controller.signal)
       if (detailRequestRef.current !== controller) return
       setDetailState({ kind: 'success', detail })
+      void loadMomentRelated(moment)
     } catch (caught) {
       if (detailRequestRef.current !== controller) return
       setDetailState({ kind: 'error', message: errorMessage(caught) })
@@ -3415,8 +3509,24 @@ export function ArkmeSurface({
     detailRequestRef.current?.abort()
     detailRequestRef.current = undefined
     detailRequestMomentRef.current = ''
+    momentRelatedGenerationRef.current += 1
+    momentRelatedRequestRef.current?.abort()
+    momentRelatedRequestRef.current = undefined
+    momentRelatedDetailRequestRef.current?.abort()
+    momentRelatedDetailRequestRef.current = undefined
     setSelectedMoment(undefined)
     setDetailState(undefined)
+    setMomentRelatedView('source-detail')
+    setMomentRelatedState({ kind: 'idle' })
+    setMomentRelatedDetailState({ kind: 'idle' })
+  }
+
+  const backMomentRelated = () => {
+    if (momentRelatedView === 'related-detail') {
+      momentRelatedDetailRequestRef.current?.abort()
+      momentRelatedDetailRequestRef.current = undefined
+    }
+    setMomentRelatedView(relatedDrawerBackTarget(momentRelatedView))
   }
 
   const displayItems = useMemo(() => {
@@ -4956,8 +5066,18 @@ export function ArkmeSurface({
       />}
       {selectedMoment !== undefined && detailState !== undefined && <ArkmeInterwovenDetailAside
         state={detailState}
+        relatedView={momentRelatedView}
+        relatedState={momentRelatedState}
+        relatedDetailState={momentRelatedDetailState}
+        shareWebsite={shareWebsite}
+        {...(source === undefined ? {} : { sourceRef: source.sourceRef })}
         onClose={closeMomentDetail}
         onRetry={() => { void loadMomentDetail(selectedMoment, true) }}
+        onOpenRelated={() => { setMomentRelatedView('related-list') }}
+        onSelectRelated={item => { void loadMomentRelatedDetail(item) }}
+        onBackRelated={backMomentRelated}
+        onRetryRelated={() => { void loadMomentRelated(selectedMoment) }}
+        onRetryRelatedDetail={item => { void loadMomentRelatedDetail(item) }}
         {...(detailGroupTarget === undefined ? {} : { onOpenGroup: () => {
           closeMomentDetail()
           arkmeUi.selectSource(detailGroupTarget)

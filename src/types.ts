@@ -1388,6 +1388,48 @@ export interface ArkmeTimelineItem {
   sharedRecording?: ArkmeSharedRecordingPreview
 }
 
+/** Browser-safe summary of one quick note related to the current message or moment. */
+export interface ArkmeRelatedQuickNoteItem {
+  /** Viewer- and source-bound opaque reference used to open the related note. */
+  relatedRef: string
+  senderName: string
+  /** Opaque Provider image reference for the related note author. */
+  senderAvatarRef?: string
+  sendAtMillis: number
+  title: string
+  textPreview: string
+  sourceLabel?: string
+}
+
+export interface ArkmeRelatedQuickNoteList {
+  items: ArkmeRelatedQuickNoteItem[]
+  total: number
+}
+
+/** Allowlisted presentation fields for one related note; routing identifiers stay host-side. */
+export interface ArkmeRelatedQuickNoteDetail {
+  relatedRef: string
+  senderName: string
+  /** Opaque Provider image reference for the related note author. */
+  avatarRef?: string
+  isMe: boolean
+  sendAtMillis: number
+  title: string
+  textContent: string
+  status: number
+  recordVersion?: number
+  aiPolish?: ArkmeTimelineAiPolish
+  templateKind?: number
+  displayKind?: number
+  version?: number
+  updateAtMillis?: number
+  recordDurationMillis?: number
+  editDurationMillis?: number
+  contentBlocks?: ArkmeContentBlock[]
+  mediaUnavailable?: boolean
+  forwardRecords?: ArkmeForwardRecordsPreview
+}
+
 /** Identity of one message returned by an Arkme private/group timeline. */
 export interface ArkmeMessageReadReceiptQueryItem {
   itemUid: string
@@ -2863,6 +2905,9 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
   | 'source.shared-recording-detail'
+  | 'source.related-quick-notes.from-message'
+  | 'source.related-quick-notes.from-moment'
+  | 'source.related-quick-note.detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

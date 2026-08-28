@@ -61,6 +61,7 @@ import {
 import { OutgoingCallService } from './services/outgoing-call-service.js'
 import { ProfileService } from './services/profile-service.js'
 import { RecordService } from './services/record-service.js'
+import { RelatedQuickNoteService } from './services/related-quick-note-service.js'
 import { ArkmePrivacyVisibilityService } from './services/privacy-visibility.js'
 import { RecordingService } from './services/recording-service.js'
 import {
@@ -189,10 +190,7 @@ import type {
   ArkmeRecordingSection,
   ArkmeRecordingTranscriptSection,
   ArkmeRecordingVersion,
-  ArkmeRelatedRecordingEligibility,
-  ArkmeRelatedRecordingPage,
-  ArkmeRelatedRecordingPageOptions,
-  ArkmeRichSendInput, ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeMessageSnapshotDetail, ArkmeBotMentionInput, ArkmeHumanMentionInput,
+  ArkmeRelatedRecordingEligibility, ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteList, ArkmeRichSendInput, ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeMessageSnapshotDetail, ArkmeBotMentionInput, ArkmeHumanMentionInput,
   ArkmeSearchHistoryResult,
   ArkmeSearchSceneKind,
   ArkmeSelfRecordItem,
@@ -289,6 +287,7 @@ export class ArkmeService {
   private readonly linkMetadata: ArkmeLinkMetadataService
   private readonly aiPolish: GroupAiPolishService
   private readonly chat: ChatService
+  private readonly relatedQuickNote: RelatedQuickNoteService
   private readonly contact: ContactService
   private readonly contactDirectory: ContactDirectoryService
   private readonly unmarkedSpeaker: UnmarkedSpeakerService
@@ -381,6 +380,7 @@ export class ArkmeService {
       this.chat,
       async () => { await this.realtime.invalidateRecordProjection() },
     )
+    this.relatedQuickNote = new RelatedQuickNoteService(this.runtime, this.record, this.media, this.profile, this.privacy)
     this.contactDirectory = new ContactDirectoryService(
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
@@ -438,6 +438,7 @@ export class ArkmeService {
     this.media.dispose()
     this.aiPolish.dispose()
     this.interwoven.dispose()
+    this.relatedQuickNote.dispose()
     this.world.dispose()
     this.arrangement.dispose()
     this.contact.dispose()
@@ -754,6 +755,7 @@ export class ArkmeService {
     this.runtime.dispose()
     this.outgoingCall.dispose()
     this.interwoven.dispose()
+    this.relatedQuickNote.dispose()
     this.world.dispose()
     this.linkMetadata.dispose()
   }
@@ -1007,13 +1009,11 @@ export class ArkmeService {
   }
 
   /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
-  async interwovenMomentDetail(
-    sourceRef: string,
-    momentRef: string,
-    signal?: AbortSignal,
-  ): Promise<ArkmeInterwovenDetail> {
-    return await this.interwoven.interwovenMomentDetail(sourceRef, momentRef, signal)
-  }
+  async interwovenMomentDetail(sourceRef: string, momentRef: string, signal?: AbortSignal): Promise<ArkmeInterwovenDetail> { return await this.interwoven.interwovenMomentDetail(sourceRef, momentRef, signal) }
+
+  async relatedQuickNotesFromMessage(sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<ArkmeRelatedQuickNoteList> { return await this.relatedQuickNote.list(await this.chat.relatedQuickNoteLocator(sourceRef, messageActionRef), signal) }
+  async relatedQuickNotesFromMoment(sourceRef: string, momentRef: string, signal?: AbortSignal): Promise<ArkmeRelatedQuickNoteList> { return await this.relatedQuickNote.list(await this.interwoven.relatedQuickNoteLocator(sourceRef, momentRef, signal), signal) }
+  async relatedQuickNoteDetail(sourceRef: string, relatedRef: string, signal?: AbortSignal): Promise<ArkmeRelatedQuickNoteDetail> { return await this.relatedQuickNote.detail(sourceRef, relatedRef, signal) }
 
   async joinDSHBetaCommunity(signal?: AbortSignal): Promise<ArkmeDSHBetaCommunityJoinResult> {
     return await this.community.joinDSHBetaCommunity(signal)

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
-import type { ArkmeInterwovenMention, ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
+import type { ArkmeInterwovenMention, ArkmeRelatedQuickNoteList, ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
 import {
   ArkmeInterwovenDetailAside,
   ArkmeInterwovenMentionCard,
@@ -83,6 +84,62 @@ describe('interwoven conversation projection', () => {
 })
 
 describe('interwoven UI', () => {
+  it('restores source-detail and related-list scroll positions across nested navigation', () => {
+    const occurredAtMillis = new Date(2026, 7, 19, 15, 13).getTime()
+    const selected = vi.fn()
+    const opened = vi.fn()
+    const backed = vi.fn()
+    const scrollBody = { scrollTop: 0 }
+    const relatedList: ArkmeRelatedQuickNoteList = { total: 1, items: [{
+      relatedRef: 'opaque-related-b', senderName: '小林',
+      sendAtMillis: occurredAtMillis - 1, title: '', textPreview: '问题不大',
+    }] }
+    const sourceDetail = {
+      momentId: 'one', groupName: '即我大群', senderName: '小林', senderIsMe: false,
+      occurredAtMillis, title: '快记标题', textContent: '源快记正文', status: 1, degraded: false,
+    }
+    const sharedProps = {
+      state: { kind: 'success' as const, detail: sourceDetail },
+      relatedState: { kind: 'success' as const, list: relatedList },
+      onClose: vi.fn(), onRetry: vi.fn(), onOpenRelated: opened,
+      onSelectRelated: selected, onBackRelated: backed,
+    }
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<ArkmeInterwovenDetailAside {...sharedProps} relatedView="source-detail" />, {
+        createNodeMock: element => element.props['data-arkme-interwoven-aside-body'] === true ? scrollBody : {},
+      })
+    })
+
+    scrollBody.scrollTop = 211
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': '查看 1 条相关快记' }).props.onClick()
+      renderer.update(<ArkmeInterwovenDetailAside {...sharedProps} relatedView="related-list" />)
+    })
+    expect(opened).toHaveBeenCalledTimes(1)
+    scrollBody.scrollTop = 137
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': '打开相关快记：问题不大' }).props.onClick()
+    })
+    expect(selected).toHaveBeenCalledWith(relatedList.items[0])
+    act(() => {
+      renderer.update(<ArkmeInterwovenDetailAside {...sharedProps} relatedView="related-detail"
+        relatedDetailState={{ kind: 'loading', item: relatedList.items[0]! }} />)
+    })
+    scrollBody.scrollTop = 0
+    act(() => {
+      renderer.update(<ArkmeInterwovenDetailAside {...sharedProps} relatedView="related-list" />)
+    })
+
+    expect(scrollBody.scrollTop).toBe(137)
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick()
+      renderer.update(<ArkmeInterwovenDetailAside {...sharedProps} relatedView="source-detail" />)
+    })
+    expect(backed).toHaveBeenCalledTimes(1)
+    expect(scrollBody.scrollTop).toBe(211)
+  })
+
   it('renders the centered transparent 18px-avatar card as a native keyboard button', () => {
     const markup = renderToStaticMarkup(
       <ArkmeInterwovenMentionCard moment={moment('one', Date.now())} rowId="moment:one" onOpen={vi.fn()} />,
@@ -103,6 +160,13 @@ describe('interwoven UI', () => {
 
   it('renders distinct loading, error, success and degraded detail states', () => {
     const occurredAtMillis = new Date(2026, 7, 19, 15, 13).getTime()
+    const relatedList: ArkmeRelatedQuickNoteList = { total: 2, items: [{
+      relatedRef: 'opaque-related-b', senderName: '小林',
+      sendAtMillis: occurredAtMillis - 1, title: '', textPreview: '问题不大',
+    }, {
+      relatedRef: 'opaque-related-a', senderName: '我',
+      sendAtMillis: occurredAtMillis - 2, title: '', textPreview: '没什么问题',
+    }] }
     const loading = renderToStaticMarkup(
       <ArkmeInterwovenDetailAside state={{ kind: 'loading' }} onClose={vi.fn()} onRetry={vi.fn()} />,
     )
@@ -112,7 +176,27 @@ describe('interwoven UI', () => {
     const success = renderToStaticMarkup(<ArkmeInterwovenDetailAside state={{ kind: 'success', detail: {
       momentId: 'one', groupName: '即我大群', senderName: '小林', senderIsMe: false,
       occurredAtMillis, title: '快记标题', textContent: '你好 @1D3E，快记正文', status: 1, degraded: false,
-    } }} onClose={vi.fn()} onRetry={vi.fn()} onOpenGroup={vi.fn()} />)
+    } }} onClose={vi.fn()} onRetry={vi.fn()} onOpenGroup={vi.fn()}
+      relatedView="source-detail" relatedState={{ kind: 'success', list: relatedList }}
+      relatedDetailState={{ kind: 'idle' }} onOpenRelated={vi.fn()} onSelectRelated={vi.fn()}
+      onBackRelated={vi.fn()} onRetryRelated={vi.fn()} onRetryRelatedDetail={vi.fn()} />)
+    const relatedListMarkup = renderToStaticMarkup(<ArkmeInterwovenDetailAside state={{ kind: 'success', detail: {
+      momentId: 'one', groupName: '即我大群', senderName: '小林', senderIsMe: false,
+      occurredAtMillis, title: '快记标题', textContent: '源快记正文', status: 1, degraded: false,
+    } }} onClose={vi.fn()} onRetry={vi.fn()} relatedView="related-list"
+      relatedState={{ kind: 'success', list: relatedList }} relatedDetailState={{ kind: 'idle' }}
+      onOpenRelated={vi.fn()} onSelectRelated={vi.fn()} onBackRelated={vi.fn()}
+      onRetryRelated={vi.fn()} onRetryRelatedDetail={vi.fn()} />)
+    const relatedDetailMarkup = renderToStaticMarkup(<ArkmeInterwovenDetailAside state={{ kind: 'success', detail: {
+      momentId: 'one', groupName: '即我大群', senderName: '小林', senderIsMe: false,
+      occurredAtMillis, title: '快记标题', textContent: '源快记正文', status: 1, degraded: false,
+    } }} onClose={vi.fn()} onRetry={vi.fn()} relatedView="related-detail"
+      relatedState={{ kind: 'success', list: relatedList }} relatedDetailState={{ kind: 'success',
+        item: relatedList.items[0]!, detail: {
+          relatedRef: 'opaque-related-b', senderName: '小林', isMe: false, sendAtMillis: occurredAtMillis - 1,
+          title: '', textContent: '完整相关快记正文', status: 1,
+        } }} onOpenRelated={vi.fn()} onSelectRelated={vi.fn()} onBackRelated={vi.fn()}
+      onRetryRelated={vi.fn()} onRetryRelatedDetail={vi.fn()} />)
     const degraded = renderToStaticMarkup(<ArkmeInterwovenDetailAside state={{ kind: 'success', detail: {
       momentId: 'one', groupName: '即我大群', senderName: '小林', senderIsMe: false,
       occurredAtMillis, title: '快记标题', textContent: '', status: 3, degraded: true,
@@ -133,14 +217,20 @@ describe('interwoven UI', () => {
     expect(success).toContain('var(--dsw-alias-state-business-primary')
     expect(success).toContain('data-arkme-interwoven-group-target="即我大群"')
     expect(success).not.toContain('disabled=""')
-    expect(success).not.toContain('相关快记')
+    expect(success).toContain('相关快记')
+    expect(success).toContain('查看 2 条相关快记')
     expect(success).not.toContain('延展此快记')
+    expect(relatedListMarkup).toContain('2 条相关快记')
+    expect(relatedListMarkup).toContain('aria-label="返回快记详情"')
+    expect(relatedListMarkup).toContain('打开相关快记：问题不大')
+    expect(relatedDetailMarkup).toContain('完整相关快记正文')
+    expect(relatedDetailMarkup).toContain('aria-label="返回相关快记列表"')
     expect(degraded).toContain('正文暂时不可用')
     expect(degradedSummary).toContain('安全摘要')
     expect(degradedSummary).toContain('data-arkme-interwoven-degraded="true"')
     expect(degradedSummary).not.toContain('正文暂时不可用')
     expect(degraded).toContain('disabled=""')
-    for (const markup of [loading, error, success, degraded, degradedSummary]) {
+    for (const markup of [loading, error, success, relatedListMarkup, relatedDetailMarkup, degraded, degradedSummary]) {
       expect(markup).toContain('aria-label="关闭快记详情"')
       expect(markup).toContain('position:absolute')
       expect(markup).toContain('width:min(372px, 100%)')

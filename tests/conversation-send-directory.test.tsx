@@ -7,11 +7,14 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({
   callArkme: mocks.callArkme,
   ArkmeClientError: class ArkmeClientError extends Error {
-    body = { message: this.message }
+    constructor(readonly body: { code: string; message: string; retryable: boolean }) {
+      super(body.message)
+    }
   },
 }))
 
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
+import { ArkmeClientError } from '../src/client/api.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
@@ -646,5 +649,137 @@ describe('conversation send directory projection', () => {
     expect(arkmeChatDirectory.getSnapshot().sources[1]).toMatchObject({
       latestPreview: '@狗才 1', activeAtMillis: 22, latestSequence: 8,
     })
+  })
+
+  it('loads related quick notes for an interwoven moment and opens nested detail', async () => {
+    const interwovenMoment = {
+      momentId: 'moment-one', momentRef: 'opaque-moment-one', occurredAtMillis: 45,
+      groupName: '项目群', senderName: '小林', senderIsMe: false,
+      summary: '@狗才 问题不大', degraded: false,
+    }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile') return {
+        profile: {
+          userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+        }, cachedAtMillis: 1, revision: 1,
+      }
+      if (operation === 'source.members') return { source: target, items: [], total: 0, activeCount: 0 }
+      if (operation === 'source.timeline') return { source: target, items: [], hasMore: false }
+      if (operation === 'source.interwoven-moments') return {
+        state: 'success', moments: [interwovenMoment], preparedAtMillis: 48,
+      }
+      if (operation === 'source.interwoven-detail') return {
+        momentId: 'moment-one', groupName: '项目群', senderName: '小林', senderIsMe: false,
+        occurredAtMillis: 45, title: '', textContent: '@狗才 问题不大', status: 1, degraded: false,
+      }
+      if (operation === 'source.related-quick-notes.from-moment') return {
+        total: 1,
+        items: [{
+          relatedRef: 'opaque-related-one', senderName: '小林',
+          sendAtMillis: 44, title: '', textPreview: '没什么问题',
+        }],
+      }
+      if (operation === 'source.related-quick-note.detail') return {
+        relatedRef: 'opaque-related-one', senderName: '小林', isMe: false,
+        sendAtMillis: 44, title: '', textContent: '完整相关快记正文', status: 1,
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const momentCard = renderer!.root.findByProps({ 'data-arkme-interwoven-card': 'moment-one' })
+    await act(async () => {
+      momentCard.findByType('button').props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.callArkme).toHaveBeenCalledWith(
+      'source.related-quick-notes.from-moment',
+      { sourceRef: 'source-harness', momentRef: 'opaque-moment-one' },
+      expect.any(AbortSignal),
+    )
+    const relatedCard = renderer!.root.findByProps({ 'aria-label': '查看 1 条相关快记' })
+    act(() => { relatedCard.props.onClick() })
+    const row = renderer!.root.findByProps({ 'aria-label': '打开相关快记：没什么问题' })
+    await act(async () => {
+      row.props.onClick()
+      await Promise.resolve()
+    })
+    expect(mocks.callArkme).toHaveBeenCalledWith(
+      'source.related-quick-note.detail',
+      { sourceRef: 'source-harness', relatedRef: 'opaque-related-one' },
+      expect.any(AbortSignal),
+    )
+    expect(JSON.stringify(renderer!.toJSON())).toContain('完整相关快记正文')
+  })
+
+  it('refreshes interwoven related notes when a detail reference expires', async () => {
+    const interwovenMoment = {
+      momentId: 'moment-one', momentRef: 'opaque-moment-one', occurredAtMillis: 45,
+      groupName: '项目群', senderName: '小林', senderIsMe: false,
+      summary: '@狗才 问题不大', degraded: false,
+    }
+    let relatedListCalls = 0
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile') return {
+        profile: {
+          userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+        }, cachedAtMillis: 1, revision: 1,
+      }
+      if (operation === 'source.members') return { source: target, items: [], total: 0, activeCount: 0 }
+      if (operation === 'source.timeline') return { source: target, items: [], hasMore: false }
+      if (operation === 'source.interwoven-moments') return {
+        state: 'success', moments: [interwovenMoment], preparedAtMillis: 48,
+      }
+      if (operation === 'source.interwoven-detail') return {
+        momentId: 'moment-one', groupName: '项目群', senderName: '小林', senderIsMe: false,
+        occurredAtMillis: 45, title: '', textContent: '@狗才 问题不大', status: 1, degraded: false,
+      }
+      if (operation === 'source.related-quick-notes.from-moment') {
+        relatedListCalls += 1
+        return {
+          total: 1,
+          items: [{
+            relatedRef: relatedListCalls === 1 ? 'opaque-related-old' : 'opaque-related-fresh',
+            senderName: '小林', sendAtMillis: 44, title: '',
+            textPreview: relatedListCalls === 1 ? '旧引用快记' : '刷新后的相关快记',
+          }],
+        }
+      }
+      if (operation === 'source.related-quick-note.detail') {
+        throw new ArkmeClientError({
+          code: 'related-quick-note-ref-expired',
+          message: '相关快记引用已过期，请刷新后重试',
+          retryable: true,
+        })
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-arkme-interwoven-card': 'moment-one' }).findByType('button').props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => { renderer!.root.findByProps({ 'aria-label': '查看 1 条相关快记' }).props.onClick() })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '打开相关快记：旧引用快记' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(relatedListCalls).toBe(2)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '打开相关快记：刷新后的相关快记' })).toHaveLength(1)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('相关快记引用已过期，请刷新后重试')
   })
 })

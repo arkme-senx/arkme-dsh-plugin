@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention } from '../types.js'
 import { ProfileService } from './profile-service.js'
+import type { ArkmeRelatedQuickNoteSourceLocator } from './related-quick-note-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { SourceService, type ArkmeSourceRefPayload } from './source-service.js'
 
@@ -232,16 +233,7 @@ export class InterwovenService {
       throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
     }
     const reference = await this.openInterwovenMomentRef(momentRef, session.userId, source.ownerRef)
-    if (!this.runtime.config.interwovenMomentsEnabled) {
-      throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开启', false, 403)
-    }
-    const gate = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
-      '/api/v1/auth/able-func', { func_type: 12 }, session, signal,
-    )
-    if (!booleanValue(gate.able)) {
-      throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开放', false, 403)
-    }
-    await this.assertHumanPrivateSource(source, session, signal)
+    await this.assertInterwovenOperationAllowed(source, session, signal)
     if (reference.detailMode === 'owner_payload') {
       return {
         momentId: reference.momentId,
@@ -297,6 +289,50 @@ export class InterwovenService {
       status,
       degraded: status !== 1 || textContent === '',
     }
+  }
+
+  async relatedQuickNoteLocator(
+    sourceRef: string,
+    momentRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRelatedQuickNoteSourceLocator> {
+    const session = await this.runtime.requireSession()
+    const normalizedSourceRef = sourceRef.trim()
+    const source = await this.source.openSourceRef(normalizedSourceRef, session.userId)
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
+    }
+    const reference = await this.openInterwovenMomentRef(momentRef, session.userId, source.ownerRef)
+    await this.assertInterwovenOperationAllowed(source, session, signal)
+    return {
+      viewerUserId: session.userId,
+      sourceRef: normalizedSourceRef,
+      sourceOwnerRef: source.ownerRef,
+      contextType: reference.sourceChatSessionUid === '' ? 'record' : 'chat',
+      recordUid: reference.recordUid,
+      recordOwnerUserId: reference.recordOwnerUserId,
+      chatSessionUid: reference.sourceChatSessionUid,
+    }
+  }
+
+  private async assertInterwovenOperationAllowed(
+    source: ArkmeSourceRefPayload,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (source.kind !== 'private_chat') {
+      throw new ArkmePluginError('interwoven-source-invalid', '交织瞬间仅支持普通私聊', false, 400)
+    }
+    if (!this.runtime.config.interwovenMomentsEnabled) {
+      throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开启', false, 403)
+    }
+    const gate = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
+      '/api/v1/auth/able-func', { func_type: 12 }, session, signal,
+    )
+    if (!booleanValue(gate.able)) {
+      throw new ArkmePluginError('interwoven-disabled', '交织瞬间能力当前未开放', false, 403)
+    }
+    await this.assertHumanPrivateSource(source, session, signal)
   }
 
   private async assertHumanPrivateSource(
