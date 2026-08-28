@@ -3,9 +3,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ArkmeStateStore } from '../src/state-store.js'
+import type { RecordingImportJob } from '../src/recording-import-contract.js'
 import { expectPrivatePath } from './helpers/private-path.js'
 
 describe('ArkmeStateStore', () => {
+  function recordingJob(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
+    return {
+      jobId: 'job-1', userId: 10001, revision: 1, phase: 'prepared',
+      fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
+      durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
+      belongUserId: 10001, temporaryPath: '/private/job-1.upload', uploadedBytes: 0,
+      createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
+      ...overrides,
+    }
+  }
+
   it('persists a stable device id and account-isolated pending writes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-state-'))
     const store = new ArkmeStateStore(root)
@@ -49,5 +61,29 @@ describe('ArkmeStateStore', () => {
     await reloaded.removeLongArticleDraft(10001, 'source-a', 'record-1')
     await expect(reloaded.getLongArticleDraft(10001, 'source-a', 'record-1')).resolves.toBeUndefined()
     await expect(reloaded.getLongArticleDraft(10001, 'source-a')).resolves.toMatchObject({ title: '新建' })
+  })
+
+  it('persists recording import checkpoints and replaces them with revision CAS', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-import-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob())
+
+    await expect(store.getRecordingImportJob(10002, 'job-1')).resolves.toBeUndefined()
+    await expect(store.replaceRecordingImportJob(
+      10001,
+      recordingJob({ revision: 2, phase: 'uploading', uploadedBytes: 512 }),
+      1,
+    )).resolves.toBe(true)
+    await expect(store.replaceRecordingImportJob(
+      10001,
+      recordingJob({ revision: 2, phase: 'cancelled' }),
+      1,
+    )).resolves.toBe(false)
+
+    const reloaded = new ArkmeStateStore(root)
+    await expect(reloaded.getRecordingImportJob(10001, 'job-1')).resolves.toMatchObject({
+      revision: 2, phase: 'uploading', uploadedBytes: 512,
+    })
+    await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
   })
 })

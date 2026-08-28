@@ -906,7 +906,10 @@ describe('ArkmeService', () => {
       jiwoScanLoginEnabled: false,
       callAssetBasePath: '/arkme-self/api/call',
       voiceprintEnrollmentPath: '/arkme-self/api/voiceprint/enroll',
+      recordingImportPath: '/arkme-self/api/recording/import',
+      mediaPath: '/arkme-self/api/media',
       shareWebsite: 'https://app.arkme.ai',
+      recordingWorkbenchV2Enabled: true,
     })
   })
 

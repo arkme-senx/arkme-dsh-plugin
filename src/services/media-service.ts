@@ -528,6 +528,52 @@ export class MediaService {
     }, undefined, 110_000)
   }
 
+  async issueRecordingPlaybackMediaRef(input: {
+    viewerUserId: number
+    sessionId: string
+    audioFileName: string
+    mimeType: string
+  }, signal?: AbortSignal): Promise<string> {
+    const session = await this.runtime.requireSession()
+    if (input.viewerUserId !== session.userId) {
+      throw new ArkmePluginError('recording-playback-account-mismatch', '录音片段与当前账号不匹配', false, 403)
+    }
+    const sessionId = audioObjectPathPart(input.sessionId)
+    const audioFileName = audioObjectPathPart(input.audioFileName)
+    if (sessionId === undefined || audioFileName === undefined) {
+      throw new ArkmePluginError('recording-playback-path-invalid', '录音播放路径无效', false, 502)
+    }
+    const objectPath = `pc_upload/${String(session.userId)}/${sessionId}/${audioFileName}`
+    const credentials = await this.audioOssCredentials(session, signal)
+    const bucket = this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test'
+    let signedUrl: URL
+    try {
+      const client = new OSS({
+        region: 'oss-cn-hangzhou', bucket, secure: true,
+        accessKeyId: credentials.accessKeyId,
+        accessKeySecret: credentials.accessKeySecret,
+        stsToken: credentials.stsToken,
+      })
+      signedUrl = new URL(client.signatureUrl(objectPath, { method: 'GET', expires: 120 }))
+    } catch (error) {
+      throw new ArkmePluginError('recording-playback-sign-failed', '录音播放授权失败', true, 502, { cause: error })
+    }
+    const signedPath = decodeURIComponent(signedUrl.pathname).replace(/^\/+/, '')
+    const hasSignature = (signedUrl.searchParams.get('Signature') ?? signedUrl.searchParams.get('x-oss-signature') ?? '').trim() !== ''
+    if (signedUrl.protocol !== 'https:' || signedUrl.username !== '' || signedUrl.password !== ''
+      || signedUrl.port !== '' || signedUrl.hash !== '' || !hasSignature
+      || !allowedSignedAudioHost(this.runtime.config.environment, signedUrl.hostname) || signedPath !== objectPath) {
+      throw new ArkmePluginError('recording-playback-target-rejected', '录音播放授权目标不受信任', false, 502)
+    }
+    const display = unmarkedSpeakerAudioType(audioFileName)
+    return this.issueMediaRef(session.userId, {
+      remoteUrl: signedUrl.toString(),
+      mimeType: input.mimeType.trim().startsWith('audio/') ? input.mimeType.trim() : display.mimeType,
+      fileName: audioFileName,
+      size: 0,
+    }, undefined, 110_000)
+  }
+
   async readImage(
     imageRef: string,
     options: { maxBytes?: number; signal?: AbortSignal } = {},

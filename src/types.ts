@@ -30,7 +30,10 @@ export interface ArkmeClientConfig {
   jiwoScanLoginEnabled: boolean
   callAssetBasePath: string
   voiceprintEnrollmentPath: string
+  recordingImportPath: string
+  mediaPath: string
   shareWebsite: string
+  recordingWorkbenchV2Enabled: boolean
 }
 
 export type ArkmeBillingPaymentMethod = 'alipay_pc_web' | 'wechat_native'
@@ -2180,6 +2183,42 @@ export interface ArkmeRecordingTranscriptItem {
   text: string
 }
 
+/** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
+export interface ArkmeRecordingWorkbenchItem {
+  itemId: string
+  itemRef: string
+  startAtMillis: number
+  endAtMillis: number
+  speakerNumber: number
+  speakerColorIndex: number
+  speakerLabel: string
+  speakerAvatarRef?: string
+  sameSpeakerItemCount: number
+  isSelf: boolean
+  isBackground: boolean
+  text: string
+}
+
+export interface ArkmeRecordingPlayback {
+  playbackRef: string
+  mimeType: string
+  startOffsetMillis: number
+  endOffsetMillis: number
+}
+
+export interface ArkmeRecordingSpeakerOption {
+  speakerRef: string
+  label: string
+  avatarRef?: string
+  recommended: boolean
+}
+
+export interface ArkmeRecordingSpeakerMutationResult {
+  scope: 'item' | 'speaker'
+  affectedCount: number
+  day: ArkmeRecordingDay
+}
+
 export interface ArkmeRecordingTimelineEvent {
   eventId: string
   startAt: string
@@ -2224,7 +2263,7 @@ export interface ArkmeRecordingTranscriptSection extends ArkmeRecordingSection<A
 export interface ArkmeRecordingDay {
   dateStamp: number
   totalDurationMillis: number
-  transcript: ArkmeRecordingSection<ArkmeRecordingTranscriptItem>
+  transcript: ArkmeRecordingSection<ArkmeRecordingWorkbenchItem>
   summary: ArkmeRecordingSection<ArkmeRecordingVersion>
   timeline: ArkmeRecordingSection<ArkmeRecordingVersion>
 }
@@ -2891,6 +2930,13 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'dsh-beta-community.join'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.import.list'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
+  | 'recordings.import.cancel'
+  | 'recordings.playback.open'
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.assign-item'
   | 'search.records'
   | 'search.scene'
   | 'search.recordings'
