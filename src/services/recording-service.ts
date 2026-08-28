@@ -3,6 +3,8 @@ import { unlink } from 'node:fs/promises'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
   openRecordingImportRef,
+  recordingImportCanonicalMimeType,
+  sameRecordingImportIdentity,
   sealRecordingImportRef,
   toPublicRecordingImportJob,
   type PublicRecordingImportJob,
@@ -112,7 +114,7 @@ function safeFailureMessage(error: unknown): string {
 
 export class RecordingService {
   private readonly recordingImports: RecordingImportCoordinator
-  private readonly importRuns = new Map<string, Promise<void>>()
+  private readonly importRuns = new Map<string, { controller: AbortController; promise: Promise<void> }>()
 
   constructor(
     private readonly runtime: ServiceRuntime,
@@ -149,6 +151,9 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const payload = await this.openRecordingItemRef(itemRef)
     const session = await this.runtime.requireSession()
+    if (session.userId !== payload.viewerUserId) {
+      throw new ArkmePluginError('recording-ref-account-mismatch', '录音引用与当前账号不匹配', false, 403)
+    }
     const [data, similar] = await Promise.all([
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
         '/api/v1/audio/get-speaker-ls', {}, session, signal,
@@ -162,7 +167,8 @@ export class RecordingService {
     const recommendedSpeakerId = stringValue(similar.speaker_id).trim()
     const userIds = speakerUserIds(rows)
     const profiles = await this.recordingSpeakerProfiles(userIds, session, signal)
-    return await Promise.all(rows.flatMap(raw => {
+    const speakerRefKey = await this.recordingRefKey('arkme-recording-speaker-v1')
+    return rows.flatMap(raw => {
       const speaker = objectValue(raw)
       const speakerId = stringValue(speaker.speaker_id ?? speaker.id ?? speaker.spk_id).trim()
       if (speakerId === '') return []
@@ -171,14 +177,14 @@ export class RecordingService {
       const label = stringValue(speaker.nick_name ?? speaker.nickname ?? speaker.display_name ?? speaker.name).trim()
         || profile?.displayName || '未命名说话人'
       return [{ speakerId, label, avatarRef: profile?.avatarRef }]
-    }).map(async item => ({
-      speakerRef: await this.sealRecordingSpeakerRef({
+    }).map(item => ({
+      speakerRef: this.sealRecordingRefWithKey('arkme-recording-speaker-v1', {
         version: 1, viewerUserId: payload.viewerUserId, speakerId: item.speakerId,
-      }),
+      }, speakerRefKey),
       label: item.label,
       ...(item.avatarRef === undefined ? {} : { avatarRef: item.avatarRef }),
       recommended: item.speakerId === recommendedSpeakerId,
-    }))).then(options => options.sort((left, right) => Number(right.recommended) - Number(left.recommended)))
+    })).sort((left, right) => Number(right.recommended) - Number(left.recommended))
   }
 
   async assignRecordingSpeaker(input: {
@@ -190,10 +196,21 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const item = await this.openRecordingItemRef(input.itemRef)
     const session = await this.runtime.requireSession()
+    if (session.userId !== item.viewerUserId) {
+      throw new ArkmePluginError('recording-ref-account-mismatch', '录音引用与当前账号不匹配', false, 403)
+    }
     const speakerRef = input.speakerRef?.trim() ?? ''
     const newSpeakerName = input.newSpeakerName?.trim() ?? ''
     if ((speakerRef === '') === (newSpeakerName === '')) {
       throw new ArkmePluginError('recording-speaker-target-invalid', '请选择现有说话人或填写新名称', false)
+    }
+    const current = await this.recordingTranscriptWithSession(item.dateStamp, session, signal)
+    const currentItems = current.items as ArkmeRecordingPrivateTranscriptItem[]
+    const currentItem = currentItems.find(candidate => candidate.childId === item.childId
+      && candidate.asrItemIndex === item.asrItemIndex && candidate.transcriptSource === item.transcriptSource)
+    if (currentItem === undefined || currentItem.speakerIdentity !== item.speakerIdentity
+      || currentItem.formalSpeakerId !== item.formalSpeakerId || currentItem.rawSpeakerNumber !== item.rawSpeakerNumber) {
+      throw new ArkmePluginError('recording-speaker-conflict', '说话人信息已变化，请刷新后重试', true, 409)
     }
     let speakerId = ''
     if (speakerRef !== '') {
@@ -208,23 +225,15 @@ export class RecordingService {
       speakerId = stringValue(created.speaker_id ?? created.spk_id ?? speaker.speaker_id ?? speaker.id).trim()
       if (speakerId === '') throw new ArkmePluginError('recording-speaker-create-invalid', '创建说话人响应无效', true, 502)
     }
-    const current = await this.recordingTranscript(item.dateStamp, signal)
-    const currentItems = current.items as ArkmeRecordingPrivateTranscriptItem[]
-    const currentItem = currentItems.find(candidate => candidate.childId === item.childId
-      && candidate.asrItemIndex === item.asrItemIndex && candidate.transcriptSource === item.transcriptSource)
-    if (currentItem === undefined || currentItem.speakerIdentity !== item.speakerIdentity
-      || currentItem.formalSpeakerId !== item.formalSpeakerId || currentItem.rawSpeakerNumber !== item.rawSpeakerNumber) {
-      throw new ArkmePluginError('recording-speaker-conflict', '说话人信息已变化，请刷新后重试', true, 409)
-    }
     let affectedCount = 1
     if (input.scope === 'speaker') {
-      const targets = currentItems.filter(candidate => candidate.speakerIdentity === item.speakerIdentity)
+      const targets = currentItems.filter(candidate => this.sameRecordingSpeakerMutationTarget(candidate, item))
       const normalPairs = [...new Map(targets.filter(candidate => candidate.rawSpeakerNumber >= 0).map(candidate => [
         `${candidate.sessionId}:${String(candidate.rawSpeakerNumber)}`,
         { session_id: candidate.sessionId, num: candidate.rawSpeakerNumber },
       ])).values()]
-      const flaggedSessionIds = [...new Set(targets.filter(candidate => candidate.rawSpeakerNumber < 0
-        && candidate.formalSpeakerId === item.formalSpeakerId).map(candidate => candidate.sessionId))]
+      const flaggedSessionIds = [...new Set(targets.filter(candidate => candidate.rawSpeakerNumber < 0)
+        .map(candidate => candidate.sessionId))]
       if (normalPairs.length > 0) {
         await this.runtime.authenticatedAudioPost(
           '/api/v1/audio/batch-assign-session-num-to-spk',
@@ -259,7 +268,7 @@ export class RecordingService {
         { lane: 'write', bypassCache: true },
       )
     }
-    return { scope: input.scope, affectedCount, day: await this.recordingDay(item.dateStamp) }
+    return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal) }
   }
 
   async acceptRecordingImport(
@@ -281,12 +290,15 @@ export class RecordingService {
     if (!Number.isSafeInteger(startAtMillis) || startAtMillis <= 0 || startAtMillis > Date.now() + 24 * 60 * 60_000) {
       throw new ArkmePluginError('recording-import-start-invalid', '录音开始时间无效', false)
     }
-    const existing = (await this.runtime.stateStore.listRecordingImportJobs(session.userId)).find(job =>
-      job.phase !== 'cancelled'
-      && job.fileName === metadata.fileName
-      && job.fileSize === metadata.fileSize
-      && job.sha256 === metadata.sha256
-      && job.startAtMillis === startAtMillis)
+    const identity = {
+      userId: session.userId,
+      fileName: metadata.fileName,
+      fileSize: metadata.fileSize,
+      sha256: metadata.sha256,
+      startAtMillis,
+    }
+    const existing = (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
+      .find(job => job.phase !== 'cancelled' && sameRecordingImportIdentity(job, identity))
     if (existing !== undefined) {
       await unlink(temporaryPath).catch(() => undefined)
       return toPublicRecordingImportJob(existing, await this.recordingImportRef(existing))
@@ -299,7 +311,7 @@ export class RecordingService {
       revision: 1,
       phase: 'prepared',
       fileName: metadata.fileName,
-      mimeType: metadata.mimeType,
+      mimeType: recordingImportCanonicalMimeType(probe.kind),
       fileSize: metadata.fileSize,
       durationMillis: probe.durationMillis,
       sha256: metadata.sha256,
@@ -310,10 +322,14 @@ export class RecordingService {
       createdAtMillis: now,
       updatedAtMillis: now,
     }
-    await this.runtime.stateStore.putRecordingImportJob(session.userId, job)
-    const importRef = await this.recordingImportRef(job)
-    this.runRecordingImport(job)
-    return toPublicRecordingImportJob(job, importRef)
+    const selected = await this.runtime.stateStore.putRecordingImportJobIfAbsent(session.userId, job)
+    if (selected.jobId !== job.jobId) {
+      await unlink(temporaryPath).catch(() => undefined)
+      return toPublicRecordingImportJob(selected, await this.recordingImportRef(selected))
+    }
+    const importRef = await this.recordingImportRef(selected)
+    this.runRecordingImport(selected)
+    return toPublicRecordingImportJob(selected, importRef)
   }
 
   async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> {
@@ -328,6 +344,9 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
+    for (const job of jobs) {
+      if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
+    }
     const sorted = jobs.sort((left, right) => right.createdAtMillis - left.createdAtMillis).slice(0, 20)
     return await Promise.all(sorted.map(async job => toPublicRecordingImportJob(job, await this.recordingImportRef(job))))
   }
@@ -336,16 +355,20 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const { userId, jobId } = await this.openRecordingImportRef(importRef)
     const resumed = await this.recordingImports.resumeRetry(userId, jobId, expectedRevision)
-    const priorRun = this.importRuns.get(jobId)
+    const priorRun = this.importRuns.get(jobId)?.promise
+    const controller = new AbortController()
     const run = (priorRun ?? Promise.resolve())
-      .then(async () => { await this.recordingImports.run(userId, jobId) })
-    this.trackRecordingImportRun(jobId, run)
+      .then(async () => { await this.recordingImports.run(userId, jobId, controller.signal) })
+    this.trackRecordingImportRun(jobId, run, controller)
     return toPublicRecordingImportJob(resumed, importRef)
   }
 
   async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
     this.assertWorkbenchEnabled()
     const { userId, jobId } = await this.openRecordingImportRef(importRef)
+    const active = this.importRuns.get(jobId)
+    active?.controller.abort()
+    await active?.promise
     const cancelled = await this.recordingImports.cancel(userId, jobId, expectedRevision)
     return toPublicRecordingImportJob(cancelled, importRef)
   }
@@ -355,13 +378,18 @@ export class RecordingService {
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     for (const job of jobs) {
-      if (['prepared', 'uploading', 'finalizing', 'processing'].includes(job.phase)) this.runRecordingImport(job)
+      if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
     }
   }
 
   private runRecordingImport(job: RecordingImportJob): void {
     if (this.importRuns.has(job.jobId)) return
-    this.trackRecordingImportRun(job.jobId, this.recordingImports.run(job.userId, job.jobId).then(() => undefined))
+    const controller = new AbortController()
+    this.trackRecordingImportRun(
+      job.jobId,
+      this.recordingImports.run(job.userId, job.jobId, controller.signal).then(() => undefined),
+      controller,
+    )
   }
 
   private assertWorkbenchEnabled(): void {
@@ -370,12 +398,12 @@ export class RecordingService {
     }
   }
 
-  private trackRecordingImportRun(jobId: string, run: Promise<void>): void {
+  private trackRecordingImportRun(jobId: string, run: Promise<void>, controller: AbortController): void {
     let tracked: Promise<void>
     tracked = run.catch(() => undefined).finally(() => {
-      if (this.importRuns.get(jobId) === tracked) this.importRuns.delete(jobId)
+      if (this.importRuns.get(jobId)?.promise === tracked) this.importRuns.delete(jobId)
     })
-    this.importRuns.set(jobId, tracked)
+    this.importRuns.set(jobId, { controller, promise: tracked })
   }
 
   private async recordingImportRef(job: RecordingImportJob): Promise<string> {
@@ -439,9 +467,16 @@ export class RecordingService {
     dateStamp: number,
     signal?: AbortSignal,
   ): Promise<ArkmeRecordingTranscriptSection> {
+    return await this.recordingTranscriptWithSession(dateStamp, await this.runtime.requireSession(), signal)
+  }
+
+  private async recordingTranscriptWithSession(
+    dateStamp: number,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingTranscriptSection> {
     const dayStart = this.recordingDayStart(dateStamp)
     const date = dayStart.getTime()
-    const session = await this.runtime.requireSession()
     const [transcriptResult, speakerResult] = await Promise.allSettled([
       this.runtime.authenticatedAudioPost<Record<string, unknown>>(
         // Keep the same transcript contract as the Flutter desktop client.
@@ -481,10 +516,18 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     signal?: AbortSignal,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
+    return await this.recordingProjectionWithSession(dateStamp, kind, await this.runtime.requireSession(), signal)
+  }
+
+  private async recordingProjectionWithSession(
+    dateStamp: number,
+    kind: ArkmeRecordingProjectionKind,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
     const dayStart = this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
     dayEnd.setDate(dayEnd.getDate() + 1)
-    const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/summary/list-timeline-by-range',
       {
@@ -554,26 +597,43 @@ export class RecordingService {
     return payload
   }
 
-  async recordingDay(dateStamp: number): Promise<ArkmeRecordingDay> {
+  async recordingDay(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingDay> {
+    return await this.recordingDayWithSession(dateStamp, await this.runtime.requireSession(), signal)
+  }
+
+  private async recordingDayWithSession(
+    dateStamp: number,
+    session: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingDay> {
     const date = this.recordingDayStart(dateStamp).getTime()
     const [transcriptResult, summaryResult, timelineResult] = await Promise.allSettled([
-      this.recordingTranscript(date),
-      this.recordingProjection(date, 'summary'),
-      this.recordingProjection(date, 'timeline'),
+      this.recordingTranscriptWithSession(date, session, signal),
+      this.recordingProjectionWithSession(date, 'summary', session, signal),
+      this.recordingProjectionWithSession(date, 'timeline', session, signal),
     ])
-    const transcript: ArkmeRecordingDay['transcript'] = transcriptResult.status === 'fulfilled'
-      ? {
-          ...transcriptResult.value,
-          items: await (async () => {
-            const items = transcriptResult.value.items as ArkmeRecordingPrivateTranscriptItem[]
-            const counts = new Map<string, number>()
-            for (const item of items) counts.set(item.speakerIdentity, (counts.get(item.speakerIdentity) ?? 0) + 1)
-            return await Promise.all(items.map(async item => await this.workbenchItem(
-              date, item, counts.get(item.speakerIdentity) ?? 1,
-            )))
-          })(),
-        }
-      : { state: 'error', items: [], message: safeFailureMessage(transcriptResult.reason) }
+    let transcript: ArkmeRecordingDay['transcript']
+    if (transcriptResult.status === 'fulfilled') {
+      const items = transcriptResult.value.items as ArkmeRecordingPrivateTranscriptItem[]
+      const counts = new Map<string, number>()
+      for (const item of items) {
+        const key = this.recordingSpeakerMutationKey(item)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+      const recordingItemRefKey = await this.recordingRefKey('arkme-recording-item-v1')
+      transcript = {
+        ...transcriptResult.value,
+        items: items.map(item => this.workbenchItem(
+          date,
+          item,
+          counts.get(this.recordingSpeakerMutationKey(item)) ?? 1,
+          session.userId,
+          recordingItemRefKey,
+        )),
+      }
+    } else {
+      transcript = { state: 'error', items: [], message: safeFailureMessage(transcriptResult.reason) }
+    }
     return {
       dateStamp: date,
       totalDurationMillis: transcriptResult.status === 'fulfilled'
@@ -589,15 +649,16 @@ export class RecordingService {
     }
   }
 
-  private async workbenchItem(
+  private workbenchItem(
     dateStamp: number,
     item: ArkmeRecordingPrivateTranscriptItem,
     sameSpeakerItemCount: number,
-  ): Promise<ArkmeRecordingWorkbenchItem> {
-    const session = await this.runtime.requireSession()
+    viewerUserId: number,
+    refKey: Buffer,
+  ): ArkmeRecordingWorkbenchItem {
     const payload: RecordingItemRefPayload = {
       version: 1,
-      viewerUserId: session.userId,
+      viewerUserId,
       dateStamp,
       sessionId: item.sessionId,
       childId: item.childId,
@@ -614,7 +675,7 @@ export class RecordingService {
     }
     return {
       itemId: item.itemId,
-      itemRef: await this.sealRecordingRef('arkme-recording-item-v1', payload),
+      itemRef: this.sealRecordingRefWithKey('arkme-recording-item-v1', payload, refKey),
       startAtMillis: item.startAtMillis,
       endAtMillis: item.endAtMillis,
       speakerNumber: item.speakerNumber,
@@ -628,15 +689,33 @@ export class RecordingService {
     }
   }
 
-  private async sealRecordingSpeakerRef(payload: RecordingSpeakerRefPayload): Promise<string> {
-    return await this.sealRecordingRef('arkme-recording-speaker-v1', payload)
-  }
-
-  private async sealRecordingRef(prefix: string, payload: object): Promise<string> {
+  private sealRecordingRefWithKey(prefix: string, payload: object, key: Buffer): string {
     const iv = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', await this.recordingRefKey(prefix), iv)
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
     const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
     return `${prefix}.${iv.toString('base64url')}.${encrypted.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}`
+  }
+
+  private recordingSpeakerMutationKey(item: ArkmeRecordingPrivateTranscriptItem): string {
+    return item.rawSpeakerNumber >= 0
+      ? `session-speaker:${item.sessionId}:${String(item.rawSpeakerNumber)}`
+      : item.formalSpeakerId !== ''
+        ? `flagged-speaker:${item.sessionId}:${item.transcriptSource}:${item.formalSpeakerId}`
+        : `unassigned-item:${item.itemId}`
+  }
+
+  private sameRecordingSpeakerMutationTarget(
+    candidate: ArkmeRecordingPrivateTranscriptItem,
+    selected: RecordingItemRefPayload,
+  ): boolean {
+    if (selected.rawSpeakerNumber >= 0) {
+      return candidate.sessionId === selected.sessionId && candidate.rawSpeakerNumber === selected.rawSpeakerNumber
+    }
+    return selected.formalSpeakerId !== ''
+      && candidate.sessionId === selected.sessionId
+      && candidate.rawSpeakerNumber < 0
+      && candidate.transcriptSource === selected.transcriptSource
+      && candidate.formalSpeakerId === selected.formalSpeakerId
   }
 
   private async openRecordingItemRef(itemRef: string): Promise<RecordingItemRefPayload> {

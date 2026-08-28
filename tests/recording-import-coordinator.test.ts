@@ -33,8 +33,7 @@ function memoryStore(initial: RecordingImportJob): RecordingImportStore & { valu
 
 function gateway(): RecordingImportGateway {
   return {
-    checkDuplicateName: vi.fn(async () => false),
-    createSession: vi.fn(async () => 'session-1'),
+    ensureSession: vi.fn(async () => 'session-1'),
     createChild: vi.fn(async () => 'child-1'),
     uploadObject: vi.fn(async (_job, _objectPath, onProgress) => {
       await onProgress(512, { uploadId: 'checkpoint-1' })
@@ -42,6 +41,7 @@ function gateway(): RecordingImportGateway {
     }),
     finishChild: vi.fn(async () => undefined),
     finishSession: vi.fn(async () => undefined),
+    deleteSession: vi.fn(async () => undefined),
   }
 }
 
@@ -52,18 +52,18 @@ describe('RecordingImportCoordinator', () => {
     const coordinator = new RecordingImportCoordinator(store, owner, async () => 42, () => 2_000)
 
     await expect(coordinator.run(42, 'job-1')).resolves.toMatchObject({ phase: 'accepted' })
-    expect(owner.checkDuplicateName).toHaveBeenCalledWith('meeting.m4a')
-    expect(owner.createSession).toHaveBeenCalledTimes(1)
+    expect(owner.ensureSession).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'meeting.m4a' }), undefined)
     expect(owner.createChild).toHaveBeenCalledTimes(1)
     expect(owner.uploadObject).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-1', childId: 'child-1' }),
       'pc_upload/42/session-1/arkme_job-1_0.m4a',
       expect.any(Function),
+      undefined,
     )
-    expect(owner.finishChild).toHaveBeenCalledWith(expect.objectContaining({ childId: 'child-1' }))
-    expect(owner.finishSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }))
+    expect(owner.finishChild).toHaveBeenCalledWith(expect.objectContaining({ childId: 'child-1' }), undefined)
+    expect(owner.finishSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }), undefined)
     expect(store.value).toMatchObject({
-      phase: 'accepted', uploadedBytes: 1024, revision: 9, temporaryPath: '', sha256: '',
+      phase: 'accepted', uploadedBytes: 1024, revision: 8, temporaryPath: '', sha256: '',
     })
     expect(store.value.sessionId).toBeUndefined()
     expect(store.value.childId).toBeUndefined()
@@ -78,8 +78,8 @@ describe('RecordingImportCoordinator', () => {
     await expect(coordinator.run(42, 'job-1')).resolves.toMatchObject({
       phase: 'failed', errorCode: 'recording-import-account-mismatch', retryable: false,
     })
-    expect(owner.checkDuplicateName).toHaveBeenCalledTimes(1)
-    expect(owner.createSession).not.toHaveBeenCalled()
+    expect(owner.ensureSession).toHaveBeenCalledTimes(1)
+    expect(owner.createChild).not.toHaveBeenCalled()
   })
 
   it('continues from stored owner ids without creating duplicate sessions or children', async () => {
@@ -91,8 +91,7 @@ describe('RecordingImportCoordinator', () => {
     const coordinator = new RecordingImportCoordinator(store, owner, async () => 42, () => 2_000)
 
     await expect(coordinator.retry(42, 'job-1', 1)).resolves.toMatchObject({ phase: 'accepted' })
-    expect(owner.checkDuplicateName).not.toHaveBeenCalled()
-    expect(owner.createSession).not.toHaveBeenCalled()
+    expect(owner.ensureSession).not.toHaveBeenCalled()
     expect(owner.createChild).not.toHaveBeenCalled()
     expect(owner.uploadObject).toHaveBeenCalledTimes(1)
   })
@@ -111,7 +110,7 @@ describe('RecordingImportCoordinator', () => {
       phase: 'failed', failedFromPhase: 'finalizing', retryable: true, childFinished: true,
     })
     await expect(coordinator.retry(42, 'job-1', store.value.revision)).resolves.toMatchObject({ phase: 'accepted' })
-    expect(owner.createSession).toHaveBeenCalledTimes(1)
+    expect(owner.ensureSession).toHaveBeenCalledTimes(1)
     expect(owner.createChild).toHaveBeenCalledTimes(1)
     expect(owner.finishChild).toHaveBeenCalledTimes(1)
     expect(owner.finishSession).toHaveBeenCalledTimes(2)
@@ -131,14 +130,16 @@ describe('RecordingImportCoordinator', () => {
     expect(owner.uploadObject).not.toHaveBeenCalled()
   })
 
-  it('aborts the active multipart runner at its next progress boundary after cancellation', async () => {
+  it('aborts the active multipart runner and deletes the incomplete owner session before cancellation', async () => {
     const store = memoryStore(job({ phase: 'uploading', sessionId: 'session-1', childId: 'child-1' }))
     let progress: ((uploadedBytes: number, checkpoint?: Record<string, unknown>) => Promise<void>) | undefined
     let progressAborted = false
     const owner = gateway()
-    owner.uploadObject = vi.fn(async (_job, _objectPath, onProgress) => {
+    owner.uploadObject = vi.fn(async (_job, _objectPath, onProgress, signal) => {
       progress = onProgress
-      await new Promise(resolve => { setTimeout(resolve, 0) })
+      await new Promise<void>((resolve, reject) => {
+        signal?.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
+      })
       try {
         await onProgress(512, { uploadId: 'checkpoint-1' })
       } catch (error) {
@@ -148,12 +149,36 @@ describe('RecordingImportCoordinator', () => {
     })
     const coordinator = new RecordingImportCoordinator(store, owner, async () => 42, () => 2_000)
 
-    const running = coordinator.run(42, 'job-1')
+    const controller = new AbortController()
+    const running = coordinator.run(42, 'job-1', controller.signal)
     while (progress === undefined) await new Promise(resolve => { setTimeout(resolve, 0) })
+    controller.abort()
+    await expect(running).resolves.toMatchObject({ phase: 'uploading' })
     await expect(coordinator.cancel(42, 'job-1', 1)).resolves.toMatchObject({ phase: 'cancelled' })
-    await expect(running).resolves.toMatchObject({ phase: 'cancelled' })
-    expect(progressAborted).toBe(true)
+    expect(progressAborted).toBe(false)
+    expect(owner.deleteSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }))
     expect(owner.finishChild).not.toHaveBeenCalled()
     expect(owner.finishSession).not.toHaveBeenCalled()
+  })
+
+  it('does not publish cancelled when owner cleanup fails', async () => {
+    const store = memoryStore(job({ phase: 'uploading', revision: 4, sessionId: 'session-1', childId: 'child-1' }))
+    const owner = gateway()
+    owner.deleteSession = vi.fn(async () => { throw new Error('owner unavailable') })
+    const coordinator = new RecordingImportCoordinator(store, owner, async () => 42, () => 2_000)
+
+    await expect(coordinator.cancel(42, 'job-1', 3)).rejects.toThrow('owner unavailable')
+    expect(store.value.phase).toBe('uploading')
+    expect(store.value.sessionId).toBe('session-1')
+  })
+
+  it('asks the gateway to recover owner state before cancelling a prepared retry', async () => {
+    const store = memoryStore(job({ phase: 'failed', failedFromPhase: 'prepared', retryable: true }))
+    const owner = gateway()
+    const coordinator = new RecordingImportCoordinator(store, owner, async () => 42, () => 2_000)
+
+    await expect(coordinator.cancel(42, 'job-1', 1)).resolves.toMatchObject({ phase: 'cancelled' })
+    expect(owner.deleteSession).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(owner.deleteSession).mock.calls[0]?.[0].sessionId).toBeUndefined()
   })
 })

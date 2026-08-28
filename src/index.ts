@@ -545,7 +545,15 @@ export function apply(ctx: Context, config: Config): void {
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
   ctx.effect(async () => {
-    await scavengeRecordingImportTemporaryFiles(join(stateDirectory, 'recording-imports')).catch(() => undefined)
+    const protectedRecordingPaths = new Set((await stateStore.listAllRecordingImportJobs())
+      .filter(job => !['accepted', 'cancelled'].includes(job.phase) && job.temporaryPath !== '')
+      .map(job => job.temporaryPath))
+    await scavengeRecordingImportTemporaryFiles(
+      join(stateDirectory, 'recording-imports'),
+      Date.now(),
+      undefined,
+      protectedRecordingPaths,
+    ).catch(() => undefined)
     await service.resumeRecordingImports().catch(() => undefined)
     return () => undefined
   }, 'dsh-arkme: recording import recovery')

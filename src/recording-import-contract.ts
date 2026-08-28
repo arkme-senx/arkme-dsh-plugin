@@ -6,12 +6,9 @@ export const MAX_RECORDING_IMPORT_DURATION_MILLIS = 10 * 60 * 60 * 1000
 export type RecordingImportFileKind = 'wav' | 'mp3' | 'm4a'
 
 export type RecordingImportPhase =
-  | 'receiving'
-  | 'validating'
   | 'prepared'
   | 'uploading'
   | 'finalizing'
-  | 'processing'
   | 'accepted'
   | 'failed'
   | 'cancelled'
@@ -42,6 +39,17 @@ export interface RecordingImportJob {
   uploadCheckpoint?: Record<string, unknown> | undefined
 }
 
+export function sameRecordingImportIdentity(
+  left: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis'>,
+  right: Pick<RecordingImportJob, 'userId' | 'fileName' | 'fileSize' | 'sha256' | 'startAtMillis'>,
+): boolean {
+  return left.userId === right.userId
+    && left.fileName === right.fileName
+    && left.fileSize === right.fileSize
+    && left.sha256 === right.sha256
+    && left.startAtMillis === right.startAtMillis
+}
+
 export interface PublicRecordingImportJob {
   importRef: string
   revision: number
@@ -70,19 +78,18 @@ export class RecordingImportContractError extends Error {
 
 const MIME_BY_KIND: Readonly<Record<RecordingImportFileKind, ReadonlySet<string>>> = {
   wav: new Set(['audio/wav', 'audio/x-wav']),
-  mp3: new Set(['audio/mpeg']),
-  m4a: new Set(['audio/mp4', 'audio/x-m4a']),
+  mp3: new Set(['audio/mpeg', 'audio/mp3']),
+  m4a: new Set(['audio/mp4', 'audio/x-m4a', 'audio/m4a']),
 }
 
+const GENERIC_RECORDING_MIME_TYPES = new Set(['', 'application/octet-stream'])
+
 const NEXT_PHASES: Readonly<Record<RecordingImportPhase, ReadonlySet<RecordingImportPhase>>> = {
-  receiving: new Set(['validating', 'failed', 'cancelled']),
-  validating: new Set(['prepared', 'failed', 'cancelled']),
   prepared: new Set(['uploading', 'failed', 'cancelled']),
   uploading: new Set(['finalizing', 'failed', 'cancelled']),
-  finalizing: new Set(['processing', 'failed']),
-  processing: new Set(['accepted', 'failed']),
+  finalizing: new Set(['accepted', 'failed', 'cancelled']),
   accepted: new Set(),
-  failed: new Set(['validating', 'prepared', 'uploading', 'finalizing']),
+  failed: new Set(['prepared', 'uploading', 'finalizing', 'cancelled']),
   cancelled: new Set(),
 }
 
@@ -109,10 +116,19 @@ export function recordingImportFileKind(input: {
   if (extension !== 'wav' && extension !== 'mp3' && extension !== 'm4a') {
     throw new RecordingImportContractError('recording-import-format-unsupported', '仅支持 WAV、MP3 和 M4A 录音')
   }
-  if (!MIME_BY_KIND[extension].has(input.mimeType.trim().toLowerCase())) {
+  const mimeType = input.mimeType.trim().toLowerCase()
+  if (!GENERIC_RECORDING_MIME_TYPES.has(mimeType) && !MIME_BY_KIND[extension].has(mimeType)) {
     throw new RecordingImportContractError('recording-import-format-mismatch', '录音格式与文件内容不一致')
   }
   return extension
+}
+
+export function recordingImportCanonicalMimeType(kind: RecordingImportFileKind): string {
+  switch (kind) {
+    case 'wav': return 'audio/wav'
+    case 'mp3': return 'audio/mpeg'
+    case 'm4a': return 'audio/mp4'
+  }
 }
 
 export function advanceRecordingImportJob(

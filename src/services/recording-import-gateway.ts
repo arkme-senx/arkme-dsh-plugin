@@ -1,9 +1,11 @@
 import OSS from 'ali-oss'
-import type { RecordingImportJob } from '../recording-import-contract.js'
+import { RecordingImportContractError, type RecordingImportJob } from '../recording-import-contract.js'
 import type { RecordingImportGateway } from '../recording-import-coordinator.js'
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import { ArkmePluginError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 
 interface AudioOssClient {
+  cancel(): void
   multipartUpload(
     objectPath: string,
     filePath: string,
@@ -24,6 +26,11 @@ interface AudioOssCredentials {
   expiration: string
 }
 
+interface RecoveredAudioSession {
+  sessionId: string
+  finished: boolean
+}
+
 type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0]) => AudioOssClient
 
 function numberValue(value: unknown): number {
@@ -36,18 +43,23 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
     private readonly createOssClient: AudioOssClientFactory = options => new OSS(options) as unknown as AudioOssClient,
   ) {}
 
-  async checkDuplicateName(fileName: string): Promise<boolean> {
-    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/check-exist-same-orig',
-      { orig_names: [fileName] },
-      await this.runtime.requireSession(),
-    )
-    return (Array.isArray(data.exist_names) ? data.exist_names : [])
-      .some(value => stringValue(value) === fileName)
-  }
+  async ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
+    const recovered = await this.recoverSession(job, signal)
+    if (recovered !== undefined) return recovered.sessionId
 
-  async createSession(job: RecordingImportJob): Promise<string> {
+    let session = await this.requireJobSession(job)
+    const duplicate = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/check-exist-same-orig',
+      { orig_names: [job.fileName] },
+      session,
+      signal,
+    )
+    if ((Array.isArray(duplicate.exist_names) ? duplicate.exist_names : [])
+      .some(value => stringValue(value) === job.fileName)) {
+      throw new RecordingImportContractError('recording-import-duplicate', '已存在同名录音，请更名后重试')
+    }
     const timezoneOffsetMillis = -new Date(job.startAtMillis).getTimezoneOffset() * 60_000
+    session = await this.requireJobSession(job)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/new-session',
       {
@@ -56,14 +68,14 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
         orig_name: job.fileName,
         tz_offset: timezoneOffsetMillis,
         start_at: job.startAtMillis,
-        belong_usr: job.belongUserId,
       },
-      await this.runtime.requireSession(),
+      session,
+      signal,
     )
     return stringValue(data.session_id).trim()
   }
 
-  async createChild(job: RecordingImportJob, remoteFileName: string): Promise<string> {
+  async createChild(job: RecordingImportJob, remoteFileName: string, signal?: AbortSignal): Promise<string> {
     if (job.sessionId === undefined) throw new ArkmePluginError('recording-import-session-missing', '录音导入缺少 Audio 会话', true)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/new-child',
@@ -74,7 +86,8 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
         file_name: remoteFileName,
         source_size: job.fileSize,
       },
-      await this.runtime.requireSession(),
+      await this.requireJobSession(job),
+      signal,
     )
     this.assertOwnerAccepted(data, 'recording-import-create-child-rejected', 'Audio 子任务创建失败')
     return stringValue(data.child_id).trim()
@@ -84,9 +97,10 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
     job: RecordingImportJob,
     objectPath: string,
     onProgress: (uploadedBytes: number, checkpoint?: Record<string, unknown>) => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const session = await this.runtime.requireSession()
-    const credentials = await this.audioOssCredentials()
+    await this.requireJobSession(job)
+    const credentials = await this.audioOssCredentials(job, signal)
     const client = this.createOssClient({
       region: 'oss-cn-hangzhou',
       bucket: this.runtime.config.environment === 'prod' ? 'jotmo-useraudio' : 'jotmo-useraudio-test',
@@ -96,11 +110,8 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
       stsToken: credentials.stsToken,
       refreshSTSTokenInterval: 5 * 60 * 1000,
       refreshSTSToken: async () => {
-        const current = await this.runtime.requireSession()
-        if (current.userId !== session.userId) {
-          throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', false, 403)
-        }
-        const refreshed = await this.audioOssCredentials()
+        await this.requireJobSession(job)
+        const refreshed = await this.audioOssCredentials(job, signal)
         return {
           accessKeyId: refreshed.accessKeyId,
           accessKeySecret: refreshed.accessKeySecret,
@@ -108,41 +119,81 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
         }
       },
     })
-    await client.multipartUpload(objectPath, job.temporaryPath, {
-      parallel: 1,
-      partSize: 5 * 1024 * 1024,
-      checkpoint: job.uploadCheckpoint,
-      mime: job.mimeType,
-      progress: async (percentage, checkpoint) => {
-        const bounded = Math.min(1, Math.max(0, percentage))
-        await onProgress(Math.round(job.fileSize * bounded), checkpoint)
-      },
-    })
+    if (signal?.aborted === true) {
+      try { client.cancel() } catch { /* cancellation remains authoritative */ }
+      throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+    }
+    let rejectAborted: ((reason: RecordingImportContractError) => void) | undefined
+    const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject })
+    const abort = (): void => {
+      try { client.cancel() } catch { /* cancellation remains authoritative */ }
+      rejectAborted?.(new RecordingImportContractError('recording-import-cancelled', '录音导入已取消'))
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      const upload = client.multipartUpload(objectPath, job.temporaryPath, {
+        parallel: 1,
+        partSize: 5 * 1024 * 1024,
+        checkpoint: job.uploadCheckpoint,
+        mime: job.mimeType,
+        progress: async (percentage, checkpoint) => {
+          if (signal?.aborted === true) throw new RecordingImportContractError('recording-import-cancelled', '录音导入已取消')
+          const bounded = Math.min(1, Math.max(0, percentage))
+          await onProgress(Math.round(job.fileSize * bounded), checkpoint)
+        },
+      })
+      await (signal === undefined ? upload : Promise.race([upload, aborted]))
+    } finally {
+      signal?.removeEventListener('abort', abort)
+    }
   }
 
-  async finishChild(job: RecordingImportJob): Promise<void> {
+  async finishChild(job: RecordingImportJob, signal?: AbortSignal): Promise<void> {
     if (job.childId === undefined) throw new ArkmePluginError('recording-import-child-missing', '录音导入缺少 Audio 子任务', true)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/child-upload-finish',
       { child_id: job.childId, upload_at: Date.now() },
-      await this.runtime.requireSession(),
+      await this.requireJobSession(job),
+      signal,
     )
     this.assertOwnerAccepted(data, 'recording-import-finish-child-rejected', 'Audio 子任务完成确认失败')
   }
 
-  async finishSession(job: RecordingImportJob): Promise<void> {
+  async finishSession(job: RecordingImportJob, signal?: AbortSignal): Promise<void> {
     if (job.sessionId === undefined) throw new ArkmePluginError('recording-import-session-missing', '录音导入缺少 Audio 会话', true)
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/finish-session',
       { session_id: job.sessionId },
-      await this.runtime.requireSession(),
+      await this.requireJobSession(job),
+      signal,
     )
     this.assertOwnerAccepted(data, 'recording-import-finish-session-rejected', 'Audio 会话完成确认失败')
   }
 
-  private async audioOssCredentials(): Promise<AudioOssCredentials> {
+  async deleteSession(job: RecordingImportJob): Promise<void> {
+    const recovered = await this.recoverSession(job)
+    if (recovered?.finished === true) {
+      throw new ArkmePluginError(
+        'recording-import-already-accepted',
+        'Audio 已接受该录音，请重试任务以刷新状态，不能取消已落库录音',
+        true,
+        409,
+      )
+    }
+    const sessionId = recovered?.sessionId ?? job.sessionId
+    if (sessionId === undefined) return
+    await this.runtime.authenticatedAudioPost(
+      '/api/v1/audio/del-session',
+      { session_id: sessionId },
+      await this.requireJobSession(job),
+      undefined,
+      { lane: 'write', bypassCache: true },
+    )
+  }
+
+  private async audioOssCredentials(job: RecordingImportJob, signal?: AbortSignal): Promise<AudioOssCredentials> {
     const raw = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio/get-sts-token', {}, await this.runtime.requireSession(), undefined,
+      '/api/v1/audio/get-sts-token', {}, await this.requireJobSession(job), signal,
       { lane: 'interactive-read', bypassCache: true },
     )
     const credentials = {
@@ -157,6 +208,36 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
       throw new ArkmePluginError('recording-import-sts-invalid', '录音上传授权无效或已过期', true, 502)
     }
     return credentials
+  }
+
+  private async requireJobSession(job: RecordingImportJob): Promise<ArkmeSessionCredentials> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== job.userId || job.belongUserId !== job.userId) {
+      throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', false, 403)
+    }
+    return session
+  }
+
+  private async recoverSession(job: RecordingImportJob, signal?: AbortSignal): Promise<RecoveredAudioSession | undefined> {
+    const session = await this.requireJobSession(job)
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+      '/api/v1/audio/get-session-ls',
+      { to_stamp: job.startAtMillis + 1, limit: 50, offset: 0, query_new: false },
+      session,
+      signal,
+    )
+    const candidates = (Array.isArray(data.session_ls) ? data.session_ls : []).map(objectValue)
+    const matchesIdentity = (item: Record<string, unknown>): boolean => numberValue(item.source) === 2
+        && numberValue(item.operate_at) === job.createdAtMillis
+        && numberValue(item.start_at) === job.startAtMillis
+        && numberValue(item.belong_usr) === job.belongUserId
+        && stringValue(item.orig_name) === job.fileName
+    const recovered = candidates.find(item => stringValue(item.id).trim() !== ''
+      && (job.sessionId === undefined
+        ? matchesIdentity(item)
+        : stringValue(item.id).trim() === job.sessionId && matchesIdentity(item)))
+    const sessionId = recovered === undefined ? '' : stringValue(recovered.id).trim()
+    return sessionId === '' ? undefined : { sessionId, finished: recovered?.has_finish_spk === true }
   }
 
   private assertOwnerAccepted(

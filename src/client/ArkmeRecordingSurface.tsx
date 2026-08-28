@@ -22,6 +22,7 @@ import { ArkmeRecordingImportDialog } from './recordings/ArkmeRecordingImportDia
 import { ArkmeRecordingImportJobs } from './recordings/ArkmeRecordingImportJobs.js'
 import { ArkmeRecordingSpeakerEditor } from './recordings/ArkmeRecordingSpeakerEditor.js'
 import { ArkmeRecordingTimeline } from './recordings/ArkmeRecordingTimeline.js'
+import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
 import { useRecordingPlayback } from './recordings/useRecordingPlayback.js'
 
 type RecordingTab = 'transcript' | 'summary' | 'timeline'
@@ -45,22 +46,6 @@ const colors = {
   warning: arkmeTheme.warning,
   warningSoft: arkmeTheme.warningSoft,
 }
-const speakerPalette = [
-  '#ec7fa9', '#799eff', '#80a1ba', '#b4debd', '#f5d2d2',
-  '#ffde63', '#e69db8', '#b7b1f2', '#91c4c3', '#4cc9fe',
-  '#ffbd73', '#e178c5', '#beadfa', '#ffa1cf', '#e6ba95',
-]
-
-function speakerColorAt(index: number): string {
-  if (index < 0) return '#a4a4a4'
-  if (index < speakerPalette.length) return speakerPalette[index] ?? '#a4a4a4'
-  const cycleStart = Math.max(0, speakerPalette.length - 7)
-  const cycleLength = speakerPalette.length - cycleStart
-  return cycleLength > 0
-    ? speakerPalette[cycleStart + ((index - cycleStart + 1) % cycleLength)] ?? '#a4a4a4'
-    : '#a4a4a4'
-}
-
 const styles: Record<string, CSSProperties> = {
   root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '384px minmax(0,1fr)', color: colors.text, background: colors.base },
   browser: { minWidth: 0, minHeight: 0, padding: '30px 15px 17px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', borderRight: `1px solid ${colors.border}`, background: colors.base },
@@ -205,7 +190,7 @@ export function RecordingSpeakerLabel({ label, colorIndex, isBackground }: {
   isBackground: boolean
 }) {
   return <span style={styles.speaker}>
-    <span aria-hidden="true" style={{ ...styles.speakerDot, background: speakerColorAt(colorIndex) }} />
+    <span aria-hidden="true" style={{ ...styles.speakerDot, background: recordingSpeakerColor(colorIndex) }} />
     <span>{label}</span>
     {isBackground && <span style={styles.background}>背景音</span>}
   </span>
@@ -219,7 +204,7 @@ function RecordingSpeakerAvatar({ label, colorIndex, avatarRef }: {
   if (avatarRef !== undefined) {
     return <ArkmeUserAvatar avatarRef={avatarRef} size={32} label={`${label}的头像`} />
   }
-  return <span aria-hidden style={{ ...styles.transcriptAvatar, background: speakerColorAt(colorIndex) }}>{label.slice(0, 1) || '声'}</span>
+  return <span aria-hidden style={{ ...styles.transcriptAvatar, background: recordingSpeakerColor(colorIndex) }}>{label.slice(0, 1) || '声'}</span>
 }
 
 function fullDuration(milliseconds: number): string {

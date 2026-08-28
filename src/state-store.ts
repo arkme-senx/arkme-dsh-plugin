@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ArkmeLongArticleDraft, ArkmePendingWrite, ArkmeRecordCaptureContext } from './types.js'
-import type { RecordingImportJob, RecordingImportPhase } from './recording-import-contract.js'
+import { sameRecordingImportIdentity, type RecordingImportJob, type RecordingImportPhase } from './recording-import-contract.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 interface PersistedState {
@@ -24,9 +24,9 @@ function emptyState(): PersistedState {
 }
 
 const RECORDING_IMPORT_PHASES = new Set<RecordingImportPhase>([
-  'receiving', 'validating', 'prepared', 'uploading', 'finalizing',
-  'processing', 'accepted', 'failed', 'cancelled',
+  'prepared', 'uploading', 'finalizing', 'accepted', 'failed', 'cancelled',
 ])
+export const RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT = 100
 
 function normalizedRecordingImportJob(value: unknown): RecordingImportJob | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -234,6 +234,11 @@ export class ArkmeStateStore {
       .map(job => ({ ...job })))
   }
 
+  async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
+    return await this.read(state => Object.values(state.recordingImportJobsByUser)
+      .flatMap(jobs => Object.values(jobs).map(job => ({ ...job }))))
+  }
+
   async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
     return await this.read(state => {
       const job = state.recordingImportJobsByUser[String(userId)]?.[jobId]
@@ -246,8 +251,35 @@ export class ArkmeStateStore {
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       jobs[job.jobId] = { ...job }
+      const expiredTerminalJobs = Object.values(jobs)
+        .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
+        .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
+        .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
+      for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
       state.recordingImportJobsByUser[String(userId)] = jobs
     })
+  }
+
+  async putRecordingImportJobIfAbsent(userId: number, job: RecordingImportJob): Promise<RecordingImportJob> {
+    if (job.userId !== userId) throw new Error('Recording import job account mismatch')
+    let selected = job
+    await this.update(state => {
+      const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
+      const existing = Object.values(jobs).find(candidate => candidate.phase !== 'cancelled'
+        && sameRecordingImportIdentity(candidate, job))
+      if (existing !== undefined) {
+        selected = { ...existing }
+        return
+      }
+      jobs[job.jobId] = { ...job }
+      const expiredTerminalJobs = Object.values(jobs)
+        .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
+        .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
+        .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
+      for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
+      state.recordingImportJobsByUser[String(userId)] = jobs
+    })
+    return selected
   }
 
   async replaceRecordingImportJob(

@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ArkmeStateStore } from '../src/state-store.js'
+import { ArkmeStateStore, RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT } from '../src/state-store.js'
 import type { RecordingImportJob } from '../src/recording-import-contract.js'
 import { expectPrivatePath } from './helpers/private-path.js'
 
@@ -85,5 +85,43 @@ describe('ArkmeStateStore', () => {
       revision: 2, phase: 'uploading', uploadedBytes: 512,
     })
     await expect(reloaded.listRecordingImportJobs(10001)).resolves.toHaveLength(1)
+    await expect(reloaded.listAllRecordingImportJobs()).resolves.toHaveLength(1)
+  })
+
+  it('atomically keeps one job for concurrent imports with the same content identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-dedupe-'))
+    const store = new ArkmeStateStore(root)
+    const first = recordingJob({ jobId: 'job-first', temporaryPath: '/private/first.upload' })
+    const second = recordingJob({ jobId: 'job-second', temporaryPath: '/private/second.upload' })
+
+    const [left, right] = await Promise.all([
+      store.putRecordingImportJobIfAbsent(10001, first),
+      store.putRecordingImportJobIfAbsent(10001, second),
+    ])
+
+    expect(left.jobId).toBe('job-first')
+    expect(right.jobId).toBe('job-first')
+    await expect(store.listRecordingImportJobs(10001)).resolves.toEqual([
+      expect.objectContaining({ jobId: 'job-first', temporaryPath: '/private/first.upload' }),
+    ])
+  })
+
+  it('bounds terminal import history without pruning resumable jobs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-history-'))
+    const store = new ArkmeStateStore(root)
+    await store.putRecordingImportJob(10001, recordingJob({ jobId: 'active', createdAtMillis: 1, phase: 'failed' }))
+    for (let index = 0; index < RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 2; index += 1) {
+      await store.putRecordingImportJob(10001, recordingJob({
+        jobId: `terminal-${String(index)}`,
+        phase: 'accepted',
+        createdAtMillis: index + 2,
+      }))
+    }
+
+    const jobs = await store.listRecordingImportJobs(10001)
+    expect(jobs).toHaveLength(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1)
+    expect(jobs.some(item => item.jobId === 'active')).toBe(true)
+    expect(jobs.some(item => item.jobId === 'terminal-0')).toBe(false)
+    expect(jobs.some(item => item.jobId === `terminal-${String(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1)}`)).toBe(true)
   })
 })

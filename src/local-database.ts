@@ -484,12 +484,20 @@ export class ArkmeLocalDatabase {
     return await this.legacy.listRecordingImportJobs(userId)
   }
 
+  async listAllRecordingImportJobs(): Promise<RecordingImportJob[]> {
+    return await this.legacy.listAllRecordingImportJobs()
+  }
+
   async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
     return await this.legacy.getRecordingImportJob(userId, jobId)
   }
 
   async putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void> {
     await this.legacy.putRecordingImportJob(userId, job)
+  }
+
+  async putRecordingImportJobIfAbsent(userId: number, job: RecordingImportJob): Promise<RecordingImportJob> {
+    return await this.legacy.putRecordingImportJobIfAbsent(userId, job)
   }
 
   async replaceRecordingImportJob(
