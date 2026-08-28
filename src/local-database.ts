@@ -16,6 +16,7 @@ import type {
   ArkmeUserProfileSnapshot,
 } from './types.js'
 import type { ArkmeExtensionReviewOperation } from './extensions/types.js'
+import type { RecordingImportJob } from './recording-import-contract.js'
 import { securePrivateDirectorySync, securePrivateFileSync } from './private-filesystem.js'
 
 type CacheState = 'synced' | 'pending' | 'failed'
@@ -477,6 +478,26 @@ export class ArkmeLocalDatabase {
 
   async removeLongArticleDraft(userId: number, sourceRef: string, itemUid?: string): Promise<void> {
     await this.legacy.removeLongArticleDraft(userId, sourceRef, itemUid)
+  }
+
+  async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
+    return await this.legacy.listRecordingImportJobs(userId)
+  }
+
+  async getRecordingImportJob(userId: number, jobId: string): Promise<RecordingImportJob | undefined> {
+    return await this.legacy.getRecordingImportJob(userId, jobId)
+  }
+
+  async putRecordingImportJob(userId: number, job: RecordingImportJob): Promise<void> {
+    await this.legacy.putRecordingImportJob(userId, job)
+  }
+
+  async replaceRecordingImportJob(
+    userId: number,
+    job: RecordingImportJob,
+    expectedRevision: number,
+  ): Promise<boolean> {
+    return await this.legacy.replaceRecordingImportJob(userId, job, expectedRevision)
   }
 
   async markAttempt(userId: number, recordUid: string, error: string): Promise<void> {

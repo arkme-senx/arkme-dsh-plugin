@@ -65,6 +65,44 @@ describe('MediaService', () => {
       ['unknown.bin', 'application/octet-stream', 'file'],
     ])
   })
+  it('signs recording playback only inside the Host and keeps the resulting media ref account-bound', async () => {
+    let userId = 42
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+      if (url.hostname === 'audio.test') return new Response(JSON.stringify({ code: 200, data: {
+        access_key_id: 'key', access_key_secret: 'secret', security_token: 'token',
+        expiration: '2099-01-01T00:00:00.000Z',
+      } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      return new Response('audio', { status: 206, headers: { 'content-type': 'audio/mp4' } })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const service = new MediaService(runtime, new ProfileService(runtime), {} as never, { recordUid() { return '' } })
+
+    const mediaRef = await service.issueRecordingPlaybackMediaRef({
+      viewerUserId: 42, sessionId: 'session-1', audioFileName: 'device_0.m4a', mimeType: 'audio/mp4',
+    })
+    expect(mediaRef).toMatch(/^arkme-media-v1\./)
+    expect(mediaRef).not.toContain('secret')
+    await expect(service.fetchMedia(mediaRef, 'bytes=100-199')).resolves.toMatchObject({
+      response: { status: 206 }, descriptor: { mimeType: 'audio/mp4', fileName: 'device_0.m4a' },
+    })
+    const signedRequest = vi.mocked(fetchImpl).mock.calls.at(-1)?.[0]
+    const signedUrl = new URL(typeof signedRequest === 'string' || signedRequest instanceof URL
+      ? signedRequest : signedRequest!.url)
+    expect(signedUrl.hostname).toBe('jotmo-useraudio-test.oss-cn-hangzhou.aliyuncs.com')
+    expect(decodeURIComponent(signedUrl.pathname)).toBe('/pc_upload/42/session-1/device_0.m4a')
+
+    userId = 99
+    await expect(service.fetchMedia(mediaRef)).rejects.toMatchObject({ code: 'media-ref-invalid' })
+    await expect(service.issueRecordingPlaybackMediaRef({
+      viewerUserId: 99, sessionId: '../other-user', audioFileName: 'voice.m4a', mimeType: 'audio/mp4',
+    })).rejects.toMatchObject({ code: 'recording-playback-path-invalid' })
+  })
+
   it('keeps forwarded media account-bound, rejects untrusted URLs, and preserves valid siblings', async () => {
     let userId = 42
     const sessions: ArkmeSessionStore = {

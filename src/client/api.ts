@@ -3,6 +3,47 @@ import type { ArkmePluginOperation } from '../types.js'
 
 export { ArkmeClientError } from '../sdk/index.js'
 
+export interface RecordingImportSnapshot {
+  importRef: string
+  revision: number
+  phase: 'receiving' | 'validating' | 'prepared' | 'uploading' | 'finalizing' | 'processing' | 'accepted' | 'failed' | 'cancelled'
+  fileName: string
+  fileSize: number
+  durationMillis: number
+  progress: number
+  errorMessage?: string
+  retryable?: boolean
+}
+
+function recordingImportMime(file: File): string {
+  if (file.type !== '') return file.type
+  const extension = file.name.toLowerCase().split('.').at(-1)
+  return extension === 'wav' ? 'audio/wav' : extension === 'mp3' ? 'audio/mpeg' : extension === 'm4a' ? 'audio/mp4' : ''
+}
+
+export async function uploadArkmeRecording(
+  importPath: string,
+  file: File,
+  startAtMillis: number,
+): Promise<RecordingImportSnapshot> {
+  const response = await fetch(importPath, {
+    method: 'POST',
+    headers: {
+      'Content-Type': recordingImportMime(file),
+      'X-Arkme-File-Name': encodeURIComponent(file.name),
+      'X-Arkme-Start-At': String(startAtMillis),
+    },
+    body: file,
+    credentials: 'same-origin',
+    redirect: 'error',
+  })
+  const payload = await response.json() as { ok: boolean; value?: RecordingImportSnapshot; error?: { message?: string } }
+  if (!response.ok || !payload.ok || payload.value === undefined) {
+    throw new Error(payload.error?.message || '录音导入失败')
+  }
+  return payload.value
+}
+
 type ArkmeUiOperation = ArkmePluginOperation
   | 'provider.instance'
   | 'link.metadata'
@@ -37,6 +78,13 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'calendar.records'
   | 'recordings.calendar'
   | 'recordings.day'
+  | 'recordings.import.list'
+  | 'recordings.import.status'
+  | 'recordings.import.retry'
+  | 'recordings.import.cancel'
+  | 'recordings.playback.open'
+  | 'recordings.speaker.options'
+  | 'recordings.speaker.assign-item'
   | 'topic.create'
   | 'topic.rename'
   | 'topic.dissolve'

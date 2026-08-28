@@ -21,6 +21,7 @@ import {
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
 import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler } from './rich-media-routes.js'
+import { createArkmeRecordingImportHandler, scavengeRecordingImportTemporaryFiles } from './recording-import-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
 import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
@@ -92,6 +93,7 @@ export interface Config {
   relatedRecordingsEnabled: boolean
   geetestCaptchaId: string
   interwovenMomentsEnabled: boolean
+  recordingWorkbenchV2Enabled: boolean
   chatMemberJoinEventsEnabled: boolean
   richMediaRenderEnabled: boolean
   richMediaSendEnabled: boolean
@@ -140,6 +142,7 @@ export const Config: Schema<Config> = Schema.object({
   relatedRecordingsEnabled: Schema.boolean().default(true),
   geetestCaptchaId: Schema.string().default('ec81315ab8b0f18a7bfa13602d01e307'),
   interwovenMomentsEnabled: Schema.boolean().default(true),
+  recordingWorkbenchV2Enabled: Schema.boolean().default(true),
   chatMemberJoinEventsEnabled: Schema.boolean().default(true),
   stateDirectory: Schema.string().default(''),
   keychainServicePrefix: Schema.string().default('com.senqisi.dsh-arkme'),
@@ -495,6 +498,11 @@ export function apply(ctx: Context, config: Config): void {
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
   const stageHandler = createArkmeUploadHandler(service, richMediaOptions, 'stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
+  const recordingImportHandler = createArkmeRecordingImportHandler(service, {
+    expectedPort: ctx.webServer.port,
+    allowNonLoopback: config.allowNonLoopback,
+    temporaryDirectory: join(stateDirectory, 'recording-imports'),
+  })
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
     expectedPort: ctx.webServer.port,
@@ -536,6 +544,11 @@ export function apply(ctx: Context, config: Config): void {
     ownedExtensionStore.close()
   }, 'dsh-arkme: local cache database')
   ctx.effect(() => service.startChatRealtime(), 'dsh-arkme: Chat SSE receive runtime')
+  ctx.effect(async () => {
+    await scavengeRecordingImportTemporaryFiles(join(stateDirectory, 'recording-imports')).catch(() => undefined)
+    await service.resumeRecordingImports().catch(() => undefined)
+    return () => undefined
+  }, 'dsh-arkme: recording import recovery')
   ctx.effect(() => updateManager.start(), 'dsh-arkme: plugin update notification runtime')
   ctx.effect(async () => {
     await extensionShareDiscovery.start()
@@ -563,6 +576,11 @@ export function apply(ctx: Context, config: Config): void {
   }), 'dsh-arkme: rich content upload route')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: `${config.routePath}/recording/import`,
+    handler: recordingImportHandler,
+  }), 'dsh-arkme: recording import route')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: `${config.routePath}/media`,

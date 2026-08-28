@@ -5,6 +5,15 @@ import type {
   ArkmeRecordingVersionStatus,
 } from './types.js'
 
+export interface ArkmeRecordingPrivateTranscriptItem extends ArkmeRecordingTranscriptItem {
+  audioFileName: string
+  audioMimeType: string
+  formalSpeakerId: string
+  rawSpeakerNumber: number
+  speakerIdentity: string
+  childStartMillis: number
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -59,7 +68,7 @@ export function projectRecordingTranscripts(
   response: unknown,
   speakerResponse: unknown,
   profilesByUserId: ReadonlyMap<number, { displayName: string; avatarRef?: string }> = new Map(),
-): ArkmeRecordingTranscriptItem[] {
+): ArkmeRecordingPrivateTranscriptItem[] {
   const data = objectValue(response)
   const sessions = new Map<string, Record<string, unknown>>()
   const sessionSpeakerColorIndexes = new Map<string, number>()
@@ -110,13 +119,15 @@ export function projectRecordingTranscripts(
     if (id !== '') speakers.set(id, speaker)
   }
 
-  const projected: Array<ArkmeRecordingTranscriptItem & { sourceIndex: number }> = []
+  const projected: Array<ArkmeRecordingPrivateTranscriptItem & { sourceIndex: number }> = []
   let sourceIndex = 0
   for (const rawChild of listValue(data.child_ls ?? data.children)) {
     const child = objectValue(rawChild)
     const childId = stringValue(child.id ?? child.child_id).trim()
     const sessionId = stringValue(child.session_id).trim()
     const session = sessions.get(sessionId) ?? {}
+    const audioFileName = stringValue(child.file_name ?? child.audio_file_name ?? child.source_file_name).trim()
+    const audioMimeType = stringValue(child.mime_type ?? child.audio_mime_type).trim()
     const sessionSpeakers = listValue(session.spk_ls ?? session.speakers).map(objectValue)
     const childOffset = numberValue(child.start_at)
     const childStart = childOffset >= 100_000_000_000
@@ -133,6 +144,12 @@ export function projectRecordingTranscripts(
       const formalSpeakerId = stringValue(
         row.effective_spk_id ?? sessionSpeaker.spk_id ?? sessionSpeaker.speaker_id,
       ).trim()
+      const innerDisplay = stringValue(sessionSpeaker.inner_display).trim()
+      const speakerIdentity = formalSpeakerId !== ''
+        ? `speaker:${formalSpeakerId}`
+        : innerDisplay !== ''
+          ? `inner:${innerDisplay}`
+          : `session:${sessionId}:${String(rawSpeakerNumber)}`
       const formalSpeaker = speakers.get(formalSpeakerId) ?? {}
       const speakerUserId = positiveNumberValue(
         formalSpeaker.ref_usr_id ?? formalSpeaker.ref_user_id ?? formalSpeaker.user_id,
@@ -161,6 +178,12 @@ export function projectRecordingTranscripts(
         childId,
         asrItemIndex: index,
         transcriptSource: 'system',
+        audioFileName,
+        audioMimeType,
+        formalSpeakerId,
+        rawSpeakerNumber,
+        speakerIdentity,
+        childStartMillis: childStart,
         startAtMillis: childStart + startOffset,
         endAtMillis: childStart + endOffset,
         speakerNumber,

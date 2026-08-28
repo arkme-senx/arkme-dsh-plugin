@@ -25,6 +25,7 @@ import type {
   ArkmeOutgoingCallToolResult,
 } from './outgoing-call-contract.js'
 import type { ArkmeRequestStats } from './request-coordinator.js'
+import type { PublicRecordingImportJob } from './recording-import-contract.js'
 import { SecretValue } from './secret-value.js'
 import {
   buildWorldVoiceprintInviteMessage,
@@ -185,9 +186,12 @@ import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingCursorPayload,
   ArkmeRecordingDay,
+  ArkmeRecordingPlayback,
   ArkmeRecordingProjectionKind,
   ArkmeRecordingSearchResult,
   ArkmeRecordingSection,
+  ArkmeRecordingSpeakerMutationResult,
+  ArkmeRecordingSpeakerOption,
   ArkmeRecordingTranscriptSection,
   ArkmeRecordingVersion,
   ArkmeRelatedRecordingEligibility, ArkmeRelatedRecordingPage, ArkmeRelatedRecordingPageOptions, ArkmeRelatedQuickNoteDetail, ArkmeRelatedQuickNoteList, ArkmeRichSendInput, ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeMessageSnapshotDetail, ArkmeBotMentionInput, ArkmeHumanMentionInput,
@@ -314,7 +318,6 @@ export class ArkmeService {
     this.calendar = new CalendarService(this.runtime, this.privacy)
     this.wechat = new WechatService(this.runtime)
     this.profile = new ProfileService(this.runtime)
-    this.recording = new RecordingService(this.runtime, this.profile)
     this.callHistory = new CallHistoryService(this.runtime, this.profile)
     this.extensionReview = new ExtensionReviewService(this.runtime, this.profile, {
       createTextForConversation: async (recordUid, textContent) => {
@@ -327,6 +330,7 @@ export class ArkmeService {
       { openWorldImageRef: async (imageRef, viewerUserId) => await this.openWorldImageRef(imageRef, viewerUserId) },
       { recordUid: raw => this.recordUid(raw) }, { openBotImageRef: async (imageRef, viewerUserId) => await this.bot.openBotImageRef(imageRef, viewerUserId) },
     )
+    this.recording = new RecordingService(this.runtime, this.profile, undefined, this.media)
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
       recordItem: raw => this.recordItem(raw),
@@ -585,7 +589,10 @@ export class ArkmeService {
       jiwoScanLoginEnabled: jiwoScanLoginAvailable(this.config),
       callAssetBasePath: `${this.config.routePath}/call`,
       voiceprintEnrollmentPath: `${this.config.routePath}/voiceprint/enroll`,
+      recordingImportPath: `${this.config.routePath}/recording/import`,
+      mediaPath: `${this.config.routePath}/media`,
       shareWebsite: this.config.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE,
+      recordingWorkbenchV2Enabled: this.config.recordingWorkbenchV2Enabled !== false,
     }
   }
 
@@ -824,6 +831,53 @@ export class ArkmeService {
   /** @internal Built-in loopback UI only; excluded from the published Provider declaration. */
   async recordingDay(dateStamp: number): Promise<ArkmeRecordingDay> {
     return await this.recording.recordingDay(dateStamp)
+  }
+
+  async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> {
+    return await this.recording.recordingPlayback(itemRef, signal)
+  }
+
+  async recordingSpeakerOptions(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerOption[]> {
+    return await this.recording.recordingSpeakerOptions(itemRef, signal)
+  }
+
+  async assignRecordingSpeaker(
+    input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' },
+    signal?: AbortSignal,
+  ): Promise<ArkmeRecordingSpeakerMutationResult> {
+    return await this.recording.assignRecordingSpeaker(input, signal)
+  }
+
+  /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
+  async acceptRecordingImport(
+    temporaryPath: string,
+    metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
+  ): Promise<PublicRecordingImportJob> {
+    return await this.recording.acceptRecordingImport(temporaryPath, metadata)
+  }
+
+  /** @internal Built-in loopback UI only. */
+  async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> {
+    return await this.recording.recordingImportStatus(importRef)
+  }
+
+  /** @internal Built-in loopback UI only. */
+  async recordingImportList(): Promise<PublicRecordingImportJob[]> {
+    return await this.recording.recordingImportList()
+  }
+
+  /** @internal Built-in loopback UI only. */
+  async retryRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
+    return await this.recording.retryRecordingImport(importRef, expectedRevision)
+  }
+
+  /** @internal Built-in loopback UI only. */
+  async cancelRecordingImport(importRef: string, expectedRevision: number): Promise<PublicRecordingImportJob> {
+    return await this.recording.cancelRecordingImport(importRef, expectedRevision)
+  }
+
+  async resumeRecordingImports(): Promise<void> {
+    await this.recording.resumeRecordingImports()
   }
 
   async refreshProfile(): Promise<ArkmeUserProfileSnapshot> {

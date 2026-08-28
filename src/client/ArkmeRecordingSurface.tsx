@@ -10,12 +10,19 @@ import type {
   ArkmeRecordingCalendarMonth,
   ArkmeRecordingDay,
   ArkmeRecordingSection,
+  ArkmeRecordingWorkbenchItem,
   ArkmeRecordingVersion,
 } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { ArkmeRecordingImportDialog } from './recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportJobs } from './recordings/ArkmeRecordingImportJobs.js'
+import { ArkmeRecordingSpeakerEditor } from './recordings/ArkmeRecordingSpeakerEditor.js'
+import { ArkmeRecordingTimeline } from './recordings/ArkmeRecordingTimeline.js'
+import { useRecordingPlayback } from './recordings/useRecordingPlayback.js'
 
 type RecordingTab = 'transcript' | 'summary' | 'timeline'
 
@@ -58,6 +65,7 @@ const styles: Record<string, CSSProperties> = {
   root: { flex: 1, width: '100%', height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateColumns: '384px minmax(0,1fr)', color: colors.text, background: colors.base },
   browser: { minWidth: 0, minHeight: 0, padding: '30px 15px 17px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', borderRight: `1px solid ${colors.border}`, background: colors.base },
   browserHeading: { padding: '0 1px' },
+  browserHeadingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   browserTitle: { margin: 0, fontSize: 19, lineHeight: '26px', letterSpacing: '-.02em', fontWeight: 650 },
   browserSubtitle: { margin: '5px 0 0', color: colors.secondary, fontSize: 12, lineHeight: '18px' },
   calendar: { width: 354, marginTop: 22, padding: '16px 17px 18px', boxSizing: 'border-box', border: '1px solid rgba(216,217,221,.9)', borderRadius: 18, background: 'rgba(255,255,255,.98)' },
@@ -93,7 +101,7 @@ const styles: Record<string, CSSProperties> = {
   emptyIcon: { width: 40, height: 40, marginBottom: 12, display: 'grid', placeItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 12, color: colors.secondary },
   emptyTitle: { color: colors.text, fontSize: 13, fontWeight: 500 },
   emptyText: { margin: '7px 0 0', fontSize: 11, lineHeight: 1.55 },
-  content: { minWidth: 0, minHeight: 0, padding: '24px 25px 20px 27px', display: 'grid', gridTemplateRows: '90px minmax(0,1fr)', gap: 12, boxSizing: 'border-box', background: colors.base },
+  content: { minWidth: 0, minHeight: 0, padding: '24px 25px 20px 27px', display: 'grid', gridTemplateRows: '142px minmax(0,1fr)', gap: 12, boxSizing: 'border-box', background: colors.base },
   dayTimeline: { minWidth: 0, padding: '14px 16px 12px', border: `1px solid ${colors.border}`, borderRadius: 14, background: colors.layer1 },
   timelineTitle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   timelineTitleLeft: { display: 'flex', alignItems: 'center', gap: 9, color: colors.secondary },
@@ -122,6 +130,8 @@ const styles: Record<string, CSSProperties> = {
   speaker: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 650, lineHeight: '22px' },
   speakerDot: { flex: 'none', width: 16, height: 16, borderRadius: 999 },
   transcriptText: { margin: '6px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: colors.text, fontSize: 12, lineHeight: 1.65 },
+  transcriptActions: { display: 'flex', gap: 5, marginTop: 7 },
+  inlineButton: { border: `1px solid ${colors.border}`, borderRadius: 7, background: colors.layer1, color: colors.secondary, padding: '3px 7px', cursor: 'pointer', fontSize: 10 },
   background: { display: 'inline-block', marginLeft: 6, padding: '0 5px', borderRadius: 999, background: colors.layer2, color: colors.secondary, fontSize: 9, lineHeight: '17px', verticalAlign: 1 },
   versionBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 16 },
   select: { maxWidth: '100%', border: `1px solid ${colors.border}`, borderRadius: 8, padding: '7px 9px', background: colors.input, color: 'inherit' },
@@ -279,6 +289,10 @@ function VersionPicker({ versions, selectedId, onChange }: {
 
 export function ArkmeRecordingSurface() {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const workbenchEnabled = auth.config?.recordingWorkbenchV2Enabled !== false
+  const recordingImportPath = auth.config?.recordingImportPath ?? '/arkme-self/api/recording/import'
+  const recordingMediaPath = auth.config?.mediaPath ?? '/arkme-self/api/media'
   const today = useMemo(() => startOfLocalDay(new Date()), [])
   const [selectedDate, setSelectedDate] = useState(today)
   const [visibleMonth, setVisibleMonth] = useState(monthStart(today))
@@ -291,6 +305,13 @@ export function ArkmeRecordingSurface() {
   const [dayError, setDayError] = useState('')
   const [summaryVersionId, setSummaryVersionId] = useState('')
   const [timelineVersionId, setTimelineVersionId] = useState('')
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0)
+  const [dayRefreshKey, setDayRefreshKey] = useState(0)
+  const [importRefreshKey, setImportRefreshKey] = useState(0)
+  const [editingSpeaker, setEditingSpeaker] = useState<ArkmeRecordingWorkbenchItem>()
+  const playback = useRecordingPlayback(recordingMediaPath)
+
+  useEffect(() => playback.stop, [playback.stop, selectedDate])
 
   useEffect(() => {
     const target = ui.recordingTarget
@@ -311,7 +332,7 @@ export function ArkmeRecordingSurface() {
       .catch(error => { if (!cancelled) { setCalendar(undefined); setCalendarError(errorMessage(error)) } })
       .finally(() => { if (!cancelled) setCalendarLoading(false) })
     return () => { cancelled = true }
-  }, [visibleMonth])
+  }, [visibleMonth, calendarRefreshKey])
 
   useEffect(() => {
     let cancelled = false
@@ -327,7 +348,7 @@ export function ArkmeRecordingSurface() {
       .catch(error => { if (!cancelled) setDayError(errorMessage(error)) })
       .finally(() => { if (!cancelled) setDayLoading(false) })
     return () => { cancelled = true }
-  }, [selectedDate])
+  }, [selectedDate, dayRefreshKey])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(item.dateStamp), item])), [calendar])
   const monthDates = useMemo(() => monthCalendarCells(visibleMonth), [visibleMonth])
@@ -355,7 +376,7 @@ export function ArkmeRecordingSurface() {
   const renderTranscript = () => {
     const section = day?.transcript
     if (dayLoading || section === undefined || section.state !== 'ready') return <SectionState section={section} loading={dayLoading} />
-    return <ul style={styles.transcriptList}>{section.items.map(item => <li key={item.itemId} style={styles.transcript}>
+    return <ul style={styles.transcriptList}>{section.items.map(item => <li key={item.itemId} style={{ ...styles.transcript, ...(playback.activeItemRef === item.itemRef ? { background: colors.layer1 } : {}) }}>
       <RecordingSpeakerAvatar label={item.speakerLabel} colorIndex={item.speakerColorIndex}
         {...(item.speakerAvatarRef === undefined ? {} : { avatarRef: item.speakerAvatarRef })} />
       <span style={styles.transcriptBody}>
@@ -365,6 +386,18 @@ export function ArkmeRecordingSurface() {
           {item.isBackground && <span style={styles.background}>背景音</span>}
         </span>
         <p style={styles.transcriptText}>{item.text}</p>
+        <span style={styles.transcriptActions}>
+          {workbenchEnabled && <button type="button" style={styles.inlineButton} onClick={() => {
+            if (playback.activeItemRef === item.itemRef) void playback.toggle(item)
+            else void playback.playItem(item)
+          }}>{playback.activeItemRef === item.itemRef ? (playback.isPlaying ? '暂停片段' : '继续播放') : '播放片段'}</button>}
+          {workbenchEnabled && <button type="button" style={styles.inlineButton} onClick={() => { setEditingSpeaker(current => current?.itemRef === item.itemRef ? undefined : item) }}>编辑说话人</button>}
+        </span>
+        {workbenchEnabled && editingSpeaker?.itemRef === item.itemRef && <ArkmeRecordingSpeakerEditor
+          item={item}
+          onUpdated={setDay}
+          onClose={() => { setEditingSpeaker(undefined) }}
+        />}
       </span>
     </li>)}</ul>
   }
@@ -408,7 +441,7 @@ export function ArkmeRecordingSurface() {
   return <div style={styles.root}>
     <aside style={styles.browser} aria-label="录音列表">
       <header style={styles.browserHeading}>
-        <h2 style={styles.browserTitle}>全天候录音</h2>
+        <div style={styles.browserHeadingRow}><h2 style={styles.browserTitle}>全天候录音</h2>{workbenchEnabled && <ArkmeRecordingImportDialog importPath={recordingImportPath} onAccepted={() => { setImportRefreshKey(value => value + 1) }} />}</div>
         <p style={styles.browserSubtitle}>查看每天的录音、转写、总结与时间轴。</p>
       </header>
       <section style={styles.calendar} aria-label="选择录音日期">
@@ -458,6 +491,10 @@ export function ArkmeRecordingSurface() {
             <ArrowRight size={15} aria-hidden />
           </button>
         </div> : <div style={styles.empty}><span style={styles.emptyIcon}><Waveform size={19} aria-hidden /></span><strong style={styles.emptyTitle}>这一天没有录音</strong><p style={styles.emptyText}>选择显示时长的日期查看录音。</p></div>}
+      {workbenchEnabled && <ArkmeRecordingImportJobs refreshKey={importRefreshKey} onAccepted={() => {
+        setCalendarRefreshKey(value => value + 1)
+        setDayRefreshKey(value => value + 1)
+      }} />}
     </aside>
 
     <section style={styles.content} aria-label="录音详情">
@@ -466,7 +503,17 @@ export function ArkmeRecordingSurface() {
           <div style={styles.timelineTitleLeft}><ClockCounterClockwise size={17} aria-hidden /><span style={styles.timelineTitleCopy}><strong style={styles.timelineStrong}>当天时间轴</strong><small style={styles.timelineSmall}>{dateTitle(selectedDate)}</small></span></div>
           <em style={styles.timelineRange}>{recordingRange}</em>
         </div>
-        <div style={styles.track} aria-label="当天录音时间轴"><span style={styles.trackBase} />{totalDuration > 0 && <span style={styles.trackSegment}><i style={styles.trackNode} /><span style={styles.trackTime}>{firstTranscript === undefined ? dayLabel : timeLabel(firstTranscript.startAtMillis).slice(0, 5)}</span></span>}</div>
+        {workbenchEnabled && transcriptItems.length > 0
+          ? <ArkmeRecordingTimeline
+            items={transcriptItems}
+            dayStartMillis={selectedDate.getTime()}
+            {...(playback.positionAtMillis === undefined ? {} : { playheadMillis: playback.positionAtMillis })}
+            isPlaying={playback.isPlaying}
+            onActivate={(item, seekAtMillis) => { void playback.playItem(item, seekAtMillis) }}
+            onTogglePlayback={() => { void playback.toggle(transcriptItems[0]) }}
+          />
+          : <div style={styles.track} aria-label="当天录音时间轴"><span style={styles.trackBase} /></div>}
+        {workbenchEnabled && playback.error !== '' && <div style={styles.error} role="alert">{playback.error}</div>}
       </div>
       <div style={styles.analysis}>
         <nav style={styles.tabs} aria-label="录音内容">
