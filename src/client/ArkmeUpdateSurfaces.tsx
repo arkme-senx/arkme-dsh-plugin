@@ -3,204 +3,31 @@ import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmePluginUpdateInstallPhase, ArkmePluginUpdateStatus } from '../types.js'
 import {
   arkmeAppUpdateStore,
-  type ArkmeAppUpdateStoreSnapshot,
 } from './app-update-store.js'
 import {
   arkmePluginUpdateStore,
-  type ArkmePluginUpdateStoreSnapshot,
 } from './plugin-update-store.js'
 import { useArkmeUpdateUiSnapshot, type ArkmeUpdateTarget } from './update-ui-controller.js'
-
-const ACTIVE_PLUGIN_PHASES = new Set<ArkmePluginUpdateInstallPhase>([
-  'preparing', 'downloading', 'verifying', 'installing', 'restarting',
-])
-
-export interface ArkmeUpdateNote {
-  title: string
-  detail?: string
-}
-
-export interface ArkmeUpdateItem {
-  target: ArkmeUpdateTarget
-  instanceKey: string
-  productLabel: string
-  title: string
-  currentVersion: string
-  latestVersion: string
-  packageSize?: string
-  notes: ArkmeUpdateNote[]
-  available: boolean
-  active: boolean
-  ready: boolean
-  restarting: boolean
-  failed: boolean
-  blockedReason?: string
-  error?: string
-  phase?: ArkmePluginUpdateInstallPhase | 'app-downloading' | 'app-downloaded' | 'app-failed'
-  phaseMessage?: string
-  progress?: number
-}
-
-export interface ArkmeUpdatePresentation {
-  items: ArkmeUpdateItem[]
-  primary?: ArkmeUpdateItem
-}
-
-function versionLabel(version: string | undefined): string {
-  return version?.trim() || '…'
-}
-
-function formatBytes(value: number | undefined): string | undefined {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined
-  if (value < 1024) return `${Math.round(value)} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function percentage(downloaded: number | undefined, total: number | undefined): number | undefined {
-  if (total === undefined || total <= 0) return undefined
-  return Math.max(0, Math.min(100, Math.round((downloaded ?? 0) / total * 100)))
-}
-
-function pluginProgress(phase: ArkmePluginUpdateInstallPhase | undefined): number | undefined {
-  switch (phase) {
-    case 'preparing': return 12
-    case 'downloading': return 36
-    case 'verifying': return 58
-    case 'installing': return 78
-    case 'restarting': return 94
-    case 'succeeded': return 100
-    default: return undefined
-  }
-}
-
-function pluginPhaseMessage(phase: ArkmePluginUpdateInstallPhase | undefined): string | undefined {
-  switch (phase) {
-    case 'preparing': return '正在准备更新'
-    case 'downloading': return '正在下载更新包'
-    case 'verifying': return '正在校验更新包'
-    case 'installing': return '正在安装新版本'
-    case 'restarting': return '完成后将自动返回新版本'
-    case 'succeeded': return '新版本已安装'
-    case 'failed': return '更新未完成，请重试'
-    case 'rolled-back': return '已恢复到更新前版本'
-    default: return undefined
-  }
-}
-
-function blockedReason(status: ArkmePluginUpdateStatus): string | undefined {
-  if (status.canInstallInApp) return undefined
-  switch (status.installBlockedReason) {
-    case 'local-install': return '当前为本地开发插件，不能在应用内覆盖更新。'
-    case 'update-disabled': return '插件自动更新当前未启用。'
-    case 'profile-unavailable': return '当前插件 Profile 不支持应用内更新。'
-    default: return '当前运行环境不支持应用内更新。'
-  }
-}
-
-function updateNotes(summary: string | undefined): ArkmeUpdateNote[] {
-  const lines = summary?.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 3) ?? []
-  return lines.map(line => {
-    const separator = line.search(/[：:—–]/)
-    if (separator <= 0 || separator >= line.length - 1) return { title: line }
-    return {
-      title: line.slice(0, separator).trim(),
-      detail: line.slice(separator + 1).trim(),
-    }
-  })
-}
-
-function appItem(snapshot: ArkmeAppUpdateStoreSnapshot): ArkmeUpdateItem | undefined {
-  const status = snapshot.status
-  if (status === undefined || !['available', 'downloading', 'downloaded', 'failed'].includes(status.status)) return undefined
-  const latestVersion = versionLabel(status.latestVersion)
-  const progress = percentage(status.downloadedBytes, status.totalBytes)
-  const packageSize = formatBytes(status.totalBytes)
-  const failed = status.status === 'failed'
-  const ready = status.status === 'downloaded'
-  return {
-    target: 'app',
-    instanceKey: `app:${latestVersion}`,
-    productLabel: 'Arkme APP',
-    title: failed ? '更新未完成' : ready ? '更新包已下载' : '发现新版本',
-    currentVersion: versionLabel(status.currentVersion),
-    latestVersion,
-    ...(packageSize === undefined ? {} : { packageSize }),
-    notes: updateNotes(status.releaseNotes),
-    available: status.status === 'available',
-    active: status.status === 'downloading',
-    ready,
-    restarting: false,
-    failed,
-    ...(status.status === 'downloading' ? { phase: 'app-downloading' as const, phaseMessage: '可继续使用' } : {}),
-    ...(ready ? { phase: 'app-downloaded' as const, phaseMessage: `已下载 ${latestVersion}` } : {}),
-    ...(failed ? { phase: 'app-failed' as const, phaseMessage: '请重新尝试下载' } : {}),
-    ...(status.error?.trim() || snapshot.error.trim() ? { error: status.error?.trim() || snapshot.error.trim() } : {}),
-    ...(progress === undefined ? {} : { progress }),
-  }
-}
-
-function pluginItem(snapshot: ArkmePluginUpdateStoreSnapshot): ArkmeUpdateItem | undefined {
-  const status = snapshot.status
-  const install = snapshot.install
-  if (status === undefined && install === undefined) return undefined
-  const active = install !== undefined && ACTIVE_PLUGIN_PHASES.has(install.phase)
-  // A status refresh/acknowledgement is not an install. In particular, a slow
-  // update check must never leave the global UI looking like an 8% install.
-  const activeDisplay = active
-  const ready = install?.phase === 'succeeded'
-  const failed = install?.phase === 'failed' || install?.phase === 'rolled-back' || snapshot.installError.trim() !== ''
-  const available = status?.availability === 'available' && !activeDisplay && !ready && !failed
-  if (!available && !activeDisplay && !ready && !failed) return undefined
-  const latestVersion = versionLabel(status?.latestVersion ?? install?.targetVersion)
-  const error = snapshot.installError.trim() || (failed ? install?.message : undefined)
-  const installBlockedReason = status === undefined ? undefined : blockedReason(status)
-  const progress = pluginProgress(install?.phase)
-  return {
-    target: 'plugin',
-    instanceKey: `plugin:${install?.jobId ?? latestVersion}`,
-    productLabel: 'Arkme 核心插件',
-    title: failed ? '更新未完成' : ready ? '更新完成' : '发现新版本',
-    currentVersion: versionLabel(status?.installedVersion ?? install?.previousVersion),
-    latestVersion,
-    notes: updateNotes(status?.summary),
-    available,
-    active: activeDisplay,
-    ready,
-    restarting: install?.phase === 'restarting',
-    failed,
-    ...(installBlockedReason === undefined ? {} : { blockedReason: installBlockedReason }),
-    ...(error === undefined || error === '' ? {} : { error }),
-    ...(install?.phase === undefined ? {} : { phase: install.phase }),
-    phaseMessage: install?.message || pluginPhaseMessage(install?.phase) || '正在准备更新',
-    ...(progress === undefined ? {} : { progress }),
-  }
-}
-
-/** Pure UI projection over the existing APP and plugin update stores. */
-export function deriveArkmeUpdatePresentation(input: {
-  app: ArkmeAppUpdateStoreSnapshot
-  plugin: ArkmePluginUpdateStoreSnapshot
-}): ArkmeUpdatePresentation {
-  const items = [pluginItem(input.plugin), appItem(input.app)].filter((item): item is ArkmeUpdateItem => item !== undefined)
-  const primary = items.find(item => item.active)
-    ?? items.find(item => item.ready || item.failed)
-    ?? items.find(item => item.available)
-  return { items, ...(primary === undefined ? {} : { primary }) }
-}
+import { deriveArkmeUpdatePresentation, type ArkmeUpdateItem } from './update-presentation.js'
+export { deriveArkmeUpdatePresentation, appUpdateProgress } from './update-presentation.js'
+export type { ArkmeUpdateNote, ArkmeUpdateItem, ArkmeUpdatePresentation } from './update-presentation.js'
 
 function railLabel(item: ArkmeUpdateItem): string {
+  if (item.uncertain) return '待确认'
   if (item.active) return item.restarting ? '重启' : item.progress === undefined ? '更新中' : `${item.progress}%`
-  if (item.ready) return '完成'
+  if (item.ready) return '待安装'
   if (item.failed) return '重试'
   return '更新'
 }
 
 function updateMeta(item: ArkmeUpdateItem): string {
   return `${item.productLabel} ${item.latestVersion}${item.packageSize === undefined ? '' : ` · ${item.packageSize}`}`
+}
+
+function updateSelectionKey(item: ArkmeUpdateItem): string {
+  return `${item.target}:${item.latestVersion}`
 }
 
 const ArkmeUpdatePopover = forwardRef<HTMLElement, {
@@ -231,14 +58,16 @@ const ArkmeUpdatePopover = forwardRef<HTMLElement, {
   </section>
 })
 
-export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded }: {
+export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded, onCheckStatus }: {
   item: ArkmeUpdateItem
   onClose(): void
   onRetry(): void
   onOpenDownloaded(): void
+  onCheckStatus?(): void
 }) {
-  const active = item.active && !item.restarting
-  const title = item.restarting ? '正在自动重启…' : item.ready ? '更新包已就绪' : item.failed ? '更新未完成' : '正在更新'
+  const active = item.active && !item.restarting && !item.ready && !item.failed
+  const hasAction = (item.ready && item.target === 'app') || item.failed || item.uncertain
+  const title = item.uncertain ? '更新状态待确认' : item.restarting ? '正在自动重启…' : item.ready ? '安装包已下载' : item.failed ? '更新未完成' : '正在更新'
   const detail = item.restarting
     ? '即将打开新版本'
     : item.ready
@@ -246,11 +75,12 @@ export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded
       : item.phaseMessage ?? '可继续使用'
   return <section
     className={`arkme-update-capsule${item.ready ? ' is-ready' : ''}${item.restarting ? ' is-restarting' : ''}${item.failed ? ' is-error' : ''}`}
+    data-layout={item.restarting ? 'restarting' : active ? 'progress' : hasAction ? 'action' : 'message'}
     role={item.failed ? 'alert' : 'status'}
     aria-live={item.failed ? 'assertive' : 'polite'}
-    aria-label={item.restarting ? '正在自动重启客户端' : item.ready ? '更新包已就绪' : item.failed ? '更新未完成' : `正在更新，${item.progress ?? 0}%`}
+    aria-label={item.uncertain ? '更新状态待确认' : item.restarting ? '正在自动重启客户端' : item.ready ? '安装包已下载' : item.failed ? '更新未完成' : `正在更新，${item.progress ?? 0}%`}
   >
-    <div className="arkme-update-capsule-copy"><strong>{title}</strong><small>{detail}</small></div>
+    <div className="arkme-update-capsule-copy"><strong>{title}</strong><small title={detail}>{detail}</small></div>
     {active && <>
       <div className={`arkme-update-progress${item.progress === undefined ? ' is-indeterminate' : ''}`} aria-hidden>
         <span style={item.progress === undefined ? {} : { width: `${item.progress}%` }} />
@@ -259,17 +89,17 @@ export function ArkmeUpdateTopCapsule({ item, onClose, onRetry, onOpenDownloaded
     </>}
     {item.ready && item.target === 'app' && <button type="button" className="arkme-update-ready-action" onClick={onOpenDownloaded}>打开文件夹</button>}
     {item.failed && <button type="button" className="arkme-update-ready-action" onClick={onRetry}>重新尝试</button>}
+    {item.uncertain && <button type="button" className="arkme-update-ready-action" disabled={item.checkingStatus} aria-busy={item.checkingStatus} onClick={onCheckStatus}>{item.checkingStatus ? '检查中…' : '检查状态'}</button>}
     {!item.restarting && <button type="button" className="arkme-update-capsule-close" onClick={onClose} aria-label="关闭更新进度"><X size={14} /></button>}
   </section>
 }
-
 /** Demo-aligned update entry, anchored popover, and recoverable top progress capsule. */
 export function ArkmeUpdateRailSlot() {
   const app = useSyncExternalStore(arkmeAppUpdateStore.subscribe, arkmeAppUpdateStore.getSnapshot, arkmeAppUpdateStore.getSnapshot)
   const plugin = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot, arkmePluginUpdateStore.getSnapshot)
   const request = useArkmeUpdateUiSnapshot()
   const presentation = useMemo(() => deriveArkmeUpdatePresentation({ app, plugin }), [app, plugin])
-  const [selectedTarget, setSelectedTarget] = useState<ArkmeUpdateTarget | undefined>()
+  const [selectedKey, setSelectedKey] = useState<string | undefined>()
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [topOpen, setTopOpen] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; bottom: number }>()
@@ -279,14 +109,25 @@ export function ArkmeUpdateRailSlot() {
   const handledRequestRef = useRef(0)
   const activeKeyRef = useRef<string>()
   const phaseRef = useRef<string>()
-  const selectedItem = presentation.items.find(item => item.target === selectedTarget) ?? presentation.primary
+  const restoreRailFocusRef = useRef(false)
+  // Selection belongs to a release, while instanceKey tracks request/job activity.
+  // Accepting or rejecting a request must not change the user's open/closed choice.
+  const selectedItem = presentation.items.find(item => updateSelectionKey(item) === selectedKey)
+
+  useEffect(() => {
+    if (selectedKey === undefined || selectedItem !== undefined) return
+    setSelectedKey(undefined)
+    setPopoverOpen(false)
+    setTopOpen(false)
+    setPopoverPosition(undefined)
+  }, [selectedKey, selectedItem])
 
   useEffect(() => {
     if (request.revision === 0 || request.revision === handledRequestRef.current) return
     handledRequestRef.current = request.revision
     const requested = presentation.items.find(item => request.target === undefined || item.target === request.target) ?? presentation.primary
     if (requested === undefined) return
-    setSelectedTarget(requested.target)
+    setSelectedKey(updateSelectionKey(requested))
     if (requested.available) {
       setTopOpen(false)
       setPopoverOpen(true)
@@ -298,18 +139,35 @@ export function ArkmeUpdateRailSlot() {
 
   useEffect(() => {
     const active = presentation.items.find(item => item.active)
-    if (active === undefined) return
+    if (active === undefined) {
+      if (presentation.items.length === 0) {
+        activeKeyRef.current = undefined
+        phaseRef.current = undefined
+      }
+      return
+    }
     const phaseKey = `${active.instanceKey}:${active.phase ?? 'active'}`
     if (activeKeyRef.current !== active.instanceKey || (active.restarting && phaseRef.current !== phaseKey)) {
+      const continuesRequest = active.target === 'plugin' && !active.restarting
+        && activeKeyRef.current === `plugin:pending:${active.latestVersion}`
       activeKeyRef.current = active.instanceKey
       phaseRef.current = phaseKey
-      setSelectedTarget(active.target)
-      setPopoverOpen(false)
-      setTopOpen(true)
+      setSelectedKey(updateSelectionKey(active))
+      if (!continuesRequest) {
+        setPopoverOpen(false)
+        setTopOpen(true)
+      }
     } else {
       phaseRef.current = phaseKey
     }
   }, [presentation])
+
+  useLayoutEffect(() => {
+    if (!topOpen && restoreRailFocusRef.current) {
+      restoreRailFocusRef.current = false
+      railRef.current?.focus()
+    }
+  }, [topOpen])
 
   useEffect(() => {
     if (!popoverOpen) return
@@ -337,9 +195,11 @@ export function ArkmeUpdateRailSlot() {
     const position = () => {
       const rail = railRef.current?.getBoundingClientRect()
       if (rail === undefined) return
+      // Measure layout size rather than the entrance animation's scaled bounds.
+      const popover = popoverRef.current
       setPopoverPosition({
-        left: Math.round(rail.right + 8),
-        bottom: Math.round(window.innerHeight - rail.bottom - 2),
+        left: Math.round(Math.max(8, Math.min(rail.right + 8, window.innerWidth - (popover?.offsetWidth ?? 356) - 8))),
+        bottom: Math.round(Math.max(8, Math.min(window.innerHeight - rail.bottom - 2, window.innerHeight - (popover?.offsetHeight ?? 0) - 8))),
       })
     }
     position()
@@ -349,14 +209,14 @@ export function ArkmeUpdateRailSlot() {
       window.removeEventListener('resize', position)
       window.removeEventListener('scroll', position, true)
     }
-  }, [popoverOpen])
+  }, [popoverOpen, selectedItem])
 
   if (presentation.primary === undefined) return null
   const railItem = selectedItem ?? presentation.primary
-  const railHidden = topOpen && (railItem.active || railItem.ready || railItem.failed)
+  const railHidden = topOpen && selectedItem !== undefined && (railItem.active || railItem.ready || railItem.failed || railItem.uncertain)
   const openFromRail = () => {
-    setSelectedTarget(railItem.target)
-    if (railItem.active || railItem.ready || railItem.failed) {
+    setSelectedKey(updateSelectionKey(railItem))
+    if (railItem.active || railItem.ready || railItem.failed || railItem.uncertain) {
       setPopoverOpen(false)
       setTopOpen(true)
     } else {
@@ -377,16 +237,16 @@ export function ArkmeUpdateRailSlot() {
     else void arkmeAppUpdateStore.download()
   }
 
-  return <div className="arkme-update-rail-slot" ref={slotRef}>
-    {!railHidden && <button
+  return <>
+    {!railHidden && <div className="arkme-update-rail-slot" ref={slotRef}><button
       ref={railRef}
       type="button"
       className={`arkme-update-rail ${railItem.available ? 'is-available' : railItem.active ? 'is-downloading' : railItem.failed ? 'is-error' : 'is-ready'}${popoverOpen ? ' is-active' : ''}`}
-      title={railItem.available ? '更新 Arkme' : railItem.active ? '查看更新进度' : railItem.failed ? '重试更新' : '查看更新状态'}
-      aria-label={railItem.available ? '更新 Arkme' : railItem.active ? `查看更新进度，${railItem.progress ?? 0}%` : railItem.failed ? '重试更新' : '查看更新状态'}
+      title={railItem.uncertain ? '更新状态待确认' : railItem.available ? '更新 Arkme' : railItem.active ? '查看更新进度' : railItem.failed ? '重试更新' : '查看更新状态'}
+      aria-label={railItem.uncertain ? '更新状态待确认' : railItem.available ? '更新 Arkme' : railItem.active ? `查看更新进度，${railItem.progress ?? 0}%` : railItem.failed ? '重试更新' : '查看更新状态'}
       aria-expanded={popoverOpen || topOpen}
       onClick={openFromRail}
-    ><ArrowClockwise size={17} weight="regular" /><span>{railLabel(railItem)}</span></button>}
+    ><ArrowClockwise size={17} weight="regular" /><span>{railLabel(railItem)}</span></button></div>}
     {popoverOpen && selectedItem?.available && typeof document !== 'undefined' && createPortal(<ArkmeUpdatePopover
       ref={popoverRef}
       item={selectedItem}
@@ -394,16 +254,13 @@ export function ArkmeUpdateRailSlot() {
       onClose={() => { setPopoverOpen(false); railRef.current?.focus() }}
       onStart={start}
     />, document.body)}
-    {topOpen && selectedItem !== undefined && (selectedItem.active || selectedItem.ready || selectedItem.failed)
+    {topOpen && selectedItem !== undefined && (selectedItem.active || selectedItem.ready || selectedItem.failed || selectedItem.uncertain)
       && typeof document !== 'undefined' && createPortal(<ArkmeUpdateTopCapsule
         item={selectedItem}
-        onClose={() => { setTopOpen(false) }}
+        onClose={() => { restoreRailFocusRef.current = true; setTopOpen(false) }}
         onRetry={retry}
+        onCheckStatus={() => { void arkmePluginUpdateStore.checkInstallStatus() }}
         onOpenDownloaded={() => { void arkmeAppUpdateStore.showDownloadedFile() }}
       />, document.body)}
-  </div>
-}
-
-export function appUpdateProgress(downloadedBytes: number | undefined, totalBytes: number | undefined): number | undefined {
-  return percentage(downloadedBytes, totalBytes)
+  </>
 }

@@ -14,7 +14,8 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
-import { arkmePluginUpdateStore } from './plugin-update-store.js'
+import { arkmePluginUpdateStore, type ArkmePluginUpdateStoreSnapshot } from './plugin-update-store.js'
+import { derivePluginUpdateItem } from './update-presentation.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeUpdateUi } from './update-ui-controller.js'
 
@@ -118,7 +119,7 @@ export interface ArkmePluginUpdateRow {
   label: string
   current: string
   latest: string
-  action: 'check' | 'install' | 'busy'
+  action: 'check' | 'install' | 'busy' | 'view'
   feedback?: string
 }
 
@@ -191,10 +192,27 @@ export function buildArkmeAppUpdateRow(input: {
 }
 
 export function buildArkmePluginUpdateRow(input: {
+  snapshot?: ArkmePluginUpdateStoreSnapshot
   plugin?: Pick<ArkmePluginUpdateStatus, 'availability' | 'installedVersion' | 'latestVersion' | 'checking' | 'checkFailed'>
   pluginBusy?: boolean
   pluginError?: string
 }): ArkmePluginUpdateRow {
+  if (input.snapshot !== undefined) {
+    const snapshot = input.snapshot
+    const item = derivePluginUpdateItem(snapshot)
+    if (item?.active || item?.uncertain || item?.failed) return {
+      label: '核心插件', current: item.currentVersion, latest: item.latestVersion, action: 'view',
+      feedback: item.uncertain ? `${item.checkingStatus ? '正在检查更新状态…' : '更新状态待确认'} · 查看状态`
+        : item.failed ? '更新未完成 · 查看结果' : `${item.phaseMessage} · 查看进度`,
+    }
+    return buildArkmePluginUpdateRow({
+      ...(snapshot.status === undefined ? {} : { plugin: { ...snapshot.status,
+        ...(item === undefined && snapshot.install?.phase === 'succeeded' ? { availability: 'current' as const } : {}),
+      } }),
+      pluginBusy: snapshot.busy || snapshot.installStatusChecking === true,
+      pluginError: snapshot.error,
+    })
+  }
   const pluginAvailable = input.plugin?.availability === 'available'
   const pluginBusy = input.pluginBusy === true || input.plugin?.checking === true
   const pluginFeedback = pluginBusy
@@ -289,22 +307,16 @@ export function ArkmeSettingsSurface() {
     ? '已开启'
     : notificationPermission === 'denied' ? '已阻止' : notificationPermission === 'default' ? '未开启' : '不可用'
   const harnessVersion = aboutHarnessVersion()
-  const updateInstalling = updateState.install !== undefined
-    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   const appUpdateRow = buildArkmeAppUpdateRow({
     ...(appUpdateState.status === undefined ? {} : { app: appUpdateState.status }),
     ...(appUpdateState.error === '' ? {} : { appError: appUpdateState.error }),
   })
-  const pluginUpdateRow = buildArkmePluginUpdateRow({
-    ...(updateState.status === undefined ? {} : { plugin: updateState.status }),
-    pluginBusy: updateState.busy || updateInstalling,
-    ...(updateState.error === '' ? {} : { pluginError: updateState.error }),
-  })
+  const pluginUpdateRow = buildArkmePluginUpdateRow({ snapshot: updateState })
 
   const runPluginUpdateAction = (row: ArkmePluginUpdateRow) => {
     if (row.action === 'busy') return
-    if (row.action === 'install') arkmeUpdateUi.open('plugin')
-    else void arkmePluginUpdateStore.refresh(true)
+    if (row.action === 'install' || row.action === 'view') arkmeUpdateUi.open('plugin')
+    else void arkmePluginUpdateStore.checkInstallStatus()
   }
 
   const runAppUpdateAction = (row: ArkmeAppUpdateRow) => {

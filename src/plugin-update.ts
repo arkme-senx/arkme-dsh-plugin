@@ -289,6 +289,12 @@ export class ArkmePluginUpdateManager {
 
   async installStatus(): Promise<ArkmePluginUpdateInstallSnapshot | undefined> {
     const install = await this.installStore.read()
+    // This version was read when this Host started, not from files being
+    // replaced underneath the old process. A job targeting it is no longer
+    // active work for this Host. Keep the helper-owned record for finalization.
+    if (install !== undefined && ACTIVE_INSTALL_PHASES.has(install.phase)
+      && semver.valid(install.targetVersion) !== null
+      && semver.gte(this.installedVersion, install.targetVersion)) return undefined
     if (install === undefined || !TERMINAL_INSTALL_PHASES.has(install.phase)) return install
     const update = await this.status({ refreshIfStale: false })
     const expired = this.now() - install.updatedAtMillis > PLUGIN_UPDATE_TERMINAL_STATE_TTL_MS
@@ -326,7 +332,7 @@ export class ArkmePluginUpdateManager {
         false,
       )
     }
-    const previous = await this.installStore.read()
+    const previous = await this.installStatus()
     if (previous !== undefined && ACTIVE_INSTALL_PHASES.has(previous.phase)) {
       return previous
     }
