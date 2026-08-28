@@ -108,8 +108,16 @@ export function recordingTimelineInitialView(
   }
 }
 
-export interface ArkmeVisibleTimelineItem extends ArkmeRecordingWorkbenchItem {
+export interface ArkmeVisibleTimelineItem {
+  item: ArkmeRecordingWorkbenchItem
+  startAtMillis: number
+  endAtMillis: number
   aggregatedCount: number
+  isMixedSpeakerAggregate: boolean
+}
+
+function recordingTimelineSpeakerIdentity(item: ArkmeRecordingWorkbenchItem): string {
+  return item.isBackground ? 'background' : `${item.speakerLabel}:${String(item.speakerColorIndex)}`
 }
 
 export function recordingVisibleTimelineItems(
@@ -119,7 +127,13 @@ export function recordingVisibleTimelineItems(
   maxNodes = 480,
 ): ArkmeVisibleTimelineItem[] {
   const visible = items.filter(item => item.endAtMillis >= windowStart && item.startAtMillis <= windowEnd)
-  if (visible.length <= maxNodes) return visible.map(item => ({ ...item, aggregatedCount: 1 }))
+  if (visible.length <= maxNodes) return visible.map(item => ({
+    item,
+    startAtMillis: item.startAtMillis,
+    endAtMillis: item.endAtMillis,
+    aggregatedCount: 1,
+    isMixedSpeakerAggregate: false,
+  }))
   const bucketSize = Math.ceil(visible.length / maxNodes)
   const aggregated: ArkmeVisibleTimelineItem[] = []
   for (let index = 0; index < visible.length; index += bucketSize) {
@@ -127,10 +141,11 @@ export function recordingVisibleTimelineItems(
     const first = bucket[0]
     if (first === undefined) continue
     aggregated.push({
-      ...first,
+      item: first,
       startAtMillis: Math.min(...bucket.map(item => item.startAtMillis)),
       endAtMillis: Math.max(...bucket.map(item => item.endAtMillis)),
       aggregatedCount: bucket.length,
+      isMixedSpeakerAggregate: new Set(bucket.map(recordingTimelineSpeakerIdentity)).size > 1,
     })
   }
   return aggregated
@@ -336,11 +351,13 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
     >
       {overviewItems.map(item => {
         const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, bounds.start, bounds.end)
-        return <span key={`overview:${item.itemId}:${String(item.startAtMillis)}`} aria-hidden style={{
+        return <span key={`overview:${item.item.itemId}:${String(item.startAtMillis)}`} aria-hidden style={{
           ...styles.overviewSegment,
           left: `${String(layout.leftPercent)}%`,
           width: `${String(layout.widthPercent)}%`,
-          background: item.isBackground ? arkmeTheme.tertiary : recordingSpeakerColor(item.speakerColorIndex),
+          background: item.isMixedSpeakerAggregate
+            ? arkmeTheme.secondary
+            : item.item.isBackground ? arkmeTheme.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
         }} />
       })}
       <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />
@@ -380,18 +397,24 @@ export function ArkmeRecordingTimeline({ items, dayStartMillis, playheadMillis, 
         {visibleItems.map(item => {
           const layout = recordingSegmentLayout(item.startAtMillis, item.endAtMillis, windowStart, windowEnd)
           return <button
-            key={`${item.itemId}:${String(item.startAtMillis)}`}
+            key={`${item.item.itemId}:${String(item.startAtMillis)}`}
             type="button"
             style={{
               ...styles.segment,
               left: `${String(layout.leftPercent)}%`,
               width: `${String(layout.widthPercent)}%`,
-              background: item.isBackground ? arkmeTheme.tertiary : recordingSpeakerColor(item.speakerColorIndex),
+              background: item.isMixedSpeakerAggregate
+                ? arkmeTheme.secondary
+                : item.item.isBackground ? arkmeTheme.tertiary : recordingSpeakerColor(item.item.speakerColorIndex),
             }}
-            aria-label={`${item.speakerLabel}，播放该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
-            title={`${item.speakerLabel} · ${item.text.slice(0, 80)}`}
+            aria-label={item.isMixedSpeakerAggregate
+              ? `多个说话人，播放聚合的 ${String(item.aggregatedCount)} 个片段中的第一段`
+              : `${item.item.speakerLabel}，播放该片段${item.aggregatedCount > 1 ? `，聚合 ${String(item.aggregatedCount)} 个片段` : ''}`}
+            title={item.isMixedSpeakerAggregate
+              ? `多个说话人 · 聚合 ${String(item.aggregatedCount)} 个片段`
+              : `${item.item.speakerLabel} · ${item.item.text.slice(0, 80)}`}
             onPointerDown={event => { event.stopPropagation() }}
-            onClick={event => { event.stopPropagation(); onActivate(item) }}
+            onClick={event => { event.stopPropagation(); onActivate(item.item) }}
           />
         })}
         {playheadVisible && <span style={{ ...styles.playhead, left: `${String(playheadPercent)}%` }} aria-hidden><span style={styles.playheadDot} /></span>}

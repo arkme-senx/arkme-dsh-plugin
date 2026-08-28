@@ -76,7 +76,7 @@ describe('RecordingImportCoordinator', () => {
     const coordinator = new RecordingImportCoordinator(store, owner, async () => users.shift() ?? 77, () => 2_000)
 
     await expect(coordinator.run(42, 'job-1')).resolves.toMatchObject({
-      phase: 'failed', errorCode: 'recording-import-account-mismatch', retryable: false,
+      phase: 'failed', errorCode: 'recording-import-account-mismatch', retryable: true,
     })
     expect(owner.ensureSession).toHaveBeenCalledTimes(1)
     expect(owner.createChild).not.toHaveBeenCalled()

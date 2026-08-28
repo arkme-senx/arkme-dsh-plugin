@@ -31,6 +31,8 @@ interface RecoveredAudioSession {
   finished: boolean
 }
 
+const AUDIO_SESSION_RECOVERY_LIMIT = 500
+
 type AudioOssClientFactory = (options: ConstructorParameters<typeof OSS>[0]) => AudioOssClient
 
 function numberValue(value: unknown): number {
@@ -213,31 +215,66 @@ export class AudioRecordingImportGateway implements RecordingImportGateway {
   private async requireJobSession(job: RecordingImportJob): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
     if (session.userId !== job.userId || job.belongUserId !== job.userId) {
-      throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', false, 403)
+      throw new ArkmePluginError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', true, 403)
     }
     return session
   }
 
   private async recoverSession(job: RecordingImportJob, signal?: AbortSignal): Promise<RecoveredAudioSession | undefined> {
     const session = await this.requireJobSession(job)
+    const matchesIdentity = (item: Record<string, unknown>): boolean => numberValue(item.source) === 2
+        && numberValue(item.start_at) === job.startAtMillis
+        && numberValue(item.belong_usr) === job.belongUserId
+        && stringValue(item.orig_name) === job.fileName
+
+    if (job.sessionId !== undefined) {
+      const recovered = objectValue(await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
+        '/api/v1/audio/get-session-by-id',
+        { session_id: job.sessionId },
+        session,
+        signal,
+      ))
+      if (stringValue(recovered.id).trim() !== job.sessionId || !matchesIdentity(recovered)) {
+        throw new RecordingImportContractError(
+          'recording-import-session-conflict',
+          'Audio 会话检查点与当前任务不一致，已停止操作',
+        )
+      }
+      return { sessionId: job.sessionId, finished: recovered.has_finish_spk === true }
+    }
+
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/audio/get-session-ls',
-      { to_stamp: job.startAtMillis + 1, limit: 50, offset: 0, query_new: false },
+      {
+        to_stamp: job.startAtMillis + 1,
+        limit: AUDIO_SESSION_RECOVERY_LIMIT,
+        offset: 0,
+        query_new: false,
+      },
       session,
       signal,
     )
     const candidates = (Array.isArray(data.session_ls) ? data.session_ls : []).map(objectValue)
-    const matchesIdentity = (item: Record<string, unknown>): boolean => numberValue(item.source) === 2
-        && numberValue(item.operate_at) === job.createdAtMillis
-        && numberValue(item.start_at) === job.startAtMillis
-        && numberValue(item.belong_usr) === job.belongUserId
-        && stringValue(item.orig_name) === job.fileName
-    const recovered = candidates.find(item => stringValue(item.id).trim() !== ''
-      && (job.sessionId === undefined
-        ? matchesIdentity(item)
-        : stringValue(item.id).trim() === job.sessionId && matchesIdentity(item)))
-    const sessionId = recovered === undefined ? '' : stringValue(recovered.id).trim()
-    return sessionId === '' ? undefined : { sessionId, finished: recovered?.has_finish_spk === true }
+    const reachedOlderSession = candidates.some(item => numberValue(item.start_at) < job.startAtMillis)
+    if (candidates.length >= AUDIO_SESSION_RECOVERY_LIMIT && !reachedOlderSession) {
+      throw new RecordingImportContractError(
+        'recording-import-session-recovery-incomplete',
+        'Audio 会话恢复范围过大，请稍后重试',
+        true,
+      )
+    }
+    const matches = candidates.filter(item => stringValue(item.id).trim() !== ''
+      && numberValue(item.operate_at) === job.createdAtMillis
+      && matchesIdentity(item))
+    if (matches.length > 1) {
+      throw new RecordingImportContractError(
+        'recording-import-session-ambiguous',
+        '检测到多个相同录音会话，已停止自动恢复',
+      )
+    }
+    const recovered = matches[0]
+    if (recovered === undefined) return undefined
+    return { sessionId: stringValue(recovered.id).trim(), finished: recovered.has_finish_spk === true }
   }
 
   private assertOwnerAccepted(

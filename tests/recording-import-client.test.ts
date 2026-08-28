@@ -4,10 +4,16 @@ import {
   inspectArkmeRecordingSelection,
   validateArkmeRecordingSelection,
 } from '../src/client/recordings/recording-import-selection.js'
+import { recordingImportLocalInputValue } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('recording import client gateway', () => {
+  it('preserves second precision for the imported recording start time', () => {
+    expect(recordingImportLocalInputValue(new Date(2026, 7, 28, 9, 12, 34)))
+      .toBe('2026-08-28T09:12:34')
+  })
+
   it('rejects unsupported, empty, oversized and over-ten-hour selections before upload', async () => {
     expect(validateArkmeRecordingSelection(new File(['x'], 'notes.txt'))).toEqual({
       ok: false,
@@ -50,11 +56,13 @@ describe('recording import client gateway', () => {
     }), { status: 202, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetch)
     const file = new File(['abc'], '会议.m4a', { type: '' })
+    const controller = new AbortController()
 
-    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', file, 1_725_000_000_000))
+    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', file, 1_725_000_000_000, controller.signal))
       .resolves.toMatchObject({ importRef: 'opaque', phase: 'prepared' })
     expect(fetch).toHaveBeenCalledWith('/arkme-self/api/recording/import', expect.objectContaining({
       method: 'POST', body: file, credentials: 'same-origin', redirect: 'error',
+      signal: controller.signal,
       headers: expect.objectContaining({
         'Content-Type': 'audio/mp4',
         'X-Arkme-File-Name': encodeURIComponent('会议.m4a'),
@@ -69,5 +77,12 @@ describe('recording import client gateway', () => {
     }), { status: 400, headers: { 'content-type': 'application/json' } })))
     await expect(uploadArkmeRecording('/arkme-self/api/recording/import', new File(['x'], 'bad.mp3'), 1))
       .rejects.toThrow('录音格式与文件内容不一致')
+  })
+
+  it('returns a bounded error when the loopback route does not return JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Bad Gateway', { status: 502 })))
+
+    await expect(uploadArkmeRecording('/arkme-self/api/recording/import', new File(['x'], 'bad.mp3'), 1))
+      .rejects.toThrow('录音导入失败')
   })
 })

@@ -27,6 +27,13 @@ async function rawRequest(port: number, options: { method?: string; headers?: Re
   })
 }
 
+function routeService(acceptRecordingImport: (...args: never[]) => unknown) {
+  return {
+    async recordingImportUserId() { return 42 },
+    acceptRecordingImport,
+  }
+}
+
 describe('recording import route', () => {
   it('streams an account-scoped temporary file into the recording service', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-route-'))
@@ -37,7 +44,7 @@ describe('recording import route', () => {
     const options: ArkmeRecordingImportRouteOptions = {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root,
     }
-    const handler = createArkmeRecordingImportHandler({ acceptRecordingImport } as never, options)
+    const handler = createArkmeRecordingImportHandler(routeService(acceptRecordingImport) as never, options)
     const server = createServer((req, res) => { void handler(req, res) })
     servers.push(server)
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -60,7 +67,7 @@ describe('recording import route', () => {
     expect(acceptRecordingImport).toHaveBeenCalledWith(expect.stringMatching(/\.upload$/), expect.objectContaining({
       fileName: '会议.wav', mimeType: 'audio/wav', fileSize: 15,
       startAtMillis: 1_725_000_000_000, sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-    }))
+    }), 42)
     const temporaryPath = acceptRecordingImport.mock.calls[0]?.[0]
     expect((await stat(temporaryPath!)).mode & 0o777).toBe(0o600)
   })
@@ -71,7 +78,7 @@ describe('recording import route', () => {
     const options: ArkmeRecordingImportRouteOptions = {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root,
     }
-    const handler = createArkmeRecordingImportHandler({ acceptRecordingImport } as never, options)
+    const handler = createArkmeRecordingImportHandler(routeService(acceptRecordingImport) as never, options)
     const server = createServer((req, res) => { void handler(req, res) })
     servers.push(server)
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -97,7 +104,7 @@ describe('recording import route', () => {
     const options: ArkmeRecordingImportRouteOptions = {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root,
     }
-    const handler = createArkmeRecordingImportHandler({ acceptRecordingImport } as never, options)
+    const handler = createArkmeRecordingImportHandler(routeService(acceptRecordingImport) as never, options)
     const server = createServer((req, res) => { void handler(req, res) })
     servers.push(server)
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -127,7 +134,7 @@ describe('recording import route', () => {
     const options: ArkmeRecordingImportRouteOptions = {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: blocked,
     }
-    const handler = createArkmeRecordingImportHandler({ acceptRecordingImport: vi.fn() } as never, options)
+    const handler = createArkmeRecordingImportHandler(routeService(vi.fn()) as never, options)
     const server = createServer((req, res) => { void handler(req, res) })
     servers.push(server)
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -156,7 +163,7 @@ describe('recording import route', () => {
     const options: ArkmeRecordingImportRouteOptions = {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root,
     }
-    const handler = createArkmeRecordingImportHandler({ acceptRecordingImport } as never, options)
+    const handler = createArkmeRecordingImportHandler(routeService(acceptRecordingImport) as never, options)
     const server = createServer((req, res) => { void handler(req, res) })
     servers.push(server)
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -184,9 +191,9 @@ describe('recording import route', () => {
     const options: ArkmeRecordingImportRouteOptions = {
       expectedPort: 0, allowNonLoopback: false, temporaryDirectory: root,
     }
-    const handler = createArkmeRecordingImportHandler({
-      async acceptRecordingImport() { throw new Error('owner unavailable') },
-    }, options)
+    const handler = createArkmeRecordingImportHandler(routeService(async () => {
+      throw new Error('owner unavailable')
+    }) as never, options)
     const server = createServer((req, res) => { void handler(req, res) })
     servers.push(server)
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

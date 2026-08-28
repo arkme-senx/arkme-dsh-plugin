@@ -501,7 +501,7 @@ export function ArkmeRecordingSurface() {
           })}
         </div>
       </section>
-      <div style={styles.dayLabel}><span style={styles.dayLabelTitle}>{dayLabel}{dateKey(selectedDate) === dateKey(today) ? ' · 今天' : ''}</span><em style={styles.dayLabelMeta}>{totalDuration > 0 ? '1 段录音' : '暂无录音'}</em></div>
+      <div style={styles.dayLabel}><span style={styles.dayLabelTitle}>{dayLabel}{dateKey(selectedDate) === dateKey(today) ? ' · 今天' : ''}</span><em style={styles.dayLabelMeta}>{totalDuration > 0 ? '有录音' : '暂无录音'}</em></div>
       {calendarError !== '' && <div style={styles.error} role="alert">{calendarError}</div>}
       {calendarLoading && calendar === undefined ? <div style={styles.status}>正在读取录音…</div>
         : totalDuration > 0 ? <div style={styles.recordingList}>

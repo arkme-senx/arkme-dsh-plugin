@@ -32,6 +32,8 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('>转写</button>')
     expect(markup).toContain('>总结</button>')
     expect(markup).toContain('>时间轴</button>')
+    expect(markup).toContain('type="datetime-local"')
+    expect(markup).toContain('step="1"')
   })
 
   it('adapts the workbench into compact and stacked layouts without clipping the calendar', () => {
@@ -41,6 +43,12 @@ describe('ArkmeRecordingSurface layout', () => {
 
     const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
     expect(markup).toContain('data-arkme-recording-layout="wide"')
+  })
+
+  it('remounts the complete recording workbench when the authenticated account changes', async () => {
+    const sidebarSource = await readFile(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
+
+    expect(sidebarSource).toContain("<ArkmeRecordingSurface key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`} />")
   })
 
   it('uses semantic DSH colors across the recording page', async () => {
@@ -66,6 +74,8 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(source).toContain('>回到今日</button>')
     expect(source).toContain("const canJumpToday = dateKey(selectedDate) !== dateKey(today)")
     expect(source).toContain('disabled={future}')
+    expect(source).toContain("totalDuration > 0 ? '有录音' : '暂无录音'")
+    expect(source).not.toContain("totalDuration > 0 ? '1 段录音'")
   })
 
   it('uses Flutter-style daily recording duration labels without a calendar shadow', async () => {

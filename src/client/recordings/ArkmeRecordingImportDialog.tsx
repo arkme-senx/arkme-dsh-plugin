@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { uploadArkmeRecording, type RecordingImportSnapshot } from '../api.js'
 import { arkmeTheme } from '../arkme-theme.js'
 import {
@@ -15,9 +15,9 @@ const styles: Record<string, CSSProperties> = {
   validation: { padding: '8px 10px', borderRadius: 8, background: arkmeTheme.layer1, color: arkmeTheme.secondary, fontSize: 11 },
 }
 
-function localInputValue(date: Date): string {
+export function recordingImportLocalInputValue(date: Date): string {
   const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+  return new Date(date.getTime() - offset).toISOString().slice(0, 19)
 }
 
 function recordingDurationLabel(durationMillis: number): string {
@@ -33,21 +33,26 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
   onAccepted(job: RecordingImportSnapshot): void
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const uploadControllerRef = useRef<AbortController>()
   const selectionRevisionRef = useRef(0)
   const [file, setFile] = useState<File>()
   const [selection, setSelection] = useState<ArkmeRecordingSelection>()
   const [validating, setValidating] = useState(false)
-  const [startAt, setStartAt] = useState(localInputValue(new Date()))
+  const [startAt, setStartAt] = useState(recordingImportLocalInputValue(new Date()))
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
 
+  useEffect(() => () => { uploadControllerRef.current?.abort() }, [])
+
   const resetSelection = () => {
     selectionRevisionRef.current += 1
+    if (fileInputRef.current !== null) fileInputRef.current.value = ''
     setFile(undefined); setSelection(undefined); setValidating(false); setError('')
   }
 
   const close = () => {
-    if (pending) return
+    uploadControllerRef.current?.abort()
     resetSelection()
     dialogRef.current?.close()
   }
@@ -55,13 +60,20 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
   const submit = async () => {
     if (file === undefined || selection?.ok !== true || pending || validating) return
     setPending(true); setError('')
+    const controller = new AbortController()
+    uploadControllerRef.current = controller
     try {
-      onAccepted(await uploadArkmeRecording(importPath, file, new Date(startAt).getTime()))
+      onAccepted(await uploadArkmeRecording(importPath, file, new Date(startAt).getTime(), controller.signal))
       dialogRef.current?.close()
       resetSelection()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '录音导入失败')
-    } finally { setPending(false) }
+      if (!(reason instanceof Error && reason.name === 'AbortError')) {
+        setError(reason instanceof Error ? reason.message : '录音导入失败')
+      }
+    } finally {
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
+      setPending(false)
+    }
   }
   const selectFile = async (nextFile?: File) => {
     const revision = ++selectionRevisionRef.current
@@ -81,7 +93,7 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
     }}>
       <div style={styles.grid}>
         <strong>导入录音</strong>
-        <input aria-label="选择录音文件" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { void selectFile(event.target.files?.[0]) }} />
+        <input ref={fileInputRef} aria-label="选择录音文件" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { void selectFile(event.target.files?.[0]) }} />
         {file !== undefined && <small>{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</small>}
         {file !== undefined && <div style={styles.validation} role="status" aria-live="polite">
           {validating
@@ -90,10 +102,10 @@ export function ArkmeRecordingImportDialog({ importPath, onAccepted }: {
               ? `${selection.format} · ${recordingDurationLabel(selection.durationMillis ?? 0)} · 大小/时长通过（导入时由本机再次校验）`
               : selection?.message ?? '等待校验'}
         </div>}
-        <label>录音开始时间<input aria-label="录音开始时间" type="datetime-local" value={startAt} onChange={event => { setStartAt(event.target.value) }} /></label>
+        <label>录音开始时间<input aria-label="录音开始时间" type="datetime-local" step={1} value={startAt} onChange={event => { setStartAt(event.target.value) }} /></label>
         {error !== '' && <div role="alert" style={{ color: arkmeTheme.danger }}>{error}</div>}
         <div style={styles.footer}>
-          <button type="button" style={styles.secondary} disabled={pending} onClick={close}>取消</button>
+          <button type="button" style={styles.secondary} onClick={close}>{pending ? '停止接收' : '取消'}</button>
           <button type="button" style={styles.button} disabled={file === undefined || selection?.ok !== true || pending || validating || !Number.isFinite(new Date(startAt).getTime())} onClick={() => { void submit() }}>{pending ? '正在接收…' : '开始导入'}</button>
         </div>
       </div>

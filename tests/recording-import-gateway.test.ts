@@ -22,6 +22,10 @@ describe('AudioRecordingImportGateway', () => {
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
         posts.push({ path, body })
+        if (path.endsWith('get-session-by-id')) return {
+          id: 'session-1', source: 2, start_at: 1_725_000_000_000,
+          orig_name: 'meeting.m4a', belong_usr: 42, has_finish_spk: false,
+        }
         if (path.endsWith('check-exist-same-orig')) return { exist_names: [] }
         if (path.endsWith('new-session')) return { session_id: 'session-1' }
         if (path.endsWith('new-child')) return { child_id: 'child-1', err_flag: 0 }
@@ -48,16 +52,13 @@ describe('AudioRecordingImportGateway', () => {
     await gateway.finishSession(current)
 
     expect(posts.map(item => item.path)).toEqual([
-      '/api/v1/audio/get-session-ls',
-      '/api/v1/audio/check-exist-same-orig',
-      '/api/v1/audio/new-session',
+      '/api/v1/audio/get-session-by-id',
       '/api/v1/audio/new-child',
       '/api/v1/audio/get-sts-token',
       '/api/v1/audio/child-upload-finish',
       '/api/v1/audio/finish-session',
     ])
-    expect(posts[2]?.body).toMatchObject({ source: 2, orig_name: 'meeting.m4a' })
-    expect(posts[3]?.body).toMatchObject({
+    expect(posts[1]?.body).toMatchObject({
       session_id: 'session-1', start_at: 0, duration: 60_000,
       file_name: 'arkme_job-1_0.m4a', source_size: 1024,
     })
@@ -98,8 +99,39 @@ describe('AudioRecordingImportGateway', () => {
     } as unknown as ServiceRuntime
     const gateway = new AudioRecordingImportGateway(runtime)
 
-    await expect(gateway.ensureSession(job())).rejects.toMatchObject({ code: 'recording-import-account-mismatch' })
+    await expect(gateway.ensureSession(job())).rejects.toMatchObject({
+      code: 'recording-import-account-mismatch',
+      retryable: true,
+    })
     expect(runtime.authenticatedAudioPost).not.toHaveBeenCalled()
+  })
+
+  it('recovers beyond the legacy fifty-item window without unstable same-timestamp pagination', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string, body: Record<string, unknown>) {
+        if (!path.endsWith('get-session-ls')) throw new Error('must not create a duplicate session')
+        requests.push(body)
+        return { session_ls: [
+          ...Array.from({ length: 100 }, (_, index) => ({
+            id: `other-${String(index)}`, source: 2, operate_at: index,
+            start_at: 1_725_000_000_000, orig_name: `other-${String(index)}.m4a`, belong_usr: 42,
+          })),
+          {
+            id: 'recovered-session', source: 2, operate_at: 1_725_000_000_100,
+            start_at: 1_725_000_000_000, orig_name: 'meeting.m4a', belong_usr: 42,
+          },
+        ] }
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job())).resolves.toBe('recovered-session')
+    expect(requests).toEqual([{
+      to_stamp: 1_725_000_000_001, limit: 500, offset: 0, query_new: false,
+    }])
   })
 
   it('recovers and deletes a session whose create response was lost', async () => {
@@ -129,11 +161,10 @@ describe('AudioRecordingImportGateway', () => {
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async authenticatedAudioPost(path: string) {
         posts.push(path)
-        if (path.endsWith('get-session-ls')) return { session_ls: [{
-          id: 'session-1', source: 2, operate_at: 1_725_000_000_100,
-          start_at: 1_725_000_000_000, orig_name: 'meeting.m4a', belong_usr: 42,
-          has_finish_spk: true,
-        }] }
+        if (path.endsWith('get-session-by-id')) return {
+          id: 'session-1', source: 2, start_at: 1_725_000_000_000,
+          orig_name: 'meeting.m4a', belong_usr: 42, has_finish_spk: true,
+        }
         throw new Error('sealed owner data must not be deleted')
       },
     } as unknown as ServiceRuntime
@@ -141,7 +172,65 @@ describe('AudioRecordingImportGateway', () => {
 
     await expect(gateway.deleteSession(job({ phase: 'failed', failedFromPhase: 'finalizing', sessionId: 'session-1' })))
       .rejects.toMatchObject({ code: 'recording-import-already-accepted' })
-    expect(posts).toEqual(['/api/v1/audio/get-session-ls'])
+    expect(posts).toEqual(['/api/v1/audio/get-session-by-id'])
+  })
+
+  it('fails closed when a stored session checkpoint resolves to different owner data', async () => {
+    const posts: string[] = []
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        posts.push(path)
+        if (path.endsWith('get-session-by-id')) return {
+          id: 'session-1', source: 2, start_at: 1_725_000_000_000,
+          orig_name: 'different.m4a', belong_usr: 42, has_finish_spk: false,
+        }
+        throw new Error('conflicting owner data must not be deleted')
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.deleteSession(job({ sessionId: 'session-1' })))
+      .rejects.toMatchObject({ code: 'recording-import-session-conflict' })
+    expect(posts).toEqual(['/api/v1/audio/get-session-by-id'])
+  })
+
+  it('fails closed when response-loss recovery finds more than one exact session', async () => {
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        if (path.endsWith('get-session-ls')) return { session_ls: ['a', 'b'].map(id => ({
+          id, source: 2, operate_at: 1_725_000_000_100,
+          start_at: 1_725_000_000_000, orig_name: 'meeting.m4a', belong_usr: 42,
+        })) }
+        throw new Error('ambiguous recovery must not create a new session')
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job()))
+      .rejects.toMatchObject({ code: 'recording-import-session-ambiguous' })
+  })
+
+  it('fails closed when the bounded same-timestamp recovery window is exhausted', async () => {
+    const runtime = {
+      config: { environment: 'test' },
+      async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async authenticatedAudioPost(path: string) {
+        if (path.endsWith('get-session-ls')) return { session_ls: Array.from({ length: 500 }, (_, index) => ({
+          id: `other-${String(index)}`, source: 2, operate_at: index,
+          start_at: 1_725_000_000_000, orig_name: `other-${String(index)}.m4a`, belong_usr: 42,
+        })) }
+        throw new Error('incomplete recovery must not create a new session')
+      },
+    } as unknown as ServiceRuntime
+    const gateway = new AudioRecordingImportGateway(runtime)
+
+    await expect(gateway.ensureSession(job())).rejects.toMatchObject({
+      code: 'recording-import-session-recovery-incomplete', retryable: true,
+    })
   })
 
   it('cancels the OSS multipart operation immediately when the job is aborted', async () => {

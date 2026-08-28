@@ -28,6 +28,14 @@ const RECORDING_IMPORT_PHASES = new Set<RecordingImportPhase>([
 ])
 export const RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT = 100
 
+function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJob>): void {
+  const expiredTerminalJobs = Object.values(jobs)
+    .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
+    .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
+    .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
+  for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
+}
+
 function normalizedRecordingImportJob(value: unknown): RecordingImportJob | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const source = value as Record<string, unknown>
@@ -251,11 +259,7 @@ export class ArkmeStateStore {
     await this.update(state => {
       const jobs = state.recordingImportJobsByUser[String(userId)] ?? {}
       jobs[job.jobId] = { ...job }
-      const expiredTerminalJobs = Object.values(jobs)
-        .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
-        .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
-        .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
-      for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
+      pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
     })
   }
@@ -272,11 +276,7 @@ export class ArkmeStateStore {
         return
       }
       jobs[job.jobId] = { ...job }
-      const expiredTerminalJobs = Object.values(jobs)
-        .filter(candidate => ['accepted', 'cancelled'].includes(candidate.phase))
-        .sort((left, right) => right.createdAtMillis - left.createdAtMillis)
-        .slice(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
-      for (const expired of expiredTerminalJobs) delete jobs[expired.jobId]
+      pruneRecordingImportTerminalJobs(jobs)
       state.recordingImportJobsByUser[String(userId)] = jobs
     })
     return selected
@@ -292,7 +292,9 @@ export class ArkmeStateStore {
     await this.update(state => {
       const current = state.recordingImportJobsByUser[String(userId)]?.[job.jobId]
       if (current?.revision !== expectedRevision) return
-      state.recordingImportJobsByUser[String(userId)]![job.jobId] = { ...job }
+      const jobs = state.recordingImportJobsByUser[String(userId)]!
+      jobs[job.jobId] = { ...job }
+      pruneRecordingImportTerminalJobs(jobs)
       replaced = true
     })
     return replaced
