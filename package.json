@@ -65,8 +65,8 @@
       "schemaVersion": 1,
       "level": "normal",
       "title": "Arkme 插件 0.1.32 更新",
-      "summary": "release: 合并 dev 到 master 并发布 Arkme 插件",
-      "publishedAt": "2026-08-28T10:24:50.709Z",
+      "summary": "release: 发布 DSH 远控并修复自动发版链路",
+      "publishedAt": "2026-08-28T10:44:00.666Z",
       "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.32"
     }
   },
