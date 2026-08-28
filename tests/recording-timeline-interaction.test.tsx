@@ -97,6 +97,25 @@ describe('recording timeline math', () => {
     expect(visible.some(item => item.aggregatedCount > 1)).toBe(true)
   })
 
+  it('keeps a ten-hour high-density recording bounded at every desktop zoom level', () => {
+    const start = new Date(2026, 7, 28, 8).getTime()
+    const items = Array.from({ length: 36_000 }, (_, index) => ({
+      itemId: `item-${String(index)}`,
+      itemRef: `ref-${String(index)}`,
+      speakerLabel: `说话人 ${String(index % 8)}`,
+      text: `第 ${String(index)} 个片段`,
+      startAtMillis: start + index * 1_000,
+      endAtMillis: start + index * 1_000 + 800,
+      isBackground: false,
+    })) as never
+
+    for (const seconds of RECORDING_TIMELINE_ZOOM_LEVELS_SECONDS) {
+      const visible = recordingVisibleTimelineItems(items, start, start + seconds * 1_000)
+      expect(visible.length).toBeLessThanOrEqual(480)
+      expect(visible.every(item => item.endAtMillis >= start && item.startAtMillis <= start + seconds * 1_000)).toBe(true)
+    }
+  })
+
   it('renders keyboard, playback, zoom and accessible segment controls', () => {
     const dayStart = new Date(2026, 7, 28).getTime()
     const item = {

@@ -34,6 +34,15 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(markup).toContain('>时间轴</button>')
   })
 
+  it('adapts the workbench into compact and stacked layouts without clipping the calendar', () => {
+    expect(recordingSurface.recordingWorkbenchLayoutMode(1_280)).toBe('wide')
+    expect(recordingSurface.recordingWorkbenchLayoutMode(820)).toBe('compact')
+    expect(recordingSurface.recordingWorkbenchLayoutMode(640)).toBe('stacked')
+
+    const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
+    expect(markup).toContain('data-arkme-recording-layout="wide"')
+  })
+
   it('uses semantic DSH colors across the recording page', async () => {
     const markup = renderToStaticMarkup(<ArkmeRecordingSurface />)
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
