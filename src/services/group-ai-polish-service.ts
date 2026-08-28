@@ -5,6 +5,7 @@ import type {
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupAiPolishThreadMessage,
   ArkmeSourceItem,
   ArkmeSourceSendResult,
   ArkmeTimelineItem,
@@ -24,6 +25,7 @@ export interface ArkmeAiPolishConfigSnapshot {
     name: string
     ruleText: string
     ruleVersion: number
+    threadMessages: ArkmeGroupAiPolishThreadMessage[]
   }>
 }
 
@@ -34,6 +36,10 @@ interface ArkmePendingAiPolishConfirmation {
   action: 'enable' | 'disable'
   expiresAtMillis: number
   candidateUid?: string
+  editingRuleUid?: string
+  editingRuleVersion?: number
+  savedRuleUid?: string
+  confirming?: boolean
   ruleName?: string
   ruleText?: string
   promptVersion?: string
@@ -87,6 +93,37 @@ function numberValue(value: unknown): number {
 
 function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
+
+function aiPolishThreadMessages(value: unknown): ArkmeGroupAiPolishThreadMessage[] {
+  let totalCharacters = 0
+  const messages: ArkmeGroupAiPolishThreadMessage[] = []
+  for (const raw of listValue(value).slice(-40)) {
+    const item = objectValue(raw)
+    const id = stringValue(item.id).trim()
+    const role = stringValue(item.role).trim()
+    const text = stringValue(item.text).trim().slice(0, 4_000)
+    if (id === '' || (role !== 'ai' && role !== 'user') || text === '') continue
+    totalCharacters += [...text].length
+    if (totalCharacters > 20_000) break
+    const ruleRef = stringValue(item.rule_uid ?? item.ruleRef).trim()
+    messages.push({
+      id, role, text,
+      ...(item.is_rule === true || item.isRule === true ? { isRule: true } : {}),
+      ...(ruleRef === '' ? {} : { ruleRef }),
+    })
+  }
+  return messages
+}
+
+function serializeAiPolishThreadMessage(message: ArkmeGroupAiPolishThreadMessage): Record<string, unknown> {
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    ...(message.isRule === true ? { is_rule: true } : {}),
+    ...(message.ruleRef === undefined || message.ruleRef === '' ? {} : { rule_uid: message.ruleRef }),
+  }
+}
 
 function compactAiPolishActorLabel(value: unknown): string {
   const normalized = stringValue(value).replace(/\s+/g, ' ').trim()
@@ -159,7 +196,7 @@ export class GroupAiPolishService {
   async generateGroupAiPolishRuleForSource(
       sourceRef: string,
       requirement: string,
-      options: { signal?: AbortSignal } = {},
+      options: { signal?: AbortSignal; threadMessages?: readonly ArkmeGroupAiPolishThreadMessage[]; targetRuleRef?: string } = {},
     ): Promise<ArkmeGroupAiPolishRuleCandidate> {
       const session = await this.runtime.requireSession()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
@@ -170,9 +207,14 @@ export class GroupAiPolishService {
       if (instruction === '' || [...instruction].length > 2_000) {
         throw new ArkmePluginError('group-ai-polish-requirement-invalid', '请提供不超过 2000 字的润色要求', false)
       }
-      const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
+      const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal, options.targetRuleRef?.trim() !== '')
       if (!config.canManage) {
-        throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
+        throw this.permissionDenied()
+      }
+      const targetRuleRef = options.targetRuleRef?.trim() ?? ''
+      const targetRule = targetRuleRef === '' ? undefined : config.rules.find(rule => rule.ruleUid === targetRuleRef)
+      if (targetRuleRef !== '' && targetRule === undefined) {
+        throw new ArkmePluginError('group-ai-polish-rule-not-found', '规则已删除或不可用，请重新读取规则列表', false, 404)
       }
       const generated = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/ai-polish/rules/generate',
@@ -188,79 +230,194 @@ export class GroupAiPolishService {
       }
       this.cleanupAiPolishState()
       const confirmationRef = `arkme-ai-polish-confirm-v1.${randomUUID()}`
+      const suppliedThread = aiPolishThreadMessages(options.threadMessages)
+      const candidateMessage: ArkmeGroupAiPolishThreadMessage = {
+        id: `arkme-${randomUUID()}`, role: 'ai', text: ruleText, isRule: true,
+        ...((targetRule?.ruleUid ?? stringValue(candidate.candidate_uid).trim()) === ''
+          ? {} : { ruleRef: targetRule?.ruleUid ?? stringValue(candidate.candidate_uid).trim() }),
+      }
+      const threadMessages = suppliedThread.length === 0 ? [] : [...suppliedThread, candidateMessage]
+      const candidateExtra = objectValue(candidate.extra)
       this.aiPolishConfirmations.set(confirmationRef, {
         userId: session.userId,
         chatSessionUid: source.ownerRef,
         groupName: source.displayName,
         action: 'enable',
         expiresAtMillis: Date.now() + 10 * 60_000,
-        candidateUid: stringValue(candidate.candidate_uid).trim(),
+        candidateUid: targetRule?.ruleUid ?? stringValue(candidate.candidate_uid).trim(),
+        ...(targetRule === undefined ? {} : { editingRuleUid: targetRule.ruleUid, editingRuleVersion: targetRule.ruleVersion }),
         ruleName,
         ruleText,
         promptVersion: stringValue(candidate.prompt_version).trim(),
-        extra: objectValue(candidate.extra),
+        extra: threadMessages.length === 0 ? candidateExtra : {
+          ...candidateExtra,
+          rule_thread_messages: threadMessages.map(serializeAiPolishThreadMessage),
+          active_rule_message_id: candidateMessage.id,
+        },
       })
-      return { groupName: source.displayName, ruleName, ruleText, confirmationRef }
+      return {
+        groupName: source.displayName, ruleName, ruleText, confirmationRef,
+        ...(threadMessages.length === 0 ? {} : { threadMessages }),
+      }
     }
   
   async generateGroupAiPolishRule(
       groupName: string,
       requirement: string,
-      options: { signal?: AbortSignal } = {},
+      options: { signal?: AbortSignal; threadMessages?: readonly ArkmeGroupAiPolishThreadMessage[]; targetRuleRef?: string } = {},
     ): Promise<ArkmeGroupAiPolishRuleCandidate> {
       const source = await this.resolveUniqueGroupByName(groupName, options.signal)
       return await this.generateGroupAiPolishRuleForSource(source.sourceRef, requirement, options)
     }
   
   async confirmEnableGroupAiPolish(
-      confirmationRef: string,
-      options: { signal?: AbortSignal } = {},
-    ): Promise<ArkmeGroupAiPolishMutationResult> {
-      const session = await this.runtime.requireSession()
-      const pending = this.requireAiPolishConfirmation(confirmationRef, session.userId, 'enable')
-      const current = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal)
-      if (!current.canManage) {
-        throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
-      }
+    confirmationRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupAiPolishMutationResult> {
+    const session = await this.runtime.requireSession()
+    const pending = this.requireAiPolishConfirmation(confirmationRef, session.userId, 'enable')
+    if (pending.confirming) throw new ArkmePluginError('group-ai-polish-confirm-busy', '此操作正在确认，请稍后重试', true, 409)
+    pending.confirming = true
+    try {
+      const current = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal, true)
+      if (!current.canManage) throw this.permissionDenied()
       const updateAt = Date.now()
-      const upserted = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/ai-polish/rules/upsert',
-        {
-          chat_session_uid: pending.chatSessionUid,
-          ...(pending.candidateUid === undefined || pending.candidateUid === '' ? {} : { rule_uid: pending.candidateUid }),
-          name: pending.ruleName,
-          rule_text: pending.ruleText,
-          ...(pending.promptVersion === undefined || pending.promptVersion === '' ? {} : { prompt_version: pending.promptVersion }),
-          update_at: updateAt,
-          ...(pending.extra === undefined || Object.keys(pending.extra).length === 0 ? {} : { extra: pending.extra }),
-        },
-        session,
-        options.signal,
-      )
-      const rule = objectValue(upserted.rule ?? upserted)
-      const ruleUid = stringValue(rule.rule_uid).trim()
-      if (ruleUid === '') {
-        throw new ArkmePluginError('group-ai-polish-rule-invalid', '保存润色规则后未返回有效规则', true, 502)
+      let ruleUid = pending.savedRuleUid ?? ''
+      let ruleChanged = false
+      if (ruleUid !== '') {
+        const saved = current.rules.find(rule => rule.ruleUid === ruleUid)
+        if (saved === undefined || saved.name !== pending.ruleName || saved.ruleText !== pending.ruleText) {
+          throw new ArkmePluginError('group-ai-polish-preview-stale', '规则已被修改或删除，请重新预览并确认', false, 409)
+        }
+      } else {
+        if (pending.editingRuleUid !== undefined) {
+          const currentRule = current.rules.find(rule => rule.ruleUid === pending.editingRuleUid)
+          if (currentRule === undefined || currentRule.ruleVersion !== pending.editingRuleVersion) {
+            throw new ArkmePluginError('group-ai-polish-preview-stale', '规则已被其他成员修改或删除，请重新读取后再编辑', false, 409)
+          }
+        }
+        const upserted = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+          '/api/v1/chats/ai-polish/rules/upsert',
+          {
+            chat_session_uid: pending.chatSessionUid,
+            ...(pending.candidateUid === undefined || pending.candidateUid === '' ? {} : { rule_uid: pending.candidateUid }),
+            name: pending.ruleName,
+            rule_text: pending.ruleText,
+            ...(pending.promptVersion === undefined || pending.promptVersion === '' ? {} : { prompt_version: pending.promptVersion }),
+            update_at: updateAt,
+            ...(pending.extra === undefined || Object.keys(pending.extra).length === 0 ? {} : { extra: pending.extra }),
+          },
+          session,
+          options.signal,
+        )
+        const rule = objectValue(upserted.rule ?? upserted)
+        ruleUid = stringValue(rule.rule_uid).trim()
+        if (ruleUid === '') {
+          throw new ArkmePluginError('group-ai-polish-rule-invalid', '保存润色规则后未返回有效规则', true, 502)
+        }
+        ruleChanged = true
+        pending.savedRuleUid = ruleUid
+        this.invalidateAiPolishReadCache(session.userId, pending.chatSessionUid)
       }
-      const updated = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
-        '/api/v1/chats/ai-polish/settings/update',
-        {
-          chat_session_uid: pending.chatSessionUid,
-          enabled: true,
-          active_rule_uid: ruleUid,
-          update_at: Math.max(Date.now(), updateAt + 1),
-        },
-        session,
-        options.signal,
-      )
-      const savedConfig = objectValue(updated.config ?? updated)
-      if (!booleanValue(savedConfig.enabled) || stringValue(savedConfig.active_rule_uid).trim() !== ruleUid) {
-        throw new ArkmePluginError('group-ai-polish-enable-invalid', '润色规则已保存，但开启状态确认失败，请重试', true, 502)
+      try {
+        if (!current.enabled || current.activeRuleUid !== ruleUid) {
+          await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+            '/api/v1/chats/ai-polish/settings/update',
+            {
+              chat_session_uid: pending.chatSessionUid,
+              enabled: true,
+              active_rule_uid: ruleUid,
+              update_at: Math.max(Date.now(), updateAt + 1),
+            },
+            session,
+            options.signal,
+          )
+        }
+        this.invalidateAiPolishReadCache(session.userId, pending.chatSessionUid)
+        const verified = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal, true)
+        const verifiedRule = verified.rules.find(rule => rule.ruleUid === ruleUid)
+        if (!verified.enabled || verified.activeRuleUid !== ruleUid
+          || verifiedRule === undefined || verifiedRule.name !== pending.ruleName || verifiedRule.ruleText !== pending.ruleText) {
+          throw new Error('AI polish state did not match the approved preview')
+        }
+      } catch {
+        this.invalidateAiPolishReadCache(session.userId, pending.chatSessionUid)
+        throw new ArkmePluginError('group-ai-polish-enable-unverified', '规则已保存，但未能确认开启生效；请查询当前状态后重试，不需要重新生成规则', true, 502)
       }
-      this.invalidateAiPolishReadCache(session.userId, pending.chatSessionUid)
       this.aiPolishConfirmations.delete(confirmationRef.trim())
-      return { groupName: pending.groupName, enabled: true, ruleName: pending.ruleName ?? '', changed: true }
+      return {
+        groupName: pending.groupName, enabled: true, ruleName: pending.ruleName ?? '',
+        changed: ruleChanged || !current.enabled || current.activeRuleUid !== ruleUid,
+      }
+    } finally {
+      pending.confirming = false
     }
+  }
+
+  private permissionDenied(): ArkmePluginError {
+    return new ArkmePluginError('group-ai-polish-forbidden', '服务端未授予当前账号该群的 AI 润色设置权限；请确认账号仍在群内，以及服务端已支持全体群成员设置', false, 403)
+  }
+
+  async prepareEnableGroupAiPolishForSource(
+    sourceRef: string,
+    ruleName = '',
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
+    const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal, true)
+    if (!config.canManage) throw this.permissionDenied()
+    const name = ruleName.trim()
+    const matches = name !== '' ? config.rules.filter(rule => rule.name === name)
+      : config.activeRuleUid !== '' ? config.rules.filter(rule => rule.ruleUid === config.activeRuleUid)
+        : config.rules
+    if (matches.length === 0) throw new ArkmePluginError('group-ai-polish-rule-not-found', '没有找到可开启的规则，请先查询规则或提供新的润色要求', false, 404)
+    if (matches.length !== 1) throw new ArkmePluginError('group-ai-polish-rule-ambiguous', '存在多个候选规则，请查询并指定唯一的规则名称', false, 409)
+    const rule = matches[0]!
+    this.cleanupAiPolishState()
+    const confirmationRef = `arkme-ai-polish-confirm-v1.${randomUUID()}`
+    this.aiPolishConfirmations.set(confirmationRef, {
+      userId: session.userId, chatSessionUid: source.ownerRef, groupName: source.displayName,
+      action: 'enable', expiresAtMillis: Date.now() + 10 * 60_000,
+      savedRuleUid: rule.ruleUid, ruleName: rule.name, ruleText: rule.ruleText,
+    })
+    return { groupName: source.displayName, ruleName: rule.name, ruleText: rule.ruleText, confirmationRef }
+  }
+
+  async prepareEnableGroupAiPolishRuleForSource(
+    sourceRef: string,
+    ruleRef: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
+    const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal, true)
+    if (!config.canManage) throw this.permissionDenied()
+    const normalizedRuleRef = ruleRef.trim()
+    const rule = config.rules.find(candidate => candidate.ruleUid === normalizedRuleRef)
+    if (normalizedRuleRef === '' || rule === undefined) {
+      throw new ArkmePluginError('group-ai-polish-rule-not-found', '规则已删除或不可用，请重新读取规则列表', false, 404)
+    }
+    this.cleanupAiPolishState()
+    const confirmationRef = `arkme-ai-polish-confirm-v1.${randomUUID()}`
+    this.aiPolishConfirmations.set(confirmationRef, {
+      userId: session.userId, chatSessionUid: source.ownerRef, groupName: source.displayName,
+      action: 'enable', expiresAtMillis: Date.now() + 10 * 60_000,
+      savedRuleUid: rule.ruleUid, ruleName: rule.name, ruleText: rule.ruleText,
+    })
+    return { groupName: source.displayName, ruleName: rule.name, ruleText: rule.ruleText, confirmationRef }
+  }
+
+  async prepareEnableGroupAiPolish(
+    groupName: string,
+    ruleName = '',
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    const source = await this.resolveUniqueGroupByName(groupName, options.signal)
+    return await this.prepareEnableGroupAiPolishForSource(source.sourceRef, ruleName, options)
+  }
   
   async prepareDisableGroupAiPolishForSource(
       sourceRef: string,
@@ -270,7 +427,7 @@ export class GroupAiPolishService {
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       if (source.kind !== 'group_chat') throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
       const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
-      if (!config.canManage) throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
+      if (!config.canManage) throw this.permissionDenied()
       this.cleanupAiPolishState()
       const confirmationRef = `arkme-ai-polish-confirm-v1.${randomUUID()}`
       this.aiPolishConfirmations.set(confirmationRef, {
@@ -300,8 +457,8 @@ export class GroupAiPolishService {
     ): Promise<ArkmeGroupAiPolishMutationResult> {
       const session = await this.runtime.requireSession()
       const pending = this.requireAiPolishConfirmation(confirmationRef, session.userId, 'disable')
-      const current = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal)
-      if (!current.canManage) throw new ArkmePluginError('group-ai-polish-forbidden', '当前无法确认有效群成员身份，请稍后重试', false, 403)
+      const current = await this.queryGroupAiPolishConfig(pending.chatSessionUid, session, options.signal, true)
+      if (!current.canManage) throw this.permissionDenied()
       const updated = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/ai-polish/settings/update',
         { chat_session_uid: pending.chatSessionUid, enabled: false, active_rule_uid: '', update_at: Date.now() },
@@ -503,13 +660,14 @@ export class GroupAiPolishService {
       chatSessionUid: string,
       session: ArkmeSessionCredentials,
       signal?: AbortSignal,
+      fresh = false,
     ): Promise<ArkmeAiPolishConfigSnapshot> {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/ai-polish/settings/query',
         { chat_session_uid: chatSessionUid },
         session,
         signal,
-        {
+        fresh ? { lane: 'interactive-read' } : {
           lane: 'background-read',
           key: `ai-polish:settings:${chatSessionUid}`,
           cacheMs: 15_000,
@@ -518,12 +676,16 @@ export class GroupAiPolishService {
       )
       const config = objectValue(data.config ?? data.setting ?? data.settings ?? data)
       const activeRuleUid = stringValue(config.active_rule_uid).trim()
-      const rules = listValue(data.rules).map(raw => objectValue(raw)).map(rule => ({
-        ruleUid: stringValue(rule.rule_uid).trim(),
-        name: stringValue(rule.name).trim() || '未命名规则',
-        ruleText: stringValue(rule.rule_text).trim(),
-        ruleVersion: numberValue(rule.rule_version),
-      })).filter(rule => rule.ruleUid !== '' && rule.ruleText !== '')
+      const rules = listValue(data.rules).map(raw => objectValue(raw)).map(rule => {
+        const extra = objectValue(rule.extra)
+        return {
+          ruleUid: stringValue(rule.rule_uid).trim(),
+          name: stringValue(rule.name).trim() || '未命名规则',
+          ruleText: stringValue(rule.rule_text).trim(),
+          ruleVersion: numberValue(rule.rule_version),
+          threadMessages: aiPolishThreadMessages(extra.rule_thread_messages),
+        }
+      }).filter(rule => rule.ruleUid !== '' && rule.ruleText !== '')
       return {
         enabled: booleanValue(config.enabled ?? config.is_enabled),
         canManage: booleanValue(data.can_manage),
@@ -552,6 +714,7 @@ export class GroupAiPolishService {
           name: rule.name,
           ruleText: rule.ruleText,
           isActive: rule.ruleUid === config.activeRuleUid,
+          ...(rule.threadMessages.length === 0 ? {} : { threadMessages: rule.threadMessages }),
         })),
         updatedAtMillis: config.updatedAtMillis,
       }

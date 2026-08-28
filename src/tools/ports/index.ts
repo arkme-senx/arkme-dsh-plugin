@@ -16,8 +16,10 @@ import type { ArkmeWechatToolPort } from './wechat.js'
 import type { ArkmeVoiceprintToolPort } from './voiceprint.js'
 import type { ArkmeExtensionReviewToolPort } from './extensions.js'
 import type { ArkmeGroupToolPort } from './groups.js'
+import type { ArkmeFileToolPort } from './files.js'
 
 export interface ArkmeCoreToolPorts extends
+  ArkmeFileToolPort,
   ArkmeAiVideoToolPort,
   ArkmeArkoToolPort,
   ArkmeBotToolPort,

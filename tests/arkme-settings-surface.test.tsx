@@ -4,8 +4,10 @@ import {
   ArkmeSettingsSurface,
   VersionSettingsRow,
   aboutArkmeVersion,
+  buildArkmePluginUpdateRow,
   scrollArkmeSettingsSurface,
 } from '../src/client/ArkmeSettingsSurface.js'
+import type { ArkmePluginUpdateStoreSnapshot } from '../src/client/plugin-update-store.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 
 describe('ArkmeSettingsSurface', () => {
@@ -48,6 +50,19 @@ describe('ArkmeSettingsSurface', () => {
   it('uses the desktop-injected APP version when the update bridge has no status yet', () => {
     expect(aboutArkmeVersion(undefined, { arkmeDesktop: { appVersion: '0.1.0' } })).toBe('v0.1.0')
     expect(aboutArkmeVersion('1.2.0', { arkmeDesktop: { appVersion: '0.1.0' } })).toBe('v0.1.0')
+  })
+
+  it.each([
+    [{ installPending: true }, '正在准备更新', 'view'],
+    [{ installWarning: '长时间没有进展', installPending: true }, '更新状态待确认', 'view'],
+    [{ installError: '安装失败' }, '更新未完成', 'view'],
+    [{ installStatusError: '状态查询不可用' }, '更新状态待确认', 'view'],
+  ] as const)('keeps update recovery accessible for %j', (patch, feedback, action) => {
+    const snapshot: ArkmePluginUpdateStoreSnapshot = { checked: true, busy: false, error: '', installError: '', ...patch }
+    const row = buildArkmePluginUpdateRow({ snapshot })
+    expect(row.action).toBe(action)
+    expect(row.feedback).toContain(feedback)
+    expect(row.feedback).not.toContain('正在检查更新')
   })
 
   it('renders only functional account settings in the plugin surface', () => {
@@ -94,7 +109,7 @@ describe('ArkmeSettingsSurface', () => {
     try {
       arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
       const authenticated = renderToStaticMarkup(<ArkmeSettingsSurface />)
-      expect(authenticated).toMatch(/当前余额[\s\S]*正在加载余额…[\s\S]*充值/)
+      expect(authenticated).toMatch(/AI 余额[\s\S]*正在加载余额…[\s\S]*可用于在 DSH 会话中通过 Arkme 调用 AI 模型[\s\S]*充值/)
       expect(authenticated).toContain('>退出登录<')
       expect(authenticated).toContain('>账户操作<')
       expect(authenticated.indexOf('>隐私条款<')).toBeLessThan(authenticated.indexOf('>账户操作<'))

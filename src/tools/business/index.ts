@@ -20,6 +20,7 @@ import { conversationMarkReadToolModule, unreadConversationsToolModule } from '.
 import { aiVideoToolModule } from './media/ai-video.js'
 import { textAiVideoToolModule } from './media/text-ai-video.js'
 import { readImageToolModule } from './media/read-image.js'
+import { fileToolModules } from './media/files.js'
 import { recordingToolModules } from './recordings/index.js'
 import { createRecordToolModule } from './records/create.js'
 import { listImagesToolModule } from './records/images.js'
@@ -87,4 +88,5 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   aiVideoToolModule,
   textAiVideoToolModule,
   readImageToolModule,
+  ...fileToolModules,
 ]

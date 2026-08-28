@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { ArkmeAuthSnapshot, ArkmeChatClientEvent } from '../types.js'
+import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../types.js'
 import { arkmeAuthStore } from './auth-store.js'
 import {
   arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation,
@@ -11,6 +11,15 @@ import {
   reconcileArkmeProviderInstance, recoverArkmeProviderInstanceDirectory,
 } from './provider-instance-runtime.js'
 import { arkmeUi } from './ui-controller.js'
+
+export function arkmeSelectedBotAffectedByChatDelta(
+  selectedBot: ArkmeBotSummary | undefined,
+  update: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>,
+): boolean {
+  if (selectedBot?.conversationProjection !== 'chat' || selectedBot.chatSourceKey === undefined) return false
+  return update.updates.some(item => item.source.kind === 'private_chat'
+    && item.sourceKey === selectedBot.chatSourceKey)
+}
 
 export function useArkmeRealtimeClientEvents(
   auth: ArkmeAuthSnapshot | undefined,
@@ -110,6 +119,7 @@ export function useArkmeRealtimeClientEvents(
           .filter(item => item.timelineItems.length > 0)
           .map(item => ({ sourceRef: item.source.sourceRef, items: item.timelineItems }))
         if (timelineUpdates.length > 0) arkmeChatTimelineDelta.publish(timelineUpdates)
+        if (arkmeSelectedBotAffectedByChatDelta(arkmeUi.getSnapshot().selectedBot, update)) arkmeUi.chatChanged()
         arkmeInterwovenInvalidation.invalidate()
       } catch { /* Ignore malformed local frames; EventSource keeps the channel alive. */ }
     }

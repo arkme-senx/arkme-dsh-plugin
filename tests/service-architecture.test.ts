@@ -7,15 +7,18 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'fileCapabilities', 'fileSearch', 'fileSessionUser', 'fileStage', 'fileList', 'fileReadLocal', 'attachLocalFileOpener', 'fileOpenLocal', 'fileRemove', 'fileSend',
+  'fileSendTasks', 'fileSendRetry', 'fileStageBytes', 'fileSendDiscard', 'fileSendReconcile', 'fileReceive',
   'startChatRealtime', 'chatRealtimeState', 'subscribeChatRealtime', 'chatRealtimeInitialEvent',
-  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'listBotPrivateChatDirectory', 'createBot', 'createBotSummary', 'revealBotSecret',
+  'attachOpenClawProvisioner', 'connectOpenClawBot', 'listBots', 'createBot', 'createBotSummary', 'revealBotSecret',
   'manageBotProfile', 'updateManagedBot', 'revealManagedBotToken', 'deleteManagedBot', 'botNotificationPreference', 'updateBotNotificationPreference',
-  'openBotChat', 'openBotPrivateChat', 'sendBotPrivateChatMessage', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
+  'openBotChat', 'listBotPrivateChatDirectory', 'openBotPrivateChat', 'refreshBotPrivateChat', 'sendBotPrivateChatMessage', 'markBotPrivateChatRead', 'listGroupBots', 'addGroupBot', 'removeGroupBot', 'authStatus', 'clientConfig',
   'billingQuota', 'billingProducts', 'createBillingOrder', 'billingOrderStatus',
   'providerCapabilities', 'providerState', 'requestOutgoingCall', 'claimOutgoingCallIntent',
   'resolveOutgoingCallIntent', 'prepareOutgoingCall', 'heartbeatOutgoingCall', 'releaseOutgoingCall',
   'listCallHistory', 'callDetail', 'retryCallSummary',
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'extensionAuthors', 'listExtensionReviews',
+  'resolveLinkMetadata',
   'searchContact', 'addContact',
   'listDirectory', 'directoryContactProfile', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
@@ -25,15 +28,15 @@ const expectedPublicMethods = [
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
   'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setChatDirectoryPolicy', 'listSourceMembers', 'sourceMemberRecords',
-  'dshBetaCommunityEntryState', 'interwovenMoments', 'interwovenMomentDetail',
+  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'interwovenMoments', 'interwovenMomentDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
-  'confirmEnableGroupAiPolish', 'prepareDisableGroupAiPolishForSource', 'prepareDisableGroupAiPolish',
+  'prepareEnableGroupAiPolish', 'prepareEnableGroupAiPolishRuleForSource', 'confirmEnableGroupAiPolish', 'prepareDisableGroupAiPolishForSource', 'prepareDisableGroupAiPolish',
   'confirmDisableGroupAiPolish', 'listGroupMembers', 'listGroupMemberCandidates', 'groupInvitePreview', 'addGroupMembers',
   'createGroup', 'groupSettings', 'setGroupMessageDnd',
   'renameGroup', 'leaveGroup', 'dissolveGroup', 'reportGroup', 'userCard',
-  'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'relatedRecordingEligibility', 'relatedRecordings',
-  'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'resolveLinkMetadata', 'forwardSourceMessages',
+  'openPrivateChatFromUser', 'openPrivateChatFromContact', 'officialAuthorProfile', 'openOfficialAuthorPrivateChat', 'openPrivateChatFromWorldAuthor', 'openPrivateChatFromMember', 'readSource', 'messageReadReceiptSummaries', 'messageReadReceiptDetail', 'sharedRecordingDetail', 'relatedRecordingEligibility', 'relatedRecordings',
+  'recordRelatedRecordingsToolEvent', 'reportMessage', 'copySourceMessageLink', 'resolveMessageCopyLink', 'extendMessageCopyLink', 'forwardSourceMessages',
   'sendSourceText', 'retryGroupAiPolish',
   'sendSourceRich', 'favoriteStickers', 'addFavoriteSticker', 'manageFavoriteSticker', 'sendFavoriteSticker', 'longArticleDetail', 'updateLongArticle', 'getLongArticleDraft',
   'putLongArticleDraft', 'removeLongArticleDraft', 'uploadLocalFile', 'fetchMedia', 'sendDirectText',
@@ -60,7 +63,8 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
-  'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'source-service.ts',
+  'file-transfers.ts',
+  'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts',
   'record-service.ts', 'related-recording-service.ts', 'recording-service.ts', 'search-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'wechat-service.ts',
@@ -68,6 +72,7 @@ const expectedServiceFiles = [
   'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'contact-service.ts', 'contact-directory-service.ts', 'unmarked-speaker-service.ts',
   'voiceprint-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
+  'link-metadata-service.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
@@ -111,6 +116,24 @@ describe('Arkme service architecture', () => {
     }
   })
 
+  it('keeps direct-conversation and group Bot projections behind separate mappers', () => {
+    const botService = readFileSync(join(root, 'src/services/bot-service.ts'), 'utf8')
+    const arkmeService = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
+    expect(botService).toContain('groupBotSummaryFromData')
+    expect(arkmeService).not.toContain('BOT_CONVERSATION_OWNER')
+  })
+
+  it('keeps owner-specific Bot conversation transport behind a narrow adapter interface', () => {
+    const conversation = readFileSync(join(root, 'src/services/bot-conversation-service.ts'), 'utf8')
+    const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
+    expect(conversation).toContain('interface BotConversationOwnerAdapter')
+    expect(conversation).toContain('interface BotConversationRegistryPort')
+    expect(conversation).toContain('interface ChatBotConversationPort')
+    expect(conversation).toContain('class SubjectBotConversationAdapter implements BotConversationOwnerAdapter')
+    expect(conversation).toContain('class ChatBotConversationAdapter implements BotConversationOwnerAdapter')
+    expect(facade).not.toMatch(/\/api\/v1\/(bot\/private-chat|chat\/timeline)/)
+  })
+
   it('keeps World cross-domain dependencies behind narrow ports', () => {
     const world = readFileSync(join(root, 'src/services/world-service.ts'), 'utf8')
     expect(world).toContain('export interface ArkmeWorldProfileReader')
@@ -134,5 +157,59 @@ describe('Arkme service architecture', () => {
     expect(surface).not.toMatch(/\bfetch\s*\(/)
     expect(enrollmentClient).toContain('export interface ArkmeVoiceprintEnrollmentClient')
     expect(enrollmentClient).toContain('class SameOriginArkmeVoiceprintEnrollmentClient')
+  })
+
+  it('keeps the default-off DSH remote feature ahead of platform secret-store construction', () => {
+    const source = readFileSync(join(root, 'src/index.ts'), 'utf8')
+    const guard = source.indexOf('if (!config.dshRemoteFeatureEnabled) return')
+    const secretStore = source.indexOf('createArkmeSecureValueStore(', guard)
+    expect(guard).toBeGreaterThanOrEqual(0)
+    expect(secretStore).toBeGreaterThan(guard)
+  })
+
+  it('keeps link recognition separate from asynchronous metadata resolution', () => {
+    const parser = readFileSync(join(root, 'src/client/text-link-parser.ts'), 'utf8')
+    const presentation = readFileSync(join(root, 'src/client/ArkmeLinkText.tsx'), 'utf8')
+    const client = readFileSync(join(root, 'src/client/link-metadata-client.ts'), 'utf8')
+    expect(parser).not.toMatch(/\bfetch\s*\(|callArkme|useEffect|useState/)
+    expect(presentation).not.toMatch(/\bfetch\s*\(|callArkme/)
+    expect(client).toContain('export interface ArkmeLinkMetadataResolver')
+    expect(client).not.toMatch(/from ['"]\.\.\/services\//)
+  })
+
+  it('reuses request admission infrastructure without a second Host cache or queue', () => {
+    const service = readFileSync(join(root, 'src/services/link-metadata-service.ts'), 'utf8')
+    expect(service).toContain('ArkmeRequestCoordinator')
+    expect(service).not.toMatch(/private readonly (?:cache|inFlight|queuedLoads)\b/)
+    expect(service).not.toMatch(/private activeLoads\b/)
+  })
+
+  it('keeps link metadata out of chat business while preserving one infrastructure owner', () => {
+    const facade = readFileSync(join(root, 'src/arkme-service.ts'), 'utf8')
+    const chat = readFileSync(join(root, 'src/services/chat-service.ts'), 'utf8')
+    const sdk = readFileSync(join(root, 'src/sdk/index.ts'), 'utf8')
+    const host = readFileSync(join(root, 'src/host-api.ts'), 'utf8')
+    const types = readFileSync(join(root, 'src/types.ts'), 'utf8')
+    const metadata = readFileSync(join(root, 'src/link-metadata.ts'), 'utf8')
+    const client = readFileSync(join(root, 'src/client/link-metadata-client.ts'), 'utf8')
+    const service = readFileSync(join(root, 'src/services/link-metadata-service.ts'), 'utf8')
+    expect(facade.match(/async resolveLinkMetadata\b/gu) ?? []).toHaveLength(1)
+    expect(chat).not.toMatch(/resolveLinkMetadata|fetchLinkMetadata|linkMetadataFromHtml/)
+    expect(sdk.match(/async resolveLinkMetadata\b/gu) ?? []).toHaveLength(1)
+    expect(sdk).toContain('source.link-metadata.resolve')
+    expect(sdk).toMatch(/async resolveLinkMetadata\([\s\S]*?\): Promise<ArkmeLinkMetadata> \{/u)
+    expect(types).toContain("| 'source.link-metadata.resolve'")
+    expect(types).not.toMatch(/export interface ArkmeLinkMetadata\b/)
+    expect(types).toContain("export type { ArkmeLinkMetadata } from './link-metadata.js'")
+    expect(sdk).toContain("export type { ArkmeLinkMetadata } from '../link-metadata.js'")
+    expect(metadata).toContain('export interface ArkmeLinkMetadata')
+    expect(metadata).toContain('export function arkmeKnownLinkMetadataFallback')
+    expect(metadata).toContain('export function arkmeRequiredLinkMetadataFallback')
+    expect(client).toContain('arkmeKnownLinkMetadataFallback')
+    expect(service).not.toContain('arkmeRequiredLinkMetadataFallback')
+    expect(host).toContain('arkmeRequiredLinkMetadataFallback')
+    expect(client).not.toMatch(/Pull Request #|Change #/u)
+    expect(service).not.toMatch(/Pull Request #|Change #/u)
+    expect(host.match(/service\.resolveLinkMetadata\(/gu) ?? []).toHaveLength(2)
   })
 })

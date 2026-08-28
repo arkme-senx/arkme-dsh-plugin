@@ -103,7 +103,7 @@ export function createContactDirectoryState(accountKey: string): ContactDirector
 export function directoryItemKey(item: ArkmeDirectoryItem): string {
   switch (item.kind) {
     case 'group': return `group:${item.sourceRef}`
-    case 'bot': return `bot:${item.botRef}`
+    case 'bot': return `bot:${item.bot.botRef}`
     case 'unmarked-speaker': return `unmarked-speaker:${item.candidateRef}`
     case 'team': return `team:${item.rowKey}`
     case 'contact': return `contact:${item.contactRef}`

@@ -35,6 +35,7 @@ import { ArkoService } from './services/arko-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
 import { AuthService, jiwoScanLoginAvailable } from './services/auth-service.js'
 import { BotService, type ArkmeBotManageUpdateInput, type ArkmeBotRefPayload } from './services/bot-service.js'
+import { BotConversationService } from './services/bot-conversation-service.js'
 import { CalendarService } from './services/calendar-service.js'
 import { CallHistoryService } from './services/call-history-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
@@ -46,6 +47,11 @@ import { ExtensionReviewService, type ArkmeExtensionAuthorProjection } from './s
 import { GroupAiPolishService } from './services/group-ai-polish-service.js'
 import { GroupService } from './services/group-service.js'
 import { InterwovenService } from './services/interwoven-service.js'
+import {
+  ArkmeLinkMetadataService,
+  type ArkmeLinkDocumentReader,
+} from './services/link-metadata-service.js'
+import type { ArkmeLinkMetadata } from './link-metadata.js'
 import {
   MAX_ARKME_IMAGE_BYTES,
   MediaService,
@@ -63,6 +69,7 @@ import {
   RelatedRecordingService,
 } from './services/related-recording-service.js'
 import { SearchService } from './services/search-service.js'
+import { createArkmeFileTransfers, type ArkmeFileSendInput, type ArkmeLocalFile, type FileTransfers } from './file-transfer-owner.js'
 import {
   ArkmePluginError,
   ServiceRuntime,
@@ -143,6 +150,7 @@ import type {
   ArkmeGroupAiPolishNotice,
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupAiPolishThreadMessage,
   ArkmeGroupMemberList,
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberCandidateList,
@@ -156,7 +164,6 @@ import type {
   ArkmeImageSearchResult,
   ArkmeInterwovenBootstrap,
   ArkmeInterwovenDetail,
-  ArkmeLinkMetadata,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageCopyLinkResult,
@@ -197,6 +204,7 @@ import type {
   ArkmeSourceList,
   ArkmeSourceReadResult,
   ArkmeSourceSendResult,
+  ArkmeSharedRecordingPreview,
   ArkmeTimelineCursor,
   ArkmeTimelinePage,
   ArkmeTopicCreateResult,
@@ -269,6 +277,7 @@ export class ArkmeService {
   private readonly record: RecordService
   private readonly search: SearchService
   private readonly bot: BotService
+  private readonly botConversation: BotConversationService
   private readonly outgoingCall: OutgoingCallService
   private readonly world: WorldService
   private readonly arko: ArkoService
@@ -277,12 +286,15 @@ export class ArkmeService {
   private readonly community: CommunityService
   private readonly realtime: ChatRealtimeService
   private readonly interwoven: InterwovenService
+  private readonly linkMetadata: ArkmeLinkMetadataService
   private readonly aiPolish: GroupAiPolishService
   private readonly chat: ChatService
   private readonly contact: ContactService
   private readonly contactDirectory: ContactDirectoryService
   private readonly unmarkedSpeaker: UnmarkedSpeakerService
   private readonly voiceprint: VoiceprintService
+  private readonly fileTransfers: FileTransfers | undefined
+  private localFileOpener?: (path: string, signal: AbortSignal) => Promise<void>
   private worldVoiceprintInviteVariantIndex = 0
 
   constructor(
@@ -293,6 +305,7 @@ export class ArkmeService {
     private readonly pendingSessionStore?: ArkmeSessionStore,
     outgoingCallBroker = new ArkmeOutgoingCallBroker(),
     billingGateway?: ArkmeBillingGateway,
+    linkDocumentReader?: ArkmeLinkDocumentReader,
   ) {
     this.runtime = new ServiceRuntime(config, sessionStore, stateStore, fetchImpl, pendingSessionStore)
     this.billingGateway = billingGateway ?? new HttpArkmeBillingGateway(this.runtime)
@@ -343,6 +356,7 @@ export class ArkmeService {
     this.relatedRecording = new RelatedRecordingService(this.runtime, this.source)
     this.community = new CommunityService(this.runtime, this.source, this.profile)
     this.interwoven = new InterwovenService(this.runtime, this.source, this.profile)
+    this.linkMetadata = new ArkmeLinkMetadataService(linkDocumentReader)
     this.aiPolish = new GroupAiPolishService(this.runtime, this.source, {
       sendChatSourceTextRaw: async (...args) => await this.chat.sendChatSourceTextRaw(...args),
     })
@@ -361,6 +375,12 @@ export class ArkmeService {
       this.realtime,
       this.privacy,
     )
+    this.botConversation = new BotConversationService(
+      this.runtime,
+      this.bot,
+      this.chat,
+      async () => { await this.realtime.invalidateRecordProjection() },
+    )
     this.contactDirectory = new ContactDirectoryService(
       this.runtime, this.source, this.bot, this.profile, this.world, this.chat,
     )
@@ -375,10 +395,44 @@ export class ArkmeService {
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.fileTransfers = createArkmeFileTransfers({
+      directory: config.fileStateDirectory,
+      maxUploadBytes: config.maxUploadBytes,
+      runtime: this.runtime,
+      source: this.source,
+      media: this.media,
+      chat: this.chat,
+      openPath: async (path, signal) => {
+        if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
+        await this.localFileOpener(path, signal)
+      },
+    })
   }
+
+  private filesOwner(): FileTransfers {
+    if (!this.fileTransfers) throw new ArkmePluginError('file-flow-unavailable', '当前宿主不支持本地文件流程，请升级插件', false, 501)
+    return this.fileTransfers
+  }
+  fileCapabilities() { return this.filesOwner().capabilities() }
+  async fileSearch(options: { query?: string; limit: number; cursor?: string; signal?: AbortSignal }) { return await this.search.searchFiles(options) }
+  async fileSessionUser() { return (await this.runtime.requireSession()).userId }
+  async fileStage(path: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>, expectedUserId?: number) { return await this.filesOwner().stage(path, metadata, expectedUserId) }
+  async fileList() { return await this.filesOwner().files() }
+  async fileReadLocal(ref: string) { return await this.filesOwner().readLocal(ref) }
+  attachLocalFileOpener(openPath: (path: string, signal: AbortSignal) => Promise<void>) { this.localFileOpener = openPath }
+  async fileOpenLocal(ref: string) { return await this.filesOwner().openLocal(ref) }
+  async fileRemove(ref: string) { await this.filesOwner().remove(ref) }
+  async fileSend(input: ArkmeFileSendInput) { return await this.filesOwner().enqueue(input) }
+  async fileSendTasks(sourceRef?: string) { return await this.filesOwner().tasks(sourceRef) }
+  async fileSendRetry(taskRef: string) { return await this.filesOwner().retry(taskRef) }
+  async fileStageBytes(contentBase64: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType'>) { return await this.filesOwner().stageBytes(contentBase64, metadata) }
+  async fileSendDiscard(taskRef: string) { return await this.filesOwner().discard(taskRef) }
+  async fileSendReconcile(taskRef: string) { return await this.filesOwner().reconcile(taskRef) }
+  async fileReceive(mediaRef: string, start = false) { return await this.filesOwner().reception(mediaRef, start) }
 
   private clearAccountState(userIds: readonly number[]): void {
     for (const userId of userIds) this.privacy.clear(userId)
+    this.fileTransfers?.cancelActive()
     for (const userId of userIds) this.outgoingCall.clearUser(userId, '账号已退出，呼叫已取消')
     this.source.dispose()
     this.media.dispose()
@@ -436,10 +490,6 @@ export class ArkmeService {
     return await this.bot.listBots(options)
   }
 
-  async listBotPrivateChatDirectory(options: { signal?: AbortSignal } = {}) {
-    return await this.bot.listBotPrivateChatDirectory(options)
-  }
-
   async createBot(
     input: ArkmeBotCreateInput,
     options: { signal?: AbortSignal } = {},
@@ -474,25 +524,23 @@ export class ArkmeService {
     await this.bot.deleteManagedBot(botRef, confirmationName, options)
   }
 
-  async botNotificationPreference(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> {
-    return await this.bot.botNotificationPreference(botRef, options)
-  }
+  async botNotificationPreference(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> { return await this.botConversation.notificationPreference(botRef, options) }
 
-  async updateBotNotificationPreference(botRef: string, muted: boolean, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> {
-    return await this.bot.updateBotNotificationPreference(botRef, muted, options)
-  }
+  async updateBotNotificationPreference(botRef: string, muted: boolean, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotNotificationPreference> { return await this.botConversation.updateNotificationPreference(botRef, muted, options) }
 
   async openBotChat(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSourceItem> {
     return await this.bot.openBotChat(botRef, options)
   }
 
-  async openBotPrivateChat(botRef: string, options: { signal?: AbortSignal } = {}) {
-    return await this.bot.openBotPrivateChat(botRef, options)
-  }
+  async listBotPrivateChatDirectory(options: { signal?: AbortSignal } = {}) { return await this.botConversation.directory(options) }
 
-  async sendBotPrivateChatMessage(botRef: string, content: string, options: { signal?: AbortSignal } = {}) {
-    return await this.bot.sendBotPrivateChatMessage(botRef, content, options)
-  }
+  async openBotPrivateChat(botRef: string, options: { signal?: AbortSignal } = {}) { return await this.botConversation.open(botRef, options) }
+
+  async refreshBotPrivateChat(botRef: string, options: { signal?: AbortSignal } = {}) { return await this.botConversation.refresh(botRef, options) }
+
+  async sendBotPrivateChatMessage(botRef: string, content: string, options: { signal?: AbortSignal } = {}) { return await this.botConversation.send(botRef, content, options) }
+
+  async markBotPrivateChatRead(botRef: string, sequence: number, options: { signal?: AbortSignal } = {}) { return await this.botConversation.markRead(botRef, sequence, options) }
 
   async listGroupBots(
     groupSourceRef: string,
@@ -524,6 +572,9 @@ export class ArkmeService {
   async authStatus(): Promise<ArkmeAuthSnapshot> {
     return await this.auth.authStatus()
   }
+
+  async dshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemoteGet<T>(path, signal) }
+  async dshRemotePost<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemotePost<T>(path, body, undefined, signal) }
 
   clientConfig(): ArkmeClientConfig {
     return {
@@ -603,6 +654,7 @@ export class ArkmeService {
         contactAdd: true,
         conversationQuickAdd: true,
         groupSettings: true,
+        groupAiPolish: true,
         extensionManagement: true,
         extensionMetadataEdit: true,
         extensionIcons: true,
@@ -686,6 +738,7 @@ export class ArkmeService {
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
 
   dispose(): void {
+    this.fileTransfers?.cancelActive()
     this.contact.dispose()
     this.contactDirectory.dispose()
     this.unmarkedSpeaker.dispose()
@@ -702,9 +755,16 @@ export class ArkmeService {
     this.outgoingCall.dispose()
     this.interwoven.dispose()
     this.world.dispose()
+    this.linkMetadata.dispose()
   }
 
   requestStats(): Record<string, ArkmeRequestStats> { return this.runtime.requestStats() }
+  async resolveLinkMetadata(
+    url: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ArkmeLinkMetadata | null> {
+    return await this.linkMetadata.resolve(url, options)
+  }
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> { return await this.profile.cachedProfile() }
   async searchContact(identifier: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeContactSearchResult> { return await this.contact.search(identifier, options) }
 
@@ -983,7 +1043,7 @@ export class ArkmeService {
   async generateGroupAiPolishRuleForSource(
     sourceRef: string,
     requirement: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; threadMessages?: readonly ArkmeGroupAiPolishThreadMessage[]; targetRuleRef?: string } = {},
   ): Promise<ArkmeGroupAiPolishRuleCandidate> {
     return await this.aiPolish.generateGroupAiPolishRuleForSource(sourceRef, requirement, options)
   }
@@ -991,9 +1051,17 @@ export class ArkmeService {
   async generateGroupAiPolishRule(
     groupName: string,
     requirement: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; threadMessages?: readonly ArkmeGroupAiPolishThreadMessage[]; targetRuleRef?: string } = {},
   ): Promise<ArkmeGroupAiPolishRuleCandidate> {
     return await this.aiPolish.generateGroupAiPolishRule(groupName, requirement, options)
+  }
+
+  prepareEnableGroupAiPolish(groupName: string, ruleName = '', options: { signal?: AbortSignal } = {}): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    return this.aiPolish.prepareEnableGroupAiPolish(groupName, ruleName, options)
+  }
+
+  prepareEnableGroupAiPolishRuleForSource(sourceRef: string, ruleRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    return this.aiPolish.prepareEnableGroupAiPolishRuleForSource(sourceRef, ruleRef, options)
   }
 
   async confirmEnableGroupAiPolish(
@@ -1165,22 +1233,15 @@ export class ArkmeService {
     return await this.chat.readSource(sourceRef, options)
   }
 
+  async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
+    return await this.chat.sharedRecordingDetail(detailRef, options)
+  }
+
   async messageReadReceiptSummaries(sourceRef: string, items: readonly ArkmeMessageReadReceiptQueryItem[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptSummaryList> { return await this.chat.messageReadReceiptSummaries(sourceRef, items, options) }
   async messageReadReceiptDetail(sourceRef: string, itemUid: string, sequence: number, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptDetail> { return await this.chat.messageReadReceiptDetail(sourceRef, itemUid, sequence, options) }
 
-  async relatedRecordingEligibility(
-    sourceRef: string,
-    signal?: AbortSignal,
-  ): Promise<ArkmeRelatedRecordingEligibility> {
-    return await this.relatedRecording.relatedRecordingEligibility(sourceRef, signal)
-  }
-
-  async relatedRecordings(
-    sourceRef: string,
-    options: ArkmeRelatedRecordingPageOptions = {},
-  ): Promise<ArkmeRelatedRecordingPage> {
-    return await this.relatedRecording.relatedRecordings(sourceRef, options)
-  }
+  async relatedRecordingEligibility(sourceRef: string, signal?: AbortSignal): Promise<ArkmeRelatedRecordingEligibility> { return await this.relatedRecording.relatedRecordingEligibility(sourceRef, signal) }
+  async relatedRecordings(sourceRef: string, options: ArkmeRelatedRecordingPageOptions = {}): Promise<ArkmeRelatedRecordingPage> { return await this.relatedRecording.relatedRecordings(sourceRef, options) }
 
   recordRelatedRecordingsToolEvent(event: {
     result: 'success' | 'error'
@@ -1198,7 +1259,6 @@ export class ArkmeService {
   async copySourceMessageLink(sourceRef: string, actionRefs: readonly string[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResult> { return await this.chat.copySourceMessageLink(sourceRef, actionRefs, options) }
   async resolveMessageCopyLink(sid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkResolveResult> { return await this.chat.resolveMessageCopyLink(sid, options) }
   async extendMessageCopyLink(sid: string, itemIndex: number, textContent: string, recordUid: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageCopyLinkExtendResult> { return await this.chat.extendMessageCopyLink(sid, itemIndex, textContent, recordUid, options) }
-  async resolveLinkMetadata(rawUrl: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeLinkMetadata> { return await this.chat.resolveLinkMetadata(rawUrl, options) }
   async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
 
   async sendSourceText(

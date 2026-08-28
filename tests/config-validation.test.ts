@@ -71,4 +71,15 @@ describe('plugin environment validation', () => {
     expect(() => { apply({} as never, config) })
       .toThrow(/production environment must explicitly configure every service origin/)
   })
+
+  it('requires an explicit credential-free Realtime origin only when DSH remote is enabled', () => {
+    const enabled = { ...productionConfig(), environment: 'test' as const, dshRemoteFeatureEnabled: true }
+
+    expect(() => resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, enabled))
+      .toThrow(/requires dshRemoteRealtimeBaseUrl/)
+    expect(() => resolveArkmeConfig({ webServer: { host: '127.0.0.1' } } as never, {
+      ...enabled,
+      dshRemoteRealtimeBaseUrl: 'https://jotmo-realtime.senguo.me',
+    })).not.toThrow()
+  })
 })

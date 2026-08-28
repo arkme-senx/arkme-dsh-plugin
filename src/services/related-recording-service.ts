@@ -16,10 +16,29 @@ export const MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH = 1024
 const MAX_ARKME_TIMEZONE_OFFSET_MILLIS = 14 * 60 * 60 * 1000
 const RELATED_RECORDINGS_FUNC_TYPE = 17
 
-function numberValue(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+interface ArkmeSharedRecordingDetailRefPayload {
+  version: 1
+  viewerUserId: number
+  chatSessionUid: string
+  relationUid: string
+  recordOwnerUserId: number
+  recordUid: string
+  sequence: number
 }
-function booleanValue(value: unknown): boolean { return value === true }
+
+function numberValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return Math.trunc(parsed)
+  }
+  return 0
+}
+function booleanValue(value: unknown): boolean {
+  if (value === true || value === 1) return true
+  if (typeof value === 'string') return ['1', 'true'].includes(value.trim().toLowerCase())
+  return false
+}
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 function optionalPositiveNumber(value: unknown): number | undefined {
   const number = numberValue(value)
@@ -28,6 +47,23 @@ function optionalPositiveNumber(value: unknown): number | undefined {
 function optionalString(value: unknown): string | undefined {
   const text = stringValue(value).trim()
   return text === '' ? undefined : text
+}
+function firstOptionalString(source: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = optionalString(source[key])
+    if (value !== undefined) return value
+  }
+  return undefined
+}
+function encodeOpaqueJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
+}
+
+function participantRoleName(role: number): string {
+  if (role === 2) return '我'
+  if (role === 1) return '对方'
+  if (role === 4) return '其他说话人'
+  return ''
 }
 
 export class RelatedRecordingService {
@@ -148,7 +184,7 @@ export class RelatedRecordingService {
     const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
       '/api/v1/auth/able-func', { func_type: RELATED_RECORDINGS_FUNC_TYPE }, session, signal,
     )
-    return data.able === true
+    return booleanValue(data.able)
   }
 
   private async relatedRecordingPage(
@@ -158,11 +194,12 @@ export class RelatedRecordingService {
     chatSessionUid: string,
   ): Promise<ArkmeRelatedRecordingPage> {
     const items: ArkmeRelatedRecordingItem[] = []
-    for (const rawItem of listValue(raw.moment_ls)) {
-      const item = await this.relatedRecordingItem(rawItem, userId, chatSessionUid)
+    const signingKey = await this.runtime.stateStore.uniqueCode()
+    for (const rawItem of listValue(raw.moment_ls ?? raw.momentLs ?? raw.items)) {
+      const item = this.relatedRecordingItem(rawItem, userId, chatSessionUid, signingKey)
       if (item !== undefined) items.push(item)
     }
-    const partial = raw.partial === true
+    const partial = booleanValue(raw.partial)
     const stateCode = numberValue(raw.state)
     const state: ArkmeRelatedRecordingPageState = partial
       ? items.length > 0 ? 'partial' : 'error'
@@ -170,13 +207,13 @@ export class RelatedRecordingService {
         : stateCode === 2 ? 'generating'
           : stateCode === 4 ? 'error'
             : 'empty'
-    const nextCursor = stringValue(raw.next_cursor).trim()
-    const timeIndexComplete = raw.time_index_complete === true && !legacyTimeIndexFallback
+    const nextCursor = stringValue(raw.next_cursor ?? raw.nextCursor).trim()
+    const timeIndexComplete = booleanValue(raw.time_index_complete ?? raw.timeIndexComplete) && !legacyTimeIndexFallback
     const monthBuckets: ArkmeRelatedRecordingMonthBucket[] = timeIndexComplete
-      ? listValue(raw.month_bucket_ls).flatMap(value => {
+      ? listValue(raw.month_bucket_ls ?? raw.monthBucketLs ?? raw.monthBuckets).flatMap(value => {
           const bucket = objectValue(value)
-          const monthKey = stringValue(bucket.month_key).trim()
-          const itemCount = numberValue(bucket.item_count)
+          const monthKey = stringValue(bucket.month_key ?? bucket.monthKey).trim()
+          const itemCount = numberValue(bucket.item_count ?? bucket.itemCount)
           return /^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey) && Number.isInteger(itemCount) && itemCount >= 0
             ? [{ monthKey, itemCount }]
             : []
@@ -185,11 +222,11 @@ export class RelatedRecordingService {
     return {
       state,
       stateCode,
-      stateMessage: stringValue(raw.state_msg).trim(),
-      hasEntry: raw.has_entry === true,
+      stateMessage: stringValue(raw.state_msg ?? raw.stateMessage).trim(),
+      hasEntry: booleanValue(raw.has_entry ?? raw.hasEntry),
       items,
-      hasMore: raw.has_more === true && nextCursor !== '',
-      ...(raw.has_more === true && nextCursor !== '' ? { nextCursor } : {}),
+      hasMore: booleanValue(raw.has_more ?? raw.hasMore) && nextCursor !== '',
+      ...(booleanValue(raw.has_more ?? raw.hasMore) && nextCursor !== '' ? { nextCursor } : {}),
       partial,
       ...(timeIndexComplete ? { monthBuckets } : {}),
       timeIndexComplete,
@@ -197,63 +234,112 @@ export class RelatedRecordingService {
     }
   }
 
-  private async relatedRecordingItem(
+  private relatedRecordingItem(
     raw: unknown,
     userId: number,
     chatSessionUid: string,
-  ): Promise<ArkmeRelatedRecordingItem | undefined> {
+    signingKey: string,
+  ): ArkmeRelatedRecordingItem | undefined {
     const item = objectValue(raw)
-    const momentId = stringValue(item.moment_id).trim()
-    const startAtMillis = numberValue(item.start_at)
+    const momentId = stringValue(item.moment_id ?? item.momentId).trim()
+    const startAtMillis = numberValue(item.start_at ?? item.startAt ?? item.startAtMillis)
     if (momentId === '' || !Number.isSafeInteger(startAtMillis) || startAtMillis <= 0) return undefined
-    const transcript = stringValue(item.transcript)
-    const speakers = listValue(item.speaker_ls).flatMap(value => {
+    const transcript = stringValue(item.transcript ?? item.transcript_text ?? item.transcriptText)
+    const speakers = listValue(item.speaker_ls ?? item.speakerLs ?? item.speakers).flatMap((value, index) => {
+      if (typeof value === 'string') {
+        const nickname = value.trim()
+        return nickname === '' ? [] : [{ speakerId: `speaker:${index}`, nickname }]
+      }
       const speaker = objectValue(value)
-      const speakerId = stringValue(speaker.speaker_id).trim()
-      if (speakerId === '') return []
-      const refUserId = optionalPositiveNumber(speaker.ref_usr_id)
-      const nickname = optionalString(speaker.nick_name)
+      const speakerId = firstOptionalString(speaker, ['speaker_id', 'speakerId', 'id']) ?? ''
+      const refUserId = optionalPositiveNumber(speaker.ref_usr_id ?? speaker.refUsrId ?? speaker.ref_user_id ?? speaker.refUserId)
+      const nickname = firstOptionalString(speaker, [
+        'nick_name', 'nickName', 'nickname', 'speaker_name', 'speakerName', 'display_name', 'displayName', 'name',
+      ])
+      if (speakerId === '' && nickname === undefined && refUserId === undefined) return []
       return [{ speakerId, ...(refUserId === undefined ? {} : { refUserId }), ...(nickname === undefined ? {} : { nickname }) }]
     })
-    const participants = listValue(item.participant_ls).flatMap(value => {
+    const participantValues = listValue(item.participant_ls ?? item.participantLs ?? item.participants)
+    const participants = (participantValues.length > 0 ? participantValues : listValue(item.speaker_ls ?? item.speakerLs ?? item.speakers))
+      .flatMap((value, index) => {
+      if (typeof value === 'string') {
+        const displayName = value.trim()
+        return displayName === '' ? [] : [{ speakerId: `participant:${index}`, displayName, role: 0 }]
+      }
       const participant = objectValue(value)
-      const speakerId = stringValue(participant.speaker_id).trim()
-      const nickname = optionalString(participant.nick_name)
-      const displayName = stringValue(participant.display_name).trim() || nickname || ''
-      if (speakerId === '' || displayName === '') return []
-      const refUserId = optionalPositiveNumber(participant.ref_usr_id)
+      const role = Math.max(0, numberValue(participant.role))
+      const speakerId = firstOptionalString(participant, ['speaker_id', 'speakerId', 'id']) ?? ''
+      const nickname = firstOptionalString(participant, ['nick_name', 'nickName', 'nickname', 'speaker_name', 'speakerName', 'name'])
+      const displayName = firstOptionalString(participant, ['display_name', 'displayName', 'display_name_snapshot', 'displayNameSnapshot'])
+        ?? nickname
+        ?? participantRoleName(role)
+      const refUserId = optionalPositiveNumber(participant.ref_usr_id ?? participant.refUsrId ?? participant.ref_user_id ?? participant.refUserId ?? participant.user_id ?? participant.userId)
+      if (displayName === '' && speakerId === '' && refUserId === undefined) return []
       return [{
-        speakerId,
+        speakerId: speakerId === '' ? `participant:${index}` : speakerId,
         ...(refUserId === undefined ? {} : { refUserId }),
         ...(nickname === undefined ? {} : { nickname }),
         displayName,
-        role: numberValue(participant.role),
+        role,
       }]
     })
-    const dateStamp = optionalPositiveNumber(item.date_stamp)
-    const timezoneOffsetMillis = numberValue(item.tz_offset)
+    const dateStamp = optionalPositiveNumber(item.date_stamp ?? item.dateStamp)
+    const timezoneOffsetMillis = numberValue(item.tz_offset ?? item.tzOffset ?? item.timezone_offset ?? item.timezoneOffset ?? item.timezoneOffsetMillis)
+    const isSharedByOther = booleanValue(item.is_shared_by_other ?? item.isSharedByOther)
+    const sharedByUserId = optionalPositiveNumber(item.shared_by_user_id ?? item.sharedByUserId)
+    const itemChatSessionUid = firstOptionalString(item, [
+      'chat_session_uid', 'chatSessionUid', 'source_chat_session_uid', 'sourceChatSessionUid',
+    ]) ?? chatSessionUid
+    const recordUid = firstOptionalString(item, ['record_uid', 'recordUid', 'shared_record_uid', 'sharedRecordUid']) ?? ''
+    const recordOwnerUserId = optionalPositiveNumber(
+      item.record_owner_user_id ?? item.recordOwnerUserId ?? item.owner_user_id ?? item.ownerUserId,
+    ) ?? sharedByUserId
+    const sourceRelationUid = firstOptionalString(item, [
+      'source_relation_uid', 'sourceRelationUid', 'rel_uid', 'relUid', 'relation_uid', 'relationUid',
+    ]) ?? ''
+    const sharedSequence = numberValue(item.shared_sequence ?? item.sharedSequence ?? item.seq ?? item.sequence)
+    const sharedRecordingDetailRef = isSharedByOther && itemChatSessionUid.trim() !== '' && recordUid.trim() !== ''
+      && recordOwnerUserId !== undefined && recordOwnerUserId > 0
+      ? this.sharedRecordingDetailRef({
+          version: 1,
+          viewerUserId: userId,
+          chatSessionUid: itemChatSessionUid.trim(),
+          relationUid: sourceRelationUid.trim(),
+          recordOwnerUserId,
+          recordUid: recordUid.trim(),
+          sequence: Math.max(0, sharedSequence),
+        }, signingKey)
+      : undefined
     return {
-      recordingRef: await this.relatedRecordingRef(userId, chatSessionUid, momentId),
+      recordingRef: this.relatedRecordingRef(userId, chatSessionUid, momentId, signingKey),
+      ...(sharedRecordingDetailRef === undefined ? {} : { sharedRecordingDetailRef }),
       startAtMillis,
-      endAtMillis: numberValue(item.end_at),
+      endAtMillis: numberValue(item.end_at ?? item.endAt ?? item.endAtMillis),
       ...(dateStamp === undefined ? {} : { dateStamp }),
       ...(Number.isSafeInteger(timezoneOffsetMillis) ? { timezoneOffsetMillis } : {}),
-      timeRangeText: stringValue(item.time_range_text).trim(),
-      title: stringValue(item.title).trim(),
-      summary: stringValue(item.summary).trim(),
-      summaryStatus: numberValue(item.summary_status),
+      timeRangeText: stringValue(item.time_range_text ?? item.timeRangeText).trim(),
+      title: stringValue(item.title ?? item.orig_name ?? item.origName).trim(),
+      summary: stringValue(item.summary ?? item.summary_text ?? item.summaryText).trim(),
+      summaryStatus: numberValue(item.summary_status ?? item.summaryStatus),
       ...(transcript === '' ? {} : { transcript }),
-      transcriptAvailable: item.transcript_available === true && transcript !== '',
+      transcriptAvailable: booleanValue(item.transcript_available ?? item.transcriptAvailable) && transcript !== '',
       speakers,
       participants,
-      isSharedByOther: item.is_shared_by_other === true,
+      isSharedByOther,
+      ...(sharedByUserId === undefined ? {} : { sharedByUserId }),
     }
   }
 
-  private async relatedRecordingRef(userId: number, chatSessionUid: string, momentId: string): Promise<string> {
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
+  private relatedRecordingRef(userId: number, chatSessionUid: string, momentId: string, signingKey: string): string {
+    const signature = createHmac('sha256', signingKey)
       .update(`related-recording:${userId}:${chatSessionUid}:${momentId}`)
       .digest('base64url')
     return `arkme-related-recording-v1.${signature}`
+  }
+
+  private sharedRecordingDetailRef(payload: ArkmeSharedRecordingDetailRefPayload, signingKey: string): string {
+    const encoded = encodeOpaqueJson(payload)
+    const signature = createHmac('sha256', signingKey).update(encoded).digest('base64url')
+    return `arkme-shared-recording-detail-v1.${encoded}.${signature}`
   }
 }

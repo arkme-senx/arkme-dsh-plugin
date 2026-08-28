@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ProfileService } from '../../src/services/profile-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
-import { SourceService } from '../../src/services/source-service.js'
+import { arkmeChatConversationPreview, arkmeTimelineConversationPreview, SourceService } from '../../src/services/source-service.js'
 import type { ArkmeSourceList } from '../../src/types.js'
 
 const config: ArkmeServiceConfig = {
@@ -15,6 +15,27 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('keeps chat directory attachment previews aligned with the real media kind', () => {
+    expect(arkmeChatConversationPreview({
+      content_payload: { media_refs: [{ file_asset_uid: 'pdf-asset', file_name: '方案.pdf', file_kind: 4, mime_type: 'application/pdf' }] },
+    })).toBe('[文件]')
+    expect(arkmeChatConversationPreview({
+      content_payload: { media_refs: [{ file_asset_uid: 'video-asset', file_name: '演示.mp4', file_kind: 3, mime_type: 'video/mp4' }] },
+    })).toBe('[视频]')
+    expect(arkmeChatConversationPreview({
+      content_payload: { media_refs: [{ file_asset_uid: 'image-asset' }] },
+      media_display_items: [{ file_asset_uid: 'image-asset', file_name: '截图.jpg', file_kind: 1, mime_type: 'image/jpeg' }],
+    })).toBe('[图片]')
+    expect(arkmeChatConversationPreview({
+      content_payload: { media_refs: [{ file_asset_uid: 'legacy-file', file_name: '归档.zip' }] },
+    })).toBe('[文件]')
+    expect(arkmeTimelineConversationPreview({
+      itemUid: 'file-item', title: '', textContent: '', sendAtMillis: 1, senderName: '我', isMe: true,
+      status: 1, displayKind: 0,
+      contentBlocks: [{ kind: 'file', mediaRef: 'file-ref', fileName: '方案.pdf', mimeType: 'application/pdf', size: 1, sortOrder: 0 }],
+    })).toBe('[文件]')
+  })
+
   it('updates a pin in the chat policy and the cloud topic pin policy', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

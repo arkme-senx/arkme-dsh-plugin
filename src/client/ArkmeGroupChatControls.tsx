@@ -3,11 +3,22 @@ import {
   type CSSProperties, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
+import { ArrowUp } from '@phosphor-icons/react/dist/icons/ArrowUp'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
+import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
+import { X } from '@phosphor-icons/react/dist/icons/X'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeConversationMemberItem,
   ArkmeConversationMemberList,
   ArkmeGroupActionResult,
+  ArkmeGroupAiPolishMutationResult,
+  ArkmeGroupAiPolishRule,
+  ArkmeGroupAiPolishRuleCandidate,
+  ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupAiPolishThreadMessage,
   ArkmeGroupMemberAddResult,
   ArkmeGroupBotCandidateList,
   ArkmeGroupMemberCandidate,
@@ -19,6 +30,7 @@ import type {
   ArkmeSourceItem,
 } from '../types.js'
 import { callArkme } from './api.js'
+import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { loadArkmeImageDataUrl } from './ArkmeAvatar.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -32,7 +44,42 @@ const colors = {
   primary: arkmeTheme.info,
 }
 
+const GROUP_SETTINGS_MENU_WIDTH = 248
+const AI_POLISH_PANEL_WIDTH = 408
+
 export const ARKME_GROUP_HEADER_ICON_COLOR = arkmeTheme.secondary
+
+export const ARKME_CONVERSATION_HEADER_ACTIONS_STYLE: CSSProperties = {
+  marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4,
+}
+
+export const ARKME_CONVERSATION_HEADER_BUTTON_STYLE: CSSProperties = {
+  width: 32, height: 32, padding: 4, border: 0, borderRadius: 4, background: 'transparent',
+  color: ARKME_GROUP_HEADER_ICON_COLOR, display: 'grid', placeItems: 'center', cursor: 'pointer',
+}
+
+export const ARKME_CONVERSATION_SETTINGS_MENU_WIDTH = GROUP_SETTINGS_MENU_WIDTH
+
+export const ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE: CSSProperties = {
+  position: 'absolute', inset: 0, zIndex: 9,
+}
+
+export const ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE: CSSProperties = {
+  position: 'absolute', zIndex: 10, width: GROUP_SETTINGS_MENU_WIDTH, maxWidth: 'calc(100% - 24px)', padding: '6px 8px',
+  borderRadius: 4, background: colors.panel, boxShadow: '0 4px 10px rgba(0,0,0,.1)', boxSizing: 'border-box',
+}
+
+export const ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE: CSSProperties = {
+  width: '100%', height: 32, border: 0, borderRadius: 4, background: 'transparent', padding: '2px 8px',
+  display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', color: colors.text,
+  cursor: 'pointer', fontSize: 14, lineHeight: '20px', whiteSpace: 'nowrap', boxSizing: 'border-box',
+}
+
+export const ARKME_CONVERSATION_SETTINGS_MENU_STATUS_STYLE: CSSProperties = {
+  ...ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE,
+  color: colors.secondary,
+  cursor: 'default',
+}
 
 const asset = (value: string) => `data:image/svg+xml;base64,${value}`
 // These are the production desktop-client assets, embedded so the published plugin remains self-contained.
@@ -45,11 +92,8 @@ const icons = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  headerActions: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 },
-  headerButton: {
-    width: 32, height: 32, padding: 4, border: 0, borderRadius: 4, background: 'transparent',
-    color: ARKME_GROUP_HEADER_ICON_COLOR, display: 'grid', placeItems: 'center', cursor: 'pointer',
-  },
+  headerActions: ARKME_CONVERSATION_HEADER_ACTIONS_STYLE,
+  headerButton: ARKME_CONVERSATION_HEADER_BUTTON_STYLE,
   icon: {
     width: 20, height: 20, display: 'block', backgroundColor: 'currentColor', opacity: .84,
     maskRepeat: 'no-repeat', maskPosition: 'center', maskSize: 'contain',
@@ -86,16 +130,77 @@ const styles: Record<string, CSSProperties> = {
   badge: { flex: 'none', color: colors.primary, fontSize: 11, lineHeight: '16px' },
   empty: { padding: '38px 18px', color: colors.secondary, fontSize: 13, textAlign: 'center' },
   loading: { padding: '14px 16px', color: colors.secondary, fontSize: 13, textAlign: 'center' },
-  menuScrim: { position: 'absolute', inset: 0, zIndex: 9 },
-  popover: {
-    position: 'absolute', zIndex: 10, width: 181, padding: '6px 8px',
-    borderRadius: 4, background: colors.panel, boxShadow: '0 4px 10px rgba(0,0,0,.1)', boxSizing: 'border-box',
+  menuScrim: ARKME_CONVERSATION_SETTINGS_MENU_SCRIM_STYLE,
+  aiModalScrim: {
+    position: 'absolute', inset: 0, zIndex: 11, padding: 24, display: 'grid', placeItems: 'center',
+    background: 'rgba(15, 23, 42, .14)', backdropFilter: 'blur(1px)', boxSizing: 'border-box',
   },
-  menuRow: {
-    width: '100%', height: 32, border: 0, borderRadius: 4, background: 'transparent', padding: '2px 8px',
-    display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', color: colors.text,
-    cursor: 'pointer', fontSize: 14, lineHeight: '20px', whiteSpace: 'nowrap', boxSizing: 'border-box',
+  popover: ARKME_CONVERSATION_SETTINGS_POPOVER_STYLE,
+  aiPopover: {
+    position: 'relative', width: AI_POLISH_PANEL_WIDTH, maxWidth: '100%', maxHeight: '100%',
+    display: 'flex', flexDirection: 'column', overflow: 'hidden', border: `1px solid ${colors.border}`,
+    borderRadius: 16, background: colors.panel, boxShadow: '0 20px 60px rgba(20, 24, 31, .20)', boxSizing: 'border-box',
   },
+  aiHeader: {
+    flex: 'none', height: 56, padding: '0 12px', display: 'grid',
+    gridTemplateColumns: '72px minmax(0, 1fr) 72px', alignItems: 'center',
+    borderBottom: `1px solid ${colors.border}`, boxSizing: 'border-box',
+  },
+  aiHeaderButton: {
+    width: 32, height: 32, padding: 0, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary,
+    display: 'grid', placeItems: 'center', cursor: 'pointer', justifySelf: 'start',
+  },
+  aiHeaderTitle: {
+    minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: colors.text, fontSize: 15, lineHeight: '22px', fontWeight: 600, textAlign: 'center',
+  },
+  aiApplyButton: {
+    width: 72, height: 32, padding: 0, border: 0, borderRadius: 9, justifySelf: 'end',
+    background: colors.text, color: arkmeTheme.foreground, cursor: 'pointer', fontSize: 12, lineHeight: '18px', fontWeight: 600,
+  },
+  aiBody: { minHeight: 0, overflowY: 'auto', padding: '10px 12px 12px' },
+  aiRuleRow: {
+    width: '100%', minHeight: 42, padding: '7px 8px', border: 0, borderRadius: 4,
+    display: 'flex', alignItems: 'center', gap: 9, color: colors.text, background: 'transparent',
+    textAlign: 'left', cursor: 'pointer', boxSizing: 'border-box',
+  },
+  aiRadio: { width: 14, height: 14, border: `1px solid ${colors.secondary}`, borderRadius: 999, flex: 'none', boxSizing: 'border-box' },
+  aiRuleName: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: '19px' },
+  aiRuleStatus: { flex: 'none', color: colors.secondary, fontSize: 11, lineHeight: '16px' },
+  aiThread: {
+    minHeight: 96, maxHeight: 300, overflowY: 'auto', padding: '18px 18px 8px',
+    background: colors.panel, boxSizing: 'border-box',
+  },
+  aiAssistantMessage: {
+    maxWidth: '100%', marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 10,
+    color: colors.text, fontSize: 13, lineHeight: '20px', whiteSpace: 'pre-wrap',
+  },
+  aiAssistantIcon: {
+    width: 26, height: 26, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 8,
+    background: arkmeTheme.infoSoft, color: colors.primary,
+  },
+  aiMessage: {
+    width: 'fit-content', maxWidth: '92%', marginBottom: 12, padding: '2px 0',
+    color: colors.text, background: 'transparent', fontSize: 13, lineHeight: '20px', whiteSpace: 'pre-wrap',
+  },
+  aiComposer: {
+    flex: 'none', padding: '8px 14px 14px', background: colors.panel,
+  },
+  aiInputShell: {
+    position: 'relative', minHeight: 68, overflow: 'hidden', border: `1px solid ${colors.border}`,
+    borderRadius: 12, background: colors.panel, boxSizing: 'border-box',
+  },
+  aiTextarea: {
+    width: '100%', minHeight: 66, maxHeight: 120, resize: 'none', border: 0,
+    borderRadius: 12, padding: '12px 52px 12px 12px', outline: 0, color: colors.text, background: 'transparent',
+    fontSize: 13, lineHeight: '18px', boxSizing: 'border-box',
+  },
+  aiSendButton: {
+    position: 'absolute', right: 8, bottom: 8, width: 34, height: 34, padding: 0, border: 0, borderRadius: 10,
+    display: 'grid', placeItems: 'center', color: arkmeTheme.foreground, background: colors.text, cursor: 'pointer',
+  },
+  aiError: { padding: '7px 10px', color: arkmeTheme.danger, fontSize: 12, lineHeight: '18px' },
+  menuRow: ARKME_CONVERSATION_SETTINGS_MENU_ROW_STYLE,
   switch: {
     marginLeft: 'auto', width: 40, height: 22, border: 0, borderRadius: 999, padding: 2,
     display: 'flex', alignItems: 'center', cursor: 'pointer', transition: 'background .15s ease',
@@ -138,7 +243,7 @@ function ClientIcon({ src, size = 20 }: { src: string; size?: number }) {
   }} />
 }
 
-function MoreIcon() {
+export function ArkmeConversationMoreIcon() {
   return <svg aria-hidden width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
     <circle cx="5" cy="12" r="1.8" fill="currentColor" />
     <circle cx="12" cy="12" r="1.8" fill="currentColor" />
@@ -146,16 +251,28 @@ function MoreIcon() {
   </svg>
 }
 
-function IconButton(props: {
+function MagicWandIcon() {
+  return <svg aria-hidden width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
+    <path d="m15 4 1-2 1 2 2 1-2 1-1 2-1-2-2-1 2-1Z" fill="currentColor" />
+    <path d="m6 8 1.2-2.5L8.5 8 11 9.2l-2.5 1.3L7.2 13 6 10.5 3.5 9.2 6 8Z" fill="currentColor" opacity=".72" />
+    <path d="m9 18 8.8-8.8a1.4 1.4 0 0 1 2 2L11 20a1.4 1.4 0 0 1-2-2Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+}
+
+export function ArkmeConversationHeaderIconButton(props: {
   label: string
   children: ReactNode
   buttonRef?: RefObject<HTMLButtonElement>
+  hasPopup?: boolean
+  expanded?: boolean
   onClick: () => void
 }) {
   return <button
     ref={props.buttonRef}
     type="button"
     aria-label={props.label}
+    aria-haspopup={props.hasPopup ? 'menu' : undefined}
+    aria-expanded={props.expanded}
     title={props.label}
     style={styles.headerButton}
     onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
@@ -716,6 +833,268 @@ function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (c
   </button>
 }
 
+const initialAiPolishMessage: ArkmeGroupAiPolishThreadMessage = {
+  id: 'intro', role: 'ai', text: '告诉我这群快记的润色要求，我会整理成规则。',
+}
+
+function GroupAiPolishPanel(props: {
+  source: ArkmeSourceItem
+  open: boolean
+  initialSettings?: ArkmeGroupAiPolishSnapshot | undefined
+  onClose: () => void
+  onSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
+  onError: (message: string) => void
+}) {
+  const [settings, setSettings] = useState<ArkmeGroupAiPolishSnapshot | undefined>(props.initialSettings)
+  const [view, setView] = useState<'rules' | 'editor'>('rules')
+  const [editingRule, setEditingRule] = useState<ArkmeGroupAiPolishRule>()
+  const [messages, setMessages] = useState<ArkmeGroupAiPolishThreadMessage[]>([initialAiPolishMessage])
+  const [input, setInput] = useState('')
+  const [candidate, setCandidate] = useState<ArkmeGroupAiPolishRuleCandidate>()
+  const [loading, setLoading] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const messageSequence = useRef(1)
+
+  const refreshSettings = useCallback(async (signal?: AbortSignal) => {
+    const next = await retryArkmeRead(() => callArkme<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', {
+      sourceRef: props.source.sourceRef,
+    }, signal), signal === undefined ? {} : { signal })
+    setSettings(next)
+    props.onSettingsChanged(next)
+    return next
+  }, [props.onSettingsChanged, props.source.sourceRef])
+
+  useEffect(() => {
+    if (!props.open) return
+    const controller = new AbortController()
+    setSettings(props.initialSettings)
+    setView('rules')
+    setEditingRule(undefined)
+    setMessages([initialAiPolishMessage])
+    setCandidate(undefined)
+    setInput('')
+    setError('')
+    setLoading(true)
+    void refreshSettings(controller.signal)
+      .catch(caught => { if (!isArkmeRequestAbort(caught, controller.signal)) setError(errorMessage(caught)) })
+      .finally(() => { setLoading(false) })
+    return () => { controller.abort() }
+  }, [props.open, props.source.sourceRef])
+
+  useEffect(() => {
+    if (!props.open) return
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) props.onClose() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [busy, props.onClose, props.open])
+
+  const openEditor = (rule?: ArkmeGroupAiPolishRule) => {
+    setEditingRule(rule)
+    setCandidate(undefined)
+    setInput('')
+    setError('')
+    setMessages(rule === undefined ? [initialAiPolishMessage]
+      : rule.threadMessages !== undefined && rule.threadMessages.length > 0 ? rule.threadMessages : [
+        initialAiPolishMessage,
+        { id: `saved-${rule.ruleRef}`, role: 'ai', text: rule.ruleText, isRule: true, ruleRef: rule.ruleRef },
+      ])
+    setView('editor')
+  }
+
+  const generateRule = async () => {
+    const requirement = input.trim()
+    if (requirement === '' || busy || settings?.canManage !== true) return
+    const currentRuleText = candidate?.ruleText.trim() || editingRule?.ruleText.trim() || ''
+    const instruction = currentRuleText === ''
+      ? requirement
+      : `基于当前规则继续修改。\n当前规则：${currentRuleText}\n本次要求：${requirement}`
+    const userMessage: ArkmeGroupAiPolishThreadMessage = {
+      id: `user-${String(messageSequence.current++)}`, role: 'user', text: requirement,
+    }
+    setMessages(current => [...current, userMessage])
+    setInput('')
+    setBusy(true)
+    setError('')
+    try {
+      const threadMessages = [...messages, userMessage]
+      const generated = await callArkme<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.generate-rule', {
+        sourceRef: props.source.sourceRef,
+        requirement: instruction,
+        threadMessages,
+        ...(editingRule === undefined ? {} : { targetRuleRef: editingRule.ruleRef }),
+      })
+      setCandidate(generated)
+      setMessages(generated.threadMessages ?? [...threadMessages, {
+        id: `candidate-${String(messageSequence.current++)}`, role: 'ai', text: generated.ruleText, isRule: true,
+      }])
+    } catch (caught) {
+      const message = errorMessage(caught)
+      setError(message)
+      props.onError(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const applyRule = async () => {
+    if (busy || settings?.canManage !== true) return
+    setBusy(true)
+    setError('')
+    try {
+      let preview = candidate
+      if (preview === undefined && editingRule !== undefined) {
+        preview = await callArkme<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.prepare-enable', {
+          sourceRef: props.source.sourceRef,
+          ruleRef: editingRule.ruleRef,
+        })
+      }
+      if (preview === undefined) return
+      await callArkme<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-enable', {
+        confirmationRef: preview.confirmationRef,
+      })
+      await refreshSettings()
+      props.onClose()
+    } catch (caught) {
+      const message = errorMessage(caught)
+      setError(message)
+      props.onError(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disablePolish = async () => {
+    if (busy || settings?.canManage !== true) return
+    if (settings.enabled !== true) { props.onClose(); return }
+    setBusy(true)
+    setError('')
+    try {
+      const preview = await callArkme<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.prepare-disable', {
+        sourceRef: props.source.sourceRef,
+      })
+      await callArkme<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-disable', {
+        confirmationRef: preview.confirmationRef,
+      })
+      await refreshSettings()
+      props.onClose()
+    } catch (caught) {
+      const message = errorMessage(caught)
+      setError(message)
+      props.onError(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!props.open) return null
+  const canManage = settings?.canManage === true
+  const canApply = canManage && !busy && (candidate !== undefined || (editingRule !== undefined && !editingRule.isActive))
+  const title = editingRule?.name ?? '新建规则'
+  return <div style={styles.aiModalScrim} role="presentation" data-arkme-ai-polish-modal-scrim="true" onMouseDown={event => {
+    if (event.target === event.currentTarget && !busy) props.onClose()
+  }}>
+    <section
+      style={styles.aiPopover}
+      role="dialog"
+      aria-label="AI 表达润色"
+      onMouseDown={event => { event.stopPropagation() }}
+      aria-modal="true"
+    >
+      <div style={styles.aiHeader}>
+        {view === 'editor' ? <button type="button" aria-label="返回规则列表" style={styles.aiHeaderButton} disabled={busy} onClick={() => { setView('rules'); setError('') }}><ArrowLeft size={18} /></button> : <span />}
+        <div style={styles.aiHeaderTitle}>{view === 'rules' ? 'AI 表达润色' : title}</div>
+        {view === 'editor' ? <button
+          type="button"
+          data-arkme-ai-polish-apply="true"
+          style={{ ...styles.aiApplyButton, opacity: canApply ? 1 : .32, cursor: canApply ? 'pointer' : 'default' }}
+          disabled={!canApply}
+          onClick={() => { void applyRule() }}
+        >{busy ? '处理中' : '应用规则'}</button> : <button type="button" aria-label="关闭 AI 润色设置" style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
+      </div>
+      {view === 'rules' ? <div style={styles.aiBody}>
+        {loading && settings === undefined ? <div style={styles.loading}>正在读取 AI 润色设置…</div> : null}
+        {!loading && settings !== undefined ? <>
+          <button
+            type="button"
+            style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
+            disabled={!canManage || busy}
+            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+            onClick={() => { void disablePolish() }}
+          ><span style={{ ...styles.aiRadio, ...(!settings.enabled ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>不润色</span></button>
+          {settings.rules.map(rule => <button
+            key={rule.ruleRef}
+            type="button"
+            data-arkme-ai-polish-rule-ref={rule.ruleRef}
+            style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
+            disabled={!canManage || busy}
+            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+            onClick={() => { openEditor(rule) }}
+          ><span style={{ ...styles.aiRadio, ...(rule.isActive ? { border: `4px solid ${colors.primary}` } : {}) }} /><span style={styles.aiRuleName}>{rule.name}</span><span style={styles.aiRuleStatus}>{rule.isActive ? '当前应用' : '›'}</span></button>)}
+          <button
+            type="button"
+            data-arkme-ai-polish-new-rule="true"
+            style={{ ...styles.aiRuleRow, opacity: canManage ? 1 : .5 }}
+            disabled={!canManage || busy}
+            onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+            onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+            onClick={() => { openEditor() }}
+          ><Plus size={16} /><span style={styles.aiRuleName}>新建规则</span><CaretRight size={15} color={colors.secondary} /></button>
+        </> : null}
+        {settings !== undefined && !canManage ? <div style={styles.aiError}>服务端未授予当前账号该群的 AI 润色设置权限</div> : null}
+      </div> : <>
+        <div style={styles.aiThread} aria-live="polite" data-arkme-ai-polish-thread="true">
+          {messages.map(message => message.role === 'ai' && message.isRule !== true ? <div key={message.id} style={styles.aiAssistantMessage}>
+            <span style={styles.aiAssistantIcon}><Sparkle size={14} weight="fill" /></span>
+            <span style={{ paddingTop: 3 }}>{message.text}</span>
+          </div> : <div key={message.id} style={{
+            ...styles.aiMessage,
+            ...(message.isRule ? {
+              width: '100%', maxWidth: '100%', padding: '11px 12px', border: `1px solid ${colors.border}`, borderRadius: 10,
+              background: arkmeTheme.subtle, boxSizing: 'border-box',
+            } : {}),
+            ...(message.role === 'user' ? {
+              marginLeft: 'auto', padding: '8px 11px', borderRadius: 10, background: arkmeTheme.infoSoft,
+            } : {}),
+          }}>
+            {message.isRule ? <div style={{ marginBottom: 3, color: colors.secondary, fontSize: 10 }}>{editingRule?.isActive === true && candidate === undefined ? '当前规则' : '规则候选'}</div> : null}
+            {message.text}
+          </div>)}
+          {busy && candidate === undefined ? <div style={{ color: colors.secondary, fontSize: 12 }}>正在整理规则…</div> : null}
+        </div>
+        <div style={styles.aiComposer}>
+          <div style={styles.aiInputShell}>
+            <textarea
+              style={styles.aiTextarea}
+              value={input}
+              maxLength={2_000}
+              aria-label="润色规则描述"
+              placeholder="例如：语气更轻松，保留原意，不要使用网络热梗"
+              disabled={!canManage || busy}
+              onChange={event => { setInput(event.target.value) }}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void generateRule() }
+              }}
+            />
+            <button
+              type="button"
+              aria-label="发送规则描述"
+              title="发送"
+              data-arkme-ai-polish-send="true"
+              style={{ ...styles.aiSendButton, opacity: input.trim() === '' || busy ? .28 : 1 }}
+              disabled={input.trim() === '' || busy || !canManage}
+              onClick={() => { void generateRule() }}
+            ><ArrowUp size={16} weight="bold" /></button>
+          </div>
+        </div>
+      </>}
+      {error !== '' ? <div role="alert" style={styles.aiError}>{error}</div> : null}
+    </section>
+  </div>
+}
+
 function GroupSettingsMenu(props: {
   source: ArkmeSourceItem
   open: boolean
@@ -724,12 +1103,17 @@ function GroupSettingsMenu(props: {
   fallbackStatus: ArkmeGroupSettingsSnapshot['selfStatus']
   onClose: () => void
   onRename: () => void
+  aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
+  onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
+  onAiPolishOpen: () => void
   onSourceUpdated: (source: ArkmeSourceItem) => void
   onError: (message: string) => void
 }) {
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
   const [messageDnd, setMessageDnd] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [localAiPolishSettings, setLocalAiPolishSettings] = useState(props.aiPolishSettings)
+  const [aiPolishLoadState, setAiPolishLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
   useEffect(() => {
     if (!props.open) return
@@ -742,8 +1126,45 @@ function GroupSettingsMenu(props: {
         setMessageDnd(value.messageDnd)
         props.onSourceUpdated(value.source)
       })
-      .catch(caught => { props.onError(errorMessage(caught)) })
+      .catch(caught => { if (!isArkmeRequestAbort(caught, controller.signal)) props.onError(errorMessage(caught)) })
     return () => { controller.abort() }
+  }, [props.open, props.source.sourceRef])
+
+  useEffect(() => {
+    if (props.aiPolishSettings !== undefined) setLocalAiPolishSettings(props.aiPolishSettings)
+  }, [props.aiPolishSettings])
+
+  useEffect(() => {
+    if (!props.open) return
+    const controller = new AbortController()
+    let active = true
+    let timedOut = false
+    setLocalAiPolishSettings(props.aiPolishSettings)
+    setAiPolishLoadState('loading')
+    const timeout = globalThis.setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, 12_000)
+    void retryArkmeRead(() => callArkme<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', {
+      sourceRef: props.source.sourceRef,
+    }, controller.signal), { signal: controller.signal })
+      .then(value => {
+        if (!active) return
+        setLocalAiPolishSettings(value)
+        setAiPolishLoadState('ready')
+        props.onAiPolishSettingsChanged(value)
+      })
+      .catch(caught => {
+        if (!active || (controller.signal.aborted && !timedOut)) return
+        setAiPolishLoadState('error')
+        props.onError(timedOut ? 'AI 润色设置读取超时，请重试' : errorMessage(caught))
+      })
+      .finally(() => { globalThis.clearTimeout(timeout) })
+    return () => {
+      active = false
+      globalThis.clearTimeout(timeout)
+      controller.abort()
+    }
   }, [props.open, props.source.sourceRef])
 
   const effective = snapshot ?? {
@@ -825,6 +1246,24 @@ function GroupSettingsMenu(props: {
           }}
         />
       </div>
+      <button
+        type="button"
+        role="menuitem"
+        data-arkme-group-ai-polish-entry="true"
+        style={{ ...styles.menuRow, marginTop: 6 }}
+        onMouseEnter={event => { event.currentTarget.style.background = colors.subtle }}
+        onMouseLeave={event => { event.currentTarget.style.background = 'transparent' }}
+        onClick={props.onAiPolishOpen}
+      >
+        <MagicWandIcon />
+        <span style={{ flex: 'none' }}>AI 表达润色</span>
+        <span style={{ minWidth: 0, marginLeft: 'auto', color: colors.secondary, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {localAiPolishSettings === undefined
+            ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
+            : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'}
+        </span>
+        <span aria-hidden style={{ flex: 'none', color: colors.secondary, fontSize: 16 }}>›</span>
+      </button>
     </div>
   </div>
 }
@@ -885,6 +1324,8 @@ export function ArkmeGroupChatControls(props: {
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
   onMemberContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
   onMembersChanged?: () => void
+  aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
+  onAiPolishSettingsChanged?: (settings: ArkmeGroupAiPolishSnapshot) => void
   onError: (message: string) => void
 }) {
   const [localMembersOpen, setLocalMembersOpen] = useState(false)
@@ -897,6 +1338,7 @@ export function ArkmeGroupChatControls(props: {
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsPosition, setSettingsPosition] = useState({ left: 12, top: 54 })
+  const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [selfRole, setSelfRole] = useState<ArkmeGroupSettingsSnapshot['selfRole']>('unknown')
@@ -908,6 +1350,7 @@ export function ArkmeGroupChatControls(props: {
     setInviteOpen(false)
     setAddMembersOpen(false)
     setSettingsOpen(false)
+    setAiPolishOpen(false)
     setRenameOpen(false)
   }, [props.source.sourceRef])
 
@@ -934,7 +1377,7 @@ export function ArkmeGroupChatControls(props: {
     if (host !== null && button !== null) {
       const hostRect = host.getBoundingClientRect()
       const buttonRect = button.getBoundingClientRect()
-      const menuWidth = 181
+      const menuWidth = GROUP_SETTINGS_MENU_WIDTH
       const menuHeight = 120
       setSettingsPosition({
         left: Math.max(12, Math.min(hostRect.width - menuWidth - 12, buttonRect.right - hostRect.left - menuWidth)),
@@ -942,13 +1385,19 @@ export function ArkmeGroupChatControls(props: {
       })
     }
     setMembersOpen(false)
+    setAiPolishOpen(false)
     setSettingsOpen(true)
   }, [props.overlayHostRef, settingsOpen])
 
+  const openAiPolish = useCallback(() => {
+    setSettingsOpen(false)
+    setAiPolishOpen(true)
+  }, [])
+
   return <>
     <div style={styles.headerActions}>
-      <IconButton label="查看群成员" onClick={openMembers}><ClientIcon src={icons.members} size={24} /></IconButton>
-      <IconButton label="群聊设置" buttonRef={settingsButtonRef} onClick={toggleSettings}><MoreIcon /></IconButton>
+      <ArkmeConversationHeaderIconButton label="查看群成员" onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
+      <ArkmeConversationHeaderIconButton label="群聊设置" buttonRef={settingsButtonRef} hasPopup expanded={settingsOpen} onClick={toggleSettings}><ArkmeConversationMoreIcon /></ArkmeConversationHeaderIconButton>
     </div>
     {overlayHost !== null && createPortal(<>
       <GroupSettingsMenu
@@ -957,9 +1406,20 @@ export function ArkmeGroupChatControls(props: {
         position={settingsPosition}
         fallbackRole={selfRole}
         fallbackStatus={selfStatus}
+        aiPolishSettings={props.aiPolishSettings}
+        onAiPolishSettingsChanged={settings => { props.onAiPolishSettingsChanged?.(settings) }}
         onClose={() => { setSettingsOpen(false) }}
         onRename={() => { setRenameOpen(true) }}
+        onAiPolishOpen={openAiPolish}
         onSourceUpdated={props.onSourceActivated}
+        onError={props.onError}
+      />
+      <GroupAiPolishPanel
+        source={props.source}
+        open={aiPolishOpen}
+        initialSettings={props.aiPolishSettings}
+        onClose={() => { setAiPolishOpen(false) }}
+        onSettingsChanged={settings => { props.onAiPolishSettingsChanged?.(settings) }}
         onError={props.onError}
       />
       <GroupMembersDrawer

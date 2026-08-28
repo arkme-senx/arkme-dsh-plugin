@@ -265,24 +265,11 @@ export function ArkmePersistentSidebar({
             })
             .catch(() => undefined)
         }}
-        onOpenBot={botRef => {
+        onOpenBot={bot => {
           arkmeContactsTab.activateAccount(contactsAccountKey)
           handoffControllerRef.current?.abort()
-          const controller = new AbortController()
-          handoffControllerRef.current = controller
-          const generation = arkmeContactsTab.getSnapshot().generation
-          const accountKey = contactsAccountKey
-          void callArkme<ArkmeSourceItem>('directory.bot.open-chat', { botRef }, controller.signal)
-            .then(source => {
-              const current = arkmeContactsTab.getSnapshot()
-              const currentUi = arkmeUi.getSnapshot()
-              const context = contactsContextRef.current
-              if (controller.signal.aborted || current.generation !== generation || current.accountKey !== accountKey
-                || context.accountKey !== accountKey || !context.contactsMode
-                || currentUi.mode !== 'source' || currentUi.productMode !== 'contacts') return
-              arkmeContactsTab.clear(); arkmeUi.selectSource(source)
-            })
-            .catch(() => undefined)
+          handoffControllerRef.current = undefined
+          arkmeUi.openBotConversation(bot)
         }}
       /> : <ArkmeNavigation
         wide

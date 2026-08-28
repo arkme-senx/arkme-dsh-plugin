@@ -3,6 +3,8 @@ import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { ArkmePluginUpdateStatus } from '../types.js'
 import { ARKME_ICON_DATA_URL } from './arkme-assets.js'
+import type { ArkmePluginUpdateStoreSnapshot } from './plugin-update-store.js'
+import { derivePluginUpdateItem } from './update-presentation.js'
 
 export interface ArkmeFooterActionInjected {
   toggle(openedFromSession: SessionId | undefined, authenticated: boolean): void
@@ -18,6 +20,7 @@ export type ArkmeFooterActionProps = PropsRuntime<'sidebar.footer.action'> & Inj
   authPending?: boolean
   unreadCount?: number
   updateStatus?: ArkmePluginUpdateStatus
+  updateSnapshot?: ArkmePluginUpdateStoreSnapshot
   updateBusy?: boolean
   onUpdate?: () => void
 }
@@ -109,6 +112,7 @@ export function ArkmeFooterAction({
   authenticated = false, authPending = false,
   unreadCount = 0,
   updateStatus,
+  updateSnapshot,
   updateBusy = false,
   onUpdate,
 }: ArkmeFooterActionProps) {
@@ -116,11 +120,17 @@ export function ArkmeFooterAction({
   const normalizedUnread = Math.max(0, Math.trunc(unreadCount))
   const unreadLabel = normalizedUnread > 99 ? '99+' : String(normalizedUnread)
   const statusLabel = bindingRequired ? '待绑定' : loggedOut ? '未登录' : ''
-  const updateAvailable = updateStatus?.availability === 'available'
-  const showUpdateButton = wide && updateAvailable && updateStatus.canInstallInApp && onUpdate !== undefined
+  const item = derivePluginUpdateItem(updateSnapshot ?? {
+    checked: true, busy: updateBusy, error: '', installError: '',
+    ...(updateStatus === undefined ? {} : { status: updateStatus }),
+  })
+  const status = updateSnapshot?.status ?? updateStatus
+  const updateAvailable = item?.available === true
+  const showUpdateButton = wide && item !== undefined && (!item.available || status?.canInstallInApp) && onUpdate !== undefined
+  const actionLabel = item?.uncertain ? '查看状态' : item?.active ? '查看进度' : item?.failed ? '查看结果' : updateBusy ? '更新中…' : '更新'
   const updateLabel = updateAvailable
-    ? updateStatus.level === 'critical' ? '插件有重要更新' : '插件有可用更新'
-    : ''
+    ? status?.level === 'critical' ? '插件有重要更新' : '插件有可用更新'
+    : item === undefined ? '' : item.uncertain ? '更新状态待确认' : item.failed ? '更新未完成' : '正在更新'
   const accessibleLabel = [
     'Arkme',
     ...(statusLabel === '' ? [] : [statusLabel]),
@@ -144,11 +154,11 @@ export function ArkmeFooterAction({
         <ArkmeMark />
         {updateAvailable && <span
           aria-hidden
-          data-arkme-update-level={updateStatus.level}
+          data-arkme-update-level={status?.level}
           style={{
             ...updateDotStyle,
-            ...(updateStatus.level === 'important' ? { background: '#d97706' } : {}),
-            ...(updateStatus.level === 'critical' ? { background: '#dc2626' } : {}),
+            ...(status?.level === 'important' ? { background: '#d97706' } : {}),
+            ...(status?.level === 'critical' ? { background: '#dc2626' } : {}),
           }}
         />}
       </span>
@@ -161,12 +171,11 @@ export function ArkmeFooterAction({
     </button>
     {showUpdateButton && <button
       type="button"
-      style={{ ...updateButtonStyle, ...(updateBusy ? { opacity: 0.7, cursor: 'default' } : {}) }}
-      disabled={updateBusy}
-      aria-label={`更新 Arkme 插件到 ${updateStatus.latestVersion ?? '最新版本'}`}
-      onMouseEnter={event => { if (!updateBusy) event.currentTarget.style.background = 'rgba(22, 119, 255, .14)' }}
+      style={updateButtonStyle}
+      aria-label={item?.available ? `更新 Arkme 插件到 ${item.latestVersion}` : `${actionLabel}：${updateLabel}`}
+      onMouseEnter={event => { event.currentTarget.style.background = 'rgba(22, 119, 255, .14)' }}
       onMouseLeave={event => { event.currentTarget.style.background = 'rgba(22, 119, 255, .08)' }}
       onClick={onUpdate}
-    >{updateBusy ? '更新中…' : '更新'}</button>}
+    >{actionLabel}</button>}
   </div>
 }

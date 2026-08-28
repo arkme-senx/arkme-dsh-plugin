@@ -36,6 +36,10 @@ import type {
   ArkmeConversationMemberRecordPage,
   ArkmeCreateTextResult,
   ArkmeGroupMemberAddResult,
+  ArkmeGroupAiPolishMutationResult,
+  ArkmeGroupAiPolishRuleCandidate,
+  ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupAiPolishThreadMessage,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupInvitePreview,
   ArkmeGroupMemberList,
@@ -46,7 +50,6 @@ import type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmeHumanMentionInput,
-  ArkmeLinkMetadata,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageCopyLinkExtendResult,
@@ -108,6 +111,11 @@ import type {
 } from '../extensions/types.js'
 import type { ArkmeMyExtensionPage, ArkmeMyExtensionPublishInput } from '../extensions/owned-types.js'
 import { normalizeGitHubRepositoryURL } from '../extensions/source.js'
+import type { ArkmeFilePolicy, ArkmeLocalFile, ArkmeFileSendInput, ArkmeFileSendTask, ArkmeFileReception } from '../file-transfer-contract.js'
+export type { ArkmeFileOpenResult, ArkmeFilePolicy, ArkmeLocalFile, ArkmeFileProgress, ArkmeFileSendInput, ArkmeFileSendTask, ArkmeFileReception } from '../file-transfer-contract.js'
+import type { ArkmeLinkMetadata } from '../link-metadata.js'
+
+export type { ArkmeLinkMetadata } from '../link-metadata.js'
 
 export type {
   ArkmeArrangementDetail,
@@ -161,6 +169,11 @@ export type {
   ArkmeGroupMemberAddItemResult,
   ArkmeGroupMemberAddResult,
   ArkmeGroupMemberAddStatus,
+  ArkmeGroupAiPolishMutationResult,
+  ArkmeGroupAiPolishRule,
+  ArkmeGroupAiPolishRuleCandidate,
+  ArkmeGroupAiPolishSnapshot,
+  ArkmeGroupAiPolishThreadMessage,
   ArkmeGroupMemberCandidate,
   ArkmeGroupMemberCandidateList,
   ArkmeGroupMemberItem,
@@ -179,7 +192,6 @@ export type {
   ArkmeIdAvailabilitySnapshot,
   ArkmeIdMutationResult,
   ArkmeHumanMentionInput,
-  ArkmeLinkMetadata,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmeMessageCopyLinkExtendResult,
@@ -276,6 +288,11 @@ export type {
 } from '../extensions/types.js'
 export { ARKME_EXTENSION_RUNTIME_UNAVAILABLE_MESSAGE } from '../extensions/types.js'
 export { ARKME_PROVIDER_CONTRACT_VERSION } from '../types.js'
+export type {
+  DshRemoteCapability,
+  DshRemoteStatus,
+} from '../dsh-remote/types.js'
+import type { DshRemoteStatus } from '../dsh-remote/types.js'
 export type {
   ArkmeOutgoingCallFailureCode,
   ArkmeOutgoingCallMediaType,
@@ -1115,6 +1132,63 @@ export class ArkmeSdk {
     return await this.call<ArkmeGroupMemberList>('group.members', { sourceRef, activeOnly: true }, signal)
   }
 
+  async groupAiPolishSettings(sourceRef: string, signal?: AbortSignal): Promise<ArkmeGroupAiPolishSnapshot> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupAiPolishSnapshot>('source.ai-polish.settings', { sourceRef }, signal)
+  }
+
+  async generateGroupAiPolishRule(
+    sourceRef: string,
+    requirement: string,
+    options: { threadMessages?: readonly ArkmeGroupAiPolishThreadMessage[]; targetRuleRef?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    if (sourceRef.trim() === '' || requirement.trim() === '') {
+      throw new TypeError('Arkme group source reference and polish requirement must not be empty')
+    }
+    return await this.call<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.generate-rule', {
+      sourceRef, requirement,
+      ...(options.threadMessages === undefined ? {} : { threadMessages: options.threadMessages }),
+      ...(options.targetRuleRef === undefined || options.targetRuleRef.trim() === '' ? {} : { targetRuleRef: options.targetRuleRef.trim() }),
+    }, options.signal)
+  }
+
+  async prepareEnableGroupAiPolishRule(
+    sourceRef: string,
+    ruleRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    if (sourceRef.trim() === '' || ruleRef.trim() === '') {
+      throw new TypeError('Arkme group source and AI polish rule references must not be empty')
+    }
+    return await this.call<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.prepare-enable', {
+      sourceRef, ruleRef,
+    }, signal)
+  }
+
+  async confirmEnableGroupAiPolish(
+    confirmationRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupAiPolishMutationResult> {
+    if (confirmationRef.trim() === '') throw new TypeError('Arkme AI polish confirmation reference must not be empty')
+    return await this.call<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-enable', { confirmationRef }, signal)
+  }
+
+  async prepareDisableGroupAiPolish(
+    sourceRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupAiPolishRuleCandidate> {
+    if (sourceRef.trim() === '') throw new TypeError('Arkme group source reference must not be empty')
+    return await this.call<ArkmeGroupAiPolishRuleCandidate>('source.ai-polish.prepare-disable', { sourceRef }, signal)
+  }
+
+  async confirmDisableGroupAiPolish(
+    confirmationRef: string,
+    signal?: AbortSignal,
+  ): Promise<ArkmeGroupAiPolishMutationResult> {
+    if (confirmationRef.trim() === '') throw new TypeError('Arkme AI polish confirmation reference must not be empty')
+    return await this.call<ArkmeGroupAiPolishMutationResult>('source.ai-polish.confirm-disable', { confirmationRef }, signal)
+  }
+
   async listSourceMembers(sourceRef: string, signal?: AbortSignal): Promise<ArkmeConversationMemberList> {
     if (sourceRef.trim() === '') throw new TypeError('Arkme chat source reference must not be empty')
     return await this.call<ArkmeConversationMemberList>('source.members', { sourceRef, activeOnly: true }, signal)
@@ -1450,6 +1524,53 @@ export class ArkmeSdk {
     }, signal)
   }
 
+  async fileCapabilities(signal?: AbortSignal): Promise<ArkmeFilePolicy> {
+    const policy = await this.call<ArkmeFilePolicy>('files.capabilities', undefined, signal)
+    if (policy.version !== 1) throw new Error(`Unsupported Arkme file contract version ${String(policy.version)}`)
+    return policy
+  }
+  async searchFiles(options: { query?: string; limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeRecordSearchResult> {
+    const { signal, ...params } = options
+    return this.call('files.search', params, signal)
+  }
+  async localFiles(signal?: AbortSignal): Promise<ArkmeLocalFile[]> { return this.call('files.local.list', undefined, signal) }
+  async openLocalFile(fileRef: string, signal?: AbortSignal): Promise<import('../file-transfer-contract.js').ArkmeFileOpenResult> { return this.call('files.local.open', { fileRef }, signal) }
+  async removeLocalFile(fileRef: string): Promise<void> { return this.call('files.local.remove', { fileRef }) }
+  async sendFiles(input: ArkmeFileSendInput): Promise<ArkmeFileSendTask> { return this.call('files.send', { ...input.content, ...input }) }
+  async fileSendTasks(sourceRef?: string, signal?: AbortSignal): Promise<ArkmeFileSendTask[]> { return this.call('files.send.tasks', sourceRef === undefined ? {} : { sourceRef }, signal) }
+  async retryFileSend(taskRef: string): Promise<ArkmeFileSendTask> { return this.call('files.send.retry', { taskRef }) }
+  async discardFileSend(taskRef: string): Promise<void> { return this.call('files.send.discard', { taskRef }) }
+  async reconcileFileSend(taskRef: string): Promise<ArkmeFileSendTask> { return this.call('files.send.reconcile', { taskRef }) }
+  async stageFileBytes(contentBase64: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType'>): Promise<ArkmeLocalFile> { return this.call('files.stage-bytes', { contentBase64, ...metadata }) }
+  async receiveFile(mediaRef: string, start = false, signal?: AbortSignal): Promise<ArkmeFileReception> { return this.call('files.receive', { mediaRef, start }, signal) }
+  subscribeFileSends(sourceRef: string, listener: (tasks: ArkmeFileSendTask[]) => void, options: ArkmeSubscribeOptions = {}): () => void {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      try { const tasks = await this.fileSendTasks(sourceRef, controller.signal); if (!controller.signal.aborted) listener(tasks) }
+      catch (error) { if (!controller.signal.aborted) options.onError?.(error) }
+      finally { if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, Math.max(250, options.intervalMs ?? 750)) }
+    }
+    if (options.immediate !== false) void poll()
+    else timer = setTimeout(() => { void poll() }, Math.max(250, options.intervalMs ?? 750))
+    return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
+  }
+  localFileUrl(fileRef: string, download = false): string {
+    if (!/^arkme-file-v1\.[0-9a-f-]{36}$/.test(fileRef)) throw new TypeError('Invalid local file reference')
+    return `${this.route}/files/local?ref=${encodeURIComponent(fileRef)}${download ? '&download=1' : ''}`
+  }
+
+  /** Stage locally only. Cloud upload starts when sendFiles accepts a task. */
+  async stageFile(file: Blob & { name?: string }, options: { fileName?: string; signal?: AbortSignal } = {}): Promise<ArkmeLocalFile> {
+    const response = await this.fetchImpl(`${this.route}/files/stage`, {
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Arkme-File-Name': encodeURIComponent(options.fileName ?? file.name ?? 'attachment') },
+      body: file, ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    const payload = await response.json() as ArkmePluginResponse<ArkmeLocalFile>
+    if (!payload.ok) throw new ArkmeClientError(payload.error)
+    return payload.value
+  }
+
   async upload(
     file: Blob & { name?: string },
     options: { fileName?: string; signal?: AbortSignal } = {},
@@ -1572,6 +1693,37 @@ export class ArkmeSdk {
       stopped = true
       if (timeout !== undefined) clearTimeout(timeout)
     }
+  }
+
+  async remoteStatus(signal?: AbortSignal): Promise<DshRemoteStatus> {
+    return await this.call<DshRemoteStatus>('remote.getStatus', undefined, signal)
+  }
+
+  async renameRemoteDesktop(displayName: string, signal?: AbortSignal): Promise<DshRemoteStatus> {
+    const normalized = displayName.trim()
+    if (normalized === '' || [...normalized].length > 80) throw new TypeError('Remote desktop name must contain 1 to 80 characters')
+    return await this.call<DshRemoteStatus>('remote.renameDesktop', { displayName: normalized }, signal)
+  }
+
+  subscribeRemote(
+    listener: (status: DshRemoteStatus) => void,
+    options: ArkmeSubscribeOptions = {},
+  ): () => void {
+    const intervalMs = Math.min(60_000, Math.max(1_000, Math.trunc(options.intervalMs ?? 2_000)))
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let revision = -1
+    const poll = async (): Promise<void> => {
+      if (stopped) return
+      try {
+        const status = await this.remoteStatus()
+        if (!stopped && status.revision !== revision) { revision = status.revision; listener(status) }
+      } catch (error) { options.onError?.(error) }
+      finally { if (!stopped) timer = setTimeout(() => { void poll() }, intervalMs) }
+    }
+    if (options.immediate === false) timer = setTimeout(() => { void poll() }, intervalMs)
+    else void poll()
+    return () => { stopped = true; if (timer !== undefined) clearTimeout(timer) }
   }
 
   async call<T>(

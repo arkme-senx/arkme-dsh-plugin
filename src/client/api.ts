@@ -5,6 +5,7 @@ export { ArkmeClientError } from '../sdk/index.js'
 
 type ArkmeUiOperation = ArkmePluginOperation
   | 'provider.instance'
+  | 'link.metadata'
   | 'directory.list'
   | 'directory.contact.profile'
   | 'directory.contact.world'
@@ -60,8 +61,8 @@ type ArkmeUiOperation = ArkmePluginOperation
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
-  | 'source.link-metadata.resolve'
   | 'source.forward-messages'
+  | 'source.shared-recording-detail'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

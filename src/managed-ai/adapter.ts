@@ -11,16 +11,24 @@ import type {
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import type { DeepSeekCatalogModel, DeepSeekConnectionOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import type { SecretValue } from '../secret-value.js'
 
 export const ARKME_MANAGED_PROVIDER = 'arkme-managed'
 export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 
-const ARKME_MANAGED_PROVIDER_NAME = 'Arkme'
-const ARKME_MANAGED_MODEL_DESCRIPTION = '使用 Arkme 登录，无需 API Key'
+const ARKME_MANAGED_PROVIDER_NAME = 'Arkme · 余额计费'
+const ARKME_MANAGED_CATALOG_TTL_MS = 60_000
+const ARKME_MANAGED_CATALOG_TIMEOUT_MS = 10_000
 const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
 const ARKME_LOGIN_MESSAGE = '请先登录或重新登录 Arkme 后再使用托管模型'
-const ARKME_MANAGED_MODELS = new Set([ARKME_MANAGED_MODEL])
+const ARKME_MANAGED_FALLBACK_MODEL: DeepSeekCatalogModel = {
+  id: ARKME_MANAGED_MODEL,
+  name: 'DeepSeek-V4-Flash',
+  contextWindow: 1_000_000,
+  maxTokens: 256_000,
+}
+const ARKME_MANAGED_FALLBACK_MODELS: readonly DeepSeekCatalogModel[] = [ARKME_MANAGED_FALLBACK_MODEL]
 const ARKME_AUTH_FAILURE_CODES = new Set([
   'login-required',
   'login-expired',
@@ -36,6 +44,8 @@ export interface ManagedAiLlmAdapterOptions {
   intelligentBaseUrl: string
   credentialOwner: ManagedAccessCredentialOwner
   resolveAnonymousUserId?: () => AnonymousUserId
+  /** Test/runtime seam for the authenticated Arkme model-directory request. */
+  fetchImpl?: typeof fetch
 }
 
 function managedAiBaseUrl(intelligentBaseUrl: string): string {
@@ -133,12 +143,9 @@ export function localizeManagedAiError(error: unknown): LlmError {
   })
 }
 
-function assertManagedRoute(provider: string, model?: string): void {
+function assertManagedProvider(provider: string): void {
   if (provider !== ARKME_MANAGED_PROVIDER) {
     throw new LlmError(`当前 Arkme 托管模型不支持提供商“${provider}”`, 'NO_ADAPTER')
-  }
-  if (model !== undefined && !ARKME_MANAGED_MODELS.has(model)) {
-    throw new LlmError(`当前 Arkme 托管服务不支持模型“${model}”，请重新选择模型`, 'UNKNOWN_MODEL')
   }
 }
 
@@ -185,8 +192,255 @@ async function resolveBearer(owner: ManagedAccessCredentialOwner): Promise<strin
   throw new LlmError(ARKME_LOGIN_MESSAGE, 'AUTH')
 }
 
+function managedConnection(
+  baseUrl: string,
+  models: readonly DeepSeekCatalogModel[],
+): DeepSeekConnectionOptions {
+  const defaults = models.find(model => model.id === ARKME_MANAGED_MODEL)
+    ?? models[0]
+    ?? ARKME_MANAGED_FALLBACK_MODEL
+  return resolveAdapterOptions({
+    baseURL: baseUrl,
+    thinking: 'enabled',
+    reasoningEffort: 'high',
+    maxTokens: defaults.maxTokens ?? 256_000,
+    defaultContextWindow: defaults.contextWindow ?? 1_000_000,
+    models: [...models],
+    retryPolicy: { mode: 'normal', maxRetries: 0 },
+  })
+}
+
+function requiredCatalogText(
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): string {
+  const value = source[key]
+  if (typeof value !== 'string') {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  const normalized = value.trim()
+  if (normalized === '' || normalized.length > 256) {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  return normalized
+}
+
+function requiredCatalogModelId(source: Record<string, unknown>): string {
+  const model = requiredCatalogText(source, 'public_model_code', '模型 ID')
+  if (!/^[^\s\u0000-\u001F\u007F]+$/u.test(model)) {
+    throw new LlmError('Arkme 模型目录中的模型 ID 无效', 'MALFORMED_RESPONSE')
+  }
+  return model
+}
+
+function requiredCatalogTokens(
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+): number {
+  const value = source[key]
+  if (typeof value !== 'string' || !/^[1-9]\d*$/u.test(value)) {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed)) {
+    throw new LlmError(`Arkme 模型目录中的${label}无效`, 'MALFORMED_RESPONSE')
+  }
+  return parsed
+}
+
+function parseManagedCatalog(payload: unknown): DeepSeekCatalogModel[] {
+  const envelope = asRecord(payload)
+  if (envelope?.code !== 200) {
+    const status = validHttpStatus(envelope?.code)
+    const message = typeof envelope?.message === 'string' ? envelope.message : 'Arkme 模型目录请求失败'
+    throw localizeManagedAiError(new LlmError(message, 'MANAGED_MODEL_CATALOG', {
+      ...(status === undefined ? {} : { status }),
+    }))
+  }
+  const data = asRecord(envelope.data)
+  const items = data?.item_ls
+  if (!Array.isArray(items) || items.length > 256) {
+    throw new LlmError('Arkme 模型目录返回异常', 'MALFORMED_RESPONSE')
+  }
+
+  const seen = new Set<string>()
+  return items.map((value) => {
+    const item = asRecord(value)
+    if (item?.provider !== ARKME_MANAGED_PROVIDER) {
+      throw new LlmError('Arkme 模型目录包含无效提供商', 'MALFORMED_RESPONSE')
+    }
+    const id = requiredCatalogModelId(item)
+    if (seen.has(id)) {
+      throw new LlmError(`Arkme 模型目录包含重复模型“${id}”`, 'MALFORMED_RESPONSE')
+    }
+    seen.add(id)
+    const contextWindow = requiredCatalogTokens(item, 'context_window_tokens', '上下文窗口')
+    const defaultMaxTokens = requiredCatalogTokens(item, 'default_max_output_tokens', '默认输出上限')
+    const maximumMaxTokens = requiredCatalogTokens(item, 'maximum_max_output_tokens', '最大输出上限')
+    if (defaultMaxTokens > maximumMaxTokens || maximumMaxTokens > contextWindow) {
+      throw new LlmError(`Arkme 模型“${id}”的 Token 上限无效`, 'MALFORMED_RESPONSE')
+    }
+    return {
+      id,
+      name: requiredCatalogText(item, 'display_name', '显示名称'),
+      contextWindow,
+      maxTokens: defaultMaxTokens,
+    }
+  })
+}
+
+function waitForSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+class ManagedModelCatalog {
+  private readonly baseUrl: string
+  private readonly fetchImpl: typeof fetch
+  private connectionSnapshot: DeepSeekConnectionOptions
+  private modelIds = new Set<string>(ARKME_MANAGED_FALLBACK_MODELS.map(model => model.id))
+  private hasRemoteSnapshot = false
+  private refreshedAt = 0
+  private refreshPromise: Promise<void> | undefined
+
+  constructor(
+    intelligentBaseUrl: string,
+    private readonly credentialOwner: ManagedAccessCredentialOwner,
+    fetchImpl: typeof fetch,
+  ) {
+    this.baseUrl = managedAiBaseUrl(intelligentBaseUrl)
+    this.fetchImpl = fetchImpl
+    this.connectionSnapshot = managedConnection(this.baseUrl, ARKME_MANAGED_FALLBACK_MODELS)
+  }
+
+  connection(): DeepSeekConnectionOptions {
+    return this.connectionSnapshot
+  }
+
+  private isFresh(): boolean {
+    return this.hasRemoteSnapshot && Date.now() - this.refreshedAt < ARKME_MANAGED_CATALOG_TTL_MS
+  }
+
+  private async fetchCatalog(signal?: AbortSignal): Promise<void> {
+    const controller = new AbortController()
+    let timedOut = false
+    const abortFromCaller = (): void => { controller.abort(signal?.reason) }
+    if (signal?.aborted === true) abortFromCaller()
+    else signal?.addEventListener('abort', abortFromCaller, { once: true })
+    const timeout = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, ARKME_MANAGED_CATALOG_TIMEOUT_MS)
+
+    try {
+      if (controller.signal.aborted) {
+        throw controller.signal.reason ?? new DOMException('Aborted', 'AbortError')
+      }
+      const bearer = await waitForSignal(resolveBearer(this.credentialOwner), controller.signal)
+      const response = await this.fetchImpl(`${this.baseUrl}/models/query`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${bearer}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        const requestId = response.headers.get('x-request-id')
+        throw localizeManagedAiError(new LlmError('Arkme 模型目录请求失败', 'MANAGED_MODEL_CATALOG', {
+          status: response.status,
+          ...(requestId === null || requestId === '' ? {} : { requestId: ProviderRequestId(requestId) }),
+        }))
+      }
+      let payload: unknown
+      try {
+        payload = await response.json()
+      } catch (error) {
+        if (controller.signal.aborted) throw error
+        throw new LlmError('Arkme 模型目录返回异常', 'MALFORMED_RESPONSE', { cause: error })
+      }
+      const models = parseManagedCatalog(payload)
+      this.connectionSnapshot = managedConnection(this.baseUrl, models)
+      this.modelIds = new Set(models.map(model => model.id))
+      this.hasRemoteSnapshot = true
+      this.refreshedAt = Date.now()
+    } catch (error) {
+      if (signal?.aborted === true) {
+        throw localizeManagedAiError(new LlmError('Arkme 模型目录请求已取消', 'ABORTED', { cause: error }))
+      }
+      if (timedOut) {
+        throw localizeManagedAiError(new LlmError('Arkme 模型目录请求超时', 'TIMEOUT', { cause: error }))
+      }
+      if (error instanceof LlmError) throw error
+      throw localizeManagedAiError(new LlmError('无法连接 Arkme 模型目录', 'TRANSPORT', { cause: error }))
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abortFromCaller)
+    }
+  }
+
+  private refresh(signal?: AbortSignal): Promise<void> {
+    if (signal !== undefined) return this.fetchCatalog(signal)
+    if (this.refreshPromise !== undefined) return this.refreshPromise
+    const refresh = this.fetchCatalog(signal).finally(() => {
+      if (this.refreshPromise === refresh) this.refreshPromise = undefined
+    })
+    this.refreshPromise = refresh
+    return refresh
+  }
+
+  async refreshForListing(): Promise<void> {
+    if (this.isFresh()) return
+    try {
+      await this.refresh()
+    } catch {
+      // Keep the last-good snapshot. Before the first successful refresh this is the legacy Flash route.
+    }
+  }
+
+  async ensureModel(model: string, signal?: AbortSignal): Promise<void> {
+    const known = this.modelIds.has(model)
+    if ((known && !this.hasRemoteSnapshot) || this.isFresh()) return
+    try {
+      await this.refresh(signal)
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      if (!known) throw error
+    }
+  }
+
+  assertModel(model: string): void {
+    if (!this.modelIds.has(model)) {
+      throw new LlmError(`当前 Arkme 托管服务不支持模型“${model}”，请重新选择模型`, 'UNKNOWN_MODEL')
+    }
+  }
+}
+
 class ManagedAiLlmAdapter extends LlmAdapter {
-  constructor(private readonly delegate: DeepSeekAdapter) {
+  constructor(
+    private readonly delegate: DeepSeekAdapter,
+    private readonly catalog: ManagedModelCatalog,
+  ) {
     super()
   }
 
@@ -198,9 +452,10 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     return this.delegate.providerRetryPolicy(provider)
   }
 
-  override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    assertManagedRoute(provider)
-    return this.delegate.listModels(provider)
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    assertManagedProvider(provider)
+    await this.catalog.refreshForListing()
+    return await this.delegate.listModels(provider)
   }
 
   override async resolveModel(
@@ -208,13 +463,17 @@ class ManagedAiLlmAdapter extends LlmAdapter {
     model: string,
     signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
-    assertManagedRoute(provider, model)
+    assertManagedProvider(provider)
+    await this.catalog.ensureModel(model, signal)
+    this.catalog.assertModel(model)
     return await this.delegate.resolveModel(provider, model, signal)
   }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    assertManagedRoute(options.provider, options.model)
     try {
+      assertManagedProvider(options.provider)
+      await this.catalog.ensureModel(options.model, options.signal)
+      this.catalog.assertModel(options.model)
       yield* this.delegate.stream(options)
     } catch (error) {
       throw localizeManagedAiError(error)
@@ -223,29 +482,17 @@ class ManagedAiLlmAdapter extends LlmAdapter {
 }
 
 export function createManagedAiLlmAdapter(options: ManagedAiLlmAdapterOptions): LlmAdapter {
-  const connection = resolveAdapterOptions({
-    baseURL: managedAiBaseUrl(options.intelligentBaseUrl),
-    thinking: 'enabled',
-    reasoningEffort: 'high',
-    maxTokens: 256_000,
-    defaultContextWindow: 1_000_000,
-    models: [
-      {
-        id: ARKME_MANAGED_MODEL,
-        name: 'DeepSeek-V4-Flash',
-        description: ARKME_MANAGED_MODEL_DESCRIPTION,
-        contextWindow: 1_000_000,
-        maxTokens: 256_000,
-      },
-    ],
-    retryPolicy: { mode: 'normal', maxRetries: 0 },
-  })
+  const catalog = new ManagedModelCatalog(
+    options.intelligentBaseUrl,
+    options.credentialOwner,
+    options.fetchImpl ?? globalThis.fetch,
+  )
   const delegate = new DeepSeekAdapter({
-    options: () => connection,
+    options: () => catalog.connection(),
     resolveApiKey: async () => await resolveBearer(options.credentialOwner),
     resolveUserId: options.resolveAnonymousUserId ?? getOrCreateAnonymousUserId,
   })
-  return new ManagedAiLlmAdapter(delegate)
+  return new ManagedAiLlmAdapter(delegate, catalog)
 }
 
 export function registerManagedAiProvider(

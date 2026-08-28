@@ -38,6 +38,13 @@ describe('Arkme quick-add UI', () => {
     expect(quickAddSource).not.toContain('zIndex: 90')
   })
 
+  it('dismisses the menu before unrelated dialogs can consume outside pointer events', () => {
+    expect(quickAddSource).toContain("document.addEventListener('pointerdown', closeFromOutside, true)")
+    expect(quickAddSource).toContain("document.addEventListener('mousedown', closeFromOutside, true)")
+    expect(quickAddSource).toContain("document.removeEventListener('pointerdown', closeFromOutside, true)")
+    expect(quickAddSource).toContain("document.removeEventListener('mousedown', closeFromOutside, true)")
+  })
+
   it('renders the desktop menu order and all three transplanted icon resources', () => {
     const markup = renderToStaticMarkup(<ArkmeQuickAddMenu
       onContactAdd={vi.fn()}

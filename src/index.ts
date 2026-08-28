@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -12,15 +12,17 @@ import { createOpenClawCliAdapter, createOpenClawCommandRunner, createOpenClawFi
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
+import { openDshHostPath } from './dsh-host-capabilities.js'
 import { ARKME_HARNESS_EMBED_PATH } from './harness-embed-contract.js'
 import {
   createHarnessEmbedRouteHandler,
+  dshRootDocumentHeaders,
   type DshWebBootGraph,
 } from './harness-embed-route.js'
 import { createOutgoingCallAssetHandler } from './outgoing-call-assets.js'
-import { createArkmeMediaHandler, createArkmeUploadHandler } from './rich-media-routes.js'
+import { createArkmeMediaHandler, createArkmeUploadHandler, createArkmeLocalFileHandler } from './rich-media-routes.js'
 import { createArkmeVoiceprintEnrollmentHandler } from './voiceprint-routes.js'
-import { createArkmeSessionStore } from './keychain-store.js'
+import { createArkmeSecureValueStore, createArkmeSessionStore } from './keychain-store.js'
 import { ArkmeLocalDatabase } from './local-database.js'
 import { registerManagedAiProvider } from './managed-ai/adapter.js'
 import {
@@ -53,6 +55,15 @@ import { registerArkmeExtensionTools } from './tools/extensions/index.js'
 import { registerArkmeTools } from './tools/index.js'
 import type { ArkmeToolProfile } from './tools/index.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE, type ArkmeEnvironment } from './types.js'
+import { DshApiProxyAdapter, type DshPublicApiProxyLike } from './dsh-remote/api-proxy-adapter.js'
+import { DshRemoteCommandLedger } from './dsh-remote/command-ledger.js'
+import { DshRemoteHttpControlPlane } from './dsh-remote/control-plane.js'
+import { createDefaultDshRemoteSocket } from './dsh-remote/default-socket-factory.js'
+import { ArkmeRemoteRealtimeHost } from './dsh-remote/host.js'
+import { ArkmeRemoteRealtimeTransport, type DshRemoteSocketLike } from './dsh-remote/realtime-transport.js'
+import { DshRemoteRuntimeStore } from './dsh-remote/runtime-store.js'
+import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker.js'
+import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 
 export interface Config {
   environment: ArkmeEnvironment
@@ -97,6 +108,8 @@ export interface Config {
   updateAllowLocalInstall: boolean
   openclawProfile: string
   shareWebsite: string
+  dshRemoteFeatureEnabled: boolean
+  dshRemoteRealtimeBaseUrl: string
 }
 
 export const ARKME_PRODUCTION_TRUSTED_SIGNING_KEYS = '{"prod-ed25519-20260819-1":"m1MKKU16hyu1b1KKIXMG+zKEr/GmhmvyUEreJzthTxs="}'
@@ -143,6 +156,8 @@ export const Config: Schema<Config> = Schema.object({
   maxUploadBytes: Schema.number().min(1024).max(1024 * 1024 * 1024).default(100 * 1024 * 1024),
   openclawProfile: Schema.string().default('dev'),
   shareWebsite: Schema.string().default(ARKME_DEFAULT_SHARE_WEBSITE),
+  dshRemoteFeatureEnabled: Schema.boolean().default(false),
+  dshRemoteRealtimeBaseUrl: Schema.string().default(''),
 })
 
 export const name = 'dsh-arkme'
@@ -192,7 +207,28 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Headless Arkme data provider for trusted Host-side consumer plugins. */
     arkmeData: ArkmeService
+    /** Public DSH gateway detected at runtime; only the remote allowlist is consumed. */
+    apiProxy: DshPublicApiProxyLike
+    /** Optional Host-owned authenticated Realtime socket carrier. */
+    arkmeRemoteSocketFactory: ArkmeRemoteAuthenticatedSocketFactory
   }
+}
+
+export type ArkmeRemoteAuthenticatedSocketFactory = (input: {
+  profileRef: string
+  clientRef: string
+  accessToken: string
+  signal: AbortSignal
+}) => DshRemoteSocketLike | Promise<DshRemoteSocketLike>
+
+function dshRemoteClientId(accessToken: string): number | undefined {
+  const parts = accessToken.split('.')
+  if (parts.length !== 3) return undefined
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Record<string, unknown>
+    const clientId = claims.client_id ?? claims.clientId
+    return typeof clientId === 'number' && Number.isSafeInteger(clientId) && clientId > 0 ? clientId : undefined
+  } catch { return undefined }
 }
 
 export function apply(ctx: Context, config: Config): void {
@@ -206,7 +242,11 @@ export function apply(ctx: Context, config: Config): void {
   const localDatabase = new ArkmeLocalDatabase(stateDirectory, stateStore)
   const sessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}`)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
-  const service = new ArkmeService(config, sessionStore, localDatabase, fetch, pendingSessionStore)
+  const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files') }, sessionStore, localDatabase, fetch, pendingSessionStore)
+  service.attachLocalFileOpener(async (path, signal) => {
+    await openDshHostPath(ctx, path, signal)
+  })
+  let remoteHost: DshRemoteHostFacade | undefined
   const openClawStateDirectory = join(stateDirectory, 'openclaw')
   const openClawCli = createOpenClawCliAdapter({
     profile: config.openclawProfile,
@@ -362,6 +402,58 @@ export function apply(ctx: Context, config: Config): void {
       tasks.dispose()
     }, 'dsh-arkme: marketplace dynamic runner bridge')
   })
+  ctx.inject(['apiProxy'], apiCtx => {
+    // The default-off feature must not construct platform credential stores,
+    // open DSH muxes or otherwise affect the existing Arkme plugin lifecycle.
+    if (!config.dshRemoteFeatureEnabled) return
+    const injectedSocketFactory = apiCtx.get('arkmeRemoteSocketFactory') as ArkmeRemoteAuthenticatedSocketFactory | undefined
+    const authenticatedSocketFactory: ArkmeRemoteAuthenticatedSocketFactory = injectedSocketFactory
+      ?? (input => createDefaultDshRemoteSocket({
+        realtimeBaseUrl: config.dshRemoteRealtimeBaseUrl,
+        accessToken: input.accessToken,
+        signal: input.signal,
+      }))
+    const profileRefValue = process.env.DSH_PROFILE?.trim() || 'web'
+    const profileRef = /^[A-Za-z0-9._:-]{1,128}$/.test(profileRefValue) ? profileRefValue : 'web'
+    const hostClientRef = `host_${createHash('sha256').update(`dsh-remote-host-client-v1\n${stateDirectory}\n${profileRef}`).digest('base64url')}`
+    const realtime = new ArkmeRemoteRealtimeTransport(async input => {
+      const session = await sessionStore.read()
+      if (session === undefined) throw new Error('Arkme session is unavailable')
+      return await authenticatedSocketFactory({ ...input, accessToken: session.accessToken })
+    })
+    const apiProxy = new DshApiProxyAdapter(apiCtx.apiProxy as unknown as DshPublicApiProxyLike)
+    const secretBroker = new DshRemoteRuntimeSecretBroker(createArkmeSecureValueStore(
+      `${config.keychainServicePrefix}.${config.environment}.dsh-remote-desktop`,
+    ))
+    const host = new ArkmeRemoteRealtimeHost({
+      featureEnabled: config.dshRemoteFeatureEnabled,
+      transportAvailable: true,
+      profileRef, hostClientRef, secretBroker,
+      runtimeStore: new DshRemoteRuntimeStore(stateDirectory),
+      controlPlane: new DshRemoteHttpControlPlane({
+        post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal),
+      }),
+      realtime, apiProxy,
+      readSession: async () => {
+        const session = await sessionStore.read()
+        if (session === undefined) return undefined
+        const clientId = dshRemoteClientId(session.accessToken)
+        return clientId === undefined ? undefined : { userId: session.userId, clientId }
+      },
+      ledgerForAccount: (accountId, key) => new DshRemoteCommandLedger(join(
+        stateDirectory, 'dsh-remote', 'ledger',
+        createHash('sha256').update(`dsh-remote-ledger-account-v1\n${accountId}`).digest('base64url'),
+      ), key),
+    })
+    remoteHost = host
+    apiCtx.effect(async () => {
+      await host.start()
+      return async () => {
+        if (remoteHost === host) remoteHost = undefined
+        await host.stop()
+      }
+    }, 'dsh-arkme: DSH remote Host lifecycle')
+  })
   const handler = createArkmeHostApi(service, {
     expectedPort: ctx.webServer.port,
     allowNonLoopback: config.allowNonLoopback,
@@ -369,6 +461,7 @@ export function apply(ctx: Context, config: Config): void {
     extensionManager: () => extensionManager,
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
+    remoteHost: () => remoteHost,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
@@ -378,6 +471,8 @@ export function apply(ctx: Context, config: Config): void {
     maxUploadBytes: config.maxUploadBytes,
   }
   const uploadHandler = createArkmeUploadHandler(service, richMediaOptions)
+  const stageHandler = createArkmeUploadHandler(service, richMediaOptions, 'stage')
+  const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
   const mediaHandler = createArkmeMediaHandler(service, richMediaOptions)
   const voiceprintEnrollmentHandler = createArkmeVoiceprintEnrollmentHandler(service, {
     expectedPort: ctx.webServer.port,
@@ -400,9 +495,9 @@ export function apply(ctx: Context, config: Config): void {
     getGraph: () => clientModules.graph(),
     installedPackageNames: () => extensionStore.list().flatMap(item =>
       item.profilePackageName === undefined ? [] : [item.profilePackageName]),
-    readRootHtml: async () => {
+    readRootHtml: async request => {
       const response = await fetch(`http://127.0.0.1:${String(ctx.webServer.port)}/`, {
-        headers: { Accept: 'text/html' },
+        headers: dshRootDocumentHeaders(request),
         signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 5_000)),
       })
       if (!response.ok) throw new Error(`DSH root document returned HTTP ${String(response.status)}`)
@@ -444,6 +539,8 @@ export function apply(ctx: Context, config: Config): void {
     path: `${config.routePath}/upload`,
     handler: uploadHandler,
   }), 'dsh-arkme: rich content upload route')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: `${config.routePath}/media`,
@@ -519,6 +616,7 @@ function validateConfig(ctx: Context, config: Config): void {
       config.relationBaseUrl,
       config.intelligentBaseUrl,
       config.audioBaseUrl,
+      ...(config.dshRemoteFeatureEnabled ? [config.dshRemoteRealtimeBaseUrl] : []),
     ].filter(origin => new URL(origin).hostname.endsWith('.senguo.me'))
     if (testDefaults.length > 0) {
       throw new Error('dsh-arkme: production environment must explicitly configure every service origin')
@@ -538,6 +636,9 @@ function validateConfig(ctx: Context, config: Config): void {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(config.openclawProfile)) {
     throw new Error('dsh-arkme: openclawProfile must be a fixed profile name')
   }
+  if (config.dshRemoteFeatureEnabled && config.dshRemoteRealtimeBaseUrl.trim() === '') {
+    throw new Error('dsh-arkme: enabled DSH remote requires dshRemoteRealtimeBaseUrl')
+  }
   for (const [label, raw] of [
     ['authBaseUrl', config.authBaseUrl],
     ['subjectBaseUrl', config.subjectBaseUrl],
@@ -552,6 +653,9 @@ function validateConfig(ctx: Context, config: Config): void {
     ['intelligentBaseUrl', config.intelligentBaseUrl],
     ['audioBaseUrl', config.audioBaseUrl],
     ['shareWebsite', config.shareWebsite],
+    ...(config.dshRemoteFeatureEnabled
+      ? [['dshRemoteRealtimeBaseUrl', config.dshRemoteRealtimeBaseUrl] as const]
+      : []),
   ] as const) {
     const url = new URL(raw)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/') {

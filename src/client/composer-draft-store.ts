@@ -1,10 +1,11 @@
 import type { ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
+import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 
-export interface ArkmeComposerAttachment {
-  asset: ArkmeUploadedAsset
-  previewUrl?: string
-}
+export type ArkmeComposerAttachment = ({ asset: ArkmeUploadedAsset; localFile?: never } | { localFile: ArkmeLocalFile; asset?: never }) & { previewUrl?: string }
+
+export function arkmeAttachmentId(item: ArkmeComposerAttachment): string { return item.localFile?.fileRef ?? item.asset!.fileAssetUid }
+export function arkmeAttachmentMetadata(item: ArkmeComposerAttachment): ArkmeUploadedAsset | ArkmeLocalFile { return item.localFile ?? item.asset! }
 
 export interface ArkmeComposerMention {
   memberRef?: string
@@ -25,6 +26,7 @@ export interface ArkmeComposerDraftSnapshot {
   attachments: readonly ArkmeComposerAttachment[]
   mentions: readonly ArkmeComposerMention[]
   emojis: readonly ArkmeComposerEmoji[]
+  fileSendIdentity?: { recordUid: string; relationUid: string; fingerprint: string }
 }
 
 export type ArkmeComposerDeleteDirection = 'backward' | 'forward'
@@ -210,6 +212,35 @@ export class ArkmeComposerDraftStore {
   private readonly drafts = new Map<string, ArkmeComposerDraftSnapshot>()
   private readonly listeners = new Set<() => void>()
   private revision = 0
+  private readonly restoredKeys = new Set<string>()
+  isRestored(key: string | undefined): boolean { return key !== undefined && this.restoredKeys.has(key) }
+  beginFileSend(key: string): { recordUid: string; relationUid: string } {
+    const draft = this.get(key)
+    const fingerprint = JSON.stringify([serializeArkmeComposerDraft(draft), draft.attachments.map(arkmeAttachmentId)])
+    const current = draft.fileSendIdentity
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    if (current?.fingerprint === fingerprint && uuid.test(current.recordUid) && uuid.test(current.relationUid)) return current
+    const identity = { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(), fingerprint }
+    this.store(key, { ...draft, fileSendIdentity: identity })
+    return identity
+  }
+  private static readonly storageKey = 'arkme-local-file-drafts-v1'
+
+  constructor(private readonly storage?: Pick<Storage, 'getItem' | 'setItem'>) {
+    try {
+      const saved = JSON.parse(storage?.getItem(ArkmeComposerDraftStore.storageKey) ?? '[]') as unknown
+      if (!Array.isArray(saved)) return
+      for (const entry of saved.slice(0, 100)) {
+        if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !entry[0].startsWith('arkme-composer:')) continue
+        const draft = entry[1] as ArkmeComposerDraftSnapshot
+        if (typeof draft?.text !== 'string' || draft.text.length > 20_000 || !Array.isArray(draft.attachments) || !Array.isArray(draft.mentions) || !Array.isArray(draft.emojis)) continue
+        const attachments = draft.attachments.filter(item => item.localFile !== undefined && /^arkme-file-v1\.[0-9a-f-]{36}$/.test(item.localFile.fileRef)
+          && typeof item.localFile.fileName === 'string' && typeof item.localFile.mimeType === 'string' && Number.isSafeInteger(item.localFile.size))
+          .slice(0, 9).map(item => ({ localFile: item.localFile! }))
+        if (attachments.length > 0) { this.drafts.set(entry[0], { ...draft, attachments }); this.restoredKeys.add(entry[0]) }
+      }
+    } catch { /* An unavailable browser store must not prevent editing a local draft. */ }
+  }
 
   readonly getRevision = (): number => this.revision
 
@@ -369,9 +400,9 @@ export class ArkmeComposerDraftStore {
     }
     const current = this.get(key)
     const retained = [...current.attachments]
-    const retainedIds = new Set(retained.map(item => item.asset.fileAssetUid))
+    const retainedIds = new Set(retained.map(arkmeAttachmentId))
     for (const attachment of incoming) {
-      const uid = attachment.asset.fileAssetUid
+      const uid = arkmeAttachmentId(attachment)
       if (retained.length >= Math.max(0, maxAttachments) || retainedIds.has(uid)) {
         releaseArkmeComposerAttachment(attachment)
         continue
@@ -387,15 +418,24 @@ export class ArkmeComposerDraftStore {
     if (key === undefined) return
     const current = this.drafts.get(key)
     if (current === undefined) return
-    const removed = current.attachments.filter(item => item.asset.fileAssetUid === fileAssetUid)
+    const removed = current.attachments.filter(item => arkmeAttachmentId(item) === fileAssetUid)
     if (removed.length === 0) return
     for (const attachment of removed) releaseArkmeComposerAttachment(attachment)
     this.storeOrDelete(key, {
       text: current.text,
-      attachments: current.attachments.filter(item => item.asset.fileAssetUid !== fileAssetUid),
+      attachments: current.attachments.filter(item => arkmeAttachmentId(item) !== fileAssetUid),
       mentions: current.mentions,
       emojis: current.emojis,
     })
+  }
+
+  moveAttachment(key: string | undefined, index: number, destination: number): void {
+    if (key === undefined) return
+    const current = this.get(key)
+    if (index < 0 || destination < 0 || index >= current.attachments.length || destination >= current.attachments.length || index === destination) return
+    const attachments = [...current.attachments]
+    const [item] = attachments.splice(index, 1); attachments.splice(destination, 0, item!)
+    this.store(key, { ...current, attachments })
   }
 
   /** Removes a draft without releasing its attachments so an in-flight send can own the snapshot. */
@@ -418,12 +458,12 @@ export class ArkmeComposerDraftStore {
     const mentions = current.text === '' ? snapshot.mentions : current.mentions
     const emojis = current.text === '' ? snapshot.emojis : current.emojis
     const merged = [...snapshot.attachments]
-    const mergedIds = new Set(merged.map(item => item.asset.fileAssetUid))
+    const mergedIds = new Set(merged.map(arkmeAttachmentId))
     for (const attachment of current.attachments) {
-      if (mergedIds.has(attachment.asset.fileAssetUid)) {
+      if (mergedIds.has(arkmeAttachmentId(attachment))) {
         releaseArkmeComposerAttachment(attachment)
       } else if (merged.length < 20) {
-        mergedIds.add(attachment.asset.fileAssetUid)
+        mergedIds.add(arkmeAttachmentId(attachment))
         merged.push(attachment)
       } else {
         releaseArkmeComposerAttachment(attachment)
@@ -464,19 +504,28 @@ export class ArkmeComposerDraftStore {
   }
 
   private store(key: string, snapshot: ArkmeComposerDraftSnapshot): void {
+    this.restoredKeys.delete(key)
     this.drafts.set(key, Object.freeze({
       text: snapshot.text,
       attachments: Object.freeze([...snapshot.attachments]),
       mentions: Object.freeze(snapshot.mentions.map(mention => Object.freeze({ ...mention }))),
       emojis: Object.freeze(snapshot.emojis.map(emoji => Object.freeze({ ...emoji }))),
+      ...(snapshot.fileSendIdentity === undefined ? {} : { fileSendIdentity: Object.freeze({ ...snapshot.fileSendIdentity }) }),
     }))
     this.publish()
   }
 
   private publish(): void {
+    try {
+      // Only file drafts opt into persistence; existing Arko/text-only semantics stay unchanged.
+      const entries = [...this.drafts].filter(([, draft]) => draft.attachments.some(item => item.localFile !== undefined))
+        .map(([key, draft]) => [key, { ...draft, attachments: draft.attachments.flatMap(item => item.localFile === undefined ? [] : [{ localFile: item.localFile }]) }])
+      this.storage?.setItem(ArkmeComposerDraftStore.storageKey, JSON.stringify(entries))
+    } catch { /* The Host still owns staged bytes and accepted send tasks. */ }
     this.revision += 1
     for (const listener of this.listeners) listener()
   }
 }
 
-export const arkmeComposerDraftStore = new ArkmeComposerDraftStore()
+function browserDraftStorage(): Storage | undefined { try { return typeof window === 'undefined' ? undefined : window.localStorage } catch { return undefined } }
+export const arkmeComposerDraftStore = new ArkmeComposerDraftStore(browserDraftStorage())

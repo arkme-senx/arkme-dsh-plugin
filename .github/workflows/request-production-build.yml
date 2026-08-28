@@ -1,0 +1,71 @@
+name: 发布 Arkme 插件后请求生产构建
+run-name: 请求 Arkme 生产构建 v${{ github.event.client_payload.version }}
+
+on:
+  repository_dispatch:
+    types: [arkme-plugin-release-published]
+
+concurrency:
+  group: plugin-production-build-request-${{ github.event.client_payload.release_sha }}
+  cancel-in-progress: false
+
+jobs:
+  request-backend-build:
+    name: 调用 Backend 请求 Arkme 生产构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 验证已发布版本与提交
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.event.client_payload.release_sha }}
+          VERSION: ${{ github.event.client_payload.version }}
+        run: |
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '发布提交格式无效。' >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '发布版本格式无效。' >&2
+            exit 1
+          fi
+
+          git fetch origin master --tags
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/master; then
+            echo '发布提交不属于当前 master 历史。' >&2
+            exit 1
+          fi
+
+          tag="v${VERSION}"
+          tag_sha=$(git rev-parse "${tag}^{commit}")
+          if [ "$tag_sha" != "$RELEASE_SHA" ]; then
+            echo '发布 Tag 与提交不一致。' >&2
+            exit 1
+          fi
+
+          release_target=$(gh release view "$tag" --repo "$GH_REPO" --json targetCommitish --jq '.targetCommitish')
+          if [ "$release_target" != "$RELEASE_SHA" ]; then
+            echo 'GitHub Release 与发布提交不一致。' >&2
+            exit 1
+          fi
+
+          package_name=$(node -p "require('./package.json').name")
+          registry_version=$(npm view "${package_name}@${VERSION}" version)
+          if [ "$registry_version" != "$VERSION" ]; then
+            echo 'npm Registry 尚未确认发布版本。' >&2
+            exit 1
+          fi
+      - name: 调用 Backend 请求 Arkme 生产构建
+        env:
+          ARKME_BACKEND_BASE_URL: ${{ secrets.ARKME_BACKEND_BASE_URL }}
+          ARKME_CI_TRIGGER_SECRET: ${{ secrets.ARKME_CI_TRIGGER_SECRET }}
+        run: bash .github/scripts/request-arkme-build.sh

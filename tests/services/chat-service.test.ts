@@ -23,6 +23,141 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ChatService', () => {
+  it('projects a direct Bot timeline by canonical actor and sequence without human hydration', async () => {
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        expect(path).toBe('/api/v1/chat/timeline/page')
+        expect(body).toEqual({ chat_session_uid: 'chat-bot-1', before_seq: 0, limit: 100 })
+        return {
+          chat_session_uid: 'chat-bot-1',
+          items: [
+            {
+              relation: { rel_uid: 'rel-2', record_uid: 'record-2', seq: 2, sender_user_id: 9001, sender_actor_kind: 2, sender_bot_uid: 'bot-1', attach_at: 200 },
+              record: { status: 1, payload: { record_uid: 'record-2', text_content: '回复', send_at: 200 } },
+            },
+            {
+              relation: { rel_uid: 'rel-1', record_uid: 'record-1', seq: 1, sender_user_id: 42, sender_actor_kind: 1, attach_at: 100 },
+              record: { status: 1, payload: { record_uid: 'record-1', text_content: '提问', send_at: 100 } },
+            },
+            {
+              relation: { rel_uid: 'rel-2', record_uid: 'record-2', seq: 2, sender_user_id: 9001, sender_actor_kind: 2, sender_bot_uid: 'bot-1', attach_at: 201 },
+              record: { status: 1, payload: { record_uid: 'record-2', text_content: '重复投影', send_at: 201 } },
+            },
+            {
+              relation: { rel_uid: 'rel-3', record_uid: 'record-3', seq: 3, sender_user_id: 9001, sender_actor_kind: 2, sender_bot_uid: 'bot-1', attach_at: 300 },
+              record: { status: 2, payload: { record_uid: 'record-3', text_content: '不可展示的 Record', send_at: 300 } },
+            },
+          ],
+        }
+      }),
+    }
+    const profile = { publicProfilesByUserIds: vi.fn(), sealProfileImageRef: vi.fn() }
+    const media = { richContentBlocks: vi.fn((item: unknown) => {
+      const recordUid = String(((item as { relation?: { record_uid?: string } }).relation?.record_uid ?? ''))
+      return recordUid === 'record-2' ? [{
+        kind: 'file', mediaRef: 'secret-media-ref', fileName: 'report.pdf', mimeType: 'application/pdf', size: 10, sortOrder: 0,
+      }] : []
+    }) }
+    const chat = new ChatService(
+      runtime as never, {} as never, profile as never, media as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.readDirectBotConversation('bot-1', 'chat-bot-1')).resolves.toEqual({
+      messages: [
+        {
+          messageId: 'rel-1', recordUid: 'record-1', role: 'user', content: '提问', status: 'sent',
+          createdAtMillis: 100, attachments: [],
+        },
+        {
+          messageId: 'rel-2', recordUid: 'record-2', role: 'assistant', content: '回复', status: 'sent',
+          createdAtMillis: 200,
+          attachments: [{
+            kind: 'file', fileName: 'report.pdf', mimeType: 'application/pdf', size: 10,
+            durationMillis: 0, width: 0, height: 0, sortOrder: 0,
+          }],
+        },
+      ],
+      latestSequence: 3,
+    })
+    expect(profile.publicProfilesByUserIds).not.toHaveBeenCalled()
+    expect(profile.sealProfileImageRef).not.toHaveBeenCalled()
+  })
+
+  it('keeps relation identity separate from owner-scoped Record identity', async () => {
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({
+        chat_session_uid: 'chat-bot-1',
+        items: [
+          {
+            relation: {
+              rel_uid: 'rel-user', record_uid: 'shared-record', record_owner_user_id: 42,
+              seq: 1, sender_user_id: 42, sender_actor_kind: 1, attach_at: 100,
+            },
+            record: { status: 1, payload: { record_uid: 'shared-record', text_content: '用户消息' } },
+          },
+          {
+            relation: {
+              rel_uid: 'rel-bot', record_uid: 'shared-record', record_owner_user_id: 9001,
+              seq: 2, sender_user_id: 9001, sender_actor_kind: 2, sender_bot_uid: 'bot-1', attach_at: 200,
+            },
+            record: { status: 1, payload: { record_uid: 'shared-record', text_content: 'Bot 消息' } },
+          },
+        ],
+      })),
+    }
+    const chat = new ChatService(
+      runtime as never, {} as never, {} as never, { richContentBlocks: vi.fn(() => []) } as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.readDirectBotConversation('bot-1', 'chat-bot-1')).resolves.toMatchObject({
+      messages: [
+        { messageId: 'rel-user', recordUid: 'shared-record', role: 'user' },
+        { messageId: 'rel-bot', recordUid: 'shared-record', role: 'assistant' },
+      ],
+    })
+  })
+
+  it('fails closed when relation and hydrated Record identities disagree', async () => {
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ chat_session_uid: 'chat-bot-1', items: [{
+        relation: {
+          rel_uid: 'rel-1', record_uid: 'record-1', record_owner_user_id: 42,
+          seq: 1, sender_user_id: 42, sender_actor_kind: 1, attach_at: 100,
+        },
+        record: { status: 1, payload: { record_uid: 'other-record', text_content: '错位消息' } },
+      }] })),
+    }
+    const chat = new ChatService(
+      runtime as never, {} as never, {} as never, { richContentBlocks: vi.fn(() => []) } as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.readDirectBotConversation('bot-1', 'chat-bot-1'))
+      .rejects.toMatchObject({ code: 'bot-chat-timeline-contract-invalid' })
+  })
+
+  it('fails closed when a direct Bot timeline contains another actor', async () => {
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ chat_session_uid: 'chat-bot-1', items: [{
+        relation: { rel_uid: 'rel-1', record_uid: 'record-1', seq: 1, sender_user_id: 9002, sender_actor_kind: 2, sender_bot_uid: 'other-bot', attach_at: 100 },
+        record: { status: 1, payload: { record_uid: 'record-1', text_content: '错误 actor' } },
+      }] })),
+    }
+    const chat = new ChatService(
+      runtime as never, {} as never, {} as never, { richContentBlocks: vi.fn(() => []) } as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+
+    await expect(chat.readDirectBotConversation('bot-1', 'chat-bot-1'))
+      .rejects.toMatchObject({ code: 'bot-chat-timeline-contract-invalid' })
+  })
+
   it('resolves normal message copy links using the Flutter source anchor field names', async () => {
     const runtime = {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
@@ -508,6 +643,215 @@ describe('ChatService', () => {
     expect(many?.items[0]?.segments).toHaveLength(500)
     expect(many?.items[0]?.truncated).toBe(true)
     expect(many?.items[0]?.segments?.[0]?.contentBlocks).toBeUndefined()
+  })
+
+  it('projects shared recording memory cards from flat and split chat payloads', () => {
+    const media = {
+      recordContentPayload(raw: unknown): Record<string, unknown> {
+        const root = raw as Record<string, unknown>
+        const record = (root.record ?? {}) as Record<string, unknown>
+        const rawRecordPayload = record.payload
+        const recordPayload = typeof rawRecordPayload === 'string'
+          ? JSON.parse(rawRecordPayload) as Record<string, unknown>
+          : (rawRecordPayload ?? {}) as Record<string, unknown>
+        const payload = root.content_payload ?? root.contentPayload
+          ?? recordPayload.content_payload ?? recordPayload.contentPayload
+          ?? record.content_payload ?? record.contentPayload
+        return (payload !== null && typeof payload === 'object') ? payload as Record<string, unknown> : {}
+      },
+    }
+    const chat = new ChatService(
+      {} as ServiceRuntime, {} as SourceService, {} as ProfileService, media as MediaService,
+      {} as RecordService, {} as BotService, {} as ArkoService, {} as GroupAiPolishService,
+      { emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {} },
+    )
+
+    const flat = chat.chatSharedRecordingPreview({ content_payload: {
+      render_kind: 'shared_recording_memory',
+      source_digest: 'digest-flat',
+      shared_by_user_id: 42,
+      shared_at: 1_782_299_000_000,
+      display_at: 1_782_300_000_000,
+      end_at: 1_782_303_000_000,
+      time_range_text: '21:00 - 22:00',
+      title: '产品复盘',
+      summary: '讨论了共享方案，并明确了后续任务和风险控制。',
+      transcript: '录音原文',
+      participants: [
+        { ref_user_id: 42, display_name: '小杨', role: 1 },
+        { ref_user_id: 43, display_name: '老黄', role: 1 },
+      ],
+    } })
+    expect(flat).toMatchObject({
+      sourceDigest: 'digest-flat',
+      sharedByUserId: 42,
+      displayAtMillis: 1_782_300_000_000,
+      endAtMillis: 1_782_303_000_000,
+      timeRangeText: '21:00 - 22:00',
+      title: '产品复盘',
+      summary: '讨论了共享方案，并明确了后续任务和风险控制。',
+      transcript: '录音原文',
+      transcriptAvailable: true,
+      participants: [
+        { refUserId: 42, displayName: '小杨', role: 1 },
+        { refUserId: 43, displayName: '老黄', role: 1 },
+      ],
+    })
+
+    const split = chat.chatSharedRecordingPreview({
+      relation: {
+        render_content_payload: JSON.stringify({
+          render_kind: 'shared_recording_memory',
+          source_digest: 'digest-split',
+          shared_by_user_id: 42,
+          shared_at: 1_782_299_000_000,
+          display_at: 1_782_300_000_000,
+          end_at: 1_782_303_000_000,
+        }),
+      },
+      record: {
+        payload: JSON.stringify({
+          content_payload: {
+            shared_recording: {
+              source_digest: 'digest-split',
+              title: '线下同步',
+              summary: '明确了下一步。',
+              participants: [{ display_name: '小杨', role: 1 }],
+            },
+          },
+        }),
+      },
+    })
+    expect(split).toMatchObject({
+      sourceDigest: 'digest-split',
+      sharedByUserId: 42,
+      displayAtMillis: 1_782_300_000_000,
+      title: '线下同步',
+      summary: '明确了下一步。',
+      transcriptAvailable: false,
+      participants: [{ displayName: '小杨' }],
+    })
+
+    const mobileShape = chat.chatSharedRecordingPreview({ content_payload: {
+      render_kind: 'shared_recording_memory',
+      source_digest: 'digest-mobile',
+      display_at: '1782300000000',
+      end_at: '1782300300000',
+      title: '路线讨论',
+      summary_text: '讨论回家路线。',
+      participant_ls: [
+        { ref_usr_id: '42', display_name: '我', role: 1 },
+        { nick_name: '其他说话人', role: 1 },
+      ],
+      transcript_ls: [
+        { speaker_name: '我', text: '光谷4日到the光。' },
+        { speaker_name: '其他说话人', text_content: '嗯。' },
+      ],
+    } })
+    expect(mobileShape).toMatchObject({
+      sourceDigest: 'digest-mobile',
+      displayAtMillis: 1_782_300_000_000,
+      title: '路线讨论',
+      summary: '讨论回家路线。',
+      transcript: '我：光谷4日到the光。\n其他说话人：嗯。',
+      transcriptAvailable: true,
+      participants: [
+        { refUserId: 42, displayName: '我', role: 1 },
+        { displayName: '其他说话人', role: 1 },
+      ],
+    })
+
+    expect(chat.chatSharedRecordingPreview({
+      relation: {
+        render_content_payload: { render_kind: 'shared_recording_memory', source_digest: 'digest-a', display_at: 1 },
+      },
+      record: {
+        payload: { content_payload: { shared_recording: { source_digest: 'digest-b', title: '不匹配', summary: '不应展示' } } },
+      },
+    })).toBeUndefined()
+  })
+
+  it('opens shared recording details from an opaque chat-card reference', async () => {
+    const detailRequests: { path: string; body: Record<string, unknown> }[] = []
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        detailRequests.push({ path, body })
+        return { item: { content_payload: {
+          render_kind: 'shared_recording_memory',
+          source_digest: 'digest-detail',
+          display_at: 1_782_300_000_000,
+          end_at: 1_782_303_000_000,
+          time_range_text: '22:48 - 23:01',
+          title: '抵达光谷四路与回家路线讨论',
+          summary: '详情摘要',
+          transcript: '完整录音原文',
+          participant_ls: [{ ref_usr_id: 7, display_name: '落日', role: 1 }],
+        } } }
+      }),
+    }
+    const media = {
+      recordContentPayload(raw: unknown): Record<string, unknown> {
+        const root = raw as Record<string, unknown>
+        const direct = root.content_payload ?? root.contentPayload
+        if (direct !== null && typeof direct === 'object') return direct as Record<string, unknown>
+        const record = (root.record ?? {}) as Record<string, unknown>
+        const payload = (record.payload ?? {}) as Record<string, unknown>
+        const nested = payload.content_payload ?? payload.contentPayload
+        return nested !== null && typeof nested === 'object' ? nested as Record<string, unknown> : {}
+      },
+      richContentBlocks: vi.fn(() => []),
+    }
+    const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
+    const chat = new ChatService(
+      runtime as never, {} as SourceService, profile as never, media as never,
+      {} as RecordService, {} as BotService, {} as ArkoService,
+      { timelineAiPolish: vi.fn(() => undefined) } as never,
+      { emitChatClientEvent() {}, nextChatClientRevision() { return 1 }, scheduleChatSessionProjection() {} },
+    )
+    const items = await chat.chatTimelineItems({ items: [{
+      relation: {
+        rel_uid: 'rel-1',
+        record_uid: 'record-1',
+        sender_user_id: 7,
+        display_name_snapshot: '落日',
+        attach_at: 1_782_300_000_000,
+        seq: 23,
+      },
+      record: {
+        status: 1,
+        record_owner_user_id: 7,
+        payload: { content_payload: {
+          render_kind: 'shared_recording_memory',
+          source_digest: 'digest-detail',
+          display_at: 1_782_300_000_000,
+          end_at: 1_782_303_000_000,
+          title: '抵达光谷四路与回家路线讨论',
+          summary: '预览摘要',
+        } },
+      },
+    }] }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, 'chat-session-1')
+    const detailRef = items[0]?.sharedRecording?.detailRef
+    expect(detailRef).toMatch(/^arkme-shared-recording-detail-v1\./u)
+    await expect(chat.sharedRecordingDetail(detailRef ?? '')).resolves.toMatchObject({
+      sourceDigest: 'digest-detail',
+      detailRef,
+      summary: '详情摘要',
+      transcript: '完整录音原文',
+      transcriptAvailable: true,
+      participants: [{ refUserId: 7, displayName: '落日' }],
+    })
+    expect(detailRequests).toEqual([{
+      path: '/api/v1/chats/records/detail',
+      body: {
+        chat_session_uid: 'chat-session-1',
+        record_uid: 'record-1',
+        record_owner_user_id: 7,
+        rel_uid: 'rel-1',
+        seq: 23,
+      },
+    }])
   })
   it('projects, groups, and redacts group member join metadata', async () => {
     const events = await projectArkmeConversationMemberJoinEvents([

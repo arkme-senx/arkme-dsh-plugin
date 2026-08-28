@@ -43,7 +43,42 @@ describe('ProfileService', () => {
         contact: { phoneMasked: '138****8000', emailMasked: 'm***@example.com' },
       },
     })
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('prefers the public-profile avatar for the signed-in user', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let cached: ArkmeUserProfileSnapshot = { profile: null, revision: 0, cachedAtMillis: 0 }
+    const stateStore = {
+      async uniqueCode() { return 'profile-test-secret' },
+      async cachedProfile() { return cached },
+      async cacheProfile(_userId: number, profile: ArkmeUserProfile) {
+        cached = { profile, revision: 1, cachedAtMillis: Date.now() }
+        return cached
+      },
+    } as StateStore
+    const profileAvatarUrl = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/profile.png?x-oss-signature=test'
+    const publicAvatarUrl = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/public.png?x-oss-signature=test'
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const data = url.endsWith('/api/v1/auth/get-user-info')
+        ? { user_id: 42, nick_name: '小明', head_img: profileAvatarUrl, name_slug: 'xiaoming', type: 1,
+          create_at: 123, phone: '', email: '', has_bind_apple: false, has_bind_wechat: true, has_bind_google: false }
+        : { items: [{ user_id: 42, nick_name: '小明', head_img: publicAvatarUrl }] }
+      return new Response(JSON.stringify({ code: 200, data }), { status: 200 })
+    }) as typeof fetch
+    const service = new ProfileService(new ServiceRuntime(config, sessions, stateStore, fetchImpl))
+
+    const snapshot = await service.refreshProfile()
+
+    expect(snapshot.profile).toMatchObject({
+      userId: 42,
+      avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./),
+      avatarUrl: publicAvatarUrl,
+    })
   })
 
   it('projects public jotmo_id as accountName without changing legacy displayName semantics', async () => {

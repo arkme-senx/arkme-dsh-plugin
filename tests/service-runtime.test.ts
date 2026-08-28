@@ -122,6 +122,21 @@ describe('ServiceRuntime', () => {
     expect(authorizations).toEqual(['Bearer expired-access', 'Bearer new-access'])
   })
 
+  it('preserves canonical DSH remote errors from HTTP 200 GET envelopes', async () => {
+    const activeSession = { accessToken: 'remote-access', refreshToken: 'refresh-token', userId: 42 }
+    const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({
+      code: 1001, message: '参数错误', data: {
+        error_code: 'RUNTIME_LIMIT_REACHED', message: '该电脑已达 Runtime 上限', trace_ref: 'trace-remote-01',
+      },
+    }), { status: 200 })), {
+      async read() { return activeSession }, async write() {}, async delete() {},
+    })
+
+    await expect(runtime.authenticatedDshRemoteGet('/api/v1/dsh-remote/bindings')).rejects.toMatchObject({
+      code: 'RUNTIME_LIMIT_REACHED', message: '该电脑已达 Runtime 上限', retryable: false,
+    })
+  })
+
   it('posts audio multipart bodies without overriding the boundary and refreshes auth once', async () => {
     let stored = { accessToken: 'expired-access', refreshToken: 'refresh-token', userId: 42 }
     const sessionStore: ArkmeSessionStore = {

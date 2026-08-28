@@ -198,9 +198,7 @@ export class ContactDirectoryService {
     const offset = await this.openOffsetCursor('bots', options.cursor, session.userId)
     const bots = (await this.bot.listBots(options.signal === undefined ? {} : { signal: options.signal })).items
     const slice = bots.slice(offset, offset + limit)
-    const items: ArkmeDirectoryItem[] = slice.map(item => ({
-      kind: 'bot', botRef: item.botRef, displayName: item.name,
-    }))
+    const items: ArkmeDirectoryItem[] = slice.map(bot => ({ kind: 'bot', bot }))
     const hasMore = offset + slice.length < bots.length
     return {
       section: 'bots', items, total: bots.length, hasMore,

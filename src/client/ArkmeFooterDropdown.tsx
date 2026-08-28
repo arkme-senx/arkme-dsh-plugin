@@ -26,8 +26,6 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
   const unreadCount = auth?.status === 'authenticated' && chatDirectory.revision > 0
     ? arkmeChatDirectory.totalUnreadCount()
     : 0
-  const updateInstalling = updateState.install !== undefined
-    && ['preparing', 'downloading', 'verifying', 'installing', 'restarting'].includes(updateState.install.phase)
   useArkmeRealtimeClientEvents(auth, ui.authRevision, false)
   return <>
     <ArkmeOutgoingCallHost />
@@ -41,7 +39,7 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
       authPending={!authState.checked || authState.busy}
       unreadCount={unreadCount}
       {...(updateState.status === undefined ? {} : { updateStatus: updateState.status })}
-      updateBusy={updateState.busy || updateInstalling}
+      updateSnapshot={updateState}
       onUpdate={() => {
         props.activate(currentSession)
         arkmeUpdateUi.open('plugin')

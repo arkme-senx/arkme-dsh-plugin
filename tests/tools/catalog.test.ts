@@ -104,6 +104,7 @@ describe('Arkme tool catalog', () => {
       'arkme_ai_video',
       'arkme_text_ai_video',
       'arkme_image_read',
+      'arkme_files_list', 'arkme_files_search', 'arkme_file_prepare', 'arkme_files_send', 'arkme_file_task', 'arkme_file_receive',
     ])
     expect(arkmeToolCatalog.toolNamesFor('atomic')).toEqual(['arkme_plugin_contract'])
     expect(arkmeToolCatalog.toolNamesFor('hybrid')).toEqual(arkmeToolCatalog.toolNamesFor('business'))
@@ -126,6 +127,7 @@ describe('Arkme tool catalog', () => {
       'arkme_call_start',
       'arkme_ai_video',
       'arkme_text_ai_video',
+      'arkme_file_prepare', 'arkme_files_send', 'arkme_file_task',
     ])
     expect(writes.every(module => module.meta.grant === 'explicit-user-write')).toBe(true)
   })

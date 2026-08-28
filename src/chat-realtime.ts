@@ -1,7 +1,11 @@
 import type { ArkmeSessionCredentials } from './keychain-store.js'
 import type { ArkmeChatRealtimeState } from './types.js'
+import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
 
 export const ARKME_CHAT_SSE_PATH = '/api/v1/sse/chat/noty'
+export const ARKME_RUNTIME_INSTANCE_ID_HEADER = 'X-Jotmo-Runtime-Instance-Id'
+export const ARKME_SSE_IDENTITY_VERSION_HEADER = 'X-Jotmo-SSE-Identity-Version'
+export const ARKME_SSE_IDENTITY_VERSION = '2'
 export const ARKME_CHAT_RECEIVE_BIZ_TYPE = 17
 export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
@@ -64,12 +68,27 @@ export interface ArkmeChatRealtimeRuntimeOptions {
   random?: () => number
   now?: () => number
   diagnostic?(
-    event: 'sse_disconnected' | 'reconnect_attempt',
-    details: { connectionGeneration: number },
+    event: 'sse_disconnected' | 'reconnect_attempt' | 'sse_identity_capability',
+    details: { connectionGeneration: number, identityVersion?: string },
   ): void
 }
 
 class ArkmeChatRealtimeAuthError extends Error {}
+
+class ArkmeChatRealtimeRetryAfterError extends Error {
+  constructor(readonly retryAfterMillis: number) {
+    super('chat SSE capacity retry requested')
+    this.name = 'ArkmeChatRealtimeRetryAfterError'
+  }
+}
+
+function capacityRetryAfterMillis(value: string | null): number | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const seconds = Number(value.trim())
+  return Number.isFinite(seconds) && seconds >= 0
+    ? Math.min(60_000, Math.round(seconds * 1_000))
+    : undefined
+}
 
 function positiveInteger(value: unknown): number | undefined {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : Number.NaN
@@ -212,6 +231,7 @@ export class ArkmeChatRealtimeRuntime {
   private connectionGeneration = 0
   private forceReconnectRequested = false
   private lastEventAtMillis: number | undefined
+  private lastIdentityVersion = ''
   private readonly seenEventUids = new Set<string>()
   private readonly listeners = new Set<(notice: ArkmeChatRealtimeNotice) => void>()
 
@@ -292,6 +312,7 @@ export class ArkmeChatRealtimeRuntime {
       }
       blockedAccessToken = undefined
       let stableConnection = false
+      let retryAfterMillis = 0
       this.options.diagnostic?.('reconnect_attempt', {
         connectionGeneration: this.connectionGeneration + 1,
       })
@@ -305,6 +326,9 @@ export class ArkmeChatRealtimeRuntime {
         stableConnection = this.lastConnectionLifetimeMs >= this.stableConnectionMs
         if (stableConnection) retryMs = this.retryBaseMs
         if (this.lastAcceptedAccessToken === session.accessToken) refreshedButUnacceptedToken = undefined
+        if (error instanceof ArkmeChatRealtimeRetryAfterError) {
+          retryAfterMillis = error.retryAfterMillis
+        }
         if (error instanceof ArkmeChatRealtimeAuthError) {
           if (refreshedButUnacceptedToken === session.accessToken) {
             blockedAccessToken = session.accessToken
@@ -338,7 +362,12 @@ export class ArkmeChatRealtimeRuntime {
         retryMs = this.retryBaseMs
         continue
       }
-      await this.wait(this.jitteredDelay(retryMs), signal)
+      await this.wait(Math.max(this.jitteredDelay(retryMs), retryAfterMillis), signal)
+      if (this.forceReconnectRequested) {
+        this.forceReconnectRequested = false
+        retryMs = this.retryBaseMs
+        continue
+      }
       if (!stableConnection) {
         retryMs = Math.min(this.maxRetryMs, Math.max(this.retryBaseMs, retryMs * 2))
       }
@@ -362,19 +391,32 @@ export class ArkmeChatRealtimeRuntime {
           'Accept-Language': 'zh-CN',
           Authorization: `Bearer ${session.accessToken}`,
           'Content-Type': 'application/json',
+          [ARKME_RUNTIME_INSTANCE_ID_HEADER]: ARKME_RUNTIME_INSTANCE_ID,
           Usersource: '3',
         },
         body: '{}',
         signal: controller.signal,
       })
       clearTimeout(connectTimer)
-      if (response.status === 401 || response.status === 403) throw new ArkmeChatRealtimeAuthError()
-      if (!response.ok || response.body === null) throw new Error(`chat SSE returned HTTP ${String(response.status)}`)
+      if (response.status === 401 || response.status === 403) {
+        await response.body?.cancel().catch(() => undefined)
+        throw new ArkmeChatRealtimeAuthError()
+      }
+      if (!response.ok) {
+        const retryAfterMillis = response.status === 429
+          ? capacityRetryAfterMillis(response.headers.get('retry-after'))
+          : undefined
+        await response.body?.cancel().catch(() => undefined)
+        if (retryAfterMillis !== undefined) throw new ArkmeChatRealtimeRetryAfterError(retryAfterMillis)
+        throw new Error(`chat SSE returned HTTP ${String(response.status)}`)
+      }
+      if (response.body === null) throw new Error(`chat SSE returned HTTP ${String(response.status)}`)
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
       if (!contentType.includes('text/event-stream')) {
         await response.body.cancel().catch(() => undefined)
         throw new Error('chat SSE returned a non-event-stream response')
       }
+      this.reportIdentityCapability(response)
       acceptedAtMillis = this.now()
       this.connected = true
       this.lastAcceptedAccessToken = session.accessToken
@@ -404,6 +446,16 @@ export class ArkmeChatRealtimeRuntime {
       rootSignal.removeEventListener('abort', abortFromRoot)
       if (this.connectionController === controller) this.connectionController = undefined
     }
+  }
+
+  private reportIdentityCapability(response: Response): void {
+    const identityVersion = response.headers.get(ARKME_SSE_IDENTITY_VERSION_HEADER)?.trim() || 'legacy'
+    if (identityVersion === this.lastIdentityVersion) return
+    this.lastIdentityVersion = identityVersion
+    this.options.diagnostic?.('sse_identity_capability', {
+      connectionGeneration: this.connectionGeneration + 1,
+      identityVersion,
+    })
   }
 
   private jitteredDelay(milliseconds: number): number {

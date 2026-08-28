@@ -310,7 +310,7 @@ export function ArkmeCalendarSurface({
       .catch(caught => { if (active && !controller.signal.aborted) setCalendarError(errorMessage(caught)) })
       .finally(() => { if (active) setCalendarLoading(false) })
     return () => { active = false; controller.abort() }
-  }, [timezone, visibleMonth, ui.chatRevision])
+  }, [timezone, visibleMonth, ui.chatRevision, ui.recordRevision])
 
   useEffect(() => {
     let active = true
@@ -325,7 +325,7 @@ export function ArkmeCalendarSurface({
       .catch(caught => { if (active && !controller.signal.aborted) setRecordsError(errorMessage(caught)) })
       .finally(() => { if (active) setRecordsLoading(false) })
     return () => { active = false; controller.abort() }
-  }, [selectedDate, timezone, ui.chatRevision])
+  }, [selectedDate, timezone, ui.chatRevision, ui.recordRevision])
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(day => [day.bucketDate, day])), [calendar])
   const canGoNext = !sameMonth(visibleMonth, today) && visibleMonth < monthStart(today)

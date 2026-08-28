@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jotmo.dev/contracts/dsh-remote/v1/remote-envelope.schema.json",
+  "title": "DSH Remote v1 bounded typed payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "protocol_major", "kind", "request_ref", "host_generation", "issued_at", "operation", "body"],
+  "properties": {
+    "protocol": {"const": "dsh.remote"},
+    "protocol_major": {"const": 1},
+    "kind": {"enum": ["request", "accepted", "response", "event", "error", "snapshot"]},
+    "request_ref": {"type": "string", "minLength": 8, "maxLength": 128},
+    "host_generation": {"type": "integer", "minimum": 1},
+    "issued_at": {"type": "integer", "minimum": 1},
+    "execute_before": {"type": "integer", "minimum": 1},
+    "operation": {
+      "enum": [
+        "capabilities.get", "snapshot.get", "workspace.list", "session.create",
+        "session.list", "session.history", "session.prompt", "session.cancel",
+        "interaction.question.respond", "interaction.approval.respond"
+      ]
+    },
+    "body": {"type": "object"},
+    "status": {"enum": ["accepted", "completed", "rejected", "duplicate"]},
+    "result": {},
+    "host_seq": {"type": "integer", "minimum": 0},
+    "session_seq": {"type": "integer", "minimum": 0},
+    "projection_as_of_seq": {"type": "integer", "minimum": 0},
+    "error": {"$ref": "#/$defs/error"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "request"}}},
+      "then": {"required": ["execute_before"]}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["capabilities.get"]}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"$ref": "#/$defs/emptyBody"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["snapshot.get", "workspace.list"]}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"$ref": "#/$defs/pageBody"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.list"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "properties": {"workspace_ref": {"$ref": "#/$defs/ref"}, "cursor": {"$ref": "#/$defs/cursor"}, "limit": {"$ref": "#/$defs/limit"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.create"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["workspace_ref"], "properties": {"workspace_ref": {"$ref": "#/$defs/ref"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.history"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "before_seq": {"type": "integer", "minimum": 1}, "limit": {"$ref": "#/$defs/limit"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.prompt"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "mode", "content"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "mode": {"enum": ["queue", "steer"]}, "content": {"$ref": "#/$defs/textContent"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.cancel"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "interaction.question.respond"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "interaction_rpc_ref", "answer"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "interaction_rpc_ref": {"$ref": "#/$defs/ref"}, "answer": {}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "interaction.approval.respond"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "interaction_rpc_ref", "approval_id", "outcome"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "interaction_rpc_ref": {"$ref": "#/$defs/ref"}, "approval_id": {"$ref": "#/$defs/ref"}, "outcome": {"enum": ["allowed-once", "rejected"]}}}}}
+    }
+  ],
+  "$defs": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 3, "maxLength": 64},
+        "message": {"type": "string", "maxLength": 256},
+        "retryable": {"type": "boolean"}
+      }
+    },
+    "ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "cursor": {"type": "string", "minLength": 1, "maxLength": 512},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    "emptyBody": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "pageBody": {"type": "object", "additionalProperties": false, "properties": {"cursor": {"$ref": "#/$defs/cursor"}, "limit": {"$ref": "#/$defs/limit"}}},
+    "textContent": {"type": "object", "additionalProperties": false, "required": ["type", "text"], "properties": {"type": {"const": "text"}, "text": {"type": "string", "minLength": 1, "maxLength": 16000}}}
+  }
+}

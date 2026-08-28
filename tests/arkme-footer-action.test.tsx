@@ -31,6 +31,20 @@ function renderFooter(patch: Partial<ArkmeFooterActionProps> = {}): string {
 }
 
 describe('ArkmeFooterAction', () => {
+  it.each([
+    [{ installPending: true }, '查看进度'],
+    [{ installPending: true, installWarning: '长时间没有进展' }, '查看状态'],
+    [{ installError: '安装失败' }, '查看结果'],
+    [{ installStatusError: '状态查询不可用' }, '查看状态'],
+  ] as const)('keeps the legacy update entry usable for %j', (patch, label) => {
+    const html = renderFooter({
+      updateSnapshot: { checked: true, busy: false, error: '', installError: '', ...patch },
+      onUpdate: () => undefined,
+    })
+    expect(html).toContain(`>${label}</button>`)
+    expect(html).not.toContain('disabled=""')
+  })
+
   it('shows the total Chat unread count on the right', () => {
     const html = renderFooter({ authenticated: true, unreadCount: 12 })
 

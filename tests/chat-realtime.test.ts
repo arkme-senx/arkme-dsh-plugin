@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE, ARKME_CHAT_SSE_PATH,
-  ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ArkmeChatRealtimeRuntime,
+  ARKME_PROJECTION_INVALIDATED_BIZ_TYPE, ARKME_RUNTIME_INSTANCE_ID_HEADER,
+  ARKME_SSE_IDENTITY_VERSION, ARKME_SSE_IDENTITY_VERSION_HEADER, ArkmeChatRealtimeRuntime,
   decodeArkmeChatReadCursorAdvancedDataLine, decodeArkmeChatReceiveDataLine,
   decodeArkmeProjectionInvalidatedDataLine,
 } from '../src/chat-realtime.js'
+import { ARKME_RUNTIME_INSTANCE_ID } from '../src/runtime-instance.js'
 
 const chatHint = {
   t: 17,
@@ -117,6 +119,8 @@ describe('Arkme Chat realtime', () => {
     expect(String(input)).toBe(`https://im.example.test${ARKME_CHAT_SSE_PATH}`)
     expect(init?.method).toBe('POST')
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access-secret')
+    expect(new Headers(init?.headers).get(ARKME_RUNTIME_INSTANCE_ID_HEADER)).toBe(ARKME_RUNTIME_INSTANCE_ID)
+    expect(ARKME_RUNTIME_INSTANCE_ID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
     stream.close()
     unsubscribe()
     stop()
@@ -304,7 +308,125 @@ describe('Arkme Chat realtime', () => {
     })
     expect(diagnostics).toContain('reconnect_attempt')
     expect(diagnostics).toContain('sse_disconnected')
+    expect(fetchImpl.mock.calls.map(call => new Headers(call[1]?.headers).get(ARKME_RUNTIME_INSTANCE_ID_HEADER)))
+      .toEqual([ARKME_RUNTIME_INSTANCE_ID, ARKME_RUNTIME_INSTANCE_ID])
     stop()
+  })
+
+  it('accepts legacy identity capability and observes a later version-2 upgrade', async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = []
+    const capabilities: string[] = []
+    let attempt = 0
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      attempt += 1
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { streams.push(controller) },
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          ...(attempt === 1 ? {} : { [ARKME_SSE_IDENTITY_VERSION_HEADER]: ARKME_SSE_IDENTITY_VERSION }),
+        },
+      })
+    })
+    const runtime = new ArkmeChatRealtimeRuntime({
+      imBaseUrl: 'https://im.example.test',
+      readSession: async () => ({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' }),
+      fetchImpl,
+      retryBaseMs: 5,
+      inactivityTimeoutMs: 10_000,
+      leaseDurationMs: 10_000,
+      random: () => 0.5,
+      diagnostic: (event, details) => {
+        if (event === 'sse_identity_capability' && details.identityVersion !== undefined) {
+          capabilities.push(details.identityVersion)
+        }
+      },
+    })
+
+    const stop = runtime.start()
+    await vi.waitFor(() => { expect(runtime.state().connectionGeneration).toBe(1) })
+    streams[0]!.close()
+    await vi.waitFor(() => { expect(runtime.state().connectionGeneration).toBe(2) })
+    expect(capabilities).toEqual(['legacy', '2'])
+    streams[1]!.close()
+    stop()
+  })
+
+  it('honors capacity Retry-After and releases the rejected response body', async () => {
+    vi.useFakeTimers()
+    try {
+      const canceled = vi.fn()
+      let attempt = 0
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        attempt += 1
+        if (attempt === 1) {
+          return new Response(new ReadableStream<Uint8Array>({ cancel: canceled }), {
+            status: 429,
+            headers: { 'Retry-After': '30' },
+          })
+        }
+        return new Response(new ReadableStream<Uint8Array>(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      })
+      const runtime = new ArkmeChatRealtimeRuntime({
+        imBaseUrl: 'https://im.example.test',
+        readSession: async () => ({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' }),
+        fetchImpl,
+        retryBaseMs: 100,
+        maxRetryMs: 1_000,
+        random: () => 0,
+      })
+
+      const stop = runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      expect(canceled).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets an explicit reconnect interrupt a capacity Retry-After wait without leaving a stale reconnect flag', async () => {
+    vi.useFakeTimers()
+    try {
+      let attempt = 0
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        attempt += 1
+        if (attempt === 1) return new Response(null, { status: 429, headers: { 'Retry-After': '30' } })
+        return new Response(new ReadableStream<Uint8Array>(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      })
+      const runtime = new ArkmeChatRealtimeRuntime({
+        imBaseUrl: 'https://im.example.test',
+        readSession: async () => ({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' }),
+        fetchImpl,
+        retryBaseMs: 100,
+        random: () => 0.5,
+      })
+
+      const stop = runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      runtime.reconnect()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(runtime.state().connectionGeneration).toBe(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('manual reconnect bypasses the network backoff', async () => {

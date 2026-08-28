@@ -13,7 +13,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeDshAgentInputMarker, isDshAgentInputRecord } from './ArkmeDshAgentInputMarker.js'
 import { arkmeUi } from './ui-controller.js'
 import { ArkmeVoiceContent } from './ArkmeVoiceContent.js'
-import { ArkmeRichText } from './ArkmeRichContent.js'
+import { ArkmeRichText } from './ArkmeRichText.js'
 
 const assetRoot = '/arkme-self/api/call'
 const mediaRoute = '/arkme-self/api/media'
@@ -86,12 +86,16 @@ const styles: Record<string, CSSProperties> = {
   modal: { position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 28, background: 'var(--dsw-alias-bg-mask-3, rgba(0,0,0,.55))' }, detail: { width: 'min(700px, 92vw)', maxHeight: '86vh', overflowY: 'auto', padding: 24, boxSizing: 'border-box', borderRadius: 14, background: colors.panel }, preview: { width: 'min(960px, 92vw)', maxHeight: '90vh', padding: 12, borderRadius: 14, background: '#111' }, previewMedia: { maxWidth: '100%', maxHeight: '78vh', display: 'block', margin: '0 auto', borderRadius: 8 }, closeText: { display: 'block', margin: '12px 0 0 auto', border: 0, borderRadius: 8, padding: '7px 12px', background: colors.subtle, color: colors.text, cursor: 'pointer' },
 }
 
+import { ArkmeFileQuickView } from './ArkmeFileQuickView.js'
+import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
+
 const quickEntries: Array<{ key: QuickKey; label: string; tabLabel: string }> = [
   { key: 'image', label: '图片', tabLabel: '图片库' },
   { key: 'ai_video', label: 'AI 视频', tabLabel: 'AI 视频' },
   { key: 'audio', label: '语音', tabLabel: '语音' },
+  { key: 'file', label: '文件', tabLabel: '文件' },
 ]
-type QuickKey = 'image' | 'ai_video' | 'audio'
+type QuickKey = 'image' | 'ai_video' | 'audio' | 'file'
 type Preview = { kind: 'image' | 'video'; url: string; name: string; subtitle?: string }
 type SearchResultTab = 'records' | 'topics' | 'recordings' | 'dsh'
 
@@ -198,7 +202,10 @@ function AudioQuickRow({ item, asset, onOpen }: {
   }, [item])
   return <article style={styles.audioRow} data-arkme-search-voice="true">
     <div role="button" tabIndex={0} aria-label={`打开快记 ${recordTitle(item)}`} style={styles.audioNavigate}
-      onClick={onOpen}
+      onClick={event => {
+        if (event.target instanceof Element && event.target.closest('a') !== null) return
+        onOpen()
+      }}
       onKeyDown={event => {
         if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
         event.preventDefault(); onOpen()
@@ -305,7 +312,7 @@ export function ArkmeSearchSurface({
     finally { setSourceLoading(false) }
   }, [query, records])
 
-  useEffect(() => { if (query.trim() === '') { resetResults(); return }; const timer = window.setTimeout(() => { void runSearch(query) }, 300); return () => window.clearTimeout(timer) }, [query, resetResults, runSearch])
+  useEffect(() => { if (quickRef.current === 'file') return; if (query.trim() === '') { resetResults(); return }; const timer = window.setTimeout(() => { void runSearch(query) }, 300); return () => window.clearTimeout(timer) }, [query, resetResults, runSearch])
 
   const loadQuick = useCallback(async (value: QuickKey) => {
     searchAbort.current?.abort()
@@ -316,7 +323,7 @@ export function ArkmeSearchSurface({
     const id = ++requestId.current
     quickRef.current = value
     setQuick(value); setQuery(''); setRecords(undefined); setRecordings(undefined); setDshMessages(undefined); setSelectedSourceUid(''); setSourceRecords([]); setRecordError(''); setRecordingError(''); setDshError('')
-    if (hasCachedPage) { setLoading(false); return }
+    if (value === 'file' || hasCachedPage) { setLoading(false); return }
     const controller = new AbortController()
     quickRequestAbort.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 20_000)
@@ -490,7 +497,7 @@ export function ArkmeSearchSurface({
         </section>}
         <section style={styles.section} aria-label="快速查找">
           <div style={styles.sectionHeader}><h3 style={styles.sectionTitle}>快速查找</h3><span style={styles.quickHint}>按内容类型浏览</span></div>
-          <div style={styles.quickChips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
+          <div style={styles.quickChips}>{quickEntries.map(entry => <button key={entry.key} type="button" style={styles.quickChip} onClick={() => { void loadQuick(entry.key) }}>{entry.key === 'file' ? <FileTextIcon size={18} aria-hidden /> : entry.key === 'audio' ? <Waveform size={18} aria-hidden /> : <img src={`${assetRoot}/${entry.key === 'image' ? 'gallery-linear.svg' : 'arkme-video-linear.svg'}`} alt="" aria-hidden style={styles.quickChipIcon} />}<span>{entry.label}</span></button>)}</div>
         </section>
       </div> : searchResults}
     </div> : <div style={{ ...styles.quickShell, ...(variant === 'dialog' ? styles.column : {}) }}>
@@ -504,7 +511,7 @@ export function ArkmeSearchSurface({
           })}
         </div>
       </header>
-      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
+      <main key={quick} ref={quickScroll} aria-label="快速查找内容" tabIndex={variant === 'dialog' ? 0 : undefined} style={{ ...styles.quickBody, ...(variant === 'dialog' ? styles.quickDialogBody : {}) }}>{quick === 'file' ? <ArkmeFileQuickView query={query} onOpenRecord={openRecord} /> : hasQuery ? <>{loading ? <Status loading /> : recordError !== '' ? <Status loading={false} error={recordError} /> : recordItems.length === 0 ? <Status loading={false} empty /> : <div style={styles.list}>{recordItems.map(item => <RecordRow key={item.recordUid} item={item} onClick={() => { openRecord(item) }} />)}</div>}</> : quickBody}</main>
     </div>}
     {preview !== undefined && <div style={styles.modal} role="dialog" aria-modal="true" onClick={() => setPreview(undefined)}><div style={styles.preview} onClick={event => event.stopPropagation()}>{preview.kind === 'video' ? <video src={preview.url} controls autoPlay style={styles.previewMedia} /> : <img src={preview.url} alt={preview.name} style={styles.previewMedia} />}{preview.subtitle !== undefined && preview.subtitle !== '' && <span style={{ ...styles.meta, color: '#c7cbd1', textAlign: 'center' }}>{preview.subtitle}</span>}<button type="button" style={styles.closeText} onClick={() => setPreview(undefined)}>关闭</button></div></div>}
   </div>

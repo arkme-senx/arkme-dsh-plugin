@@ -143,6 +143,11 @@ function phoneDefaultAvatarFallback(raw: string): ArkmeGroupAvatarFallback | und
   }
 }
 
+function fileAssetAvatarRef(raw: string): string | undefined {
+  const normalized = raw.trim()
+  return /^file_asset:\/\/[A-Za-z0-9_-]{8,128}$/.test(normalized) ? normalized : undefined
+}
+
 function allowedSignedImageHost(environment: ArkmeEnvironment, hostname: string): boolean {
   const allowed = environment === 'prod'
     ? ['jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', 'userfiles.jotmo.cc']
@@ -205,7 +210,10 @@ export class ProfileService {
 
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
     const session = await this.runtime.requireAuthFlowSession()
-    return await this.runtime.stateStore.cachedProfile(session.userId)
+    const cached = await this.runtime.stateStore.cachedProfile(session.userId)
+    // Upgrade pre-fix cached profiles: their raw URL or file_asset reference cannot be rendered by image.read.
+    if (this.profileNeedsAvatarRefresh(cached, session.userId)) return await this.refreshProfileForSession(session)
+    return cached
   }
 
   async refreshProfile(): Promise<ArkmeUserProfileSnapshot> {
@@ -323,6 +331,7 @@ export class ProfileService {
     const persisted = await this.runtime.stateStore.cachedProfile(session.userId).catch(() => undefined)
     if (persisted?.profile?.userId === session.userId
       && persisted.cachedAtMillis > 0 && Date.now() - persisted.cachedAtMillis < PROFILE_CACHE_TTL_MS) {
+      if (this.profileNeedsAvatarRefresh(persisted, session.userId)) return await this.refreshProfileForSession(session)
       this.profileCache.set(session.userId, {
         value: persisted,
         expiresAtMillis: persisted.cachedAtMillis + PROFILE_CACHE_TTL_MS,
@@ -353,7 +362,17 @@ export class ProfileService {
         || stringValue(data.google_given_name).trim()
         || stringValue(data.name_slug).trim()
         || 'Arkme用户'
-      const avatarRef = stringValue(data.head_img).trim()
+      const rawAvatarRef = stringValue(data.head_img).trim()
+      const avatarAssetRef = fileAssetAvatarRef(rawAvatarRef)
+      // The public-profile endpoint is the production-proven avatar path used for every other member.
+      // Prefer it for the signed-in user too; get-user-info may instead expose an internal file_asset reference.
+      const publicAvatarUrl = await this.publicProfilesByUserIds([session.userId], session)
+        .then(profiles => profiles.get(session.userId)?.avatarUrl)
+        .catch(() => undefined)
+      const avatarUrl = publicAvatarUrl ?? (/^https?:\/\//i.test(rawAvatarRef) ? rawAvatarRef : undefined)
+      const avatarRef = avatarUrl !== undefined || avatarAssetRef !== undefined
+        ? await this.sealProfileImageRef(session.userId, session.userId)
+        : rawAvatarRef
       const phone = maskedPhone(stringValue(data.phone))
       const email = maskedEmail(stringValue(data.email))
       const wechatName = stringValue(data.wechat_nick_name).trim()
@@ -363,7 +382,8 @@ export class ProfileService {
         displayName,
         nickname,
         avatarRef,
-        ...(/^https?:\/\//i.test(avatarRef) ? { avatarUrl: avatarRef } : {}),
+        ...(avatarAssetRef === undefined ? {} : { avatarAssetRef }),
+        ...(avatarUrl === undefined ? {} : { avatarUrl }),
         arkmeId: stringValue(data.jotmo_id).trim() || stringValue(data.name_slug).trim(),
         ...(canUpdateArkmeId === undefined ? {} : { canUpdateArkmeId }),
         accountType: numberValue(data.type),
@@ -389,6 +409,13 @@ export class ProfileService {
     } finally {
       if (this.profileInFlight.get(session.userId) === pending) this.profileInFlight.delete(session.userId)
     }
+  }
+
+  private profileNeedsAvatarRefresh(snapshot: ArkmeUserProfileSnapshot, userId: number): boolean {
+    const profile = snapshot.profile
+    if (profile?.userId !== userId) return false
+    const avatarRef = profile.avatarRef.trim()
+    return /^https?:\/\//i.test(avatarRef) || fileAssetAvatarRef(avatarRef) !== undefined
   }
 
   async publicProfileSummariesByUserIds(

@@ -82,6 +82,23 @@ export class SearchService {
     return await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids), options.signal)
   }
 
+  async searchFiles(options: { query?: string; limit: number; cursor?: string; signal?: AbortSignal }): Promise<ArkmeRecordSearchResult> {
+    const page = options.query?.trim()
+      ? await this.searchRemote({ ...options, query: options.query })
+      : await this.searchScene({ ...options, scene: 'file' })
+    const items = page.items.filter(item => item.files.length > 0)
+    const requests = items.flatMap(item => item.files.map(file => ({ recordUid: item.recordUid, fileAssetUid: file.fileAssetUid })))
+    const refs = new Map<string, string>()
+    for (let offset = 0; offset < requests.length; offset += 50) {
+      const part = await this.media.issueSearchFileMediaRefs(requests.slice(offset, offset + 50), options.signal)
+      for (const [key, value] of part) refs.set(key, value)
+    }
+    return { ...page, items: items.map(item => ({ ...item, files: item.files.map(file => {
+      const mediaRef = refs.get(`${item.recordUid}\0${file.fileAssetUid}`)
+      return mediaRef === undefined ? file : { ...file, mediaRef }
+    }) })) }
+  }
+
   private async withAudioMediaRefs(
     result: ArkmeRecordSearchResult,
     signal?: AbortSignal,

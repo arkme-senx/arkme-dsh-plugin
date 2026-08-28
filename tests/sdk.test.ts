@@ -892,6 +892,37 @@ describe('Arkme SDK', () => {
     ]) expect(rootSource).toContain(name)
   })
 
+  it('exposes the same confirmation-based group AI polish owner to external plugins', async () => {
+    const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
+    const sdk = createArkmeSdk({
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
+        calls.push(request)
+        if (request.operation === 'source.ai-polish.settings') return success({
+          sourceRef: 'group-ref', groupName: '产品群', enabled: false, canManage: true,
+          viewerRole: 1, activeRuleName: '', rules: [], updatedAtMillis: 1,
+        })
+        if (request.operation === 'source.ai-polish.prepare-enable') return success({
+          groupName: '产品群', ruleName: '友好简洁', ruleText: '表达友好、简洁。', confirmationRef: 'confirm-1',
+        })
+        if (request.operation === 'source.ai-polish.confirm-enable') return success({
+          groupName: '产品群', enabled: true, ruleName: '友好简洁', changed: true,
+        })
+        throw new Error(`unexpected ${request.operation}`)
+      },
+    })
+
+    await expect(sdk.groupAiPolishSettings('group-ref')).resolves.toMatchObject({ canManage: true })
+    await expect(sdk.prepareEnableGroupAiPolishRule('group-ref', 'rule-2'))
+      .resolves.toMatchObject({ confirmationRef: 'confirm-1' })
+    await expect(sdk.confirmEnableGroupAiPolish('confirm-1')).resolves.toMatchObject({ enabled: true })
+    expect(calls).toEqual([
+      { operation: 'source.ai-polish.settings', params: { sourceRef: 'group-ref' } },
+      { operation: 'source.ai-polish.prepare-enable', params: { sourceRef: 'group-ref', ruleRef: 'rule-2' } },
+      { operation: 'source.ai-polish.confirm-enable', params: { confirmationRef: 'confirm-1' } },
+    ])
+  })
+
   it('notifies subscribers only when auth identity or revision changes', async () => {
     vi.useFakeTimers()
     const states: ArkmeProviderState[] = [

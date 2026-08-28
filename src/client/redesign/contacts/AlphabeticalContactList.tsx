@@ -1,4 +1,4 @@
-import type { ArkmeDirectoryItem } from '../../../types.js'
+import type { ArkmeBotSummary, ArkmeDirectoryItem } from '../../../types.js'
 import { groupContactDirectoryItems } from '../../../contact-directory-presentation.js'
 import { ArkmeDefaultAvatarFrame, ArkmeSourceAvatar, ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 import type { ArkmeDirectorySelection } from './contact-directory-state.js'
@@ -8,7 +8,7 @@ export interface DirectoryItemRowProps {
   item: ArkmeDirectoryItem
   selected: boolean
   onOpenGroup(sourceRef: string): void
-  onOpenBot(botRef: string): void
+  onOpenBot(bot: ArkmeBotSummary): void
   onSelect(selection: ArkmeDirectorySelection): void
 }
 
@@ -58,6 +58,7 @@ function itemSubtitle(item: ArkmeDirectoryItem): string {
 }
 
 function itemTitle(item: ArkmeDirectoryItem): string {
+  if (item.kind === 'bot') return item.bot.name
   if (item.kind !== 'contact') return item.displayName
   return item.remark.trim() || item.nickname.trim() || item.displayName
 }
@@ -76,7 +77,7 @@ function rowContent(item: ArkmeDirectoryItem) {
           />
         </span>
       : item.kind === 'bot'
-        ? <span className="arkme-contact-directory-avatar is-bot" role="img" aria-label={`${item.displayName}的机器人头像`}>
+        ? <span className="arkme-contact-directory-avatar is-bot" role="img" aria-label={`${item.bot.name}的机器人头像`}>
             <ArkmeDefaultAvatarFrame>
               <ArkmeDirectoryBotGlyph />
             </ArkmeDefaultAvatarFrame>
@@ -130,11 +131,11 @@ export function DirectoryItemRow({
     type="button"
     className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}
     data-directory-row-kind={item.kind}
-    data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.candidateRef}
+    data-directory-row-ref={item.kind === 'group' ? item.sourceRef : item.kind === 'bot' ? item.bot.botRef : selection === undefined ? '' : item.kind === 'contact' ? item.contactRef : item.candidateRef}
     {...(selection === undefined ? {} : { 'aria-current': selected as true | false })}
     onClick={() => {
       if (item.kind === 'group') onOpenGroup(item.sourceRef)
-      else if (item.kind === 'bot') onOpenBot(item.botRef)
+      else if (item.kind === 'bot') onOpenBot(item.bot)
       else onSelect(selection ?? { kind: 'none' })
     }}
   >{rowContent(item)}</button>
@@ -151,7 +152,7 @@ export function AlphabeticalContactList({
   selection: ArkmeDirectorySelection
   onSelect(selection: ArkmeDirectorySelection): void
   onOpenGroup(sourceRef: string): void
-  onOpenBot(botRef: string): void
+  onOpenBot(bot: ArkmeBotSummary): void
 }) {
   return <div className="arkme-contact-directory-alphabetical" role="list">
     {groupContactDirectoryItems(items).map(group => <div key={group.letter} className="arkme-contact-directory-letter-group">

@@ -181,7 +181,7 @@ export class ChatRealtimeService {
     }
   }
 
-  private async invalidateRecordProjection(): Promise<void> {
+  async invalidateRecordProjection(): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return

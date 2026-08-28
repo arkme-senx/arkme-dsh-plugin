@@ -18,9 +18,14 @@ import {
   type ContactDirectoryState,
 } from '../src/client/redesign/contacts/contact-directory-state.js'
 
+const botSummary = {
+  botRef: 'bot-ref', name: '旅行助手', provider: 'webhook', description: '', status: 'online',
+  directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
+} as const
+
 const items: Record<ArkmeDirectorySectionKind, ArkmeDirectoryItem[]> = {
   groups: [{ kind: 'group', sourceRef: 'group-ref', displayName: '产品共创' }],
-  bots: [{ kind: 'bot', botRef: 'bot-ref', displayName: '旅行助手' }],
+  bots: [{ kind: 'bot', bot: botSummary }],
   'unmarked-speakers': [{
     kind: 'unmarked-speaker', candidateRef: 'candidate-ref', speakerToken: 'B', displayName: '说话人 B', subtitle: '3 天 · 最新：今天 09:28',
   }],
@@ -197,7 +202,9 @@ describe('ContactDirectorySurface content', () => {
 
   it('renders every Bot row as a circular robot avatar', () => {
     const markup = renderToStaticMarkup(<DirectoryItemRow
-      item={{ kind: 'bot', botRef: 'bot-ref', displayName: '旅行助手', avatarRef: 'ignored-bot-avatar' }}
+      item={{
+        kind: 'bot', bot: { ...botSummary, avatarRef: 'ignored-bot-avatar' },
+      }}
       selected={false}
       onOpenGroup={() => undefined}
       onOpenBot={() => undefined}
@@ -305,7 +312,7 @@ describe('ContactDirectorySurface content', () => {
     }
 
     expect(onOpenGroup).toHaveBeenCalledWith('group-ref')
-    expect(onOpenBot).toHaveBeenCalledWith('bot-ref')
+    expect(onOpenBot).toHaveBeenCalledWith(botSummary)
     expect(onSelect).toHaveBeenNthCalledWith(1, { kind: 'contact', contactRef: 'alice' })
     expect(onSelect).toHaveBeenNthCalledWith(2, { kind: 'unmarked-speaker', candidateRef: 'candidate-ref' })
   })

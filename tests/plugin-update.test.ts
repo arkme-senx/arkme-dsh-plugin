@@ -115,7 +115,7 @@ describe('ArkmePluginUpdateManager', () => {
     await expect(value.installStatus()).resolves.toEqual(currentRollback)
   })
 
-  it('keeps an active install regardless of its age or target', async () => {
+  it('keeps an active install for a version not running yet, regardless of its age', async () => {
     const now = 1_000_000
     const { value, root } = await manager({ now: () => now })
     await value.check({ manual: true })
@@ -123,15 +123,32 @@ describe('ArkmePluginUpdateManager', () => {
       schemaVersion: 1 as const,
       jobId: 'active-install',
       phase: 'installing' as const,
-      previousVersion: '0.1.2',
-      targetVersion: '0.1.3',
-      message: '正在安装 0.1.3…',
+      previousVersion: '0.1.3',
+      targetVersion: '0.1.4',
+      message: '正在安装 0.1.4…',
       updatedAtMillis: 1,
     }
     await new PluginUpdateInstallStateStore(root).write(activeInstall)
 
     await expect(value.installStatus()).resolves.toEqual(activeInstall)
   })
+
+  it.each(['preparing', 'downloading', 'verifying', 'installing', 'restarting'] as const)(
+    'does not advertise an obsolete %s job once its target version is running', async phase => {
+      const { value, root } = await manager()
+      await value.check({ manual: true })
+      const store = new PluginUpdateInstallStateStore(root)
+      const oldJob = {
+        schemaVersion: 1 as const, jobId: 'already-running', phase,
+        previousVersion: '0.1.2', targetVersion: '0.1.3',
+        message: '正在安装 0.1.3…', updatedAtMillis: Date.now(),
+      }
+      await store.write(oldJob)
+      await expect(value.installStatus()).resolves.toBeUndefined()
+      // Do not race the helper's final receipt/state write or invent a success.
+      await expect(store.read()).resolves.toEqual(oldJob)
+    },
+  )
 
   it('checks the Jotmo private update endpoint with app/dsh/current version query params', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

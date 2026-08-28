@@ -75,6 +75,7 @@ export interface ArkmeServiceConfig {
   richMediaRenderEnabled?: boolean
   richMediaSendEnabled?: boolean
   maxUploadBytes?: number
+  fileStateDirectory?: string
 }
 
 export type FetchLike = typeof fetch
@@ -435,6 +436,7 @@ export class ServiceRuntime {
     successCodes: readonly number[],
     signal?: AbortSignal,
     options: ArkmeRemoteRequestOptions = {},
+    preferDataError = false,
   ): Promise<T> {
     return await this.requestCoordinator.run({
       scope: options.scope ?? 'public',
@@ -449,7 +451,7 @@ export class ServiceRuntime {
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => this.remoteServiceCooldownMs(error),
       operation: async coordinatedSignal => await this.getDirect(
-        baseUrl, path, bearer, successCodes, coordinatedSignal,
+        baseUrl, path, bearer, successCodes, coordinatedSignal, preferDataError,
       ),
     })
   }
@@ -460,6 +462,7 @@ export class ServiceRuntime {
     bearer: string | undefined,
     successCodes: readonly number[],
     signal: AbortSignal = new AbortController().signal,
+    preferDataError = false,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
@@ -498,10 +501,13 @@ export class ServiceRuntime {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
       if (!successCodes.includes(envelope.code)) {
+        const errorData = objectValue(envelope.data)
+        const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
+        const serviceMessage = preferDataError ? stringValue(errorData.message).trim() : ''
         throw new ArkmePluginError(
-          `arkme-code-${envelope.code}`,
-          envelope.message?.trim() || 'Arkme 服务请求失败',
-          envelope.code >= 500,
+          serviceErrorCode || `arkme-code-${envelope.code}`,
+          serviceMessage || envelope.message?.trim() || 'Arkme 服务请求失败',
+          serviceErrorCode === '' ? envelope.code >= 500 : serviceErrorCode === 'PAIRING_RATE_LIMITED',
           502,
         )
       }
@@ -548,6 +554,18 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions())
+    }
+  }
+
+  async authenticatedDshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+    let session = await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'interactive-read', { bypassCache: true })
+    try {
+      return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions(), true)
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.get<T>(this.config.authBaseUrl, path, session.accessToken, [200], signal, requestOptions(), true)
     }
   }
 
@@ -632,6 +650,23 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  async authenticatedDshRemotePost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    initialSession?: ArkmeSessionCredentials,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    let session = initialSession ?? await this.requireSession()
+    const requestOptions = () => this.authenticatedRequestOptions(session, 'auth', 'write', { bypassCache: true })
+    try {
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
+    } catch (error) {
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
+      session = await this.refreshAccessToken(session)
+      return await this.post<T>(this.config.authBaseUrl, path, body, session.accessToken, [200], signal, true, requestOptions())
     }
   }
 

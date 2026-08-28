@@ -117,7 +117,7 @@ export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreate
 
   useEffect(() => {
     if (!menuOpen || typeof document === 'undefined') return
-    const closeFromOutside = (event: PointerEvent) => {
+    const closeFromOutside = (event: PointerEvent | MouseEvent) => {
       if (anchorRef.current !== null && !anchorRef.current.contains(event.target as Node)) setMenuOpen(false)
     }
     const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
@@ -126,10 +126,12 @@ export function ArkmeQuickAddButton({ onContactAdd, onSourceCreated, onBotCreate
         triggerRef.current?.focus()
       }
     }
-    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('pointerdown', closeFromOutside, true)
+    document.addEventListener('mousedown', closeFromOutside, true)
     document.addEventListener('keydown', closeFromKeyboard)
     return () => {
-      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('pointerdown', closeFromOutside, true)
+      document.removeEventListener('mousedown', closeFromOutside, true)
       document.removeEventListener('keydown', closeFromKeyboard)
     }
   }, [menuOpen])

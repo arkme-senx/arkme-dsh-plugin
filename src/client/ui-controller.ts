@@ -17,8 +17,14 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
   if (left === undefined || right === undefined) return left === right
   return left.botRef === right.botRef && left.name === right.name && left.provider === right.provider
     && left.description === right.description && left.status === right.status && left.avatarRef === right.avatarRef
+    && left.directChatAvailable === right.directChatAvailable
+    && left.privateChatOutboundEnabled === right.privateChatOutboundEnabled
+    && left.refreshOnRecordChanges === right.refreshOnRecordChanges
+    && left.conversationProjection === right.conversationProjection
+    && left.chatSourceKey === right.chatSourceKey
     && left.createdAtMillis === right.createdAtMillis && left.latestMessageAtMillis === right.latestMessageAtMillis
-    && left.latestMessagePreview === right.latestMessagePreview
+    && left.latestMessagePreview === right.latestMessagePreview && left.unreadCount === right.unreadCount
+    && left.isMuted === right.isMuted
 }
 
 export interface ArkmeUiState {

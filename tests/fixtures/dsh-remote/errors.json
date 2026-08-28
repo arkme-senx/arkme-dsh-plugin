@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "errors": [
+    {"code": "REMOTE_LOGIN_REQUIRED", "retryable": false},
+    {"code": "REMOTE_REQUEST_INVALID", "retryable": false},
+    {"code": "REMOTE_INVALID_RESPONSE", "retryable": false},
+    {"code": "REMOTE_NETWORK_UNAVAILABLE", "retryable": true},
+    {"code": "REMOTE_STORAGE_FAILED", "retryable": false},
+    {"code": "REMOTE_TRANSPORT_FAILED", "retryable": true},
+    {"code": "RUNTIME_OFFLINE", "retryable": true},
+    {"code": "RUNTIME_LIMIT_REACHED", "retryable": false},
+    {"code": "HOST_CHANNEL_NOT_READY", "retryable": true},
+    {"code": "CAPABILITY_UNSUPPORTED", "retryable": false},
+    {"code": "WORKSPACE_UNAVAILABLE", "retryable": true},
+    {"code": "SESSION_NOT_FOUND", "retryable": false},
+    {"code": "COMMAND_EXPIRED", "retryable": false},
+    {"code": "COMMAND_OUTCOME_UNKNOWN", "retryable": false},
+    {"code": "INTERACTION_RESOLVED", "retryable": false},
+    {"code": "CONNECTION_REPLACED", "retryable": true},
+    {"code": "HOST_GENERATION_STALE", "retryable": true},
+    {"code": "SESSION_STATE_CHANGED", "retryable": true},
+    {"code": "REPLAY_GAP", "retryable": true},
+    {"code": "REMOTE_PROTOCOL_UNSUPPORTED", "retryable": false}
+  ]
+}

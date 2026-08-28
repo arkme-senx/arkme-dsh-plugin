@@ -12,6 +12,9 @@ import {
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_file_prepare',
+  'arkme_files_send',
+  'arkme_file_task',
   'arkme_id_set',
   'arkme_bot_openclaw_connect',
   'arkme_extension_review_create',
@@ -59,6 +62,11 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_file_prepare') return `是否确认将“${cleanArgument(args.file_name, 100)}”暂存到本地？这一步不会上传或发送。`
+  if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始上传。`
+  if (name === 'arkme_file_task') return cleanArgument(args.action, 30) === 'open-local'
+    ? '是否确认使用本机默认应用打开这个 Arkme 文件？'
+    : `是否确认执行文件任务操作“${cleanArgument(args.action, 30)}”？移除本地任务不会撤回已发送的消息。`
   if (name === 'arkme_group_member_add') {
     const count = Array.isArray(args.candidate_refs) ? args.candidate_refs.length : 0
     return `是否确认向这个群聊添加或邀请 ${String(count)} 位成员？成员加入后将可以看到群内后续消息。`

@@ -14,7 +14,7 @@ vi.mock('../src/client/api.js', () => ({
 import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { ArkmeRichComposerInput } from '../src/client/ArkmeRichComposerInput.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
-import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
+import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
 import { arkmeComposerDraftStore } from '../src/client/composer-draft-store.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
@@ -26,6 +26,10 @@ const target: ArkmeSourceItem = {
 const other: ArkmeSourceItem = {
   sourceRef: 'source-other', sourceKey: 'chat:other', kind: 'private_chat', displayName: '其他会话',
   latestPreview: '稍新的消息', activeAtMillis: 40, unreadCount: 1, latestSequence: 4,
+}
+const group: ArkmeSourceItem = {
+  sourceRef: 'source-group', sourceKey: 'chat:group', kind: 'group_chat', displayName: '群聊',
+  latestPreview: 'message-784', activeAtMillis: 48, unreadCount: 0, latestSequence: 784,
 }
 
 describe('conversation send directory projection', () => {
@@ -51,6 +55,7 @@ describe('conversation send directory projection', () => {
       .mockReturnValueOnce('relation-new') })
     arkmeComposerDraftStore.clearAccount(42)
     arkmeChatDirectory.clear()
+    arkmeChatTimelineDelta.publish([])
     arkmeChatDirectory.activateAccount(42)
     arkmeChatDirectory.publish([other, target])
     arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
@@ -150,6 +155,7 @@ describe('conversation send directory projection', () => {
     renderer = undefined
     arkmeComposerDraftStore.clearAccount(42)
     arkmeChatDirectory.clear()
+    arkmeChatTimelineDelta.publish([])
     arkmeMessageReadReceipts.activateAccount(undefined)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -178,6 +184,210 @@ describe('conversation send directory projection', () => {
       latestPreview: '测试', activeAtMillis: 48, unreadCount: 0, latestSequence: 9,
     })
     expect(renderer!.root.findByProps({ 'data-arkme-read-receipt-indicator': 'unread' })).toBeDefined()
+  })
+
+  it('keeps the list mounted and avoids a timeline reload when an AI-polished send advances the selected projection', async () => {
+    const previousItem: ArkmeTimelineItem = {
+      itemUid: 'message-784', sequence: 784, senderName: '我', isMe: true,
+      sendAtMillis: 40, title: '', textContent: '之前的消息', status: 1,
+    }
+    const polishedItem: ArkmeTimelineItem = {
+      itemUid: 'record-new', sequence: 785, senderName: '狗才', isMe: true,
+      sendAtMillis: 48, title: '', textContent: '润色后的测试', status: 1,
+      aiPolish: { state: 'polished', originalText: '测试', polishedText: '润色后的测试' },
+    }
+    timeline = [previousItem]
+    arkmeChatDirectory.publish([group, other])
+    arkmeUi.selectSource(group)
+    let timelineCalls = 0
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile') return {
+        profile: {
+          userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+        },
+        cachedAtMillis: 1, revision: 1,
+      }
+      if (operation === 'source.members') return { source: group, items: [], total: 0, activeCount: 0 }
+      if (operation === 'source.timeline') {
+        timelineCalls += 1
+        return {
+          source: group, items: timeline, hasMore: false,
+          aiPolishSettings: {
+            sourceRef: group.sourceRef, groupName: group.displayName, enabled: true, canManage: true,
+            viewerRole: 3, activeRuleName: '非主流', rules: [], updatedAtMillis: 1,
+          },
+        }
+      }
+      if (operation === 'source.send-text') {
+        timeline = [previousItem, polishedItem]
+        return {
+          sourceRef: group.sourceRef, itemUid: polishedItem.itemUid, status: 1,
+          sequence: polishedItem.sequence, localState: 'synced', aiPolish: polishedItem.aiPolish,
+        }
+      }
+      throw new Error(`unexpected operation ${operation}`)
+    })
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    const conversationList = () => renderer!.root.find(node => node.type === 'ul'
+      && typeof node.props.className === 'string'
+      && node.props.className.includes('arkme-conversation-records'))
+    const timelineCallsBeforeSend = timelineCalls
+    const listBefore = conversationList()
+    const previousRowBefore = renderer!.root.findByProps({ 'data-arkme-message-content-line': previousItem.itemUid })
+    const unsubscribe = arkmeChatDirectory.subscribe(() => {
+      const projected = arkmeChatDirectory.getSnapshot().sources.find(item => item.sourceRef === group.sourceRef)
+      if (projected?.latestSequence === polishedItem.sequence
+        && arkmeUi.getSnapshot().selectedSource?.latestSequence !== polishedItem.sequence) {
+        arkmeUi.selectSource(projected)
+      }
+    })
+    const composer = renderer!.root.findByType(ArkmeRichComposerInput)
+    await act(async () => {
+      composer.props.onTextChange('测试')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    unsubscribe()
+
+    expect(timelineCalls).toBe(timelineCallsBeforeSend)
+    expect(conversationList()).toBe(listBefore)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-content-line': previousItem.itemUid })).toBe(previousRowBefore)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-content-line': polishedItem.itemUid })).toBeDefined()
+  })
+
+  it('keeps one initial timeline request alive when the chat projection changes during loading', async () => {
+    const loadedItem: ArkmeTimelineItem = {
+      itemUid: 'message-after-reconcile', sequence: 784, senderName: '我', isMe: true,
+      sendAtMillis: 48, title: '', textContent: '加载完成', status: 1,
+    }
+    arkmeChatDirectory.publish([group, other])
+    arkmeUi.selectSource(group)
+    let timelineCalls = 0
+    let resolveTimeline!: (page: unknown) => void
+    const pendingTimeline = new Promise(resolve => { resolveTimeline = resolve })
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile') return {
+        profile: {
+          userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+        },
+        cachedAtMillis: 1,
+        revision: 1,
+      }
+      if (operation === 'source.timeline') {
+        timelineCalls += 1
+        return await pendingTimeline
+      }
+      if (operation === 'source.ai-polish.settings') return {
+        sourceRef: group.sourceRef, groupName: group.displayName, enabled: true, canManage: true,
+        viewerRole: 3, activeRuleName: '非主流', rules: [], updatedAtMillis: 1,
+      }
+      if (operation === 'source.ai-polish.notices') return []
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      arkmeUi.chatChanged()
+      await Promise.resolve()
+    })
+
+    expect(timelineCalls).toBe(1)
+    await act(async () => {
+      resolveTimeline({ source: group, items: [loadedItem], hasMore: false })
+      await pendingTimeline
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findByProps({ 'data-arkme-message-content-line': loadedItem.itemUid })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ 'aria-label': '正在加载会话内容' })).toHaveLength(0)
+  })
+
+  it('recovers the initial timeline after a transient browser transport failure', async () => {
+    const loadedItem: ArkmeTimelineItem = {
+      itemUid: 'message-after-retry', sequence: 784, senderName: '我', isMe: true,
+      sendAtMillis: 48, title: '', textContent: '重试后加载完成', status: 1,
+    }
+    arkmeChatDirectory.publish([group, other])
+    arkmeUi.selectSource(group)
+    let timelineCalls = 0
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'user.profile') return {
+        profile: {
+          userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
+          createdAt: 1, bindings: { apple: false, wechat: true, google: false }, contact: {},
+        },
+        cachedAtMillis: 1, revision: 1,
+      }
+      if (operation === 'source.timeline') {
+        timelineCalls += 1
+        if (timelineCalls === 1) throw new TypeError('Failed to fetch')
+        return { source: group, items: [loadedItem], hasMore: false }
+      }
+      if (operation === 'source.ai-polish.settings') return {
+        sourceRef: group.sourceRef, groupName: group.displayName, enabled: true, canManage: true,
+        viewerRole: 3, activeRuleName: '非主流', rules: [], updatedAtMillis: 1,
+      }
+      if (operation === 'source.ai-polish.notices') return []
+      throw new Error(`unexpected operation ${operation}`)
+    })
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(timelineCalls).toBe(2)
+    expect(renderer!.root.findByProps({ 'data-arkme-message-content-line': loadedItem.itemUid })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ 'aria-label': '正在加载会话内容' })).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('Failed to fetch')
+  })
+
+  it('keeps the complete cached group timeline when returning from Harness with a retained realtime delta', async () => {
+    timeline = Array.from({ length: 6 }, (_, index): ArkmeTimelineItem => ({
+      itemUid: `message-${String(779 + index)}`,
+      sequence: 779 + index,
+      senderName: '我',
+      isMe: true,
+      sendAtMillis: 40 + index,
+      title: '',
+      textContent: `message-${String(779 + index)}`,
+      status: 1,
+    }))
+    arkmeChatDirectory.publish([group, other])
+    arkmeUi.selectSource(group)
+
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
+      await Promise.resolve()
+    })
+    const visibleMessageIds = () => renderer!.root
+      .findAll(node => typeof node.props['data-arkme-message-content-line'] === 'string')
+      .map(node => node.props['data-arkme-message-content-line'])
+    expect(visibleMessageIds()).toEqual(timeline.map(item => item.itemUid))
+
+    await act(async () => {
+      arkmeChatTimelineDelta.publish([{ sourceRef: group.sourceRef, items: [timeline[5]!] }])
+    })
+    await act(async () => { arkmeUi.showHarness() })
+    await act(async () => {
+      arkmeUi.selectSource(group)
+      await Promise.resolve()
+    })
+
+    expect(visibleMessageIds()).toEqual(timeline.map(item => item.itemUid))
   })
 
   it('keeps the read receipt next to a forwarded card while opening its complete transcript detail', async () => {

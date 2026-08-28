@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "authority": "authenticated-account",
+  "runtime_target": {
+    "channel_ref": "runtime_fixture_01",
+    "runtime_ref": "runtime_fixture_01",
+    "host_profile_ref": "profile_fixture_01",
+    "host_client_ref": "host_client_fixture_01",
+    "host_lease_generation": 17
+  },
+  "host_pre_registration_subscribe": {
+    "type": "channel.subscribe",
+    "request_id": "request_subscribe_fixture_01",
+    "namespace": "dsh_remote",
+    "channel_ref": "runtime_fixture_01",
+    "runtime_ref": "runtime_fixture_01",
+    "host_profile_ref": "profile_fixture_01",
+    "host_client_ref": "host_client_fixture_01",
+    "host_lease_generation": 0,
+    "after_seq": 3
+  },
+  "host_service_register": {
+    "type": "service.register",
+    "request_id": "request_register_fixture_01",
+    "namespace": "dsh_remote",
+    "service": "host",
+    "protocol": "dsh.remote",
+    "protocol_major": 1,
+    "descriptor": {
+      "runtime_ref": "runtime_fixture_01",
+      "capabilities": ["session.list", "session.prompt"]
+    }
+  },
+  "controller_publish": {
+    "type": "channel.publish",
+    "request_id": "request_publish_fixture_01",
+    "namespace": "dsh_remote",
+    "channel_ref": "runtime_fixture_01",
+    "runtime_ref": "runtime_fixture_01",
+    "host_profile_ref": "profile_fixture_01",
+    "host_client_ref": "host_client_fixture_01",
+    "host_lease_generation": 17,
+    "command_id": "command_fixture_01",
+    "direction": "request",
+    "payload": {
+      "protocol": "dsh.remote",
+      "protocol_major": 1,
+      "kind": "request",
+      "request_ref": "request_fixture_01",
+      "host_generation": 7,
+      "issued_at": 1787760000000,
+      "execute_before": 1787760030000,
+      "operation": "session.list",
+      "body": {}
+    }
+  },
+  "trusted_event_metadata": {
+    "sender_role": "controller",
+    "runtime_ref": "runtime_fixture_01",
+    "accepted_at": 1787760000100,
+    "target_host_lease_generation": 17
+  }
+}

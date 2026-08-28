@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react'
-import type { ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../../../types.js'
+import type { ArkmeBotSummary, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeDirectorySectionKind } from '../../../types.js'
 import { callArkme } from '../../api.js'
 import { AlphabeticalContactList, DirectoryItemRow } from './AlphabeticalContactList.js'
 import { CollapsibleDirectorySection } from './CollapsibleDirectorySection.js'
@@ -46,7 +46,7 @@ export interface ContactDirectorySurfaceProps {
   onSelectionChange(selection: ArkmeDirectorySelection): void
   onExpandedChange?(section: ArkmeDirectorySectionKind, expanded: boolean): void
   onOpenGroup(sourceRef: string): void
-  onOpenBot(botRef: string): void
+  onOpenBot(bot: ArkmeBotSummary): void
   onStateChange?(state: ContactDirectoryState, refreshed: boolean): void
   loadPage?: ContactDirectoryPageLoader
 }
@@ -80,7 +80,7 @@ export function ContactDirectoryContent({
   onLoadMore(section: ArkmeDirectorySectionKind): void
   onSelect(selection: ArkmeDirectorySelection): void
   onOpenGroup(sourceRef: string): void
-  onOpenBot(botRef: string): void
+  onOpenBot(bot: ArkmeBotSummary): void
 }) {
   return <nav className="arkme-contact-directory" aria-label="联系人目录">
     {CONTACT_DIRECTORY_SECTION_ORDER.map(sectionKind => {
@@ -106,7 +106,7 @@ export function ContactDirectoryContent({
           : <div className="arkme-contact-directory-list" role="list">
               {section.items.map(item => <DirectoryItemRow
                 key={item.kind === 'group' ? item.sourceRef
-                  : item.kind === 'bot' ? item.botRef
+                  : item.kind === 'bot' ? item.bot.botRef
                     : item.kind === 'unmarked-speaker' ? item.candidateRef
                       : item.kind === 'team' ? item.rowKey : item.contactRef}
                 item={item}

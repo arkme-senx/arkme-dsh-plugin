@@ -21,6 +21,7 @@ import { ProfileService, type ArkmePublicProfile } from './profile-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { arkmeMentionMetadataMentionsViewer } from '../mention-metadata.js'
+import { arkmeMediaKind } from '../file-transfer-contract.js'
 
 export interface ArkmeSourceRefPayload {
   version: 1
@@ -191,16 +192,54 @@ function chatMessageDnd(value: unknown): boolean | undefined {
   return numberValue(policy.mute_state) === 2 || numberValue(policy.notify_state) === 2
 }
 
-function textPreview(raw: Record<string, unknown>): string {
+function attachmentPreviewKind(item: Record<string, unknown>): 'image' | 'video' | 'audio' | 'file' {
+  const fileName = stringValue(item.file_name ?? item.fileName).trim()
+  const mimeType = stringValue(item.mime_type ?? item.mimeType).trim()
+  const detectedKind = arkmeMediaKind(mimeType, fileName)
+  if (detectedKind !== undefined) return detectedKind
+  const fileKind = integerLikeValue(item.file_kind ?? item.fileKind)
+  if (fileKind === 1) return 'image'
+  if (fileKind === 2) return 'audio'
+  if (fileKind === 3) return 'video'
+  return 'file'
+}
+
+export function arkmeChatConversationPreview(raw: Record<string, unknown>): string {
   const direct = stringValue(raw.text_content ?? raw.title ?? raw.summary).trim()
   if (direct !== '') return direct.slice(0, 300)
   const content = objectValue(raw.content_payload ?? raw.payload)
   const nested = stringValue(content.text_content ?? content.title ?? content.summary).trim()
   if (nested !== '') return nested.slice(0, 300)
   if (objectValue(content.voice).duration !== undefined) return '[语音]'
-  if (listValue(content.media_refs).length > 0 || listValue(raw.media_display_items).length > 0) return '[图片]'
+  const displayItems = listValue(raw.media_display_items ?? raw.mediaDisplayItems).map(objectValue)
+  const displayByAsset = new Map<string, Record<string, unknown>>()
+  for (const item of displayItems) {
+    const fileAssetUid = stringValue(item.file_asset_uid ?? item.fileAssetUid).trim()
+    if (fileAssetUid !== '') displayByAsset.set(fileAssetUid, item)
+  }
+  const mediaRefs = listValue(content.media_refs ?? content.mediaRefs).map(objectValue)
+  const attachments: Record<string, unknown>[] = (mediaRefs.length > 0
+    ? mediaRefs.map(ref => ({
+        ...(displayByAsset.get(stringValue(ref.file_asset_uid ?? ref.fileAssetUid).trim()) ?? {}),
+        ...ref,
+      }))
+    : displayItems)
+    .filter(item => integerLikeValue(item.content_file_role ?? item.contentFileRole) !== 4)
+    .sort((left, right) => integerLikeValue(left.sort_order ?? left.sortOrder) - integerLikeValue(right.sort_order ?? right.sortOrder))
+  const firstAttachment = attachments[0]
+  if (firstAttachment !== undefined) {
+    const kind = attachmentPreviewKind(firstAttachment)
+    return kind === 'image' ? '[图片]' : kind === 'video' ? '[视频]' : kind === 'audio' ? '[语音]' : '[文件]'
+  }
   if (Object.keys(objectValue(content.structured_anchor)).length > 0) return '[卡片]'
   return ''
+}
+
+export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): string {
+  const text = item.textContent.trim() || item.title.trim()
+  if (text !== '') return text
+  const kind = item.contentBlocks?.[0]?.kind
+  return kind === 'image' ? '[图片]' : kind === 'video' ? '[视频]' : kind === 'audio' ? '[语音]' : kind === 'file' ? '[文件]' : '非文本内容'
 }
 
 function chunksOf<T>(values: readonly T[], size: number): T[][] {
@@ -1195,7 +1234,7 @@ export class SourceService {
           ...(parentTopicUid === '' || parentTopicUid === topicUid ? {} : { parentTopicUid }),
           siblingOrder: numberValue(siblingOrderByChild.get(topicUid) ?? core.sibling_order ?? item.sibling_order),
           title,
-          latestPreview: textPreview(latest),
+          latestPreview: arkmeChatConversationPreview(latest),
           latestMessageAtMillis: numberValue(latest.send_at ?? summary.latest_send_at),
           activeAtMillis: numberValue(latest.send_at ?? summary.latest_send_at ?? core.update_at),
           recordCount: numberValue(summary.record_count),
@@ -1327,7 +1366,7 @@ export class SourceService {
           ?? supplement.pending_name ?? counterpart.visible_phone,
         )
         : stringValue(chatSession.title)).trim() || '未命名会话'
-      const preview = textPreview(latestPayload)
+      const preview = arkmeChatConversationPreview(latestPayload)
       const unreadCount = Math.max(0, Math.trunc(numberValue(unread.unread_count)))
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
@@ -1683,7 +1722,7 @@ export class SourceService {
     const latestPreview = latestItem === undefined
       ? cached?.latestPreview
       : latestItem.forwardRecords === undefined
-        ? latestItem.textContent || latestItem.title || '非文本内容'
+        ? arkmeTimelineConversationPreview(latestItem)
         : `[转发] ${latestItem.forwardRecords.title}`
     const latestSequence = Math.max(
       numberValue(unread.session_last_seq ?? chatSession.last_seq),

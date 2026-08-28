@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jotmo.dev/contracts/dsh-remote/v1/remote-channel.schema.json",
+  "title": "Account-login DSH Runtime channel target",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["channel_ref", "runtime_ref", "host_profile_ref", "host_client_ref", "host_lease_generation"],
+  "properties": {
+    "channel_ref": {"type": "string", "minLength": 1, "maxLength": 128},
+    "runtime_ref": {"type": "string", "minLength": 1, "maxLength": 128},
+    "host_profile_ref": {"type": "string", "minLength": 1, "maxLength": 128},
+    "host_client_ref": {"type": "string", "minLength": 1, "maxLength": 128},
+    "host_lease_generation": {"type": "integer", "minimum": 0}
+  }
+}

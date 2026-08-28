@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jotmo.dev/contracts/dsh-remote/v1/dsh-history-entry.schema.json",
+  "title": "DSH public HistoryEntry passthrough",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event"],
+  "properties": {
+    "event": {"$ref": "#/$defs/sessionEvent"},
+    "view": {"$ref": "#/$defs/toolEventView"}
+  },
+  "$defs": {
+    "sessionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "seq", "time", "data"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "seq": {"type": "integer", "minimum": 0},
+        "time": {"type": "number"},
+        "data": {},
+        "sourceEventSeqs": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "surfaceOp": {},
+        "ignorable": {"const": true}
+      }
+    },
+    "toolEventView": {
+      "oneOf": [
+        {"$ref": "#/$defs/toolCallView"},
+        {"$ref": "#/$defs/toolResultView"}
+      ]
+    },
+    "toolCallView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["for", "view"],
+      "properties": {
+        "for": {"const": "call"},
+        "view": {
+          "type": "object",
+          "required": ["card"],
+          "properties": {"card": {"type": "string"}}
+        }
+      }
+    },
+    "toolResultView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["for", "view"],
+      "properties": {
+        "for": {"const": "result"},
+        "view": {
+          "type": "object",
+          "required": ["card"],
+          "properties": {"card": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

@@ -6,6 +6,11 @@ import { arkmeUi } from '../src/client/ui-controller.js'
 import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 
+const botSummary = {
+  botRef: 'bot-1', name: '测试 Bot', provider: 'webhook', description: '', status: 'online',
+  directChatAvailable: true, privateChatOutboundEnabled: true, conversationProjection: 'chat',
+} as const
+
 const testState = vi.hoisted(() => ({ callArkme: vi.fn() }))
 const mountedRenderers = new Set<ReactTestRenderer>()
 vi.mock('../src/client/api.js', () => ({ callArkme: testState.callArkme }))
@@ -122,7 +127,9 @@ function installDirectoryApi(openGroup: ReturnType<typeof deferred<ArkmeSourceIt
       if (params?.countOnly === true) return { section, items: [], total, hasMore: false }
       if (section === 'contacts') return { section, items: [{ kind: 'contact', contactRef: 'contact-1', displayName: '后来选择的联系人', nickname: '后来的昵称', remark: '', letter: 'H' }], total: 1, hasMore: false }
       if (section === 'groups') return { section, items: [{ kind: 'group', sourceRef: 'group-1', displayName: '测试群聊' }], total: 1, hasMore: false }
-      if (section === 'bots') return { section, items: [{ kind: 'bot', botRef: 'bot-1', displayName: '测试 Bot' }], total: 1, hasMore: false }
+      if (section === 'bots') return { section, items: [{
+        kind: 'bot', bot: botSummary,
+      }], total: 1, hasMore: false }
       return { section, items: [], total: 0, hasMore: false }
     }
     if (operation === 'directory.contact.profile') return { profile: { displayName: '后来选择的联系人', fields: [] } }
@@ -155,19 +162,16 @@ describe('production Contacts handoff isolation', () => {
     expect(arkmeContactsTab.getSnapshot().selection).toEqual({ kind: 'contact', contactRef: 'contact-1' })
   })
 
-  it('aborts pending bot work on route exit and pending group work on an environment switch', async () => {
+  it('opens a Bot directly through the Bot surface and still aborts pending group work on an environment switch', async () => {
     const group = deferred<ArkmeSourceItem>()
     const bot = deferred<ArkmeSourceItem>()
     const signals = installDirectoryApi(group, bot)
     const renderer = await mountProductionContacts()
     await click(renderer, 'Bot')
     await click(renderer, '测试 Bot')
-    arkmeUi.showConversations()
-    await flush()
-    expect(signals.bot?.aborted).toBe(true)
-    bot.resolve({ sourceRef: 'bot-source', kind: 'private_chat', displayName: '测试 Bot', activeAtMillis: 1, unreadCount: 0 })
-    await flush()
+    expect(arkmeUi.getSnapshot()).toMatchObject({ mode: 'bot', selectedBot: botSummary })
     expect(arkmeUi.getSnapshot().selectedSource).toBeUndefined()
+    expect(testState.callArkme.mock.calls.some(([operation]) => operation === 'directory.bot.open-chat')).toBe(false)
 
     await click(renderer, '联系人')
     await click(renderer, '群聊')

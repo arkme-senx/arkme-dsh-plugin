@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeLongArticleDetail, ArkmeLongArticleDraft, ArkmeSourceSendResult, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
+import { ArkmeLinkText } from './ArkmeLinkText.js'
 
 const MAX_TITLE_LENGTH = 100
 const MAX_CONTENT_LENGTH = 40000
@@ -302,7 +303,7 @@ export function ArkmeLongArticleDialog({ sourceRef, item, onClose, onCreated, on
         : <div style={styles.body}>
           {editing
             ? <textarea autoFocus={creating} style={styles.bodyInput} value={textContent} maxLength={MAX_CONTENT_LENGTH} placeholder="请输入正文内容" aria-label="长文正文" disabled={submitting} onChange={event => { setTextContent(event.target.value) }} />
-            : <p style={styles.bodyRead}>{textValue}</p>}
+            : <p style={styles.bodyRead}><ArkmeLinkText text={textValue} /></p>}
         </div>}
     </article>
   </div>

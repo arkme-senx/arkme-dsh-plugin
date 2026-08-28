@@ -28,10 +28,22 @@ describe('Arkme conversation directory load state', () => {
     })).toBe('idle')
   })
 
+  it('keeps embedded directory refresh failures out of the visible sidebar', () => {
+    const embeddedStatuses = workspaceSource.slice(
+      workspaceSource.indexOf("rootDirectoryState === 'loading'"),
+      workspaceSource.indexOf('{lockedDirectory ? <>'),
+    )
+    expect(embeddedStatuses).not.toContain("rootDirectoryState === 'error'")
+    expect(embeddedStatuses).not.toContain('加载失败')
+    expect(embeddedStatuses).not.toContain('重试')
+  })
+
   it('opens and selects the new Bot through its dedicated private-chat surface', () => {
     expect(workspaceSource).toContain('const createdQuickAddBot = async (bot: ArkmeBotSummary): Promise<void> =>')
     expect(workspaceSource).toContain('setBots(current => sortArkmeBotsByCreatedAt([bot, ...current.filter(item => item.botRef !== bot.botRef)]))')
     expect(workspaceSource).toContain('arkmeUi.openBotConversation(bot)')
+    expect(workspaceSource).toContain('(bot.unreadCount ?? 0) > 0')
+    expect(workspaceSource).toContain('bot.isMuted === true')
     expect(workspaceSource).toContain("callArkme<{ items: ArkmeBotSummary[] }>('bots.private-chat.directory'")
   })
 

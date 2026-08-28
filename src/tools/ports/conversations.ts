@@ -108,6 +108,11 @@ export interface ArkmeConversationToolPort {
     requirement: string,
     options?: { signal?: AbortSignal },
   ): Promise<ArkmeGroupAiPolishRuleCandidate>
+  prepareEnableGroupAiPolish(
+    groupName: string,
+    ruleName?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ArkmeGroupAiPolishRuleCandidate>
   confirmEnableGroupAiPolish(
     confirmationRef: string,
     options?: { signal?: AbortSignal },

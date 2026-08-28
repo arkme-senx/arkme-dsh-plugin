@@ -47,6 +47,13 @@ describe('ArkmeSettingsSurface', () => {
     expect(source).toMatch(/setProfile\(undefined\)\s*setError\(''\)\s*void callArkme<ArkmeUserProfileSnapshot>\('user.profile', undefined, signal\)/)
   })
 
+  it('does not expose a separate mobile remote-control setting', () => {
+    expect(source).not.toContain('remote.getStatus')
+    expect(source).not.toContain('ArkmeRemoteSettingsPanel')
+    expect(source).not.toContain('title="远程连接"')
+    expect(source).not.toContain('title="手机远控"')
+  })
+
   it('positions the DSH account section at the top before paint', () => {
     expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*scrollArkmeSettingsSurface\(surfaceRef\.current\)/)
     expect(source).not.toContain('document.getElementById')

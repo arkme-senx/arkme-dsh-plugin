@@ -82,6 +82,7 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
   const [error, setError] = useState('')
   const [detail, setDetail] = useState<'profile' | 'connection' | 'security' | 'groups'>()
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const notificationInFlightRef = useRef(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -146,12 +147,16 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
   }
 
   const updateMuted = async (nextMuted: boolean) => {
-    if (notificationLoading) return
+    if (notificationInFlightRef.current) return
+    notificationInFlightRef.current = true
     setNotificationLoading(true); setError('')
     try {
       const value = await callArkme<ArkmeBotNotificationPreference>('bots.private-chat.notification.update', { botRef: bot.botRef, muted: nextMuted })
       setMuted(value.muted)
-    } catch (caught) { setError(errorMessage(caught)) } finally { setNotificationLoading(false) }
+    } catch (caught) { setError(errorMessage(caught)) } finally {
+      notificationInFlightRef.current = false
+      setNotificationLoading(false)
+    }
   }
 
   const leaveDetail = () => {

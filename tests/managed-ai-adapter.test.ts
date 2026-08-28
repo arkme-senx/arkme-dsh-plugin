@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ARKME_MANAGED_MODEL,
   ARKME_MANAGED_PROVIDER,
@@ -13,33 +13,100 @@ import {
 } from '../src/managed-ai/adapter.js'
 import { SecretValue } from '../src/secret-value.js'
 
+const MANAGED_CATALOG_ITEMS = [
+  {
+    provider: 'arkme-managed',
+    public_model_code: 'deepseek-v4-flash',
+    display_name: 'DeepSeek V4 Flash',
+    context_window_tokens: '1000000',
+    default_max_output_tokens: '256000',
+    maximum_max_output_tokens: '384000',
+  },
+  {
+    provider: 'arkme-managed',
+    public_model_code: 'qwen3.8-max',
+    display_name: 'Qwen3.8 Max',
+    context_window_tokens: '1000000',
+    default_max_output_tokens: '65536',
+    maximum_max_output_tokens: '131072',
+  },
+  {
+    provider: 'arkme-managed',
+    public_model_code: 'glm-5.2',
+    display_name: 'GLM-5.2',
+    context_window_tokens: '1048576',
+    default_max_output_tokens: '65536',
+    maximum_max_output_tokens: '131072',
+  },
+  {
+    provider: 'arkme-managed',
+    public_model_code: 'deepseek-v4-flash-bailian',
+    display_name: 'DeepSeek V4 Flash（百炼）',
+    context_window_tokens: '1000000',
+    default_max_output_tokens: '131072',
+    maximum_max_output_tokens: '393216',
+  },
+]
+
+function managedCatalogResponse(items: unknown = MANAGED_CATALOG_ITEMS): Response {
+  return new Response(JSON.stringify({
+    code: 200,
+    message: '请求成功',
+    data: { item_ls: items },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 describe('Arkme managed model adapter', () => {
-  it('advertises only the backend-supported Arkme Flash route without automatic retries', async () => {
+  it('advertises every active backend catalog model without automatic retries', async () => {
+    const catalogFetch = vi.fn(async () => managedCatalogResponse())
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
       credentialOwner: {
         resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
       },
       resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: catalogFetch,
     })
 
     expect(adapter.providerInfo('arkme-managed')).toEqual({
       id: 'arkme-managed',
-      name: 'Arkme',
+      name: 'Arkme · 余额计费',
     })
-    await expect(adapter.listModels('arkme-managed')).resolves.toEqual([{
+    await expect(adapter.listModels('arkme-managed')).resolves.toEqual([
+      {
+        provider: 'arkme-managed',
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        inputModalities: ['text'],
+      },
+      {
+        provider: 'arkme-managed',
+        id: 'qwen3.8-max',
+        name: 'Qwen3.8 Max',
+        inputModalities: ['text'],
+      },
+      {
+        provider: 'arkme-managed',
+        id: 'glm-5.2',
+        name: 'GLM-5.2',
+        inputModalities: ['text'],
+      },
+      {
+        provider: 'arkme-managed',
+        id: 'deepseek-v4-flash-bailian',
+        name: 'DeepSeek V4 Flash（百炼）',
+        inputModalities: ['text'],
+      },
+    ])
+    await expect(adapter.resolveModel('arkme-managed', 'qwen3.8-max')).resolves.toMatchObject({
       provider: 'arkme-managed',
-      id: 'deepseek-v4-flash',
-      name: 'DeepSeek-V4-Flash',
-      description: '使用 Arkme 登录，无需 API Key',
-      inputModalities: ['text'],
-    }])
-    await expect(adapter.resolveModel('arkme-managed', 'deepseek-v4-flash')).resolves.toMatchObject({
-      provider: 'arkme-managed',
-      id: 'deepseek-v4-flash',
-      name: 'DeepSeek-V4-Flash',
+      id: 'qwen3.8-max',
+      name: 'Qwen3.8 Max',
       context: { contextWindow: 1_000_000 },
-      defaultMaxTokens: 256_000,
+      defaultMaxTokens: 65_536,
     })
     await expect(adapter.resolveModel('arkme-managed', 'deepseek-v4-pro')).rejects.toMatchObject({
       code: 'UNKNOWN_MODEL',
@@ -47,6 +114,111 @@ describe('Arkme managed model adapter', () => {
     expect(adapter.providerRetryPolicy('arkme-managed')).toMatchObject({
       mode: 'normal',
       maxRetries: 0,
+    })
+    expect(catalogFetch).toHaveBeenCalledTimes(1)
+    expect(catalogFetch).toHaveBeenCalledWith(
+      'https://intelligent.test/api/v1/managed-ai/models/query',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer arkme-access' }),
+        body: '{}',
+      }),
+    )
+  })
+
+  it('uses a newly discovered Arkme model id on the managed chat route', async () => {
+    let requestedModel: unknown
+    const server = createServer(async (req, res) => {
+      const body: Buffer[] = []
+      for await (const chunk of req) body.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      if (req.url === '/api/v1/managed-ai/models/query') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(await managedCatalogResponse().text())
+        return
+      }
+      requestedModel = (JSON.parse(Buffer.concat(body).toString('utf8')) as Record<string, unknown>).model
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      res.end([
+        'data: {"choices":[{"index":0,"delta":{"content":"完成"},"finish_reason":null}]}',
+        '',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n') + '\n')
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    try {
+      const address = server.address() as AddressInfo
+      const adapter = createManagedAiLlmAdapter({
+        intelligentBaseUrl: `http://127.0.0.1:${String(address.port)}`,
+        credentialOwner: {
+          resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+        },
+        resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      })
+
+      await adapter.listModels(ARKME_MANAGED_PROVIDER)
+      const chunks: StreamChunk[] = []
+      for await (const chunk of adapter.stream({
+        provider: ARKME_MANAGED_PROVIDER,
+        model: 'qwen3.8-max',
+        messages: [createUserMessage({
+          content: [{ type: 'text', text: '你好' }],
+          source: { kind: 'user' },
+        })],
+      })) chunks.push(chunk)
+
+      expect(requestedModel).toBe('qwen3.8-max')
+      expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: '完成' })
+    } finally {
+      await new Promise<void>(resolve => { server.close(() => { resolve() }) })
+    }
+  })
+
+  it('keeps the last-good catalog when a later refresh is malformed', async () => {
+    let now = 10_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const catalogFetch = vi.fn()
+      .mockResolvedValueOnce(managedCatalogResponse())
+      .mockResolvedValueOnce(managedCatalogResponse([{ provider: 'arkme-managed' }]))
+    try {
+      const adapter = createManagedAiLlmAdapter({
+        intelligentBaseUrl: 'https://intelligent.test',
+        credentialOwner: {
+          resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+        },
+        resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+        fetchImpl: catalogFetch,
+      })
+
+      const first = await adapter.listModels(ARKME_MANAGED_PROVIDER)
+      now += 60_001
+      const afterMalformedRefresh = await adapter.listModels(ARKME_MANAGED_PROVIDER)
+
+      expect(afterMalformedRefresh).toEqual(first)
+      expect(catalogFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('removes the legacy fallback when the backend publishes an empty active catalog', async () => {
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async () => managedCatalogResponse([]),
+    })
+
+    await expect(adapter.listModels(ARKME_MANAGED_PROVIDER)).resolves.toEqual([])
+    await expect(adapter.resolveModel(ARKME_MANAGED_PROVIDER, ARKME_MANAGED_MODEL)).rejects.toMatchObject({
+      code: 'UNKNOWN_MODEL',
     })
   })
 
@@ -327,14 +499,18 @@ describe('Arkme managed model adapter', () => {
           resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
         },
         resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+        fetchImpl: async () => managedCatalogResponse(),
       })
       expect(ctx.llm.listProviders()).toContainEqual({
         id: ARKME_MANAGED_PROVIDER,
-        name: 'Arkme',
+        name: 'Arkme · 余额计费',
       })
       const models = await ctx.llm.listModels(ARKME_MANAGED_PROVIDER)
       expect(models.map(model => [model.id, model.name])).toEqual([
-        ['deepseek-v4-flash', 'DeepSeek-V4-Flash'],
+        ['deepseek-v4-flash', 'DeepSeek V4 Flash'],
+        ['qwen3.8-max', 'Qwen3.8 Max'],
+        ['glm-5.2', 'GLM-5.2'],
+        ['deepseek-v4-flash-bailian', 'DeepSeek V4 Flash（百炼）'],
       ])
     } finally {
       await llm.dispose()
@@ -417,7 +593,7 @@ describe('Arkme managed model adapter', () => {
     })
   })
 
-  it('rejects any model outside the single managed route before reading credentials', async () => {
+  it('rejects a model absent from the latest managed catalog after one owner refresh', async () => {
     let credentialReads = 0
     const adapter = createManagedAiLlmAdapter({
       intelligentBaseUrl: 'https://intelligent.test',
@@ -428,6 +604,7 @@ describe('Arkme managed model adapter', () => {
         },
       },
       resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async () => managedCatalogResponse(),
     })
 
     await expect(adapter.resolveModel(ARKME_MANAGED_PROVIDER, 'other-model')).rejects.toMatchObject({
@@ -444,6 +621,30 @@ describe('Arkme managed model adapter', () => {
     await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
       code: 'UNKNOWN_MODEL',
     })
+    expect(credentialReads).toBe(1)
+  })
+
+  it('cancels unknown-model discovery before reading credentials when the caller is already aborted', async () => {
+    let credentialReads = 0
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => {
+          credentialReads += 1
+          return new SecretValue('arkme-access')
+        },
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async () => managedCatalogResponse(),
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(adapter.resolveModel(
+      ARKME_MANAGED_PROVIDER,
+      'other-model',
+      controller.signal,
+    )).rejects.toMatchObject({ code: 'ABORTED' })
     expect(credentialReads).toBe(0)
   })
 })

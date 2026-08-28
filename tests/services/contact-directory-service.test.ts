@@ -192,8 +192,18 @@ describe('ContactDirectoryService', () => {
 
     expect(page).toEqual({
       section: 'bots', total: 1, hasMore: false,
-      items: [{ kind: 'bot', botRef: expect.stringMatching(/^arkme-bot-v2\./), displayName: '小助手' }],
+      items: [{
+        kind: 'bot', bot: {
+        botRef: expect.stringMatching(/^arkme-bot-v2\./),
+        directoryKey: expect.stringMatching(/^arkme-bot-directory-v1\./),
+        name: '小助手', provider: 'webhook', description: '', status: 'online',
+        directChatAvailable: false, privateChatOutboundEnabled: false, refreshOnRecordChanges: false,
+        conversationProjection: 'none',
+      } }],
     })
+    expect(page.items[0]).not.toHaveProperty('botRef')
+    expect(page.items[0]).not.toHaveProperty('displayName')
+    expect(page.items[0]).not.toHaveProperty('avatarRef')
     expect(JSON.stringify(page)).not.toContain('bot-private-1')
   })
 

@@ -47,6 +47,7 @@ import {
   writeBotDirectoryPreferences,
   type ArkmeBotDirectoryPreferences,
 } from './bot-directory-preferences.js'
+import { projectBotChatDirectory } from './bot-chat-directory-projection.js'
 import {
   arkmeTopicPathNames, buildArkmeSourceTree, flattenVisibleArkmeSourceTree, type ArkmeSourceTreeRow,
 } from './source-tree.js'
@@ -163,11 +164,6 @@ const styles: Record<string, CSSProperties> = {
   rootDirectoryStatus: {
     height: 14, flex: 'none', margin: '-10px 16px 6px', display: 'flex', alignItems: 'center', gap: 4,
     color: colors.caption, fontSize: 10, lineHeight: '14px',
-  },
-  rootDirectoryStatusError: { color: '#c2413b' },
-  rootDirectoryStatusRetry: {
-    padding: 0, border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: 10,
-    lineHeight: '14px', textDecoration: 'underline',
   },
   embeddedSearchField: { flex: 1, minWidth: 0, margin: 0 },
   createTaskButton: {
@@ -955,16 +951,20 @@ export function ArkmeNavigation({
   const cardMode = sourceSort !== 'default'
   const bindingRequired = auth?.status === 'binding-required'
   const rootSources = sources
+  const botChatDirectory = useMemo(
+    () => projectBotChatDirectory(rootSources, bots),
+    [bots, rootSources],
+  )
   const officialAuthorSource = useMemo(
     () => arkmeOfficialAuthorSource(rootSources, officialAuthorProfile?.userId ?? OFFICIAL_AUTHOR_USER_ID),
     [officialAuthorProfile?.userId, rootSources],
   )
   const rootConversationRows = useMemo(() => [
-    ...rootSources.map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
-    ...bots
+    ...botChatDirectory.sources.map(source => ({ kind: 'source' as const, source, activeAtMillis: source.activeAtMillis, pinned: source.isPinned === true })),
+    ...botChatDirectory.bots
       .filter(bot => !botDirectoryIsHidden(botDirectoryPreferences, bot))
       .map(bot => ({ kind: 'bot' as const, bot, activeAtMillis: botActivityAtMillis(bot), pinned: botDirectoryIsPinned(botDirectoryPreferences, bot) })),
-  ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis), [botDirectoryPreferences, bots, rootSources])
+  ].sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.activeAtMillis - left.activeAtMillis), [botChatDirectory, botDirectoryPreferences])
   const showArkoInSearch = true
   const sendToSelfPresentation = arkmeSendToSelfDirectoryPresentation(sendToSelfSource)
   const showSelfInSearch = true
@@ -1603,9 +1603,6 @@ export function ArkmeNavigation({
     {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'updating' && <div style={styles.rootDirectoryStatus} role="status">
       <ArkmeDirectoryRefreshIcon /><span>更新中</span>
     </div>}
-    {directory === 'root' && embeddedProductShell && authenticated && rootDirectoryState === 'error' && <div style={{ ...styles.rootDirectoryStatus, ...styles.rootDirectoryStatusError }} role="alert">
-      <span aria-hidden>!</span><span>加载失败</span><button type="button" style={styles.rootDirectoryStatusRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>重试</button>
-    </div>}
 
     {lockedDirectory ? <>
       <div style={styles.list} role="tree" aria-label="Arkme 会话">
@@ -1699,6 +1696,7 @@ export function ArkmeNavigation({
           if (row.kind === 'bot') {
             const { bot } = row
             const selected = activeDirectoryEntryId === undefined && ui.mode === 'bot' && ui.selectedBot?.botRef === bot.botRef
+            const unreadText = (bot.unreadCount ?? 0) > 99 ? '99+' : bot.unreadCount
             const removeFeedbackVisible = directoryRemoveFeedbackBotRef === bot.botRef
             const interactionsDisabled = directoryMutationBotRef === bot.botRef || removeFeedbackVisible
             return <button
@@ -1721,7 +1719,11 @@ export function ArkmeNavigation({
                     <span style={styles.entryName}>{bot.name}</span><span style={styles.botBadge}>BOT</span>
                     <span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{timeLabel(row.activeAtMillis)}</span>
                   </span>
-                  <span style={styles.chatBottom}><span style={styles.preview}>{bot.latestMessagePreview || bot.description || '与 Bot 私聊'}</span></span>
+                  <span style={styles.chatBottom}>
+                    <span style={styles.preview}>{bot.latestMessagePreview || bot.description || '与 Bot 私聊'}</span>
+                    {bot.isMuted === true && <span style={styles.muteIcon}><ArkmeMuteIcon size={15} /></span>}
+                    {(bot.unreadCount ?? 0) > 0 && <span style={styles.unread}>{unreadText}</span>}
+                  </span>
                 </span>
               </span>
               <span style={{ ...styles.chatRowRemoveOverlay, ...(removeFeedbackVisible ? styles.chatRowRemoveOverlayVisible : {}) }}>

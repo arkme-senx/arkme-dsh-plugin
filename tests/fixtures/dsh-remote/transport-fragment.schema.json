@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jotmo.dev/contracts/dsh-remote/v1/transport-fragment.schema.json",
+  "title": "DSH Remote v1 typed payload fragment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol", "protocol_major", "kind", "transfer_ref", "fragment_index",
+    "fragment_count", "payload_bytes", "payload_sha256", "chunk"
+  ],
+  "properties": {
+    "protocol": {"const": "dsh.remote-fragment"},
+    "protocol_major": {"const": 1},
+    "kind": {"const": "fragment"},
+    "transfer_ref": {"type": "string", "minLength": 8, "maxLength": 128},
+    "fragment_index": {"type": "integer", "minimum": 0, "maximum": 255},
+    "fragment_count": {"type": "integer", "minimum": 2, "maximum": 256},
+    "payload_bytes": {"type": "integer", "minimum": 1, "maximum": 524288},
+    "payload_sha256": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "chunk": {"type": "string", "minLength": 1, "maxLength": 32768}
+  }
+}

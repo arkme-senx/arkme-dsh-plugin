@@ -284,6 +284,9 @@ function fakeService(): ArkmeCoreToolPorts & {
     generateGroupAiPolishRule: vi.fn(async (groupName: string) => ({
       groupName, ruleName: '友好简洁', ruleText: '表达友好、简洁，并保留事实。', confirmationRef: 'confirm-1',
     })),
+    prepareEnableGroupAiPolish: vi.fn(async (groupName: string) => ({
+      groupName, ruleName: '友好', ruleText: '保留事实，表达友好。', confirmationRef: 'existing-confirm-1',
+    })),
     confirmEnableGroupAiPolish: vi.fn(async () => ({
       groupName: '产品群', enabled: true, ruleName: '友好简洁', changed: true,
     })),
@@ -391,6 +394,23 @@ function fakeService(): ArkmeCoreToolPorts & {
 }
 
 describe('Arkme conversation tools', () => {
+  it('opens only an opaque local file reference through the file owner action', async () => {
+    const service = fakeService()
+    const fileOpenLocal = vi.fn(async (fileRef: string) => ({
+      opened: true as const,
+      file: { fileRef, fileName: 'report.pdf', mimeType: 'application/pdf', size: 3, fileKind: 4 as const },
+    }))
+    const tool = createArkmeCoreToolDefinitions({ ...service, fileOpenLocal }).find(definition => definition.name === 'arkme_file_task')!
+    const output = await tool.execute(
+      { action: 'open-local', reference: 'arkme-file-v1.00000000-0000-4000-8000-000000000001' },
+      { signal: new AbortController().signal } as never,
+    ) as string
+
+    expect(fileOpenLocal).toHaveBeenCalledWith('arkme-file-v1.00000000-0000-4000-8000-000000000001')
+    expect(output).toContain('"opened": true')
+    expect(output).not.toContain('/Users/')
+  })
+
   it('reads recent records with optional refresh and an explicit data boundary', async () => {
     const service = fakeService()
     const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_records_recent')!
@@ -943,6 +963,21 @@ describe('Arkme conversation tools', () => {
     ) as string
     expect(service.confirmEnableGroupAiPolish).toHaveBeenCalledWith('confirm-1', { signal })
     expect(enabled).toContain('"enabled": true')
+  })
+
+  it('previews a saved group rule without generating a new rule or silently ignoring requirements', async () => {
+    const service = fakeService()
+    const tool = createArkmeCoreToolDefinitions(service).find(definition => definition.name === 'arkme_group_ai_polish_manage')!
+    const signal = new AbortController().signal
+    const preview = await tool.execute({ operation: 'prepare_enable', group_name: '产品群', rule_name: '友好' }, { signal } as never)
+    expect(preview).toContain('existing-confirm-1')
+    expect(service.prepareEnableGroupAiPolish).toHaveBeenCalledWith('产品群', '友好', { signal })
+    expect(service.generateGroupAiPolishRule).not.toHaveBeenCalled()
+    expect(service.confirmEnableGroupAiPolish).not.toHaveBeenCalled()
+    await expect(tool.execute({ operation: 'prepare_enable', group_name: '产品群', requirement: '新要求' }, { signal } as never))
+      .rejects.toThrow('generate_rule')
+    await expect(tool.execute({ operation: 'prepare_enable' }, { signal } as never)).rejects.toThrow('群名称')
+    await expect(tool.execute({ operation: 'confirm_enable' }, { signal } as never)).rejects.toThrow('确认引用')
   })
 
   it('renames one exact group source through an explicit write tool', async () => {

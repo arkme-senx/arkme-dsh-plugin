@@ -11,7 +11,7 @@ import {
   clampArkmeMemberRecordsWidth, positionArkmeMemberMenu,
   retainArkmeMemberRecordsScrollTop, shouldLoadOlderArkmeMemberRecords,
 } from '../src/client/ArkmeChatMemberActions.js'
-import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichContent.js'
+import { arkmeVisibleMentionRuns } from '../src/client/ArkmeRichText.js'
 import {
   ArkmeMemberJoinNotice, arkmeConversationJoinEventsInLoadedWindow, arkmeMemberJoinDisplayName,
   arkmeMemberJoinTimeLabel, arkmeVisibleMemberJoinInvitees, arkmeComposerMentionTrigger,

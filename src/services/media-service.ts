@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { open as openFile } from 'node:fs/promises'
 import OSS from 'ali-oss'
+import { Readable } from 'node:stream'
+import { arkmeMediaKind, arkmeNormalizedFileMimeType, type ArkmeFileProgress } from '../file-transfer-contract.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeContentBlock,
@@ -45,6 +47,7 @@ export interface ArkmeUnmarkedSpeakerSegmentResolver {
 }
 
 export interface ArkmeMediaDescriptor {
+  purpose?: 'original'
   viewerUserId: number
   remoteUrl: string
   mimeType: string
@@ -307,6 +310,7 @@ export class MediaService {
   async uploadLocalFile(
     filePath: string,
     metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
+    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal } = {},
   ): Promise<ArkmeUploadedAsset> {
     if (this.runtime.config.richMediaSendEnabled === false) {
       throw new ArkmePluginError('rich-content-disabled', '文件上传已被插件配置关闭', false, 403)
@@ -317,6 +321,10 @@ export class MediaService {
       throw new ArkmePluginError('upload-metadata-invalid', '文件为空、过大或元数据无效', false, 400)
     }
     const session = await this.runtime.requireSession()
+    if (options.expectedUserId !== undefined && session.userId !== options.expectedUserId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
+    options.signal?.throwIfAborted()
+    const progress = (phase: ArkmeFileProgress['phase'], sentBytes: number) => options.onProgress?.({ phase, sentBytes, totalBytes: metadata.size })
+    progress('preparing', 0)
     const uploadMode = metadata.size > 16 * 1024 * 1024 ? 2 : 1
     const prepared = await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
       planned_size: metadata.size,
@@ -325,7 +333,7 @@ export class MediaService {
       file_kind: metadata.fileKind,
       upload_mode: uploadMode,
       display_name: metadata.fileName,
-    }, session)
+    }, session, options.signal)
     const uploadSessionUid = stringValue(prepared.upload_session_uid).trim()
     if (uploadSessionUid === '') throw new ArkmePluginError('upload-prepare-invalid', '上传准备响应无效', true, 502)
     try {
@@ -334,12 +342,20 @@ export class MediaService {
       if (uploadMode === 1) {
         const uploadUrl = stringValue(prepared.upload_url).trim()
         if (uploadUrl === '') throw new ArkmePluginError('upload-url-missing', '对象存储上传地址缺失', true, 502)
+        const signal = options.signal
+        const body = options.onProgress === undefined ? createReadStream(filePath) : Readable.from((async function* () {
+          let sent = 0
+          for await (const chunk of createReadStream(filePath)) {
+            signal?.throwIfAborted(); sent += (chunk as Buffer).length; progress('uploading', sent); yield chunk
+          }
+        })())
         const response = await this.runtime.fetchImpl(uploadUrl, {
           method: 'PUT',
           headers: Object.fromEntries(Object.entries(objectValue(prepared.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
-          body: createReadStream(filePath) as never,
+          body: body as never,
           duplex: 'half',
           redirect: 'error',
+          ...(signal === undefined ? {} : { signal }),
         } as RequestInit)
         if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储上传失败（${String(response.status)}）`, true, 502)
         storageETag = response.headers.get('etag') ?? ''
@@ -350,6 +366,7 @@ export class MediaService {
         const handle = await openFile(filePath, 'r')
         try {
           for (const part of parts) {
+            options.signal?.throwIfAborted()
             const partNumber = Math.trunc(numberValue(part.part_number))
             const uploadUrl = stringValue(part.upload_url).trim()
             const offset = (partNumber - 1) * partSize
@@ -363,20 +380,24 @@ export class MediaService {
               headers: Object.fromEntries(Object.entries(objectValue(part.upload_headers)).map(([key, value]) => [key, stringValue(value)])),
               body: buffer,
               redirect: 'error',
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
             })
             if (!response.ok) throw new ArkmePluginError('upload-storage-failed', `对象存储分片上传失败（${String(response.status)}）`, true, 502)
             completedParts.push({ part_number: partNumber, etag: response.headers.get('etag') ?? '' })
+            progress('uploading', Math.min(metadata.size, offset + length))
           }
         } finally { await handle.close() }
       }
+      progress('completing', metadata.size)
       const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', {
         upload_session_uid: uploadSessionUid,
         uploaded_size: metadata.size,
         storage_etag: storageETag,
         multipart_parts: completedParts,
-      }, session)
+      }, session, options.signal)
       const fileAssetUid = stringValue(completed.file_asset_uid).trim()
       if (fileAssetUid === '') throw new ArkmePluginError('upload-complete-invalid', '上传完成响应无效', true, 502)
+      progress('ready', metadata.size)
       return {
         fileAssetUid,
         fileName: metadata.fileName,
@@ -394,6 +415,7 @@ export class MediaService {
     mediaRef: string,
     range?: string,
     signal?: AbortSignal,
+    originalOnly = false,
   ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
     const session = await this.runtime.requireSession()
     const descriptor = this.mediaRefs.get(mediaRef)
@@ -401,6 +423,9 @@ export class MediaService {
       this.mediaRefs.delete(mediaRef)
       if (descriptor?.stableKey !== undefined) this.stableMediaRefs.delete(descriptor.stableKey)
       throw new ArkmePluginError('media-ref-invalid', '媒体引用已失效，请刷新对话后重试', false, 404)
+    }
+    if (originalOnly && descriptor.purpose !== 'original') {
+      throw new ArkmePluginError('original-unavailable', '原文件不可用，请刷新后重试；不会用预览图代替原文件', false, 404)
     }
     const url = new URL(descriptor.remoteUrl)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
@@ -605,6 +630,24 @@ export class MediaService {
             // A missing current-user profile may still fall back to the public profile below.
           }
         }
+        const ownAvatarUrl = snapshot.profile?.avatarUrl
+        if (ownAvatarUrl !== undefined && ownAvatarUrl !== '') {
+          return await this.downloadSignedImage(
+            trustedSignedImageUrl(this.runtime.config.environment, ownAvatarUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
+          )
+        }
+        const ownAvatarAssetRef = snapshot.profile?.avatarAssetRef?.trim() ?? ''
+        const assetMatch = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(ownAvatarAssetRef)
+        if (assetMatch !== null) {
+          const asset = (await this.queryFileAssets([assetMatch[1]!], signal))
+            .find(item => item.fileAssetUid === assetMatch[1])
+          const assetUrl = asset?.previewUrl ?? asset?.downloadUrl
+          if (assetUrl !== undefined) {
+            return await this.downloadSignedImage(
+              trustedSignedImageUrl(this.runtime.config.environment, assetUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
+            )
+          }
+        }
         const ownAvatarRef = snapshot.profile?.avatarRef.trim() ?? ''
         if (ownAvatarRef !== '' && !ownAvatarRef.startsWith('arkme-profile-image-v1.')) {
           return await this.readImage(ownAvatarRef, {
@@ -685,10 +728,14 @@ export class MediaService {
     return await this.downloadSignedImage(signedUrl, byteLimit, signal, this.runtime.requestScope(session.userId))
   }
 
-  private mediaKind(fileKind: number, mimeType: string): ArkmeContentBlock['kind'] {
-    if (fileKind === 1 || mimeType.startsWith('image/')) return 'image'
-    if (fileKind === 2 || mimeType.startsWith('audio/')) return 'audio'
-    if (fileKind === 3 || mimeType.startsWith('video/')) return 'video'
+  private mediaKind(fileKind: number, mimeType: string, fileName: string): ArkmeContentBlock['kind'] {
+    const detectedKind = arkmeMediaKind(mimeType, fileName)
+    if (detectedKind !== undefined) return detectedKind
+    if (fileKind === 2) return 'audio'
+    if (!/\.[A-Za-z0-9]+$/u.test(fileName.trim())) {
+      if (fileKind === 1) return 'image'
+      if (fileKind === 3) return 'video'
+    }
     return 'file'
   }
 
@@ -826,6 +873,28 @@ export class MediaService {
       }, `search-audio\0${key}`))
     }
     return mediaRefs
+  }
+
+  async issueSearchFileMediaRefs(requests: Array<{ recordUid: string; fileAssetUid: string }>, signal?: AbortSignal): Promise<Map<string, string>> {
+    const normalized = [...new Map(requests.filter(item => item.recordUid !== '' && item.fileAssetUid !== '')
+      .map(item => [`${item.recordUid}\0${item.fileAssetUid}`, item])).values()].slice(0, 50)
+    const refs = new Map<string, string>()
+    if (normalized.length === 0 || this.runtime.config.richMediaRenderEnabled === false) return refs
+    const session = await this.runtime.requireSession()
+    const display = await this.queryRecordMediaDisplayItems(normalized.map(item => item.recordUid), session, signal)
+    for (const request of normalized) {
+      const item = objectValue((display.get(request.recordUid) ?? []).find(raw => stringValue(objectValue(raw).file_asset_uid) === request.fileAssetUid))
+      const remoteUrl = safeHttpsUrl(item.download_url)
+      if (remoteUrl === undefined) continue
+      const host = new URL(remoteUrl).hostname
+      if (!allowedSignedImageHost(this.runtime.config.environment, host) && !allowedSignedAudioHost(this.runtime.config.environment, host)) continue
+      const key = `${request.recordUid}\0${request.fileAssetUid}`
+      refs.set(key, this.issueMediaRef(session.userId, {
+        remoteUrl, purpose: 'original', mimeType: stringValue(item.mime_type) || 'application/octet-stream',
+        fileName: stringValue(item.file_name) || '文件', size: Math.max(0, numberValue(item.size)),
+      }, `search-file\0${key}`))
+    }
+    return refs
   }
 
   async hydrateRecordMediaPage(
@@ -977,14 +1046,20 @@ export class MediaService {
       return Math.trunc(numberValue(item.content_file_role)) !== RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND
     }).flatMap((item, index): ArkmeContentBlock[] => {
       const fileAssetUid = stringValue(item.file_asset_uid).trim()
-      const mimeType = stringValue(item.mime_type).trim() || 'application/octet-stream'
       const fileName = stringValue(item.file_name).trim() || `附件-${String(index + 1)}`
       const fileKind = Math.trunc(numberValue(item.file_kind))
-      const kind = this.mediaKind(fileKind, mimeType)
+      const declaredMimeType = stringValue(item.mime_type).trim().toLowerCase()
+      const mimeType = arkmeNormalizedFileMimeType(declaredMimeType, fileName)
+      const kind = this.mediaKind(fileKind, mimeType, fileName)
       const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
       if (remoteUrl === '') return []
+      const originalUrl = stringValue(item.download_url).trim()
+      const originalRef = originalUrl === '' ? undefined : this.issueMediaRef(viewerUserId, {
+        remoteUrl: originalUrl, purpose: 'original', mimeType, fileName, size: Math.max(0, Math.trunc(numberValue(item.size))),
+      }, fileAssetUid === '' ? undefined : `original\0${fileAssetUid}`)
       return [{
         kind,
+        ...(originalRef === undefined ? {} : { originalRef }),
         mediaRef: this.issueMediaRef(viewerUserId, {
           remoteUrl, mimeType, fileName, size: Math.max(0, Math.trunc(numberValue(item.size))),
         }, kind === 'image' && fileAssetUid !== '' ? fileAssetUid : undefined),

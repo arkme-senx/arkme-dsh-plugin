@@ -10,6 +10,17 @@ const toolIconSource = readFileSync(new URL('../src/client/ArkmeComposerToolIcon
 const presentationModuleUrl = new URL('../src/client/conversation-composer-presentation.ts', import.meta.url)
 
 describe('Arkme conversation composer presentation', () => {
+  it('keeps file selection in the existing menu instead of exposing the internal cache', () => {
+    const menu = sidebarSource.slice(sidebarSource.indexOf('{addMenuOpen &&'), sidebarSource.indexOf('<input ref={fileInputRef}'))
+    expect(menu.match(/role="menuitem"/gu)).toHaveLength(2)
+    expect(menu).toContain('添加照片和文件')
+    expect(menu).toContain('写长文')
+    expect(menu).not.toContain('本地附件')
+    expect(sidebarSource).not.toContain('files.local.list')
+    expect(sidebarSource).not.toContain('添加到草稿')
+    expect(sidebarSource).not.toContain('移除本地任务')
+  })
+
   it('defines the private and group chat sizing contract once', async () => {
     expect(existsSync(fileURLToPath(presentationModuleUrl))).toBe(true)
     const presentation = await import(presentationModuleUrl.href) as {
@@ -66,7 +77,10 @@ describe('Arkme conversation composer presentation', () => {
   it('preserves the original add button while aligning the static emoji tool to it', () => {
     expect(sidebarSource).toContain("plus: { width: 34, height: 34, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 22, lineHeight: '30px' }")
     expect(sidebarSource).toContain('<button ref={addMenuTriggerRef} type="button" style={styles.plus}')
-    expect(sidebarSource).toContain('>+</button><ArkmeEmojiPicker')
+    expect(sidebarSource).toContain("preparingFiles ? <ArkmeFilePreparingIndicator /> : '+'")
+    expect(sidebarSource).not.toContain('aria-label={`前移')
+    expect(sidebarSource).not.toContain('aria-label={`后移')
+    expect(sidebarSource).not.toContain('正在保存 ${file.name}')
     expect(sidebarSource).not.toContain('ArkmeComposerPlusIcon')
     expect(emojiPickerSource).toContain('<ArkmeComposerToolButton')
     expect(emojiPickerSource).toContain("triggerIcon: { width: 20, height: 20, display: 'block', transform: 'translateY(1.5px)' }")

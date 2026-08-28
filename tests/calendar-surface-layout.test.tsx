@@ -157,7 +157,7 @@ describe('ArkmeCalendarSurface layout', () => {
 
   it('refreshes open calendar data when the shared record projection changes', () => {
     expect(surfaceSource).toContain('useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)')
-    expect(surfaceSource).toContain('}, [timezone, visibleMonth, ui.chatRevision])')
-    expect(surfaceSource).toContain('}, [selectedDate, timezone, ui.chatRevision])')
+    expect(surfaceSource).toContain('}, [timezone, visibleMonth, ui.chatRevision, ui.recordRevision])')
+    expect(surfaceSource).toContain('}, [selectedDate, timezone, ui.chatRevision, ui.recordRevision])')
   })
 })
