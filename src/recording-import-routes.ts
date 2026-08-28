@@ -41,9 +41,11 @@ export async function scavengeRecordingImportTemporaryFiles(
 }
 
 interface ArkmeRecordingImportAcceptor {
+  recordingImportUserId(): Promise<number>
   acceptRecordingImport(
     temporaryPath: string,
     metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
+    expectedUserId: number,
   ): Promise<PublicRecordingImportJob>
 }
 
@@ -114,6 +116,7 @@ export function createArkmeRecordingImportHandler(
       if (!Number.isSafeInteger(startAtMillis) || startAtMillis <= 0) {
         throw new ArkmePluginError('recording-import-start-invalid', '录音开始时间无效', false)
       }
+      const expectedUserId = await service.recordingImportUserId()
 
       await mkdir(options.temporaryDirectory, { recursive: true, mode: 0o700 })
       temporaryPath = join(options.temporaryDirectory, `${randomUUID()}.upload`)
@@ -140,7 +143,7 @@ export function createArkmeRecordingImportHandler(
         fileSize: received,
         sha256: hash.digest('hex'),
         startAtMillis,
-      })
+      }, expectedUserId)
       accepted = true
       writeJson(res, 202, { ok: true, value })
     } catch (error) {

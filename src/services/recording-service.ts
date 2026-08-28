@@ -271,6 +271,11 @@ export class RecordingService {
     return { scope: input.scope, affectedCount, day: await this.recordingDayWithSession(item.dateStamp, session, signal) }
   }
 
+  async recordingImportUserId(): Promise<number> {
+    this.assertWorkbenchEnabled()
+    return (await this.runtime.requireSession()).userId
+  }
+
   async acceptRecordingImport(
     temporaryPath: string,
     metadata: {
@@ -280,9 +285,18 @@ export class RecordingService {
       sha256: string
       startAtMillis: number
     },
+    expectedUserId: number,
   ): Promise<PublicRecordingImportJob> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) {
+      throw new ArkmePluginError(
+        'recording-import-account-mismatch',
+        '登录账号已变化，已停止录音导入',
+        true,
+        403,
+      )
+    }
     if (!/^[a-f0-9]{64}$/.test(metadata.sha256)) {
       throw new ArkmePluginError('recording-import-hash-invalid', '录音文件摘要无效', false)
     }

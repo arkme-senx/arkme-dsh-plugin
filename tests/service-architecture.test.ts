@@ -25,7 +25,7 @@ const expectedPublicMethods = [
   'createExtensionReview', 'recordingCalendar', 'recordingTranscript', 'recordingProjection',
   'sealRecordingCursor', 'openRecordingCursor', 'recordingDay', 'recordingPlayback',
   'recordingSpeakerOptions', 'assignRecordingSpeaker',
-  'acceptRecordingImport', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
+  'acceptRecordingImport', 'recordingImportUserId', 'recordingImportStatus', 'recordingImportList', 'retryRecordingImport',
   'cancelRecordingImport', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',

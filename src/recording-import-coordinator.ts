@@ -188,7 +188,7 @@ export class RecordingImportCoordinator {
 
   private async assertActiveAccount(expectedUserId: number): Promise<void> {
     if (await this.activeUserId() !== expectedUserId) {
-      throw new RecordingImportContractError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入')
+      throw new RecordingImportContractError('recording-import-account-mismatch', '登录账号已变化，已停止录音导入', true)
     }
   }
 

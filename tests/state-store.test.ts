@@ -124,4 +124,30 @@ describe('ArkmeStateStore', () => {
     expect(jobs.some(item => item.jobId === 'terminal-0')).toBe(false)
     expect(jobs.some(item => item.jobId === `terminal-${String(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1)}`)).toBe(true)
   })
+
+  it('bounds terminal history immediately when an active job becomes terminal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-transition-history-'))
+    const store = new ArkmeStateStore(root)
+    for (let index = 0; index < RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT; index += 1) {
+      await store.putRecordingImportJob(10001, recordingJob({
+        jobId: `terminal-${String(index)}`,
+        phase: 'accepted',
+        createdAtMillis: index + 1,
+      }))
+    }
+    await store.putRecordingImportJob(10001, recordingJob({
+      jobId: 'active', phase: 'uploading', revision: 1,
+      createdAtMillis: RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1,
+    }))
+
+    await expect(store.replaceRecordingImportJob(10001, recordingJob({
+      jobId: 'active', phase: 'accepted', revision: 2,
+      createdAtMillis: RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT + 1,
+    }), 1)).resolves.toBe(true)
+
+    const jobs = await store.listRecordingImportJobs(10001)
+    expect(jobs).toHaveLength(RECORDING_IMPORT_TERMINAL_HISTORY_LIMIT)
+    expect(jobs.some(item => item.jobId === 'active')).toBe(true)
+    expect(jobs.some(item => item.jobId === 'terminal-0')).toBe(false)
+  })
 })

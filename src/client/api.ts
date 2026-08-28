@@ -25,6 +25,7 @@ export async function uploadArkmeRecording(
   importPath: string,
   file: File,
   startAtMillis: number,
+  signal?: AbortSignal,
 ): Promise<RecordingImportSnapshot> {
   const response = await fetch(importPath, {
     method: 'POST',
@@ -36,8 +37,15 @@ export async function uploadArkmeRecording(
     body: file,
     credentials: 'same-origin',
     redirect: 'error',
+    ...(signal === undefined ? {} : { signal }),
   })
-  const payload = await response.json() as { ok: boolean; value?: RecordingImportSnapshot; error?: { message?: string } }
+  let payload: { ok: boolean; value?: RecordingImportSnapshot; error?: { message?: string } }
+  try {
+    payload = await response.json() as typeof payload
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === 'AbortError') throw reason
+    throw new Error('录音导入失败')
+  }
   if (!response.ok || !payload.ok || payload.value === undefined) {
     throw new Error(payload.error?.message || '录音导入失败')
   }

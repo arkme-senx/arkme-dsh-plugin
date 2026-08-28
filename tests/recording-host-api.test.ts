@@ -58,4 +58,14 @@ describe('recording UI-only host operations', () => {
       itemRef: 'item-opaque', speakerRef: 'speaker-opaque', scope: 'speaker',
     }, undefined)
   })
+
+  it('rejects an unknown speaker mutation scope instead of silently treating it as one item', async () => {
+    const assignRecordingSpeaker = vi.fn()
+    const service = { assignRecordingSpeaker } as unknown as ArkmeService
+
+    await expect(dispatchArkmeHostOperation(service, 'recordings.speaker.assign-item', {
+      itemRef: 'item-opaque', speakerRef: 'speaker-opaque', scope: 'session',
+    })).rejects.toMatchObject({ code: 'recording-speaker-scope-invalid' })
+    expect(assignRecordingSpeaker).not.toHaveBeenCalled()
+  })
 })

@@ -186,6 +186,12 @@ function directoryLimitParam(params: Record<string, unknown>, fallback = 30): nu
   return Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', fallback))))
 }
 
+function recordingSpeakerScopeParam(params: Record<string, unknown>): 'item' | 'speaker' {
+  const scope = stringParam(params, 'scope')
+  if (scope === 'item' || scope === 'speaker') return scope
+  throw new ArkmePluginError('recording-speaker-scope-invalid', '说话人修改范围无效', false, 400)
+}
+
 function unmarkedSpeakerMarkInputParam(params: Record<string, unknown>): {
   candidateRef: string
   candidateVersion: string
@@ -932,7 +938,7 @@ export async function dispatchArkmeHostOperation(
       itemRef: stringParam(params, 'itemRef').trim(),
       ...(stringParam(params, 'speakerRef').trim() === '' ? {} : { speakerRef: stringParam(params, 'speakerRef').trim() }),
       ...(stringParam(params, 'newSpeakerName').trim() === '' ? {} : { newSpeakerName: stringParam(params, 'newSpeakerName').trim() }),
-      scope: stringParam(params, 'scope') === 'speaker' ? 'speaker' : 'item',
+      scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
     case 'calendar.buckets': return await service.calendarBuckets({
       startDate: stringParam(params, 'startDate'),

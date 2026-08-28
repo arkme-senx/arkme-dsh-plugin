@@ -105,6 +105,23 @@ describe('recording timeline math', () => {
     expect(visible.some(item => item.aggregatedCount > 1)).toBe(true)
   })
 
+  it('does not present a dense mixed-speaker bucket as the first speaker', () => {
+    const items = [
+      {
+        itemId: 'item-1', itemRef: 'ref-1', speakerLabel: '说话人 1', speakerColorIndex: 1,
+        text: '第一段', startAtMillis: 1_000, endAtMillis: 1_400, isBackground: false,
+      },
+      {
+        itemId: 'item-2', itemRef: 'ref-2', speakerLabel: '说话人 2', speakerColorIndex: 2,
+        text: '第二段', startAtMillis: 1_500, endAtMillis: 1_900, isBackground: false,
+      },
+    ] as never
+
+    expect(recordingVisibleTimelineItems(items, 0, 3_000, 1)).toEqual([
+      expect.objectContaining({ aggregatedCount: 2, isMixedSpeakerAggregate: true }),
+    ])
+  })
+
   it('keeps a ten-hour high-density recording bounded at every desktop zoom level', () => {
     const start = new Date(2026, 7, 28, 8).getTime()
     const items = Array.from({ length: 36_000 }, (_, index) => ({
@@ -144,5 +161,29 @@ describe('recording timeline math', () => {
     expect(markup).toContain('说话人 1，播放该片段')
     expect(markup).toContain('24 小时缩略导航')
     expect(markup).toContain('可视范围说话人')
+  })
+
+  it('labels dense mixed-speaker aggregates without borrowing the first speaker identity', () => {
+    const dayStart = new Date(2026, 7, 28).getTime()
+    const items = Array.from({ length: 1_000 }, (_, index) => ({
+      itemId: `item-${String(index)}`,
+      itemRef: `ref-${String(index)}`,
+      speakerLabel: `说话人 ${String(index % 2 + 1)}`,
+      speakerColorIndex: index % 2,
+      text: `片段 ${String(index)}`,
+      startAtMillis: dayStart + index * 1_000,
+      endAtMillis: dayStart + index * 1_000 + 500,
+      isBackground: false,
+    })) as never
+
+    const markup = renderToStaticMarkup(<ArkmeRecordingTimeline
+      items={items}
+      dayStartMillis={dayStart}
+      isPlaying={false}
+      onActivate={() => {}}
+      onTogglePlayback={() => {}}
+    />)
+    expect(markup).toContain('多个说话人，播放聚合的')
+    expect(markup).toContain('多个说话人 · 聚合')
   })
 })

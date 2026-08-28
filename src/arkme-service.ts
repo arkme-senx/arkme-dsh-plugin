@@ -810,10 +810,16 @@ export class ArkmeService {
   ): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
 
   /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
+  async recordingImportUserId(): Promise<number> { return await this.recording.recordingImportUserId() }
+
+  /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
   async acceptRecordingImport(
     temporaryPath: string,
     metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
-  ): Promise<PublicRecordingImportJob> { return await this.recording.acceptRecordingImport(temporaryPath, metadata) }
+    expectedUserId: number,
+  ): Promise<PublicRecordingImportJob> {
+    return await this.recording.acceptRecordingImport(temporaryPath, metadata, expectedUserId)
+  }
 
   /** @internal Built-in loopback UI only. */
   async recordingImportStatus(importRef: string): Promise<PublicRecordingImportJob> { return await this.recording.recordingImportStatus(importRef) }

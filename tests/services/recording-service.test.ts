@@ -30,6 +30,25 @@ describe('RecordingService', () => {
     return bytes
   }
 
+  it('rejects an account change between raw receive start and job persistence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-account-fence-'))
+    const path = join(root, 'voice.upload')
+    const bytes = oneSecondMonoWav()
+    await writeFile(path, bytes)
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 77, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const store = new ArkmeStateStore(root)
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), undefined, gatewayNoop())
+
+    await expect(service.acceptRecordingImport(path, {
+      fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
+      sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
+    }, 42)).rejects.toMatchObject({ code: 'recording-import-account-mismatch', retryable: true })
+    await expect(store.listRecordingImportJobs(77)).resolves.toEqual([])
+  })
+
   it('round-trips an account-bound recording cursor', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -71,7 +90,7 @@ describe('RecordingService', () => {
     const accepted = await service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
       sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    })
+    }, 42)
     expect(accepted).toMatchObject({ phase: 'prepared', fileName: 'voice.wav', durationMillis: 1_000 })
     expect(JSON.stringify(accepted)).not.toContain(path)
     expect(accepted.importRef).toMatch(/^arkme-recording-import-v1\./)
@@ -81,7 +100,7 @@ describe('RecordingService', () => {
     await expect(service.acceptRecordingImport(duplicatePath, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
       sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    })).resolves.toMatchObject({ importRef: accepted.importRef })
+    }, 42)).resolves.toMatchObject({ importRef: accepted.importRef })
     await expect(access(duplicatePath)).rejects.toThrow()
 
     releaseUpload?.()
@@ -121,8 +140,8 @@ describe('RecordingService', () => {
     }
 
     const [first, second] = await Promise.all([
-      service.acceptRecordingImport(firstPath, metadata),
-      service.acceptRecordingImport(secondPath, metadata),
+      service.acceptRecordingImport(firstPath, metadata, 42),
+      service.acceptRecordingImport(secondPath, metadata, 42),
     ])
 
     expect(second.importRef).toBe(first.importRef)
@@ -164,7 +183,7 @@ describe('RecordingService', () => {
     const accepted = await service.acceptRecordingImport(path, {
       fileName: 'voice.wav', mimeType: 'audio/wav', fileSize: bytes.length,
       sha256: 'b'.repeat(64), startAtMillis: 1_725_000_000_000,
-    })
+    }, 42)
     await started
 
     await expect(service.cancelRecordingImport(accepted.importRef, accepted.revision))
@@ -248,7 +267,21 @@ describe('RecordingService', () => {
       body: { session_num_ls: [{ session_id: 'session-secret', num: 1 }], spk_id: 'speaker-secret' },
     })
     expect(calls.some(call => call.path.endsWith('/batch-change-flag-session-spk'))).toBe(false)
-    expect(calls.filter(call => call.path.endsWith('/one-day-trans'))).toHaveLength(5)
+
+    const flaggedItem = day.transcript.items.find(candidate => candidate.speakerNumber < 0)
+    await expect(service.assignRecordingSpeaker({
+      itemRef: flaggedItem!.itemRef, speakerRef: options[0]!.speakerRef, scope: 'speaker',
+    })).resolves.toMatchObject({ scope: 'speaker', affectedCount: 1 })
+    expect(calls).toContainEqual({
+      path: '/api/v1/audio/batch-change-flag-session-spk',
+      body: {
+        session_ids: ['session-secret'], new_spk_id: 'speaker-secret', old_spk_id: 'speaker-secret',
+        transcript_source: 'system',
+      },
+    })
+    expect(calls.filter(call => call.path.endsWith('/batch-assign-session-num-to-spk'))).toHaveLength(1)
+    expect(calls.filter(call => call.path.endsWith('/batch-change-flag-session-spk'))).toHaveLength(1)
+    expect(calls.filter(call => call.path.endsWith('/one-day-trans'))).toHaveLength(7)
   })
 
   it('checks the owner snapshot before creating a new speaker', async () => {
