@@ -24,7 +24,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     sha256: 'a'.repeat(64),
     startAtMillis: 1_725_000_000_000,
     belongUserId: 42,
-    temporaryPath: '/private/job-1.upload',
+    sourceHandle: '/private/job-1.upload',
     uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100,
     updatedAtMillis: 1_725_000_000_100,
@@ -107,7 +107,7 @@ describe('recording import contract', () => {
       phase: 'uploading', uploadedBytes: 512, sessionId: 'session-secret', childId: 'child-secret', childFinished: true,
     }), 'opaque-ref')
     expect(publicJob).toEqual(expect.objectContaining({ importRef: 'opaque-ref', phase: 'uploading', progress: 0.5 }))
-    expect(publicJob).not.toHaveProperty('temporaryPath')
+    expect(publicJob).not.toHaveProperty('sourceHandle')
     expect(publicJob).not.toHaveProperty('sessionId')
     expect(publicJob).not.toHaveProperty('childId')
     expect(publicJob).not.toHaveProperty('childFinished')

@@ -26,6 +26,7 @@ import type {
 } from './outgoing-call-contract.js'
 import type { ArkmeRequestStats } from './request-coordinator.js'
 import type { PublicRecordingImportJob } from './recording-import-contract.js'
+import { LocalRecordingImportSource } from './recording-import-probe.js'
 import { SecretValue } from './secret-value.js'
 import {
   buildWorldVoiceprintInviteMessage,
@@ -65,6 +66,7 @@ import { RecordService } from './services/record-service.js'
 import { RelatedQuickNoteService } from './services/related-quick-note-service.js'
 import { ArkmePrivacyVisibilityService } from './services/privacy-visibility.js'
 import { RecordingService } from './services/recording-service.js'
+import { AudioRecordingImportGateway } from './services/recording-import-gateway.js'
 import {
   MAX_ARKME_RELATED_RECORDING_CURSOR_LENGTH,
   MAX_ARKME_RELATED_RECORDING_PAGE_SIZE,
@@ -330,7 +332,11 @@ export class ArkmeService {
       { openWorldImageRef: async (imageRef, viewerUserId) => await this.openWorldImageRef(imageRef, viewerUserId) },
       { recordUid: raw => this.recordUid(raw) }, { openBotImageRef: async (imageRef, viewerUserId) => await this.bot.openBotImageRef(imageRef, viewerUserId) },
     )
-    this.recording = new RecordingService(this.runtime, this.profile, undefined, this.media)
+    this.recording = new RecordingService(this.runtime, {
+      recordingImportGateway: new AudioRecordingImportGateway(this.runtime),
+      recordingImportSource: new LocalRecordingImportSource(),
+      profile: this.profile, media: this.media,
+    })
     this.source = new SourceService(this.runtime, this.profile, {
       summary: async () => await this.summary(),
       recordItem: raw => this.recordItem(raw),
@@ -814,11 +820,11 @@ export class ArkmeService {
 
   /** @internal Built-in loopback UI only; raw files use the dedicated streaming route. */
   async acceptRecordingImport(
-    temporaryPath: string,
+    sourceHandle: string,
     metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob> {
-    return await this.recording.acceptRecordingImport(temporaryPath, metadata, expectedUserId)
+    return await this.recording.acceptRecordingImport(sourceHandle, metadata, expectedUserId)
   }
 
   /** @internal Built-in loopback UI only. */

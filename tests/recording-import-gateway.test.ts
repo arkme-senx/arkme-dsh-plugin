@@ -8,7 +8,7 @@ function job(overrides: Partial<RecordingImportJob> = {}): RecordingImportJob {
     jobId: 'job-1', userId: 42, revision: 4, phase: 'uploading',
     fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
     durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-    belongUserId: 42, temporaryPath: '/private/job-1.upload', uploadedBytes: 0,
+    belongUserId: 42, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
     createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
     ...overrides,
   }
@@ -45,9 +45,9 @@ describe('AudioRecordingImportGateway', () => {
     const current = job({ sessionId: 'session-1', childId: 'child-1' })
 
     await expect(gateway.ensureSession(current)).resolves.toBe('session-1')
-    await expect(gateway.createChild(current, 'arkme_job-1_0.m4a')).resolves.toBe('child-1')
+    await expect(gateway.createChild(current)).resolves.toBe('child-1')
     const progress = vi.fn(async () => undefined)
-    await gateway.uploadObject(current, 'pc_upload/42/session-1/arkme_job-1_0.m4a', progress)
+    await gateway.upload(current, progress)
     await gateway.finishChild(current)
     await gateway.finishSession(current)
 
@@ -249,7 +249,7 @@ describe('AudioRecordingImportGateway', () => {
     const multipartUpload = vi.fn(async () => await new Promise<never>(() => undefined))
     const gateway = new AudioRecordingImportGateway(runtime, () => ({ multipartUpload, cancel }))
     const controller = new AbortController()
-    const uploading = gateway.uploadObject(job({ sessionId: 'session-1', childId: 'child-1' }), 'object', async () => undefined, controller.signal)
+    const uploading = gateway.upload(job({ sessionId: 'session-1', childId: 'child-1' }), async () => undefined, controller.signal)
 
     controller.abort()
     await expect(uploading).rejects.toMatchObject({ code: 'recording-import-cancelled' })

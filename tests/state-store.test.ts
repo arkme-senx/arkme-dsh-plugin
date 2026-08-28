@@ -12,7 +12,7 @@ describe('ArkmeStateStore', () => {
       jobId: 'job-1', userId: 10001, revision: 1, phase: 'prepared',
       fileName: 'meeting.m4a', mimeType: 'audio/mp4', fileSize: 1024,
       durationMillis: 60_000, sha256: 'a'.repeat(64), startAtMillis: 1_725_000_000_000,
-      belongUserId: 10001, temporaryPath: '/private/job-1.upload', uploadedBytes: 0,
+      belongUserId: 10001, sourceHandle: '/private/job-1.upload', uploadedBytes: 0,
       createdAtMillis: 1_725_000_000_100, updatedAtMillis: 1_725_000_000_100,
       ...overrides,
     }
@@ -91,8 +91,8 @@ describe('ArkmeStateStore', () => {
   it('atomically keeps one job for concurrent imports with the same content identity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-recording-dedupe-'))
     const store = new ArkmeStateStore(root)
-    const first = recordingJob({ jobId: 'job-first', temporaryPath: '/private/first.upload' })
-    const second = recordingJob({ jobId: 'job-second', temporaryPath: '/private/second.upload' })
+    const first = recordingJob({ jobId: 'job-first', sourceHandle: '/private/first.upload' })
+    const second = recordingJob({ jobId: 'job-second', sourceHandle: '/private/second.upload' })
 
     const [left, right] = await Promise.all([
       store.putRecordingImportJobIfAbsent(10001, first),
@@ -102,7 +102,7 @@ describe('ArkmeStateStore', () => {
     expect(left.jobId).toBe('job-first')
     expect(right.jobId).toBe('job-first')
     await expect(store.listRecordingImportJobs(10001)).resolves.toEqual([
-      expect.objectContaining({ jobId: 'job-first', temporaryPath: '/private/first.upload' }),
+      expect.objectContaining({ jobId: 'job-first', sourceHandle: '/private/first.upload' }),
     ])
   })
 

@@ -39,7 +39,7 @@ function pruneRecordingImportTerminalJobs(jobs: Record<string, RecordingImportJo
 function normalizedRecordingImportJob(value: unknown): RecordingImportJob | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const source = value as Record<string, unknown>
-  const requiredStrings = ['jobId', 'fileName', 'mimeType', 'sha256', 'temporaryPath'] as const
+  const requiredStrings = ['jobId', 'fileName', 'mimeType', 'sha256', 'sourceHandle'] as const
   const requiredNumbers = [
     'userId', 'revision', 'fileSize', 'durationMillis', 'startAtMillis', 'belongUserId',
     'uploadedBytes', 'createdAtMillis', 'updatedAtMillis',
@@ -59,7 +59,7 @@ function normalizedRecordingImportJob(value: unknown): RecordingImportJob | unde
     sha256: source.sha256 as string,
     startAtMillis: source.startAtMillis as number,
     belongUserId: source.belongUserId as number,
-    temporaryPath: source.temporaryPath as string,
+    sourceHandle: source.sourceHandle as string,
     uploadedBytes: source.uploadedBytes as number,
     createdAtMillis: source.createdAtMillis as number,
     updatedAtMillis: source.updatedAtMillis as number,

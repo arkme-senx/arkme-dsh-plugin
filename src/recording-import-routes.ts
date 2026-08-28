@@ -43,7 +43,7 @@ export async function scavengeRecordingImportTemporaryFiles(
 interface ArkmeRecordingImportAcceptor {
   recordingImportUserId(): Promise<number>
   acceptRecordingImport(
-    temporaryPath: string,
+    sourceHandle: string,
     metadata: { fileName: string; mimeType: string; fileSize: number; sha256: string; startAtMillis: number },
     expectedUserId: number,
   ): Promise<PublicRecordingImportJob>

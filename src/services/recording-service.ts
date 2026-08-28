@@ -1,5 +1,4 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { unlink } from 'node:fs/promises'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import {
   openRecordingImportRef,
@@ -9,9 +8,9 @@ import {
   toPublicRecordingImportJob,
   type PublicRecordingImportJob,
   type RecordingImportJob,
+  type RecordingImportSource,
 } from '../recording-import-contract.js'
 import { RecordingImportCoordinator, type RecordingImportGateway } from '../recording-import-coordinator.js'
-import { probeRecordingImportFile } from '../recording-import-probe.js'
 import {
   projectRecordingTranscripts,
   projectRecordingVersions,
@@ -32,7 +31,6 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import type { ArkmePublicProfile } from './profile-service.js'
-import { AudioRecordingImportGateway } from './recording-import-gateway.js'
 
 export interface ArkmeRecordingProfileReader {
   publicProfileSummariesByUserIds(
@@ -50,6 +48,13 @@ export interface ArkmeRecordingMediaIssuer {
     audioFileName: string
     mimeType: string
   }, signal?: AbortSignal): Promise<string>
+}
+
+export interface RecordingServiceDependencies {
+  recordingImportGateway: RecordingImportGateway
+  recordingImportSource: RecordingImportSource
+  profile?: ArkmeRecordingProfileReader
+  media?: ArkmeRecordingMediaIssuer
 }
 
 interface RecordingItemRefPayload {
@@ -115,16 +120,21 @@ function safeFailureMessage(error: unknown): string {
 export class RecordingService {
   private readonly recordingImports: RecordingImportCoordinator
   private readonly importRuns = new Map<string, { controller: AbortController; promise: Promise<void> }>()
+  private readonly profile: ArkmeRecordingProfileReader | undefined
+  private readonly media: ArkmeRecordingMediaIssuer | undefined
+  private readonly recordingImportSource: RecordingImportSource
 
   constructor(
     private readonly runtime: ServiceRuntime,
-    private readonly profile?: ArkmeRecordingProfileReader,
-    recordingImportGateway: RecordingImportGateway = new AudioRecordingImportGateway(runtime),
-    private readonly media?: ArkmeRecordingMediaIssuer,
+    dependencies: RecordingServiceDependencies,
   ) {
+    this.profile = dependencies.profile
+    this.media = dependencies.media
+    this.recordingImportSource = dependencies.recordingImportSource
     this.recordingImports = new RecordingImportCoordinator(
       runtime.stateStore,
-      recordingImportGateway,
+      dependencies.recordingImportGateway,
+      dependencies.recordingImportSource,
       async () => (await runtime.requireSession()).userId,
     )
   }
@@ -277,7 +287,7 @@ export class RecordingService {
   }
 
   async acceptRecordingImport(
-    temporaryPath: string,
+    sourceHandle: string,
     metadata: {
       fileName: string
       mimeType: string
@@ -314,10 +324,10 @@ export class RecordingService {
     const existing = (await this.runtime.stateStore.listRecordingImportJobs(session.userId))
       .find(job => job.phase !== 'cancelled' && sameRecordingImportIdentity(job, identity))
     if (existing !== undefined) {
-      await unlink(temporaryPath).catch(() => undefined)
+      await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
       return toPublicRecordingImportJob(existing, await this.recordingImportRef(existing))
     }
-    const probe = await probeRecordingImportFile(temporaryPath, metadata)
+    const probe = await this.recordingImportSource.inspect(sourceHandle, metadata)
     const now = Date.now()
     const job: RecordingImportJob = {
       jobId: randomUUID(),
@@ -331,14 +341,14 @@ export class RecordingService {
       sha256: metadata.sha256,
       startAtMillis,
       belongUserId: session.userId,
-      temporaryPath,
+      sourceHandle,
       uploadedBytes: 0,
       createdAtMillis: now,
       updatedAtMillis: now,
     }
     const selected = await this.runtime.stateStore.putRecordingImportJobIfAbsent(session.userId, job)
     if (selected.jobId !== job.jobId) {
-      await unlink(temporaryPath).catch(() => undefined)
+      await this.recordingImportSource.discard(sourceHandle).catch(() => undefined)
       return toPublicRecordingImportJob(selected, await this.recordingImportRef(selected))
     }
     const importRef = await this.recordingImportRef(selected)
