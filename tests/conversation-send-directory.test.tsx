@@ -62,7 +62,13 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(42)
     arkmeUi.selectSource(target)
     mocks.callArkme.mockReset()
-    mocks.callArkme.mockImplementation(async (operation: string, params?: { sid?: string; textContent?: string; recordUid?: string }) => {
+    mocks.callArkme.mockImplementation(async (operation: string, params?: {
+      sid?: string
+      textContent?: string
+      recordUid?: string
+      targetSourceRef?: string
+      directory?: 'root' | 'send_to_self'
+    }) => {
       if (operation === 'user.profile') return {
         profile: {
           userId: 42, displayName: '狗才', nickname: '狗才', avatarRef: '', arkmeId: 'doge', accountType: 1,
@@ -73,6 +79,11 @@ describe('conversation send directory projection', () => {
       }
       if (operation === 'source.members') return { source: target, items: [], total: 0, activeCount: 0 }
       if (operation === 'source.timeline') return { source: target, items: timeline, hasMore: false }
+      if (operation === 'sources.list') return {
+        directory: params?.directory ?? 'root',
+        items: params?.directory === 'send_to_self' ? [] : [other, target],
+        hasMore: false,
+      }
       if (operation === 'source.interwoven-moments') return {
         state: 'disabled', moments: [], preparedAtMillis: 48,
       }
@@ -123,6 +134,13 @@ describe('conversation send directory projection', () => {
       if (operation === 'source.send-text') return {
         sourceRef: target.sourceRef, itemUid: params?.recordUid ?? 'record-new', status: 1, sequence: 9, localState: 'synced',
       }
+      if (operation === 'source.forward-messages') return {
+        sourceRef: params?.targetSourceRef ?? other.sourceRef,
+        itemUid: params?.recordUid ?? 'forwarded-record',
+        status: 1,
+        sequence: 5,
+        localState: 'synced',
+      }
       if (operation === 'source.message-copy-link.extend') {
         copiedQuickLinkExtensionText = params?.textContent ?? '补充想法'
         return {
@@ -159,6 +177,108 @@ describe('conversation send directory projection', () => {
     arkmeMessageReadReceipts.activateAccount(undefined)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  async function openForwardPicker() {
+    timeline = [{
+      itemUid: 'forward-source', messageActionRef: 'opaque-forward-action',
+      senderName: '狗才', isMe: true, sendAtMillis: 1, title: '', textContent: '待转发快记', status: 1,
+    }]
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    const bubble = renderer!.root.findByProps({ 'aria-label': '打开快记详情' })
+    act(() => {
+      bubble.props.onContextMenu({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        clientX: 120,
+        clientY: 180,
+      })
+    })
+    const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+    await act(async () => {
+      menu.findAllByProps({ role: 'menuitem' })[3]!.props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    return renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
+  }
+
+  it('keeps the forward picker mounted while rapid comment changes are deferred', async () => {
+    const dialog = await openForwardPicker()
+    const targetButton = dialog.findAll(node => node.type === 'button'
+      && typeof node.props['aria-pressed'] === 'boolean')[0]!
+    act(() => { targetButton.props.onClick() })
+    const comment = dialog.findByProps({ 'aria-label': '转发附言' })
+    const firstEvent: { currentTarget: { value: string } | null } = { currentTarget: { value: '附' } }
+    const secondEvent: { currentTarget: { value: string } | null } = { currentTarget: { value: '附言' } }
+
+    expect(() => {
+      act(() => {
+        comment.props.onChange(firstEvent)
+        firstEvent.currentTarget = null
+        comment.props.onChange(secondEvent)
+        secondEvent.currentTarget = null
+      })
+    }).not.toThrow()
+
+    expect(renderer!.root.findByProps({ 'aria-label': '转发附言' }).props.value).toBe('附言')
+    expect(renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toBeDefined()
+  })
+
+  it('keeps the forward picker mounted while rapid search changes are deferred', async () => {
+    await openForwardPicker()
+    const search = renderer!.root.findByProps({ 'aria-label': '搜索转发对象' })
+    const firstEvent: { currentTarget: { value: string } | null } = { currentTarget: { value: '其' } }
+    const secondEvent: { currentTarget: { value: string } | null } = { currentTarget: { value: '其他' } }
+
+    expect(() => {
+      act(() => {
+        search.props.onChange(firstEvent)
+        firstEvent.currentTarget = null
+        search.props.onChange(secondEvent)
+        secondEvent.currentTarget = null
+      })
+    }).not.toThrow()
+
+    expect(renderer!.root.findByProps({ 'aria-label': '搜索转发对象' }).props.value).toBe('其他')
+    expect(renderer!.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toBeDefined()
+  })
+
+  it('renders the forward submit button with primary action contrast', async () => {
+    const dialog = await openForwardPicker()
+    const targetButton = dialog.findAll(node => node.type === 'button'
+      && typeof node.props['aria-pressed'] === 'boolean')[0]!
+    act(() => { targetButton.props.onClick() })
+
+    expect(renderer!.root.findByProps({ 'aria-label': '发送转发' }).props.style).toMatchObject({
+      background: 'var(--dsw-alias-button-primary-fill, #17191c)',
+      color: 'var(--dsw-alias-label-primary-inverted, #ffffff)',
+    })
+  })
+
+  it('removes the forwarding status after a forward succeeds', async () => {
+    const dialog = await openForwardPicker()
+    const targetButton = dialog.findAll(node => node.type === 'button'
+      && typeof node.props['aria-pressed'] === 'boolean')[0]!
+    act(() => { targetButton.props.onClick() })
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '发送转发' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ 'aria-label': '已转发到 1 个对象' })).toBeDefined()
+    expect(renderer!.root.findAllByProps({ role: 'status' })).toHaveLength(0)
   })
 
   it('updates and reorders the left conversation row when a send succeeds', async () => {

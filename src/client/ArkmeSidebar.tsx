@@ -450,7 +450,7 @@ const styles: Record<string, CSSProperties> = {
   forwardTargetSend: {
     position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
     width: 40, height: 40, border: 0, borderRadius: 999, display: 'grid', placeItems: 'center',
-    background: 'transparent', color: arkmeTheme.base, cursor: 'pointer', padding: 0,
+    background: arkmeTheme.primaryAction, color: arkmeTheme.onPrimaryAction, cursor: 'pointer', padding: 0,
   },
   forwardTargetSendDisabled: { opacity: .45, cursor: 'default' },
   forwardTargetSendError: { margin: '8px 2px 0', color: colors.danger, fontSize: 12, lineHeight: '16px' },
@@ -3669,7 +3669,7 @@ export function ArkmeSurface({
       setForwardTargetPicker(undefined)
       closeMessageMenu()
       showForwardSuccessFeedback(successfulTargets, successCount, failureCount)
-      if (warningText !== '') showMessageActionStatus(warningText)
+      showMessageActionStatus(warningText)
       if (needsTimelineRefresh) await loadTimeline()
     } catch (caught) {
       if (activeSourceRef.current === sourceRef) {
@@ -4455,9 +4455,10 @@ export function ArkmeSurface({
                 aria-label="搜索转发对象"
                 disabled={messageActionBusy === 'forward'}
                 onChange={event => {
+                  const keyword = event.currentTarget.value
                   setForwardTargetPicker(current => current === undefined
                     ? current
-                    : { ...current, keyword: event.currentTarget.value })
+                    : { ...current, keyword })
                 }}
               />
             </div>
@@ -4533,9 +4534,10 @@ export function ArkmeSurface({
                   aria-label="转发附言"
                   disabled={messageActionBusy === 'forward'}
                   onChange={event => {
+                    const commentText = event.currentTarget.value
                     setForwardTargetPicker(current => current === undefined
                       ? current
-                      : { ...current, commentText: event.currentTarget.value })
+                      : { ...current, commentText })
                   }}
                   onKeyDown={event => {
                     if (event.key === 'Enter' && !event.shiftKey) {
