@@ -8,6 +8,7 @@ import type {
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
+  ArkmeRecordCaptureContext,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
@@ -58,6 +59,35 @@ function safeFailureMessage(error: unknown): string {
   if (error instanceof ArkmePluginError) return error.message
   if (error instanceof Error && error.message.trim() !== '') return error.message
   return '未知错误'
+}
+
+export function arkmeRecordCaptureContextPayload(input: ArkmeRecordCaptureContext): Record<string, unknown> {
+  const clientName = input.clientName?.trim().slice(0, 120) ?? ''
+  const networkName = input.networkName?.trim().slice(0, 120) ?? ''
+  const electric = input.electric === undefined ? undefined : Math.trunc(input.electric)
+  const charge = Math.trunc(input.charge ?? 0)
+  return {
+    ...(clientName === '' ? {} : { client_name: clientName }),
+    ...(networkName === '' ? {} : { network_name: networkName }),
+    ...(electric === undefined || electric < 0 || electric > 100 ? {} : { electric }),
+    ...(charge < 1 || charge > 3 ? {} : { charge }),
+  }
+}
+
+function normalizedRecordCaptureContext(input: ArkmeRecordCaptureContext | undefined): ArkmeRecordCaptureContext | undefined {
+  if (input === undefined) return undefined
+  const payload = arkmeRecordCaptureContextPayload(input)
+  const clientName = stringValue(payload.client_name)
+  const networkName = stringValue(payload.network_name)
+  const electric = numberValue(payload.electric)
+  const charge = numberValue(payload.charge)
+  const normalized: ArkmeRecordCaptureContext = {
+    ...(clientName === '' ? {} : { clientName }),
+    ...(networkName === '' ? {} : { networkName }),
+    ...(payload.electric === undefined ? {} : { electric }),
+    ...(charge === 0 ? {} : { charge }),
+  }
+  return Object.keys(normalized).length === 0 ? undefined : normalized
 }
 
 export class RecordService {
@@ -276,7 +306,11 @@ export class RecordService {
     return page
   }
 
-  async createText(recordUid: string, textContent: string): Promise<ArkmeCreateTextResult> {
+  async createText(
+    recordUid: string,
+    textContent: string,
+    options: { recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
+  ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     const normalizedUid = recordUid.trim()
     const normalizedText = textContent.trim()
@@ -294,12 +328,16 @@ export class RecordService {
       )
     }
     const now = Date.now()
+    const recordDurationMillis = Math.max(0, Math.trunc(options.recordDurationMillis ?? 0))
+    const captureContext = normalizedRecordCaptureContext(options.captureContext)
     const pending: ArkmePendingWrite = {
       recordUid: normalizedUid,
       textContent: normalizedText,
       createdAtMillis: now,
       sendAtMillis: now,
       attempts: 0,
+      ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+      ...(captureContext === undefined ? {} : { captureContext }),
     }
     await this.runtime.stateStore.putPending(session.userId, pending)
     return await this.sendPending(session, pending)
@@ -308,9 +346,10 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
+    options: { recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
-      const result = await this.createText(recordUid, textContent)
+      const result = await this.createText(recordUid, textContent, options)
       return { ...result, localState: 'synced' }
     } catch (error) {
       const session = await this.runtime.requireSession()
@@ -442,6 +481,9 @@ export class RecordService {
     pending: ArkmePendingWrite,
   ): Promise<ArkmeCreateTextResult> {
     try {
+      const captureContext = pending.captureContext === undefined
+        ? undefined
+        : arkmeRecordCaptureContextPayload(pending.captureContext)
       const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
         '/api/v1/records/create',
         {
@@ -449,6 +491,12 @@ export class RecordService {
           template_kind: 1,
           title: '',
           text_content: pending.textContent,
+          ...(Math.max(0, Math.trunc(pending.recordDurationMillis ?? 0)) === 0
+            ? {}
+            : { record_duration_millis: Math.max(0, Math.trunc(pending.recordDurationMillis ?? 0)) }),
+          ...(captureContext === undefined || Object.keys(captureContext).length === 0
+            ? {}
+            : { capture_context: captureContext }),
           send_at: pending.sendAtMillis,
         },
         session,

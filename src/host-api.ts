@@ -9,7 +9,7 @@ import type {
   ArkmeDirectorySectionKind, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
   ArkmeGroupAiPolishThreadMessage, ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
-  ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
+  ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
 } from './types.js'
 import type { ArkmeCaptchaResult } from './types.js'
@@ -115,6 +115,51 @@ function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillin
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function captureContextParam(params: Record<string, unknown>): ArkmeRecordCaptureContext | undefined {
+  const raw = params.captureContext
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('capture-context-invalid', '记忆快照参数无效', false, 400)
+  }
+  const value = raw as Record<string, unknown>
+  const clientName = stringParam(value, 'clientName').trim().slice(0, 120)
+  const networkName = stringParam(value, 'networkName').trim().slice(0, 120)
+  const electric = typeof value.electric === 'number' && Number.isFinite(value.electric) ? Math.trunc(value.electric) : undefined
+  const charge = Math.trunc(numberParam(value, 'charge', 0))
+  const context: ArkmeRecordCaptureContext = {
+    ...(clientName === '' ? {} : { clientName }),
+    ...(networkName === '' ? {} : { networkName }),
+    ...(electric === undefined || electric < 0 || electric > 100 ? {} : { electric }),
+    ...(charge < 1 || charge > 3 ? {} : { charge }),
+  }
+  return Object.keys(context).length === 0 ? undefined : context
+}
+
+function recordLocationCaptureParam(params: Record<string, unknown>): ArkmeRecordLocationCapture {
+  const raw = params.location
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ArkmePluginError('record-location-invalid', '位置快照参数无效', false, 400)
+  }
+  const value = raw as Record<string, unknown>
+  const latitude = numberParam(value, 'latitude', Number.NaN)
+  const longitude = numberParam(value, 'longitude', Number.NaN)
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new ArkmePluginError('record-location-invalid', '位置坐标无效', false, 400)
+  }
+  const altitudeMeters = numberParam(value, 'altitudeMeters', Number.NaN)
+  const speedMetersPerSecond = numberParam(value, 'speedMetersPerSecond', Number.NaN)
+  const accuracyMeters = numberParam(value, 'accuracyMeters', Number.NaN)
+  const capturedAtMillis = Math.trunc(numberParam(value, 'capturedAtMillis', 0))
+  return {
+    latitude,
+    longitude,
+    capturedAtMillis: capturedAtMillis > 0 ? capturedAtMillis : Date.now(),
+    ...(Number.isFinite(accuracyMeters) && accuracyMeters >= 0 ? { accuracyMeters } : {}),
+    ...(Number.isFinite(altitudeMeters) ? { altitudeMeters } : {}),
+    ...(Number.isFinite(speedMetersPerSecond) && speedMetersPerSecond >= 0 ? { speedMetersPerSecond } : {}),
+  }
 }
 
 const ARKME_DIRECTORY_SECTIONS = new Set<ArkmeDirectorySectionKind>([
@@ -451,6 +496,8 @@ function botRefsParam(params: Record<string, unknown>): string[] {
 function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const rawAssets = Array.isArray(params.assets) ? params.assets : []
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
+  const recordDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0)))
+  const captureContext = captureContextParam(params)
   const humanMentions = humanMentionsParam(params)
   const botMentions = botMentionsParam(params)
   return {
@@ -458,6 +505,8 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
     textContent: stringParam(params, 'textContent'),
     displayKind: numberParam(params, 'displayKind', 0) === 1 ? 1 : 0,
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
+    ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+    ...(captureContext === undefined ? {} : { captureContext }),
     ...(humanMentions.length === 0 ? {} : { humanMentions }),
     ...(botMentions.length === 0 ? {} : { botMentions }),
     assets: rawAssets.flatMap(raw => {
@@ -1132,6 +1181,21 @@ export async function dispatchArkmeHostOperation(
       stringParam(params, 'detailRef'),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.message-snapshot.detail': return await service.messageSnapshotDetail(
+      stringParam(params, 'sourceRef'),
+      stringParam(params, 'actionRef'),
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    )
+    case 'source.message-location.set': {
+      await service.saveMessageLocation(
+        stringParam(params, 'sourceRef'),
+        stringParam(params, 'itemUid'),
+        recordLocationCaptureParam(params),
+        numberParam(params, 'recordVersion', 0) || undefined,
+        requestSignal === undefined ? {} : { signal: requestSignal },
+      )
+      return { ok: true }
+    }
     case 'source.forward-messages': return await service.forwardSourceMessages(
       stringParam(params, 'sourceRef'),
       messageActionRefsParam(params),
@@ -1147,12 +1211,15 @@ export async function dispatchArkmeHostOperation(
       const botRefs = botRefsParam(params)
       const humanMentions = humanMentionsParam(params)
       const botMentions = botMentionsParam(params)
+      const captureContext = captureContextParam(params)
       return await service.sendSourceText(
         stringParam(params, 'sourceRef'),
         stringParam(params, 'textContent'),
         {
           ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
           ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
+          ...(numberParam(params, 'recordDurationMillis', 0) <= 0 ? {} : { recordDurationMillis: Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0))) }),
+          ...(captureContext === undefined ? {} : { captureContext }),
           ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
           ...(botRefs.length === 0 ? {} : { botRefs }),
           ...(humanMentions.length === 0 ? {} : { humanMentions }),

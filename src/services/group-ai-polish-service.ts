@@ -6,6 +6,7 @@ import type {
   ArkmeGroupAiPolishRuleCandidate,
   ArkmeGroupAiPolishSnapshot,
   ArkmeGroupAiPolishThreadMessage,
+  ArkmeRecordCaptureContext,
   ArkmeSourceItem,
   ArkmeSourceSendResult,
   ArkmeTimelineItem,
@@ -535,7 +536,7 @@ export class GroupAiPolishService {
       recordUid: string,
       relationUid: string,
       session: ArkmeSessionCredentials,
-      options: { agentAuthored?: boolean; signal?: AbortSignal } = {},
+      options: { agentAuthored?: boolean; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; signal?: AbortSignal } = {},
     ): Promise<ArkmeSourceSendResult> {
       let config: ArkmeAiPolishConfigSnapshot
       try {

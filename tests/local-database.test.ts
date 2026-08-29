@@ -19,6 +19,16 @@ function pending(recordUid: string, textContent: string): ArkmePendingWrite {
   }
 }
 
+function capturedPending(recordUid: string, textContent: string): ArkmePendingWrite {
+  return {
+    ...pending(recordUid, textContent),
+    recordDurationMillis: 3_400,
+    captureContext: {
+      clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
+    },
+  }
+}
+
 function remote(recordUid: string, textContent: string): ArkmeSelfRecordItem {
   return {
     recordUid,
@@ -74,8 +84,9 @@ describe('ArkmeLocalDatabase', () => {
 
   it('migrates legacy outbox data and isolates cached records by account', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
+    const legacyWriter = new ArkmeStateStore(directory)
+    await legacyWriter.putPending(10001, capturedPending('pending-1', 'offline'))
     const legacy = new ArkmeStateStore(directory)
-    await legacy.putPending(10001, pending('pending-1', 'offline'))
     const database = new ArkmeLocalDatabase(directory, legacy)
 
     const first = await database.cachedSnapshot(10001)
@@ -83,11 +94,78 @@ describe('ArkmeLocalDatabase', () => {
       recordUid: 'pending-1', textContent: 'offline', localState: 'pending',
     }])
     expect(first.revision).toBeGreaterThan(0)
+    expect(await database.listPending(10001)).toMatchObject([{
+      recordUid: 'pending-1', recordDurationMillis: 3_400,
+      captureContext: {
+        clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
+      },
+    }])
     expect(await legacy.listPending(10001)).toEqual([])
     expect((await database.cachedSnapshot(10002)).items).toEqual([])
 
     expectPrivatePath(join(directory, 'records.sqlite3'), 0o600)
     database.close()
+  })
+
+  it('keeps capture metadata when a pending write is reopened from SQLite', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
+    const first = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    await first.putPending(10001, capturedPending('pending-capture', 'browser metadata'))
+    first.close()
+
+    const reopened = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    expect(await reopened.listPending(10001)).toMatchObject([{
+      recordUid: 'pending-capture', recordDurationMillis: 3_400,
+      captureContext: {
+        clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
+      },
+    }])
+    reopened.close()
+  })
+
+  it('upgrades an existing record outbox before writing capture metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-arkme-db-'))
+    const legacyDatabase = new DatabaseSync(join(directory, 'records.sqlite3'))
+    legacyDatabase.exec(`
+      CREATE TABLE record_cache (
+        user_id INTEGER NOT NULL,
+        record_uid TEXT NOT NULL,
+        send_at_millis INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        text_content TEXT NOT NULL DEFAULT '',
+        template_kind INTEGER NOT NULL DEFAULT 0,
+        status INTEGER NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 0,
+        sync_state TEXT NOT NULL CHECK (sync_state IN ('synced', 'pending', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at_millis INTEGER NOT NULL,
+        updated_at_millis INTEGER NOT NULL,
+        PRIMARY KEY (user_id, record_uid)
+      );
+      INSERT INTO record_cache VALUES (
+        10001, 'legacy-pending', 100, '', 'legacy offline', 1, 0, 0,
+        'pending', 0, NULL, 100, 100
+      );
+    `)
+    legacyDatabase.close()
+
+    const upgraded = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    expect(await upgraded.listPending(10001)).toMatchObject([{
+      recordUid: 'legacy-pending', textContent: 'legacy offline', attempts: 0,
+    }])
+    await upgraded.putPending(10001, {
+      ...capturedPending('legacy-pending', 'legacy offline'),
+      captureContext: { clientName: 'Google Chrome（DeepSeek Harness）', electric: 0, charge: 2 },
+    })
+    upgraded.close()
+
+    const reopened = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    expect(await reopened.listPending(10001)).toMatchObject([{
+      recordUid: 'legacy-pending', recordDurationMillis: 3_400,
+      captureContext: { clientName: 'Google Chrome（DeepSeek Harness）', electric: 0, charge: 2 },
+    }])
+    reopened.close()
   })
 
   it('persists remote pages, summary metadata, and pending sync transitions', async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHmac } from 'node:crypto'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { ArkoService } from '../../src/services/arko-service.js'
 import { BotService } from '../../src/services/bot-service.js'
@@ -22,7 +23,373 @@ const config: ArkmeServiceConfig = {
   maxTextLength: 20_000, geetestCaptchaId: 'captcha-test-id-1234567890', interwovenMomentsEnabled: true,
 }
 
+function snapshotActionRef(input: Partial<Record<string, unknown>> = {}): string {
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    sourceKind: 'chat_relation',
+    userId: 42,
+    sourceOwnerRef: 'chat-1',
+    chatSessionUid: 'chat-1',
+    relationUid: 'rel-snapshot-1',
+    recordOwnerUserId: 42,
+    recordUid: 'record-snapshot-1',
+    senderUserId: 42,
+    senderName: '测试用户',
+    title: '',
+    textContent: '',
+    sendAtMillis: 1_786_000_003_000,
+    sourceSequence: 9,
+    templateKind: 1,
+    displayKind: 0,
+    imageCount: 0,
+    voiceCount: 0,
+    fileCount: 0,
+    fileNames: [],
+    ...input,
+  })).toString('base64url')
+  const signature = createHmac('sha256', 'snapshot-test-signing-key').update(payload).digest('base64url')
+  return `arkme-message-action-v1.${payload}.${signature}`
+}
+
 describe('ChatService', () => {
+  it('passes browser capture metadata into send-to-self and default-category text writes', async () => {
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+    }
+    const source = {
+      openSourceRef: vi.fn(),
+      invalidateSourceListCache: vi.fn(),
+    }
+    const record = {
+      createTextForConversation: vi.fn(async (recordUid: string) => ({ recordUid, status: 1, localState: 'synced' })),
+    }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, record as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+    const captureContext = {
+      clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
+    }
+
+    for (const kind of ['send_to_self', 'default_category'] as const) {
+      source.openSourceRef.mockResolvedValueOnce({ kind, ownerRef: kind })
+      await expect(chat.sendSourceText(`opaque-${kind}`, '浏览器纯文字', {
+        recordUid: `record-${kind}`,
+        recordDurationMillis: 2_700,
+        captureContext,
+      })).resolves.toMatchObject({ localState: 'synced' })
+    }
+    expect(record.createTextForConversation).toHaveBeenNthCalledWith(
+      1, 'record-send_to_self', '浏览器纯文字', { recordDurationMillis: 2_700, captureContext },
+    )
+    expect(record.createTextForConversation).toHaveBeenNthCalledWith(
+      2, 'record-default_category', '浏览器纯文字', { recordDurationMillis: 2_700, captureContext },
+    )
+  })
+
+  it('writes an explicitly captured location for every supported conversation source', async () => {
+    const authenticatedPost = vi.fn(async () => ({}))
+    const runtime = {
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedPost,
+    }
+    const source = { openSourceRef: vi.fn() }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    )
+    const location = {
+      latitude: 30.52, longitude: 114.31, accuracyMeters: 18, altitudeMeters: 42,
+      speedMetersPerSecond: 0, capturedAtMillis: 1_786_000_000_000,
+    }
+
+    for (const kind of ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'] as const) {
+      source.openSourceRef.mockResolvedValueOnce({ kind, ownerRef: kind })
+      await expect(chat.saveMessageLocation(`opaque-${kind}`, `record-${kind}`, location, undefined)).resolves.toBeUndefined()
+    }
+    expect(authenticatedPost).toHaveBeenCalledTimes(5)
+    expect(authenticatedPost).toHaveBeenLastCalledWith(
+      '/api/v1/records/location/set',
+      {
+        record_uid: 'record-topic',
+        location: {
+          source_kind: 1, lat: 30.52, lon: 114.31, accuracy: 18, alt: 42, speed: 0,
+          captured_at: 1_786_000_000_000,
+        },
+      },
+      expect.anything(),
+      undefined,
+    )
+  })
+
+  it('uses the signed chat relation to load the complete mounted record snapshot', async () => {
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, seq: 9, attach_at: 1_786_000_003_000 },
+        record: { record_uid: 'record-snapshot-1', status: 1, payload: {
+          text_content: '来自聊天投影的文本', location: { lat: 1, lon: 2, altitude: 99 }, position_detail: { address: '过期聊天地址' },
+        } },
+      } })),
+      authenticatedPost: vi.fn(async () => ({
+        record_core: {
+          record_uid: 'record-snapshot-1', text_content: '完整快记文本', record_duration_millis: 2_400,
+          create_at: 1_786_000_000_000, send_at: 1_786_000_003_000, upload_at: 1_786_000_004_000, status: 1,
+          content_payload: JSON.stringify({ network: 'WiFi（senguoyun_5G）' }),
+        },
+        // The real detail contract keeps these outside record_core. They must
+        // survive the hydration merge just as they do in the Flutter parser.
+        location: { lat: 30.1, lon: 120.2, altitude: 12, speed: 0 },
+        position_detail: { address: '武汉市洪山区高新大道', weather: { temp: 30, condition_ch: 'Windy' } },
+        record_extra: JSON.stringify({ capture_context: { client_name: 'ts\'s MacBook Pro', electric: 81, charge: 1 }, background_sound_amplitudes: [1, 2, 3] }),
+      })),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef())).resolves.toMatchObject({
+      itemUid: 'record-snapshot-1', textContent: '完整快记文本', recordDurationMillis: 2_400,
+      weather: '30° Windy', altitudeMeters: 12, movement: '静止', locationLabel: '武汉市洪山区高新大道',
+      captureContext: { clientName: 'ts\'s MacBook Pro', networkName: 'WiFi（senguoyun_5G）', electric: 81, charge: 1 },
+      backgroundSound: 'available', syncState: 'synced',
+    })
+    expect(runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/detail', {
+      chat_session_uid: 'chat-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, rel_uid: 'rel-snapshot-1', seq: 9,
+    }, expect.anything(), undefined, expect.anything())
+    expect(runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/detail', {
+      record_uid: 'record-snapshot-1',
+    }, expect.anything(), undefined, expect.anything())
+  })
+
+  it('uses Flutter record timestamps and location context when the detail core has no weather', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { rel_uid: 'rel-snapshot-flutter', record_uid: 'record-snapshot-flutter', record_owner_user_id: 42, seq: 1, attach_at: 1_786_000_000_000 },
+        record: { record_uid: 'record-snapshot-flutter', status: 1, payload: { text_content: '聊天消息' } },
+      } })),
+      authenticatedPost: vi.fn(async (path: string) => path === '/api/v1/records/detail'
+        ? { record_core: {
+            record_uid: 'record-snapshot-flutter', text_content: 'Flutter 发送的快记', status: 1,
+            // Older records can expose only send_at. Flutter uses it as the
+            // creation-time fallback, so the plugin must do the same.
+            send_at: 1_786_000_000_000,
+            update_time_stamp: 1_786_000_004_000,
+            // A stale payload timestamp must never hide the record-core one.
+            payload: { create_time_stamp: 0, location: { lat: 30.1, lon: 120.2, altitude: 0 } },
+          } }
+        : {
+            record_uid: 'record-snapshot-flutter',
+            position_detail: { address: '武汉市洪山区九峰街道', weather: { temp: 30, condition_ch: 'Windy' } },
+          }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef({
+      relationUid: 'rel-snapshot-flutter', recordUid: 'record-snapshot-flutter', sourceSequence: 1, sendAtMillis: 1_786_000_000_000,
+    }))).resolves.toMatchObject({
+      itemUid: 'record-snapshot-flutter',
+      startAtMillis: 1_786_000_000_000,
+      completeAtMillis: 1_786_000_004_000,
+      syncState: 'synced',
+      weather: '30° Windy',
+      altitudeMeters: 0,
+      locationCapture: { latitude: 30.1, longitude: 120.2, altitudeMeters: 0 },
+    })
+    expect(runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/location/context/get', {
+      record_uid: 'record-snapshot-flutter',
+    }, expect.anything(), undefined, expect.anything())
+  })
+
+  it('refuses another sender’s signed snapshot before any remote detail request', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(),
+      authenticatedPost: vi.fn(),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef({
+      senderUserId: 7,
+      recordOwnerUserId: 7,
+    }))).rejects.toMatchObject({ code: 'message-snapshot-not-owned' })
+    expect(runtime.authenticatedChatPost).not.toHaveBeenCalled()
+    expect(runtime.authenticatedPost).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty record-detail response instead of rendering sparse chat fields as a complete snapshot', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, seq: 9 },
+        record: { record_uid: 'record-snapshot-1', payload: { text_content: '仅聊天气泡里的文本' } },
+      } })),
+      authenticatedPost: vi.fn(async () => ({})),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef()))
+      .rejects.toMatchObject({ code: 'message-snapshot-detail-unavailable' })
+  })
+
+  it('loads a send-to-self record snapshot directly from its signed record reference', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(),
+      authenticatedPost: vi.fn(async (path: string) => path === '/api/v1/records/detail'
+        ? { record_core: {
+            record_uid: 'record-self-1', text_content: '发给自己的完整快记', status: 1,
+            createdAt: 1_786_000_000_000, send_at: 1_786_000_003_000, upload_at: 1_786_000_004_000,
+            payload: { createdAt: 0, capture_context: { client_name: 'Arkme Desktop', network_name: 'WiFi', electric: 100, charge: 2 } },
+          } }
+        : { record_uid: 'record-self-1', weather: { temp: 30, condition_ch: 'Windy' } }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef({
+      sourceKind: 'record', sourceOwnerRef: 'self', chatSessionUid: '', relationUid: '',
+      recordUid: 'record-self-1', recordOwnerUserId: 42, senderUserId: 42, sourceSequence: 0,
+    }))).resolves.toMatchObject({
+      itemUid: 'record-self-1', textContent: '发给自己的完整快记',
+      captureContext: { clientName: 'Arkme Desktop', networkName: 'WiFi', electric: 100, charge: 2 },
+      startAtMillis: 1_786_000_000_000, weather: '30° Windy',
+      syncState: 'synced',
+    })
+    expect(runtime.authenticatedChatPost).not.toHaveBeenCalled()
+    expect(runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/detail', { record_uid: 'record-self-1' }, expect.anything(), undefined, expect.anything())
+    expect(runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/location/context/get', { record_uid: 'record-self-1' }, expect.anything(), undefined, expect.anything())
+  })
+
+  it('rejects a location-context response belonging to a different quick-memory record', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, seq: 9 },
+        record: { record_uid: 'record-snapshot-1', payload: { text_content: '消息' } },
+      } })),
+      authenticatedPost: vi.fn(async (path: string) => path === '/api/v1/records/detail'
+        ? { record_core: { record_uid: 'record-snapshot-1', text_content: '消息', send_at: 1_786_000_000_000, status: 1 } }
+        : { record_uid: 'another-record', weather: { temp: 30, condition_ch: 'Windy' } }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef()))
+      .rejects.toMatchObject({ code: 'message-snapshot-detail-mismatch' })
+  })
+
+  it('keeps the location-context envelope identity when context fields are nested', async () => {
+    const runtime = {
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async () => ({ item: {
+        relation: { rel_uid: 'rel-snapshot-1', record_uid: 'record-snapshot-1', record_owner_user_id: 42, seq: 9 },
+        record: { record_uid: 'record-snapshot-1', payload: { text_content: '消息' } },
+      } })),
+      authenticatedPost: vi.fn(async (path: string) => path === '/api/v1/records/detail'
+        ? { record_core: { record_uid: 'record-snapshot-1', text_content: '消息', send_at: 1_786_000_000_000, status: 1 } }
+        : { record_uid: 'another-record', data: { weather: { temp: 30, condition_ch: 'Windy' } } }),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'private_chat', ownerRef: 'chat-1' })) }
+    const chat = new ChatService(runtime as never, source as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+
+    await expect(chat.messageSnapshotDetail('opaque-source', snapshotActionRef()))
+      .rejects.toMatchObject({ code: 'message-snapshot-detail-mismatch' })
+  })
+
+  it('attaches a usable snapshot reference to records shown in the send-to-self timeline', async () => {
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedPost: vi.fn(async (path: string) => path === '/api/v1/home/feed/query'
+        ? { items: [{ record_uid: 'record-self-timeline', text_content: '发给自己的消息' }], has_more: false }
+        : { record_core: { record_uid: 'record-self-timeline', text_content: '发给自己的消息', status: 1 } }),
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ kind: 'send_to_self', ownerRef: 'self' })),
+      sourceItem: vi.fn(async () => ({ sourceRef: 'opaque-source', kind: 'send_to_self', displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 })),
+    }
+    const record = {
+      recordUid: vi.fn((raw: { record_uid: string }) => raw.record_uid),
+      recordTimelineItemFromRaw: vi.fn((raw: { record_uid: string; text_content: string }) => ({
+        itemUid: raw.record_uid, senderName: '我', isMe: true, sendAtMillis: 1_786_000_003_000,
+        title: '', textContent: raw.text_content, status: 1,
+      })),
+    }
+    const media = { hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
+    const privacy = { lockedRecordUids: vi.fn(async () => new Set<string>()) }
+    const chat = new ChatService(
+      runtime as never, source as never, {} as never, media as never, record as never, {} as never, {} as never, {} as never, {} as never, privacy as never,
+    )
+
+    const page = await chat.readSource('opaque-source')
+    const item = page.items[0]!
+    expect(item.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    await expect(chat.messageSnapshotDetail('opaque-source', item.messageActionRef ?? '')).resolves.toMatchObject({ itemUid: 'record-self-timeline' })
+  })
+
+  it('keeps the authoritative relation owner and detail reference on realtime timeline items', async () => {
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        requests.push({ path, body })
+        return { item: {
+          relation: { rel_uid: 'rel-realtime-1', record_uid: 'record-realtime-1', record_owner_user_id: 42, seq: 18, attach_at: 1_786_000_003_000 },
+          record: { record_uid: 'record-realtime-1', status: 1, create_time_stamp: 1_786_000_000_000, send_time_stamp: 1_786_000_003_000, payload: { text_content: '实时消息' } },
+        } }
+      }),
+      authenticatedPost: vi.fn(async () => ({ record_core: {
+        record_uid: 'record-realtime-1', status: 1, create_time_stamp: 1_786_000_000_000,
+        send_time_stamp: 1_786_000_003_000, payload: { text_content: '实时消息' },
+      } })),
+    }
+    const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-1' })) }
+    const profile = { sealProfileImageRef: vi.fn(async () => 'avatar-ref') }
+    const media = { richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) }
+    const chat = new ChatService(
+      runtime as never, source as never, profile as never, media as never, {} as never, {} as never,
+      { currentUserAgentSourceFallback: vi.fn((_userId: number, agentSource: unknown) => agentSource) } as never,
+      { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
+    )
+
+    const [item] = await chat.chatTimelineItems({ items: [{
+      relation: {
+        rel_uid: 'rel-realtime-1', record_uid: 'record-realtime-1', record_owner_user_id: 42,
+        sender_user_id: 42, display_name_snapshot: '测试用户', seq: 18, attach_at: 1_786_000_003_000,
+      },
+      // A copied payload may claim another user. The relation owner must win.
+      record: { status: 1, user_id: 999, payload: { record_uid: 'record-realtime-1', text_content: '实时消息' } },
+    }] }, { userId: 42, accessToken: 'access', refreshToken: 'refresh' }, 'chat-1')
+
+    expect(item?.messageActionRef).toMatch(/^arkme-message-action-v1\./u)
+    await expect(chat.messageSnapshotDetail('opaque-source', item?.messageActionRef ?? '')).resolves.toMatchObject({
+      itemUid: 'record-realtime-1', startAtMillis: 1_786_000_000_000,
+    })
+    expect(requests).toEqual([{
+      path: '/api/v1/chats/records/detail',
+      body: {
+        chat_session_uid: 'chat-1', record_uid: 'record-realtime-1', record_owner_user_id: 42,
+        rel_uid: 'rel-realtime-1', seq: 18,
+      },
+    }])
+  })
+
   it('projects a direct Bot timeline by canonical actor and sequence without human hydration', async () => {
     const runtime = {
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
@@ -774,6 +1141,7 @@ describe('ChatService', () => {
   it('opens shared recording details from an opaque chat-card reference', async () => {
     const detailRequests: { path: string; body: Record<string, unknown> }[] = []
     const runtime = {
+      config: { maxTextLength: 20_000 },
       stateStore: { uniqueCode: vi.fn(async () => 'test-signing-key') },
       requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
       authenticatedChatPost: vi.fn(async (path: string, body: Record<string, unknown>) => {

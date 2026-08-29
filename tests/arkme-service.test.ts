@@ -1834,10 +1834,21 @@ describe('ArkmeService', () => {
       hasMore: true,
       nextCursor: { sendAtMillis: 79, itemUid: 'record-next' },
     })
-    await expect(service.sendSourceText(topicRef, '写进主题', { recordUid: 'record-create-1' })).resolves.toMatchObject({
+    await expect(service.sendSourceText(topicRef, '写进主题', {
+      recordUid: 'record-create-1',
+      recordDurationMillis: 4_200,
+      captureContext: {
+        clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 88, charge: 1,
+      },
+    })).resolves.toMatchObject({
       itemUid: 'record-create-1', localState: 'synced',
     })
-    expect(calls.at(-1)?.body).toMatchObject({ topic_uid: 'topic-1', text_content: '写进主题' })
+    expect(calls.at(-1)?.body).toMatchObject({
+      topic_uid: 'topic-1', text_content: '写进主题', record_duration_millis: 4_200,
+      capture_context: {
+        client_name: 'Google Chrome（DeepSeek Harness）', network_name: '网络已连接', electric: 88, charge: 1,
+      },
+    })
     await service.listSources('send_to_self')
     expect(calls.filter(call => call.url.endsWith('/api/v1/topics/display/list'))).toHaveLength(2)
   })

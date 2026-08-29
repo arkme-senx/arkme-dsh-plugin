@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { ArkmeLongArticleDraft, ArkmePendingWrite } from './types.js'
+import type { ArkmeLongArticleDraft, ArkmePendingWrite, ArkmeRecordCaptureContext } from './types.js'
 import { securePrivateDirectory, securePrivateFile } from './private-filesystem.js'
 
 interface PersistedState {
@@ -44,6 +44,22 @@ function longArticleDraftKey(sourceRef: string, itemUid?: string): string {
   return `${sourceRef}\u0000${itemUid ?? ''}`
 }
 
+function normalizedCaptureContext(value: unknown): ArkmeRecordCaptureContext | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const clientName = typeof source.clientName === 'string' ? source.clientName.trim().slice(0, 120) : ''
+  const networkName = typeof source.networkName === 'string' ? source.networkName.trim().slice(0, 120) : ''
+  const electric = typeof source.electric === 'number' && Number.isFinite(source.electric) ? Math.trunc(source.electric) : undefined
+  const charge = typeof source.charge === 'number' && Number.isFinite(source.charge) ? Math.trunc(source.charge) : 0
+  const result: ArkmeRecordCaptureContext = {
+    ...(clientName === '' ? {} : { clientName }),
+    ...(networkName === '' ? {} : { networkName }),
+    ...(electric === undefined || electric < 0 || electric > 100 ? {} : { electric }),
+    ...(charge < 1 || charge > 3 ? {} : { charge }),
+  }
+  return Object.keys(result).length === 0 ? undefined : result
+}
+
 function normalizedPending(value: unknown): ArkmePendingWrite[] {
   if (!Array.isArray(value)) return []
   const result: ArkmePendingWrite[] = []
@@ -52,12 +68,18 @@ function normalizedPending(value: unknown): ArkmePendingWrite[] {
     const source = item as Record<string, unknown>
     if (typeof source.recordUid !== 'string' || source.recordUid.trim() === '') continue
     if (typeof source.textContent !== 'string' || source.textContent.trim() === '') continue
+    const recordDurationMillis = typeof source.recordDurationMillis === 'number' && Number.isFinite(source.recordDurationMillis)
+      ? Math.max(0, Math.trunc(source.recordDurationMillis))
+      : 0
+    const captureContext = normalizedCaptureContext(source.captureContext)
     result.push({
       recordUid: source.recordUid,
       textContent: source.textContent,
       createdAtMillis: typeof source.createdAtMillis === 'number' ? source.createdAtMillis : 0,
       sendAtMillis: typeof source.sendAtMillis === 'number' ? source.sendAtMillis : 0,
       attempts: typeof source.attempts === 'number' ? source.attempts : 0,
+      ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+      ...(captureContext === undefined ? {} : { captureContext }),
       ...(typeof source.lastError === 'string' && source.lastError !== ''
         ? { lastError: source.lastError }
         : {}),

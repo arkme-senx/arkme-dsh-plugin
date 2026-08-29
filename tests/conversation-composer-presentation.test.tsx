@@ -8,6 +8,7 @@ const emojiPickerSource = readFileSync(new URL('../src/client/ArkmeEmojiPicker.t
 const toolButtonSource = readFileSync(new URL('../src/client/ArkmeComposerToolButton.tsx', import.meta.url), 'utf8')
 const toolIconSource = readFileSync(new URL('../src/client/ArkmeComposerToolIcon.tsx', import.meta.url), 'utf8')
 const presentationModuleUrl = new URL('../src/client/conversation-composer-presentation.ts', import.meta.url)
+const locationCaptureModuleUrl = new URL('../src/client/record-capture-location.ts', import.meta.url)
 
 describe('Arkme conversation composer presentation', () => {
   it('keeps file selection in the existing menu instead of exposing the internal cache', () => {
@@ -15,10 +16,26 @@ describe('Arkme conversation composer presentation', () => {
     expect(menu.match(/role="menuitem"/gu)).toHaveLength(2)
     expect(menu).toContain('添加照片和文件')
     expect(menu).toContain('写长文')
+    expect(menu).not.toContain('采集本次位置')
+    expect(sidebarSource).toContain('开启位置记录')
     expect(menu).not.toContain('本地附件')
     expect(sidebarSource).not.toContain('files.local.list')
     expect(sidebarSource).not.toContain('添加到草稿')
     expect(sidebarSource).not.toContain('移除本地任务')
+  })
+
+  it('offers the existing per-message location control for every record-producing conversation source', async () => {
+    const locationCapture = await import(locationCaptureModuleUrl.href) as {
+      arkmeSourceSupportsLocationCapture: (kind: string | undefined) => boolean
+    }
+    for (const kind of ['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic']) {
+      expect(locationCapture.arkmeSourceSupportsLocationCapture(kind)).toBe(true)
+    }
+    expect(locationCapture.arkmeSourceSupportsLocationCapture('bot')).toBe(false)
+    expect(sidebarSource).toContain('arkmeSourceSupportsLocationCapture(source?.kind)')
+    expect(sidebarSource).toContain('window.setTimeout(() => resolve(undefined), 900)')
+    expect(sidebarSource).toContain("charge: battery?.charging === true ? 1 : 2")
+    expect(sidebarSource).not.toContain('effectiveType')
   })
 
   it('defines the private and group chat sizing contract once', async () => {

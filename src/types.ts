@@ -380,6 +380,10 @@ export interface ArkmePendingWrite {
   createdAtMillis: number
   sendAtMillis: number
   attempts: number
+  /** Composer time that must survive the durable outbox retry path. */
+  recordDurationMillis?: number
+  /** Browser capture data that must survive the durable outbox retry path. */
+  captureContext?: ArkmeRecordCaptureContext
   lastError?: string
 }
 
@@ -1301,6 +1305,46 @@ export interface ArkmeTimelineSelfTopic {
   title?: string
 }
 
+/** Static environment data captured when a user creates a chat record. */
+export interface ArkmeRecordCaptureContext {
+  clientName?: string
+  networkName?: string
+  electric?: number
+  charge?: number
+}
+
+/** Browser-safe device location saved for one record after an explicit user grant. */
+export interface ArkmeRecordLocationCapture {
+  latitude: number
+  longitude: number
+  /** Horizontal accuracy reported by the browser, in metres. */
+  accuracyMeters?: number
+  altitudeMeters?: number
+  speedMetersPerSecond?: number
+  capturedAtMillis: number
+}
+
+export interface ArkmeMessageSnapshotDetail {
+  itemUid: string
+  textContent: string
+  recordDurationMillis?: number
+  editDurationMillis?: number
+  viewTimes?: number
+  shareTimes?: number
+  captureContext?: ArkmeRecordCaptureContext
+  backgroundSound: 'available' | 'not-recorded' | 'disabled' | 'unknown'
+  locationCapture?: ArkmeRecordLocationCapture
+  locationLabel?: string
+  weather?: string
+  altitudeMeters?: number
+  movement?: string
+  belongDate?: string
+  startAtMillis?: number
+  completeAtMillis?: number
+  syncedAtMillis?: number
+  syncState?: 'synced' | 'syncing' | 'failed' | 'not-synced'
+}
+
 export interface ArkmeTimelineItem {
   itemUid: string
   /** Account-bound opaque reference for reporting this concrete group-chat message. */
@@ -1329,6 +1373,10 @@ export interface ArkmeTimelineItem {
   updateAtMillis?: number
   recordDurationMillis?: number
   editDurationMillis?: number
+  /** Snapshot metadata returned with the record when the originating client captured it. */
+  captureContext?: ArkmeRecordCaptureContext
+  /** Explicitly user-authorized location captured by this client for the record. */
+  locationCapture?: ArkmeRecordLocationCapture
   contentBlocks?: ArkmeContentBlock[]
   /** Record owner reported media refs, but their delivery projection was temporarily unavailable. */
   mediaUnavailable?: boolean
@@ -1570,6 +1618,10 @@ export interface ArkmeRichSendInput {
   textContent?: string
   displayKind?: 0 | 1
   thinkingDurationMillis?: number
+  /** Time spent composing this record before it was sent. */
+  recordDurationMillis?: number
+  /** Browser/device data captured at send time, when available. */
+  captureContext?: ArkmeRecordCaptureContext
   assets?: ArkmeUploadedAsset[]
   humanMentions?: ArkmeHumanMentionInput[]
   botMentions?: ArkmeBotMentionInput[]
@@ -2665,6 +2717,8 @@ export type ArkmePluginOperation =
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
+  | 'source.message-snapshot.detail'
+  | 'source.message-location.set'
   | 'source.link-metadata.resolve'
   | 'source.forward-messages'
   | 'source.send-text'

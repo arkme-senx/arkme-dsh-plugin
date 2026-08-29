@@ -9,7 +9,7 @@ import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot, ArkmeGroupAiPolishNotice, ArkmeGroupAiPolishSnapshot, ArkmeSourceReadResult,
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPage,
-  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
+  ArkmeRelatedRecordingPageState, ArkmeSourceItem, ArkmeSourceSendResult, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage, ArkmeMessageSnapshotDetail, ArkmeRecordLocationCapture,
   ArkmeInterwovenBootstrap, ArkmeInterwovenDetail, ArkmeInterwovenMention, ArkmePluginResponse,
   ArkmeMessageCopyLinkExtendResult, ArkmeMessageCopyLinkExtensionItem, ArkmeMessageCopyLinkResolveResult, ArkmeMessageCopyLinkResult, ArkmeMessageCopyLinkSnapshotItem,
   ArkmeUploadedAsset, ArkmeSourceList, ArkmeUserProfile, ArkmeUserProfileSnapshot,
@@ -116,6 +116,8 @@ import {
 } from './arkme-login-locales.js'
 
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
+import { ArkmeMessageSnapshotDialog, arkmeCanOpenMessageSnapshot } from './ArkmeMessageSnapshotDialog.js'
+import { arkmeLocationCaptureEnabled, arkmeSourceSupportsLocationCapture, requestArkmeRecordLocation, setArkmeLocationCaptureEnabled, subscribeArkmeLocationCapturePreference } from './record-capture-location.js'
 export { ArkmeTimelineDetailDrawer, arkmeTimelineDetailSenderText } from './ArkmeNoteDetails.js'
 
 const ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY = 'arkme.composer.show-input-time'
@@ -126,6 +128,51 @@ function arkmeComposerShowsInputTime(): boolean {
 
 function setArkmeComposerShowsInputTime(value: boolean): void {
   try { window.localStorage.setItem(ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY, value ? 'shown' : 'hidden') } catch { /* storage is optional */ }
+}
+
+function arkmeBrowserName(): string {
+  const navigatorWithUaData = navigator as Navigator & { userAgentData?: { brands?: ReadonlyArray<{ brand?: unknown }> } }
+  const brands = navigatorWithUaData.userAgentData?.brands ?? []
+  const brandText = brands.map(item => typeof item.brand === 'string' ? item.brand : '').join(' ')
+  const userAgent = navigator.userAgent
+  if (/Microsoft Edge|Edg\//iu.test(`${brandText} ${userAgent}`)) return 'Microsoft Edge'
+  if (/Opera|OPR\//iu.test(`${brandText} ${userAgent}`)) return 'Opera'
+  if (/Firefox|FxiOS\//iu.test(`${brandText} ${userAgent}`)) return 'Firefox'
+  if (/Safari/iu.test(userAgent) && !/Chrome|Chromium|CriOS|Edg\//iu.test(userAgent)) return 'Safari'
+  if (/Google Chrome|Chrome|Chromium|CriOS/iu.test(`${brandText} ${userAgent}`)) return 'Google Chrome'
+  return '浏览器'
+}
+
+function arkmeNetworkName(): string {
+  const connection = (navigator as Navigator & { connection?: { type?: unknown } }).connection
+  const type = typeof connection?.type === 'string' ? connection.type.trim().toLowerCase() : ''
+  if (type === 'wifi') return 'Wi‑Fi'
+  if (type === 'ethernet') return '有线网络'
+  if (type === 'cellular') return '移动网络'
+  if (type === 'none') return '离线'
+  return navigator.onLine ? '网络已连接' : '离线'
+}
+
+async function arkmeComposerCaptureContext(): Promise<{ clientName: string; networkName?: string; electric?: number; charge?: number }> {
+  const networkName = arkmeNetworkName()
+  const base = {
+    clientName: `${arkmeBrowserName()}（DeepSeek Harness）`,
+    ...(networkName === '' ? {} : { networkName }),
+  }
+  const batteryApi = navigator as Navigator & { getBattery?: () => Promise<{ level?: number; charging?: boolean }> }
+  if (typeof batteryApi.getBattery !== 'function') return base
+  const battery = await Promise.race([
+    batteryApi.getBattery().catch(() => undefined),
+    new Promise<undefined>(resolve => { window.setTimeout(() => resolve(undefined), 900) }),
+  ])
+  const level = typeof battery?.level === 'number' && Number.isFinite(battery.level)
+    ? Math.round(Math.max(0, Math.min(1, battery.level)) * 100)
+    : undefined
+  return {
+    ...base,
+    ...(level === undefined ? {} : { electric: level }),
+    ...(level === undefined ? {} : { charge: battery?.charging === true ? 1 : 2 }),
+  }
 }
 
 function ArkmeComposerInputTimeIcon({ visible }: { visible: boolean }) {
@@ -757,14 +804,15 @@ export function arkmeTimelineMessageActionRef(item: ArkmeTimelineItem): string {
 }
 
 const ARKME_MESSAGE_ACTION_MENU_LABELS = ['复制', '复制链接', '多选', '转发'] as const
+const ARKME_MESSAGE_ACTION_DETAIL_LABEL = '详情'
 const ARKME_MESSAGE_SELECT_ACTION_LABELS = ['复制文本', '复制链接', '转发', '退出多选'] as const
 
 export function arkmeMessageActionMenuLabels(): readonly string[] {
   return ARKME_MESSAGE_ACTION_MENU_LABELS
 }
 
-export function arkmeMessageActionMenuRowCount(): number {
-  return ARKME_MESSAGE_ACTION_MENU_LABELS.length
+export function arkmeMessageActionMenuRowCount(item?: ArkmeTimelineItem): number {
+  return ARKME_MESSAGE_ACTION_MENU_LABELS.length + (item !== undefined && arkmeCanOpenMessageSnapshot(item) ? 1 : 0)
 }
 
 export function arkmeMessageSelectActionLabels(): readonly string[] {
@@ -1019,9 +1067,16 @@ function mergeItems(current: ArkmeTimelineItem[], incoming: ArkmeTimelineItem[])
   const map = new Map(current.map(item => [item.itemUid, item]))
   for (const item of incoming) {
     const previous = map.get(item.itemUid)
-    map.set(item.itemUid, previous?.aiPolish !== undefined && item.aiPolish === undefined
-      ? { ...item, aiPolish: previous.aiPolish }
-      : item)
+    map.set(item.itemUid, {
+      ...item,
+      ...(previous?.aiPolish !== undefined && item.aiPolish === undefined ? { aiPolish: previous.aiPolish } : {}),
+      ...(previous?.recordDurationMillis !== undefined && item.recordDurationMillis === undefined
+        ? { recordDurationMillis: previous.recordDurationMillis } : {}),
+      ...(previous?.editDurationMillis !== undefined && item.editDurationMillis === undefined
+        ? { editDurationMillis: previous.editDurationMillis } : {}),
+      ...(previous?.captureContext !== undefined && item.captureContext === undefined
+        ? { captureContext: previous.captureContext } : {}),
+    })
   }
   return [...map.values()].sort((a, b) => a.sendAtMillis - b.sendAtMillis || a.itemUid.localeCompare(b.itemUid))
 }
@@ -1035,7 +1090,16 @@ function applySourceSendResult(
   const optimistic = current.find(item => item.itemUid === optimisticItemUid)
   const candidate = returned ?? optimistic
   if (candidate === undefined) return current
-  const { aiPolish: _optimisticAiPolish, ...base } = candidate
+  const { aiPolish: _optimisticAiPolish, ...candidateBase } = candidate
+  const base = {
+    ...candidateBase,
+    ...(candidate.recordDurationMillis === undefined && optimistic?.recordDurationMillis !== undefined
+      ? { recordDurationMillis: optimistic.recordDurationMillis } : {}),
+    ...(candidate.editDurationMillis === undefined && optimistic?.editDurationMillis !== undefined
+      ? { editDurationMillis: optimistic.editDurationMillis } : {}),
+    ...(candidate.captureContext === undefined && optimistic?.captureContext !== undefined
+      ? { captureContext: optimistic.captureContext } : {}),
+  }
   const confirmed: ArkmeTimelineItem = {
     ...base,
     itemUid: result.itemUid,
@@ -1649,7 +1713,17 @@ export function ArkmeSurface({
   const attachments = composerDraft.attachments
   const [composerInputFocused, setComposerInputFocused] = useState(false)
   const [composerShowsInputTime, setComposerShowsInputTime] = useState(arkmeComposerShowsInputTime)
+  const [composerLocation, setComposerLocation] = useState<ArkmeRecordLocationCapture>()
+  const locationCaptureEnabled = useSyncExternalStore(
+    subscribeArkmeLocationCapturePreference,
+    () => arkmeLocationCaptureEnabled(authenticatedUserId),
+    () => false,
+  )
   const [composerInputStartedAt, setComposerInputStartedAt] = useState<{ draftKey: string; startedAt: number }>()
+  // Keyboard handlers inside the contenteditable can fire before React has replaced
+  // their closures. Keep the start time in a ref as well, so an Enter-send always
+  // measures the draft that is currently on screen.
+  const composerInputStartedAtRef = useRef<{ draftKey: string; startedAt: number }>()
   const [composerInputNow, setComposerInputNow] = useState(() => Date.now())
   const composerTextLength = Array.from(draft).length
   const composerStatsVisible = composerInputFocused || composerTextLength > 0
@@ -1661,10 +1735,15 @@ export function ArkmeSurface({
     : 0
   useEffect(() => {
     if (composerDraftKey === undefined || composerTextLength === 0) {
+      composerInputStartedAtRef.current = undefined
       setComposerInputStartedAt(undefined)
       return
     }
-    setComposerInputStartedAt(current => current?.draftKey === composerDraftKey ? current : { draftKey: composerDraftKey, startedAt: Date.now() })
+    const current = composerInputStartedAtRef.current
+    if (current?.draftKey === composerDraftKey) return
+    const next = { draftKey: composerDraftKey, startedAt: Date.now() }
+    composerInputStartedAtRef.current = next
+    setComposerInputStartedAt(next)
   }, [composerDraftKey, composerTextLength])
   useEffect(() => {
     if (composerInputStartedAt === undefined) return
@@ -1788,6 +1867,7 @@ export function ArkmeSurface({
     left: number
     top: number
   }>()
+  const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
   const messageMenuRef = useRef<HTMLDivElement | null>(null)
   const [messageActionStatus, setMessageActionStatus] = useState('')
   const messageActionStatusTimerRef = useRef<number>()
@@ -1825,6 +1905,7 @@ export function ArkmeSurface({
     setMemberProfile(undefined)
     setMemberRecords(undefined)
     setPrivateChatBusy(false)
+    setSnapshot(undefined)
     if (auth?.status !== 'authenticated' || source === undefined || (source.kind !== 'group_chat' && source.kind !== 'private_chat')) return
     const controller = new AbortController()
     void callArkme<ArkmeConversationMemberList>('source.members', {
@@ -2893,6 +2974,12 @@ export function ArkmeSurface({
     const serializedDraft = serializeArkmeComposerDraft(readyDraft)
     const textContent = serializedDraft.text.trim()
     if (textContent === '' && readyDraft.attachments.length === 0) return
+    const composerStartedAt = composerInputStartedAtRef.current
+    const recordDurationMillis = composerStartedAt?.draftKey === targetDraftKey
+      ? Math.max(0, Date.now() - composerStartedAt.startedAt)
+      : 0
+    const captureContextPromise = arkmeComposerCaptureContext()
+    const selectedLocation = composerLocation
     const { recordUid, relationUid } = readyDraft.attachments.some(item => item.localFile !== undefined)
       ? arkmeComposerDraftStore.beginFileSend(targetDraftKey)
       : { recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID() }
@@ -2900,6 +2987,7 @@ export function ArkmeSurface({
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
     const pendingDraft = arkmeComposerDraftStore.take(targetDraftKey)
     pendingComposerFocusDraftKeyRef.current = targetDraftKey
+    const captureContext = await captureContextPromise
     const now = Date.now()
     const optimisticSenderName = selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'
     const optimisticAvatarRef = selfProfile?.avatarRef.trim()
@@ -2907,6 +2995,8 @@ export function ArkmeSurface({
       itemUid: recordUid, senderName: optimisticSenderName, isMe: true, sendAtMillis: now,
       ...(optimisticAvatarRef === undefined || optimisticAvatarRef === '' ? {} : { avatarRef: optimisticAvatarRef }),
       title: '', textContent, status: 0,
+      ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+      captureContext,
       ...(targetSource.kind === 'group_chat' && aiPolishSettings?.enabled === true
         ? { aiPolish: { state: 'polishing' as const, originalText: textContent } }
         : {}),
@@ -2932,10 +3022,13 @@ export function ArkmeSurface({
         if (pendingAssets.length > 0) throw new Error('旧版附件与本地附件不能混合发送，请重新添加旧版附件')
         const acceptedTask = await callArkme<ArkmeFileSendTask>('files.send', {
           sourceRef: targetSource.sourceRef, recordUid, relationUid, fileRefs: pendingFileRefs, title: '', textContent, displayKind: 0,
+          ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+          captureContext,
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
         releaseArkmeComposerDraft(pendingDraft)
+        setComposerLocation(undefined)
         fileTasks.accept(acceptedTask)
         return
       }
@@ -2943,15 +3036,31 @@ export function ArkmeSurface({
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           sourceRef: targetSource.sourceRef, title: '', textContent, displayKind: 0,
           assets: pendingAssets, recordUid, relationUid,
+          ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+          captureContext,
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
         : await callArkme<ArkmeSourceSendResult>('source.send-text', {
           sourceRef: targetSource.sourceRef, textContent, recordUid, relationUid,
+          ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+          captureContext,
           ...(pendingHumanMentions.length === 0 ? {} : { humanMentions: pendingHumanMentions }),
           ...(pendingBotMentions.length === 0 ? {} : { botMentions: pendingBotMentions }),
         })
       setItems(current => applySourceSendResult(current, recordUid, result))
+      if (result.localState !== 'failed' && selectedLocation !== undefined) {
+        setComposerLocation(undefined)
+        void callArkme('source.message-location.set', {
+          sourceRef: targetSource.sourceRef,
+          itemUid: result.itemUid,
+          location: selectedLocation,
+        }).then(() => {
+          setItems(current => current.map(item => item.itemUid === result.itemUid ? { ...item, locationCapture: selectedLocation } : item))
+        }).catch(caught => {
+          setError(`消息已发送，但位置快照未写入：${errorMessage(caught) || '请稍后重试'}`)
+        })
+      }
       if (result.localState !== 'failed' && isArkmeChatDirectorySource(targetSource)
         && result.sequence !== undefined) {
         const cachedTimeline = conversationCacheRef.current.getTimeline(targetSource.sourceRef)
@@ -3002,6 +3111,21 @@ export function ArkmeSurface({
       }
       setError(errorMessage(caught))
     }
+  }
+
+  const updateComposerText = (text: string) => {
+    if (composerDraftKey !== undefined && text.length > 0) {
+      const current = composerInputStartedAtRef.current
+      if (current?.draftKey !== composerDraftKey) {
+        const next = { draftKey: composerDraftKey, startedAt: Date.now() }
+        composerInputStartedAtRef.current = next
+        setComposerInputStartedAt(next)
+      }
+    } else {
+      composerInputStartedAtRef.current = undefined
+      setComposerInputStartedAt(undefined)
+    }
+    arkmeComposerDraftStore.setText(composerDraftKey, text)
   }
 
   const retryAiPolish = async (item: ArkmeTimelineItem) => {
@@ -3393,6 +3517,33 @@ export function ArkmeSurface({
   const closeMessageMenu = useCallback(() => {
     setMessageMenu(undefined)
   }, [])
+  const openMessageSnapshot = useCallback((item: ArkmeTimelineItem) => {
+    closeMessageMenu()
+    const actionRef = arkmeTimelineMessageActionRef(item)
+    setSnapshot({ item, actionRef, loading: true })
+    if (source === undefined) {
+      setSnapshot(current => current?.actionRef === actionRef
+        ? { ...current, loading: false, loadError: '当前对话不可用，请刷新后重试' }
+        : current)
+      return
+    }
+    if (actionRef === '') {
+      setSnapshot(current => current?.actionRef === actionRef
+        ? { ...current, loading: false, loadError: '快记详情引用无效，请刷新后重试' }
+        : current)
+      return
+    }
+    void callArkme<ArkmeMessageSnapshotDetail>('source.message-snapshot.detail', {
+      sourceRef: source.sourceRef,
+      actionRef,
+    }).then(detail => {
+      setSnapshot(current => current?.actionRef === actionRef ? { ...current, detail, loading: false } : current)
+    }).catch(caught => {
+      setSnapshot(current => current?.actionRef === actionRef
+        ? { ...current, loading: false, loadError: errorMessage(caught) || '请稍后重试' }
+        : current)
+    })
+  }, [closeMessageMenu, source])
   const openMessageMenu = useCallback((item: ArkmeTimelineItem, event: Pick<MouseEvent, 'preventDefault' | 'stopPropagation' | 'clientX' | 'clientY'>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -3400,7 +3551,7 @@ export function ArkmeSurface({
     if (host === null || source === undefined) return
     const hostRect = host.getBoundingClientRect()
     const menuWidth = 178
-    const menuHeight = 12 + arkmeMessageActionMenuRowCount() * 50
+    const menuHeight = 12 + arkmeMessageActionMenuRowCount(item) * 50
     setMemberMenu(undefined)
     setMessageMenu({
       itemUid: item.itemUid,
@@ -4386,7 +4537,7 @@ export function ArkmeSurface({
                 })}
             </div>}
             <ArkmeRichComposerInput className="arkme-conversation-textarea" ref={textareaRef} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} ariaLabel={arkmeSourceComposerPlaceholder(selectedSource)} disabled={preparingFiles}
-              onTextChange={text => { arkmeComposerDraftStore.setText(composerDraftKey, text) }}
+              onTextChange={updateComposerText}
               onFocus={() => { setComposerInputFocused(true) }}
               onBlur={() => { setComposerInputFocused(false) }}
               onSelectionChange={updateMentionTrigger}
@@ -4455,6 +4606,15 @@ export function ArkmeSurface({
               onStickerSent={async () => { await loadTimeline() }}
               onError={message => { setError(message) }}
             /></div><div style={styles.composerSendArea}>
+              {arkmeSourceSupportsLocationCapture(source?.kind) && (composerInputFocused || composerTextLength > 0) && <button type="button" style={styles.composerTimeToggle} title={composerLocation === undefined ? '点击记录本条消息的位置' : '点击移除本条消息的位置'} aria-label={composerLocation === undefined ? '位置记录' : '已采集本条位置，点击移除'} onMouseDown={event => { event.preventDefault() }} onClick={() => {
+                if (composerLocation !== undefined) { setComposerLocation(undefined); textareaRef.current?.focus(); return }
+                void requestArkmeRecordLocation().then(location => {
+                  setArkmeLocationCaptureEnabled(authenticatedUserId, true)
+                  setComposerLocation(location)
+                  setError('')
+                  textareaRef.current?.focus()
+                }).catch(caught => { setError(errorMessage(caught)) })
+              }}>{composerLocation !== undefined ? '⌖ 已记录位置' : locationCaptureEnabled ? '⌖ 获取本条位置' : '⌖ 开启位置记录'}</button>}
               {composerStatsVisible && <div style={styles.composerStats} aria-label={`已输入 ${String(composerTextLength)} 字，编辑 ${String(composerInputDurationSeconds)} 秒`}>
                 <span>{String(composerTextLength)}字</span>
                 <button type="button" style={styles.composerTimeToggle} aria-label={composerShowsInputTime ? '隐藏输入时长' : '显示输入时长'} title={composerShowsInputTime ? '隐藏输入时长' : '显示输入时长'} onMouseDown={event => { event.preventDefault() }} onClick={() => {
@@ -4662,7 +4822,14 @@ export function ArkmeSurface({
             disabled={arkmeTimelineMessageActionRef(messageMenuItem) === ''}
             onClick={() => { openForwardTargetPicker([messageMenuItem]) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="forward" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_MENU_LABELS[3]}</span></button>
+          {arkmeCanOpenMessageSnapshot(messageMenuItem) && <button
+            type="button"
+            role="menuitem"
+            style={{ ...styles.messageActionMenuItem, borderTop: `1px solid ${colors.border}`, borderRadius: 0, marginTop: 4, paddingTop: 10 }}
+            onClick={() => { openMessageSnapshot(messageMenuItem) }}
+          ><span style={styles.messageActionMenuIcon} aria-hidden>ⓘ</span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_DETAIL_LABEL}</span></button>}
         </div>}
+        {snapshot !== undefined && <ArkmeMessageSnapshotDialog item={snapshot.item} {...(snapshot.detail === undefined ? {} : { detail: snapshot.detail })} loading={snapshot.loading} {...(snapshot.loadError === undefined ? {} : { loadError: snapshot.loadError })} onClose={() => { setSnapshot(undefined) }} />}
         {source !== undefined && memberMenu !== undefined && <ArkmeMemberActionMenu
           member={memberMenu.member}
           sourceKind={source.kind}

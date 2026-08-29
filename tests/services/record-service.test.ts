@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionStore } from '../../src/keychain-store.js'
+import type { ArkmePendingWrite } from '../../src/types.js'
 import { MediaService } from '../../src/services/media-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
-import { RecordService } from '../../src/services/record-service.js'
+import { arkmeRecordCaptureContextPayload, RecordService } from '../../src/services/record-service.js'
 import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 
 const config: ArkmeServiceConfig = {
@@ -15,6 +16,66 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordService', () => {
+  it('preserves the Flutter battery contract including an explicit zero percent', () => {
+    expect(arkmeRecordCaptureContextPayload({ electric: 0, charge: 2 })).toEqual({ electric: 0, charge: 2 })
+    expect(arkmeRecordCaptureContextPayload({ electric: 100, charge: 1 })).toEqual({ electric: 100, charge: 1 })
+  })
+
+  it('keeps composer duration and browser context through a failed write and durable retry', async () => {
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    let pending: ArkmePendingWrite[] = []
+    const stateStore = {
+      async putPending(_userId: number, item: ArkmePendingWrite) { pending = [structuredClone(item)] },
+      async listPending() { return structuredClone(pending) },
+      async markAttempt(_userId: number, recordUid: string, error: string) {
+        pending = pending.map(item => item.recordUid === recordUid ? { ...item, attempts: item.attempts + 1, lastError: error } : item)
+      },
+      async markSynced(_userId: number, recordUid: string) { pending = pending.filter(item => item.recordUid !== recordUid) },
+    } as StateStore
+    const bodies: Record<string, unknown>[] = []
+    const fetchImpl = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      bodies.push(body)
+      if (bodies.length === 1) throw new TypeError('offline')
+      return new Response(JSON.stringify({ code: 0, data: { record_uid: body.record_uid, status: 1 } }), { status: 200 })
+    }) as typeof fetch
+    const runtime = new ServiceRuntime(config, sessions, stateStore, fetchImpl)
+    const profile = new ProfileService(runtime)
+    const media = new MediaService(runtime, profile, {
+      async openWorldImageRef() { throw new Error('unexpected') },
+    }, { recordUid() { return '' } })
+    const service = new RecordService(runtime, media, {
+      async openSourceRef() { throw new Error('unexpected') },
+    })
+    const recordUid = 'ccfe56ca-4d7a-4c95-b383-fce1c65a635b'
+    const captureContext = {
+      clientName: 'Google Chrome（DeepSeek Harness）', networkName: '网络已连接', electric: 100, charge: 1,
+    }
+
+    await expect(service.createTextForConversation(recordUid, '浏览器采集验证', {
+      recordDurationMillis: 3_200,
+      captureContext,
+    })).resolves.toMatchObject({ recordUid, localState: 'failed' })
+    expect(pending).toMatchObject([{ recordUid, recordDurationMillis: 3_200, captureContext, attempts: 1 }])
+
+    await expect(service.retryPending(recordUid)).resolves.toEqual({ recordUid, status: 1 })
+    expect(bodies).toHaveLength(2)
+    for (const body of bodies) {
+      expect(body).toMatchObject({
+        record_uid: recordUid,
+        text_content: '浏览器采集验证',
+        record_duration_millis: 3_200,
+        capture_context: {
+          client_name: 'Google Chrome（DeepSeek Harness）', network_name: '网络已连接', electric: 100, charge: 1,
+        },
+      })
+    }
+    expect(pending).toEqual([])
+  })
+
   it('reads and caches the self-record summary', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

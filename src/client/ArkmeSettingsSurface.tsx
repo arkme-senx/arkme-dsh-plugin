@@ -24,6 +24,7 @@ import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { clearLastNavigationCache } from './navigation-cache.js'
+import { arkmeLocationCaptureEnabled, arkmeLocationPermissionState, requestArkmeRecordLocation, setArkmeLocationCaptureEnabled, subscribeArkmeLocationCapturePreference } from './record-capture-location.js'
 import { arkmeUi } from './ui-controller.js'
 import { arkmeUpdateUi } from './update-ui-controller.js'
 import { verifyPhoneCaptcha } from './geetest.js'
@@ -209,6 +210,42 @@ function SettingsDialog({
       {children}
     </section>
   </div>
+}
+
+function LocationPermissionDialog({ userId, enabled, onClose }: { userId: number; enabled: boolean; onClose: () => void }) {
+  const [permission, setPermission] = useState<'granted' | 'denied' | 'prompt' | 'unavailable'>('prompt')
+  const [locationBusy, setLocationBusy] = useState(false)
+  const [status, setStatus] = useState('')
+  const refreshPermission = useCallback(() => { void arkmeLocationPermissionState().then(setPermission) }, [])
+  useEffect(() => { refreshPermission() }, [refreshPermission])
+  const request = async () => {
+    setLocationBusy(true)
+    setStatus('')
+    try {
+      // This is an explicit settings action. It is the only place besides the
+      // composer reminder that is allowed to trigger a browser permission UI.
+      await requestArkmeRecordLocation()
+      setArkmeLocationCaptureEnabled(userId, true)
+      setStatus('位置记录已开启')
+    } catch (caught) {
+      setStatus(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      await arkmeLocationPermissionState().then(setPermission)
+      setLocationBusy(false)
+    }
+  }
+  const browserPermission = permission === 'granted' ? '已允许' : permission === 'denied' ? '已拒绝' : permission === 'unavailable' ? '浏览器不支持' : '尚未授权'
+  return <SettingsDialog title="位置权限" onClose={onClose}>
+    <div className="arkme-account-form">
+      <p className="arkme-account-rule">开启后，私聊、群聊、发给自己和主题输入时会显示位置提示；只有你点击提示后，才会记录该条消息的位置。</p>
+      <p className="arkme-account-rule">插件记录：{enabled ? '已开启' : '未开启'} · 浏览器权限：{browserPermission}</p>
+      {status !== '' ? <p className={`arkme-account-dialog-status${status === '位置记录已开启' ? '' : ' is-error'}`} role="status">{status}</p> : null}
+      <div className="arkme-account-dialog-actions">
+        {enabled ? <button type="button" disabled={locationBusy} onClick={() => { setArkmeLocationCaptureEnabled(userId, false); setStatus('位置记录已关闭') }}>关闭位置记录</button> : <button type="button" disabled={locationBusy || permission === 'unavailable'} onClick={() => { void request() }}>{locationBusy ? '正在请求…' : '开启位置记录'}</button>}
+        <button type="button" onClick={onClose}>完成</button>
+      </div>
+    </div>
+  </SettingsDialog>
 }
 
 function ProfileQrDialog({
@@ -515,6 +552,7 @@ export function ArkmeSettingsSurface() {
   const [error, setError] = useState('')
   const [accountFeedback, setAccountFeedback] = useState('')
   const [activeAccountDialog, setActiveAccountDialog] = useState<'qr' | 'arkme-id' | 'phone' | null>(null)
+  const [locationDialogOpen, setLocationDialogOpen] = useState(false)
   const [notificationPermission, setNotificationPermission] = useState(() => arkmeDesktopNotifications.permission())
 
   const applyProfileSnapshot = useCallback((snapshot: ArkmeUserProfileSnapshot) => {
@@ -582,6 +620,12 @@ export function ArkmeSettingsSurface() {
   }
 
   const authenticated = authState.auth?.status === 'authenticated'
+  const authenticatedUserId = authenticated ? authState.auth?.userId : undefined
+  const locationCaptureEnabled = useSyncExternalStore(
+    subscribeArkmeLocationCapturePreference,
+    () => arkmeLocationCaptureEnabled(authenticatedUserId),
+    () => false,
+  )
   const bindingRequired = authState.auth?.status === 'binding-required'
   const displayName = authenticated
     ? profile?.displayName.trim() || profile?.nickname.trim() || '我的账户'
@@ -691,6 +735,14 @@ export function ArkmeSettingsSurface() {
         />
       </SettingsGroup>
 
+      {authenticated && authenticatedUserId !== undefined ? <SettingsGroup title="隐私与权限">
+        <SettingsRow
+          title="位置记录"
+          description={locationCaptureEnabled ? '已开启，输入时可记录本条消息的位置' : '未开启，不会采集位置'}
+          onClick={() => { setLocationDialogOpen(true) }}
+        />
+      </SettingsGroup> : null}
+
       <SettingsGroup title="更新" id="arkme-settings-about">
         <VersionSettingsRow
           title="ArkME 客户端"
@@ -727,6 +779,9 @@ export function ArkmeSettingsSurface() {
           onClose={() => { setActiveAccountDialog(null) }}
           onUpdated={(snapshot) => { applyProfileSnapshot(snapshot); arkmeUi.authChanged(true) }}
         />
+      : null}
+    {locationDialogOpen && authenticatedUserId !== undefined
+      ? <LocationPermissionDialog userId={authenticatedUserId} enabled={locationCaptureEnabled} onClose={() => { setLocationDialogOpen(false) }} />
       : null}
   </div>
 }

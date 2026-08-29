@@ -7,6 +7,7 @@ import type {
   ArkmeCachedQueryResult,
   ArkmeLongArticleDraft,
   ArkmePendingWrite,
+  ArkmeRecordCaptureContext,
   ArkmeRecordCursor,
   ArkmeSelfRecordItem,
   ArkmeSelfRecordList,
@@ -30,6 +31,8 @@ interface RecordRow {
   sync_state: CacheState
   attempts: number
   last_error: string | null
+  record_duration_millis?: number
+  capture_context_json?: string | null
   created_at_millis: number
 }
 
@@ -90,6 +93,8 @@ export class ArkmeLocalDatabase {
         sync_state TEXT NOT NULL CHECK (sync_state IN ('synced', 'pending', 'failed')),
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
+        record_duration_millis INTEGER NOT NULL DEFAULT 0,
+        capture_context_json TEXT,
         created_at_millis INTEGER NOT NULL,
         updated_at_millis INTEGER NOT NULL,
         PRIMARY KEY (user_id, record_uid)
@@ -143,6 +148,13 @@ export class ArkmeLocalDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS extension_review_outbox_user_record
         ON extension_review_outbox (user_id, record_uid);
     `)
+    const recordColumns = this.database.prepare('PRAGMA table_info(record_cache)').all() as unknown as Array<{ name: string }>
+    if (!recordColumns.some(column => column.name === 'record_duration_millis')) {
+      this.database.exec('ALTER TABLE record_cache ADD COLUMN record_duration_millis INTEGER NOT NULL DEFAULT 0')
+    }
+    if (!recordColumns.some(column => column.name === 'capture_context_json')) {
+      this.database.exec('ALTER TABLE record_cache ADD COLUMN capture_context_json TEXT')
+    }
     const metaColumns = this.database.prepare('PRAGMA table_info(cache_meta)').all() as unknown as Array<{ name: string }>
     if (!metaColumns.some(column => column.name === 'pagination_initialized')) {
       this.database.exec('ALTER TABLE cache_meta ADD COLUMN pagination_initialized INTEGER NOT NULL DEFAULT 0')
@@ -338,21 +350,29 @@ export class ArkmeLocalDatabase {
   async listPending(userId: number): Promise<ArkmePendingWrite[]> {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
-      SELECT record_uid, text_content, created_at_millis, send_at_millis, attempts, last_error
+      SELECT record_uid, text_content, created_at_millis, send_at_millis, attempts, last_error,
+             record_duration_millis, capture_context_json
       FROM record_cache
       WHERE user_id = ? AND sync_state IN ('pending', 'failed')
       ORDER BY created_at_millis ASC, record_uid ASC
     `).all(userId) as unknown as Array<Pick<
       RecordRow, 'record_uid' | 'text_content' | 'created_at_millis' | 'send_at_millis' | 'attempts' | 'last_error'
+        | 'record_duration_millis' | 'capture_context_json'
     >>
-    return rows.map(row => ({
-      recordUid: row.record_uid,
-      textContent: row.text_content,
-      createdAtMillis: row.created_at_millis,
-      sendAtMillis: row.send_at_millis,
-      attempts: row.attempts,
-      ...(row.last_error == null || row.last_error === '' ? {} : { lastError: row.last_error }),
-    }))
+    return rows.map(row => {
+      const captureContext = this.pendingCaptureContext(row.capture_context_json)
+      const recordDurationMillis = Math.max(0, Math.trunc(row.record_duration_millis ?? 0))
+      return {
+        recordUid: row.record_uid,
+        textContent: row.text_content,
+        createdAtMillis: row.created_at_millis,
+        sendAtMillis: row.send_at_millis,
+        attempts: row.attempts,
+        ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
+        ...(captureContext === undefined ? {} : { captureContext }),
+        ...(row.last_error == null || row.last_error === '' ? {} : { lastError: row.last_error }),
+      }
+    })
   }
 
   async putPending(userId: number, pending: ArkmePendingWrite): Promise<void> {
@@ -520,12 +540,14 @@ export class ArkmeLocalDatabase {
 
   private insertPending(userId: number, pending: ArkmePendingWrite): void {
     const now = Date.now()
+    const recordDurationMillis = Math.max(0, Math.trunc(pending.recordDurationMillis ?? 0))
+    const captureContextJson = pending.captureContext === undefined ? null : JSON.stringify(pending.captureContext)
     this.database.prepare(`
       INSERT INTO record_cache (
         user_id, record_uid, send_at_millis, title, text_content, template_kind,
         status, version, sync_state, attempts, last_error,
-        created_at_millis, updated_at_millis
-      ) VALUES (?, ?, ?, '', ?, 1, 0, 0, 'pending', ?, ?, ?, ?)
+        record_duration_millis, capture_context_json, created_at_millis, updated_at_millis
+      ) VALUES (?, ?, ?, '', ?, 1, 0, 0, 'pending', ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, record_uid) DO UPDATE SET
         send_at_millis = excluded.send_at_millis,
         text_content = excluded.text_content,
@@ -533,11 +555,35 @@ export class ArkmeLocalDatabase {
         sync_state = 'pending',
         attempts = excluded.attempts,
         last_error = excluded.last_error,
+        record_duration_millis = excluded.record_duration_millis,
+        capture_context_json = excluded.capture_context_json,
         updated_at_millis = excluded.updated_at_millis
     `).run(
       userId, pending.recordUid, pending.sendAtMillis, pending.textContent,
-      pending.attempts, pending.lastError ?? null, pending.createdAtMillis, now,
+      pending.attempts, pending.lastError ?? null, recordDurationMillis, captureContextJson, pending.createdAtMillis, now,
     )
+  }
+
+  private pendingCaptureContext(raw: string | null | undefined): ArkmeRecordCaptureContext | undefined {
+    if (raw == null || raw === '') return undefined
+    try {
+      const value = JSON.parse(raw) as unknown
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+      const source = value as Record<string, unknown>
+      const clientName = typeof source.clientName === 'string' ? source.clientName.trim().slice(0, 120) : ''
+      const networkName = typeof source.networkName === 'string' ? source.networkName.trim().slice(0, 120) : ''
+      const electric = typeof source.electric === 'number' && Number.isFinite(source.electric) ? Math.trunc(source.electric) : undefined
+      const charge = typeof source.charge === 'number' && Number.isFinite(source.charge) ? Math.trunc(source.charge) : 0
+      const result: ArkmeRecordCaptureContext = {
+        ...(clientName === '' ? {} : { clientName }),
+        ...(networkName === '' ? {} : { networkName }),
+        ...(electric === undefined || electric < 0 || electric > 100 ? {} : { electric }),
+        ...(charge < 1 || charge > 3 ? {} : { charge }),
+      }
+      return Object.keys(result).length === 0 ? undefined : result
+    } catch {
+      return undefined
+    }
   }
 
   private upsertSyncedRecord(userId: number, item: ArkmeSelfRecordItem): void {

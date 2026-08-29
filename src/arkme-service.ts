@@ -192,7 +192,7 @@ import type {
   ArkmeRelatedRecordingEligibility,
   ArkmeRelatedRecordingPage,
   ArkmeRelatedRecordingPageOptions,
-  ArkmeRichSendInput, ArkmeBotMentionInput, ArkmeHumanMentionInput,
+  ArkmeRichSendInput, ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeMessageSnapshotDetail, ArkmeBotMentionInput, ArkmeHumanMentionInput,
   ArkmeSearchHistoryResult,
   ArkmeSearchSceneKind,
   ArkmeSelfRecordItem,
@@ -1232,10 +1232,12 @@ export class ArkmeService {
   ): Promise<ArkmeTimelinePage> {
     return await this.chat.readSource(sourceRef, options)
   }
-
   async sharedRecordingDetail(detailRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
   }
+
+  async messageSnapshotDetail(sourceRef: string, actionRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageSnapshotDetail> { return await this.chat.messageSnapshotDetail(sourceRef, actionRef, options) }
+  async saveMessageLocation(sourceRef: string, itemUid: string, location: ArkmeRecordLocationCapture, recordVersion?: number, options: { signal?: AbortSignal } = {}): Promise<void> { await this.chat.saveMessageLocation(sourceRef, itemUid, location, recordVersion, options) }
 
   async messageReadReceiptSummaries(sourceRef: string, items: readonly ArkmeMessageReadReceiptQueryItem[], options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptSummaryList> { return await this.chat.messageReadReceiptSummaries(sourceRef, items, options) }
   async messageReadReceiptDetail(sourceRef: string, itemUid: string, sequence: number, options: { signal?: AbortSignal } = {}): Promise<ArkmeMessageReadReceiptDetail> { return await this.chat.messageReadReceiptDetail(sourceRef, itemUid, sequence, options) }
@@ -1267,6 +1269,8 @@ export class ArkmeService {
     options: {
       recordUid?: string
       relationUid?: string
+      recordDurationMillis?: number
+      captureContext?: ArkmeRecordCaptureContext
       botRefs?: readonly string[]
       humanMentions?: readonly ArkmeHumanMentionInput[]
       botMentions?: readonly ArkmeBotMentionInput[]
