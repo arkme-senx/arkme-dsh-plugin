@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -64,10 +64,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 0.1.32 更新",
-      "summary": "release: 发布 DSH 远控并修复自动发版链路",
-      "publishedAt": "2026-08-29T04:12:41.000Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.32"
+      "title": "Arkme 插件 0.1.33 更新",
+      "summary": "release: 发布 Release Set 交付、扩展恢复与转发修复",
+      "publishedAt": "2026-08-29T06:19:50.297Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.33"
     }
   },
   "scripts": {
