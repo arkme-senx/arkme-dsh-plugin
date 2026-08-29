@@ -12,7 +12,7 @@ const PARENT_EXIT_TIMEOUT_MS = 20_000
 const HEALTH_TIMEOUT_MS = 45_000
 
 export interface ArkmeExtensionProfileRestartPlan {
-  schemaVersion: 1 | 2 | 3
+  schemaVersion: 1 | 2 | 3 | 4
   parentPid: number
   execPath: string
   dshBinPath: string
@@ -29,9 +29,11 @@ export interface ArkmeExtensionProfileRestartPlan {
   installStoreDirectory: string
   previousInstalled?: ArkmeInstalledExtension
   activationChange?: true
+  desktopQuarantineActivation?: true
   previousProfileIncluded?: boolean
   healthUrl: string
   logPath: string
+  runtimeReleaseId?: string
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -65,20 +67,29 @@ export function parseExtensionProfileRestartPlan(value: unknown): ArkmeExtension
       ? source.previousInstalled as ArkmeInstalledExtension
       : undefined,
     activationChange: source.activationChange === true ? true as const : undefined,
+    desktopQuarantineActivation: source.desktopQuarantineActivation === true ? true as const : undefined,
     previousProfileIncluded: typeof source.previousProfileIncluded === 'boolean'
       ? source.previousProfileIncluded
       : undefined,
     healthUrl: stringValue(source.healthUrl), logPath: stringValue(source.logPath),
+    runtimeReleaseId: stringValue(source.runtimeReleaseId),
   }
-  if (![1, 2, 3].includes(plan.schemaVersion as number) || typeof plan.parentPid !== 'number' || !Number.isSafeInteger(plan.parentPid)
+  if (![1, 2, 3, 4].includes(plan.schemaVersion as number) || typeof plan.parentPid !== 'number' || !Number.isSafeInteger(plan.parentPid)
     || plan.parentPid <= 0 || plan.execPath === undefined || plan.dshBinPath === undefined || plan.restartArgv.length === 0
     || plan.dshHome === undefined || plan.profileName === undefined || plan.packageName === undefined
     || plan.extensionId === undefined || typeof plan.expectActive !== 'boolean'
     || plan.installStoreDirectory === undefined
     || plan.healthUrl === undefined || plan.logPath === undefined
+    || (plan.runtimeReleaseId !== undefined && !/^electron-runtime-v1-[a-f0-9]{32}$/.test(plan.runtimeReleaseId))
     || (plan.schemaVersion === 3 && (plan.activationChange !== true
-      || plan.previousInstalled === undefined || plan.previousProfileIncluded === undefined))
-    || (plan.schemaVersion !== 3 && plan.activationChange === true)
+      || plan.desktopQuarantineActivation === true || plan.previousInstalled === undefined
+      || plan.previousProfileIncluded === undefined))
+    || (plan.schemaVersion === 4 && (plan.activationChange !== true
+      || plan.desktopQuarantineActivation !== true || plan.previousInstalled !== undefined
+      || plan.previousProfileIncluded !== false || plan.expectActive !== true
+      || plan.extensionId !== `desktop-quarantine:${plan.packageName}`))
+    || (![3, 4].includes(plan.schemaVersion as number) && plan.activationChange === true)
+    || (plan.schemaVersion !== 4 && plan.desktopQuarantineActivation === true)
     || (plan.schemaVersion === 1
       ? !/^@arkme-local\/ext-[a-f0-9]{16}$/.test(plan.packageName)
       : !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(plan.packageName))) {
@@ -88,7 +99,7 @@ export function parseExtensionProfileRestartPlan(value: unknown): ArkmeExtension
   if (health.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(health.hostname)) {
     throw new Error('extension restart health URL must be loopback HTTP')
   }
-  return { ...plan, schemaVersion: plan.schemaVersion as 1 | 2 | 3, healthUrl: health.toString() } as ArkmeExtensionProfileRestartPlan
+  return { ...plan, schemaVersion: plan.schemaVersion as 1 | 2 | 3 | 4, healthUrl: health.toString() } as ArkmeExtensionProfileRestartPlan
 }
 
 function alive(pid: number): boolean {
@@ -116,15 +127,26 @@ async function healthy(plan: ArkmeExtensionProfileRestartPlan): Promise<boolean>
       const response = await fetch(plan.healthUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: new URL(plan.healthUrl).origin },
-        body: JSON.stringify({ operation: 'extensions.installed-list' }),
+        body: JSON.stringify(plan.desktopQuarantineActivation === true
+          ? { operation: 'extensions.quarantine.health', params: { packageName: plan.packageName } }
+          : { operation: 'extensions.installed-list' }),
         signal: AbortSignal.timeout(2_000),
       })
       if (response.ok) {
         const body = await response.json() as {
           ok?: boolean
           value?: Array<{ extensionId?: string; enabled?: boolean; active?: boolean }>
+            | { profileEnabled?: boolean; active?: boolean }
         }
-        const installed = body.value?.find(item => item.extensionId === plan.extensionId)
+        if (plan.desktopQuarantineActivation === true) {
+          const status = body.value as { profileEnabled?: boolean; active?: boolean } | undefined
+          if (body.ok === true && status?.profileEnabled === true && status.active === true) return true
+          await new Promise(resolve => setTimeout(resolve, 500))
+          continue
+        }
+        const installed = Array.isArray(body.value)
+          ? body.value.find(item => item.extensionId === plan.extensionId)
+          : undefined
         if (body.ok === true && (plan.activationChange === true
           ? plan.expectActive
             ? installed?.enabled === true && installed.active === true

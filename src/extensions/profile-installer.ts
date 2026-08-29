@@ -38,6 +38,7 @@ export interface ArkmeExtensionProfileInstallerOptions {
   requestShutdown?: () => void
   supervisedExitCode?: number
   supervisedPlanPath?: string
+  runtimeReleaseId?: string
   requestProcessExit?: (code: number) => void
 }
 
@@ -107,6 +108,7 @@ export class ArkmeExtensionProfileInstaller {
     previousInstalled?: ArkmeInstalledExtension
     expectActive: boolean
     activationChange?: true
+    desktopQuarantineActivation?: true
     previousProfileIncluded?: boolean
   }): Promise<void> {
     await this.mutationTail
@@ -114,7 +116,7 @@ export class ArkmeExtensionProfileInstaller {
       || this.options.helperPath === undefined || this.options.restartArgv === undefined
       || this.options.installStoreDirectory === undefined) return
     const plan: ArkmeExtensionProfileRestartPlan = {
-      schemaVersion: input.activationChange === true ? 3 : input.targetBundlePath?.endsWith('.tgz') === true
+      schemaVersion: input.desktopQuarantineActivation === true ? 4 : input.activationChange === true ? 3 : input.targetBundlePath?.endsWith('.tgz') === true
         || input.previousBundlePath?.endsWith('.tgz') === true
         || input.previousInstalled?.executionModel !== undefined ? 2 : 1,
       parentPid: process.pid,
@@ -136,8 +138,12 @@ export class ArkmeExtensionProfileInstaller {
         activationChange: true as const,
         previousProfileIncluded: input.previousProfileIncluded === true,
       } : {}),
+      ...(input.desktopQuarantineActivation === true ? {
+        desktopQuarantineActivation: true as const,
+      } : {}),
       healthUrl: this.options.healthUrl,
       logPath: join(this.options.stateDirectory, 'extension-profile-restart.log'),
+      ...(this.options.runtimeReleaseId === undefined ? {} : { runtimeReleaseId: this.options.runtimeReleaseId }),
     }
     if (this.options.supervisedExitCode !== undefined) {
       if (!Number.isSafeInteger(this.options.supervisedExitCode)
@@ -184,6 +190,18 @@ export class ArkmeExtensionProfileInstaller {
       timer.unref?.()
     })
     shutdown()
+  }
+
+  async restartDesktopQuarantine(input: { packageName: string }): Promise<void> {
+    if (!isArkmeProfilePackageName(input.packageName)) throw new Error('扩展 Bundle 包名无效')
+    await this.restart({
+      extensionId: `desktop-quarantine:${input.packageName}`,
+      packageName: input.packageName,
+      expectActive: true,
+      activationChange: true,
+      desktopQuarantineActivation: true,
+      previousProfileIncluded: false,
+    })
   }
 
   private async run(args: readonly string[]): Promise<void> {

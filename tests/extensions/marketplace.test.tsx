@@ -921,6 +921,13 @@ describe('Arkme marketplace UI', () => {
     expect(installedHtml).not.toContain('>更新</button>')
     expect(installedHtml.indexOf('aria-label="查看扩展：扩展"')).toBeLessThan(installedHtml.indexOf('role="switch"'))
 
+    const quarantinedHtml = renderToStaticMarkup(<ArkmeExtensionLifecycleRow
+      item={item} installed={{ ...installed, enabled: false, active: false }} kind="installed"
+      quarantineReason="扩展启动时加载失败，已自动停用" onOpen={() => {}} onToggle={() => {}}
+    />)
+    expect(quarantinedHtml).toContain('已自动停用')
+    expect(quarantinedHtml).toContain('扩展启动时加载失败，已自动停用')
+
     const updateHtml = renderToStaticMarkup(<ArkmeExtensionLifecycleRow
       item={item} installed={installed} kind="update" onOpen={() => {}} onUpdate={() => {}}
     />)

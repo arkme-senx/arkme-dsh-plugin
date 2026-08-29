@@ -8,13 +8,12 @@ const adapterSource = readFileSync(new URL('../src/client/index.tsx', import.met
 const redesignCss = readFileSync(new URL('../src/client/redesign/arkme-redesign.css', import.meta.url), 'utf8')
 
 describe('ArkmeSettingsSurface', () => {
-  it('keeps Arkme account and update capabilities in the redesigned settings surface', () => {
+  it('keeps Arkme account and APP update capabilities with a read-only plugin version', () => {
     expect(source).toContain("callArkme<ArkmeUserProfileSnapshot>('user.profile'")
     expect(source).toContain("callArkme<ArkmeAuthSnapshot>('auth.logout')")
     expect(source).toContain('退出登录')
     expect(source).toContain('aria-label="Arkme 设置"')
-    expect(source).toContain('buildArkmePluginUpdateRow')
-    expect(source).toContain('立即更新')
+    expect(source).not.toContain('buildArkmePluginUpdateRow')
     expect(source).not.toContain('<SettingsRow title="个人资料"')
     expect(source).not.toContain('<SettingsRow title="登录与安全"')
     expect(source).not.toContain('<SettingsRow title="执行前确认"')

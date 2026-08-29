@@ -15,7 +15,7 @@ export interface ArkmeUpdateNote {
 }
 
 export interface ArkmeUpdateItem {
-  target: ArkmeUpdateTarget
+  target: ArkmeUpdateTarget | 'plugin'
   instanceKey: string
   productLabel: string
   title: string

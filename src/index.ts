@@ -33,6 +33,7 @@ import {
 import { ArkmeRealtimeEvents } from './realtime-events.js'
 import { ArkmeService } from './arkme-service.js'
 import { ArkmeExtensionInstallStore } from './extensions/install-store.js'
+import { ArkmeDesktopExtensionQuarantine } from './extensions/desktop-quarantine.js'
 import { ArkmeExtensionInstallTasks, type ArkmeAgentRegistryLike } from './extensions/install-tasks.js'
 import { createArkmeExtensionIconReadHandler, createArkmeExtensionIconUploadHandler } from './extensions/icon-routes.js'
 import { createArkmeExtensionPreviewReadHandler, createArkmeExtensionPreviewUploadHandler } from './extensions/preview-routes.js'
@@ -313,8 +314,28 @@ export function apply(ctx: Context, config: Config): void {
       ? {
           supervisedExitCode: ARKME_DESKTOP_MANAGED_RESTART_EXIT_CODE,
           supervisedPlanPath: process.env.ARKME_DESKTOP_MANAGED_RESTART_PLAN_PATH,
+          ...(process.env.ARKME_RUNTIME_RELEASE_ID === undefined
+            ? {}
+            : { runtimeReleaseId: process.env.ARKME_RUNTIME_RELEASE_ID }),
         }
       : {}),
+  })
+  const pluginInventory = ctx.get('pluginInventory') as import('./extensions/manager.js').ArkmePluginInventoryLike
+  const desktopQuarantine = new ArkmeDesktopExtensionQuarantine({
+    dshHome,
+    environment: config.environment,
+    installStore: extensionStore,
+    setProfileEnabled: async (packageName, enabled) => {
+      await extensionProfileInstaller.setEnabled(packageName, enabled)
+    },
+    requestRestart: async ({ packageName }) => {
+      await extensionProfileInstaller.restartDesktopQuarantine({ packageName })
+    },
+    isPackageActive: packageName => pluginInventory.list().entries.some(entry =>
+      entry.moduleName === packageName && entry.enabled && entry.fiberPhase === 'active'),
+  })
+  void desktopQuarantine.reconcile().catch(error => {
+    ctx.logger.warn('Arkme desktop extension quarantine reconciliation failed: %s', error instanceof Error ? error.message : String(error))
   })
   const ownedExtensionStore = new ArkmeOwnedExtensionStore(extensionDirectory)
   const ownedExtensionRefs = new ArkmeOwnedExtensionRefs()
@@ -349,7 +370,7 @@ export function apply(ctx: Context, config: Config): void {
         profileDirectory: extensionProfileDirectory,
         profileInstaller: extensionProfileInstaller,
         clientApiPath: config.routePath,
-        pluginInventory: ctx.get('pluginInventory') as import('./extensions/manager.js').ArkmePluginInventoryLike,
+        pluginInventory,
         ...(dshRuntimeVersion === undefined ? {} : { dshRuntimeVersion }),
       },
     )
@@ -462,6 +483,7 @@ export function apply(ctx: Context, config: Config): void {
     extensionInstallTasks: () => extensionInstallTasks,
     ownedExtensionInventory: () => ownedExtensionInventory,
     remoteHost: () => remoteHost,
+    desktopQuarantine,
   })
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {

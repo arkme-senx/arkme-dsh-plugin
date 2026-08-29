@@ -273,7 +273,7 @@ describe('official DSH client adapter', () => {
     }))
   })
 
-  it('starts independent APP and plugin update status stores from the client lifecycle', () => {
+  it('starts only the APP update status store from the client lifecycle', () => {
     const effect = vi.fn()
 
     apply({
@@ -285,9 +285,8 @@ describe('official DSH client adapter', () => {
       effect,
     } as never)
 
-    expect(effect.mock.calls.map(call => call[1])).toEqual(expect.arrayContaining([
-      'dsh-arkme: client plugin update status',
-      'dsh-arkme: client app update status',
-    ]))
+    const labels = effect.mock.calls.map(call => call[1])
+    expect(labels).toContain('dsh-arkme: client app update status')
+    expect(labels).not.toContain('dsh-arkme: client plugin update status')
   })
 })

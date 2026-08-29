@@ -3,6 +3,78 @@ import { describe, expect, it, vi } from 'vitest'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../../src/host-api.js'
 
 describe('marketplace Host BFF', () => {
+  it('routes desktop quarantine reads and mutations through the Host owner', async () => {
+    const quarantine = {
+      status: vi.fn(async () => ({ active: true, entries: [] })),
+      dismiss: vi.fn(async () => undefined),
+      reenable: vi.fn(async () => undefined),
+      health: vi.fn(async () => ({ profileEnabled: true, active: true })),
+    }
+
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.quarantine.status', {},
+      undefined, undefined, undefined, undefined, undefined, undefined, quarantine,
+    )).resolves.toEqual({ active: true, entries: [] })
+    await dispatchArkmeHostOperation(
+      {} as never, 'extensions.quarantine.dismiss', { packageName: '@example/local' },
+      undefined, undefined, undefined, undefined, undefined, undefined, quarantine,
+    )
+    await dispatchArkmeHostOperation(
+      {} as never, 'extensions.quarantine.reenable', { packageName: '@example/local' },
+      undefined, undefined, undefined, undefined, undefined, undefined, quarantine,
+    )
+    await expect(dispatchArkmeHostOperation(
+      {} as never, 'extensions.quarantine.health', { packageName: '@example/local' },
+      undefined, undefined, undefined, undefined, undefined, undefined, quarantine,
+    )).resolves.toEqual({ profileEnabled: true, active: true })
+
+    expect(quarantine.dismiss).toHaveBeenCalledWith('@example/local')
+    expect(quarantine.reenable).toHaveBeenCalledWith('@example/local')
+    expect(quarantine.health).toHaveBeenCalledWith('@example/local')
+  })
+
+  it('requires the current DSH page origin for desktop quarantine mutations but not managed health reads', async () => {
+    const quarantine = {
+      status: vi.fn(async () => ({ active: false, entries: [] })),
+      dismiss: vi.fn(async () => undefined),
+      reenable: vi.fn(async () => undefined),
+      health: vi.fn(async () => ({ profileEnabled: true, active: true })),
+    }
+    let handler: ReturnType<typeof createArkmeHostApi>
+    const server = createServer((req, res) => { void handler(req, res) })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('missing test port')
+      const origin = `http://127.0.0.1:${String(address.port)}`
+      handler = createArkmeHostApi({} as never, {
+        expectedPort: address.port,
+        allowNonLoopback: false,
+        desktopQuarantine: quarantine,
+      })
+      const mutation = JSON.stringify({
+        operation: 'extensions.quarantine.reenable', params: { packageName: '@example/local' },
+      })
+      const rejected = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: mutation,
+      })
+      expect(rejected.status).toBe(403)
+      const accepted = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: mutation,
+      })
+      expect(accepted.status).toBe(200)
+      const health = await fetch(`${origin}/api`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'extensions.quarantine.health', params: { packageName: '@example/local' },
+        }),
+      })
+      expect(health.status).toBe(200)
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
+
   it('requires same-origin requests for preview delete and reorder', async () => {
     const deletePreview = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 2 }))
     const reorderPreviews = vi.fn(async () => ({ extension_id: 'ext-1', preview_images: [], preview_revision: 3 }))

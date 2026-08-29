@@ -41,6 +41,13 @@ describe('Bundle v2 profile restart plan', () => {
     expect(extensionProfileRollbackArgs(parsed)).toEqual(['add', '/isolated/artifacts/old bundle.tgz'])
   })
 
+  it('preserves a valid Release Set identity and rejects a forged identity', () => {
+    const runtimeReleaseId = 'electron-runtime-v1-0123456789abcdef0123456789abcdef'
+    expect(parseExtensionProfileRestartPlan({ ...v2Plan(), runtimeReleaseId })).toMatchObject({ runtimeReleaseId })
+    expect(() => parseExtensionProfileRestartPlan({ ...v2Plan(), runtimeReleaseId: 'release-old' }))
+      .toThrow('extension restart plan is incomplete')
+  })
+
   it('removes the exact package when a first installation has no previous tgz', () => {
     const parsed = parseExtensionProfileRestartPlan({ ...v2Plan(), previousBundlePath: undefined })
     expect(extensionProfileRollbackArgs(parsed)).toEqual(['remove', '@example/install-bundle'])
@@ -56,6 +63,26 @@ describe('Bundle v2 profile restart plan', () => {
       schemaVersion: 3, activationChange: true, previousProfileIncluded: true, expectActive: false,
     })
     expect(() => extensionProfileRollbackArgs(parsed)).toThrow('does not use DSH plugin commands')
+  })
+
+  it('accepts a desktop quarantine re-enable without an install-store record', () => {
+    const parsed = parseExtensionProfileRestartPlan({
+      ...v2Plan(),
+      schemaVersion: 4,
+      activationChange: true,
+      desktopQuarantineActivation: true,
+      previousProfileIncluded: false,
+      previousInstalled: undefined,
+      extensionId: 'desktop-quarantine:@example/local-extension',
+      packageName: '@example/local-extension',
+    })
+
+    expect(parsed).toMatchObject({
+      schemaVersion: 4,
+      activationChange: true,
+      desktopQuarantineActivation: true,
+      previousProfileIncluded: false,
+    })
   })
 })
 
@@ -248,5 +275,47 @@ describe('desktop-managed extension profile restart', () => {
     const reopened = new ArkmeExtensionInstallStore(plan.installStoreDirectory)
     expect(reopened.get(plan.extensionId)).toMatchObject({ enabled: true, active: false })
     reopened.close()
+  })
+
+  it('rolls a failed desktop quarantine re-enable back out of the Profile without requiring install metadata', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-managed-profile-quarantine-'))
+    directories.push(root)
+    const profileDirectory = join(root, 'profiles', 'web')
+    await mkdir(profileDirectory, { recursive: true })
+    await writeFile(join(profileDirectory, 'package.json'), JSON.stringify({
+      dependencies: { '@example/local-extension': 'link:../../local-extension' },
+      dsh: { profile: { bundles: ['@example/local-extension'] } },
+    }))
+    const planPath = join(root, 'restart.json')
+    const plan: ArkmeExtensionProfileRestartPlan = {
+      schemaVersion: 4,
+      parentPid: process.pid,
+      execPath: process.execPath,
+      dshBinPath: '/fixture/dsh.js',
+      execArgv: [],
+      restartArgv: ['dsh', 'web'],
+      dshHome: root,
+      profileName: 'web',
+      packageName: '@example/local-extension',
+      extensionId: 'desktop-quarantine:@example/local-extension',
+      expectActive: true,
+      cleanupPaths: [],
+      installStoreDirectory: join(root, 'extensions'),
+      activationChange: true,
+      desktopQuarantineActivation: true,
+      previousProfileIncluded: false,
+      healthUrl: 'http://127.0.0.1:41234/arkme-self/api',
+      logPath: join(root, 'restart.log'),
+    }
+    await writeFile(planPath, JSON.stringify(plan), { mode: 0o600 })
+    const profileCommand = vi.fn(() => true)
+
+    await rollbackManagedExtensionProfileRestart(planPath, { profileCommand })
+
+    expect(profileCommand).not.toHaveBeenCalled()
+    const manifest = JSON.parse(await readFile(join(profileDirectory, 'package.json'), 'utf8')) as {
+      dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.dsh.profile.bundles).toEqual([])
   })
 })

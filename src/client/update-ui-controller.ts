@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-export type ArkmeUpdateTarget = 'app' | 'plugin'
+export type ArkmeUpdateTarget = 'app'
 
 export interface ArkmeUpdateUiSnapshot {
   revision: number

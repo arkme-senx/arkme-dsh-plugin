@@ -66,7 +66,7 @@
       "level": "normal",
       "title": "Arkme 插件 0.1.32 更新",
       "summary": "release: 发布 DSH 远控并修复自动发版链路",
-      "publishedAt": "2026-08-28T10:44:00.666Z",
+      "publishedAt": "2026-08-29T04:12:41.000Z",
       "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v0.1.32"
     }
   },
@@ -78,6 +78,7 @@
     "bundle": "node scripts/clean-bundle.mjs && tsdown && node scripts/verify-executable-entrypoints.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run",
+    "pack:runtime": "node scripts/build-runtime-artifact.mjs",
     "verify:call-assets": "node scripts/verify-call-assets.mjs",
     "verify:windows-credential-helper": "node scripts/verify-windows-credential-helper.mjs",
     "prepare": "pnpm run build"

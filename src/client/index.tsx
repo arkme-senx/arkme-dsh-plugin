@@ -16,7 +16,6 @@ import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeAppUpdateStore } from './app-update-store.js'
 import { arkmeDesktopNotifications } from './desktop-notification-runtime.js'
 import { arkmeNotificationActivation } from './notification-activation-store.js'
-import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested } from './DeepSeekHarnessSurface.js'
@@ -82,7 +81,6 @@ export function apply(ctx: ClientContext): void {
   }), 'dsh-arkme: login dictionaries')
   const loginT = ctx.locale.bind(ARKME_LOGIN_LOCALE_NAMESPACE)
 
-  ctx.effect(() => arkmePluginUpdateStore.start(), 'dsh-arkme: client plugin update status')
   ctx.effect(() => arkmeAppUpdateStore.start(), 'dsh-arkme: client app update status')
   ctx.effect(() => {
     let disposed = false
@@ -286,7 +284,6 @@ export { ArkmeOutgoingCallHost, outgoingCallModalLayout } from './ArkmeOutgoingC
 export { ArkmePrivateCallMenu } from './ArkmePrivateCallMenu.js'
 export { ArkmeAppUpdateDialog } from './ArkmeAppUpdateDialog.js'
 export { ArkmeUpdateRailSlot, ArkmeUpdateTopCapsule, deriveArkmeUpdatePresentation } from './ArkmeUpdateSurfaces.js'
-export { ArkmePluginUpdateDialog } from './ArkmePluginUpdateDialog.js'
 export { ArkmeStartupAuthGate } from './ArkmeStartupAuthGate.js'
 export { ArkmeWebLoginOverlay } from './ArkmeWebLoginOverlay.js'
 export {
@@ -328,7 +325,6 @@ export { ArkmeCallsRow, ArkmeDirectoryRow, ArkmeNavigation, ArkmeRecordingsRow, 
 export { ArkmeLayoutController } from './redesign/layout-controller.js'
 export type { ArkmeDirectoryEntryOwnerProps, ArkmeDirectoryRowProps } from './slots-contract.js'
 export { outgoingCallUi } from './outgoing-call-ui-controller.js'
-export { ArkmePluginUpdateStore, arkmePluginUpdateStore } from './plugin-update-store.js'
 export { ArkmeAppUpdateStore, arkmeAppUpdateStore } from './app-update-store.js'
 export {
   isOfficialConversationTarget, isOfficialNewSessionTarget,

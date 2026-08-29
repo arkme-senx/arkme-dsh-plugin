@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { renderToStaticMarkup } from 'react-dom/server'
 import { ArkmePluginUpdateStore } from '../src/client/plugin-update-store.js'
-import { ArkmeUpdateTopCapsule, deriveArkmeUpdatePresentation } from '../src/client/ArkmeUpdateSurfaces.js'
+import { deriveArkmeUpdatePresentation } from '../src/client/update-presentation.js'
 import type { ArkmePluginUpdateInstallSnapshot, ArkmePluginUpdateStatus } from '../src/types.js'
 
 function deferred<T>() {
@@ -234,12 +233,6 @@ describe('ArkmePluginUpdateStore', () => {
         expect(store.getSnapshot().installWarning).toContain('长时间')
         expect(store.getSnapshot().installError).toBe('')
         expect(presentation(store).primary).toMatchObject({ uncertain: true, active: false, failed: false })
-        const markup = renderToStaticMarkup(<ArkmeUpdateTopCapsule item={presentation(store).primary!}
-          onClose={() => {}} onRetry={() => {}} onOpenDownloaded={() => {}} />)
-        expect(markup).toContain('更新状态待确认')
-        expect(markup).toContain('检查状态')
-        expect(markup).not.toContain('重新尝试')
-        expect(markup).not.toContain('78%')
         expect(call.mock.calls.filter(([operation]) => operation === 'plugin.update.install')).toHaveLength(mode === 'accepted' ? 1 : 0)
       } finally {
         store.stop()
@@ -475,10 +468,6 @@ describe('ArkmePluginUpdateStore', () => {
       expect(store.getSnapshot()).toMatchObject({ busy: true, installPending: true })
       const item = presentation(store).primary!
       expect(item).toMatchObject({ active: true, failed: false, ready: false, phaseMessage: '正在准备更新' })
-      const markup = renderToStaticMarkup(<ArkmeUpdateTopCapsule item={item} onClose={() => {}} onRetry={() => {}} onOpenDownloaded={() => {}} />)
-      expect(markup).toContain('data-layout="progress"')
-      expect(markup).not.toContain('重新尝试')
-      expect(markup).not.toContain('旧失败信息')
       expect(call.mock.calls.filter(([operation]) => operation === 'plugin.update.install')).toHaveLength(1)
       response.resolve(newJob)
       expect(await first).toEqual(newJob)

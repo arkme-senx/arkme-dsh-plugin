@@ -6,8 +6,6 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { arkmeUi } from './ui-controller.js'
-import { arkmePluginUpdateStore } from './plugin-update-store.js'
-import { arkmeUpdateUi } from './update-ui-controller.js'
 
 const styles: Record<string, CSSProperties> = {
   root: { width: '100%', minWidth: 0 },
@@ -19,10 +17,8 @@ export type ArkmeFooterDropdownProps = ArkmeFooterActionProps & PropsRenderSlots
 export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getSnapshot, arkmeUi.getSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
-  const updateState = useSyncExternalStore(arkmePluginUpdateStore.subscribe, arkmePluginUpdateStore.getSnapshot, arkmePluginUpdateStore.getSnapshot)
   const chatDirectory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot, arkmeChatDirectory.getSnapshot)
   const auth = authState.auth
-  const currentSession = props.useSessions(state => state.current)
   const unreadCount = auth?.status === 'authenticated' && chatDirectory.revision > 0
     ? arkmeChatDirectory.totalUnreadCount()
     : 0
@@ -38,12 +34,6 @@ export function ArkmeFooterDropdown(props: ArkmeFooterDropdownProps) {
       authenticated={auth?.status === 'authenticated'}
       authPending={!authState.checked || authState.busy}
       unreadCount={unreadCount}
-      {...(updateState.status === undefined ? {} : { updateStatus: updateState.status })}
-      updateSnapshot={updateState}
-      onUpdate={() => {
-        props.activate(currentSession)
-        arkmeUpdateUi.open('plugin')
-      }}
     />
     </div>
   </>

@@ -21,7 +21,6 @@ import { ArkmeCalendarSurface } from './ArkmeCalendarSurface.js'
 import { ArkmeUpdateRailSlot } from './ArkmeUpdateSurfaces.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
-import { arkmePluginUpdateStore } from './plugin-update-store.js'
 import { arkmeUi } from './ui-controller.js'
 
 export interface ArkmeProductNavigationProps {
@@ -139,11 +138,6 @@ export function ArkmeProductNavigation({
     arkmeChatDirectory.getSnapshot,
     arkmeChatDirectory.getSnapshot,
   )
-  const pluginUpdateState = useSyncExternalStore(
-    arkmePluginUpdateStore.subscribe,
-    arkmePluginUpdateStore.getSnapshot,
-    arkmePluginUpdateStore.getSnapshot,
-  )
   const [profileOpen, setProfileOpen] = useState(false)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
   const profileTriggerRef = useRef<HTMLButtonElement>(null)
@@ -185,8 +179,6 @@ export function ArkmeProductNavigation({
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
-  const pluginUpdate = pluginUpdateState.status
-  const installedPluginVersion = pluginUpdate?.installedVersion ?? pluginManifest.version
   const conversationUnreadCount = authState.auth?.status === 'authenticated' && chatDirectory.baselineReady
     ? arkmeChatDirectory.totalUnreadCount({ excludeMuted: true })
     : 0
@@ -238,8 +230,8 @@ export function ArkmeProductNavigation({
           draggable={false}
           style={styles.brandImage}
         />
-        <span data-arkme-plugin-version={installedPluginVersion} style={styles.brandVersion}>
-          v{installedPluginVersion}
+        <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>
+          v{pluginManifest.version}
         </span>
       </div>}
       <div style={{ ...styles.primary, ...(compact ? { flexDirection: 'row' as const } : {}) }}>

@@ -31,18 +31,22 @@ function renderFooter(patch: Partial<ArkmeFooterActionProps> = {}): string {
 }
 
 describe('ArkmeFooterAction', () => {
-  it.each([
-    [{ installPending: true }, '查看进度'],
-    [{ installPending: true, installWarning: '长时间没有进展' }, '查看状态'],
-    [{ installError: '安装失败' }, '查看结果'],
-    [{ installStatusError: '状态查询不可用' }, '查看状态'],
-  ] as const)('keeps the legacy update entry usable for %j', (patch, label) => {
+  it('does not restore the legacy plugin update entry from stale update state', () => {
     const html = renderFooter({
-      updateSnapshot: { checked: true, busy: false, error: '', installError: '', ...patch },
+      updateSnapshot: {
+        checked: true,
+        busy: false,
+        error: '',
+        installError: '安装失败',
+        installWarning: '长时间没有进展',
+        installStatusError: '状态查询不可用',
+      },
       onUpdate: () => undefined,
-    })
-    expect(html).toContain(`>${label}</button>`)
-    expect(html).not.toContain('disabled=""')
+    } as Partial<ArkmeFooterActionProps>)
+
+    expect(html).not.toContain('查看进度')
+    expect(html).not.toContain('查看状态')
+    expect(html).not.toContain('查看结果')
   })
 
   it('shows the total Chat unread count on the right', () => {
@@ -57,33 +61,32 @@ describe('ArkmeFooterAction', () => {
     expect(renderFooter({ loggedOut: true, unreadCount: 12 })).not.toContain('>12</span>')
   })
 
-  it('shows an independent update marker without replacing Chat unread', () => {
+  it('does not expose a plugin update marker alongside Chat unread', () => {
     const html = renderFooter({ authenticated: true, unreadCount: 12, updateStatus: availableUpdate })
 
-    expect(html).toContain('Arkme · 12 条未读 · 插件有可用更新')
-    expect(html).toContain('data-arkme-update-level="important"')
+    expect(html).toContain('Arkme · 12 条未读')
+    expect(html).not.toContain('插件有可用更新')
+    expect(html).not.toContain('data-arkme-update-level')
     expect(html).toContain('>12</span>')
   })
 
-  it('raises critical updates in the wide sidebar', () => {
+  it('does not raise critical plugin updates in the wide sidebar', () => {
     const html = renderFooter({
       authenticated: true,
       updateStatus: { ...availableUpdate, level: 'critical' },
     })
-    expect(html).toContain('插件有重要更新')
-    expect(html).toContain('data-arkme-update-level="critical"')
+    expect(html).not.toContain('插件有重要更新')
+    expect(html).not.toContain('data-arkme-update-level')
   })
 
-  it('projects an available update as one compact sibling action', () => {
+  it('does not project an available plugin update as a sibling action', () => {
     const html = renderFooter({
       authenticated: true,
       updateStatus: { ...availableUpdate, canInstallInApp: true },
       onUpdate: () => undefined,
     })
-    expect(html).toContain('aria-label="更新 Arkme 插件到 0.1.4"')
-    expect(html).toContain('>更新</button>')
-    expect(html).not.toContain('复制更新命令')
-    expect(html).not.toContain('稍后提醒')
+    expect(html).not.toContain('aria-label="更新 Arkme 插件到 0.1.4"')
+    expect(html).not.toContain('>更新</button>')
 
     const busy = renderFooter({
       authenticated: true,
@@ -91,6 +94,6 @@ describe('ArkmeFooterAction', () => {
       updateBusy: true,
       onUpdate: () => undefined,
     })
-    expect(busy).toContain('>更新中…</button>')
+    expect(busy).not.toContain('>更新中…</button>')
   })
 })

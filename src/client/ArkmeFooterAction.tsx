@@ -1,10 +1,7 @@
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type { ArkmePluginUpdateStatus } from '../types.js'
 import { ARKME_ICON_DATA_URL } from './arkme-assets.js'
-import type { ArkmePluginUpdateStoreSnapshot } from './plugin-update-store.js'
-import { derivePluginUpdateItem } from './update-presentation.js'
 
 export interface ArkmeFooterActionInjected {
   toggle(openedFromSession: SessionId | undefined, authenticated: boolean): void
@@ -19,10 +16,6 @@ export type ArkmeFooterActionProps = PropsRuntime<'sidebar.footer.action'> & Inj
   authenticated?: boolean
   authPending?: boolean
   unreadCount?: number
-  updateStatus?: ArkmePluginUpdateStatus
-  updateSnapshot?: ArkmePluginUpdateStoreSnapshot
-  updateBusy?: boolean
-  onUpdate?: () => void
 }
 
 const actionRowStyle: React.CSSProperties = {
@@ -76,18 +69,6 @@ const unreadBadgeStyle: React.CSSProperties = {
   background: '#ff4d4f', color: '#fff', fontSize: 10, lineHeight: '18px', fontWeight: 600,
 }
 
-const updateDotStyle: React.CSSProperties = {
-  position: 'absolute', top: -2, right: -3, width: 7, height: 7, borderRadius: '50%',
-  background: '#1677ff', border: '2px solid var(--dsw-specific-sidebar-fill, #fff)', boxSizing: 'content-box',
-}
-
-const updateButtonStyle: React.CSSProperties = {
-  flex: 'none', height: 28, minWidth: 50, margin: '4px 8px 4px 0', padding: '0 11px',
-  border: '1px solid rgba(22, 119, 255, .24)', borderRadius: 8,
-  background: 'rgba(22, 119, 255, .08)', color: '#1677ff', cursor: 'pointer',
-  fontFamily: 'inherit', fontSize: 12, lineHeight: '26px', fontWeight: 500, whiteSpace: 'nowrap',
-}
-
 export function ArkmeMark({ size = 18 }: { size?: number }) {
   return (
     <img
@@ -111,31 +92,15 @@ export function ArkmeFooterAction({
   wide, toggle, useSessions, expanded = false, loggedOut = false, bindingRequired = false,
   authenticated = false, authPending = false,
   unreadCount = 0,
-  updateStatus,
-  updateSnapshot,
-  updateBusy = false,
-  onUpdate,
 }: ArkmeFooterActionProps) {
   const currentSession = useSessions(state => state.current)
   const normalizedUnread = Math.max(0, Math.trunc(unreadCount))
   const unreadLabel = normalizedUnread > 99 ? '99+' : String(normalizedUnread)
   const statusLabel = bindingRequired ? '待绑定' : loggedOut ? '未登录' : ''
-  const item = derivePluginUpdateItem(updateSnapshot ?? {
-    checked: true, busy: updateBusy, error: '', installError: '',
-    ...(updateStatus === undefined ? {} : { status: updateStatus }),
-  })
-  const status = updateSnapshot?.status ?? updateStatus
-  const updateAvailable = item?.available === true
-  const showUpdateButton = wide && item !== undefined && (!item.available || status?.canInstallInApp) && onUpdate !== undefined
-  const actionLabel = item?.uncertain ? '查看状态' : item?.active ? '查看进度' : item?.failed ? '查看结果' : updateBusy ? '更新中…' : '更新'
-  const updateLabel = updateAvailable
-    ? status?.level === 'critical' ? '插件有重要更新' : '插件有可用更新'
-    : item === undefined ? '' : item.uncertain ? '更新状态待确认' : item.failed ? '更新未完成' : '正在更新'
   const accessibleLabel = [
     'Arkme',
     ...(statusLabel === '' ? [] : [statusLabel]),
     ...(statusLabel !== '' || normalizedUnread === 0 ? [] : [`${unreadLabel} 条未读`]),
-    ...(updateLabel === '' ? [] : [updateLabel]),
   ].join(' · ')
   return <div style={wide ? actionRowStyle : { width: 36 }}>
     <button
@@ -152,15 +117,6 @@ export function ArkmeFooterAction({
     >
       <span style={{ position: 'relative', flex: 'none' }}>
         <ArkmeMark />
-        {updateAvailable && <span
-          aria-hidden
-          data-arkme-update-level={status?.level}
-          style={{
-            ...updateDotStyle,
-            ...(status?.level === 'important' ? { background: '#d97706' } : {}),
-            ...(status?.level === 'critical' ? { background: '#dc2626' } : {}),
-          }}
-        />}
       </span>
       {wide && <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'left' }}>Arkme</span>}
       {wide && statusLabel !== '' && <span style={loggedOutBadgeStyle}>{statusLabel}</span>}
@@ -169,13 +125,5 @@ export function ArkmeFooterAction({
         ...(wide ? {} : { position: 'absolute', top: -2, right: -3, marginLeft: 0 }),
       }}>{unreadLabel}</span>}
     </button>
-    {showUpdateButton && <button
-      type="button"
-      style={updateButtonStyle}
-      aria-label={item?.available ? `更新 Arkme 插件到 ${item.latestVersion}` : `${actionLabel}：${updateLabel}`}
-      onMouseEnter={event => { event.currentTarget.style.background = 'rgba(22, 119, 255, .14)' }}
-      onMouseLeave={event => { event.currentTarget.style.background = 'rgba(22, 119, 255, .08)' }}
-      onClick={onUpdate}
-    >{actionLabel}</button>}
   </div>
 }

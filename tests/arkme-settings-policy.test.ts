@@ -2,8 +2,6 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   buildArkmeAppUpdateRow,
-  buildArkmePluginUpdateRow,
-  desktopRuntimeManaged,
   updateVersionText,
 } from '../src/client/ArkmeSettingsSurface.js'
 
@@ -13,27 +11,6 @@ describe('Arkme settings policy', () => {
     expect(updateVersionText('v0.1.10', 'v0.1.11')).toBe('当前 v0.1.10 → 最新 v0.1.11')
     expect(updateVersionText('v0.1.10', 'v…')).toBe('当前 v0.1.10')
     expect(updateVersionText('v…', 'v…')).toBe('当前版本读取中…')
-  })
-
-  it('projects an available core-plugin update without APP update state', () => {
-    expect(buildArkmePluginUpdateRow({
-      plugin: { availability: 'available', installedVersion: '0.1.10', latestVersion: '0.1.11' },
-    })).toEqual({
-      label: '核心插件', current: 'v0.1.10', latest: 'v0.1.11',
-      action: 'install', feedback: '发现新版本，可以立即更新',
-    })
-  })
-
-  it('disables independent core-plugin updates in a desktop-managed runtime', () => {
-    expect(desktopRuntimeManaged({ arkmeDesktop: { runtimeManaged: true } })).toBe(true)
-    expect(desktopRuntimeManaged({ arkmeDesktop: { runtimeManaged: false } })).toBe(false)
-    expect(buildArkmePluginUpdateRow({
-      runtimeManaged: true,
-      plugin: { availability: 'available', installedVersion: '0.1.13', latestVersion: '0.1.14' },
-    })).toEqual({
-      label: '核心插件', current: 'v0.1.13', latest: 'v0.1.13',
-      action: 'busy', feedback: '由 Arkme 桌面端统一管理',
-    })
   })
 
   it('projects an available APP update through the existing desktop update flow', () => {
@@ -69,15 +46,6 @@ describe('Arkme settings policy', () => {
     })
   })
 
-  it('keeps plugin checks actionable when no update is known', () => {
-    expect(buildArkmePluginUpdateRow({
-      plugin: { availability: 'current', installedVersion: '0.1.10' },
-    })).toEqual({
-      label: '核心插件', current: 'v0.1.10', latest: 'v…',
-      action: 'check', feedback: '已检查 · 当前已是最新版本',
-    })
-  })
-
   it('keeps notification permission activity separate from logout activity', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
 
@@ -88,27 +56,11 @@ describe('Arkme settings policy', () => {
     expect(source).not.toContain('const [busy, setBusy] = useState(false)')
   })
 
-  it('reuses the existing core-plugin check state without adding an install state contract', () => {
+  it('shows a read-only plugin version without exposing update controls or polling', () => {
     const source = readFileSync(new URL('../src/client/ArkmeSettingsSurface.tsx', import.meta.url), 'utf8')
-
-    expect(buildArkmePluginUpdateRow({
-      plugin: { availability: 'current', installedVersion: '0.1.10' },
-      pluginBusy: true,
-    })).toMatchObject({ action: 'busy', feedback: '正在检查更新…' })
-
-    expect(buildArkmePluginUpdateRow({
-      plugin: { availability: 'unknown', installedVersion: '0.1.10' },
-      pluginError: '无法连接更新服务',
-    }).feedback).toBe('检查失败：无法连接更新服务')
-    expect(source).not.toContain('isArkmePluginInstallBusy')
-    expect(source).not.toContain('pluginInstallError')
-    expect(source).not.toContain('pluginInstallBusy?:')
-  })
-
-  it('surfaces a remote plugin failure even with a cached current version', () => {
-    expect(buildArkmePluginUpdateRow({
-      plugin: { availability: 'current', installedVersion: '0.1.10', checkFailed: true },
-    }).feedback).toBe('检查失败：请稍后重试')
+    expect(source).not.toContain('arkmePluginUpdateStore')
+    expect(source).toContain('title="ArkME 插件"')
+    expect(source).not.toContain("arkmeUpdateUi.open('plugin')")
   })
 
   it('restores the APP entry without restoring the legacy copy-command path', () => {

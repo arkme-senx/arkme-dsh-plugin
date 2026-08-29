@@ -35,6 +35,30 @@ DSH_HOME=<dsh-home> dsh plugin --profile web add <artifact-directory>/senguoyun-
 DSH_HOME=<dsh-home> dsh web
 ```
 
+## Release Set 运行时制品
+
+使用当前 `package.json.version` 构建 Electron Release Set 动态加载的 Arkme 插件制品：
+
+```sh
+pnpm pack:runtime
+```
+
+默认输出到 `dist/runtime-artifacts/`：
+
+```text
+dsh-arkme-<version>.tar.zst
+artifact-metadata.json
+SHA256SUMS
+```
+
+如需指定输出目录：
+
+```sh
+pnpm pack:runtime -- --output-dir /path/to/output
+```
+
+脚本会运行插件现有构建流程，并校验包名、版本、Release Set 必需入口、归档路径和文件类型；校验失败时不会留下不完整制品。
+
 ## 架构
 
 插件通过一个 Host 业务层同时服务三个消费面，权限、数据、幂等和错误语义只实现一次：

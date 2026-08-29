@@ -24,6 +24,7 @@ import { arkmeChatDirectory } from './chat-directory-store.js'
 import { useArkmeRealtimeClientEvents } from './realtime-client-events.js'
 import { arkmeUi } from './ui-controller.js'
 import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
+import { ArkmeExtensionRecoveryNotice } from './ArkmeExtensionRecoveryNotice.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
@@ -328,6 +329,7 @@ export function ArkmePersistentWorkspace({
 
   return <main data-arkme-owned="persistent-workspace" data-arkme-workspace {...(contactsMode ? { 'data-arkme-contacts-mobile-view': scopedContacts.selection.kind !== 'none' ? 'content' : 'directory' } : {})} style={styles.workspace} aria-label="Arkme 主界面">
     <ArkmePersistentClientRuntime />
+    <ArkmeExtensionRecoveryNotice />
     <DeepSeekHarnessSurface
       visible={harnessVisible}
       nativeSettings={webLockedHarness}

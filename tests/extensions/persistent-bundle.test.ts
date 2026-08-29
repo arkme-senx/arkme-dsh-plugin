@@ -553,6 +553,7 @@ describe('persistent extension profile bundle', () => {
         requestShutdown: standaloneShutdown,
         supervisedExitCode: 75,
         supervisedPlanPath,
+        runtimeReleaseId: 'electron-runtime-v1-0123456789abcdef0123456789abcdef',
         requestProcessExit,
       })
 
@@ -572,6 +573,7 @@ describe('persistent extension profile bundle', () => {
       expect(requestProcessExit).toHaveBeenCalledWith(75)
       expectPrivatePath(supervisedPlanPath, 0o600)
       expect(JSON.parse(readFileSync(supervisedPlanPath, 'utf8'))).toMatchObject({
+        runtimeReleaseId: 'electron-runtime-v1-0123456789abcdef0123456789abcdef',
         extensionId: 'ext-test',
         packageName: '@arkme-local/ext-0123456789abcdef',
         expectActive: true,
@@ -580,6 +582,45 @@ describe('persistent extension profile bundle', () => {
         previousBundlePath: join(root, 'old-bundle'),
         cleanupPaths: [join(root, 'old-bundle'), join(root, 'old.arkext')],
         previousInstalled,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('writes a supervised desktop-quarantine re-enable plan without synthesized install metadata', async () => {
+    vi.useFakeTimers()
+    try {
+      const { root } = fixture()
+      const requestProcessExit = vi.fn()
+      const supervisedPlanPath = join(root, 'desktop-managed-extension-restart.json')
+      const installer = new ArkmeExtensionProfileInstaller({
+        dshHome: root,
+        profileName: 'web',
+        execPath: process.execPath,
+        dshBinPath: '/dsh/bin',
+        stateDirectory: root,
+        healthUrl: 'http://127.0.0.1:41234/arkme-self/api',
+        restartArgv: ['dsh', 'web'],
+        helperPath: '/extension-profile-restart-helper.js',
+        installStoreDirectory: root,
+        supervisedExitCode: 75,
+        supervisedPlanPath,
+        requestProcessExit,
+      })
+
+      await installer.restartDesktopQuarantine({ packageName: '@example/local-extension' })
+      await vi.advanceTimersByTimeAsync(800)
+
+      expect(requestProcessExit).toHaveBeenCalledWith(75)
+      expect(JSON.parse(readFileSync(supervisedPlanPath, 'utf8'))).toMatchObject({
+        schemaVersion: 4,
+        extensionId: 'desktop-quarantine:@example/local-extension',
+        packageName: '@example/local-extension',
+        expectActive: true,
+        activationChange: true,
+        desktopQuarantineActivation: true,
+        previousProfileIncluded: false,
       })
     } finally {
       vi.useRealTimers()

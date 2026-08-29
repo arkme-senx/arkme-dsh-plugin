@@ -17,6 +17,7 @@ import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } f
 import type { ArkmeExtensionManager } from './extensions/manager.js'
 import type { ArkmeExtensionInstallTasks } from './extensions/install-tasks.js'
 import type { ArkmeOwnedExtensionInventory } from './extensions/owned-inventory.js'
+import type { ArkmeDesktopExtensionQuarantine } from './extensions/desktop-quarantine.js'
 import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage, ArkmeExtensionCatalogSort } from './extensions/types.js'
 import { effectiveExtensionPublisherRole } from './extensions/publisher-role.js'
 import { invokePersistentArkmeExtension } from './extensions/persistent-runtime.js'
@@ -542,6 +543,7 @@ export interface ArkmeHostApiOptions {
   extensionInstallTasks?: () => ArkmeExtensionInstallTasks | undefined
   ownedExtensionInventory?: () => ArkmeOwnedExtensionInventory | undefined
   remoteHost?: () => DshRemoteHostFacade | undefined
+  desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>
 }
 
 export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiOptions) {
@@ -576,7 +578,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'link.metadata' && origin === undefined) {
         throw new ArkmePluginError('origin-required', '网址名称解析必须从当前 DSH 页面发起', false, 403)
       }
-      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'remote.renameDesktop']
+      if (['user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '扩展变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -590,6 +592,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.ownedExtensionInventory?.(),
         controller.signal,
         options.remoteHost?.(),
+        options.desktopQuarantine,
       )
       writeJson(res, 200, { ok: true, value })
     } catch (error) {
@@ -626,6 +629,7 @@ export async function dispatchArkmeHostOperation(
   ownedExtensionInventory?: ArkmeOwnedExtensionInventory,
   requestSignal?: AbortSignal,
   remoteHost?: DshRemoteHostFacade,
+  desktopQuarantine?: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'>,
 ): Promise<unknown> {
   switch (operation) {
     case 'provider.capabilities': return service.providerCapabilities()
@@ -1452,6 +1456,16 @@ export async function dispatchArkmeHostOperation(
       extensionId: stringParam(params, 'extensionId'),
     })
     case 'extensions.installed-list': return requireExtensionManager(extensionManager).listInstalled()
+    case 'extensions.quarantine.status': return await requireDesktopQuarantine(desktopQuarantine).status()
+    case 'extensions.quarantine.dismiss': return await requireDesktopQuarantine(desktopQuarantine).dismiss(
+      stringParam(params, 'packageName'),
+    )
+    case 'extensions.quarantine.reenable': return await requireDesktopQuarantine(desktopQuarantine).reenable(
+      stringParam(params, 'packageName'),
+    )
+    case 'extensions.quarantine.health': return await requireDesktopQuarantine(desktopQuarantine).health(
+      stringParam(params, 'packageName'),
+    )
     case 'extensions.mine.list': return await requireOwnedExtensionInventory(ownedExtensionInventory).list({
       ...(stringParam(params, 'currentSessionId').trim() === '' ? {} : { currentSessionId: stringParam(params, 'currentSessionId').trim() }),
     })
@@ -1581,6 +1595,15 @@ function requireExtensionManager(manager: ArkmeExtensionManager | undefined): Ar
     throw new ArkmePluginError('extension-runtime-unavailable', '当前 DSH 未加载 Dynamic Cordis Runner，市集不可用', false, 503)
   }
   return manager
+}
+
+function requireDesktopQuarantine(
+  quarantine: Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'> | undefined,
+): Pick<ArkmeDesktopExtensionQuarantine, 'status' | 'dismiss' | 'reenable' | 'health'> {
+  if (quarantine === undefined) {
+    throw new ArkmePluginError('extension-runtime-unavailable', '桌面扩展恢复状态尚未就绪', false, 503)
+  }
+  return quarantine
 }
 
 function requireOwnedExtensionInventory(inventory: ArkmeOwnedExtensionInventory | undefined): ArkmeOwnedExtensionInventory {
