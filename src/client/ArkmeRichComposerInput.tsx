@@ -1,6 +1,6 @@
 import {
   forwardRef, useImperativeHandle, useLayoutEffect, useRef,
-  type ClipboardEvent, type CSSProperties, type KeyboardEvent,
+  type ClipboardEvent, type CSSProperties, type FocusEvent, type KeyboardEvent,
 } from 'react'
 import type { ArkmeComposerEmoji, ArkmeComposerMention } from './composer-draft-store.js'
 import { ARKME_COMPOSER_EMOJI_PLACEHOLDER } from './composer-draft-store.js'
@@ -56,6 +56,8 @@ export interface ArkmeRichComposerInputProps {
   style: CSSProperties
   onTextChange(text: string): void
   onSelectionChange?(text: string, selectionStart: number, selectionEnd: number): void
+  onFocus?(event: FocusEvent<HTMLDivElement>): void
+  onBlur?(event: FocusEvent<HTMLDivElement>): void
   onPaste?(event: ClipboardEvent<HTMLDivElement>): void
   onKeyDown?(event: KeyboardEvent<HTMLDivElement>): void
 }
@@ -251,7 +253,7 @@ function renderEditorContents(
 export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichComposerInputProps>(
   function ArkmeRichComposerInput({
     className, value, mentions, emojis, maxLength, placeholder, ariaLabel, disabled, style,
-    onTextChange, onSelectionChange, onPaste, onKeyDown,
+    onTextChange, onSelectionChange, onFocus, onBlur, onPaste, onKeyDown,
   }, forwardedRef) {
     const editorRef = useRef<HTMLDivElement>(null)
     const valueRef = useRef(value)
@@ -352,6 +354,8 @@ export const ArkmeRichComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeR
         onCompositionStart={() => { composingRef.current = true }}
         onCompositionEnd={event => { composingRef.current = false; commitDom(event.currentTarget) }}
         onInput={event => { if (!composingRef.current) commitDom(event.currentTarget) }}
+        onFocus={onFocus}
+        onBlur={onBlur}
         onPaste={onPaste}
         onKeyDown={event => {
           onKeyDown?.(event)

@@ -118,6 +118,27 @@ import {
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
 export { ArkmeTimelineDetailDrawer, arkmeTimelineDetailSenderText } from './ArkmeNoteDetails.js'
 
+const ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY = 'arkme.composer.show-input-time'
+
+function arkmeComposerShowsInputTime(): boolean {
+  try { return window.localStorage.getItem(ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY) !== 'hidden' } catch { return true }
+}
+
+function setArkmeComposerShowsInputTime(value: boolean): void {
+  try { window.localStorage.setItem(ARKME_COMPOSER_SHOW_INPUT_TIME_STORAGE_KEY, value ? 'shown' : 'hidden') } catch { /* storage is optional */ }
+}
+
+function ArkmeComposerInputTimeIcon({ visible }: { visible: boolean }) {
+  return visible
+    ? <svg width="14" height="15" viewBox="0 0 14 15" fill="none" aria-hidden>
+      <path d="M0 7.5C.85 4.43 3.66 2.18 7 2.18S13.15 4.43 14 7.5C13.15 10.57 10.34 12.83 7 12.83S.85 10.57 0 7.5Z" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="7" cy="7.5" r="1.92" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+    : <svg width="14" height="15" viewBox="0 0 14 15" fill="none" aria-hidden>
+      <path d="M1.11 4.95C1.69 5.72 2.53 6.38 3.57 6.84C4.61 7.31 5.79 7.55 7 7.55S9.39 7.31 10.42 6.84C11.46 6.38 12.31 5.72 12.89 4.95M3.21 6.77L1.03 9.53M10.76 6.77L13 9.79M8.55 7.55L9.17 11.03M5.83 7.55L5.21 11.03" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+}
+
 export interface ArkmeSurfaceProps {
   t?: ArkmeLoginTranslate
   floating?: boolean
@@ -562,6 +583,8 @@ const styles: Record<string, CSSProperties> = {
     border: `1px solid ${colors.border}`,
     background: arkmeTheme.input, boxShadow: arkmeTheme.shadow,
   },
+  composerStack: { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' },
+  composerHint: { alignSelf: 'flex-end', margin: '4px 4px 0 0', color: arkmeTheme.tertiary, fontSize: 10, lineHeight: '14px' },
   textarea: {
     ...arkmeConversationComposerLayout.textarea,
     background: 'transparent', color: colors.text, boxShadow: 'none', appearance: 'none', WebkitAppearance: 'none',
@@ -569,6 +592,9 @@ const styles: Record<string, CSSProperties> = {
   },
   tools: { ...arkmeConversationComposerLayout.tools },
   toolGroup: { display: 'flex', alignItems: 'center', gap: 2 },
+  composerSendArea: { display: 'flex', alignItems: 'center', minWidth: 0 },
+  composerStats: { display: 'flex', alignItems: 'center', gap: 10, marginRight: 8, color: arkmeTheme.tertiary, fontSize: 12, lineHeight: '16px', whiteSpace: 'nowrap' },
+  composerTimeToggle: { height: 18, display: 'flex', alignItems: 'center', gap: 4, border: 0, padding: 0, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer', font: 'inherit' },
   plus: { width: 34, height: 34, border: 0, borderRadius: 9, background: 'transparent', color: colors.secondary, cursor: 'pointer', fontSize: 22, lineHeight: '30px' },
   addMenu: { position: 'absolute', left: 0, bottom: 54, zIndex: 20, width: 210, padding: '6px 0', borderRadius: 12, border: `1px solid ${colors.border}`, background: colors.panel, boxShadow: '0 12px 32px rgba(0,0,0,.15)' },
   addMenuItem: { width: '100%', border: 0, padding: '11px 14px', display: 'flex', alignItems: 'center', gap: 10, background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 14, textAlign: 'left' },
@@ -1621,6 +1647,30 @@ export function ArkmeSurface({
   const composerDraft = arkmeComposerDraftStore.get(composerDraftKey)
   const draft = composerDraft.text
   const attachments = composerDraft.attachments
+  const [composerInputFocused, setComposerInputFocused] = useState(false)
+  const [composerShowsInputTime, setComposerShowsInputTime] = useState(arkmeComposerShowsInputTime)
+  const [composerInputStartedAt, setComposerInputStartedAt] = useState<{ draftKey: string; startedAt: number }>()
+  const [composerInputNow, setComposerInputNow] = useState(() => Date.now())
+  const composerTextLength = Array.from(draft).length
+  const composerStatsVisible = composerInputFocused || composerTextLength > 0
+  const composerInputStartedAtMillis = composerInputStartedAt?.draftKey === composerDraftKey
+    ? composerInputStartedAt?.startedAt
+    : undefined
+  const composerInputDurationSeconds = composerInputStartedAtMillis !== undefined
+    ? Math.max(0, Math.floor((composerInputNow - composerInputStartedAtMillis) / 1000))
+    : 0
+  useEffect(() => {
+    if (composerDraftKey === undefined || composerTextLength === 0) {
+      setComposerInputStartedAt(undefined)
+      return
+    }
+    setComposerInputStartedAt(current => current?.draftKey === composerDraftKey ? current : { draftKey: composerDraftKey, startedAt: Date.now() })
+  }, [composerDraftKey, composerTextLength])
+  useEffect(() => {
+    if (composerInputStartedAt === undefined) return
+    const timer = globalThis.setInterval(() => { setComposerInputNow(Date.now()) }, 500)
+    return () => { globalThis.clearInterval(timer) }
+  }, [composerInputStartedAt])
   const surfaceRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -4282,7 +4332,7 @@ export function ArkmeSurface({
           {activeSelectMode === undefined && <footer className="arkme-conversation-composer" style={styles.composer}
             onDragOver={event => { if (!preparingFiles && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
             onDrop={event => { if (!preparingFiles && event.dataTransfer.files.length > 0) { event.preventDefault(); void selectFiles(event.dataTransfer.files) } }}
-          ><div ref={composerRef} className="arkme-conversation-composer-inner" style={styles.composerInner}>
+          ><div style={styles.composerStack}><div ref={composerRef} className="arkme-conversation-composer-inner" style={styles.composerInner}>
             {addMenuOpen && <div ref={addMenuRef} style={styles.addMenu} role="menu">
               <button type="button" role="menuitem" style={styles.addMenuItem} onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }}><span aria-hidden>📎</span>添加照片和文件</button>
               <div style={styles.menuDivider} />
@@ -4337,6 +4387,8 @@ export function ArkmeSurface({
             </div>}
             <ArkmeRichComposerInput className="arkme-conversation-textarea" ref={textareaRef} style={styles.textarea!} value={draft} mentions={composerDraft.mentions} emojis={composerDraft.emojis} maxLength={20000} placeholder={arkmeSourceComposerPlaceholder(selectedSource)} ariaLabel={arkmeSourceComposerPlaceholder(selectedSource)} disabled={preparingFiles}
               onTextChange={text => { arkmeComposerDraftStore.setText(composerDraftKey, text) }}
+              onFocus={() => { setComposerInputFocused(true) }}
+              onBlur={() => { setComposerInputFocused(false) }}
               onSelectionChange={updateMentionTrigger}
               onPaste={event => {
                 const files = arkmeClipboardFiles(event.clipboardData)
@@ -4402,7 +4454,20 @@ export function ArkmeSurface({
               }}
               onStickerSent={async () => { await loadTimeline() }}
               onError={message => { setError(message) }}
-            /></div><button
+            /></div><div style={styles.composerSendArea}>
+              {composerStatsVisible && <div style={styles.composerStats} aria-label={`已输入 ${String(composerTextLength)} 字，编辑 ${String(composerInputDurationSeconds)} 秒`}>
+                <span>{String(composerTextLength)}字</span>
+                <button type="button" style={styles.composerTimeToggle} aria-label={composerShowsInputTime ? '隐藏输入时长' : '显示输入时长'} title={composerShowsInputTime ? '隐藏输入时长' : '显示输入时长'} onMouseDown={event => { event.preventDefault() }} onClick={() => {
+                  const next = !composerShowsInputTime
+                  setComposerShowsInputTime(next)
+                  setArkmeComposerShowsInputTime(next)
+                  textareaRef.current?.focus()
+                }}>
+                  <span>{composerShowsInputTime ? `${String(composerInputDurationSeconds)}秒` : '思考中…'}</span>
+                  <ArkmeComposerInputTimeIcon visible={composerShowsInputTime} />
+                </button>
+              </div>}
+              <button
               type="button"
               style={{ ...styles.send, opacity: canSend ? 1 : .4 }}
               disabled={!canSend}
@@ -4421,7 +4486,9 @@ export function ArkmeSurface({
               <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
                 <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
               </svg>
-            </button></div>
+              </button>
+            </div></div></div>
+            <div style={styles.composerHint}>Enter发送 / Shift+Enter换行</div>
           </div></footer>}
         </>}
         {forwardTargetPicker !== undefined && <div
