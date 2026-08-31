@@ -872,6 +872,7 @@ describe('ArkmeService', () => {
         imageRead: true,
         recordCalendar: true,
         messageReadReceipts: true,
+        messageReport: true,
         outgoingCall: true,
         contactAdd: true,
         conversationQuickAdd: true,

@@ -618,7 +618,6 @@ export class ArkmeService {
       throw error
     }
   }
-
   providerCapabilities(): ArkmeProviderCapabilities {
     return {
       contractVersion: ARKME_PROVIDER_CONTRACT_VERSION,
@@ -643,6 +642,7 @@ export class ArkmeService {
         forwardContent: true,
         sourceTextSend: true,
         messageReadReceipts: true,
+        messageReport: true,
         richContentRead: this.config.richMediaRenderEnabled !== false,
         richContentSend: this.config.richMediaSendEnabled !== false,
         fileUpload: this.config.richMediaSendEnabled !== false,

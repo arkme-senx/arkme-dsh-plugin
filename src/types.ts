@@ -1049,6 +1049,8 @@ export interface ArkmeProviderCapabilities {
     sourceTextSend: true
     /** Recipient read/unread summaries and group member detail for current-user-sent messages. */
     messageReadReceipts?: true
+    /** Peer group-chat messages expose an account-bound report action. */
+    messageReport?: true
     richContentRead: boolean
     richContentSend: boolean
     fileUpload: boolean
@@ -1706,6 +1708,8 @@ export interface ArkmeLongArticleDraft {
   durationMillis: number
   updatedAtMillis: number
 }
+
+export type ArkmeMessageReportType = 1 | 2 | 3 | 4
 
 export interface ArkmeMessageReportResult {
   messageRef: string
@@ -2761,6 +2765,7 @@ export type ArkmePluginOperation =
   | 'source.mark-read'
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
+  | 'source.message-report'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'

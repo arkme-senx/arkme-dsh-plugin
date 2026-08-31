@@ -137,6 +137,7 @@ import {
 
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from './ArkmeNoteDetails.js'
 import { ArkmeMessageSnapshotDialog, arkmeCanOpenMessageSnapshot } from './ArkmeMessageSnapshotDialog.js'
+import { ArkmeMessageReportDialog, arkmeCanReportTimelineMessage } from './ArkmeMessageReportDialog.js'
 import { arkmeLocationCaptureEnabled, arkmeSourceSupportsLocationCapture, requestArkmeRecordLocation, setArkmeLocationCaptureEnabled, subscribeArkmeLocationCapturePreference } from './record-capture-location.js'
 export { ArkmeTimelineDetailDrawer, arkmeTimelineDetailSenderText } from './ArkmeNoteDetails.js'
 
@@ -895,6 +896,7 @@ export function arkmeTimelineMessageActionRef(item: ArkmeTimelineItem): string {
 }
 
 const ARKME_MESSAGE_ACTION_MENU_LABELS = ['复制', '复制链接', '多选', '转发'] as const
+const ARKME_MESSAGE_REPORT_ACTION_LABEL = '举报'
 const ARKME_MESSAGE_ACTION_DETAIL_LABEL = '详情'
 const ARKME_MESSAGE_SELECT_ACTION_LABELS = ['复制文本', '复制链接', '转发', '退出多选'] as const
 
@@ -902,8 +904,10 @@ export function arkmeMessageActionMenuLabels(): readonly string[] {
   return ARKME_MESSAGE_ACTION_MENU_LABELS
 }
 
-export function arkmeMessageActionMenuRowCount(item?: ArkmeTimelineItem): number {
-  return ARKME_MESSAGE_ACTION_MENU_LABELS.length + (item !== undefined && arkmeCanOpenMessageSnapshot(item) ? 1 : 0)
+export function arkmeMessageActionMenuRowCount(item?: ArkmeTimelineItem, source?: ArkmeSourceItem): number {
+  return ARKME_MESSAGE_ACTION_MENU_LABELS.length
+    + (item !== undefined && arkmeCanReportTimelineMessage(source, item) ? 1 : 0)
+    + (item !== undefined && arkmeCanOpenMessageSnapshot(item) ? 1 : 0)
 }
 
 export function arkmeMessageSelectActionLabels(): readonly string[] {
@@ -1521,7 +1525,10 @@ function ArkmeSelectActionIcon({ kind, size = 22 }: { kind: 'copy' | 'link' | 's
   return <X size={size} weight="regular" aria-hidden />
 }
 
-function ArkmeMessageActionIcon({ kind }: { kind: 'copy' | 'link' | 'select' | 'forward' }) {
+function ArkmeMessageActionIcon({ kind }: { kind: 'copy' | 'link' | 'select' | 'forward' | 'report' }) {
+  if (kind === 'report') return <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <path d="M4.5 17.25V3.25M5 4H13.45C14.55 4 15.16 5.27 14.48 6.14L13.26 7.7C12.91 8.15 12.91 8.78 13.26 9.23L14.48 10.79C15.16 11.66 14.55 12.93 13.45 12.93H4.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
   return <ArkmeSelectActionIcon kind={kind} size={kind === 'forward' ? 18 : 16} />
 }
 
@@ -2047,6 +2054,7 @@ export function ArkmeSurface({
     top: number
   }>()
   const [snapshot, setSnapshot] = useState<{ item: ArkmeTimelineItem; actionRef: string; detail?: ArkmeMessageSnapshotDetail; loading: boolean; loadError?: string }>()
+  const [messageReportItem, setMessageReportItem] = useState<ArkmeTimelineItem>()
   const messageMenuRef = useRef<HTMLDivElement | null>(null)
   const [messageActionStatus, setMessageActionStatus] = useState('')
   const messageActionStatusTimerRef = useRef<number>()
@@ -2095,6 +2103,7 @@ export function ArkmeSurface({
     setMemberRecords(undefined)
     setPrivateChatBusy(false)
     setSnapshot(undefined)
+    setMessageReportItem(undefined)
     if (authenticatedUserId === undefined || source === undefined || (source.kind !== 'group_chat' && source.kind !== 'private_chat')) return
     const controller = new AbortController()
     void callArkme<ArkmeConversationMemberList>('source.members', {
@@ -2330,6 +2339,7 @@ export function ArkmeSurface({
     setMemberMenu(undefined)
     setMessageMenu(undefined)
     setSnapshot(undefined)
+    setMessageReportItem(undefined)
     setMemberProfile(undefined)
     setMemberRecords(undefined)
     setPrivateChatBusy(false)
@@ -3986,6 +3996,12 @@ export function ArkmeSurface({
       if (snapshotRequestRef.current === controller) snapshotRequestRef.current = undefined
     })
   }, [closeMessageMenu, source])
+  const openMessageReport = useCallback((item: ArkmeTimelineItem) => {
+    if (!activeConversationRef.current) return
+    closeMessageMenu()
+    if (!arkmeCanReportTimelineMessage(source, item)) return
+    setMessageReportItem(item)
+  }, [closeMessageMenu, source])
   const openMessageMenu = useCallback((item: ArkmeTimelineItem, event: Pick<MouseEvent, 'preventDefault' | 'stopPropagation' | 'clientX' | 'clientY'>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -3993,7 +4009,7 @@ export function ArkmeSurface({
     if (host === null || source === undefined) return
     const hostRect = host.getBoundingClientRect()
     const menuWidth = 178
-    const menuHeight = 12 + arkmeMessageActionMenuRowCount(item) * 50
+    const menuHeight = 12 + arkmeMessageActionMenuRowCount(item, source) * 50
     setMemberMenu(undefined)
     setMessageMenu({
       itemUid: item.itemUid,
@@ -5336,6 +5352,12 @@ export function ArkmeSurface({
             disabled={arkmeTimelineMessageActionRef(messageMenuItem) === ''}
             onClick={() => { openForwardTargetPicker([messageMenuItem]) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="forward" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_MENU_LABELS[3]}</span></button>
+          {arkmeCanReportTimelineMessage(source, messageMenuItem) && <button
+            type="button"
+            role="menuitem"
+            style={styles.messageActionMenuItem}
+            onClick={() => { openMessageReport(messageMenuItem) }}
+          ><span style={styles.messageActionMenuIcon} aria-hidden><ArkmeMessageActionIcon kind="report" /></span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_REPORT_ACTION_LABEL}</span></button>}
           {arkmeCanOpenMessageSnapshot(messageMenuItem) && <button
             type="button"
             role="menuitem"
@@ -5343,6 +5365,14 @@ export function ArkmeSurface({
             onClick={() => { openMessageSnapshot(messageMenuItem) }}
           ><span style={styles.messageActionMenuIcon} aria-hidden>ⓘ</span><span style={styles.messageActionMenuText}>{ARKME_MESSAGE_ACTION_DETAIL_LABEL}</span></button>}
         </div>}
+        {activeConversation && messageReportItem !== undefined && <ArkmeMessageReportDialog
+          item={messageReportItem}
+          onClose={() => { setMessageReportItem(undefined) }}
+          onSubmitted={() => {
+            setMessageReportItem(undefined)
+            showMessageActionStatus('举报已提交')
+          }}
+        />}
         {activeConversation && snapshot !== undefined && <ArkmeMessageSnapshotDialog item={snapshot.item} {...(snapshot.detail === undefined ? {} : { detail: snapshot.detail })} loading={snapshot.loading} {...(snapshot.loadError === undefined ? {} : { loadError: snapshot.loadError })} onClose={closeMessageSnapshot} />}
         {activeConversation && source !== undefined && memberMenu !== undefined && <ArkmeMemberActionMenu
           member={memberMenu.member}

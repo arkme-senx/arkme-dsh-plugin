@@ -748,6 +748,8 @@ export type {
   ArkmeSourceSendResult,
   ArkmeTimelineCursor,
   ArkmeTimelineItem,
+  ArkmeMessageReportResult,
+  ArkmeMessageReportType,
   ArkmeForwardRecordsPreview,
   ArkmeForwardRecordPreviewItem,
   ArkmeForwardTranscriptSegment,

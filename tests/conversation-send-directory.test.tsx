@@ -13,6 +13,10 @@ vi.mock('../src/client/api.js', () => ({
   },
 }))
 
+vi.mock('react-dom', () => ({
+  createPortal: (children: unknown) => children,
+}))
+
 import {
   ArkmeSurface, arkmeGroupMentionCandidates, arkmeRealtimeDeltaCoversTimelineGap,
 } from '../src/client/ArkmeSidebar.js'
@@ -56,10 +60,12 @@ describe('conversation send directory projection', () => {
   let renderer: ReactTestRenderer | undefined
   let timeline: ArkmeTimelineItem[]
   let copiedQuickLinkExtensionText = ''
+  let activeSource = target
 
   beforeEach(() => {
     timeline = []
     copiedQuickLinkExtensionText = ''
+    activeSource = target
     vi.spyOn(Date, 'now').mockReturnValue(48)
     vi.stubGlobal('window', {
       addEventListener: vi.fn(),
@@ -97,11 +103,11 @@ describe('conversation send directory projection', () => {
         cachedAtMillis: 1,
         revision: 1,
       }
-      if (operation === 'source.members') return { source: target, items: [], total: 0, activeCount: 0 }
-      if (operation === 'source.timeline') return { source: target, items: timeline, hasMore: false }
+      if (operation === 'source.members') return { source: activeSource, items: [], total: 0, activeCount: 0 }
+      if (operation === 'source.timeline') return { source: activeSource, items: timeline, hasMore: false }
       if (operation === 'sources.list') return {
         directory: params?.directory ?? 'root',
-        items: params?.directory === 'send_to_self' ? [] : [other, target],
+        items: params?.directory === 'send_to_self' ? [] : activeSource === group ? [other, target, group] : [other, target],
         hasMore: false,
       }
       if (operation === 'source.interwoven-moments') return {
@@ -229,6 +235,45 @@ describe('conversation send directory projection', () => {
 
     expect(arkmeGroupMentionCandidates('', [], [member]).map(candidate => candidate.kind))
       .toEqual(['all'])
+  })
+
+  it('opens the report dialog from a peer group-message action menu', async () => {
+    activeSource = group
+    timeline = [{
+      itemUid: 'report-source', messageActionRef: 'opaque-action', messageRef: 'opaque-report-message',
+      senderName: '群成员', isMe: false, sendAtMillis: 1, title: '', textContent: '待举报消息', status: 1,
+    }]
+    arkmeChatDirectory.publish([group])
+    arkmeUi.selectSource(group)
+    await act(async () => {
+      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+        createNodeMock: element => element.props.className === 'arkme-conversation-panel'
+          ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 720 }) }
+          : null,
+      })
+      await Promise.resolve()
+    })
+    act(() => {
+      renderer!.root.findByProps({ 'aria-label': '打开快记详情' }).props.onContextMenu({
+        preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 180,
+      })
+    })
+    const menu = renderer!.root.findByProps({ 'aria-label': '消息操作' })
+    const report = menu.findAllByProps({ role: 'menuitem' }).find(button => button.findAllByType('span')
+      .some(span => span.children.includes('举报')))
+    expect(report).toBeDefined()
+    act(() => { report!.props.onClick() })
+    expect(renderer!.root.findByProps({ 'aria-labelledby': 'arkme-message-report-title' })).toBeDefined()
+    await act(async () => {
+      renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} active={false} />)
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-message-report-title' })).toHaveLength(0)
+    await act(async () => {
+      renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} active />)
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-message-report-title' })).toHaveLength(0)
   })
 
   async function openForwardPicker() {

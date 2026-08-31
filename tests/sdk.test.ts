@@ -92,6 +92,9 @@ describe('Arkme SDK', () => {
         const request = JSON.parse(String(init?.body)) as { operation: string; params?: Record<string, unknown> }
         calls.push(request)
         if (request.operation === 'source.message-copy-link') return success({ sid: 'sid-1', url: 'https://app.arkme.ai/share/sid-1' })
+        if (request.operation === 'source.message-report') return success({
+          messageRef: request.params?.messageRef, reportUid: 'report-1', status: 1,
+        })
         if (request.operation === 'source.message-copy-link.resolve') return success({
           sid: 'U2HQgn1RhPJZaFmx',
           displayTitle: '实习性的快记',
@@ -119,6 +122,11 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.copyMessageLink('source-ref', [' action-1 ', '', 'action-2']))
       .resolves.toEqual({ sid: 'sid-1', url: 'https://app.arkme.ai/share/sid-1' })
+    await expect(sdk.reportMessage(' arkme-message-v1.payload.signature ', 4, {
+      reason: ' 补充说明 ', requestUid: '019d8590-ebb4-7232-90f2-000000000001',
+    })).resolves.toEqual({
+      messageRef: 'arkme-message-v1.payload.signature', reportUid: 'report-1', status: 1,
+    })
     await expect(sdk.resolveMessageCopyLink(' U2HQgn1RhPJZaFmx '))
       .resolves.toMatchObject({ sid: 'U2HQgn1RhPJZaFmx', displayTitle: '实习性的快记' })
     await expect(sdk.extendMessageCopyLink(' U2HQgn1RhPJZaFmx ', ' 延展 ', {
@@ -136,12 +144,24 @@ describe('Arkme SDK', () => {
 
     expect(calls).toEqual([
       { operation: 'source.message-copy-link', params: { sourceRef: 'source-ref', actionRefs: ['action-1', 'action-2'] } },
+      { operation: 'source.message-report', params: {
+        messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '补充说明',
+        requestUid: '019d8590-ebb4-7232-90f2-000000000001',
+      } },
       { operation: 'source.message-copy-link.resolve', params: { sid: 'U2HQgn1RhPJZaFmx' } },
       { operation: 'source.message-copy-link.extend', params: { sid: 'U2HQgn1RhPJZaFmx', itemIndex: 1, textContent: '延展', recordUid: 'record-extension-1' } },
       { operation: 'source.link-metadata.resolve', params: { url: 'https://github.com/arkme-senx/arkme-dsh-plugin/pull/145' } },
       { operation: 'source.forward-messages', params: { sourceRef: 'source-ref', targetSourceRef: 'target-source-ref', actionRefs: ['action-1'], recordUid: 'record-1', relationUid: 'rel-1', commentText: '附言' } },
     ])
     await expect(sdk.copyMessageLink('source-ref', ['action-1', 'action-1'])).rejects.toThrow('unique')
+    const randomUuid = vi.spyOn(globalThis.crypto, 'randomUUID')
+    await expect(sdk.reportMessage('', 1)).rejects.toThrow('message reference')
+    expect(randomUuid).not.toHaveBeenCalled()
+    randomUuid.mockRestore()
+    await expect(sdk.reportMessage('arkme-message-v1.payload.signature', 4)).rejects.toThrow('reason')
+    await expect(sdk.reportMessage('arkme-message-v1.payload.signature', 1, {
+      requestUid: 'not-a-uuid',
+    })).rejects.toThrow('request UID')
     await expect(sdk.resolveMessageCopyLink('bad')).rejects.toThrow('16 alphanumeric')
     await expect(sdk.extendMessageCopyLink('bad', '延展')).rejects.toThrow('16 alphanumeric')
     await expect(sdk.resolveLinkMetadata('')).rejects.toThrow('must not be empty')
@@ -473,6 +493,7 @@ describe('Arkme SDK', () => {
               recordCalendar: true,
               sourceDirectory: true, sourceTimeline: true, sourceTextSend: true, outgoingCall: true,
               messageReadReceipts: true,
+              messageReport: true,
               extensionManagement: true,
               extensionIcons: true,
             },
@@ -519,7 +540,7 @@ describe('Arkme SDK', () => {
 
     await expect(sdk.capabilities()).resolves.toMatchObject({
       contractVersion: 1,
-      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, accountSettings: true },
+      features: { outgoingCall: true, extensionManagement: true, extensionIcons: true, messageReadReceipts: true, messageReport: true, accountSettings: true },
       limits: { maxMessageReadReceiptItems: 50 },
     })
     await expect(sdk.search('复盘', { limit: 5, syncAll: true })).resolves.toMatchObject({ revision: 4 })

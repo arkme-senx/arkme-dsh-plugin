@@ -52,6 +52,8 @@ import type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReportResult,
+  ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
   ArkmeMessageCopyLinkResolveResult,
@@ -194,6 +196,8 @@ export type {
   ArkmeHumanMentionInput,
   ArkmeLongArticleDetail,
   ArkmeLongArticleDraft,
+  ArkmeMessageReportResult,
+  ArkmeMessageReportType,
   ArkmeMessageCopyLinkExtendResult,
   ArkmeMessageCopyLinkResult,
   ArkmeMessageCopyLinkAccessMode,
@@ -1349,6 +1353,31 @@ export class ArkmeSdk {
       throw new TypeError('Arkme message link action references must be 1-100 unique values')
     }
     return await this.call<ArkmeMessageCopyLinkResult>('source.message-copy-link', { sourceRef, actionRefs: refs }, signal)
+  }
+
+  async reportMessage(
+    messageRef: string,
+    reportType: ArkmeMessageReportType,
+    options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {},
+  ): Promise<ArkmeMessageReportResult> {
+    const normalizedMessageRef = messageRef.trim()
+    const reason = options.reason?.trim() ?? ''
+    if (normalizedMessageRef === '' || normalizedMessageRef.length > 4_096) {
+      throw new TypeError('Arkme message reference must not be empty or exceed 4096 characters')
+    }
+    if (![1, 2, 3, 4].includes(reportType) || (reportType === 4 && reason === '') || [...reason].length > 500) {
+      throw new TypeError('Arkme message report type or reason is invalid')
+    }
+    const requestUid = (options.requestUid ?? crypto.randomUUID()).trim().toLowerCase()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestUid)) {
+      throw new TypeError('Arkme message report request UID is invalid')
+    }
+    return await this.call<ArkmeMessageReportResult>('source.message-report', {
+      messageRef: normalizedMessageRef,
+      reportType,
+      ...(reason === '' ? {} : { reason }),
+      requestUid,
+    }, options.signal)
   }
 
   async resolveMessageCopyLink(

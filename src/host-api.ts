@@ -8,6 +8,7 @@ import type {
   ArkmeBillingPaymentMethod, ArkmeBotMentionInput, ArkmeConversationMemberRecordMode,
   ArkmeDirectorySectionKind, ArkmeFavoriteStickerAddInput, ArkmeFavoriteStickerManageAction,
   ArkmeGroupAiPolishThreadMessage, ArkmeHumanMentionInput, ArkmeMessageReadReceiptQueryItem,
+  ArkmeMessageReportType,
   ArkmePluginRequest, ArkmePluginResponse, ArkmeRecordCursor,
   ArkmeRecordCaptureContext, ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSearchSceneKind, ArkmeSourceDirectory, ArkmeTimelineCursor,
   ArkmeWorldPublishFileAsset,
@@ -29,6 +30,7 @@ import { arkmeRequiredLinkMetadataFallback } from './link-metadata.js'
 
 const MAX_STANDARD_REQUEST_BYTES = 128 * 1024
 const MAX_MESSAGE_ACTION_REF_CHARS = 1024 * 1024
+const MAX_MESSAGE_REPORT_REF_CHARS = 4_096
 const MAX_REQUEST_BYTES = MAX_MESSAGE_ACTION_REF_CHARS + (64 * 1024)
 
 function isLoopback(address: string | undefined): boolean {
@@ -306,6 +308,30 @@ function stringListParam(params: Record<string, unknown>, key: string): string[]
 
 function messageActionRefsParam(params: Record<string, unknown>): string[] {
   return stringListParam(params, 'actionRefs').map(value => value.trim()).filter(value => value !== '')
+}
+
+function messageReportParam(params: Record<string, unknown>): {
+  messageRef: string
+  reportType: ArkmeMessageReportType
+  reason?: string
+  requestUid?: string
+} {
+  const messageRef = stringParam(params, 'messageRef').trim()
+  const reportType = numberParam(params, 'reportType', 0)
+  const reason = stringParam(params, 'reason').trim()
+  const requestUid = stringParam(params, 'requestUid').trim().toLowerCase()
+  if (messageRef === '' || messageRef.length > MAX_MESSAGE_REPORT_REF_CHARS
+    || !Number.isInteger(reportType) || ![1, 2, 3, 4].includes(reportType)
+    || (reportType === 4 && reason === '') || [...reason].length > 500
+    || (requestUid !== '' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestUid))) {
+    throw new ArkmePluginError('message-report-invalid', '举报类型或补充说明无效', false, 400)
+  }
+  return {
+    messageRef,
+    reportType: reportType as ArkmeMessageReportType,
+    ...(reason === '' ? {} : { reason }),
+    ...(requestUid === '' ? {} : { requestUid }),
+  }
 }
 
 function aiPolishThreadMessagesParam(params: Record<string, unknown>): ArkmeGroupAiPolishThreadMessage[] {
@@ -1199,6 +1225,14 @@ export async function dispatchArkmeHostOperation(
       numberParam(params, 'sequence', 0),
       requestSignal === undefined ? {} : { signal: requestSignal },
     )
+    case 'source.message-report': {
+      const report = messageReportParam(params)
+      return await service.reportMessage(report.messageRef, report.reportType, {
+        ...(report.reason === undefined ? {} : { reason: report.reason }),
+        ...(report.requestUid === undefined ? {} : { requestUid: report.requestUid }),
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+      })
+    }
     case 'source.message-copy-link': return await service.copySourceMessageLink(
       stringParam(params, 'sourceRef'),
       messageActionRefsParam(params),

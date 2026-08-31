@@ -45,6 +45,7 @@ function fakeService() {
     openOfficialAuthorPrivateChat: vi.fn(async () => ({ source: { sourceRef: 'official-author-source' } })),
     openPrivateChatFromContact: vi.fn(async (contactRef: string) => ({ source: { sourceRef: `source:${contactRef}` } })),
     openPrivateChatFromMember: vi.fn(async (sourceRef: string, memberRef: string) => ({ sourceRef, memberRef })),
+    reportMessage: vi.fn(async (messageRef: string, reportType: number, options: unknown) => ({ messageRef, reportType, options })),
     copySourceMessageLink: vi.fn(async (sourceRef: string, actionRefs: unknown, options: unknown) => ({ sourceRef, actionRefs, options })),
     resolveMessageCopyLink: vi.fn(async (sid: string, options: unknown) => ({ sid, options })),
     extendMessageCopyLink: vi.fn(async (sid: string, itemIndex: number, textContent: string, recordUid: string, options: unknown) => ({ sid, itemIndex, textContent, recordUid, options })),
@@ -600,6 +601,11 @@ describe('message action Host API dispatch', () => {
 
   it('forwards only opaque message action references and bounded send identifiers', async () => {
     const service = fakeService()
+    const requestUid = '019d8590-ebb4-7232-90f2-000000000001'
+    await dispatchArkmeHostOperation(service as never, 'source.message-report', {
+      messageRef: ' arkme-message-v1.payload.signature ', reportType: 4, reason: ' 补充说明 ', requestUid,
+      chatSessionUid: 'must-not-forward', relationUid: 'must-not-forward', reporterUserId: 999,
+    })
     await dispatchArkmeHostOperation(service as never, 'source.message-copy-link', {
       sourceRef: 'source-ref', actionRefs: ['action-1', '', 'action-2'], relationUid: 'must-not-forward',
     })
@@ -615,6 +621,9 @@ describe('message action Host API dispatch', () => {
       textContent: 'must-not-forward',
     })
 
+    expect(service.reportMessage).toHaveBeenCalledWith('arkme-message-v1.payload.signature', 4, {
+      reason: '补充说明', requestUid,
+    })
     expect(service.copySourceMessageLink).toHaveBeenCalledWith('source-ref', ['action-1', 'action-2'], expect.any(Object))
     expect(service.resolveMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', expect.any(Object))
     expect(service.extendMessageCopyLink).toHaveBeenCalledWith('U2HQgn1RhPJZaFmx', 1, ' 延展 ', 'record-1', expect.any(Object))
@@ -624,6 +633,9 @@ describe('message action Host API dispatch', () => {
       targetSourceRef: 'target-source-ref',
       commentText: ' 附言 ',
     })
+    await expect(dispatchArkmeHostOperation(service as never, 'source.message-report', {
+      messageRef: 'arkme-message-v1.payload.signature', reportType: 4, reason: '', requestUid,
+    })).rejects.toMatchObject({ code: 'message-report-invalid' })
   })
 })
 
