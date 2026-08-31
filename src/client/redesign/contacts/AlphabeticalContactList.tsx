@@ -9,6 +9,7 @@ export interface DirectoryItemRowProps {
   selected: boolean
   onOpenGroup(sourceRef: string): void
   onOpenBot(bot: ArkmeBotSummary): void
+  onManageBot?(bot: ArkmeBotSummary): void
   onSelect(selection: ArkmeDirectorySelection): void
 }
 
@@ -44,6 +45,13 @@ function ArkmeDirectoryTeamGlyph() {
     </g>
     <circle cx="9.3" cy="10.1" r="3" />
     <path d="M4.2 19c.55-4.1 2.25-6.15 5.1-6.15s4.55 2.05 5.1 6.15H4.2Z" />
+  </svg>
+}
+
+function ArkmeDirectoryManageGlyph() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
+    <path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18 6l-1.4 1.4M7.4 16.6 6 18M18 18l-1.4-1.4M7.4 7.4 6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
   </svg>
 }
 
@@ -111,6 +119,7 @@ export function DirectoryItemRow({
   selected,
   onOpenGroup,
   onOpenBot,
+  onManageBot,
   onSelect,
 }: DirectoryItemRowProps) {
   if (item.kind === 'team') {
@@ -127,6 +136,24 @@ export function DirectoryItemRow({
     : item.kind === 'unmarked-speaker'
       ? { kind: 'unmarked-speaker', candidateRef: item.candidateRef } as const
       : undefined
+  if (item.kind === 'bot' && onManageBot !== undefined) {
+    return <div role="listitem" className="arkme-contact-directory-bot-row">
+      <button
+        type="button"
+        className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}
+        data-directory-row-kind="bot"
+        data-directory-row-ref={item.bot.botRef}
+        onClick={() => { onOpenBot(item.bot) }}
+      >{rowContent(item)}</button>
+      <button
+        type="button"
+        className="arkme-contact-directory-bot-manage"
+        aria-label={`管理${item.bot.name}`}
+        title="管理 Bot"
+        onClick={() => { onManageBot(item.bot) }}
+      ><ArkmeDirectoryManageGlyph /></button>
+    </div>
+  }
   return <button
     type="button"
     className={`arkme-contact-directory-row${selected ? ' is-selected' : ''}`}

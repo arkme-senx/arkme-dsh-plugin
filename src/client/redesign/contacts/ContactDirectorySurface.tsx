@@ -47,6 +47,7 @@ export interface ContactDirectorySurfaceProps {
   onExpandedChange?(section: ArkmeDirectorySectionKind, expanded: boolean): void
   onOpenGroup(sourceRef: string): void
   onOpenBot(bot: ArkmeBotSummary): void
+  onManageBot(bot: ArkmeBotSummary): void
   onStateChange?(state: ContactDirectoryState, refreshed: boolean): void
   loadPage?: ContactDirectoryPageLoader
 }
@@ -73,6 +74,7 @@ export function ContactDirectoryContent({
   onSelect,
   onOpenGroup,
   onOpenBot,
+  onManageBot,
 }: {
   state: ContactDirectoryState
   onToggle(section: ArkmeDirectorySectionKind): void
@@ -81,6 +83,7 @@ export function ContactDirectoryContent({
   onSelect(selection: ArkmeDirectorySelection): void
   onOpenGroup(sourceRef: string): void
   onOpenBot(bot: ArkmeBotSummary): void
+  onManageBot(bot: ArkmeBotSummary): void
 }) {
   return <nav className="arkme-contact-directory" aria-label="联系人目录">
     {CONTACT_DIRECTORY_SECTION_ORDER.map(sectionKind => {
@@ -114,6 +117,7 @@ export function ContactDirectoryContent({
                 onSelect={onSelect}
                 onOpenGroup={onOpenGroup}
                 onOpenBot={onOpenBot}
+                onManageBot={onManageBot}
               />)}
             </div>}
       </CollapsibleDirectorySection>
@@ -154,6 +158,7 @@ export function ContactDirectorySurface({
   onExpandedChange,
   onOpenGroup,
   onOpenBot,
+  onManageBot,
   onStateChange,
   loadPage = defaultLoadPage,
 }: ContactDirectorySurfaceProps) {
@@ -230,6 +235,17 @@ export function ContactDirectorySurface({
       commit({ type: 'load-error', section, accountKey, generation, message: errorMessage(error) })
     })
   }, [accountKey, commit])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const refreshBots = () => { load('bots', 'replace', true) }
+    window.addEventListener('arkme-bot-updated', refreshBots)
+    window.addEventListener('arkme-bot-deleted', refreshBots)
+    return () => {
+      window.removeEventListener('arkme-bot-updated', refreshBots)
+      window.removeEventListener('arkme-bot-deleted', refreshBots)
+    }
+  }, [load])
 
   const contactsSection = state.sections.contacts
   useEffect(() => {
@@ -318,5 +334,6 @@ export function ContactDirectorySurface({
     onSelect={handleSelect}
     onOpenGroup={onOpenGroup}
     onOpenBot={onOpenBot}
+    onManageBot={onManageBot}
   />
 }

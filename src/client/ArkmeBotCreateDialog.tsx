@@ -170,6 +170,13 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
   const [error, setError] = useState('')
   const nameInput = useRef<HTMLInputElement>(null)
   const avatarInput = useRef<HTMLInputElement>(null)
+  const createAttempt = useRef<{
+    name: string
+    description: string
+    provider: ArkmeBotProvider
+    avatarFile?: File
+    avatar: string
+  }>()
   const busy = busyLabel !== ''
   const canSubmit = !busy && !created && name.trim() !== ''
 
@@ -196,21 +203,35 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated }: {
 
   const submit = async () => {
     const normalizedName = name.trim()
+    const normalizedDescription = description.trim()
     if (busy || created) return
     if (normalizedName === '') { setError('请输入 Bot 名称'); nameInput.current?.focus(); return }
     setError('')
     try {
-      let avatar = ''
-      if (avatarFile !== undefined) {
+      const previous = createAttempt.current
+      const sameDraft = previous !== undefined
+        && previous.name === normalizedName
+        && previous.description === normalizedDescription
+        && previous.provider === provider
+        && previous.avatarFile === avatarFile
+      const attempt = sameDraft ? previous : {
+        name: normalizedName,
+        description: normalizedDescription,
+        provider,
+        ...(avatarFile === undefined ? {} : { avatarFile }),
+        avatar: previous !== undefined && previous.avatarFile === avatarFile ? previous.avatar : '',
+      }
+      createAttempt.current = attempt
+      if (attempt.avatarFile !== undefined && attempt.avatar === '') {
         setBusyLabel('头像处理中...')
-        avatar = await uploadBotAvatar(avatarFile)
+        attempt.avatar = await uploadBotAvatar(attempt.avatarFile)
       }
       setBusyLabel('创建中...')
       const bot = await callArkme<ArkmeBotSummary>('bots.create', {
         name: normalizedName,
         provider,
-        ...(description.trim() === '' ? {} : { description: description.trim() }),
-        ...(avatar === '' ? {} : { avatar }),
+        ...(normalizedDescription === '' ? {} : { description: normalizedDescription }),
+        ...(attempt.avatar === '' ? {} : { avatar: attempt.avatar }),
       })
       try {
         await onBotCreated?.(bot)

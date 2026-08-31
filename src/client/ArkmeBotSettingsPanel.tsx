@@ -8,6 +8,7 @@ import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { botAvatarMimeType, uploadBotAvatar } from './ArkmeBotCreateDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { botUsesPrivateConversationSurface } from './bot-conversation-routing.js'
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
@@ -83,6 +84,7 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
   const [detail, setDetail] = useState<'profile' | 'connection' | 'security' | 'groups'>()
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const notificationInFlightRef = useRef(false)
+  const privateNotificationAvailable = botUsesPrivateConversationSurface(bot)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -95,12 +97,13 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
     return () => { controller.abort() }
   }, [bot.botRef])
   useEffect(() => {
+    if (!privateNotificationAvailable) return
     const controller = new AbortController()
     void callArkme<ArkmeBotNotificationPreference>('bots.private-chat.notification.status', { botRef: bot.botRef }, controller.signal)
       .then(value => { if (!controller.signal.aborted) setMuted(value.muted) })
       .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught)) })
     return () => { controller.abort() }
-  }, [bot.botRef])
+  }, [bot.botRef, privateNotificationAvailable])
   useEffect(() => () => { if (avatarPreview !== '') URL.revokeObjectURL(avatarPreview) }, [avatarPreview])
 
   const chooseAvatar = (file: File | undefined) => {
@@ -123,7 +126,9 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
           ipWhitelist: ipWhitelist.split(/\r?\n/).map(item => item.trim()).filter(item => item !== ''),
         } } : {}),
       })
-      setProfile(updated); setName(updated.name); setDescription(updated.description); setAvatarFile(undefined); setAvatarPreview(''); onUpdated(updated); setDetail(undefined)
+      setProfile(updated); setName(updated.name); setDescription(updated.description); setAvatarFile(undefined); setAvatarPreview('')
+      window.dispatchEvent(new CustomEvent('arkme-bot-updated', { detail: { botRef: bot.botRef } }))
+      onUpdated(updated); setDetail(undefined)
     } catch (caught) { setError(errorMessage(caught)) } finally { setBusy('') }
   }
 
@@ -147,7 +152,7 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
   }
 
   const updateMuted = async (nextMuted: boolean) => {
-    if (notificationInFlightRef.current) return
+    if (!privateNotificationAvailable || notificationInFlightRef.current) return
     notificationInFlightRef.current = true
     setNotificationLoading(true); setError('')
     try {
@@ -187,7 +192,7 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
             </button>
             <div style={styles.summaryText}><div style={styles.nameLine}><h3 style={styles.summaryName}>{profile.name}</h3><button type="button" aria-label="编辑 Bot 资料" title="编辑 Bot 资料" style={styles.titleEdit} onClick={() => { setDetail('profile') }}><PencilSimpleIcon size={14} weight="bold" /></button></div>{profile.description !== '' && <p style={styles.meta}>{profile.description}</p>}</div>
           </div></section>
-          <section style={styles.section}><div style={{ ...styles.row, borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}><span style={styles.rowTitle}>消息免打扰</span><Toggle checked={muted} disabled={disabled || notificationLoading} onChange={value => { void updateMuted(value) }} /></div></section>
+          {privateNotificationAvailable && <section style={styles.section}><div style={{ ...styles.row, borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}><span style={styles.rowTitle}>消息免打扰</span><Toggle checked={muted} disabled={disabled || notificationLoading} onChange={value => { void updateMuted(value) }} /></div></section>}
           <section style={styles.section}><button type="button" style={styles.rowButton} onClick={() => { setDetail('connection') }}><span style={styles.rowMain}><span style={styles.rowTitle}>接入方式</span><span style={styles.rowValue}>{profile.provider === 'openclaw' ? 'OpenClaw' : 'Webhook'}</span></span><CaretRight size={15} color={arkmeTheme.tertiary} aria-hidden /></button><button type="button" style={styles.rowButton} onClick={() => { setDetail('connection') }}><span style={styles.rowMain}><span style={styles.rowTitle}>连接信息</span></span><CaretRight size={15} color={arkmeTheme.tertiary} aria-hidden /></button>{profile.provider === 'webhook' && <button type="button" style={styles.rowButton} onClick={() => { setDetail('security') }}><span style={styles.rowMain}><span style={styles.rowTitle}>安全设置</span></span><CaretRight size={15} color={arkmeTheme.tertiary} aria-hidden /></button>}<button type="button" style={styles.rowButton} onClick={() => { setDetail('groups') }}><span style={styles.rowMain}><span style={styles.rowTitle}>已加入群聊</span><span style={styles.rowValue}>{profile.joinedGroups.length === 0 ? '未加入群聊' : `${String(profile.joinedGroups.length)} 个`}</span></span><CaretRight size={15} color={arkmeTheme.tertiary} aria-hidden /></button></section>
           <section style={styles.section}><button type="button" style={styles.danger} disabled={disabled} onClick={() => { void deleteBot() }}><span>删除 Bot</span><CaretRight size={15} aria-hidden /></button></section></>}
           {detail === 'profile' && <><section><input ref={avatarInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,.heic,image/png,image/jpeg,image/webp,image/heic,image/heif" style={styles.hidden} onChange={event => { chooseAvatar(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} /><label style={styles.field}><span style={styles.label}>名称</span><input style={styles.input} value={name} maxLength={50} disabled={disabled} onChange={event => { setName(event.target.value) }} /></label><label style={styles.field}><span style={styles.label}>简介（可选）</span><textarea style={styles.textarea} value={description} maxLength={200} disabled={disabled} onChange={event => { setDescription(event.target.value) }} /></label><button type="button" style={{ ...styles.action, marginTop: 12 }} disabled={disabled} onClick={() => { avatarInputRef.current?.click() }}>更换头像</button></section><button type="button" style={{ ...styles.primary, ...(disabled ? { opacity: .5, cursor: 'default' } : {}) }} disabled={disabled} onClick={() => { void save() }}>{busy === '' ? '保存' : busy}</button></>}

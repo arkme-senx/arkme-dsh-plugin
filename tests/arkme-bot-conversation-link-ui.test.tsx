@@ -14,6 +14,8 @@ const bot: ArkmeBotSummary = {
   description: '',
   status: 'online',
   directChatAvailable: true,
+  privateChatOutboundEnabled: true,
+  conversationProjection: 'record',
 }
 
 describe('Arkme Bot conversation link presentation', () => {

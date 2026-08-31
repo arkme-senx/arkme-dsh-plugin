@@ -1,7 +1,17 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { SecretValue } from '../secret-value.js'
-import type { OpenClawCliPort, OpenClawConnectionMetadata, OpenClawProvisionResult, OpenClawSecretStore } from './types.js'
+import type {
+  OpenClawBotRuntimePort,
+  OpenClawChatOwnedCreatePreflight,
+  OpenClawConnectionMetadata,
+  OpenClawProvisionResult,
+} from '../services/bot-service.js'
+import type {
+  OpenClawCliPort,
+  OpenClawSecretStore,
+} from './types.js'
+import { CHAT_OWNER_CHANNEL_VERSION, SUBJECT_OWNER_CHANNEL_VERSION } from './types.js'
 
 function resourceHash(botRef: string): string {
   return createHash('sha256').update(`arkme-openclaw-bot:v1\0${botRef}`).digest('hex').slice(0, 16)
@@ -12,9 +22,16 @@ export function createOpenClawProvisioner(options: {
   secretStore: OpenClawSecretStore
   workspaceRoot: string
   isRuntimeOnline: (botRef: string) => Promise<boolean>
-}) {
+}): OpenClawBotRuntimePort {
   return {
-    async reconcile(input: { botRef: string; allowGatewayRestart?: boolean; resolveConnectionMetadata: () => Promise<OpenClawConnectionMetadata>; revealSecret: () => Promise<SecretValue>; signal?: AbortSignal }): Promise<OpenClawProvisionResult> {
+    async chatOwnedCreatePreflight(input: { signal?: AbortSignal } = {}): Promise<OpenClawChatOwnedCreatePreflight> {
+      const runOptions = input.signal === undefined ? {} : { signal: input.signal }
+      const preflight = await options.cli.preflight(runOptions)
+      return preflight.status === 'ready'
+        ? { status: 'ready' }
+        : { status: 'blocked', reason: 'profile' }
+    },
+    async reconcile(input: { botRef: string; runtimeContract: 'subject_private_v1' | 'chat_direct_v1'; allowGatewayRestart?: boolean; resolveConnectionMetadata: () => Promise<OpenClawConnectionMetadata>; revealSecret: () => Promise<SecretValue>; signal?: AbortSignal }): Promise<OpenClawProvisionResult> {
       const runOptions = input.signal === undefined ? {} : { signal: input.signal }
       const preflight = await options.cli.preflight(runOptions)
       if (preflight.status !== 'ready') return preflight
@@ -26,7 +43,25 @@ export function createOpenClawProvisioner(options: {
       const current = await options.cli.inspect({ agentId, accountId, gatewayUrl }, runOptions)
       await options.secretStore.ensureOwnership({ resourceHash: hash, localResourceExists: current.agent })
       let changed = false
-      if (!current.channel) changed = (await options.cli.ensureChannel(runOptions)).changed || changed
+      let channelVersion = current.channelVersion
+      const chatOwnerContract = input.runtimeContract === 'chat_direct_v1'
+      const targetChannelVersion = chatOwnerContract
+        ? CHAT_OWNER_CHANNEL_VERSION
+        : SUBJECT_OWNER_CHANNEL_VERSION
+      const requiredChannelReady = !chatOwnerContract
+        || channelVersion === CHAT_OWNER_CHANNEL_VERSION
+      if (!current.channel || !requiredChannelReady) {
+        const ensuredChannel = await options.cli.ensureChannel({
+          installed: current.channel,
+          targetVersion: targetChannelVersion,
+        }, runOptions)
+        changed = ensuredChannel.changed || changed
+        channelVersion = ensuredChannel.installedVersion
+      }
+      if (chatOwnerContract
+        && channelVersion !== CHAT_OWNER_CHANNEL_VERSION) {
+        return { status: 'prerequisite_failed', reason: 'channel_contract' }
+      }
       if (!current.agent) changed = (await options.cli.ensureAgent({ agentId, workspaceRef: join(options.workspaceRoot, agentId) }, runOptions)).changed || changed
       const secretMatches = current.account && await options.secretStore.matchesPreview(hash, tokenPreview)
       if (!current.account || !secretMatches) {

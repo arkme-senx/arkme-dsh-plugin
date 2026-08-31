@@ -1667,6 +1667,16 @@ body[data-ds-dark-theme] .arkme-workspace-dialog-backdrop {
 .arkme-contact-directory-row.is-static { cursor: default; }
 .arkme-contact-directory-row.is-selected { background: var(--dsw-alias-interactive-bg-active, #eef0f4); }
 .arkme-contact-directory-row:not(.is-static):hover { background: var(--dsw-alias-interactive-bg-hover, #f6f6f7); }
+.arkme-contact-directory-bot-row { position: relative; min-width: 0; }
+.arkme-contact-directory-bot-row > .arkme-contact-directory-row { padding-right: 46px; }
+.arkme-contact-directory-bot-manage {
+  position: absolute; top: 50%; right: 9px; width: 30px; height: 30px; display: grid; place-items: center;
+  transform: translateY(-50%); border-radius: 9px; background: transparent; color: var(--dsw-alias-label-tertiary, var(--arkme-muted));
+  cursor: pointer;
+}
+.arkme-contact-directory-bot-manage:hover, .arkme-contact-directory-bot-manage:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover, #f0f1f3); color: var(--dsw-alias-label-primary, #202124); outline: none;
+}
 .arkme-contact-directory-avatar { width: 38px; height: 38px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 50%; }
 .arkme-contact-directory-row-copy { min-width: 0; flex: 1; display: grid; align-content: center; overflow: hidden; }
 .arkme-contact-directory-row-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 18px; font-weight: 600; }

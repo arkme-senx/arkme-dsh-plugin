@@ -114,7 +114,7 @@ describe('Arkme desktop Bot create dialog', () => {
     const source = readFileSync(new URL('../src/client/ArkmeBotCreateDialog.tsx', import.meta.url), 'utf8')
     expect(source).toContain("request.open('POST', '/arkme-self/api/upload')")
     expect(source).toContain('file_asset://${fileAssetUid}')
-    expect(source).toContain("...(avatar === '' ? {} : { avatar })")
+    expect(source).toContain("...(attempt.avatar === '' ? {} : { avatar: attempt.avatar })")
   })
 
   it('does not silently invite a duplicate Bot when the new private chat cannot open', () => {
@@ -122,6 +122,16 @@ describe('Arkme desktop Bot create dialog', () => {
     expect(source).toContain('setCreated(true)')
     expect(source).toContain('Bot 已创建，但无法打开私聊')
     expect(source).toContain('const canSubmit = !busy && !created && name.trim() !== \'\'')
+  })
+
+  it('keeps manual OpenClaw creation on the existing owner path', () => {
+    const source = readFileSync(new URL('../src/client/ArkmeBotCreateDialog.tsx', import.meta.url), 'utf8')
+    expect(source).not.toContain("'bots.create.preflight'")
+    expect(source).not.toContain('createRequestUid')
+    expect(source).not.toContain('directChatOwner')
+    expect(source).toContain('const sameDraft = previous !== undefined')
+    expect(source).toContain('avatar: previous !== undefined && previous.avatarFile === avatarFile ? previous.avatar : \'\'')
+    expect(source).not.toContain('requestUid: string\n  }>()')
   })
 
   it('keeps optional fields visible without an internal dialog scrollbar', () => {

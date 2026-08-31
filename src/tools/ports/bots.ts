@@ -1,10 +1,14 @@
 import type { SecretValue } from '../../secret-value.js'
-import type { ArkmeBotList, ArkmeBotProvider, ArkmeBotSummary } from '../../types.js'
+import type { ArkmeBotList, ArkmeBotProvider, ArkmeBotSummary, ArkmeChatBotDirectOwner } from '../../types.js'
 import type { ArkmeSourceItem } from '../../types.js'
 
 export interface ArkmeBotCreateInput {
   name: string
   provider: ArkmeBotProvider
+  /** Explicitly opts an OpenClaw Bot into the canonical Chat-owned conversation path. */
+  directChatOwner?: ArkmeChatBotDirectOwner
+  /** Required and stable for every retry of the same Chat-owned OpenClaw creation intent. */
+  requestUid?: string
   description?: string
   avatar?: string
 }

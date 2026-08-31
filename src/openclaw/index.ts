@@ -10,6 +10,7 @@ export { createOpenClawProvisioner } from './provisioner.js'
 export { createOpenClawFileSecretStore } from './secret-provider.js'
 export type {
   OpenClawCliPort,
+  OpenClawChatOwnedCreatePreflight,
   OpenClawConnectionMetadata,
   OpenClawLocalResources,
   OpenClawProvisionResult,

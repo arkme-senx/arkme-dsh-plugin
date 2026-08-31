@@ -6,11 +6,13 @@ import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/d
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from './slots-contract.js'
-import type { ArkmeAuthSnapshot, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import { ArkmeBotSettingsPanel } from './ArkmeBotSettingsPanel.js'
 import { ArkmeOutgoingCallHost } from './ArkmeOutgoingCallHost.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
 import { ArkmeSurface } from './ArkmeSidebar.js'
 import { ArkmeNavigation } from './ArkmeVirtualWorkspace.js'
+import { botUsesPrivateConversationSurface, botUsesStandardChatSource } from './bot-conversation-routing.js'
 import type { ArkmeDshMessageSearchResult } from './ArkmeSearchSurface.js'
 import { ContactDirectorySurface } from './redesign/contacts/ContactDirectorySurface.js'
 import { DirectoryDetailPane } from './redesign/contacts/DirectoryDetailPane.js'
@@ -31,7 +33,15 @@ const styles: Record<string, CSSProperties> = {
     position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0,
     display: 'flex', overflow: 'hidden', background: '#fff',
   },
-  taskDirectory: { minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
+  taskDirectory: { position: 'relative', minWidth: 0, flex: 1, overflow: 'hidden', borderLeft: '1px solid #ececef', background: '#fff' },
+  directoryHandoffFeedback: {
+    position: 'absolute', zIndex: 4, left: 12, right: 12, bottom: 12,
+    padding: '8px 10px', borderRadius: 8,
+    border: '1px solid var(--dsw-alias-border-l2, #e3e4e8)',
+    background: 'var(--dsw-specific-menu, rgba(255, 255, 255, 0.96))',
+    color: 'var(--dsw-alias-label-primary, #1a1c21)',
+    boxShadow: '0 6px 18px rgba(17, 24, 39, 0.12)', fontSize: 12, lineHeight: '18px',
+  },
   sidebarResizeHandle: {
     position: 'absolute', zIndex: 3, top: 0, right: 0, bottom: 0, width: 10,
     cursor: 'col-resize', touchAction: 'none',
@@ -111,6 +121,8 @@ export function ArkmePersistentSidebar({
   const handoffControllerRef = useRef<AbortController>()
   const contactsContextRef = useRef({ accountKey: contactsAccountKey, contactsMode })
   contactsContextRef.current = { accountKey: contactsAccountKey, contactsMode }
+  const [botHandoffFeedback, setBotHandoffFeedback] = useState<{ kind: 'status' | 'error'; message: string }>()
+  const [managedBot, setManagedBot] = useState<ArkmeBotSummary>()
   const [sendToSelfState, setSendToSelfState] = useState<{
     userId: number
     source: ArkmeSourceItem
@@ -164,6 +176,8 @@ export function ArkmePersistentSidebar({
   useEffect(() => arkmeContactsTab.bindAborter(() => { handoffControllerRef.current?.abort() }), [])
   useEffect(() => {
     if (!contactsMode) handoffControllerRef.current?.abort()
+    setManagedBot(undefined)
+    setBotHandoffFeedback(undefined)
   }, [contactsMode, contactsAccountKey, contacts.generation])
   useEffect(() => () => { handoffControllerRef.current?.abort() }, [])
 
@@ -237,7 +251,7 @@ export function ArkmePersistentSidebar({
       currentSessionId={sessionState.current}
     />
     {directoryVisible && <div style={styles.taskDirectory} data-arkme-directory-mode={contactsMode ? 'contacts' : 'conversations'}>
-      {contactsMode ? <ContactDirectorySurface
+      {contactsMode ? <><ContactDirectorySurface
         accountKey={contactsAccountKey ?? ''} selection={scopedContacts.selection} refreshRevision={scopedContacts.refreshRevision}
         expandedSections={scopedContacts.expandedSections}
         {...(contactsDirectoryCache === undefined ? {} : {
@@ -269,10 +283,67 @@ export function ArkmePersistentSidebar({
         onOpenBot={bot => {
           arkmeContactsTab.activateAccount(contactsAccountKey)
           handoffControllerRef.current?.abort()
-          handoffControllerRef.current = undefined
-          arkmeUi.openBotConversation(bot)
+          if (botUsesPrivateConversationSurface(bot)) {
+            handoffControllerRef.current = undefined
+            setBotHandoffFeedback(undefined)
+            arkmeUi.openBotConversation(bot)
+            return
+          }
+          if (!botUsesStandardChatSource(bot)) {
+            handoffControllerRef.current = undefined
+            setBotHandoffFeedback({ kind: 'error', message: '当前 Bot 会话暂不可用' })
+            return
+          }
+          setBotHandoffFeedback({ kind: 'status', message: '正在打开 Bot 会话…' })
+          const controller = new AbortController()
+          handoffControllerRef.current = controller
+          const generation = arkmeContactsTab.getSnapshot().generation
+          const accountKey = contactsAccountKey
+          void callArkme<ArkmeSourceItem>('directory.bot.open-chat', { botRef: bot.botRef }, controller.signal)
+            .then(source => {
+              const current = arkmeContactsTab.getSnapshot()
+              const currentUi = arkmeUi.getSnapshot()
+              const context = contactsContextRef.current
+              if (controller.signal.aborted || current.generation !== generation || current.accountKey !== accountKey
+                || context.accountKey !== accountKey || !context.contactsMode
+                || currentUi.mode !== 'source' || currentUi.productMode !== 'contacts') return
+              setBotHandoffFeedback(undefined)
+              arkmeContactsTab.clear(); arkmeUi.selectSource(source)
+            })
+            .catch(caught => {
+              if (controller.signal.aborted) return
+              const current = arkmeContactsTab.getSnapshot()
+              const currentUi = arkmeUi.getSnapshot()
+              const context = contactsContextRef.current
+              if (current.generation !== generation || current.accountKey !== accountKey
+                || context.accountKey !== accountKey || !context.contactsMode
+                || currentUi.mode !== 'source' || currentUi.productMode !== 'contacts') return
+              setBotHandoffFeedback({
+                kind: 'error',
+                message: caught instanceof Error && caught.message.trim() !== ''
+                  ? caught.message
+                  : '暂时无法打开 Bot 会话，请稍后重试',
+              })
+            })
         }}
-      /> : <ArkmeNavigation
+        onManageBot={bot => {
+          handoffControllerRef.current?.abort()
+          handoffControllerRef.current = undefined
+          setBotHandoffFeedback(undefined)
+          setManagedBot(bot)
+        }}
+      />
+      {botHandoffFeedback !== undefined && <div
+        role={botHandoffFeedback.kind === 'error' ? 'alert' : 'status'}
+        aria-live={botHandoffFeedback.kind === 'error' ? 'assertive' : 'polite'}
+        style={{
+          ...styles.directoryHandoffFeedback,
+          ...(botHandoffFeedback.kind === 'error'
+            ? { color: 'var(--dsw-alias-state-negative, #c2413b)' }
+            : {}),
+        }}
+      >{botHandoffFeedback.message}</div>}
+      </> : <ArkmeNavigation
         wide
         avatarOnly={avatarOnly}
         embeddedProductShell
@@ -284,6 +355,12 @@ export function ArkmePersistentSidebar({
         {...(sendToSelfSource === undefined ? {} : { sendToSelfSource })}
       />}
     </div>}
+    {contactsMode && managedBot !== undefined && <ArkmeBotSettingsPanel
+      bot={managedBot}
+      onClose={() => { setManagedBot(undefined) }}
+      onUpdated={updated => { setManagedBot(updated) }}
+      onDeleted={() => { setManagedBot(undefined) }}
+    />}
     {!collapsed && directoryVisible && !contactsMode && <div
       data-arkme-owned="persistent-sidebar-resize-handle"
       role="separator"

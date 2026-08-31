@@ -354,4 +354,21 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot().selectedSource?.isMuted).toBe(true)
     expect(listener).toHaveBeenCalledTimes(2)
   })
+
+  it('publishes a Subject-owned Bot when its owner activity projection advances', () => {
+    const controller = new ArkmeUiController()
+    const listener = vi.fn()
+    controller.subscribe(listener)
+    const bot = {
+      botRef: 'subject-bot', name: 'Subject Bot', provider: 'openclaw' as const, description: '', status: 'online',
+      directChatAvailable: true, privateChatOutboundEnabled: false, conversationProjection: 'record' as const,
+      latestActivityAtMillis: 100,
+    }
+
+    controller.openBotConversation(bot)
+    controller.openBotConversation({ ...bot, latestActivityAtMillis: 200 })
+
+    expect(controller.getSnapshot().selectedBot?.latestActivityAtMillis).toBe(200)
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
 })
