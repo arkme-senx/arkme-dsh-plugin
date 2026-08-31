@@ -144,6 +144,84 @@ describe('Arkme managed model adapter', () => {
     )
   })
 
+  it.each([
+    {
+      name: 'decoded pixel budget',
+      image: {
+        allowed_media_types: ['image/png'],
+        maximum_images: 2,
+        maximum_bytes_per_image: 10 * 1024 * 1024,
+        maximum_pixels: 40_000_001,
+        token_estimator: 'maximum-input-exposure-v1',
+        evidence: {
+          provider_reference_url: 'https://example.test/vision',
+          verified_on: '2026-08-31',
+          provider_documented_fields: ['allowed_media_types', 'maximum_bytes_per_image'],
+          platform_guardrail_fields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
+        },
+      },
+    },
+    {
+      name: 'implicit request byte budget',
+      image: {
+        allowed_media_types: ['image/png'],
+        maximum_images: 2_048,
+        maximum_bytes_per_image: 64 * 1024 * 1024,
+        maximum_pixels: 40_000_000,
+        token_estimator: 'maximum-input-exposure-v1',
+        evidence: {
+          provider_reference_url: 'https://example.test/vision',
+          verified_on: '2026-08-31',
+          provider_documented_fields: ['allowed_media_types', 'maximum_bytes_per_image'],
+          platform_guardrail_fields: ['maximum_images', 'maximum_pixels', 'token_estimator'],
+        },
+      },
+    },
+    {
+      name: 'explicit request byte budget',
+      image: {
+        allowed_media_types: ['image/png'],
+        maximum_images: 2,
+        maximum_bytes_per_image: 10 * 1024 * 1024,
+        maximum_total_bytes: 1024 * 1024 * 1024 + 1,
+        maximum_pixels: 40_000_000,
+        token_estimator: 'maximum-input-exposure-v1',
+        evidence: {
+          provider_reference_url: 'https://example.test/vision',
+          verified_on: '2026-08-31',
+          provider_documented_fields: ['allowed_media_types', 'maximum_bytes_per_image'],
+          platform_guardrail_fields: [
+            'maximum_images', 'maximum_total_bytes', 'maximum_pixels', 'token_estimator',
+          ],
+        },
+      },
+    },
+  ])('rejects catalog image capability above the client $name', async ({ image }) => {
+    const adapter = createManagedAiLlmAdapter({
+      intelligentBaseUrl: 'https://intelligent.test',
+      credentialOwner: {
+        resolveManagedAccessCredential: async () => new SecretValue('arkme-access'),
+      },
+      resolveAnonymousUserId: () => '11111111-1111-4111-8111-111111111111' as never,
+      fetchImpl: async () => managedCatalogResponse([{
+        ...MANAGED_CATALOG_ITEMS[0],
+        public_model_code: 'unsafe-image-model',
+        capability: {
+          contract_version: 'unsafe-image-chat-v1',
+          input_modalities: ['text', 'image'],
+          output_modalities: ['text'],
+          image,
+          materialization_mode: 'oss-signed-url-v1',
+          usage_schema: 'cache-split-token-v1',
+        },
+      }]),
+    })
+
+    await expect(adapter.listModels(ARKME_MANAGED_PROVIDER)).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE',
+    })
+  })
+
   it('uploads a DSH image directly, completes an ambiguous existing object, and sends only image_asset', async () => {
     const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     const attachment = {
@@ -163,6 +241,7 @@ describe('Arkme managed model adapter', () => {
         maximum_images: 600,
         maximum_bytes_per_image: 64 * 1024 * 1024,
         maximum_total_bytes: 200 * 1024 * 1024,
+        maximum_pixels: 40_000_000,
         maximum_width: 8192,
         maximum_height: 8192,
         count_dimension_limits: [{ minimum_images: 15, maximum_width: 4096, maximum_height: 4096 }],
@@ -174,6 +253,7 @@ describe('Arkme managed model adapter', () => {
             'allowed_media_types', 'maximum_images', 'maximum_bytes_per_image', 'maximum_total_bytes',
             'maximum_width', 'maximum_height', 'count_dimension_limits', 'token_estimator',
           ],
+          platform_guardrail_fields: ['maximum_pixels'],
         },
       },
       materialization_mode: 'deepseek-files-v1',
@@ -317,6 +397,7 @@ describe('Arkme managed model adapter', () => {
         maximum_images: 2_048,
         maximum_bytes_per_image: 20 * 1024 * 1024,
         maximum_total_bytes: 1024 * 1024 * 1024,
+        maximum_pixels: 40_000_000,
         minimum_width: 11,
         minimum_height: 11,
         maximum_aspect_ratio: 200,
@@ -329,7 +410,7 @@ describe('Arkme managed model adapter', () => {
             'maximum_images', 'maximum_bytes_per_image', 'minimum_width', 'minimum_height',
             'maximum_aspect_ratio', 'provider_max_pixels', 'token_estimator',
           ],
-          platform_guardrail_fields: ['allowed_media_types', 'maximum_total_bytes'],
+          platform_guardrail_fields: ['allowed_media_types', 'maximum_total_bytes', 'maximum_pixels'],
         },
       },
       materialization_mode: 'oss-signed-url-v1',
