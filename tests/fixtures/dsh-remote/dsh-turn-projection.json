@@ -1,0 +1,37 @@
+{
+  "turn_ref": "turn_session_fixture_01_10",
+  "start_seq": 10,
+  "end_seq": 14,
+  "status": "completed",
+  "nodes": [
+    {
+      "node_ref": "message:message_fixture_01",
+      "kind": "user",
+      "ordinal": 0,
+      "anchor_seq": 10,
+      "time": 1787760000000,
+      "source_seq_start": 10,
+      "source_seq_end": 10,
+      "data": {
+        "id": "message_fixture_01",
+        "content": [{"type": "text", "text": "检查当前状态"}],
+        "source": {"kind": "user", "rpcId": "request_fixture_01"}
+      }
+    },
+    {
+      "node_ref": "assistant:1:1",
+      "kind": "assistant",
+      "ordinal": 1,
+      "anchor_seq": 14,
+      "time": 1787760001000,
+      "source_seq_start": 11,
+      "source_seq_end": 14,
+      "data": {
+        "status": "settled",
+        "turn": 1,
+        "step": 1,
+        "blocks": [{"type": "text", "text": "当前状态正常。"}]
+      }
+    }
+  ]
+}

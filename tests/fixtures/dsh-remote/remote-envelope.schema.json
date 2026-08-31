@@ -15,7 +15,7 @@
     "execute_before": {"type": "integer", "minimum": 1},
     "operation": {
       "enum": [
-        "capabilities.get", "snapshot.get", "workspace.list", "session.create",
+        "capabilities.get", "snapshot.get", "workspace.list", "model.list", "session.model.get", "session.model.select", "session.create",
         "session.list", "session.history", "session.prompt", "session.cancel",
         "interaction.question.respond", "interaction.approval.respond"
       ]
@@ -34,7 +34,7 @@
       "then": {"required": ["execute_before"]}
     },
     {
-      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["capabilities.get"]}}, "required": ["kind", "operation"]},
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"enum": ["capabilities.get", "model.list"]}}, "required": ["kind", "operation"]},
       "then": {"properties": {"body": {"$ref": "#/$defs/emptyBody"}}}
     },
     {
@@ -47,7 +47,15 @@
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.create"}}, "required": ["kind", "operation"]},
-      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["workspace_ref"], "properties": {"workspace_ref": {"$ref": "#/$defs/ref"}}}}}
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["workspace_ref"], "dependentRequired": {"model_provider": ["model_id"], "model_id": ["model_provider"]}, "properties": {"workspace_ref": {"$ref": "#/$defs/ref"}, "model_provider": {"$ref": "#/$defs/ref"}, "model_id": {"$ref": "#/$defs/ref"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.model.get"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}}}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.model.select"}}, "required": ["kind", "operation"]},
+      "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "required": ["session_ref", "model_provider", "model_id"], "properties": {"session_ref": {"$ref": "#/$defs/ref"}, "model_provider": {"$ref": "#/$defs/ref"}, "model_id": {"$ref": "#/$defs/ref"}}}}}
     },
     {
       "if": {"properties": {"kind": {"const": "request"}, "operation": {"const": "session.history"}}, "required": ["kind", "operation"]},

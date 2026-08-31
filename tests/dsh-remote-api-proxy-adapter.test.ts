@@ -108,6 +108,62 @@ describe('public DSH ApiProxy remote adapter', () => {
       .resolves.not.toEqual(first)
   })
 
+  it('projects the live DSH model catalog including the Arkme managed provider and applies an exact model', async () => {
+    const { api } = await fakeApi()
+    const selectModel = vi.fn(async (request: {
+      rpcId: string
+      payload: { sessionId: string; provider: string; model: string }
+    }) => ok({ selected: {
+      provider: request.payload.provider,
+      model: request.payload.model,
+    } }, request.rpcId))
+    api.llm = { models: async request => ok({
+      groups: [
+        { id: 'deepseek-official', name: 'DeepSeek', models: [
+          { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+        ] },
+        { id: 'arkme-managed', name: 'Arkme · 余额计费', models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', description: 'Arkme 托管模型' },
+        ] },
+      ],
+      failures: [{ id: 'broken-provider', name: '失败 Provider', message: 'https://secret.example failed' }],
+    }, request.rpcId) }
+    api.sessions!.selectModel = selectModel
+    const adapter = new DshApiProxyAdapter(api)
+
+    expect(adapter.capabilities()).toEqual(expect.arrayContaining([
+      'model.list', 'session.create.model',
+    ]))
+    await expect(adapter.models()).resolves.toEqual({
+      items: [
+        {
+          provider: 'deepseek-official', providerName: 'DeepSeek',
+          model: 'deepseek-chat', displayName: 'DeepSeek Chat',
+        },
+        {
+          provider: 'arkme-managed', providerName: 'Arkme · 余额计费',
+          model: 'deepseek-v4-flash', displayName: 'DeepSeek-V4-Flash', description: 'Arkme 托管模型',
+        },
+      ],
+      failedProviders: [{ provider: 'broken-provider', providerName: '失败 Provider' }],
+      truncated: false,
+    })
+    const created = await adapter.createSession({
+      workspaceId: 'workspace-1',
+      dshRpcId: 'rpc-model-create',
+      modelSelection: { provider: 'arkme-managed', model: 'deepseek-v4-flash' },
+    })
+    expect(created).toMatchObject({
+      modelSelection: { provider: 'arkme-managed', model: 'deepseek-v4-flash' },
+    })
+    expect(selectModel).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        provider: 'arkme-managed', model: 'deepseek-v4-flash',
+      }),
+    }))
+    expect(JSON.stringify(await adapter.models())).not.toContain('secret.example')
+  })
+
   it('reconciles a created Session by its deterministic request identity', async () => {
     const { api } = await fakeApi()
     const adapter = new DshApiProxyAdapter(api)

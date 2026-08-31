@@ -8,7 +8,8 @@ import {
 } from './types.js'
 
 const OPERATIONS = new Set<DshRemoteOperation>([
-  'workspace.list', 'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel',
+  'workspace.list', 'model.list', 'session.model.get', 'session.model.select',
+  'session.create', 'session.list', 'session.history', 'session.prompt', 'session.cancel',
   'interaction.question.respond', 'interaction.approval.respond', 'snapshot.get', 'capabilities.get',
 ])
 const REQUEST_KEYS = new Set([
@@ -67,7 +68,22 @@ function validateOperationBody(operation: DshRemoteOperation, source: Record<str
     case 'workspace.list': assertOnly(source, ['cursor', 'limit']); pageFields(source); return
     case 'session.list':
       assertOnly(source, ['workspace_ref', 'cursor', 'limit']); bodyRef(source, 'workspace_ref', false); pageFields(source); return
-    case 'session.create': assertOnly(source, ['workspace_ref']); bodyRef(source, 'workspace_ref'); return
+    case 'model.list': assertOnly(source, []); return
+    case 'session.model.get':
+      assertOnly(source, ['session_ref']); bodyRef(source, 'session_ref'); return
+    case 'session.model.select':
+      assertOnly(source, ['session_ref', 'model_provider', 'model_id'])
+      bodyRef(source, 'session_ref'); bodyRef(source, 'model_provider'); bodyRef(source, 'model_id'); return
+    case 'session.create': {
+      assertOnly(source, ['workspace_ref', 'model_provider', 'model_id'])
+      bodyRef(source, 'workspace_ref')
+      bodyRef(source, 'model_provider', false)
+      bodyRef(source, 'model_id', false)
+      if ((source.model_provider === undefined) !== (source.model_id === undefined)) {
+        throw new DshRemoteError('REMOTE_REQUEST_INVALID', '模型 Provider 和模型 ID 必须同时提供')
+      }
+      return
+    }
     case 'session.history':
       assertOnly(source, ['session_ref', 'before_seq', 'limit']); bodyRef(source, 'session_ref');
       if (source.before_seq !== undefined && (!Number.isSafeInteger(source.before_seq) || Number(source.before_seq) < 1)) {

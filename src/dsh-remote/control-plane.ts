@@ -41,6 +41,22 @@ export class DshRemoteHttpControlPlane implements DshRemoteControlPlane {
     return await this.post(`${BASE}/session-events/append`, input, signal)
   }
 
+  async sessionEventSyncStatuses(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-events/status`, input, signal)
+  }
+
+  async completeSessionEventHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-events/complete`, input, signal)
+  }
+
+  async syncSessionTurns(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turns/sync`, input, signal)
+  }
+
+  async completeSessionTurnHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.post(`${BASE}/session-turns/complete`, input, signal)
+  }
+
 }
 
 export function mapDshRemoteControlPlaneError(error: unknown): DshRemoteError {

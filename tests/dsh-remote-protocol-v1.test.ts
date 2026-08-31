@@ -21,4 +21,24 @@ describe('dsh.remote/v1 envelopes', () => {
       operation: 'session.prompt', body: { session_ref: 'session-1', mode: 'queue', content: { type: 'image', data: 'secret' } },
     }), { expectedHostGeneration: 7, nowMillis: 1_500 })).toThrow(/普通文本/)
   })
+
+  it('requires an exact paired Provider and model for model-aware session creation', () => {
+    expect(parseDshRemoteRequest(request({
+      operation: 'model.list', body: {},
+    }), { expectedHostGeneration: 7, nowMillis: 1_500 }).operation).toBe('model.list')
+    expect(parseDshRemoteRequest(request({
+      operation: 'session.create',
+      body: {
+        workspace_ref: 'workspace-1',
+        model_provider: 'arkme-managed',
+        model_id: 'deepseek-v4-flash',
+      },
+    }), { expectedHostGeneration: 7, nowMillis: 1_500 }).body).toMatchObject({
+      model_provider: 'arkme-managed', model_id: 'deepseek-v4-flash',
+    })
+    expect(() => parseDshRemoteRequest(request({
+      operation: 'session.create',
+      body: { workspace_ref: 'workspace-1', model_provider: 'arkme-managed' },
+    }), { expectedHostGeneration: 7, nowMillis: 1_500 })).toThrow(/同时提供/)
+  })
 })

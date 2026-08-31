@@ -66,6 +66,14 @@ async function fixture(input: { featureEnabled?: boolean; session?: () => { user
     syncWorkspaces: async value => { controlCalls.push({ name: 'workspaces', value }); return {} },
     syncSessions: async value => { controlCalls.push({ name: 'sessions', value }); return {} },
     appendSessionEvents: async value => { controlCalls.push({ name: 'events', value }); return {} },
+    sessionEventSyncStatuses: async value => {
+      controlCalls.push({ name: 'event-status', value })
+      return { items: [] }
+    },
+    completeSessionEventHistory: async value => {
+      controlCalls.push({ name: 'event-complete', value })
+      return {}
+    },
   }
   const adapter = apiProxy()
   const host = new ArkmeRemoteRealtimeHost({

@@ -28,7 +28,7 @@
     "protocol_major": 1,
     "descriptor": {
       "runtime_ref": "runtime_fixture_01",
-      "capabilities": ["session.list", "session.prompt"]
+      "capabilities": ["session.list", "session.prompt", "model.list", "session.create.model"]
     }
   },
   "controller_publish": {

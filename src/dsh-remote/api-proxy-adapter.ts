@@ -3,9 +3,12 @@ import { realpath, stat } from 'node:fs/promises'
 import {
   DSH_REMOTE_MAX_PAGE_ITEMS,
   DSH_REMOTE_MAX_PAGE_RESULT_BYTES,
+  DSH_REMOTE_MAX_MODEL_OPTIONS,
   DSH_REMOTE_MAX_SNAPSHOT_BYTES,
   DSH_REMOTE_MAX_TEXT_CODE_POINTS,
   type DshRemoteCapability,
+  type DshRemoteModelCatalog,
+  type DshRemoteModelSelection,
   type DshRemotePendingInteraction,
   type DshRemoteSessionSummary,
   type DshRemoteSnapshot,
@@ -41,6 +44,17 @@ interface SessionsApiLike {
     projections?: { asOfSeq: number; values: Record<string, unknown> }
   }> }>>
   create?(request: { rpcId: string; payload: { workspaceId: string; sessionId: string } }): Promise<RpcResponse<{ sessionId: string }>>
+  models?(request: { rpcId: string; payload: { sessionId: string } }): Promise<RpcResponse<{
+    current: { provider: string; model: string; reasoningEffort?: string }
+    routable: boolean
+    groups: unknown[]
+    failures: unknown[]
+  }>>
+  selectModel?(request: { rpcId: string; payload: {
+    sessionId: string
+    provider: string
+    model: string
+  } }): Promise<RpcResponse<{ selected: { provider: string; model: string; reasoningEffort?: string } }>>
   history?(request: { rpcId: string; payload: { sessionId: string; beforeSeq?: number; maxMessages: number } }): Promise<RpcResponse<{
     events: Array<{ event: {
       type: string
@@ -60,6 +74,17 @@ interface SessionsApiLike {
     content: Array<{ type: 'text'; text: string }>
   } }): Promise<RpcResponse<{ accepted: true }>>
   cancel?(request: { rpcId: string; payload: { sessionId: string } }): Promise<RpcResponse<{ accepted: true }>>
+}
+
+interface LlmApiLike {
+  models?(request: { rpcId: string; payload: Record<string, never> }): Promise<RpcResponse<{
+    groups: Array<{
+      id: string
+      name: string
+      models: Array<{ id: string; name: string; description?: string }>
+    }>
+    failures: Array<{ id: string; name: string; message: string }>
+  }>>
 }
 
 interface EventsApiLike {
@@ -89,6 +114,7 @@ export type DshRemoteApiProjectionEvent =
 export interface DshPublicApiProxyLike {
   workspace?: WorkspaceApiLike
   sessions?: SessionsApiLike
+  llm?: LlmApiLike
   events?: EventsApiLike
   respond?(message: {
     type: 'client-response'
@@ -235,6 +261,11 @@ export class DshApiProxyAdapter {
     if (typeof this.api.workspace?.list === 'function') result.push('workspace.list')
     if (typeof this.api.sessions?.list === 'function') result.push('session.list')
     if (typeof this.api.sessions?.create === 'function') result.push('session.create')
+    if (typeof this.api.sessions?.create === 'function'
+      && typeof this.api.sessions?.selectModel === 'function') result.push('session.create.model')
+    if (typeof this.api.sessions?.models === 'function') result.push('session.model.get')
+    if (typeof this.api.sessions?.selectModel === 'function') result.push('session.model.select')
+    if (typeof this.api.llm?.models === 'function') result.push('model.list')
     if (typeof this.api.sessions?.history === 'function') result.push('session.history')
     if (typeof this.api.sessions?.prompt === 'function') {
       result.push('session.prompt', 'session.prompt.queue', 'session.prompt.steer')
@@ -363,11 +394,87 @@ export class DshApiProxyAdapter {
     }
   }
 
+  async models(): Promise<DshRemoteModelCatalog> {
+    const models = this.api.llm?.models
+    if (typeof models !== 'function') this.unsupported('model.list')
+    const value = unwrap(await models.call(this.api.llm, {
+      rpcId: rpcId('remote-models'),
+      payload: {},
+    }))
+    const result: DshRemoteModelCatalog = {
+      items: [],
+      failedProviders: value.failures.map(failure => ({
+        provider: boundedUtf8(failure.id, 128),
+        providerName: boundedUtf8(failure.name, 256),
+      })),
+      truncated: false,
+    }
+    outer: for (const group of value.groups) {
+      const provider = boundedUtf8(group.id, 128)
+      const providerName = boundedUtf8(group.name, 256)
+      for (const model of group.models) {
+        const item = {
+          provider,
+          providerName,
+          model: boundedUtf8(model.id, 128),
+          displayName: boundedUtf8(model.name, 256),
+          ...(model.description === undefined
+            ? {}
+            : { description: boundedUtf8(model.description, 512) }),
+        }
+        if (result.items.length >= DSH_REMOTE_MAX_MODEL_OPTIONS
+          || jsonBytes({ ...result, items: [...result.items, item] }) > DSH_REMOTE_MAX_PAGE_RESULT_BYTES) {
+          result.truncated = true
+          break outer
+        }
+        result.items.push(item)
+      }
+    }
+    return result
+  }
+
+  async sessionModel(sessionId: string): Promise<{
+    current: DshRemoteModelSelection
+    routable: boolean
+  }> {
+    const models = this.api.sessions?.models
+    if (typeof models !== 'function') this.unsupported('session.model.get')
+    const value = unwrap(await models.call(this.api.sessions, {
+      rpcId: rpcId('remote-session-model'),
+      payload: { sessionId },
+    }))
+    return {
+      current: {
+        provider: boundedUtf8(value.current.provider, 128),
+        model: boundedUtf8(value.current.model, 128),
+      },
+      routable: value.routable,
+    }
+  }
+
+  async selectSessionModel(input: {
+    sessionId: string
+    selection: DshRemoteModelSelection
+    dshRpcId: string
+  }): Promise<{ selected: DshRemoteModelSelection }> {
+    const selectModel = this.api.sessions?.selectModel
+    if (typeof selectModel !== 'function') this.unsupported('session.model.select')
+    const selected = unwrap(await selectModel.call(this.api.sessions, {
+      rpcId: input.dshRpcId,
+      payload: { sessionId: input.sessionId, ...input.selection },
+    })).selected
+    return { selected: { provider: selected.provider, model: selected.model } }
+  }
+
   historyContainsRpcId(entries: readonly DshRemoteHistoryEntry[], rpcIdValue: string): boolean {
     return entries.some(entry => dshHistoryEntryUserRpcId(entry) === rpcIdValue)
   }
 
-  async createSession(input: { workspaceId: string; dshRpcId: string }): Promise<{ sessionId: string }> {
+  async createSession(input: {
+    workspaceId: string
+    dshRpcId: string
+    modelSelection?: DshRemoteModelSelection
+  }): Promise<{ sessionId: string; modelSelection?: DshRemoteModelSelection }> {
     const workspace = (await this.workspaces()).find(item => item.workspaceId === input.workspaceId)
     if (workspace === undefined || !workspace.available) throw new DshRemoteError('WORKSPACE_UNAVAILABLE', '工作目录已经删除或不可访问')
     const create = this.api.sessions?.create
@@ -382,10 +489,25 @@ export class DshApiProxyAdapter {
     if (created.sessionId !== sessionId) {
       throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 返回了与预分配值不一致的 SessionId')
     }
-    return created
+    if (input.modelSelection === undefined) return created
+    const selectModel = this.api.sessions?.selectModel
+    if (typeof selectModel !== 'function') this.unsupported('session.create.model')
+    const selected = unwrap(await selectModel.call(this.api.sessions, {
+      rpcId: `${input.dshRpcId}-model`,
+      payload: { sessionId, ...input.modelSelection },
+    })).selected
+    if (selected.provider !== input.modelSelection.provider
+      || selected.model !== input.modelSelection.model) {
+      throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 返回了与请求不一致的模型')
+    }
+    return { sessionId, modelSelection: { provider: selected.provider, model: selected.model } }
   }
 
-  async reconcileCreatedSession(input: { workspaceId: string; dshRpcId: string }): Promise<{ sessionId: string } | undefined> {
+  async reconcileCreatedSession(input: {
+    workspaceId: string
+    dshRpcId: string
+    modelSelection?: DshRemoteModelSelection
+  }): Promise<{ sessionId: string; modelSelection?: DshRemoteModelSelection } | undefined> {
     const expected = stableSessionId(input.dshRpcId)
     let cursor: string | undefined
     do {
@@ -394,7 +516,19 @@ export class DshApiProxyAdapter {
         limit: DSH_REMOTE_MAX_PAGE_ITEMS,
         ...(cursor === undefined ? {} : { cursor }),
       })
-      if (page.items.some(item => item.sessionId === expected)) return { sessionId: expected }
+      if (page.items.some(item => item.sessionId === expected)) {
+        if (input.modelSelection === undefined) return { sessionId: expected }
+        const models = this.api.sessions?.models
+        if (typeof models !== 'function') return undefined
+        const current = unwrap(await models.call(this.api.sessions, {
+          rpcId: rpcId('remote-session-model'),
+          payload: { sessionId: expected },
+        })).current
+        return current.provider === input.modelSelection.provider
+          && current.model === input.modelSelection.model
+          ? { sessionId: expected, modelSelection: input.modelSelection }
+          : undefined
+      }
       cursor = page.nextCursor
     } while (cursor !== undefined)
     return undefined

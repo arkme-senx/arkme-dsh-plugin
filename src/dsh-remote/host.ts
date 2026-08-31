@@ -3,11 +3,14 @@ import { hostname } from 'node:os'
 import { DshApiProxyAdapter, type DshRemoteApiProjectionEvent } from './api-proxy-adapter.js'
 import { DshRemoteHostChannelManager } from './channel-manager.js'
 import { DshRemoteCommandLedger, type DshRemoteLedgerEntry } from './command-ledger.js'
+import type { DshRemoteHistoryEntry } from './dsh-event-contract.js'
 import { asDshRemoteError, DshRemoteError } from './errors.js'
 import { parseDshRemoteRequest } from './protocol-v1.js'
 import { DshRemoteRuntimeStore } from './runtime-store.js'
 import { DshRemoteRuntimeSecretBroker } from './runtime-secret-broker.js'
+import { extractCompletedTurnWindows, projectCompletedTurns } from './turn-projector.js'
 import {
+  DSH_REMOTE_MAX_PAGE_ITEMS,
   DSH_REMOTE_MAX_PAGE_RESULT_BYTES,
   DSH_REMOTE_PROTOCOL,
   DSH_REMOTE_PROTOCOL_MAJOR,
@@ -21,7 +24,22 @@ import {
   type DshRemoteRuntimeProjection,
   type DshRemoteStatus,
   type DshRemoteTrustedEventMetadata,
+  type DshRemoteTurnProjection,
 } from './types.js'
+
+const HISTORY_RECONCILE_INTERVAL_MILLIS = 30_000
+const BACKEND_HISTORY_BATCH_ITEMS = 100
+const BACKEND_TURN_BATCH_ITEMS = 100
+const BACKEND_TURN_BATCH_BYTES = 4 * 1024 * 1024
+
+interface SessionHistoryStatus {
+  sessionRef: string
+  projectionAsOfSeq: number
+  lastEventSeq: number
+  historyCompleteThroughSeq: number
+  turnProjectionAsOfSeq: number
+  turnProjectionCompleteThroughSeq: number
+}
 
 interface HostSession { userId: number; clientId: number }
 interface HostRuntimeContext {
@@ -61,11 +79,58 @@ function optionalPositive(body: Record<string, unknown>, key: string): number | 
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
+function historySequence(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < -1) {
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', `Backend ${field} 无效`, true)
+  }
+  return value
+}
+
+function historyCompletenessSequence(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < -2) {
+    throw new DshRemoteError(
+      'REMOTE_INVALID_RESPONSE',
+      'Backend history_complete_through_seq 无效',
+      true,
+    )
+  }
+  return value
+}
+
+function sessionHistoryStatuses(value: Record<string, unknown>): Map<string, SessionHistoryStatus> {
+  if (!Array.isArray(value.items)) {
+    throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'Backend 历史完整性响应无效', true)
+  }
+  const result = new Map<string, SessionHistoryStatus>()
+  for (const raw of value.items) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'Backend 历史完整性条目无效', true)
+    }
+    const item = raw as Record<string, unknown>
+    const sessionRef = typeof item.session_ref === 'string' ? item.session_ref.trim() : ''
+    if (sessionRef === '' || result.has(sessionRef)) {
+      throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'Backend 历史完整性 Session 引用无效', true)
+    }
+    result.set(sessionRef, {
+      sessionRef,
+      projectionAsOfSeq: historySequence(item.projection_as_of_seq, 'projection_as_of_seq'),
+      lastEventSeq: historySequence(item.last_event_seq, 'last_event_seq'),
+      historyCompleteThroughSeq: historyCompletenessSequence(item.history_complete_through_seq),
+      turnProjectionAsOfSeq: historySequence(item.turn_projection_as_of_seq ?? -1, 'turn_projection_as_of_seq'),
+      turnProjectionCompleteThroughSeq: historyCompletenessSequence(item.turn_projection_complete_through_seq ?? -2),
+    })
+  }
+  return result
+}
+
 function requiredCapabilities(operation: DshRemoteOperation): DshRemoteCapability[] {
   switch (operation) {
     case 'capabilities.get': return []
     case 'snapshot.get': return ['workspace.list', 'session.list']
     case 'workspace.list': return ['workspace.list']
+    case 'model.list': return ['model.list']
+    case 'session.model.get': return ['session.model.get']
+    case 'session.model.select': return ['session.model.select']
     case 'session.list': return ['session.list']
     case 'session.create': return ['session.create']
     case 'session.history': return ['session.history']
@@ -137,8 +202,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private reconnecting = false
   private sessionTimer: ReturnType<typeof setTimeout> | undefined
   private connectionError: DshRemoteError | undefined
+  private historySyncError: DshRemoteError | undefined
   private lastProjectionSyncAttemptMillis = 0
   private projectionVersion = 0
+  private historyReconcileTimer: ReturnType<typeof setTimeout> | undefined
+  private historyReconcileFlight: Promise<void> | undefined
+  private historyReconcileRequested = false
 
   constructor(private readonly options: ArkmeRemoteRealtimeHostOptions) {
     this.now = options.now ?? Date.now
@@ -163,6 +232,9 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.sessionTimer = undefined
     if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
+    if (this.historyReconcileTimer !== undefined) clearTimeout(this.historyReconcileTimer)
+    this.historyReconcileTimer = undefined
+    this.historyReconcileRequested = false
     await this.deactivateAccount()
     this.bump()
   }
@@ -181,7 +253,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       ...(this.accountId === undefined ? {} : { accountId: this.accountId }),
       ...(this.runtime?.desktopRef === undefined ? {} : { desktopRef: this.runtime.desktopRef }),
       ...(this.runtime === undefined ? {} : { runtimeRef: this.runtime.runtimeRef }),
-      ...(this.connectionError !== undefined ? { unavailableReason: this.connectionError.message }
+      ...((this.connectionError ?? this.historySyncError) !== undefined
+        ? { unavailableReason: (this.connectionError ?? this.historySyncError)!.message }
         : available ? {} : { unavailableReason: !this.options.featureEnabled
           ? '远控能力尚未在此版本启用'
           : this.accountId === undefined
@@ -335,8 +408,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     this.accountId = undefined
     this.clientId = 0
     this.connectionError = undefined
+    this.historySyncError = undefined
     this.lastProjectionSyncAttemptMillis = 0
     this.projectionVersion = 0
+    if (this.historyReconcileTimer !== undefined) clearTimeout(this.historyReconcileTimer)
+    this.historyReconcileTimer = undefined
+    this.historyReconcileRequested = false
   }
 
   private startApiProxyEvents(): void {
@@ -361,30 +438,19 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
   private async publishProjectionEvent(event: DshRemoteApiProjectionEvent): Promise<void> {
     const runtime = this.runtime
     const manager = this.channelManager
-    if (!this.started || !this.connected || runtime === undefined || manager === undefined) return
+    if (!this.started || runtime === undefined) return
     const issuedAt = this.now()
     if (event.kind === 'session-event') {
-      const append = async (): Promise<void> => {
-        await this.options.controlPlane.appendSessionEvents({
-          runtime_ref: runtime.runtimeRef,
-          host_generation: runtime.hostGeneration,
-          session_ref: event.sessionId,
-          entries: [event.entry],
-        })
-      }
       try {
-        await append()
+        await this.appendSessionHistory(runtime, event.sessionId, [event.entry])
       } catch (error) {
-        const remote = asDshRemoteError(error)
-        if (remote.code !== 'REMOTE_NOT_FOUND') throw error
-        // A newly-created DSH session can emit its first event before the
-        // periodic metadata projection sees it. Backend intentionally rejects
-        // orphan events, so publish the authoritative session row first and
-        // retry this exact seq once. Backend's seq/hash guard keeps the retry
-        // idempotent; all other failures remain fail-closed.
-        await this.syncProjectionSnapshot(true)
-        await append()
+        this.scheduleHistoryReconcile()
+        throw error
       }
+      this.scheduleHistoryReconcile()
+      // Backend durability is independent from Realtime presence. A disconnected
+      // Host still persists the DSH event; only the live mobile projection waits.
+      if (!this.connected || manager === undefined) return
       const seq = event.entry.event.seq
       const requestRef = `event_${createHash('sha256').update([
         'dsh-remote-session-event-v1', runtime.runtimeRef, String(runtime.hostGeneration), event.sessionId,
@@ -405,6 +471,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       return
     }
     const baseline = event.kind === 'mux-baseline'
+    if (baseline) this.scheduleHistoryReconcile()
+    if (!this.connected || manager === undefined) return
     const requestRef = `projection_${randomUUID()}`
     const pendingFits = Buffer.byteLength(JSON.stringify(event.pendingInteractions)) <= DSH_REMOTE_MAX_PAGE_RESULT_BYTES
     await manager.publishProjectionEvent({
@@ -422,6 +490,271 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       },
       ...(baseline && event.lastSeq >= 0 ? { projection_as_of_seq: event.lastSeq } : {}),
     }, requestRef)
+  }
+
+  private async appendSessionHistory(
+    runtime: DshRemoteRuntimeProjection,
+    sessionRef: string,
+    entries: DshRemoteHistoryEntry[],
+  ): Promise<void> {
+    if (entries.length === 0) return
+    const append = async (): Promise<void> => {
+      for (let offset = 0; offset < entries.length; offset += BACKEND_HISTORY_BATCH_ITEMS) {
+        await this.options.controlPlane.appendSessionEvents({
+          runtime_ref: runtime.runtimeRef,
+          host_generation: runtime.hostGeneration,
+          session_ref: sessionRef,
+          entries: entries.slice(offset, offset + BACKEND_HISTORY_BATCH_ITEMS),
+        })
+      }
+    }
+    try {
+      await append()
+    } catch (error) {
+      const remote = asDshRemoteError(error)
+      if (remote.code !== 'REMOTE_NOT_FOUND') throw error
+      // A new DSH session can emit before the periodic metadata projection.
+      // Publish the authoritative row, then retry the exact immutable seq set.
+      await this.syncProjectionSnapshot(true)
+      await append()
+    }
+  }
+
+  private async syncSessionTurns(
+    runtime: DshRemoteRuntimeProjection,
+    sessionRef: string,
+    turns: DshRemoteTurnProjection[],
+  ): Promise<boolean> {
+    const sync = this.options.controlPlane.syncSessionTurns
+    const complete = this.options.controlPlane.completeSessionTurnHistory
+    if (sync === undefined || complete === undefined) return false
+    try {
+      let batch: DshRemoteTurnProjection[] = []
+      let batchBytes = 0
+      const flush = async (): Promise<void> => {
+        if (batch.length === 0) return
+        await sync.call(this.options.controlPlane, {
+          runtime_ref: runtime.runtimeRef,
+          host_generation: runtime.hostGeneration,
+          session_ref: sessionRef,
+          items: batch,
+        })
+        batch = []
+        batchBytes = 0
+      }
+      for (const turn of turns) {
+        const bytes = Buffer.byteLength(JSON.stringify(turn))
+        if (batch.length >= BACKEND_TURN_BATCH_ITEMS || batchBytes + bytes > BACKEND_TURN_BATCH_BYTES) {
+          await flush()
+        }
+        batch.push(turn)
+        batchBytes += bytes
+      }
+      await flush()
+      return true
+    } catch (error) {
+      const remote = asDshRemoteError(error)
+      if (!['REMOTE_NOT_FOUND', 'REMOTE_PROTOCOL_UNSUPPORTED', 'CAPABILITY_UNSUPPORTED'].includes(remote.code)) {
+        throw error
+      }
+      // Backend-first rollout is expected, but an older test service must not
+      // make DSH unavailable. Raw event history remains the compatibility path.
+      this.scheduleHistoryReconcile(HISTORY_RECONCILE_INTERVAL_MILLIS)
+      return false
+    }
+  }
+
+  private scheduleHistoryReconcile(delayMillis = 0): void {
+    const runtime = this.runtime
+    if (!this.started || this.accountId === undefined || runtime?.desktopRef === undefined) return
+    const capabilities = new Set(runtime.capabilities)
+    if (!capabilities.has('session.list') || !capabilities.has('session.history')) return
+    if (delayMillis === 0 && this.historyReconcileFlight !== undefined) {
+      this.historyReconcileRequested = true
+      return
+    }
+    if (this.historyReconcileTimer !== undefined) {
+      if (delayMillis > 0) return
+      clearTimeout(this.historyReconcileTimer)
+    }
+    this.historyReconcileTimer = setTimeout(() => {
+      this.historyReconcileTimer = undefined
+      void this.reconcileAllHistorySafely()
+    }, delayMillis)
+    this.historyReconcileTimer.unref()
+  }
+
+  private async reconcileAllHistorySafely(): Promise<void> {
+    if (this.historyReconcileFlight !== undefined) return await this.historyReconcileFlight
+    const accountId = this.accountId
+    const runtime = this.runtime
+    const flight = this.reconcileAllHistory()
+    this.historyReconcileFlight = flight
+    try {
+      await flight
+      if (accountId !== undefined && runtime !== undefined
+        && this.historyOwnerMatches(accountId, runtime)
+        && this.historySyncError !== undefined) {
+        this.historySyncError = undefined
+        this.bump()
+      }
+    } catch (error) {
+      if (accountId !== undefined && runtime !== undefined
+        && this.historyOwnerMatches(accountId, runtime)) {
+        this.historySyncError = asDshRemoteError(error)
+        this.bump()
+        this.scheduleHistoryReconcile(HISTORY_RECONCILE_INTERVAL_MILLIS)
+      }
+    } finally {
+      if (this.historyReconcileFlight === flight) this.historyReconcileFlight = undefined
+      if (this.historyReconcileRequested) {
+        this.historyReconcileRequested = false
+        this.scheduleHistoryReconcile()
+      }
+    }
+  }
+
+  private historyOwnerMatches(accountId: string, runtime: DshRemoteRuntimeProjection): boolean {
+    return this.started && this.accountId === accountId
+      && this.runtime?.runtimeRef === runtime.runtimeRef
+      && this.runtime.hostGeneration === runtime.hostGeneration
+  }
+
+  private async reconcileAllHistory(): Promise<void> {
+    const accountId = this.accountId
+    const runtime = this.runtime
+    if (accountId === undefined || runtime?.desktopRef === undefined || !this.started) return
+    const capabilities = new Set(runtime.capabilities)
+    if (!capabilities.has('session.list') || !capabilities.has('session.history')) return
+
+    const sessions = [] as Awaited<ReturnType<DshApiProxyAdapter['sessions']>>['items']
+    let cursor: string | undefined
+    const seenSessionCursors = new Set<string>()
+    do {
+      const page = await this.options.apiProxy.sessions({
+        limit: DSH_REMOTE_MAX_PAGE_ITEMS,
+        ...(cursor === undefined ? {} : { cursor }),
+      })
+      if (!this.historyOwnerMatches(accountId, runtime)) return
+      sessions.push(...page.items)
+      cursor = page.nextCursor
+      if (cursor !== undefined) {
+        if (seenSessionCursors.has(cursor)) {
+          throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 会话游标发生循环', true)
+        }
+        seenSessionCursors.add(cursor)
+      }
+    } while (cursor !== undefined)
+
+    const statuses = new Map<string, SessionHistoryStatus>()
+    for (let offset = 0; offset < sessions.length; offset += DSH_REMOTE_MAX_PAGE_ITEMS) {
+      const refs = sessions.slice(offset, offset + DSH_REMOTE_MAX_PAGE_ITEMS).map(item => item.sessionId)
+      const response = await this.options.controlPlane.sessionEventSyncStatuses({
+        runtime_ref: runtime.runtimeRef,
+        session_refs: refs,
+      })
+      if (!this.historyOwnerMatches(accountId, runtime)) return
+      const page = sessionHistoryStatuses(response)
+      for (const ref of refs) {
+        const status = page.get(ref)
+        if (status === undefined) {
+          throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'Backend 缺少会话历史完整性条目', true)
+        }
+        statuses.set(ref, status)
+      }
+    }
+
+    for (const session of sessions) {
+      if (!this.historyOwnerMatches(accountId, runtime)) return
+      const status = statuses.get(session.sessionId)
+      if (status === undefined) continue
+      if (session.projectionAsOfSeq !== undefined
+        && status.historyCompleteThroughSeq >= session.projectionAsOfSeq
+        && (this.options.controlPlane.syncSessionTurns === undefined
+          || status.turnProjectionCompleteThroughSeq >= session.projectionAsOfSeq)) continue
+      await this.reconcileSessionHistory(accountId, runtime, session.sessionId, session.projectionAsOfSeq)
+    }
+  }
+
+  private async reconcileSessionHistory(
+    accountId: string,
+    runtime: DshRemoteRuntimeProjection,
+    sessionRef: string,
+    expectedThroughSeq?: number,
+  ): Promise<void> {
+    let beforeSeq: number | undefined
+    let completeThroughSeq: number | undefined
+    let maximumEntrySeq = -1
+    let pendingProjectionEntries: DshRemoteHistoryEntry[] = []
+    let turnProjectionSupported = this.options.controlPlane.syncSessionTurns !== undefined
+      && this.options.controlPlane.completeSessionTurnHistory !== undefined
+    let turnProjectionBlocked = false
+    const seenCursors = new Set<number>()
+    while (true) {
+      const page = await this.options.apiProxy.history({
+        sessionId: sessionRef,
+        limit: DSH_REMOTE_MAX_PAGE_ITEMS,
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+      })
+      if (!this.historyOwnerMatches(accountId, runtime)) return
+      if (completeThroughSeq === undefined) {
+        completeThroughSeq = page.projectionAsOfSeq ?? expectedThroughSeq
+      }
+      for (const entry of page.entries) {
+        maximumEntrySeq = Math.max(maximumEntrySeq, entry.event.seq)
+      }
+      await this.appendSessionHistory(runtime, sessionRef, page.entries)
+      if (!this.historyOwnerMatches(accountId, runtime)) return
+      const extracted = extractCompletedTurnWindows([
+        ...page.entries,
+        ...pendingProjectionEntries,
+      ])
+      pendingProjectionEntries = extracted.pending
+      const pageTurns: DshRemoteTurnProjection[] = []
+      for (const window of extracted.completed) {
+        const projected = projectCompletedTurns(window)
+        turnProjectionBlocked ||= projected.oversizedTurnRefs.length > 0
+          || projected.unmatchedTurnEndSeqs.length > 0
+        pageTurns.push(...projected.turns)
+      }
+      if (turnProjectionSupported && pageTurns.length > 0) {
+        turnProjectionSupported = await this.syncSessionTurns(runtime, sessionRef, pageTurns)
+      }
+      if (!page.hasMore) break
+      const next = page.nextCursor
+      if (next === undefined || next < 0 || seenCursors.has(next)) {
+        throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 历史游标无效或发生循环', true)
+      }
+      seenCursors.add(next)
+      beforeSeq = next
+    }
+    const throughSeq = completeThroughSeq ?? maximumEntrySeq
+    if (!this.historyOwnerMatches(accountId, runtime)) return
+    await this.options.controlPlane.completeSessionEventHistory({
+      runtime_ref: runtime.runtimeRef,
+      host_generation: runtime.hostGeneration,
+      session_ref: sessionRef,
+      through_seq: throughSeq,
+    })
+    if (!this.historyOwnerMatches(accountId, runtime)) return
+    const pendingProjection = projectCompletedTurns(pendingProjectionEntries)
+    turnProjectionBlocked ||= pendingProjection.oversizedTurnRefs.length > 0
+      || pendingProjection.unmatchedTurnEndSeqs.length > 0
+    if (turnProjectionSupported && pendingProjection.turns.length > 0) {
+      turnProjectionSupported = await this.syncSessionTurns(
+        runtime,
+        sessionRef,
+        pendingProjection.turns,
+      )
+    }
+    if (!turnProjectionSupported || turnProjectionBlocked) return
+    if (!this.historyOwnerMatches(accountId, runtime)) return
+    await this.options.controlPlane.completeSessionTurnHistory!({
+      runtime_ref: runtime.runtimeRef,
+      host_generation: runtime.hostGeneration,
+      session_ref: sessionRef,
+      through_seq: throughSeq,
+    })
   }
 
   private handleTransportDisconnect(error?: unknown): void {
@@ -491,6 +824,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       desktopRef,
     }
     await this.syncProjectionSnapshot(true)
+    this.scheduleHistoryReconcile()
     const controller = new AbortController()
     await this.options.realtime.connect({
       profileRef: this.options.profileRef,
@@ -519,6 +853,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       this.serviceLeaseGeneration = registered.serviceLeaseGeneration
       this.connected = true
       this.connectionError = undefined
+      this.scheduleHistoryReconcile()
       this.bump()
     } catch (error) {
       await this.options.realtime.disconnect()
@@ -668,6 +1003,12 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           ...(limit === undefined ? {} : { limit }),
         }) }
       }
+      case 'model.list':
+        return { duplicate: false, value: await this.options.apiProxy.models() }
+      case 'session.model.get':
+        return { duplicate: false, value: await this.options.apiProxy.sessionModel(
+          stringBody(request.body, 'session_ref'),
+        ) }
       case 'session.list': {
         const workspaceId = optionalString(request.body, 'workspace_ref')
         const cursor = optionalString(request.body, 'cursor')
@@ -713,8 +1054,28 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     try {
       switch (request.operation) {
         case 'session.create':
+          if ((request.body.model_provider !== undefined || request.body.model_id !== undefined)
+            && !this.runtime!.capabilities.includes('session.create.model')) {
+            throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '当前 DSH 不支持远程选择模型')
+          }
           value = await this.options.apiProxy.createSession({
             workspaceId: stringBody(request.body, 'workspace_ref'),
+            dshRpcId: begun.entry.dshRpcId,
+            ...(request.body.model_provider === undefined
+              ? {}
+              : { modelSelection: {
+                  provider: stringBody(request.body, 'model_provider'),
+                  model: stringBody(request.body, 'model_id'),
+                } }),
+          })
+          break
+        case 'session.model.select':
+          value = await this.options.apiProxy.selectSessionModel({
+            sessionId: stringBody(request.body, 'session_ref'),
+            selection: {
+              provider: stringBody(request.body, 'model_provider'),
+              model: stringBody(request.body, 'model_id'),
+            },
             dshRpcId: begun.entry.dshRpcId,
           })
           break
@@ -781,6 +1142,13 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           const created = await this.options.apiProxy.reconcileCreatedSession({
             workspaceId: argumentsRecord.workspace_ref,
             dshRpcId: entry.dshRpcId,
+            ...(typeof argumentsRecord.model_provider !== 'string'
+              || typeof argumentsRecord.model_id !== 'string'
+              ? {}
+              : { modelSelection: {
+                  provider: argumentsRecord.model_provider,
+                  model: argumentsRecord.model_id,
+                } }),
           })
           if (created !== undefined) {
             proven = true

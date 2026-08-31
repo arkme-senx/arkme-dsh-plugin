@@ -9,11 +9,16 @@ export const DSH_REMOTE_MAX_PAGE_ITEMS = 50
 export const DSH_REMOTE_MAX_SNAPSHOT_BYTES = 512 * 1024
 export const DSH_REMOTE_MAX_PAGE_RESULT_BYTES = 40 * 1024
 export const DSH_REMOTE_MAX_TEXT_CODE_POINTS = 20_000
+export const DSH_REMOTE_MAX_MODEL_OPTIONS = 100
 
 export type DshRemoteCapability =
   | 'workspace.list'
   | 'session.list'
   | 'session.create'
+  | 'session.create.model'
+  | 'session.model.get'
+  | 'session.model.select'
+  | 'model.list'
   | 'session.history'
   | 'session.prompt'
   | 'session.prompt.queue'
@@ -27,6 +32,9 @@ export type DshRemoteOperation =
   | 'capabilities.get'
   | 'snapshot.get'
   | 'workspace.list'
+  | 'model.list'
+  | 'session.model.get'
+  | 'session.model.select'
   | 'session.list'
   | 'session.create'
   | 'session.history'
@@ -119,6 +127,44 @@ export interface DshRemoteControlPlane {
   syncWorkspaces(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   syncSessions(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
   appendSessionEvents(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  sessionEventSyncStatuses(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  completeSessionEventHistory(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Optional during rolling upgrades; raw HistoryEntry remains the fallback. */
+  syncSessionTurns?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+  /** Optional during rolling upgrades; raw HistoryEntry remains the fallback. */
+  completeSessionTurnHistory?(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>>
+}
+
+export type DshRemoteTimelineNodeKind =
+  | 'user'
+  | 'steering'
+  | 'context'
+  | 'assistant'
+  | 'tool'
+  | 'command'
+  | 'compaction'
+  | 'retry'
+  | 'turn_error'
+  | 'max_tokens'
+  | 'unknown'
+
+export interface DshRemoteTimelineNode {
+  node_ref: string
+  kind: DshRemoteTimelineNodeKind
+  ordinal: number
+  anchor_seq: number
+  time: number
+  source_seq_start: number
+  source_seq_end: number
+  data: Record<string, unknown>
+}
+
+export interface DshRemoteTurnProjection {
+  turn_ref: string
+  start_seq: number
+  end_seq: number
+  status: 'completed' | 'interrupted' | 'error' | 'max_tokens'
+  nodes: DshRemoteTimelineNode[]
 }
 
 export interface DshRemoteRealtimeTransport {
@@ -162,6 +208,25 @@ export interface DshRemoteSessionSummary {
   running: boolean
   blank: boolean
   projectionAsOfSeq?: number
+}
+
+export interface DshRemoteModelOption {
+  provider: string
+  providerName: string
+  model: string
+  displayName: string
+  description?: string
+}
+
+export interface DshRemoteModelCatalog {
+  items: DshRemoteModelOption[]
+  failedProviders: Array<{ provider: string; providerName: string }>
+  truncated: boolean
+}
+
+export interface DshRemoteModelSelection {
+  provider: string
+  model: string
 }
 
 export interface DshRemoteSnapshot {
