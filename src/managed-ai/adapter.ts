@@ -27,6 +27,8 @@ export const ARKME_MANAGED_MODEL = 'deepseek-v4-flash'
 const ARKME_MANAGED_PROVIDER_NAME = 'Arkme · 余额计费'
 const ARKME_MANAGED_CATALOG_TTL_MS = 60_000
 const ARKME_MANAGED_CATALOG_TIMEOUT_MS = 10_000
+const ARKME_MANAGED_MAXIMUM_IMAGE_PIXELS = 40_000_000
+const ARKME_MANAGED_MAXIMUM_REQUEST_IMAGE_BYTES = 1 << 30
 const ARKME_INSUFFICIENT_BALANCE_MESSAGE = 'Arkme AI 余额不足，请前往 Arkme 设置中的余额充值后重试'
 const ARKME_LOGIN_MESSAGE = '请先登录或重新登录 Arkme 后再使用托管模型'
 const ARKME_AUTH_FAILURE_CODES = new Set([
@@ -410,12 +412,15 @@ function parseImageCapability(value: unknown): ManagedImageCapability {
   const maximumHeight = optionalCapabilityInteger(source, 'maximum_height', '图片高度上限')
   const maximumAspectRatio = optionalCapabilityInteger(source, 'maximum_aspect_ratio', '图片宽高比上限')
   const providerMaxPixels = optionalCapabilityInteger(source, 'provider_max_pixels', '供应商图片处理像素')
+  const effectiveMaximumTotalBytes = maximumTotalBytes ?? maximumImages * maximumBytesPerImage
   if ((minimumWidth === undefined) !== (minimumHeight === undefined)
     || (maximumWidth === undefined) !== (maximumHeight === undefined)
     || (minimumWidth !== undefined && maximumWidth !== undefined
       && (minimumWidth > maximumWidth || minimumHeight! > maximumHeight!))
     || (maximumAspectRatio !== undefined && maximumAspectRatio > 10_000)
     || maximumImages > 2_048 || maximumBytesPerImage > 64 << 20
+    || maximumPixels === undefined || maximumPixels > ARKME_MANAGED_MAXIMUM_IMAGE_PIXELS
+    || effectiveMaximumTotalBytes > ARKME_MANAGED_MAXIMUM_REQUEST_IMAGE_BYTES
     || (maximumTotalBytes !== undefined && maximumTotalBytes < maximumBytesPerImage)) {
     throw new LlmError('Arkme 模型目录中的图片能力超出客户端安全边界', 'MALFORMED_RESPONSE')
   }
